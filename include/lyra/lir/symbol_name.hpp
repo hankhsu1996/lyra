@@ -24,7 +24,7 @@ enum class SymbolCategory : std::uint8_t {
   kClosureDefinition,
   kConstructor,
   kClassCallable,
-  kStructMethod,
+  kRecordMethod,
   kNamespaceCallable,
   kNamespaceStorageInstall,
   kNamespaceStorageInitialize,
@@ -32,7 +32,7 @@ enum class SymbolCategory : std::uint8_t {
   kNamespaceVariable,
   kStaticProperty,
   kClosureInvoke,
-  kTypeDefault,
+  kTypeOperation,
   kConstructorPrologue,
   kBaseObjectDestructor,
   kCompleteObjectDestructor,
@@ -101,10 +101,10 @@ auto ClassDefinitionSymbol(std::string_view unit_name, SymbolPart cls)
 auto ClassCallableSymbol(
     std::string_view unit_name, SymbolPart cls, SymbolPart callable)
     -> std::string;
-// A struct's method (LRM 7.2), under the struct the unit declares. The
-// operation it answers is its name, since a struct has one method for each.
-auto StructMethodSymbol(
-    std::string_view unit_name, const support::DefPath& structure,
+// A record's method (LRM 7.2, 7.3), under the record the unit declares. The
+// operation it answers is its name, since a record has one method for each.
+auto RecordMethodSymbol(
+    std::string_view unit_name, const support::DefPath& record,
     support::ValueOperation operation) -> std::string;
 // A class's cell, under the class that owns it. The pool holding a class's
 // cells also takes what its bodies keep for the whole class, which the source
@@ -143,9 +143,10 @@ auto NamespaceVariableSymbol(std::string_view unit_name, SymbolPart variable)
 auto ClosureInvokeSymbol(std::string_view unit_name, std::uint32_t ordinal)
     -> std::string;
 
-// The function building a type's default is counted the same way: a type has
-// no name of its own, and nothing outside the unit reaches the function.
-auto TypeDefaultSymbol(std::string_view unit_name, std::uint32_t ordinal)
+// A function answering an operation at a type with no declaration is counted
+// the same way: such a type has no name of its own, and nothing outside the
+// unit reaches the function.
+auto TypeOperationSymbol(std::string_view unit_name, std::uint32_t ordinal)
     -> std::string;
 
 // The name what `unit` defines is qualified by: the unit's own for a

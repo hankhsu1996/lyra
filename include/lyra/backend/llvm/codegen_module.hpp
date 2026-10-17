@@ -13,8 +13,8 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 
-#include "lyra/backend/llvm/codegen_tuple.hpp"
 #include "lyra/backend/llvm/codegen_types.hpp"
+#include "lyra/backend/llvm/codegen_value_type.hpp"
 #include "lyra/backend/llvm/emit.hpp"
 #include "lyra/backend/llvm/fn_abi.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
@@ -113,8 +113,8 @@ using DispatchSlot = std::variant<LineageSlot, InterfaceSlot>;
 // offset to top), the first of the two entries every table opens with.
 inline constexpr std::uint64_t kOffsetToTopEntry = 2;
 
-// What a table holds where no class gives a virtual function a body: the host's
-// C++ runtime ends the program if it is ever entered.
+// What a class's table holds where no class gives a virtual function a body:
+// the host's C++ runtime ends the program if it is ever entered.
 inline constexpr std::string_view kNoBody = "__cxa_pure_virtual";
 
 // The allocation function storage the program asks for comes from (C++ ABI
@@ -140,9 +140,6 @@ class CodeGenModule {
   auto Types() -> CodeGenTypes& {
     return types_;
   }
-  auto Tuples() -> CodeGenTuples& {
-    return tuples_;
-  }
   auto Unit() const -> const lir::CompilationUnit& {
     return *unit_;
   }
@@ -152,6 +149,17 @@ class CodeGenModule {
   // name.
   auto UnitFunction(lir::FunctionId function) -> llvm::Function*;
 
+  // Data the library defines and generated code names by address, linked
+  // under `symbol`.
+  auto LibraryData(std::string_view symbol) -> llvm::Constant*;
+
+  // The constant that states `element` to the library as the type of an
+  // array's elements: the type, and the function of this unit that builds the
+  // value one starts as (LRM Table 7-1). The module defines one per element
+  // type it hands over, whatever kind of array holds the elements.
+  auto GetAddrOfElementType(lir::TypeId element)
+      -> diag::Result<llvm::Constant*>;
+
   // The definition the library reads of a type whose values it builds -- a
   // class, a struct, or a closure: a constant the unit declaring the type
   // emits, which every unit reaches by the symbol it is linked under. A use
@@ -159,11 +167,10 @@ class CodeGenModule {
   // and one of another are named the same way.
   auto DefinitionOf(lir::TypeId type) -> diag::Result<llvm::Constant*>;
 
-  // The type the library asks of a value of `type`: a tuple's own, which this
-  // unit emits with the tuple type; an integral type's and a fixed-size
-  // unpacked array's, which it emits too; or the library's for a value of one
-  // of its own kinds.
-  auto ValueTypeOf(lir::TypeId type) -> diag::Result<llvm::Constant*>;
+  // The type the library asks of a value of `type`: one this module lays out,
+  // for a type laid out by the design or an integral type, or the library's
+  // own for a value of one of its kinds.
+  auto GetAddrOfValueType(lir::TypeId type) -> diag::Result<llvm::Constant*>;
 
   // A function something outside this module defines -- an entry the runtime
   // publishes, a body of another artifact, a function of the host -- declared
@@ -201,6 +208,17 @@ class CodeGenModule {
   auto EmitLifecycle(
       llvm::IRBuilderBase& builder, lir::TypeId type, LifecycleStep step,
       std::span<llvm::Value* const> args) -> diag::Result<void>;
+  // Defines the constant `value` under `symbol`, linked as `linkage` says,
+  // which every reference made to a declaration of that symbol before then
+  // names instead.
+  auto DefineConstant(
+      const std::string& symbol, llvm::Constant* value,
+      llvm::GlobalValue::LinkageTypes linkage) -> llvm::GlobalVariable*;
+  // Every position above an integral's width in the value of `type` lying at
+  // `at` made clear, emitted where `builder` stands, as the C++ rendering's
+  // clear is once a compiler inlines it.
+  void EmitClearAboveWidths(
+      llvm::IRBuilderBase& builder, lir::TypeId type, llvm::Value* at);
   // The host's dynamic cast (C++ ABI 2.9.7): handed a part of an object, the
   // descriptions of that part's class and of the wanted one, and a hint of
   // where the wanted part sits, it answers the wanted part or null.
@@ -417,19 +435,11 @@ class CodeGenModule {
       lir::TypeId type, const Declared& declared,
       std::span<const lir::ConformingBehavior> conforming)
       -> diag::Result<void>;
-  // Defines the constant `value` under `symbol`, linked as `linkage` says.
-  auto DefineConstant(
-      const std::string& symbol, llvm::Constant* value, lir::Linkage linkage)
-      -> llvm::GlobalVariable*;
   // The address, `point` entries into the table group of the class whose
   // definition is linked under `definition`, that a value holds as where one
   // of its tables is.
   auto TableAddressPoint(std::string_view definition, std::uint64_t point)
       -> llvm::Constant*;
-  // The address a value holds as where the table of the library class whose
-  // table is linked under `table` is: its first virtual function (C++ ABI
-  // 2.5.2).
-  auto LibraryTableAddressPoint(std::string_view table) -> llvm::Constant*;
   // How a value of `declared` is laid out.
   auto LayOut(const Declared& declared) -> diag::Result<RecordLayout>;
   // How the storage a closure's captures live in is laid out. A closure extends
@@ -449,11 +459,15 @@ class CodeGenModule {
   // storage back.
   auto EmitDestructors(const Declared& declared, lir::Linkage linkage)
       -> diag::Result<void>;
+  // The address a value holds as where the table of the library class whose
+  // table is linked under `table` is: its first virtual function (C++ ABI
+  // 2.5.2).
+  auto LibraryTableAddressPoint(std::string_view table) -> llvm::Constant*;
   // The definition linked under `symbol`, or a declaration of it where nothing
   // has defined it yet.
   auto DefinitionGlobal(const std::string& symbol) -> llvm::GlobalVariable*;
   // An integer of `bytes` bytes, as a field of a constant record.
-  auto Int(std::uint64_t value, unsigned bytes) -> llvm::Constant*;
+  auto Int(std::uint64_t value, std::size_t bytes) -> llvm::Constant*;
   // The address of `name` as a NUL-terminated constant.
   auto NameConstant(std::string_view name) -> llvm::Constant*;
   // A body a declaration's values are built or ended by, this unit's or
@@ -463,26 +477,6 @@ class CodeGenModule {
   auto DefineEnumTable(lir::EnumTableId table) -> llvm::GlobalVariable*;
   auto DefineIntegralConstant(lir::IntegralConstantId constant)
       -> llvm::GlobalVariable*;
-  // What the library is handed as the type of a value of the integral type
-  // `type`, where a value crosses with its type: constant data of the class
-  // the library declares for an integral type, stating the width, signedness
-  // and states that class's operations read. The module defines one per
-  // integral type it hands over that way.
-  auto GetAddrOfIntegralType(lir::TypeId type) -> llvm::Constant*;
-  // The constant that states a fixed-size unpacked array type to the library:
-  // how many elements, and the constant stating their type.
-  auto GetAddrOfFixedArrayType(lir::TypeId type)
-      -> diag::Result<llvm::Constant*>;
-  // The constant that states a union type to the library: its size, how many
-  // members, the constants stating their types, and for a tagged union where
-  // its tag lies. The module defines one per union type it hands over.
-  auto GetAddrOfUnionType(lir::TypeId type) -> diag::Result<llvm::Constant*>;
-  // The constant that states `element` to the library as the type of an
-  // array's elements: the type, and the function of this unit that builds the
-  // value one starts as (LRM Table 7-1). The module defines one per element
-  // type it hands over, whatever kind of array holds the elements.
-  auto GetAddrOfElementType(lir::TypeId element)
-      -> diag::Result<llvm::Constant*>;
   // The constant that states the queue type `queue` to the library: the
   // constant stating its elements' type, and the bound it declares (LRM
   // 7.10.5). The module defines one per queue type it hands over.
@@ -492,14 +486,11 @@ class CodeGenModule {
   std::unique_ptr<llvm::Module> module_;
   const lir::CompilationUnit* unit_;
   CodeGenTypes types_;
-  CodeGenTuples tuples_;
+  CodeGenValueTypes value_types_;
   base::Translation<lir::FunctionId, llvm::Function*> functions_;
   std::unordered_map<lir::EnumTableId, llvm::GlobalVariable*> enum_tables_;
   std::unordered_map<lir::IntegralConstantId, llvm::GlobalVariable*>
       integral_constants_;
-  std::unordered_map<lir::TypeId, llvm::GlobalVariable*> integral_types_;
-  std::unordered_map<lir::TypeId, llvm::GlobalVariable*> fixed_array_types_;
-  std::unordered_map<lir::TypeId, llvm::GlobalVariable*> union_types_;
   std::unordered_map<lir::TypeId, llvm::GlobalVariable*> element_types_;
   std::unordered_map<lir::TypeId, llvm::GlobalVariable*> queue_types_;
   std::unordered_map<lir::TypeId, RecordLayout> records_;

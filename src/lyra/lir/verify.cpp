@@ -238,23 +238,26 @@ void VerifyInstr(
 void VerifyRvalue(
     const CompilationUnit& unit, const Function& fn, const Rvalue& value,
     TypeId result_type) {
+  // A read answers a value of the type its place holds, and storage reached
+  // only through its address holds none.
+  const auto verify_read = [&](const Place& place) {
+    const TypeId place_type = PlaceType(unit, fn, place);
+    if (unit.types.Get(place_type).IsAddressOnly()) {
+      throw InternalError(
+          "lir verify: load of a place whose storage is only addressable");
+    }
+    if (result_type != place_type) {
+      throw InternalError(
+          std::format(
+              "lir verify: load result type does not match its place type "
+              "(result Type[{}], place Type[{}])",
+              result_type.value, place_type.value));
+    }
+  };
   std::visit(
       Overloaded{
-          [&](const LoadInstr& load) {
-            const TypeId place_type = PlaceType(unit, fn, load.place);
-            if (unit.types.Get(place_type).IsAddressOnly()) {
-              throw InternalError(
-                  "lir verify: load of a place whose storage is only "
-                  "addressable");
-            }
-            if (result_type != place_type) {
-              throw InternalError(
-                  std::format(
-                      "lir verify: load result type does not match its place "
-                      "type (result Type[{}], place Type[{}])",
-                      result_type.value, place_type.value));
-            }
-          },
+          [&](const LoadInstr& load) { verify_read(load.place); },
+          [&](const OverlaidLoadInstr& load) { verify_read(load.place); },
           [&](const AddrOfInstr& addr) {
             const TypeId place_type = PlaceType(unit, fn, addr.place);
             const Type& result = unit.types.Get(result_type);
@@ -291,7 +294,7 @@ void VerifyRvalue(
           },
           [&](const UnionInstr& built) {
             const std::optional<std::span<const TypeId>> members =
-                unit.types.Get(result_type).UnionMembers();
+                OverlaidMembers(unit, result_type);
             if (!members.has_value() || built.member.value >= members->size()) {
               throw InternalError(
                   "lir verify: a union is built holding a member its type "
@@ -299,8 +302,7 @@ void VerifyRvalue(
             }
           },
           [&](const DiscriminantInstr& read) {
-            if (!unit.types.Get(PlaceType(unit, fn, read.place))
-                     .Is<TaggedUnionType>()) {
+            if (!IsTaggedUnion(unit, PlaceType(unit, fn, read.place))) {
               throw InternalError(
                   "lir verify: a tag is read of something that is no tagged "
                   "union");
@@ -310,7 +312,7 @@ void VerifyRvalue(
           [&](const CallInstr& call) {
             RequireCallWellFormed(unit, fn, call.target, call.args);
           },
-          [](const TupleInstr&) {},
+          [](const ProductInstr&) {},
           [&](const ClosureInstr& built) {
             const auto* closure = unit.types.Get(result_type).As<ClosureType>();
             if (closure == nullptr ||

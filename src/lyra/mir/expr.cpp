@@ -53,6 +53,7 @@ auto IsPlace(const ExprData& data) -> bool {
           [](const BorrowExpr&) { return false; },
           [](const MoveExpr&) { return false; },
           [](const CopyExpr&) { return false; },
+          [](const DiscriminantExpr&) { return false; },
           [](const ClosureExpr&) { return false; },
           [](const CompositeExpr&) { return false; },
           [](const UnionExpr&) { return false; },

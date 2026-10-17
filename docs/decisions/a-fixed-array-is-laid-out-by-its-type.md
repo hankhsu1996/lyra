@@ -10,12 +10,16 @@ element default a construction carried under
 the element default among a fixed-size array's construction arguments in
 [value-construction-forms](value-construction-forms.md) D1. Two alternatives
 [a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md) rejects for a tuple are taken
-here for an array; Rejected quotes both and says what differs. Who states an element's default, and
-that no array of any kind is handed one, is
+here for an array; Rejected quotes both and says what differs, and the first is taken back by D4's
+revision, under which an array's whole-value operations are code compiled for its type
+([a-fixed-arrays-operations-are-stated-per-unit](a-fixed-arrays-operations-are-stated-per-unit.md)).
+Who states an element's default, and that no array of any kind is handed one, is
 [an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md).
 D6 is superseded by [a-holder-lays-out-the-value-it-keeps](a-holder-lays-out-the-value-it-keeps.md):
 a variable, a net and a local lay an array out after themselves from the type they are told where
-they are built.
+they are built. The type constant's form -- a record both sides read, not an object of a library
+class -- is
+[a-type-is-told-to-the-library-as-a-record-both-sides-read](a-type-is-told-to-the-library-as-a-record-both-sides-read.md).
 
 ## Context
 
@@ -96,22 +100,33 @@ with the element type's default and a write is handed storage no read reaches (L
 asked of the element type. LIR states the element step and the type as element and count; the
 stride, the bound and where the elements lie are decided below it (`../architecture/lir.md`).
 
-**D4. The prebuilt library is handed the array's type as constant data.** The code generator writes
-one constant per array type per unit: the count and the element's type, which is itself a constant
-stating how an element starts (D7). It is an instance of one class the library has, whose operations
--- copy, move, end, assign, the equalities, the bit stream, the net folds, the parts by position --
-are each that operation on every element in turn, through the element's type. No function is
-generated for an array type. Two units that state one array type write two constants, and the
-library holds two types the same where their counts agree and their element types do.
+**D4. The prebuilt library is handed the array's type as constant data** (revised 2026-10-15). The
+code generator writes one constant per array type per unit: the count and the element's type, which
+is itself a constant stating how an element starts (D7), which is what reaching an element, a run of
+them and their order by position need. The constant's table holds the array's whole-value operations
+-- copy, move, end, assign, the equalities, the bit stream, the net folds -- as code compiled for
+the array type
+([a-fixed-arrays-operations-are-stated-per-unit](a-fixed-arrays-operations-are-stated-per-unit.md)).
+This revises the earlier rule that the library carried each of them out over the count and the
+element's type, which had the library interpret the type. Every unit naming an array type states its
+constant under a name the count and the element settle, and the linker keeps one of them, as it
+keeps one of a template's static data member however many translation units instantiate it; one
+array type is therefore one object in the program, and the library tells two types apart by which
+object each is (revised 2026-10-16: two units' constants were two objects, compared by count and
+element).
 
-**D5. An array crossing to the library is its bytes followed by its type.** An entry realized for
-arrays takes each array it is handed as two parameters, and one that builds an array takes the
-answer's type before the storage it builds into. An entry of another kind that holds an array as an
-element -- a queue taking one, a container's algorithm visiting one -- takes the bytes alone, since
-it was built knowing its element's type. Where an entry of another kind reads an array as an array,
-its declaration says so of that operand. A reference to an array and a part designated within a
-write name bytes lying inside something else, so an access through one that is handed no array and
-builds none is told the reached array's type, as it is told a wide integral's width.
+**D5. An array crossing to the library is its bytes, and its type crosses once** (revised
+2026-10-15). An entry realized for arrays of one type takes that type once, after its operands, as a
+generic function takes its type argument once however many arguments are of that type; every array
+of that type it takes, and the one it builds, are its bytes alone. An array of another type -- the
+run of elements a slice write puts -- is read with its own type, which its declaration says. This
+revises the earlier rule that each array crossed with its type, which told an operation over two
+arrays of one type the type twice and had the library check or drop the second copy. An entry of
+another kind that holds an array as an element -- a queue taking one, a container's algorithm
+visiting one -- takes the bytes alone, since it was built knowing its element's type. Where an entry
+of another kind reads an array as an array, its declaration says so of that operand. A reference to
+an array and a part designated within a write name bytes lying inside something else, and an access
+through one is told the array's type the same way.
 
 **D6. Whatever holds an array for the library holds its bytes with its type.** A variable, a net, a
 driver and a sampled history keep the array in storage of their own beside the type they were first
@@ -130,37 +145,26 @@ operand. What an array method answering an array is handed of that answer is set
 kind in
 [an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md).
 
-**D9. Generated code copies and ends an array itself where that is moving bytes.** An array lying in
-place whose elements end with nothing to do is copied as its bytes and ended by nothing. Any other
-array is copied, moved, assigned and ended by the library, handed the array and its type.
+**D9. Generated code copies and ends an array itself.** An array lying in place whose elements end
+with nothing to do is copied as its bytes and ended by nothing. Any other array is copied, moved,
+assigned and ended by a function generated for its type, each element in turn.
 
 ## Rejected
 
-Two of these are rejections other records make, reversed here for an array.
+One of these is a rejection another record makes, reversed here for an array.
 
 - **"A description of the type that the runtime walks ... It is a second realization of every
   operation, interpreted at run time, where clang compiles each operation for its type; the
   requirement is clang's"** ([a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md)),
-  and **"Nothing reads a description of a type while the program runs ... it is handed the functions
-  the compiler generated for that type, never a description to interpret"**
-  ([a-value-is-its-machine-data](a-value-is-its-machine-data.md) D5). Both stand for what they were
-  written about, and D4 is the case their reason does not reach. A tuple's components differ in
-  type, so an operation on one is a different step for each component: generated, it is a few direct
-  calls in a row, and walked, it is a list of offsets and types decoded at every use. An array's
-  elements are one type, so an operation on one is the element's operation and a count; there is
-  nothing to decode, and the element's operation is still the one compiled for its type. Generating
-  the loop per array type would differ from the library's one loop only in a bound and a stride
-  being constants and the element's call being direct. It would cost every unit about twenty
-  functions for each array type it states, which is the same price
-  [a-value-is-its-machine-data](a-value-is-its-machine-data.md) declines to pay for the
-  variable-size containers ("a second implementation of every container algorithm"), and test 4
-  weighs it against whole-array operations, which are not what a design spends its time in: reading
-  and writing an element is, and D3 compiles that. What D5 of that record goes on forbidding is a
-  value that describes itself -- which the array object this replaces was -- and a record the
-  library must branch on to learn what kind of thing it holds. What it now admits is what
-  [a-packed-value-is-its-words](a-packed-value-is-its-words.md) already admitted for a packed value:
-  code compiled once is told numbers and the addresses of functions the design contains. A count and
-  an element's type, with the one function that type states, are that.
+  and **"Nothing reads a description of a type while the program runs"**
+  ([a-value-is-its-machine-data](a-value-is-its-machine-data.md) D5). Both stand for an array too.
+  This record first held that an array was the case their reason did not reach, since its elements
+  are one type and a whole-array operation is the element's operation and a count; that left the
+  library carrying out every operation by reading the type, and the execution backend doing other
+  work than the C++ backend's instantiated template. D4's revision takes it back. What the library
+  is still told -- a count and the element's table, for reaching an element, building an array from
+  elements and merging two -- is what [a-packed-value-is-its-words](a-packed-value-is-its-words.md)
+  admits: numbers and the addresses of functions the design contains.
 - **"Passing a tuple's table beside its bytes instead of inside them. Entries over a container's
   elements take a value of any domain, so their signatures cannot grow a table argument for one
   domain, and the families that keep a tuple would each need to be told its type again"**
@@ -174,10 +178,6 @@ Two of these are rejections other records make, reversed here for an array.
   kind alike. And a holder is not told again: it keeps the type from the first array it is handed
   (D6). What is told at each access is a reference and a designated part, which is what a wide
   integral's width already is.
-- **The code generator compiling each array type's lifecycle and operations**, clang's own answer
-  and the tuple's. Correct, and rejected above for what it costs per unit against what it buys.
-  Where a whole-array operation shows up in a design's time, the answer is D9's -- carry it out
-  inline where every element is its bytes -- and not a function per type.
 - **An element default handed to every construction**, which
   [runtime-shape-and-default-value](runtime-shape-and-default-value.md) decision 6 chose. Rejected
   for every array kind, with that record's own reasons quoted, in
@@ -189,10 +189,11 @@ Two of these are rejections other records make, reversed here for an array.
   design declares memories of megabytes.
 - **Every array behind an address.** Element access gains a load and every small array an
   allocation, where the C++ backend pays neither.
-- **One type constant per array type for the whole program.** It needs a unit to know what other
-  units state, where a unit compiles from its own declarations, so that an edit recompiles only the
-  units it reaches. Comparing two constants by what they state costs a count and a pointer walk at
-  the few places two units' arrays meet.
+- **Two units' constants for one array type kept as two objects, compared by count and element**
+  (taken back 2026-10-16). It was chosen over one constant for the program on the ground that one
+  "needs a unit to know what other units state". It does not: each unit states the constant from its
+  own declarations alone, and the linker keeps one where the names agree. Kept as two, the library
+  compared every pair by what they state, which is a description of a type read at run time.
 
 ## Consequences
 
@@ -200,8 +201,8 @@ Two of these are rejections other records make, reversed here for an array.
   still a call for each level of the select, because that is where the variable is told which part a
   write reached
   ([a-part-of-a-variable-is-named-by-its-steps](a-part-of-a-variable-is-named-by-its-steps.md)).
-- A whole-array operation the library carries out is an indirect call per element where clang would
-  inline. That is the allowed difference, and its cost is not measured.
+- A whole-array operation is a loop compiled for the array type, calling the element's operation
+  directly at each position.
 - An array inside an array, a structure or a frame slot costs its elements and nothing more. A
   variable, a net and a history holding one hold one allocation for it.
 - The library's own array object, its type object, and the entry that read one element go. A cell of
@@ -216,7 +217,9 @@ Two of these are rejections other records make, reversed here for an array.
 - [a-value-is-its-machine-data](a-value-is-its-machine-data.md) -- D6 asks for the layout; D5 is
   what D4 narrows.
 - [a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md) -- the product's answer, and
-  the two rejections reversed here for an array.
+  the rejection reversed here for an array.
+- [a-fixed-arrays-operations-are-stated-per-unit](a-fixed-arrays-operations-are-stated-per-unit.md)
+  -- the bodies an array type's table holds.
 - [a-packed-value-is-its-words](a-packed-value-is-its-words.md) -- what code compiled once may be
   told of a type, and why a frame's size does not follow a declared size.
 - [unpacked-array-representation](unpacked-array-representation.md) -- the C++ backend's array, and

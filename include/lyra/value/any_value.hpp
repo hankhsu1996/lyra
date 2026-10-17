@@ -103,11 +103,9 @@ class AnyValue {
   std::unique_ptr<void, End> bytes_;
 };
 
-// Whether two types hold their values the same way: the same type, two
+// Whether two types hold their values the same way: the same type, or two
 // integral types of one shape, which generated code and the library may each
-// state of their own, or two fixed-size unpacked array types of one count
-// whose element types are the same in this sense, which each unit naming the
-// type states of its own.
+// state of their own.
 [[nodiscard]] auto SameType(const ValueType& a, const ValueType& b) -> bool;
 
 static_assert(LyraValue<AnyValue>);

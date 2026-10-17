@@ -183,8 +183,6 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [&](const ManagedRefType& t) { HashId(seed, t.pointee); },
           [&](const VectorType& t) { HashId(seed, t.element); },
           [&](const TupleType& t) { HashIds(seed, t.elements); },
-          [&](const UnionType& t) { HashIds(seed, t.members); },
-          [&](const TaggedUnionType& t) { HashIds(seed, t.members); },
           [](const EmptyType&) {},
           [&](const ObservableType& t) { HashId(seed, t.value); },
           [&](const ResolvedType& t) { HashId(seed, t.value); },
@@ -196,10 +194,10 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [&](const SampledHistoryType& t) { HashId(seed, t.value); },
           [](const EvaluationAttemptsType&) {},
           [](const LoopBlocksType&) {},
-          [&](const StructType& t) {
+          [&](const RecordType& t) {
             std::visit(
                 Overloaded{
-                    [&](StructId id) { HashField(seed, id.value); },
+                    [&](RecordId id) { HashField(seed, id.value); },
                     [&](const TypeDeclarationRef& ref) {
                       HashField(seed, ref.unit_name);
                       HashField(seed, ref.path);
@@ -288,15 +286,13 @@ auto Type::IsAddressOnly() const -> bool {
           [](const ManagedRefType&) { return false; },
           [](const VectorType&) { return false; },
           [](const TupleType&) { return false; },
-          [](const UnionType&) { return false; },
-          [](const TaggedUnionType&) { return false; },
           [](const EmptyType&) { return false; },
           [](const DriverType&) { return false; },
           [](const OpenWriteType&) { return false; },
           [](const DesignationType&) { return false; },
           [](const BitsReferenceType&) { return false; },
           [](const ObjectWriteType&) { return false; },
-          [](const StructType&) { return false; },
+          [](const RecordType&) { return false; },
           [](const ClosureType&) { return false; }});
 }
 
@@ -355,9 +351,7 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           [](const QueueType&) { return true; },
           [](const AssociativeArrayType&) { return true; },
           [](const TupleType&) { return true; },
-          [](const StructType&) { return true; },
-          [](const UnionType&) { return true; },
-          [](const TaggedUnionType&) { return true; },
+          [](const RecordType&) { return true; },
           [](const StringType&) { return true; },
           [](const RealType&) { return true; },
           [](const ShortRealType&) { return true; },
@@ -456,9 +450,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           // Parts side by side, or members overlaid, but never a sequence of
           // one type.
           [](const TupleType&) -> Element { return std::nullopt; },
-          [](const StructType&) -> Element { return std::nullopt; },
-          [](const UnionType&) -> Element { return std::nullopt; },
-          [](const TaggedUnionType&) -> Element { return std::nullopt; },
+          [](const RecordType&) -> Element { return std::nullopt; },
 
           // A single quantity or a single token.
           [](const WildcardIndexType&) -> Element { return std::nullopt; },

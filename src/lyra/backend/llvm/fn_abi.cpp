@@ -30,15 +30,15 @@ auto Unsupported(std::string message) -> std::unexpected<diag::Diagnostic> {
       diag::DiagCode::kUnsupportedExpressionForm, std::move(message));
 }
 
-// The type a realization told of one is told of, which the call entering it
-// states.
+// The type a call states it is made at, which an entry told something of its
+// answer reads.
 auto ToldOfType(std::optional<lir::TypeId> stated, std::string_view what)
     -> lir::TypeId {
   if (!stated.has_value()) {
     throw InternalError(
         std::format(
-            "llvm codegen: a realization is told {} by a call that states "
-            "none -- please report this as a bug",
+            "llvm codegen: an entry is told {} by a call that states none -- "
+            "please report this as a bug",
             what));
   }
   return *stated;
@@ -104,15 +104,14 @@ auto CallArranger::StorageReached(lir::TypeId operand) const
   return types.Get(pointee.value_or(operand));
 }
 
-auto CallArranger::StorageDomainBehind(lir::TypeId operand) const
-    -> diag::Result<support::ValueDomain> {
+auto CallArranger::ValuesBehind(lir::TypeId operand) const -> lir::TypeId {
   const std::optional<lir::TypeId> held = ValuesHeldBy(StorageReached(operand));
   if (!held.has_value()) {
     throw InternalError(
         "llvm codegen: an entry named by the representation of what a storage "
         "holds needs a storage whose values are all of one");
   }
-  return module_->DomainOf(*held);
+  return *held;
 }
 
 auto PassModeOf(support::OperandReading reading, lir::TypeId operand)
@@ -131,81 +130,6 @@ auto PassModeOf(support::OperandReading reading, lir::TypeId operand)
       return PassWithType{.type = operand};
   }
   throw InternalError("llvm codegen: unknown operand reading");
-}
-
-auto ToldModeOf(
-    const Told& told, std::size_t index, support::OperandReading reading,
-    std::optional<lir::TypeId> acted_on, lir::TypeId own,
-    const lir::TypePool& pool) -> std::optional<PassMode> {
-  using Mode = std::optional<PassMode>;
-  const auto held = [&] {
-    return ToldOfType(
-        acted_on, "how wide the values the storage it acts on holds are");
-  };
-  return std::visit(
-      Overloaded{
-          [](const ToldNothing&) -> Mode { return std::nullopt; },
-          [](const ToldWidthMetadataAhead&) -> Mode { return std::nullopt; },
-          [](const ToldTypeMetadataAhead&) -> Mode { return std::nullopt; },
-          [](const ToldByTheStorage&) -> Mode { return std::nullopt; },
-          [&](const ToldWidthMetadata& t) -> Mode {
-            if (t.after != index) {
-              return std::nullopt;
-            }
-            return PassWithWidth{.type = held()};
-          },
-          [&](const ToldLaidOutTypes& t) -> Mode {
-            if (t.reached_after == index) {
-              return PassWithType{
-                  .type = ToldOfType(
-                      acted_on, "the type of the value the storage holds")};
-            }
-            if (!IsLaidOutByType(pool.Get(own))) {
-              return std::nullopt;
-            }
-            // The readings that hand a value over with nothing of its type
-            // are the ones a realization for such values adds the type to;
-            // any other already says what crosses with the operand.
-            switch (reading) {
-              case support::OperandReading::kHeld:
-              case support::OperandReading::kMachine:
-                return PassWithType{.type = own};
-              case support::OperandReading::kBits:
-              case support::OperandReading::kNumber:
-              case support::OperandReading::kPosition:
-              case support::OperandReading::kTyped:
-              case support::OperandReading::kKey:
-                return std::nullopt;
-            }
-            throw InternalError("llvm codegen: unknown operand reading");
-          },
-          [&](const ToldKeyType& t) -> Mode {
-            if (t.after != index) {
-              return std::nullopt;
-            }
-            const auto* keyed = pool.Get(own).As<lir::AssociativeArrayType>();
-            if (keyed == nullptr) {
-              throw InternalError(
-                  "llvm codegen: a realization told the type a memory's keys "
-                  "are built at is handed no associative array -- please "
-                  "report this as a bug");
-            }
-            return PassWithType{.type = keyed->key_type};
-          },
-          [&](const ToldEntryType& t) -> Mode {
-            if (t.after != index) {
-              return std::nullopt;
-            }
-            const auto* entries = pool.Get(own).As<lir::MachineArrayType>();
-            if (entries == nullptr) {
-              throw InternalError(
-                  "llvm codegen: a realization told the type of a literal's "
-                  "entries is handed no sequence of them -- please report "
-                  "this as a bug");
-            }
-            return PassWithType{.type = entries->element};
-          }},
-      told);
 }
 
 namespace {
@@ -241,6 +165,97 @@ void RequireReadAs(
     case support::OperandReading::kKey:
       break;
   }
+}
+
+// How operand `index`, of type `own` and read as `reading`, crosses where what
+// `realization` is told concerns it -- with what it is told, or as it; nothing
+// where the realization is told nothing of that operand, or where the library
+// realizes the entry once, which then crosses as its reading says.
+auto ToldModeOf(
+    const std::optional<Realization>& realization, std::size_t index,
+    support::OperandReading reading, lir::TypeId own, const lir::TypePool& pool)
+    -> std::optional<PassMode> {
+  using Mode = std::optional<PassMode>;
+  if (!realization.has_value()) {
+    return std::nullopt;
+  }
+  const lir::TypeId of = realization->of;
+  return std::visit(
+      Overloaded{
+          [](const ToldNothing&) -> Mode { return std::nullopt; },
+          [](const ToldWidthMetadataAhead&) -> Mode { return std::nullopt; },
+          [](const ToldTypeMetadataAhead&) -> Mode { return std::nullopt; },
+          [&](const ToldWidthMetadata& t) -> Mode {
+            if (t.after != index) {
+              return std::nullopt;
+            }
+            return PassWithWidth{.type = of};
+          },
+          [&](const ToldLaidOutType&) -> Mode {
+            if (!IsLaidOutByType(pool.Get(own))) {
+              return std::nullopt;
+            }
+            // A value handed over with nothing of its type is one of the type
+            // the realization is told, or the realization could not read it;
+            // any other reading already says what crosses with the operand.
+            switch (reading) {
+              case support::OperandReading::kHeld:
+              case support::OperandReading::kMachine:
+                if (own != of) {
+                  throw InternalError(
+                      "llvm codegen: a realization for values laid out by "
+                      "one type is handed a value laid out by another, which "
+                      "its declaration does not read with its type -- please "
+                      "report this as a bug");
+                }
+                return std::nullopt;
+              case support::OperandReading::kBits:
+              case support::OperandReading::kNumber:
+              case support::OperandReading::kPosition:
+              case support::OperandReading::kTyped:
+              case support::OperandReading::kKey:
+                return std::nullopt;
+            }
+            throw InternalError("llvm codegen: unknown operand reading");
+          },
+          [&](const ToldKeyType& t) -> Mode {
+            if (t.after != index) {
+              return std::nullopt;
+            }
+            const auto* keyed = pool.Get(own).As<lir::AssociativeArrayType>();
+            if (keyed == nullptr) {
+              throw InternalError(
+                  "llvm codegen: a realization told the type a memory's keys "
+                  "are built at is handed no associative array -- please "
+                  "report this as a bug");
+            }
+            return PassWithType{.type = keyed->key_type};
+          },
+          [&](const ToldEntryType& t) -> Mode {
+            if (t.after != index) {
+              return std::nullopt;
+            }
+            const auto* entries = pool.Get(own).As<lir::MachineArrayType>();
+            if (entries == nullptr) {
+              throw InternalError(
+                  "llvm codegen: a realization told the type of a literal's "
+                  "entries is handed no sequence of them -- please report "
+                  "this as a bug");
+            }
+            return PassWithType{.type = entries->element};
+          }},
+      realization->told);
+}
+
+// What a realization for values laid out by their type is told after its
+// operands: that type, once, however many values of it it takes or builds.
+auto TypeArgsOfTheRealization(const std::optional<Realization>& realization)
+    -> std::vector<TypeArg> {
+  if (!realization.has_value() ||
+      !std::holds_alternative<ToldLaidOutType>(realization->told)) {
+    return {};
+  }
+  return {TypeConstantArg{.type = realization->of}};
 }
 
 // What an entry told `told` of its answer is handed after its operands, where
@@ -308,58 +323,28 @@ auto TypeArgsToldAs(
   throw InternalError("llvm codegen: unknown answer told");
 }
 
-}  // namespace
-
-auto ImplicitArgOf(const Told& told, std::optional<lir::TypeId> acted_on)
-    -> ImplicitArg {
-  return std::visit(
-      Overloaded{
-          [&](const ToldWidthMetadataAhead&) -> ImplicitArg {
-            return WidthMetadataArg{
-                .of = ToldOfType(
-                    acted_on,
-                    "how wide the values the storage it makes holds are")};
-          },
-          [&](const ToldTypeMetadataAhead&) -> ImplicitArg {
-            return TypeMetadataArg{
-                .of = ToldOfType(
-                    acted_on,
-                    "the type of the value the storage it makes holds")};
-          },
-          [](const ToldNothing&) -> ImplicitArg { return NoImplicitArg{}; },
-          [](const ToldByTheStorage&) -> ImplicitArg {
-            return NoImplicitArg{};
-          },
-          [](const ToldWidthMetadata&) -> ImplicitArg {
-            return NoImplicitArg{};
-          },
-          [](const ToldLaidOutTypes&) -> ImplicitArg {
-            return NoImplicitArg{};
-          },
-          [](const ToldKeyType&) -> ImplicitArg { return NoImplicitArg{}; },
-          [](const ToldEntryType&) -> ImplicitArg { return NoImplicitArg{}; }},
-      told);
-}
-
-auto TypeArgsOf(
-    const lir::TypePool& types, const Told& told, support::AnswerTold declared,
-    std::optional<lir::TypeId> called_at, lir::TypeId answered,
-    const ReturnInfo& ret) -> std::vector<TypeArg> {
+// What an entry is told of its answer, after its operands and after the type
+// `realization` is told: what its declaration says it is told of the type
+// `called_at` the call is made at or of `answered`, the value the call answers
+// coming back as `ret`. A value laid out by its type that a realization builds
+// is of the type it is realized for, since its declaration says it is told
+// nothing else.
+auto AnswerTypeArgs(
+    const lir::TypePool& types, const std::optional<Realization>& realization,
+    support::AnswerTold declared, std::optional<lir::TypeId> called_at,
+    lir::TypeId answered, const ReturnInfo& ret) -> std::vector<TypeArg> {
   switch (declared) {
-    // A realization for values laid out by their type building one is
-    // told its type, which its bytes do not state; whether one builds such a
-    // value follows from the type a call answers at, which no declaration
-    // holds.
-    case support::AnswerTold::kNothing: {
-      const bool builds_a_value_laid_out_by_type =
-          std::holds_alternative<ToldLaidOutTypes>(told) &&
-          std::holds_alternative<ReturnIndirect>(ret) &&
-          IsLaidOutByType(types.Get(answered));
-      if (!builds_a_value_laid_out_by_type) {
-        return {};
+    case support::AnswerTold::kNothing:
+      if (std::holds_alternative<ReturnIndirect>(ret) &&
+          IsLaidOutByType(types.Get(answered)) &&
+          !TypeArgsOfTheRealization(realization).empty() &&
+          answered != realization->of) {
+        throw InternalError(
+            "llvm codegen: a realization for values laid out by one type "
+            "builds a value laid out by another, which its declaration says "
+            "it is told nothing of -- please report this as a bug");
       }
-      return {TypeConstantArg{.type = answered}};
-    }
+      return {};
     case support::AnswerTold::kBuiltArray:
     case support::AnswerTold::kAnswerType:
     case support::AnswerTold::kElementType:
@@ -369,12 +354,39 @@ auto TypeArgsOf(
   throw InternalError("llvm codegen: unknown answer told");
 }
 
-auto FnAbiOf(
-    CodeGenModule& module, RuntimeOp op,
-    std::span<const StatedOperand> operands, const Told& told,
-    std::optional<lir::TypeId> acted_on, std::optional<lir::TypeId> called_at,
-    ReturnInfo ret) -> FnAbi {
-  const support::OperandReadings readings = OperandReadingsOf(op);
+// What a call through `realization`, none where the library realizes the
+// entry once, hands it ahead of its operands.
+auto ImplicitArgOf(const std::optional<Realization>& realization)
+    -> ImplicitArg {
+  if (!realization.has_value()) {
+    return NoImplicitArg{};
+  }
+  return std::visit(
+      Overloaded{
+          [&](const ToldWidthMetadataAhead&) -> ImplicitArg {
+            return WidthMetadataArg{.of = realization->of};
+          },
+          [&](const ToldTypeMetadataAhead&) -> ImplicitArg {
+            return TypeMetadataArg{.of = realization->of};
+          },
+          [](const ToldNothing&) -> ImplicitArg { return NoImplicitArg{}; },
+          [](const ToldWidthMetadata&) -> ImplicitArg {
+            return NoImplicitArg{};
+          },
+          [](const ToldLaidOutType&) -> ImplicitArg { return NoImplicitArg{}; },
+          [](const ToldKeyType&) -> ImplicitArg { return NoImplicitArg{}; },
+          [](const ToldEntryType&) -> ImplicitArg { return NoImplicitArg{}; }},
+      realization->told);
+}
+
+}  // namespace
+
+auto ArrangeCall(
+    CodeGenModule& module, const support::OperandReadings& readings,
+    std::span<const StatedOperand> operands,
+    const std::optional<Realization>& realization,
+    std::optional<NamedPartArg> named_part,
+    std::vector<TypeArg> told_of_the_answer, ReturnInfo ret) -> FnAbi {
   std::vector<ArgAbi> args;
   args.reserve(operands.size());
   for (std::size_t i = 0; i < operands.size(); ++i) {
@@ -387,7 +399,7 @@ auto FnAbiOf(
                   return ArgAbi{
                       .type = module.Types().Map(value.type),
                       .mode = ToldModeOf(
-                                  told, i, reading, acted_on, value.type,
+                                  realization, i, reading, value.type,
                                   module.Unit().types)
                                   .value_or(PassModeOf(reading, value.type))};
                 },
@@ -412,39 +424,44 @@ auto FnAbiOf(
                 }},
             operands[i]));
   }
+  std::vector<TypeArg> type_args = TypeArgsOfTheRealization(realization);
+  std::ranges::move(told_of_the_answer, std::back_inserter(type_args));
   return FnAbi{
-      .implicit_arg = ImplicitArgOf(told, acted_on),
-      .named_part = std::nullopt,
+      .implicit_arg = ImplicitArgOf(realization),
+      .named_part = named_part,
       .args = std::move(args),
-      .type_args = TypeArgsCalledAt(AnswerToldOf(op), called_at),
+      .type_args = std::move(type_args),
       .ret = ret};
+}
+
+auto FnAbiOf(
+    CodeGenModule& module, RuntimeOp op,
+    std::span<const StatedOperand> operands,
+    const std::optional<Realization>& realization,
+    std::optional<lir::TypeId> called_at, ReturnInfo ret) -> FnAbi {
+  return ArrangeCall(
+      module, OperandReadingsOf(op), operands, realization, std::nullopt,
+      TypeArgsCalledAt(AnswerToldOf(op), called_at), ret);
 }
 
 auto CallArranger::ArgOf(
     const support::OperandReadings& readings, std::size_t index,
-    lir::TypeId operand, const Told& told,
-    std::optional<lir::TypeId> acted_on) const -> ArgAbi {
+    lir::TypeId operand) const -> ArgAbi {
   const support::OperandReading reading = readings.At(index);
   RequireReadAs(module_->Types(), reading, operand);
   return ArgAbi{
       .type = module_->Types().Map(operand),
-      .mode =
-          ToldModeOf(
-              told, index, reading, acted_on, operand, module_->Unit().types)
-              .value_or(llvm_backend::PassModeOf(reading, operand))};
+      .mode = llvm_backend::PassModeOf(reading, operand)};
 }
 
-auto CallArranger::ArgsAsRead(
-    const lir::CallInstr& call, const support::OperandReadings& readings,
-    const Told& told, std::optional<lir::TypeId> acted_on) const
-    -> std::vector<ArgAbi> {
-  std::vector<ArgAbi> args;
-  args.reserve(call.args.size());
-  for (std::size_t i = 0; i < call.args.size(); ++i) {
-    args.push_back(
-        ArgOf(readings, i, OperandType(call.args[i]), told, acted_on));
+auto CallArranger::Stated(const lir::CallInstr& call) const
+    -> std::vector<StatedOperand> {
+  std::vector<StatedOperand> stated;
+  stated.reserve(call.args.size());
+  for (const lir::Operand& arg : call.args) {
+    stated.emplace_back(ValueOperand{.type = OperandType(arg)});
   }
-  return args;
+  return stated;
 }
 
 auto CallArranger::Direct(llvm::Type* type) -> ArgAbi {
@@ -493,32 +510,28 @@ auto CallArranger::EntryOf(
     const lir::BuiltinTarget& target, const lir::CallInstr& call,
     lir::TypeId result_type) const -> diag::Result<LibraryEntry> {
   using Named = diag::Result<LibraryEntry>;
-  const auto over = [&](diag::Result<support::ValueDomain> domain,
-                        std::optional<lir::TypeId> acted_on) -> Named {
+  // The realization for the representation values of `of` are held in.
+  const auto over = [&](lir::TypeId of) -> Named {
+    auto domain = module_->DomainOf(of);
     if (!domain) {
       return std::unexpected(std::move(domain.error()));
     }
     return LibraryEntry{
         .symbol = RuntimeSymbol(*domain, target.fn),
-        .told = ToldOf(*domain, target.fn),
-        .acted_on = acted_on};
+        .realization =
+            Realization{.told = ToldOf(*domain, target.fn), .of = of}};
   };
   return std::visit(
       Overloaded{
           [&](const NamedAlone&) -> Named {
             return LibraryEntry{
                 .symbol = RuntimeSymbol(target.fn),
-                .told = ToldNothing{},
-                .acted_on = std::nullopt};
+                .realization = std::nullopt};
           },
           [&](const NamedByValue& named) -> Named {
-            return over(
-                module_->DomainOf(OperandType(call.args.at(named.operand))),
-                std::nullopt);
+            return over(OperandType(call.args.at(named.operand)));
           },
-          [&](const NamedByResult&) -> Named {
-            return over(module_->DomainOf(result_type), std::nullopt);
-          },
+          [&](const NamedByResult&) -> Named { return over(result_type); },
           // The operation acts on the wrapper itself rather than reaching
           // through it, and a wrapper classifies the same way whether it
           // arrives as an operand or as a place.
@@ -537,14 +550,11 @@ auto CallArranger::EntryOf(
             }
             return LibraryEntry{
                 .symbol = RuntimeSymbol(*domain, kind, target.fn),
-                .told = ToldOf(*domain, kind, target.fn),
-                .acted_on = held};
+                .realization = Realization{
+                    .told = ToldOf(*domain, kind, target.fn), .of = held}};
           },
           [&](const NamedByStorageDomain&) -> Named {
-            const std::optional<lir::TypeId> held =
-                ValuesHeldBy(StorageReached(OperandType(call.args.at(0))));
-            return over(
-                StorageDomainBehind(OperandType(call.args.at(0))), held);
+            return over(ValuesBehind(OperandType(call.args.at(0))));
           },
           [&](const NamedByConversion&) -> Named {
             auto destination = module_->DomainOf(result_type);
@@ -557,8 +567,7 @@ auto CallArranger::EntryOf(
             }
             return LibraryEntry{
                 .symbol = RuntimeSymbol(*destination, target.fn, *source),
-                .told = ToldNothing{},
-                .acted_on = std::nullopt};
+                .realization = std::nullopt};
           },
           [&](const OverIntegralValues&) -> Named {
             return Unsupported(
@@ -596,18 +605,18 @@ auto CallArranger::ConstructionOf(
     return Construction{
         .symbol = RuntimeSymbol(op),
         .operands = OperandReadingsOf(op),
-        .told = ToldNothing{},
-        .answer_told = AnswerToldOf(op),
-        .implicit_arg = NoImplicitArg{}};
+        .realization = std::nullopt,
+        .answer_told = AnswerToldOf(op)};
   };
-  const auto entry_over = [](support::ValueDomain domain,
-                             RuntimeOp op) -> Built {
+  // The entry realized for `domain`, the representation values of `of` are
+  // held in.
+  const auto entry_over = [&](support::ValueDomain domain, lir::TypeId of,
+                              RuntimeOp op) -> Built {
     return Construction{
         .symbol = RuntimeSymbol(domain, op),
         .operands = OperandReadingsOf(op),
-        .told = ToldOf(domain, op),
-        .answer_told = AnswerToldOf(op),
-        .implicit_arg = NoImplicitArg{}};
+        .realization = Realization{.told = ToldOf(domain, op), .of = of},
+        .answer_told = AnswerToldOf(op)};
   };
   const auto no_construct = [&]() -> Built {
     return Unsupported(
@@ -628,7 +637,7 @@ auto CallArranger::ConstructionOf(
     if (!domain) {
       return std::unexpected(std::move(domain.error()));
     }
-    return entry_over(*domain, of_a_domain);
+    return entry_over(*domain, operand, of_a_domain);
   };
   const auto real_from_host = [&]() -> Built {
     if (!types.Get(OperandType(call.args.at(0))).Is<lir::MachineFloatType>()) {
@@ -642,18 +651,20 @@ auto CallArranger::ConstructionOf(
     if (!domain) {
       return std::unexpected(std::move(domain.error()));
     }
-    return entry_over(*domain, RuntimeOp::kConst);
+    return entry_over(*domain, result, RuntimeOp::kConst);
   };
   return types.Get(result).Visit(
       Overloaded{
           [&](const lir::StringType&) -> Built {
-            return entry_over(support::ValueDomain::kString, RuntimeOp::kMake);
+            return entry_over(
+                support::ValueDomain::kString, result, RuntimeOp::kMake);
           },
           // LRM 6.14: a chandle is a host pointer, so the domain carries its
           // value inline and what comes into existence is the pointer the
           // boundary handed back.
           [&](const lir::ChandleType&) -> Built {
-            return entry_over(support::ValueDomain::kChandle, RuntimeOp::kMake);
+            return entry_over(
+                support::ValueDomain::kChandle, result, RuntimeOp::kMake);
           },
           [&](const lir::ClosureType&) -> Built {
             throw InternalError(
@@ -665,17 +676,19 @@ auto CallArranger::ConstructionOf(
           // admits (LRM 7.10.5), which the entry is told with that type.
           [&](const lir::DynamicArrayType&) -> Built {
             return entry_over(
-                support::ValueDomain::kDynArray, RuntimeOp::kFromLiteral);
+                support::ValueDomain::kDynArray, result,
+                RuntimeOp::kFromLiteral);
           },
           [&](const lir::QueueType&) -> Built {
             return entry_over(
-                support::ValueDomain::kQueue, RuntimeOp::kFromLiteral);
+                support::ValueDomain::kQueue, result, RuntimeOp::kFromLiteral);
           },
           // A fixed-size unpacked array's type fixes how many elements it has,
           // so its element list is all it is built over.
           [&](const lir::UnpackedArrayType&) -> Built {
             return entry_over(
-                support::ValueDomain::kUnpackedArray, RuntimeOp::kFromElements);
+                support::ValueDomain::kUnpackedArray, result,
+                RuntimeOp::kFromElements);
           },
           // LRM 7.8: the index type imposes the order the entries are held in.
           // Every declared index type's order is its own, which an index's type
@@ -687,7 +700,7 @@ auto CallArranger::ConstructionOf(
             const bool wildcard =
                 types.Get(a.key_type).Is<lir::WildcardIndexType>();
             return entry_over(
-                support::ValueDomain::kAssocArray,
+                support::ValueDomain::kAssocArray, result,
                 wildcard ? RuntimeOp::kFromEntriesWildcard
                          : RuntimeOp::kFromEntries);
           },
@@ -795,14 +808,15 @@ auto CallArranger::ConstructionOf(
                 if (!domain) {
                   return std::unexpected(std::move(domain.error()));
                 }
-                const Told told = ToldOf(*domain, RuntimeOp::kSharedCellMake);
                 return Construction{
                     .symbol =
                         RuntimeSymbol(*domain, RuntimeOp::kSharedCellMake),
                     .operands = OperandReadingsOf(RuntimeOp::kSharedCellMake),
-                    .told = told,
-                    .answer_told = AnswerToldOf(RuntimeOp::kSharedCellMake),
-                    .implicit_arg = ImplicitArgOf(told, cell->value)};
+                    .realization =
+                        Realization{
+                            .told = ToldOf(*domain, RuntimeOp::kSharedCellMake),
+                            .of = cell->value},
+                    .answer_told = AnswerToldOf(RuntimeOp::kSharedCellMake)};
               }
               case lir::PointerOwnership::kBorrowed:
                 return no_construct();
@@ -825,7 +839,7 @@ auto CallArranger::ConstructionOf(
           // yields that value.
           [&](const lir::EmptyType&) -> Built {
             return entry_over(
-                support::ValueDomain::kEmpty, RuntimeOp::kDefault);
+                support::ValueDomain::kEmpty, result, RuntimeOp::kDefault);
           },
 
           // Nothing below has a construction entry on this backend. Each says
@@ -852,12 +866,9 @@ auto CallArranger::ConstructionOf(
           // body.
           [&](const lir::MachineArrayType&) -> Built { return no_construct(); },
           [&](const lir::TupleType&) -> Built { return no_construct(); },
-          [&](const lir::StructType&) -> Built { return no_construct(); },
-
           // A union's value is made by the instruction that states which
           // member it holds, never by a construction.
-          [&](const lir::UnionType&) -> Built { return no_construct(); },
-          [&](const lir::TaggedUnionType&) -> Built { return no_construct(); },
+          [&](const lir::RecordType&) -> Built { return no_construct(); },
           [&](const lir::MachineFunctionType&) -> Built {
             return no_construct();
           },
@@ -928,23 +939,26 @@ auto CallArranger::FnAbiOf(const lir::CallInstr& call, lir::TypeId result_type)
     if (!domain) {
       return std::unexpected(std::move(domain.error()));
     }
-    const Told told = ToldOf(*domain, op);
-    return FnAbi{
-        .implicit_arg = ImplicitArgOf(told, value),
-        .named_part = std::nullopt,
-        .args = ArgsAsRead(call, OperandReadingsOf(op), told, value),
-        .type_args = TypeArgsOf(
-            types, told, support::AnswerTold::kNothing, std::nullopt,
+    const Realization realization{.told = ToldOf(*domain, op), .of = value};
+    return ArrangeCall(
+        *module_, OperandReadingsOf(op), Stated(call), realization,
+        std::nullopt,
+        AnswerTypeArgs(
+            types, realization, support::AnswerTold::kNothing, std::nullopt,
             result_type, ret),
-        .ret = ret};
+        ret);
   };
   // A part the callee names goes right after the object whose part it is, and
   // first where the entry acts on no object -- which is what its declaration
-  // says by being a factory on the type it builds.
-  const auto named_part_of =
-      [](const lir::BuiltinTarget& t,
-         const support::RuntimeEntry& declared) -> std::optional<NamedPartArg> {
-    if (!t.position.has_value()) {
+  // says by being a factory on the type it builds. Every member of a union
+  // lies at the union's own start in this target's layout, so a step into one
+  // names no position, as clang's code generation adjusts no address for a
+  // union's field.
+  const auto named_part_of = [&](const lir::BuiltinTarget& t,
+                                 const support::RuntimeEntry& declared)
+      -> std::optional<NamedPartArg> {
+    if (!t.position.has_value() ||
+        t.fn == support::BuiltinFn::kDesignateMember) {
       return std::nullopt;
     }
     const bool acts_on_an_object =
@@ -962,30 +976,26 @@ auto CallArranger::FnAbiOf(const lir::CallInstr& call, lir::TypeId result_type)
             }
             const support::RuntimeEntry declared =
                 support::RuntimeEntryOf(t.fn);
-            return FnAbi{
-                .implicit_arg = ImplicitArgOf(entry->told, entry->acted_on),
-                .named_part = named_part_of(t, declared),
-                .args = ArgsAsRead(
-                    call, declared.operands, entry->told, entry->acted_on),
-                .type_args = TypeArgsOf(
-                    types, entry->told, declared.answer_told, t.type_argument,
-                    result_type, ret),
-                .ret = ret};
+            return ArrangeCall(
+                *module_, declared.operands, Stated(call), entry->realization,
+                named_part_of(t, declared),
+                AnswerTypeArgs(
+                    types, entry->realization, declared.answer_told,
+                    t.type_argument, result_type, ret),
+                ret);
           },
           [&](const lir::ConstructTarget&) -> Arranged {
             auto construction = ConstructionOf(call, result_type);
             if (!construction) {
               return std::unexpected(std::move(construction.error()));
             }
-            return FnAbi{
-                .implicit_arg = construction->implicit_arg,
-                .named_part = std::nullopt,
-                .args = ArgsAsRead(
-                    call, construction->operands, construction->told, {}),
-                .type_args = TypeArgsOf(
-                    types, construction->told, construction->answer_told,
+            return ArrangeCall(
+                *module_, construction->operands, Stated(call),
+                construction->realization, std::nullopt,
+                AnswerTypeArgs(
+                    types, construction->realization, construction->answer_told,
                     std::nullopt, result_type, ret),
-                .ret = ret};
+                ret);
           },
           [&](const lir::FunctionTarget&) { return as_stated(); },
           [&](const lir::DispatchTarget&) { return as_stated(); },
@@ -1008,23 +1018,20 @@ auto CallArranger::FnAbiOf(const lir::CallInstr& call, lir::TypeId result_type)
             if (!domain) {
               return std::unexpected(std::move(domain.error()));
             }
-            const support::OperandReadings readings =
-                OperandReadingsOf(RuntimeOp::kInsertDesignatedBits);
-            const Told told = ToldOf(*domain, RuntimeOp::kInsertDesignatedBits);
-            return FnAbi{
-                .implicit_arg = NoImplicitArg{},
-                .named_part = std::nullopt,
-                .args =
-                    {ArgOf(
-                         readings, 0, OperandType(call.args.front()), told,
-                         t.value),
-                     Direct(module_->Types().Span()),
-                     ArgOf(
-                         readings, 2, OperandType(t.parts.back().start), told,
-                         t.value),
-                     ArgOf(readings, 3, t.parts.back().type, told, t.value)},
-                .type_args = {},
-                .ret = ret};
+            // What the realization is told is of the value designated, which
+            // no operand is.
+            const std::array<StatedOperand, 4> stated{
+                ValueOperand{.type = OperandType(call.args.front())},
+                MachineOperand{.type = module_->Types().Span()},
+                ValueOperand{.type = OperandType(t.parts.back().start)},
+                ValueOperand{.type = t.parts.back().type}};
+            return ArrangeCall(
+                *module_, OperandReadingsOf(RuntimeOp::kInsertDesignatedBits),
+                stated,
+                Realization{
+                    .told = ToldOf(*domain, RuntimeOp::kInsertDesignatedBits),
+                    .of = t.value},
+                std::nullopt, {}, ret);
           },
           [&](const lir::EndValueTarget&) { return as_stated(); },
           [&](const lir::CopyValueTarget&) { return as_stated(); },

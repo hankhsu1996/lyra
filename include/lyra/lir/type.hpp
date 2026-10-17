@@ -12,7 +12,7 @@
 #include "lyra/base/interner.hpp"
 #include "lyra/lir/class_id.hpp"
 #include "lyra/lir/closure_id.hpp"
-#include "lyra/lir/struct_id.hpp"
+#include "lyra/lir/record_id.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
@@ -314,31 +314,20 @@ struct TupleType {
   auto operator==(const TupleType&) const -> bool = default;
 };
 
-// The declaration a struct type is: one this unit declares, by its position in
+// The declaration a record type is: one this unit declares, by its position in
 // the unit's registry, or one another unit declares, by that unit and which
-// declaration of it the struct is.
-using StructRef = std::variant<StructId, TypeDeclarationRef>;
+// declaration of it the record is.
+using RecordRef = std::variant<RecordId, TypeDeclarationRef>;
 
-// A product named by its declaration, each component reached by its position
-// the way a tuple's is: two structs with the same components are still two
-// types (LRM 6.22.1), and the declaration is what states the operations on a
-// whole value of one.
-struct StructType {
-  StructRef declaration;
+// A structure, a union or a tagged union named by its declaration, as clang's
+// record type names its record declaration: two with the same members are
+// still two types (LRM 6.22.1). Which aggregate it is and its members' types
+// are the declaration's, as are the operations on a whole value of one; a
+// member is reached by its position.
+struct RecordType {
+  RecordRef declaration;
 
-  auto operator==(const StructType&) const -> bool = default;
-};
-
-struct UnionType {
-  std::vector<TypeId> members;
-
-  auto operator==(const UnionType&) const -> bool = default;
-};
-
-struct TaggedUnionType {
-  std::vector<TypeId> members;
-
-  auto operator==(const TaggedUnionType&) const -> bool = default;
+  auto operator==(const RecordType&) const -> bool = default;
 };
 
 // The sealed endpoint of a cross-instance reference -- a resolution node
@@ -449,10 +438,9 @@ class Type {
       VoidType, EmptyType, ObjectType, CrossUnitClassType, RuntimeClassType,
       ClosureType, RuntimeEffectsType, FilesType, DiagnosticType,
       RuntimeLibraryType, CoroutineType, VariableRefType, PointerType,
-      ManagedRefType, VectorType, TupleType, StructType, UnionType,
-      TaggedUnionType, ResolvedType, DriverType, ObservableType,
-      SampledHistoryType, EvaluationAttemptsType, LoopBlocksType, OpenWriteType,
-      DesignationType>;
+      ManagedRefType, VectorType, TupleType, RecordType, ResolvedType,
+      DriverType, ObservableType, SampledHistoryType, EvaluationAttemptsType,
+      LoopBlocksType, OpenWriteType, DesignationType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {
@@ -518,17 +506,6 @@ class Type {
   // to a slot, to a caller, to a callee, as another type -- its end goes with
   // it, as Rust moves a value that is not `Copy`.
   [[nodiscard]] auto IsMoveOnly() const -> bool;
-
-  // True for a value made of all its components at once, each reached by its
-  // position -- a tuple, or a struct a declaration names. What the components
-  // are is read from the unit, since a struct's are listed on its declaration.
-  [[nodiscard]] auto IsProduct() const -> bool;
-
-  // The members of a union of either kind, in declaration order, each lying
-  // at the start of the union's storage (LRM 7.3, 7.3.2); nothing for any
-  // other type.
-  [[nodiscard]] auto UnionMembers() const
-      -> std::optional<std::span<const TypeId>>;
 
   // The type of the elements this one holds a sequence of, or nothing where it
   // holds none: the unpacked array (LRM 7.4), the dynamic array (7.5), the

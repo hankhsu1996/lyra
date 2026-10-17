@@ -32,7 +32,7 @@ enum class ReceiverPlacement : std::uint8_t {
 // Whether a templated method name follows a value or a type. After a value,
 // `v.template Component<2>()` needs the `template` keyword, because C++ cannot
 // yet tell whether `<` starts an argument list or a comparison; after a type,
-// `T::Make<2>()` does not.
+// `T::FromBitstream<R>(bits)` does not.
 enum class NameReachedThrough : std::uint8_t { kAValue, kAType };
 
 // What a callee states beside its target, as one template argument where C++
@@ -221,7 +221,8 @@ void WriteEntryCallee(
                     .reached = NameReachedThrough::kAValue});
           },
           // A factory is called on the type it builds, so that type is no
-          // template argument of its name: `T::Make<2>(args)`. One generic
+          // template argument of its name: `T::FromBitstream(bits)`. One
+          // generic
           // over the type it builds is called at the type its callee states,
           // and one building a single type answers with it.
           [&](const support::StaticFactory& s) {
@@ -237,6 +238,19 @@ void WriteEntryCallee(
                     .reached = NameReachedThrough::kAType});
           }},
       entry.declaration);
+}
+
+// Whether the library's member answering `operation` on a value is generic
+// over the type it answers, as its runtime entry declares: the answer's type is
+// then the member's template argument, which only this backend instantiates.
+auto OperationTakesATypeArgument(support::ValueOperation operation) -> bool {
+  return std::visit(
+      Overloaded{
+          [](support::ValueOperator) { return false; },
+          [](support::BuiltinFn fn) {
+            return support::RuntimeEntryOf(fn).takes_a_type_argument;
+          }},
+      operation);
 }
 
 // The name of a callee fixed at compile time. Each kind of function is looked
@@ -284,15 +298,40 @@ void WriteDirectCallee(
                 CppExternalClassPath(t.unit_name, t.class_path),
                 "::", ToCppName(t.method_name));
           },
-          // A struct's method, qualified by the struct the way a class method
-          // is: `v.::Pkg::sv_types::s::IsBitIdentical(w)` on the value it is
-          // asked of, `::Pkg::sv_types::s::FromBitstream(b)` for a question
-          // asked of the type.
-          [&](const mir::StructMethodTarget& t) {
+          // A method of a struct or a union, qualified by its type the way a
+          // class method is: `v.::Pkg::sv_types::s::IsBitIdentical(w)` on the
+          // value it is asked of, `::Pkg::sv_types::s::FromBitstream(b)` for a
+          // question asked of the type.
+          [&](const mir::RecordMethodTarget& t) {
             callee.Named(
                 ReceiverPlacement::kIntoCalleeName,
-                CppStructRef(t.declaration.unit_name, t.declaration.path),
-                "::", CppStructMethodName(t.answers));
+                CppRecordQualifiedName(
+                    t.declaration.unit_name, t.declaration.path),
+                "::", CppValueOperationMemberName(t.answers));
+          },
+          // An operation a fixed-size array answers is the library
+          // template's own member, which the host compiler instantiates for
+          // the type where the call is written:
+          // `a.lyra::value::UnpackedArray<T, 4>::operator==(b)`. A member that
+          // is itself generic over what it answers is called at the answer
+          // the call states:
+          // `a.UnpackedArray<T, 4>::template ToBitstream<R>()`. The body the
+          // unit states for the operation is for a backend that resolves no
+          // type where the call is written.
+          [&](const mir::TypeOperationTarget& t) {
+            const std::vector<TemplateArgument> answered =
+                OperationTakesATypeArgument(t.answers)
+                    ? std::vector<TemplateArgument>{CppType(
+                          view.Unit(), result_type)}
+                    : std::vector<TemplateArgument>{};
+            callee.Named(
+                ReceiverPlacement::kIntoCalleeName,
+                CppType(view.Unit(), t.type), "::",
+                OperationName{
+                    .unit = &view.Unit(),
+                    .identifier = CppValueOperationMemberName(t.answers).text,
+                    .arguments = answered,
+                    .reached = NameReachedThrough::kAValue});
           },
           // One of another unit's bring-up entries:
           // `::Pkg::sv_initialize_namespace_storage`.

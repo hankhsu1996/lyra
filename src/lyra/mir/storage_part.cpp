@@ -5,7 +5,6 @@
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/overloaded.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -62,24 +61,64 @@ auto Wider(PlaceKind a, PlaceKind b) -> PlaceKind {
   return std::max(a, b);
 }
 
+// The kind of a part of a value of `aggregate`: a union's member is overlaid,
+// a tagged union's has no address of its own, and any other part is ordinary
+// (LRM 7.3).
+auto KindOfAPart(const CompilationUnit& unit, TypeId aggregate) -> PlaceKind {
+  const std::optional<RecordKind> kind = RecordKindOf(unit, aggregate);
+  if (!kind.has_value()) {
+    return PlaceKind::kOrdinary;
+  }
+  switch (*kind) {
+    case RecordKind::kStruct:
+      return PlaceKind::kOrdinary;
+    case RecordKind::kUnion:
+      return PlaceKind::kOverlaid;
+    case RecordKind::kTaggedUnion:
+      return PlaceKind::kNoAddress;
+  }
+  throw InternalError("mir: unknown record kind");
+}
+
+// The kind of the part a call answering a place designated within a write
+// designates: the kind of the part designated before it, widened by the kind
+// of a part of what that designates, as a field step widens its receiver's.
+// The whole a write was opened on is ordinary.
+auto KindDesignated(
+    const CompilationUnit& unit, const Block& block, ExprId designation)
+    -> PlaceKind {
+  const std::optional<ExprId> within = SelectedFrom(block, designation);
+  if (!within.has_value()) {
+    return PlaceKind::kOrdinary;
+  }
+  const auto* designated =
+      unit.types.Get(block.exprs.Get(*within).type).As<DesignationType>();
+  if (designated == nullptr) {
+    throw InternalError(
+        "mir: a step within a write is taken on no designation -- please "
+        "report this as a bug");
+  }
+  return Wider(
+      KindDesignated(unit, block, *within),
+      KindOfAPart(unit, designated->value));
+}
+
 }  // namespace
 
 auto KindOfPlace(const CompilationUnit& unit, const Block& block, ExprId place)
     -> PlaceKind {
   const ExprData& data = block.exprs.Get(place).data;
   if (const auto* field = std::get_if<FieldAccessExpr>(&data)) {
-    const PlaceKind receiver = KindOfPlace(unit, block, field->receiver);
-    const Type& aggregate =
-        unit.types.Get(block.exprs.Get(field->receiver).type);
-    if (aggregate.Is<UnionType>()) {
-      return PlaceKind::kOverlaid;
-    }
-    if (aggregate.Is<TaggedUnionType>()) {
-      return Wider(receiver, PlaceKind::kNoAddress);
-    }
-    return receiver;
+    return Wider(
+        KindOfPlace(unit, block, field->receiver),
+        KindOfAPart(unit, block.exprs.Get(field->receiver).type));
   }
   if (const auto* deref = std::get_if<DerefExpr>(&data)) {
+    const mir::Type& pointer =
+        unit.types.Get(block.exprs.Get(deref->pointer).type);
+    if (pointer.Is<DesignationType>()) {
+      return KindDesignated(unit, block, deref->pointer);
+    }
     const auto* call =
         std::get_if<CallExpr>(&block.exprs.Get(deref->pointer).data);
     if (call == nullptr || !AnswersReferenceIntoReceiver(*call)) {

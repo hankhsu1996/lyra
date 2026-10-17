@@ -31,6 +31,7 @@
 #include "lyra/lowering/hir_to_mir/expression/enum_method.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/expression/real_conversion.hpp"
+#include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/bit_vector.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/control.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/diagnostic.hpp"
@@ -50,8 +51,8 @@
 #include "lyra/lowering/hir_to_mir/sampled_history.hpp"
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
-#include "lyra/lowering/hir_to_mir/struct_methods.hpp"
 #include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
+#include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/storage_part.hpp"
@@ -364,6 +365,56 @@ auto LowerBuiltinMethodCall(
   }
   const auto& unit_lowerer = lowerer.Owner();
   const auto& hir_exprs = lowerer.HirExprs();
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+
+  // The entry reads its operands in one order: the object it acts on where it
+  // has one, the engine where it reaches it, then these.
+  const std::size_t leading = (b.receiver.has_value() ? 1 : 0) +
+                              (entry.takes_the_runtime_handle ? 1 : 0);
+  const auto lower_operands =
+      [&](WalkFrame at) -> diag::Result<std::vector<mir::ExprId>> {
+    mir::Block& into = *at.current_block;
+    std::vector<mir::ExprId> args;
+    args.reserve(c.arguments.size() + 1);
+    for (const hir::ExprId operand : RequiredOperands(c)) {
+      auto arg_or = lowerer.LowerExpr(hir_exprs.Get(operand), at);
+      if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+      args.push_back(StatedAsRead(
+          unit, into, entry.operands.At(leading + args.size()),
+          into.exprs.Add(*std::move(arg_or))));
+    }
+    // LRM 7.12.1: reduction / ordering / locator array methods take a
+    // closure. The user's `with` clause is used if present; otherwise LRM
+    // defines the default as `with (item)`, which HIR-to-MIR synthesises so
+    // MIR always carries the closure argument and downstream consumers see
+    // one uniform shape per kind.
+    if (entry.takes_closure) {
+      auto closure_or = BuildArrayMethodClosure(
+          lowerer, at, hir_exprs.Get(ObjectActedOn(b)).type,
+          c.with_clause.has_value() ? &*c.with_clause : nullptr);
+      if (!closure_or) return std::unexpected(std::move(closure_or.error()));
+      args.push_back(into.exprs.Add(*std::move(closure_or)));
+    } else if (c.with_clause.has_value()) {
+      throw InternalError(
+          "BuiltinMethodRef with-clause on a method kind that does not "
+          "accept a with-clause (LRM 7.12.1 family only)");
+    }
+    return args;
+  };
+  const auto call_on = [&](mir::Block& into,
+                           std::optional<mir::ExprId> receiver,
+                           std::vector<mir::ExprId> args) -> mir::Expr {
+    // A question asked of a whole value is asked as every such question is:
+    // through the type's own body where it has one -- a structure's or a
+    // union's method, the body a unit states for an array -- and of the
+    // library otherwise.
+    if (receiver.has_value() && IsWholeValueOperation(b.method)) {
+      return into.exprs.Get(BuildValueOperation(
+          unit, into, b.method, receiver, std::move(args), result_type));
+    }
+    return BuildBuiltinMethodCall(
+        unit_lowerer, into, b.method, receiver, std::move(args), result_type);
+  };
 
   auto& block = *frame.current_block;
   // A method that changes the object it acts on takes the place that object
@@ -387,76 +438,49 @@ auto LowerBuiltinMethodCall(
             block.LocalPlace(DeclareLocal(frame, changed.incoming), type);
         written_back = std::move(changed.place);
       } else {
-        receiver = PathPlace(lowerer.Owner().Unit(), block, *recv_or);
+        receiver = PathPlace(unit, block, *recv_or);
       }
+    } else if (IsTagCheckedRead(lowerer, frame, object)) {
+      // An object reached through a member a tag guards is entered where it
+      // lies among the steps that check the tag (LRM 11.9), after every
+      // operand of the call, so nothing else the expression evaluates runs
+      // between a check and the call it guards.
+      return LowerTagCheckedUse(
+          lowerer, frame, object,
+          [&](BlockBuilder& steps,
+              const AccessPath& path) -> diag::Result<mir::ExprId> {
+            mir::Block& body = steps.Body();
+            auto args = lower_operands(steps.Frame());
+            if (!args) return std::unexpected(std::move(args.error()));
+            const mir::ExprId object_place = PathAsPlace(unit, body, path);
+            return body.exprs.Add(call_on(
+                body, mir::ReadIfOverlaid(unit, body, object_place),
+                *std::move(args)));
+          });
     } else {
       auto recv_or = lowerer.LowerAsPlace(object, frame);
       if (!recv_or) return std::unexpected(std::move(recv_or.error()));
       receiver = mir::ReadIfOverlaid(
-          lowerer.Owner().Unit(), block, block.exprs.Add(*std::move(recv_or)));
+          unit, block, block.exprs.Add(*std::move(recv_or)));
     }
   }
-  // How many bits a structure holds is its type's own function to answer (LRM
-  // 20.6.2), so the width is asked the way every whole-value question is.
-  if (b.method == support::BuiltinFn::kBitstreamWidth) {
-    if (!receiver.has_value()) {
-      throw InternalError(
-          "LowerBuiltinMethodCall: a bit count is asked of no value");
-    }
-    const mir::CompilationUnit& unit = lowerer.Owner().Unit();
-    return block.exprs.Get(ConvertToType(
-        unit, block, BuildBitWidth(unit, block, *receiver), result_type));
-  }
-  std::vector<mir::ExprId> args;
-  args.reserve(c.arguments.size() + 1);
-
-  // The entry reads its operands in one order: the object it acts on where it
-  // has one, the engine where it reaches it, then these.
-  const std::size_t leading =
-      (receiver.has_value() ? 1 : 0) + (entry.takes_the_runtime_handle ? 1 : 0);
-
-  for (const hir::ExprId operand : RequiredOperands(c)) {
-    auto arg_or = lowerer.LowerExpr(hir_exprs.Get(operand), frame);
-    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-    args.push_back(StatedAsRead(
-        lowerer.Owner().Unit(), block, entry.operands.At(leading + args.size()),
-        block.exprs.Add(*std::move(arg_or))));
-  }
-
-  // LRM 7.12.1: reduction / ordering / locator array methods take a
-  // closure. The user's `with` clause is used if present; otherwise LRM
-  // defines the default as `with (item)`, which HIR-to-MIR synthesises so
-  // MIR always carries the closure argument and downstream consumers see
-  // one uniform shape per kind.
-  if (entry.takes_closure) {
-    auto closure_or = BuildArrayMethodClosure(
-        lowerer, frame, hir_exprs.Get(ObjectActedOn(b)).type,
-        c.with_clause.has_value() ? &*c.with_clause : nullptr);
-    if (!closure_or) return std::unexpected(std::move(closure_or.error()));
-    args.push_back(block.exprs.Add(*std::move(closure_or)));
-  } else if (c.with_clause.has_value()) {
-    throw InternalError(
-        "BuiltinMethodRef with-clause on a method kind that does not "
-        "accept a with-clause (LRM 7.12.1 family only)");
-  }
-
-  mir::Expr call = BuildBuiltinMethodCall(
-      unit_lowerer, block, b.method, receiver, std::move(args), result_type);
+  auto args = lower_operands(frame);
+  if (!args) return std::unexpected(std::move(args.error()));
+  mir::Expr call = call_on(block, receiver, *std::move(args));
   if (!written_back.has_value()) {
     return call;
   }
   // What an untagged union may hold changes only through a method answering
   // nothing -- an array's ordering methods (LRM 7.3, 7.12.2) -- so the write
   // back is all the call stands for.
-  const mir::Type& answered = lowerer.Owner().Unit().types.Get(result_type);
+  const mir::Type& answered = unit.types.Get(result_type);
   if (!answered.Is<mir::VoidType>()) {
     throw InternalError(
         "LowerBuiltinMethodCall: a method changing overlaid storage answers a "
         "value");
   }
   block.AppendStmt(mir::ExprStmt{.expr = block.exprs.Add(std::move(call))});
-  return BuildStoreExpr(
-      lowerer.Owner().Unit(), block, *written_back, block.Read(*receiver));
+  return BuildStoreExpr(unit, block, *written_back, block.Read(*receiver));
 }
 
 }  // namespace

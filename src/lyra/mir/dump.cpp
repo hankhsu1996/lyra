@@ -27,10 +27,10 @@
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/local.hpp"
+#include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/struct_decl.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -175,11 +175,15 @@ class MirDumper {
       DumpCallable(unit.named_callables, id, unit.callables.Get(id), id.value);
     }
     Dedent();
-    // The body building the default of each type the unit holds an array of.
-    Line("TypeDefaults:");
+    // The operations the unit states for the types it names that have no
+    // declaration.
+    Line("TypeOperations:");
     Indent();
-    for (const TypeDefault& stated : unit.type_defaults) {
-      Line(std::format("Default : Type[{}]", stated.type.value));
+    for (const TypeOperation& stated : unit.type_operations) {
+      Line(
+          std::format(
+              R"(Type[{}] "{}")", stated.type.value,
+              support::ValueOperationName(stated.answers)));
       Indent();
       DumpCallableBody(stated.code);
       Dedent();
@@ -207,19 +211,19 @@ class MirDumper {
       Dedent();
     }
     Dedent();
-    if (unit.structs.size() > 0) {
-      Line("Structs:");
+    if (unit.records.size() > 0) {
+      Line("Records:");
       Indent();
-      for (const StructId sid : unit.structs.Ids()) {
-        DumpStruct(sid, unit.GetStruct(sid));
+      for (const RecordId id : unit.records.Ids()) {
+        DumpRecord(id, unit.GetRecord(id));
       }
       Dedent();
     }
-    if (!unit.external_structs.empty()) {
-      Line("ExternalStructs:");
+    if (!unit.external_records.empty()) {
+      Line("ExternalRecords:");
       Indent();
-      for (const ExternalStruct& external : unit.external_structs) {
-        DumpExternalStruct(external);
+      for (const ExternalRecord& external : unit.external_records) {
+        DumpExternalRecord(external);
       }
       Dedent();
     }
@@ -282,6 +286,32 @@ class MirDumper {
     return out;
   }
 
+  static auto RecordKindName(RecordKind kind) -> std::string_view {
+    switch (kind) {
+      case RecordKind::kStruct:
+        return "Struct";
+      case RecordKind::kUnion:
+        return "Union";
+      case RecordKind::kTaggedUnion:
+        return "TaggedUnion";
+    }
+    throw InternalError("MirDumper: unknown record kind");
+  }
+
+  // The declaration a struct or a union is: `[3]` for one this unit declares,
+  // `(Pkg::name)` for another unit's.
+  static auto FormatRecordRef(const RecordRef& ref) -> std::string {
+    return std::visit(
+        Overloaded{
+            [](RecordId id) { return std::format("[{}]", id.value); },
+            [](const TypeDeclarationRef& declared) {
+              return std::format(
+                  "({}::{})", declared.unit_name,
+                  support::DisplayOf(declared.path));
+            }},
+        ref);
+  }
+
   [[nodiscard]] auto FormatClassRef(const ClassRef& ref) const -> std::string {
     return std::visit(
         Overloaded{
@@ -327,7 +357,7 @@ class MirDumper {
         s);
   }
 
-  static auto FormatType(const Type& t) -> std::string {
+  [[nodiscard]] auto FormatType(const Type& t) const -> std::string {
     return t.Visit(
         Overloaded{
             [](const IntegralType& integral) -> std::string {
@@ -478,18 +508,10 @@ class MirDumper {
               return std::format(
                   "Coroutine(payload=Type[{}])", c.payload.value);
             },
-            [](const StructType& s) -> std::string {
-              return std::visit(
-                  Overloaded{
-                      [](StructId id) {
-                        return std::format("Struct[{}]", id.value);
-                      },
-                      [](const TypeDeclarationRef& ref) {
-                        return std::format(
-                            "Struct({}::{})", ref.unit_name,
-                            support::DisplayOf(ref.path));
-                      }},
-                  s.declaration);
+            [this](const RecordType& r) -> std::string {
+              return std::format(
+                  "{}{}", RecordKindName(RecordKindOf(*unit_, r.declaration)),
+                  FormatRecordRef(r.declaration));
             },
             [](const ClosureType& c) -> std::string {
               return std::format("Closure[{}]", c.closure_id.value);
@@ -542,16 +564,8 @@ class MirDumper {
               return std::format(
                   "Tuple(elems=[{}])", FormatTypeList(t.elements));
             },
-            [](const UnionType& u) -> std::string {
-              return std::format(
-                  "Union(members=[{}])", FormatTypeList(u.members));
-            },
             [](const EmptyType&) -> std::string {
               return std::string{"Empty"};
-            },
-            [](const TaggedUnionType& u) -> std::string {
-              return std::format(
-                  "TaggedUnion(members=[{}])", FormatTypeList(u.members));
             },
             [](const ObservableType& o) -> std::string {
               return std::format("Observable(value=Type[{}])", o.value.value);
@@ -703,11 +717,16 @@ class MirDumper {
                   "external_class_method={}::{}::{}", e.unit_name,
                   support::DisplayOf(e.class_path), e.method_name);
             },
-            [](const StructMethodTarget& s) -> std::string {
+            [](const RecordMethodTarget& s) -> std::string {
               return std::format(
                   R"(struct_method={}::{} "{}")", s.declaration.unit_name,
                   support::DisplayOf(s.declaration.path),
                   support::ValueOperationName(s.answers));
+            },
+            [](const TypeOperationTarget& t) -> std::string {
+              return std::format(
+                  R"(type_operation=Type[{}] "{}")", t.type.value,
+                  support::ValueOperationName(t.answers));
             },
             [](const ExternalBringUpTarget& e) -> std::string {
               return std::format(
@@ -857,6 +876,10 @@ class MirDumper {
             },
             [](const CopyExpr& c) -> std::string {
               return std::format("CopyExpr place=Expr[{}]", c.place.value);
+            },
+            [](const DiscriminantExpr& d) -> std::string {
+              return std::format(
+                  "DiscriminantExpr tagged=Expr[{}]", d.tagged.value);
             },
             [this](const ReferenceExpr& r) -> std::string {
               return std::format(
@@ -1091,13 +1114,13 @@ class MirDumper {
     Dedent();
   }
 
-  void DumpStruct(StructId id, const StructDecl& decl) {
+  void DumpRecord(RecordId id, const RecordDecl& decl) {
     Line(
         std::format(
-            R"(Struct (#{}) "{}" elems=[{}])", id.value,
+            R"({} (#{}) "{}" elems=[{}])", RecordKindName(decl.kind), id.value,
             support::DisplayOf(decl.path), FormatTypeList(decl.elements)));
     Indent();
-    for (const StructMethod& method : decl.methods) {
+    for (const RecordMethod& method : unit_->GetRecordMethods(id)) {
       Line(
           std::format(
               R"(Method "{}" : Type[{}])",
@@ -1111,10 +1134,11 @@ class MirDumper {
     Dedent();
   }
 
-  void DumpExternalStruct(const ExternalStruct& external) {
+  void DumpExternalRecord(const ExternalRecord& external) {
     Line(
         std::format(
-            "Struct({}::{}) elems=[{}]", external.declaration.unit_name,
+            "{}({}::{}) elems=[{}]", RecordKindName(external.kind),
+            external.declaration.unit_name,
             support::DisplayOf(external.declaration.path),
             FormatTypeList(external.elements)));
   }

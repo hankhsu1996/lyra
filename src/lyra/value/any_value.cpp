@@ -4,7 +4,6 @@
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/value/fixed_array_type.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -19,13 +18,7 @@ auto SameType(const ValueType& a, const ValueType& b) -> bool {
   }
   const IntegralValueType* x = a.AsIntegral();
   const IntegralValueType* y = b.AsIntegral();
-  if (x != nullptr && y != nullptr) {
-    return x->Shape() == y->Shape();
-  }
-  const FixedArrayType* p = a.AsFixedArray();
-  const FixedArrayType* q = b.AsFixedArray();
-  return p != nullptr && q != nullptr && p->Count() == q->Count() &&
-         SameType(p->ElementType().Type(), q->ElementType().Type());
+  return x != nullptr && y != nullptr && x->Shape() == y->Shape();
 }
 
 auto AnyValue::CopyOf(const ValueType& type, const void* value) -> AnyValue {

@@ -106,18 +106,20 @@ TEST(MirVerifyTest, ASuspensionWaitsOnWhatItsKindWaitsOn) {
   }
 }
 
-// A default stated for `type` whose body answers a value of `answers`. What a
-// verifier holds a default to is the type it is stated for and the type it
-// answers, so a value standing in for one the program computes is the body.
-auto DefaultAnswering(TypeId type, TypeId answers) -> TypeDefault {
+// The default of `type` stated as a body of the unit. What a verifier holds a
+// stated operation to is the type it is stated for, so a value standing in for
+// one the program computes is the body.
+auto DefaultOf(TypeId type) -> TypeOperation {
   CallableCode code = CallableCode::Defined();
-  code.result_type = answers;
+  code.result_type = type;
   Block& block = code.Body();
   block.AppendStmt(
       ReturnStmt{
-          .value =
-              block.exprs.Add(Expr{.data = NullLiteral{}, .type = answers})});
-  return TypeDefault{.type = type, .code = std::move(code)};
+          .value = block.exprs.Add(Expr{.data = NullLiteral{}, .type = type})});
+  return TypeOperation{
+      .type = type,
+      .answers = support::BuiltinFn::kDeclaredDefault,
+      .code = std::move(code)};
 }
 
 // A unit whose one body, `f`, is the code `fill` writes into it.
@@ -131,7 +133,10 @@ auto UnitWithCode(const Fill& fill) -> CompilationUnit {
   // Every unit states the default of each type an array it holds has as its
   // element, so one built here does too, whatever its body reaches.
   for (const TypeId element : ArrayElementTypes(unit.types)) {
-    unit.type_defaults.push_back(DefaultAnswering(element, element));
+    if (FindTypeOperation(
+            unit, element, support::BuiltinFn::kDeclaredDefault) == nullptr) {
+      unit.type_operations.push_back(DefaultOf(element));
+    }
   }
   const CallableId id = unit.callables.Add(
       CallableDecl{
@@ -1013,44 +1018,69 @@ TEST(MirVerifyTest, AnAssignmentLandsOnAPlace) {
   ExpectRefused(assigning(false), "which names no place");
 }
 
-// What a position of an array holds before anything is written to it is asked
-// of the element type alone (LRM 7.4.5), so a unit states exactly one default
-// for each type its arrays have as their element, answering a value of that
-// type, and none for any other type.
-TEST(MirVerifyTest, AUnitStatesOneDefaultForEachArrayElementType) {
-  const auto holding_an_array = [] {
-    return UnitWithBody([](CompilationUnit& u, Block& body) {
+// A unit states operations only for a type it states them for per unit, and a
+// default for each type an array of it holds, each once, and a call names one
+// only where the unit states it.
+TEST(MirVerifyTest, AUnitStatesEachTypeOperationOnceAndCallsOnlyThose) {
+  const auto calling_the_default = [](bool stated) {
+    return UnitWithBody([stated](CompilationUnit& u, Block& body) {
       const TypeId array = u.types.Intern(
-          Type{DynamicArrayType{.element_type = u.builtins.int_type}});
+          Type{UnpackedArrayType{
+              .element_type = u.builtins.int_type,
+              .dim = UnpackedRange{.left = 0, .right = 3}}});
+      if (stated) {
+        u.type_operations.push_back(DefaultOf(array));
+      }
       body.AppendStmt(
           ExprStmt{
-              .expr =
-                  body.exprs.Add(Expr{.data = NullLiteral{}, .type = array})});
+              .expr = body.exprs.Add(
+                  Expr{
+                      .data =
+                          CallExpr{
+                              .callee =
+                                  Direct{
+                                      .target =
+                                          TypeOperationTarget{
+                                              .type = array,
+                                              .answers = support::BuiltinFn::
+                                                  kDeclaredDefault}},
+                              .arguments = {}},
+                      .type = array})});
     });
   };
 
-  EXPECT_NO_THROW(Verify(holding_an_array()));
-
-  CompilationUnit unasked = holding_an_array();
-  unasked.type_defaults.push_back(
-      DefaultAnswering(unasked.builtins.string, unasked.builtins.string));
+  EXPECT_NO_THROW(Verify(calling_the_default(true)));
   ExpectRefused(
-      unasked, "a default is stated for a type no array has as its element");
+      calling_the_default(false), "which its unit states no body for");
 
-  CompilationUnit twice = holding_an_array();
-  twice.type_defaults.push_back(
-      DefaultAnswering(twice.builtins.int_type, twice.builtins.int_type));
-  ExpectRefused(twice, "a type has two defaults stated");
+  // A type no array holds has no default stated, and an element type whose
+  // other operations are the library's has no other.
+  CompilationUnit unasked = calling_the_default(true);
+  unasked.type_operations.push_back(DefaultOf(unasked.builtins.string));
+  ExpectRefused(
+      unasked,
+      "an operation is stated for a type whose operations are not stated per "
+      "unit, or a default for a type no array holds");
+  CompilationUnit compared = calling_the_default(true);
+  TypeOperation equality = DefaultOf(compared.builtins.int_type);
+  equality.answers = support::ValueOperator::kEquality;
+  compared.type_operations.push_back(std::move(equality));
+  ExpectRefused(
+      compared,
+      "an operation is stated for a type whose operations are not stated per "
+      "unit, or a default for a type no array holds");
 
-  CompilationUnit mistyped = holding_an_array();
-  mistyped.type_defaults.front() =
-      DefaultAnswering(mistyped.builtins.int_type, mistyped.builtins.string);
-  ExpectRefused(mistyped, "a type's default answers a value of another type");
-
-  CompilationUnit unanswered = holding_an_array();
-  unanswered.type_defaults.clear();
+  CompilationUnit unanswered = calling_the_default(true);
+  std::erase_if(unanswered.type_operations, [&](const TypeOperation& stated) {
+    return stated.type == unanswered.builtins.int_type;
+  });
   ExpectRefused(
       unanswered, "the element type of an array has no default stated");
+
+  CompilationUnit twice = calling_the_default(true);
+  twice.type_operations.push_back(
+      DefaultOf(twice.type_operations.front().type));
+  ExpectRefused(twice, "a type has one operation stated twice");
 }
 
 }  // namespace

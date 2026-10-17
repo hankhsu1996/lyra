@@ -28,9 +28,9 @@
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/struct_methods.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -149,7 +149,7 @@ auto CollectPatternTests(
             return {};
           },
           [&](const hir::TaggedPattern& tagged) -> diag::Result<void> {
-            tests.push_back(BuildTagTest(
+            tests.push_back(BuildHoldsMember(
                 owner, block, Read(owner, block, subject), pattern.subject_type,
                 tagged.member_index));
             if (!tagged.value_pattern.has_value()) return {};

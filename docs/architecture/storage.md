@@ -87,9 +87,9 @@ actual; an unpacked array element is both. Every rule below follows from taking 
 ## Boundary to Adjacent Layers
 
 - **MIR** carries access as place expressions -- a local reference, a member access, a dereference,
-  a field step, an element reached by a call answering a reference -- and each place states the kind
-  of storage it names: one with an identity a reference may hold, or one with none (invariants 1 and
-  2). It states which entity a reference is built over and does not state when the path is
+  a field step, an element reached by a call answering a reference -- and each place determines the
+  kind of storage it names: one with an identity a reference may hold, or one with none (invariants
+  1 and 2). It states which entity a reference is built over and does not state when the path is
   evaluated, because a reference is built by one node whose operand is that path.
 - **LIR** carries the place vocabulary and the operation that turns a place into a value. The phase
   boundary of invariant 3 lands here: the place is the access path and is consumed where it is

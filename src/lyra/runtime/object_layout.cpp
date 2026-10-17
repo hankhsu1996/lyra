@@ -5,10 +5,12 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <typeinfo>
+#include <utility>
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
@@ -42,14 +44,11 @@
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/dpi_open_array.hpp"
-#include "lyra/value/element_type.hpp"
 #include "lyra/value/empty.hpp"
-#include "lyra/value/fixed_array_type.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/object_ref.hpp"
-#include "lyra/value/queue_type.hpp"
 #include "lyra/value/real.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
@@ -57,7 +56,7 @@
 #include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/runtime_record.hpp"
 #include "lyra/value/string.hpp"
-#include "lyra/value/union_type.hpp"
+#include "lyra/value/value_type.hpp"
 #include "lyra/value/wide.hpp"
 
 namespace lyra::runtime {
@@ -133,8 +132,7 @@ auto WithValueClass(ValueDomain domain, F f)
       return f.template operator()<value::Chandle>();
     case ValueDomain::kEmpty:
       return f.template operator()<value::Empty>();
-    case ValueDomain::kTuple:
-    case ValueDomain::kUnion:
+    case ValueDomain::kRecord:
       return f.template operator()<value::RuntimeRecord>();
     case ValueDomain::kDynArray:
       return f.template operator()<value::RuntimeDynamicArray>();
@@ -354,7 +352,8 @@ auto TailThroughOffset(Through through) -> std::uint64_t {
     return ThroughOffset<Holder>(
         HeldAs::ValueLayoutFor(kWidth), through, kWidth);
   } else {
-    const value::ValueType& type = value::IntegralValueType::Of<value::Bit>();
+    const value::ValueType& type =
+        value::IntegralValueType::Of<value::Bit>().Type();
     return ThroughOffset<Holder>(
         HeldAs::ValueLayoutFor(type), through, std::cref(type));
   }
@@ -425,87 +424,6 @@ auto HeldContentsOf(support::DeclaredMemberStorage storage)
         }
         throw InternalError("object layout: unknown member storage kind");
       });
-}
-
-// The Itanium ABI names a class's table `_ZTV` followed by the class's mangled
-// name, which is what its `type_info` reports as its name.
-auto LayoutOfIntegralTypeConstant() -> IntegralTypeConstantLayout {
-  const value::IntegralValueType& stated =
-      value::IntegralValueType::Of<value::Bit>();
-  return IntegralTypeConstantLayout{
-      .object = Of<value::IntegralValueType>(),
-      .table_symbol =
-          std::string("_ZTV") + typeid(value::IntegralValueType).name(),
-      .value_size = stated.SizeStatedAt(),
-      .value_align = stated.AlignStatedAt(),
-      .shape_at = stated.ShapeOffset()};
-}
-
-auto LayoutOfElementTypeConstant() -> ElementTypeConstantLayout {
-  value::ElementScratch scratch;
-  const value::ElementType stated(
-      value::IntegralValueType::Of<value::Bit>(), nullptr, scratch);
-  return ElementTypeConstantLayout{
-      .object = Of<value::ElementType>(),
-      .type = stated.TypeStatedAt(),
-      .build_default = stated.BuildDefaultStatedAt(),
-      .scratch = stated.ScratchStatedAt(),
-      .scratch_object = Of<value::ElementScratch>()};
-}
-
-auto LayoutOfFixedArrayTypeConstant() -> FixedArrayTypeConstantLayout {
-  value::ElementScratch scratch;
-  const value::ElementType element(
-      value::IntegralValueType::Of<value::Bit>(), nullptr, scratch);
-  const value::FixedArrayType stated(element, 1);
-  return FixedArrayTypeConstantLayout{
-      .object = Of<value::FixedArrayType>(),
-      .table_symbol =
-          std::string("_ZTV") + typeid(value::FixedArrayType).name(),
-      .parts_table_symbol =
-          std::string("_ZTV") + value::FixedArrayType::PartsClassName(),
-      .value_size = stated.SizeStatedAt(),
-      .value_align = stated.AlignStatedAt(),
-      .count = stated.CountStatedAt(),
-      .element = stated.ElementStatedAt(),
-      .parts = stated.PartsStatedAt(),
-      .parts_owner = stated.PartsOwnerStatedAt()};
-}
-
-auto LayoutOfUnionTypeConstant() -> UnionTypeConstantLayout {
-  const value::UnionType stated(1, 1, {});
-  return UnionTypeConstantLayout{
-      .object = Of<value::UnionType>(),
-      .table_symbol = std::string("_ZTV") + typeid(value::UnionType).name(),
-      .value_size = stated.SizeStatedAt(),
-      .value_align = stated.AlignStatedAt(),
-      .count = stated.CountStatedAt(),
-      .members = stated.MembersStatedAt()};
-}
-
-auto LayoutOfTaggedUnionTypeConstant() -> TaggedUnionTypeConstantLayout {
-  const value::TaggedUnionType stated(1, 1, {}, 0, 1);
-  return TaggedUnionTypeConstantLayout{
-      .object = Of<value::TaggedUnionType>(),
-      .table_symbol =
-          std::string("_ZTV") + typeid(value::TaggedUnionType).name(),
-      .value_size = stated.SizeStatedAt(),
-      .value_align = stated.AlignStatedAt(),
-      .count = stated.CountStatedAt(),
-      .members = stated.MembersStatedAt(),
-      .tag_offset = stated.TagOffsetStatedAt(),
-      .tag_bytes = stated.TagBytesStatedAt()};
-}
-
-auto LayoutOfQueueTypeConstant() -> QueueTypeConstantLayout {
-  value::ElementScratch scratch;
-  const value::ElementType element(
-      value::IntegralValueType::Of<value::Bit>(), nullptr, scratch);
-  const value::QueueType stated(element, -1);
-  return QueueTypeConstantLayout{
-      .object = Of<value::QueueType>(),
-      .element = stated.ElementStatedAt(),
-      .bound = stated.BoundStatedAt()};
 }
 
 auto LayoutOf(support::RuntimeClass klass) -> ObjectLayout {

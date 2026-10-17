@@ -186,6 +186,12 @@ void WriteOne(TargetText& out, const CppType& spelling) {
   const mir::CompilationUnit& unit = spelling.Unit();
   const mir::TypeId type_id = spelling.Type();
   const auto type = [&unit](mir::TypeId t) { return CppType(unit, t); };
+  // A struct or a union is named by its declaration, wherever it is declared.
+  const auto record = [&](const mir::RecordRef& declaration) {
+    const mir::TypeDeclarationRef ref =
+        mir::RecordDeclarationOf(unit, declaration);
+    Write(out, CppRecordQualifiedName(ref.unit_name, ref.path));
+  };
   unit.types.Get(type_id).Visit(
       Overloaded{
           [&](const mir::IntegralType& t) { WriteIntegralCppType(out, t); },
@@ -250,19 +256,7 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           [&](const mir::ObjectType& o) {
             Write(out, CppClassRef(unit, o.of));
           },
-          [&](const mir::StructType& s) {
-            std::visit(
-                Overloaded{
-                    [&](mir::StructId id) {
-                      Write(
-                          out,
-                          CppStructRef(unit.name, unit.GetStruct(id).path));
-                    },
-                    [&](const mir::TypeDeclarationRef& ref) {
-                      Write(out, CppStructRef(ref.unit_name, ref.path));
-                    }},
-                s.declaration);
-          },
+          [&](const mir::RecordType& r) { record(r.declaration); },
           [&](const mir::RuntimeClassType& e) {
             out += RuntimeClassCppType(e.which);
           },
@@ -335,17 +329,7 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           [&](const mir::TupleType& t) {
             Write(out, CppTupleComponents{.unit = &unit, .of = t.elements});
           },
-          [&](const mir::UnionType& u) {
-            out += "lyra::value::Union<";
-            WriteTypeList(out, unit, u.members);
-            out += ">";
-          },
           [&](const mir::EmptyType&) { out += "lyra::value::Empty"; },
-          [&](const mir::TaggedUnionType& u) {
-            out += "lyra::value::TaggedUnion<";
-            WriteTypeList(out, unit, u.members);
-            out += ">";
-          },
           [&](const mir::ObservableType& o) {
             Write(out, "lyra::runtime::Var<", type(o.value), ">");
           },
@@ -528,15 +512,13 @@ auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [&](const mir::CoroutineType&) { return reaches_nothing(); },
           [&](const mir::VectorType&) { return reaches_nothing(); },
           [&](const mir::TupleType&) { return reaches_nothing(); },
-          [&](const mir::UnionType&) { return reaches_nothing(); },
-          [&](const mir::TaggedUnionType&) { return reaches_nothing(); },
           [&](const mir::ObservableType&) { return reaches_nothing(); },
           [&](const mir::ResolvedType&) { return reaches_nothing(); },
           [&](const mir::DriverType&) { return reaches_nothing(); },
           [&](const mir::SampledHistoryType&) { return reaches_nothing(); },
           [&](const mir::EvaluationAttemptsType&) { return reaches_nothing(); },
           [&](const mir::LoopBlocksType&) { return reaches_nothing(); },
-          [&](const mir::StructType&) { return reaches_nothing(); },
+          [&](const mir::RecordType&) { return reaches_nothing(); },
           [&](const mir::ClosureType&) { return reaches_nothing(); },
       });
 }
@@ -625,8 +607,8 @@ void WriteNull(
       spelling);
 }
 
-void WriteOne(TargetText& out, const CppUnionMemberMaker& maker) {
-  Write(out, maker.of, "::template Make<", maker.member.value, ">");
+void WriteOne(TargetText& out, const CppUnionMemberTag& tag) {
+  Write(out, "std::in_place_index<", tag.member.value, ">");
 }
 
 void WriteOne(TargetText& out, const CppConstructorName& constructor) {
@@ -696,7 +678,7 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           [&](const mir::AssociativeArrayType& t) { by_naming_itself(t); },
           [&](const mir::WildcardIndexType& t) { by_naming_itself(t); },
           [&](const mir::ObjectType& t) { by_naming_itself(t); },
-          [&](const mir::StructType& t) { by_naming_itself(t); },
+          [&](const mir::RecordType& t) { by_naming_itself(t); },
           [&](const mir::RuntimeClassType& t) { by_naming_itself(t); },
           [&](const mir::RuntimeEffectsType& t) { by_naming_itself(t); },
           [&](const mir::FilesType& t) { by_naming_itself(t); },
@@ -707,8 +689,6 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           [&](const mir::ReferenceWrapperType& t) { by_naming_itself(t); },
           [&](const mir::VoidType& t) { by_naming_itself(t); },
           [&](const mir::TupleType& t) { by_naming_itself(t); },
-          [&](const mir::UnionType& t) { by_naming_itself(t); },
-          [&](const mir::TaggedUnionType& t) { by_naming_itself(t); },
           [&](const mir::EmptyType& t) { by_naming_itself(t); },
           [&](const mir::ObservableType& t) { by_naming_itself(t); },
           [&](const mir::ResolvedType& t) { by_naming_itself(t); },
@@ -730,11 +710,15 @@ void WriteOne(TargetText& out, const CppNewOwner& owner) {
     out += "lyra::runtime::AdoptObject";
     return;
   }
-  if (const auto* pointer = type.As<mir::PointerType>();
-      pointer != nullptr &&
-      pointer->ownership == mir::PointerOwnership::kUnique) {
-    Write(out, owner.of);
-    return;
+  if (const auto* pointer = type.As<mir::PointerType>()) {
+    switch (pointer->ownership) {
+      case mir::PointerOwnership::kUnique:
+        Write(out, owner.of);
+        return;
+      case mir::PointerOwnership::kShared:
+      case mir::PointerOwnership::kBorrowed:
+        break;
+    }
   }
   throw InternalError(
       "backend::cpp: storage a new-expression allocates is owned by a unique "
@@ -745,6 +729,27 @@ void WriteOne(TargetText& out, const CppTupleComponents& components) {
   out += "lyra::value::Tuple<";
   WriteTypeList(out, *components.unit, components.of);
   out += ">";
+}
+
+void WriteOne(TargetText& out, const CppRecordBase& base) {
+  const auto overlay = [&](std::string_view library_type) {
+    out += library_type;
+    WriteTypeList(out, *base.unit, base.of->elements);
+    out += ">";
+  };
+  switch (base.of->kind) {
+    case mir::RecordKind::kStruct:
+      Write(
+          out, CppTupleComponents{.unit = base.unit, .of = base.of->elements});
+      return;
+    case mir::RecordKind::kUnion:
+      overlay("lyra::value::Union<");
+      return;
+    case mir::RecordKind::kTaggedUnion:
+      overlay("lyra::value::TaggedUnion<");
+      return;
+  }
+  throw InternalError("backend::cpp: unknown record kind");
 }
 
 void WriteOne(TargetText& out, const CppClassRef& ref) {

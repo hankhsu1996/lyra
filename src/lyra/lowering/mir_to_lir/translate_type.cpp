@@ -7,7 +7,7 @@
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
-#include "lyra/mir/struct_id.hpp"
+#include "lyra/mir/record_id.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -109,6 +109,19 @@ auto UnitLowerer::TranslateDeclaration(const mir::TypeDeclarationRef& ref)
 }
 
 auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
+  // A record of this unit is the declaration it took here, and one another
+  // unit declares is named by that declaration.
+  const auto record_of = [&](const mir::RecordRef& record) -> lir::RecordRef {
+    return std::visit(
+        Overloaded{
+            [&](mir::RecordId id) -> lir::RecordRef {
+              return RecordDeclaration(id);
+            },
+            [&](const mir::TypeDeclarationRef& ref) -> lir::RecordRef {
+              return TranslateDeclaration(ref);
+            }},
+        record);
+  };
   return ty.Visit(
       Overloaded{
           [&](const mir::IntegralType& integral) -> lir::Type {
@@ -270,14 +283,6 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
             return lir::Type{
                 lir::TupleType{.elements = TranslateTypes(t.elements)}};
           },
-          [&](const mir::UnionType& u) -> lir::Type {
-            return lir::Type{
-                lir::UnionType{.members = TranslateTypes(u.members)}};
-          },
-          [&](const mir::TaggedUnionType& u) -> lir::Type {
-            return lir::Type{
-                lir::TaggedUnionType{.members = TranslateTypes(u.members)}};
-          },
           [&](const mir::ResolvedType& r) -> lir::Type {
             return lir::Type{
                 lir::ResolvedType{.value = TranslateType(r.value)}};
@@ -322,18 +327,9 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
           [](const mir::LoopBlocksType&) -> lir::Type {
             return lir::Type{lir::LoopBlocksType{}};
           },
-          [&](const mir::StructType& s) -> lir::Type {
-            return lir::Type{lir::StructType{
-                .declaration = std::visit(
-                    Overloaded{
-                        [&](mir::StructId id) -> lir::StructRef {
-                          return StructDeclaration(id);
-                        },
-                        [](const mir::TypeDeclarationRef& ref)
-                            -> lir::StructRef {
-                          return TranslateDeclaration(ref);
-                        }},
-                    s.declaration)}};
+          [&](const mir::RecordType& r) -> lir::Type {
+            return lir::Type{
+                lir::RecordType{.declaration = record_of(r.declaration)}};
           },
           [&](const mir::ClosureType& c) -> lir::Type {
             return lir::Type{lir::ClosureType{

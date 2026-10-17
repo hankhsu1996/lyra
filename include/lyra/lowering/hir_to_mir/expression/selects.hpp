@@ -5,12 +5,14 @@
 // the aggregate's bit plane -- MIR carries no struct-specific node.
 
 #include <cstdint>
+#include <functional>
 
 #include "lyra/base/component_index.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
+#include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -52,7 +54,7 @@ namespace lyra::lowering::hir_to_mir {
 // `index`, as a machine boolean; a packed union of one member carries a tag of
 // no bits (LRM 7.3.2) and always holds it. What a pattern tests (LRM 12.6) and
 // what `%p` prints (LRM 21.2.1.6) both ask it.
-[[nodiscard]] auto BuildTagTest(
+[[nodiscard]] auto BuildHoldsMember(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId subject,
     hir::TypeId subject_type, base::ComponentIndex index) -> mir::ExprId;
 
@@ -100,8 +102,9 @@ auto LowerHirClassPropertyAccessExpr(
 // every tag it passes checked, and the part it selects read and kept, all in
 // one block of steps, so nothing the enclosing expression evaluates -- a
 // sibling operand retagging the union -- runs between a check and the read it
-// guards. A receiver or a borrow reached this way takes the value kept, since
-// a member is never a reference target (LRM 13.5.2).
+// guards. A borrow reached this way takes the value kept, since a member is
+// never a reference target (LRM 13.5.2) and the borrow outlives the steps; a
+// call that only reads the object is entered on it among the steps instead.
 template <ExprLowerer Lowerer>
 auto IsTagCheckedRead(
     Lowerer& lowerer, const WalkFrame& frame, const hir::Expr& select) -> bool;
@@ -109,6 +112,19 @@ template <ExprLowerer Lowerer>
 auto LowerTagCheckedRead(
     Lowerer& lowerer, WalkFrame frame, const hir::Expr& select)
     -> diag::Result<mir::Expr>;
+
+// A use of what such a select reaches, made in the same way: the select's
+// whole path is taken in one block of steps and handed to the use, named
+// there, and the value the use answers is what the steps end with. Each place
+// the use forms on the path checks every tag it passes (LRM 11.9), so a use
+// evaluating what else it needs before forming one runs nothing between a
+// check and the access the check guards.
+using TagCheckedUse = std::function<diag::Result<mir::ExprId>(
+    BlockBuilder& steps, const AccessPath& path)>;
+template <ExprLowerer Lowerer>
+auto LowerTagCheckedUse(
+    Lowerer& lowerer, WalkFrame frame, const hir::Expr& select,
+    const TagCheckedUse& use) -> diag::Result<mir::Expr>;
 
 // A select named as a part rather than read: the path its base names, one step
 // deeper. Each adds the same step the read of it takes, so what comes back is

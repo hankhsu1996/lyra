@@ -638,6 +638,12 @@ void RenderExpr(
             }
             throw InternalError("backend::cpp: unknown place kind");
           },
+          [&](const mir::DiscriminantExpr& d) {
+            Write(
+                view, out,
+                Operand{.expr = d.tagged, .at_least = Precedence::kPostfix},
+                ".", CppDiscriminantAccessor(), "()");
+          },
           [&](const mir::FieldAccessExpr& m) {
             RenderFieldAccessExpr(view, m, out);
           },
@@ -647,10 +653,8 @@ void RenderExpr(
           },
           [&](const mir::UnionExpr& u) {
             Write(
-                view, out,
-                CppUnionMemberMaker{
-                    .of = CppType(view.Unit(), expr.type), .member = u.member},
-                "(", u.value, ")");
+                view, out, CppType(view.Unit(), expr.type), "(",
+                CppUnionMemberTag{.member = u.member}, ", ", u.value, ")");
           },
           [&](const mir::AwaitExpr& a) {
             const Enclosure enclosure(out, Precedence::kPrefix, at_least);

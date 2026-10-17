@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "lyra/lir/type.hpp"
+#include "lyra/value/value_type.hpp"
 
 namespace llvm {
 class Constant;
@@ -53,6 +54,9 @@ class ConstantRecord {
   // Places `value` at `offset`, which lies at or past where the field placed
   // before it ends.
   void Place(std::uint64_t offset, llvm::Constant* value);
+  // Places `value` as an integer of the bytes `at` gives the field, where it
+  // gives it.
+  void PlaceInteger(value::StatedAt at, std::uint64_t value);
 
   [[nodiscard]] auto Build() && -> llvm::Constant*;
 

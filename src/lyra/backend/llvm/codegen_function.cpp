@@ -20,7 +20,7 @@
 #include <llvm/IR/Type.h>
 
 #include "lyra/backend/llvm/codegen_module.hpp"
-#include "lyra/backend/llvm/codegen_tuple.hpp"
+#include "lyra/backend/llvm/codegen_value_type.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/compilation_unit.hpp"
@@ -305,7 +305,7 @@ auto CodeGenFunction::ComponentAddress(
     -> llvm::Value* {
   // Every member of a union lies at its start (LRM 7.3), as C reaches one by
   // retyping the union's own address.
-  if (module_->Unit().types.Get(aggregate).UnionMembers().has_value()) {
+  if (lir::OverlaidMembers(module_->Unit(), aggregate).has_value()) {
     return value;
   }
   return builder_.CreateConstInBoundsGEP1_64(

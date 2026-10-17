@@ -112,15 +112,15 @@ struct CppConstructorName {
 
 void WriteOne(TargetText& out, const CppConstructorName& constructor);
 
-// What builds a union of this type holding its member `member`, before the
-// member's value: `T::template Make<I>`, which places the member at the start
-// of the union's storage and every other byte zero.
-struct CppUnionMemberMaker {
-  CppType of;
+// What says which member a union is built holding, ahead of that member's
+// value: `std::in_place_index<I>`, the tag a union type takes a constructor by,
+// as `std::variant` does. The constructor places the member at the start of
+// the union's storage with every other byte zero.
+struct CppUnionMemberTag {
   base::ComponentIndex member;
 };
 
-void WriteOne(TargetText& out, const CppUnionMemberMaker& maker);
+void WriteOne(TargetText& out, const CppUnionMemberTag& tag);
 
 // What takes ownership of the storage a `new` allocated, applied to the
 // pointer `new` yields: `std::unique_ptr<T>(new T(init))` for a uniquely
@@ -132,14 +132,24 @@ struct CppNewOwner {
 void WriteOne(TargetText& out, const CppNewOwner& owner);
 
 // The library's product of a product type's components, `Tuple<Ts...>`: what a
-// tuple is spelled as, and what the type a unit defines for a struct is built
-// on.
+// tuple is spelled as.
 struct CppTupleComponents {
   const mir::CompilationUnit* unit;
   std::span<const mir::TypeId> of;
 };
 
 void WriteOne(TargetText& out, const CppTupleComponents& components);
+
+// The library type a struct or a union the unit declares is built on, holding
+// its members: the product of a struct's, `Tuple<Ts...>`, or the one storage a
+// union's overlay, `Union<Ts...>`, with the tag a tagged one adds,
+// `TaggedUnion<Ts...>`.
+struct CppRecordBase {
+  const mir::CompilationUnit* unit;
+  const mir::RecordDecl* of;
+};
+
+void WriteOne(TargetText& out, const CppRecordBase& base);
 
 // A name written into a file needs the file declaring it read first, and how
 // the name is used says whether a declaration is enough or the definition is

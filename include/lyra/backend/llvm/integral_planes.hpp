@@ -76,6 +76,22 @@ auto LowerOnPlanes(
     const IntegralShapes& shapes, const PlaneOperands& operands)
     -> std::optional<PlaneAnswer>;
 
+// The planes of the value of type `shape` lying at `at`, each loaded as the
+// integer its bytes are and cut to the value's width.
+auto LoadPlanes(
+    llvm::IRBuilderBase& builder, llvm::Value* at,
+    const value::IntegralShape& shape) -> Planes;
+// Planes laid out at `at` as a value of type `shape`, each widened to its
+// storage unit, which is what keeps every position above the width clear.
+void StorePlanes(
+    llvm::IRBuilderBase& builder, Planes planes, llvm::Value* at,
+    const value::IntegralShape& shape);
+// The value of type `shape` lying at `at` laid back out there as its type
+// holds one, every position above its width clear.
+void ClearAboveWidth(
+    llvm::IRBuilderBase& builder, llvm::Value* at,
+    const value::IntegralShape& shape);
+
 // The 0, 1 or x a comparison answers (LRM 11.4.4, 11.4.5) as the byte a runtime
 // entry answers it in -- the value bit, and above it whether it is unknown --
 // read out of a value of the one-bit type `answer` laid out at `at`, and laid

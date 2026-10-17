@@ -154,20 +154,23 @@ auto ComponentStep(StepUse use, base::ComponentIndex position) -> StepTaken {
   throw InternalError("access path: unknown step use");
 }
 
-// A union's member lies at the start of the union's storage, so reading it and
-// writing it are the one field step on the place the union lies in (LRM 7.3);
-// it has no identity of its own, so nothing is designated within a write of
-// one or lent by reference (LRM 13.5.2).
+// A union's member is a component of the union, lying at the union's own start
+// (LRM 7.3), and is taken as one; it has no identity of its own, so nothing
+// lends it by reference (LRM 13.5.2).
 auto UnionMemberStep(StepUse use, base::ComponentIndex position) -> StepTaken {
   switch (use) {
     case StepUse::kRead:
     case StepUse::kWrite:
-      return mir::ComponentFieldTarget{.position = position};
+      return ComponentStep(use, position);
     case StepUse::kDesignate:
+      return StepCall{
+          .entry = support::BuiltinFn::kDesignateMember,
+          .part = mir::CallPart{position},
+          .arguments = {}};
     case StepUse::kLend:
       throw InternalError(
           "access path: a union's member has no identity of its own, and this "
-          "descent designates or lends one");
+          "descent lends one");
   }
   throw InternalError("access path: unknown step use");
 }
@@ -268,34 +271,39 @@ auto StepTakenFor(
           },
           [&](const StepToUnionMember& member) {
             return UnionMemberStep(use, member.position);
+          },
+          [&](const StepToTaggedMember& member) {
+            return UnionMemberStep(use, member.position);
           }},
       step.to);
 }
 
-// Whether a step reaches a part that is storage of its own, which a write in
-// progress designates within itself: an element or a component. Bits and
-// several elements in a row are no one place, and a union's member and a
-// character have no identity of their own.
+// Whether a step reaches a part a write in progress designates within itself:
+// an element, a component, or a union's member, each one place a write lands
+// on. Bits and several elements in a row are no one place, and a character
+// lies inside the string's own value.
 auto DesignatedWithinAWrite(const DescentStep& step) -> bool {
   return std::visit(
       Overloaded{
           [](const StepToElement&) { return true; },
           [](const StepToAssocElement&) { return true; },
           [](const StepToComponent&) { return true; },
+          [](const StepToUnionMember&) { return true; },
+          [](const StepToTaggedMember&) { return true; },
           [](const StepToBits&) { return false; },
           [](const StepToElementRun&) { return false; },
           [](const StepToQueueRun&) { return false; },
-          [](const StepToCharacter&) { return false; },
-          [](const StepToUnionMember&) { return false; }},
+          [](const StepToCharacter&) { return false; }},
       step.to);
 }
 
 // How many of `path`'s steps a write opened on its owner takes within itself:
-// where the owner is a capability wrapper, the write designates each part that
-// is storage of its own, so it knows what forming each one did, for as long as
-// each step reaches such a part. Any step left is taken on what the
-// write lands on, or on the last designation by an operation of the value's
-// own. A write onto anything else takes none within itself.
+// where the owner is a capability wrapper, the write designates each part it
+// can land on, so it knows what forming each one did and keeps no more than
+// the part it lands on, for as long as each step reaches such a part. Any step
+// left is taken on what the write lands on, or on the last designation by an
+// operation of the value's own. A write onto anything else takes none within
+// itself.
 auto StepsTakenWithinTheWrite(
     const mir::CompilationUnit& unit, const mir::Block& block,
     const AccessPath& path) -> std::size_t {
@@ -444,6 +452,9 @@ auto NamedAgain(const mir::Block& from, mir::Block& to, mir::ExprId id)
           },
           [&](const mir::CopyExpr& e) -> mir::ExprData {
             return mir::CopyExpr{.place = again(e.place)};
+          },
+          [&](const mir::DiscriminantExpr& e) -> mir::ExprData {
+            return mir::DiscriminantExpr{.tagged = again(e.tagged)};
           },
           [&](const mir::FieldAccessExpr& e) -> mir::ExprData {
             return mir::FieldAccessExpr{
@@ -740,9 +751,13 @@ auto BuildTagMatches(
                     unit.builtins.bit1)));
           },
           [&](const HeldTag& held) {
-            return block.exprs.Add(
-                mir::MakeTagMatchesExpr(
-                    into, held.member, unit.builtins.machine_bool));
+            const mir::ExprId held_now = block.exprs.Add(
+                mir::MakeDiscriminantExpr(into, unit.builtins.machine_int64));
+            return block.exprs.Add(MakeBinary(
+                unit, block, mir::BinaryOp::kEquality, held_now,
+                BuildMachineIntLiteral(
+                    unit, block, static_cast<std::int64_t>(held.member.value)),
+                unit.builtins.machine_bool));
           }},
       tag);
 }
@@ -916,6 +931,7 @@ auto SettledPlace(
           [&](const mir::AddressOfExpr&) { return computed(); },
           [&](const mir::BorrowExpr&) { return computed(); },
           [&](const mir::CopyExpr&) { return computed(); },
+          [&](const mir::DiscriminantExpr&) { return computed(); },
           [&](const mir::UnaryExpr&) { return computed(); },
           [&](const mir::BinaryExpr&) { return computed(); },
           [&](const mir::CastExpr&) { return computed(); },
@@ -1023,8 +1039,7 @@ auto NamedIn(const SettledPath& settled, mir::Block& to) -> AccessPath {
 
 auto ReachesOverlaidStorage(const AccessPath& path) -> bool {
   return std::ranges::any_of(path.descent, [](const DescentStep& step) {
-    const auto* member = std::get_if<StepToUnionMember>(&step.to);
-    return member != nullptr && !member->tagged;
+    return std::holds_alternative<StepToUnionMember>(step.to);
   });
 }
 
@@ -1076,6 +1091,10 @@ auto PartNamedBy(
                   unit, block, component.position.value);
             },
             [&](const StepToUnionMember& member) -> std::optional<mir::ExprId> {
+              return BuildMachineIntLiteral(unit, block, member.position.value);
+            },
+            [&](const StepToTaggedMember& member)
+                -> std::optional<mir::ExprId> {
               return BuildMachineIntLiteral(unit, block, member.position.value);
             },
             [](const StepToBits&) -> std::optional<mir::ExprId> {

@@ -13,7 +13,7 @@
 #include <llvm/IR/IRBuilder.h>
 
 #include "lyra/backend/llvm/codegen_module.hpp"
-#include "lyra/backend/llvm/codegen_tuple.hpp"
+#include "lyra/backend/llvm/codegen_value_type.hpp"
 #include "lyra/backend/llvm/fn_abi.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -244,9 +244,9 @@ class CodeGenFunction {
   auto LowerArray(
       const lir::ArrayInstr& array, const DestinationRef& destination)
       -> diag::Result<llvm::Value*>;
-  auto LowerTuple(
-      const lir::TupleInstr& tuple, lir::TypeId result_type, llvm::Value* out)
-      -> diag::Result<llvm::Value*>;
+  auto LowerProduct(
+      const lir::ProductInstr& product, lir::TypeId result_type,
+      llvm::Value* out) -> diag::Result<llvm::Value*>;
   // A union laid out in place: its storage zeroed, the member it holds built
   // at its start, and a tagged union's tag stored after its members.
   auto LowerUnion(
@@ -263,17 +263,8 @@ class CodeGenFunction {
   // member's (LRM 7.3.2): the value copied into `out` and every position its
   // type keeps clear cleared there.
   auto LowerOverlaidLoad(
-      const lir::LoadInstr& load, lir::TypeId result_type, llvm::Value* out)
-      -> diag::Result<llvm::Value*>;
-  // Whether `place` is reached through a member of an untagged union.
-  [[nodiscard]] auto ReachesOverlaidStorage(const lir::Place& place) const
-      -> bool;
-  // Every position above an integral's width in the value of `type` lying at
-  // `at` made clear, inline as the C++ rendering's clear is once a compiler
-  // inlines it: each integral's planes, each component of a product, each
-  // element of an array.
-  auto ClearAboveWidthsAt(lir::TypeId type, llvm::Value* at)
-      -> diag::Result<void>;
+      const lir::OverlaidLoadInstr& load, lir::TypeId result_type,
+      llvm::Value* out) -> diag::Result<llvm::Value*>;
   auto LowerStore(const lir::StoreInstr& store) -> diag::Result<llvm::Value*>;
   auto LowerUse(const lir::UseInstr& use, const DestinationRef& destination)
       -> diag::Result<llvm::Value*>;
@@ -380,10 +371,6 @@ class CodeGenFunction {
   // The planes of `position`, which has to be stated as the position type
   // every ordinal of the layer above is brought to.
   auto LoadPosition(const OperandRef& position) -> Planes;
-  // The integral value of `shape` at `at` left as its type holds one, every
-  // position above its width clear.
-  void ClearIntegralAboveWidth(
-      llvm::Value* at, const value::IntegralShape& shape);
   // Where the element `position` names lies in the fixed-size unpacked array
   // lying at `array`: arithmetic on where the array lies. A position naming no
   // element reaches what the array's type answers for one (LRM 7.4.5), the

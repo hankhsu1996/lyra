@@ -124,8 +124,6 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
           [&](const mir::ManagedRefType&) { return crosses_no_boundary(); },
           [&](const mir::VectorType&) { return crosses_no_boundary(); },
           [&](const mir::TupleType&) { return crosses_no_boundary(); },
-          [&](const mir::UnionType&) { return crosses_no_boundary(); },
-          [&](const mir::TaggedUnionType&) { return crosses_no_boundary(); },
           [&](const mir::ObservableType&) { return crosses_no_boundary(); },
           [&](const mir::ResolvedType&) { return crosses_no_boundary(); },
           [&](const mir::DriverType&) { return crosses_no_boundary(); },
@@ -138,7 +136,7 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
             return crosses_no_boundary();
           },
           [&](const mir::LoopBlocksType&) { return crosses_no_boundary(); },
-          [&](const mir::StructType&) { return crosses_no_boundary(); },
+          [&](const mir::RecordType&) { return crosses_no_boundary(); },
           [&](const mir::ClosureType&) { return crosses_no_boundary(); }});
 }
 

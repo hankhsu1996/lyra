@@ -3036,10 +3036,10 @@ enough to warrant its own focused review.
       and ignores what it is handed. Each such parameter is unnamed, which clang-tidy's
       readability-named-parameter reports, and naming it instead is reported by the build's own
       `-Wunused-parameter`; the one spelling both accept, a name written as a comment, is a
-      suppression the project's style forbids. Seen on the fixed-size array type's and the library
-      value types' refusing overrides. Target: a type answers only the operations it has, so no
-      override exists to refuse -- the operations no type of a family answers move to the family
-      that does. Not blocked.
+      suppression the project's style forbids. Seen on the library value types' refusing overrides;
+      the code generator fills the same slots of every table it generates with a body nothing
+      enters. Target: a type answers only the operations it has, so no override exists to refuse --
+      the operations no type of a family answers move to the family that does. Not blocked.
 - [ ] R240 -- clang-tidy reports readability-static-accessed-through-instance on the generated
       process body the runtime resumes, at the coroutine's own declaration, where nothing in the
       source names a static member. The cause is not established; a coroutine's promise type has
@@ -3047,36 +3047,58 @@ enough to warrant its own focused review.
       check. Target: the body reads clean, by a change to whatever the expansion reaches and not by
       silencing the check. Not blocked.
 - [x] R241 -- Whether an expression names storage is stated by MIR for a union's member too: it is a
-      field step on the place holding the union, at the union's start, on both backends, so a select
-      into a member reads only what it selects and a write to one leaves the union in place.
+      field step on the place holding the union, at the union's start, and is designated within a
+      write in progress, on both backends, so a select into a member reads only what it selects and
+      a write to one leaves the union in place.
 - [x] R234 -- A read through a member a tag guards is one access with its check: the whole of what
       it selects below the member is read and kept among the steps that check the tag, so a sibling
       operand retagging the union can no longer have the read land on a member the union no longer
       holds, on either backend.
 
-- [ ] R235 -- An operation the execution backend's library carries out on values laid out by their
-      type -- comparing two unions or two fixed-size arrays, resolving two drivers of one -- is told
-      the type of every such operand it takes, although its operands share one type, which the
-      answer or the first operand already fixes. Each entry then reads the type of the others only
-      to check it or to discard it. The type an operation is over belongs to the call once, as a
-      generic function takes its type argument once however many arguments are of that type.
+- [x] R235 -- An operation the execution backend's library carries out on values laid out by their
+      type -- designating an element of a fixed-size array, writing a run of elements into one,
+      holding one in a variable -- is told their type once, after its operands, as a generic
+      function takes its type argument once; a value of another type it takes is read with its own.
 
-- [ ] R236 -- A write through a member of a union a process waits on keeps the whole union from
-      before the write and compares the whole of it when the write ends, on both backends, where a
-      write through a structure's member keeps and compares only that member. A member has no
-      identity of its own, so the write cannot designate it, but what the write keeps and compares
-      could still narrow to the member while it reports the whole union as changed, since every
-      member is one storage.
+- [x] R236 -- A write through a member of a union keeps and compares only what it lands on below the
+      member, on both backends, as a write through a structure's member does, and reports the change
+      to the whole union, so a wait on any member of it is told.
 
-- [ ] R237 -- A method entered on something reached through a member a tag guards is handed a copy
-      of what it is entered on, kept with the check of the tag, so `size` of a queue a tagged union
-      holds copies the queue. A method that only reads could be entered where the queue lies,
-      between the check and the end of the read.
+- [x] R237 -- A method that only reads what a member a tag guards selects is entered on it where it
+      lies, among the steps that check the tag, after the call's own operands, so `size` of a queue
+      a tagged union holds copies nothing.
 
-- [ ] R238 -- Which type a library entry's realization is told of is carried beside the entry as an
-      optional type, and only an entry told something about a type reads it, refusing its absence
-      when it reads. Where the entry is chosen, what it is told could carry the type itself, so no
-      entry carries a type it is told nothing of.
+- [x] R238 -- The type a library entry's realization is realized for is bound to the realization
+      where the entry is chosen, so what it is told of a type is read from there and no entry
+      carries that type beside it as something it may lack.
+
+- [x] R242 -- Every operation on a whole value of a union, a tagged union or a fixed-size array is
+      code compiled for the type on both backends: a union's stated by its declaration, as a
+      structure's is, and an array's by each unit naming the type; the execution backend's library
+      is told no description of the type to carry one out by. A tuple's default and its clearing are
+      compiled for its type too.
+
+- [x] R243 -- What a read of overlaid storage clears above a value's widths is one function per type
+      on the execution backend, which the function's code calls where it reads such storage; the
+      library is asked nothing for it, and a type's table carries no slot for it.
+
+- [x] R244 -- A type reaches the execution backend's prebuilt library as a record laid out as C lays
+      one out, declared once and read by both the code generator and the library, opening with the
+      address of a table of functions each handed the type. Generated code no longer imitates an
+      object of a library C++ class, and nothing measures one at compiler run time.
+
+- [ ] R245 -- The algorithms the prebuilt library carries out over values of any type -- a
+      container's search, sort and fold, a net's resolution, a variable's change test -- reach each
+      type's operations through its table, where clang on the C++ backend compiles each one for the
+      type and can inline it. Target: an optimized build sees through a type's table to the
+      operation it names. Two forms reach it: the library also prebuilt as optimizer input that an
+      optimized build links in, so a call through a table that is a constant is specialized and
+      inlined, as Swift lets a client specialize a library function marked inlinable; or those
+      algorithms stated where the compiler compiles them per type, as rustc compiles its own
+      library's generic code. The first keeps the library one source and the default build
+      unchanged. Not blocked; it is a trade of run time against build time, and the measurement that
+      would select it -- a design whose time goes into calls through a type's table -- has not been
+      taken.
 
 The entries from R221 on come from one audit of the lowering against the front end: places where
 this compiler works out again, or steps around, something the front end already knows or could keep.

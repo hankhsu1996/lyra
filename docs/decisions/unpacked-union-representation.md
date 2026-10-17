@@ -1,10 +1,13 @@
-# Unpacked union is overlapping storage realized as an active-member value (MIR `UnionType`)
+# Unpacked union is overlapping storage realized as an active-member value
 
 Date: 2026-06-27 Status: points 3, 4, 5, 7 and 8 superseded by
 [a-union-is-one-storage-its-members-overlay](a-union-is-one-storage-its-members-overlay.md)
 (2026-10-13): an unpacked union is the overlay its rejected alternative named, a member is a field
-step of the union's place, and a read of another member answers its bits. Points 1, 2 and 6 stand.
-Before that: the write encoding is superseded by
+step of the union's place, and a read of another member answers its bits. Points 1, 2 and 6 stand,
+except that the union's type now names its declaration, which states its members: a structure, a
+union and a tagged union are one record type
+([a-structures-operations-are-stated-in-mir](a-structures-operations-are-stated-in-mir.md),
+2026-10-16). Before that: the write encoding is superseded by
 [value-descent-as-named-calls](value-descent-as-named-calls.md), under which reading a member and
 reaching one are the same pair of entries a product component uses, differing only in which value
 domain realizes them. The representation this entry settles, an active-member value, is unchanged.

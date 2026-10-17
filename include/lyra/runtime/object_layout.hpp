@@ -10,7 +10,6 @@
 #include "lyra/support/runtime_class.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
-#include "lyra/value/value_type.hpp"
 
 namespace lyra::runtime {
 
@@ -53,85 +52,6 @@ struct ContentsIndirectAt {
 using HeldContents = std::variant<ContentsAt, ContentsIndirectAt>;
 auto HeldContentsOf(support::DeclaredMemberStorage storage)
     -> std::optional<HeldContents>;
-
-// The constant that tells the library an integral type's numbers, as a target
-// stating one lays it out: what the whole occupies, the symbol of the table
-// the library defines for it, which the constant opens with the address of
-// (C++ ABI 2.4), and where it states the size and the alignment of a value of
-// the type and the type's shape.
-struct IntegralTypeConstantLayout {
-  support::ObjectLayout object;
-  std::string table_symbol;
-  value::StatedAt value_size;
-  value::StatedAt value_align;
-  std::uint64_t shape_at;
-};
-auto LayoutOfIntegralTypeConstant() -> IntegralTypeConstantLayout;
-
-// The constant that tells the library the type of an array's elements: where
-// it states the address of the element's value type, the function building a
-// value of it at its default, and the address of the scratch it names. It
-// opens with no table. `scratch_object` is what one scratch occupies, which a
-// target defines zeroed beside each constant.
-struct ElementTypeConstantLayout {
-  support::ObjectLayout object;
-  value::StatedAt type;
-  value::StatedAt build_default;
-  value::StatedAt scratch;
-  support::ObjectLayout scratch_object;
-};
-auto LayoutOfElementTypeConstant() -> ElementTypeConstantLayout;
-
-// The same for the type of a fixed-size unpacked array: beside what every
-// value type states, how many elements, the address of the constant stating
-// their type, and the part of the constant that answers for its elements,
-// which opens with a table of its own and names the constant it lies in.
-struct FixedArrayTypeConstantLayout {
-  support::ObjectLayout object;
-  std::string table_symbol;
-  std::string parts_table_symbol;
-  value::StatedAt value_size;
-  value::StatedAt value_align;
-  value::StatedAt count;
-  value::StatedAt element;
-  value::StatedAt parts;
-  value::StatedAt parts_owner;
-};
-auto LayoutOfFixedArrayTypeConstant() -> FixedArrayTypeConstantLayout;
-
-// The same for the type of a union: beside what every value type states, how
-// many members, and the address of the list of the constants stating their
-// types; for a tagged union also where its tag lies and how many bytes it
-// takes.
-struct UnionTypeConstantLayout {
-  support::ObjectLayout object;
-  std::string table_symbol;
-  value::StatedAt value_size;
-  value::StatedAt value_align;
-  value::StatedAt count;
-  value::StatedAt members;
-};
-auto LayoutOfUnionTypeConstant() -> UnionTypeConstantLayout;
-struct TaggedUnionTypeConstantLayout {
-  support::ObjectLayout object;
-  std::string table_symbol;
-  value::StatedAt value_size;
-  value::StatedAt value_align;
-  value::StatedAt count;
-  value::StatedAt members;
-  value::StatedAt tag_offset;
-  value::StatedAt tag_bytes;
-};
-auto LayoutOfTaggedUnionTypeConstant() -> TaggedUnionTypeConstantLayout;
-
-// The same for the type of a queue, which opens with no table: where it states
-// the address of the constant stating its elements' type, and its bound.
-struct QueueTypeConstantLayout {
-  support::ObjectLayout object;
-  value::StatedAt element;
-  value::StatedAt bound;
-};
-auto LayoutOfQueueTypeConstant() -> QueueTypeConstantLayout;
 
 // The same for the part of a value this library builds where a class of the
 // source extends one of its classes: what that part occupies, which is where

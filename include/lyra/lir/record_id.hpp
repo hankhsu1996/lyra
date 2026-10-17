@@ -5,10 +5,10 @@
 
 namespace lyra::lir {
 
-struct StructId {
+struct RecordId {
   std::uint32_t value;
 
-  auto operator<=>(const StructId&) const -> std::strong_ordering = default;
+  auto operator<=>(const RecordId&) const -> std::strong_ordering = default;
 };
 
 }  // namespace lyra::lir

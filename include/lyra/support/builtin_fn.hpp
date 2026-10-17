@@ -61,9 +61,6 @@ enum class BuiltinFn : std::uint16_t {
   // LRM 11.5.1: an integral value with the bits a position names replaced,
   // which is how bits of a value lying in no storage are written.
   kWithSlice,
-  // Whether a tagged union's tag names the member at a declaration-order
-  // position (LRM 11.9).
-  kTagMatches,
   // Raises the given message as a simulation error unless a machine boolean
   // holds: a check the language requires before an access (LRM 11.9, 25.9),
   // stated ahead of it as rustc's `Assert` stands before the projection it
@@ -251,10 +248,11 @@ enum class BuiltinFn : std::uint16_t {
   kResolveWiredOr,
   kDominating,
   kFilledLike,
-  // The value a variable of a structure starts as (LRM Table 7-1): each member
-  // at the initial value its declaration assigns (LRM 7.2.2), and at its own
-  // type's default where it assigns none. A structure alone answers it, its
-  // declaration being where those values are written.
+  // The value a variable of an aggregate starts as (LRM Table 7-1): a
+  // structure's each member at the initial value its declaration assigns (LRM
+  // 7.2.2), and at its own type's default where it assigns none; a union's its
+  // first member's; an array's each element's. A type with operations of its
+  // own answers it with its own body, and no value the library holds does.
   kDeclaredDefault,
   // LRM 20.8.1. ceil(log2) of the operand read as unsigned; $clog2(0) is 0.
   // A constant argument is folded downstream, never in lowering.
@@ -353,18 +351,26 @@ enum class BuiltinFn : std::uint16_t {
   // the whole lands.
   kDesignateWhole,
   // A step taken within a write in progress, into a part of what it designates
-  // that is storage of its own: an element or a component. It answers with the
-  // part designated within the same write -- a value of its own that borrows
-  // the write -- which is not what the step answering with the part alone
-  // answers. The write hears what the step did to the variable where the part
+  // that a write lands on: an element or a component, a union's member among
+  // the components. It answers with the part designated within the same write
+  // -- a value of its own that borrows the write -- which is not what the step
+  // answering with the part alone answers, and the write keeps only what it
+  // lands on. The write hears what the step did to the variable where the part
   // cannot say so itself -- an element made by being written, an index naming
   // none (LRM 7.8.7, 7.10.1, 7.4.6); a component is formed by nothing, so its
-  // step has nothing to tell. Dereferencing what the steps designate is where
-  // the write lands. Bits and a run of elements are no storage of their own,
-  // and are written within the write by the value's own operations taken on
-  // its designation.
+  // step has nothing to tell. A union's member lies where every other member
+  // does (LRM 7.3), so the change is reported at the union, whose bytes every
+  // member reads. Dereferencing what the steps designate is where the write
+  // lands. Bits and a run of elements are no storage of their own, and are
+  // written within the write by the value's own operations taken on its
+  // designation.
   kDesignateElement,
   kDesignateComponent,
+  // A step into a member of a union a write designates. Every member lies at
+  // the union's own start (LRM 7.3), so no step of a path stands for one, and
+  // the path the write reports stops at the union, whose bytes every member
+  // reads.
+  kDesignateMember,
   // A step taken on a reference, into a part of what it refers to that may be
   // passed by reference -- an element or a component (LRM 13.5.2). It answers
   // with a reference to that part, which belongs to whatever the reference it
@@ -1216,7 +1222,7 @@ enum class EntryAnswer : std::uint8_t {
 
 // How an entry that reaches one part of the value it acts on names that part:
 // by a coordinate the program computes (LRM 7.4.5, 7.8, 7.10.1), by a
-// declaration-order position (LRM 7.2), as a slice of consecutive
+// declaration-order position (LRM 7.2, 7.3), as a slice of consecutive
 // elements (LRM 7.4.6), or as bits of an integral value (LRM 11.5.1), which
 // lie inside the value rather than being storage of their own. Reading the
 // part and writing into it name it the same way, so the entry for each shares

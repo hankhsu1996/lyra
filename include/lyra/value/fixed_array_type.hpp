@@ -4,13 +4,12 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <type_traits>
 #include <vector>
 
 #include "lyra/value/element_type.hpp"
 #include "lyra/value/formation.hpp"
-#include "lyra/value/integral_words.hpp"
 #include "lyra/value/layout.hpp"
-#include "lyra/value/reduction.hpp"
 #include "lyra/value/value_type.hpp"
 
 namespace lyra::value {
@@ -18,21 +17,28 @@ namespace lyra::value {
 class String;
 
 // The type of a fixed-size unpacked array (LRM 7.4.2) as code compiled before
-// any design existed is handed it: how many elements, and their type. An array
-// is its elements one after another and nothing else, so every operation on a
-// whole array is that operation on each element in turn, carried out here once
-// for every array type.
+// any design existed is handed it: the numbers and the table every type
+// states, then how many elements, and their type, which is what reaching an
+// element, a run of them, or their order by position needs. Every operation
+// on a whole array is code compiled for the array type, which the type's table
+// holds, as a structure's and a union's are, so nothing here builds one.
 //
 // The elements lie in the array, and an element keeps its address across every
 // assignment (LRM 13.5.2 has a reference to one go on naming it).
 //
 // Generated code states one of these for each array type it hands a value of
-// to such code, as constant data of this class, so its layout is part of what
-// the two sides agree on.
-class FixedArrayType final : public ValueType {
+// to such code, as constant data laid out as this record is.
+class FixedArrayType {
  public:
-  FixedArrayType(const value::ElementType& element, std::uint32_t count);
+  // A type of `count` elements of `element`, laid out as a sequence of them,
+  // answering its whole value's operations through `witnesses`.
+  FixedArrayType(
+      const ValueWitnessTable& witnesses, const value::ElementType& element,
+      std::uint32_t count);
 
+  [[nodiscard]] auto Type() const -> const ValueType& {
+    return type_;
+  }
   [[nodiscard]] auto Count() const -> std::size_t {
     return count_;
   }
@@ -70,63 +76,15 @@ class FixedArrayType final : public ValueType {
   // LRM 7.12.2: puts the value that was at `order[k]` at position `k`.
   void Permute(void* array, std::span<const std::size_t> order) const;
 
-  // Where the type states each of its own parts, which code stating a type as
-  // constant data places them by.
-  [[nodiscard]] auto CountStatedAt() const -> StatedAt;
-  [[nodiscard]] auto ElementStatedAt() const -> StatedAt;
-  [[nodiscard]] auto PartsStatedAt() const -> StatedAt;
-  [[nodiscard]] auto PartsOwnerStatedAt() const -> StatedAt;
-  // The name the implementation gives the class its parts answer as, which is
-  // what that class's table is found by.
-  [[nodiscard]] static auto PartsClassName() -> const char*;
-
-  void Copy(const void* value, void* out) const override;
-  void Move(void* value, void* out) const noexcept override;
-  void Destroy(void* value) const noexcept override;
-  void Assign(void* storage, const void* value) const override;
-
-  [[nodiscard]] auto Equal(const void* lhs, const void* rhs) const
-      -> FourStateBit override;
-  [[nodiscard]] auto CaseEqual(const void* lhs, const void* rhs) const
-      -> bool override;
-  [[nodiscard]] auto BitIdentical(const void* lhs, const void* rhs) const
-      -> bool override;
-  [[nodiscard]] auto HasUnknown(const void* value) const -> bool override;
-  void ClearAboveWidths(void* value) const override;
-
-  void BuildDefault(void* out) const override;
-
-  void BitstreamWidth(const void* value, void* out) const override;
-  void CountBits(
-      const void* value, const ConstIntegralView& control_bits,
-      void* out) const override;
-  auto WriteToStream(
-      const void* value, const IntegralView& stream, std::uint64_t filled) const
-      -> std::uint64_t override;
-  auto ReadFromStream(
-      const ConstIntegralView& stream, std::uint64_t taken, void* out) const
-      -> std::uint64_t override;
-
-  void ResolveTriState(
-      const void* lhs, const void* rhs, void* out) const override;
-  void ResolveWiredAnd(
-      const void* lhs, const void* rhs, void* out) const override;
-  void ResolveWiredOr(
-      const void* lhs, const void* rhs, void* out) const override;
-  void Dominating(
-      const void* stronger, const void* weaker, void* out) const override;
-  void FilledLike(
-      const void* prototype, const void* fill, void* out) const override;
-
-  [[nodiscard]] auto OrderBefore(const void* lhs, const void* rhs) const
-      -> bool override;
-  [[nodiscard]] auto IsTrue(const void* value) const -> bool override;
-  void Reduce(Reduction reduction, const void* lhs, const void* rhs, void* out)
-      const override;
-
-  [[nodiscard]] auto Parts() const -> const PartsByPosition* override;
-  [[nodiscard]] auto AsIntegral() const -> const IntegralValueType* override;
-  [[nodiscard]] auto AsFixedArray() const -> const FixedArrayType* override;
+  // Where the type states its count and the address of its element's type,
+  // past the numbers every type states.
+  [[nodiscard]] static constexpr auto CountStatedAt() -> StatedAt {
+    return {
+        .offset = offsetof(FixedArrayType, count_), .bytes = sizeof(count_)};
+  }
+  [[nodiscard]] static constexpr auto ElementStatedAt() -> std::size_t {
+    return offsetof(FixedArrayType, element_);
+  }
 
   // An array of this type built in `out`, its element at each position built
   // by `build(position, element_out)`.
@@ -141,27 +99,6 @@ class FixedArrayType final : public ValueType {
   }
 
  private:
-  // An array's elements answered by position, for what walks a value down to
-  // its leaves. It names the array type it answers for, since the questions
-  // are asked of a value alone.
-  class ElementsByPosition final : public PartsByPosition {
-   public:
-    explicit ElementsByPosition(const FixedArrayType& array) : array_(&array) {
-    }
-
-    [[nodiscard]] auto Count(const void* value) const -> std::size_t override;
-    [[nodiscard]] auto Type(const void* value) const
-        -> const ValueType& override;
-    [[nodiscard]] auto At(const void* value, std::size_t position) const
-        -> const void* override;
-    [[nodiscard]] auto RefAt(void* value, std::size_t position) const
-        -> void* override;
-
-   private:
-    friend class FixedArrayType;
-    const FixedArrayType* array_;
-  };
-
   // An array being built element by element in storage that holds none yet.
   // Whatever was built is ended unless the build finishes.
   class Building {
@@ -186,16 +123,25 @@ class FixedArrayType final : public ValueType {
     bool finished_ = false;
   };
 
+  FixedArrayType(
+      const ValueWitnessTable& witnesses, const value::ElementType& element,
+      std::uint32_t count, SequenceLayout layout);
+
   [[nodiscard]] auto Layout() const -> SequenceLayout;
 
-  using Fold =
-      void (ValueType::*)(const void* lhs, const void* rhs, void* out) const;
-  void FoldedBy(Fold fold, const void* lhs, const void* rhs, void* out) const;
-
+  ValueType type_;
   std::uint32_t count_;
   const value::ElementType* element_;
-  ElementsByPosition parts_;
 };
+
+static_assert(std::is_standard_layout_v<FixedArrayType>);
+
+// Any fixed-size array's elements answered by position, for what walks a
+// value down to its leaves, each answer read off the array type it is handed.
+// The table of every such type names this one.
+extern "C" {
+extern const PartsWitnessTable lyra_rt_fixed_array_parts_witness_table;
+}
 
 // A fixed-size unpacked array lying in something else, read where it lies. It
 // owns nothing, so the array has to outlive it.

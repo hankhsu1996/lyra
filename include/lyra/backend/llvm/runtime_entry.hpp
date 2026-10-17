@@ -106,16 +106,14 @@ struct ToldWidthMetadataAhead {};
 // such storage once it is made is told nothing of the values it is handed,
 // which the storage keeps the type of.
 struct ToldTypeMetadataAhead {};
-struct ToldByTheStorage {};
 // A tuple, a union and a fixed-size unpacked array are their bytes laid out by
-// their type and nothing more, so a realization for one is told the type of
-// every such value it is handed as the value it is, after that value. Where it
-// reaches the value through a reference or a designation instead, which name
-// bytes lying in something else, it is told the type of the value reached,
-// after operand `reached_after`.
-struct ToldLaidOutTypes {
-  std::optional<std::size_t> reached_after = std::nullopt;
-};
+// their type and nothing more, so a realization for one is told that type,
+// after its operands, once however many values of it it takes or builds, as a
+// generic function takes its type argument once. That holds where it reaches
+// the value through a reference or a designation too, which name bytes lying
+// in something else. A value of another type it is handed is read with its
+// own.
+struct ToldLaidOutType {};
 struct ToldKeyType {
   std::size_t after;
 };
@@ -124,15 +122,15 @@ struct ToldEntryType {
 };
 using Told = std::variant<
     ToldNothing, ToldWidthMetadata, ToldWidthMetadataAhead,
-    ToldTypeMetadataAhead, ToldByTheStorage, ToldLaidOutTypes, ToldKeyType,
-    ToldEntryType>;
+    ToldTypeMetadataAhead, ToldLaidOutType, ToldKeyType, ToldEntryType>;
 
 // The domains the library realizes an entry for that are told the same thing.
 // An entry states one of these per thing its realizations are told, and a
-// domain in none of them is one the library holds no realization for.
+// domain in none of them is one the library holds no realization for. One
+// that states nothing is told what every realization for its domain is.
 struct RealizedFor {
   DomainSet domains;
-  Told told = ToldNothing{};
+  std::optional<Told> told = std::nullopt;
 };
 
 // A library entry a step into a value is taken by, and the symbol its
@@ -208,21 +206,13 @@ enum class RuntimeOp : std::uint8_t {
   kMakeDpiLogicBuffer,
   kMakeDpiOpenArray,
   kSettleDeparture,
-  // What stands between a structure's own operations and the type the library
-  // asks them through: the stream a structure's function answers written into
-  // the stream the type was handed, a stream's bits laid out as an integral
-  // value, and a structure built by its function out of such a stream; and a
-  // structure built with each of its components at what that component's type
-  // builds before anything writes it.
+  // What stands between a type's own operations and the type the library asks
+  // them through: the stream a type's function answers written into the stream
+  // the type was handed, a stream's bits laid out as an integral value, and a
+  // value built by its type's function out of such a stream.
   kStreamWrite,
   kStreamRead,
   kStreamBuild,
-  kTupleBuildDefault,
-  // What a read of storage another member of an untagged union may have
-  // written does to the value it reads, through that value's type (LRM
-  // 7.3.2), and what a structure's type does for it, component by component.
-  kClearAboveWidths,
-  kTupleClearAboveWidths,
   // Bits written into an integral value where they lie (LRM 11.5.1): into the
   // words of a value held at a place, and into the value a write in progress
   // designates, which hears which of them moved and is named by the domain
@@ -267,6 +257,16 @@ auto LifecycleOp(LifecycleStep step) -> RuntimeOp;
 // generated code hands over beside such a value. It names data, where every
 // other symbol here names an entry.
 auto ValueTypeSymbol(support::ValueDomain domain) -> std::string;
+
+// Witnesses the library defines once for every type of a kind, which generated
+// code names where it states such a type, and the entry a table names for an
+// operation the language does not define for its type.
+inline constexpr std::string_view kIntegralValueWitnessTableSymbol =
+    "lyra_rt_integral_value_witness_table";
+inline constexpr std::string_view kFixedArrayPartsWitnessTableSymbol =
+    "lyra_rt_fixed_array_parts_witness_table";
+inline constexpr std::string_view kTypeLacksOperationSymbol =
+    "lyra_rt_type_lacks_operation";
 
 // What a member slot is for, which two declarations answer differently for a
 // slot of the same type: a variable is written through its own store for as
@@ -344,7 +344,7 @@ struct NamedByResult {
 struct ThroughWrapper {
   WrapperKind wrapper;
   DomainSet domains;
-  Told told = ToldNothing{};
+  std::optional<Told> told = std::nullopt;
 };
 
 // The operation acts on the capability wrapper an argument reaches rather than

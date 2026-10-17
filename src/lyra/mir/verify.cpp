@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <format>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -28,9 +29,9 @@
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/frame_size.hpp"
 #include "lyra/mir/integral_constant_folding.hpp"
+#include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/storage_part.hpp"
-#include "lyra/mir/struct_decl.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -167,6 +168,9 @@ void ForEachOperand(const ExprData& data, const auto& reach) {
           [&](const BorrowExpr& e) { reach(e.operand, OperandUse::kStorage); },
           [&](const MoveExpr& e) { reach(e.operand, OperandUse::kRead); },
           [&](const CopyExpr& e) { reach(e.place, OperandUse::kRead); },
+          [&](const DiscriminantExpr& e) {
+            reach(e.tagged, OperandUse::kObject);
+          },
           [&](const FieldAccessExpr& e) {
             reach(e.receiver, OperandUse::kStorage);
           },
@@ -245,6 +249,7 @@ auto ComputesNothingItself(const ExprData& data) -> bool {
           [](const AddressOfExpr&) { return true; },
           [](const BorrowExpr&) { return true; },
           [](const CopyExpr&) { return true; },
+          [](const DiscriminantExpr&) { return true; },
           [](const FieldAccessExpr&) { return true; },
           [](const UnaryExpr&) { return false; },
           [](const BinaryExpr&) { return false; },
@@ -322,6 +327,9 @@ auto Describe(const ExprData& data) -> std::string {
           [](const BorrowExpr&) -> std::string { return "a borrow"; },
           [](const MoveExpr&) -> std::string { return "a move"; },
           [](const CopyExpr&) -> std::string { return "a read"; },
+          [](const DiscriminantExpr&) -> std::string {
+            return "a read of a tag";
+          },
           [](const FieldAccessExpr&) -> std::string {
             return "a field access";
           },
@@ -483,8 +491,12 @@ void VerifyPlacesAreRead(
               describe(), taker, Describe(block.exprs.Get(id).data), id.value));
     }
   };
+  // A read of overlaid storage is the value a read through that member makes
+  // of the bits there, which lies in no storage, so it is held as any value
+  // is.
   const auto as_storage = [&](ExprId id, std::string_view taker) {
-    if (std::holds_alternative<CopyExpr>(block.exprs.Get(id).data)) {
+    if (std::holds_alternative<CopyExpr>(block.exprs.Get(id).data) &&
+        ValueLiesInStorage(unit, block, id)) {
       throw InternalError(
           std::format(
               "mir verify: in {}, {} takes a read (expression {} of its "
@@ -681,6 +693,91 @@ void VerifyTypeArguments(const Block& block, const auto& describe) {
   }
   for (const BlockId id : block.child_scopes.Ids()) {
     VerifyTypeArguments(block.child_scopes.Get(id), describe);
+  }
+}
+
+// A call naming an operation of a type the unit states per type, or a method of
+// a record the unit declares, names a body the unit states; one naming another
+// leaves the call bound to nothing.
+void VerifyTypeOperationCalls(
+    const CompilationUnit& unit, const Block& block, const auto& describe) {
+  for (const ExprId id : block.exprs.Ids()) {
+    const auto* call = std::get_if<CallExpr>(&block.exprs.Get(id).data);
+    if (call == nullptr) {
+      continue;
+    }
+    const auto* direct = std::get_if<Direct>(&call->callee);
+    if (direct == nullptr) {
+      continue;
+    }
+    // A method of a record this unit declares is one its declaration states.
+    if (const auto* method = std::get_if<RecordMethodTarget>(&direct->target);
+        method != nullptr && method->declaration.unit_name == unit.name) {
+      const auto records = unit.records.Ids();
+      const auto declared = std::ranges::find_if(records, [&](RecordId record) {
+        return unit.GetRecord(record).path == method->declaration.path;
+      });
+      if (declared == records.end() ||
+          std::ranges::none_of(
+              unit.GetRecordMethods(*declared), [&](const RecordMethod& m) {
+                return m.answers == method->answers;
+              })) {
+        throw InternalError(
+            std::format(
+                "mir verify: {} calls the method \"{}\" of record '{}' "
+                "(expression {} of its block), which its declaration does not "
+                "state -- please report this as a bug",
+                describe(), support::ValueOperationName(method->answers),
+                support::DisplayOf(method->declaration.path), id.value));
+      }
+    }
+    const auto* target = std::get_if<TypeOperationTarget>(&direct->target);
+    if (target != nullptr &&
+        FindTypeOperation(unit, target->type, target->answers) == nullptr) {
+      throw InternalError(
+          std::format(
+              "mir verify: {} calls the operation \"{}\" of type {} "
+              "(expression {} of its block), which its unit states no body "
+              "for -- please report this as a bug",
+              describe(), support::ValueOperationName(target->answers),
+              target->type.value, id.value));
+    }
+  }
+  for (const BlockId id : block.child_scopes.Ids()) {
+    VerifyTypeOperationCalls(unit, block.child_scopes.Get(id), describe);
+  }
+}
+
+// A tag is read of a tagged union, and a union value holds one of the members
+// its type declares (LRM 7.3, 7.3.2).
+void VerifyUnionValues(
+    const CompilationUnit& unit, const Block& block, const auto& describe) {
+  for (const ExprId id : block.exprs.Ids()) {
+    const Expr& expr = block.exprs.Get(id);
+    if (const auto* read = std::get_if<DiscriminantExpr>(&expr.data);
+        read != nullptr &&
+        !IsTaggedUnion(unit, block.exprs.Get(read->tagged).type)) {
+      throw InternalError(
+          std::format(
+              "mir verify: {} reads a tag of something that is no tagged union "
+              "(expression {} of its block) -- please report this as a bug",
+              describe(), id.value));
+    }
+    if (const auto* built = std::get_if<UnionExpr>(&expr.data)) {
+      const std::optional<std::span<const TypeId>> members =
+          OverlaidMembers(unit, expr.type);
+      if (!members.has_value() || built->member.value >= members->size()) {
+        throw InternalError(
+            std::format(
+                "mir verify: {} builds a union holding a member its type does "
+                "not have (expression {} of its block) -- please report this "
+                "as a bug",
+                describe(), id.value));
+      }
+    }
+  }
+  for (const BlockId id : block.child_scopes.Ids()) {
+    VerifyUnionValues(unit, block.child_scopes.Get(id), describe);
   }
 }
 
@@ -1137,10 +1234,10 @@ void VerifyConstantsAreFolded(
             [](const NewExpr&) {}, [](const DerefExpr&) {},
             [](const AddressOfExpr&) {}, [](const BorrowExpr&) {},
             [](const MoveExpr&) {}, [](const CopyExpr&) {},
-            [](const FieldAccessExpr&) {}, [](const ClosureExpr&) {},
-            [](const CompositeExpr&) {}, [](const UnionExpr&) {},
-            [](const AwaitExpr&) {}, [](const WaitExpr&) {},
-            [](const VectorGetExpr&) {}},
+            [](const DiscriminantExpr&) {}, [](const FieldAccessExpr&) {},
+            [](const ClosureExpr&) {}, [](const CompositeExpr&) {},
+            [](const UnionExpr&) {}, [](const AwaitExpr&) {},
+            [](const WaitExpr&) {}, [](const VectorGetExpr&) {}},
         expr.data);
   }
   for (const BlockId id : block.child_scopes.Ids()) {
@@ -1261,6 +1358,8 @@ void VerifyCode(
   VerifyMemberReceivers(unit, *code.body, describe);
   VerifyReferenceBindings(unit, *code.body, describe);
   VerifyTypeArguments(*code.body, describe);
+  VerifyTypeOperationCalls(unit, *code.body, describe);
+  VerifyUnionValues(unit, *code.body, describe);
   VerifyOrdinals(unit, *code.body, describe);
   VerifyEntryDeclarations(unit, *code.body, describe);
   VerifyConstantsAreFolded(unit, *code.body, describe);
@@ -1333,13 +1432,12 @@ void VerifyOwnClassesNamedAsOwn(const CompilationUnit& unit) {
   }
 }
 
-// The code holding an array -- fixed-size, dynamic, associative or a queue --
-// asks for its element's default by the element type alone (LRM 7.4.5), and no
-// call building one states it. So the unit answers for exactly the types some
-// array of it has as its element: one with no default leaves the question
-// unanswered, one with two leaves which body answers to chance, and a default
-// no array asks for is a body nothing runs.
-void VerifyTypeDefaults(const CompilationUnit& unit) {
+// Every element type of an array -- fixed-size, dynamic, associative or a
+// queue -- has its default stated, since the code holding the array asks for
+// it by the element type alone (LRM 7.4.5); a type whose operations are stated
+// per unit has its other operations stated, and no other type has any. A pair
+// stated twice leaves which body answers to chance.
+void VerifyTypeOperations(const CompilationUnit& unit) {
   const auto refuse = [&](TypeId type, std::string_view defect) {
     throw InternalError(
         std::format(
@@ -1347,32 +1445,38 @@ void VerifyTypeDefaults(const CompilationUnit& unit) {
             "bug",
             unit.name, defect, type.value));
   };
+  const support::ValueOperation default_value =
+      support::BuiltinFn::kDeclaredDefault;
   const std::vector<TypeId> elements = ArrayElementTypes(unit.types);
-  std::vector<bool> asked_for(unit.types.size(), false);
+  std::vector<bool> is_element(unit.types.size(), false);
   for (const TypeId element : elements) {
-    asked_for[element.value] = true;
+    is_element[element.value] = true;
   }
-  std::vector<bool> answered(unit.types.size(), false);
-  for (const TypeDefault& stated : unit.type_defaults) {
-    if (!asked_for[stated.type.value]) {
+  std::set<std::pair<TypeId, support::ValueOperation>> answered;
+  for (const TypeOperation& stated : unit.type_operations) {
+    if (!OperationsAreStatedPerUnit(unit.types.Get(stated.type)) &&
+        (stated.answers != default_value || !is_element[stated.type.value])) {
       refuse(
           stated.type,
-          "a default is stated for a type no array has as its element");
+          "an operation is stated for a type whose operations are not stated "
+          "per unit, or a default for a type no array holds");
     }
-    if (answered[stated.type.value]) {
-      refuse(stated.type, "a type has two defaults stated");
+    if (!answered.emplace(stated.type, stated.answers).second) {
+      refuse(stated.type, "a type has one operation stated twice");
     }
-    answered[stated.type.value] = true;
-    if (stated.code.result_type != stated.type) {
+    if (stated.answers == default_value &&
+        stated.code.result_type != stated.type) {
       refuse(stated.type, "a type's default answers a value of another type");
     }
     VerifyCode(unit, stated.code, [&] {
       return std::format(
-          "the default of type {} in unit '{}'", stated.type.value, unit.name);
+          "operation \"{}\" of type {} in unit '{}'",
+          support::ValueOperationName(stated.answers), stated.type.value,
+          unit.name);
     });
   }
   for (const TypeId element : elements) {
-    if (!answered[element.value]) {
+    if (!answered.contains({element, default_value})) {
       refuse(element, "the element type of an array has no default stated");
     }
   }
@@ -1401,7 +1505,7 @@ void Verify(const CompilationUnit& unit) {
           BodyLabel(NameOf(unit.named_callables, id), id.value), unit.name);
     });
   }
-  VerifyTypeDefaults(unit);
+  VerifyTypeOperations(unit);
   for (const ForeignScopeEntry& entry : unit.foreign_scope_entries) {
     VerifyCode(unit, entry.definition, [&] {
       return std::format("the foreign entry '{}'", entry.linkage.foreign_name);
@@ -1412,12 +1516,12 @@ void Verify(const CompilationUnit& unit) {
       return std::format("closure {} of unit '{}'", id.value, unit.name);
     });
   }
-  for (const StructId id : unit.structs.Ids()) {
-    const StructDecl& declaration = unit.GetStruct(id);
-    for (const StructMethod& method : declaration.methods) {
+  for (const RecordId id : unit.records.Ids()) {
+    const RecordDecl& declaration = unit.GetRecord(id);
+    for (const RecordMethod& method : unit.GetRecordMethods(id)) {
       VerifyCode(unit, method.code, [&] {
         return std::format(
-            "method '{}' of struct '{}' in unit '{}'",
+            "method '{}' of record '{}' in unit '{}'",
             support::ValueOperationName(method.answers),
             support::DisplayOf(declaration.path), unit.name);
       });

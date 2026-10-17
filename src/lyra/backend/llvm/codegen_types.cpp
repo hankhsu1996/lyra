@@ -95,13 +95,11 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
           [&](const lir::RealType& t) { return address(t); },
           [&](const lir::ShortRealType& t) { return address(t); },
           [&](const lir::EmptyType& t) { return address(t); },
-          // A product and a union, which this backend lays out itself from
+          // A tuple and a record, which this backend lays out itself from
           // their components and members; each is held where it lies, like
           // every value above.
-          [&](const lir::UnionType& t) { return address(t); },
-          [&](const lir::TaggedUnionType& t) { return address(t); },
           [&](const lir::TupleType& t) { return address(t); },
-          [&](const lir::StructType& t) { return address(t); },
+          [&](const lir::RecordType& t) { return address(t); },
           [&](const lir::EventType& t) { return address(t); },
           // A wildcard index (LRM 7.8.1) names where an index of such an array
           // goes. What stands there is an object of the library's keeping the
@@ -278,7 +276,7 @@ auto CodeGenTypes::MachineValueLayout(lir::TypeId type)
 
 auto CodeGenTypes::LayoutOf(lir::TypeId type) -> support::ObjectLayout {
   const lir::Type& ty = unit_->types.Get(type);
-  if (ty.IsProduct()) {
+  if (lir::ProductElements(*unit_, type).has_value()) {
     return LayoutOfTuple(type).storage;
   }
   if (const std::optional<value::IntegralShape> shape = IntegralShapeOf(type)) {
@@ -291,7 +289,7 @@ auto CodeGenTypes::LayoutOf(lir::TypeId type) -> support::ObjectLayout {
   if (ty.Is<lir::UnpackedArrayType>()) {
     return LayoutOfArray(type).storage;
   }
-  if (ty.UnionMembers().has_value()) {
+  if (lir::OverlaidMembers(*unit_, type).has_value()) {
     return LayoutOfUnion(type).storage;
   }
   if (const auto* machine = ty.As<lir::MachineIntType>()) {
@@ -360,9 +358,8 @@ auto CodeGenTypes::LayoutOfUnion(lir::TypeId union_type) -> const UnionLayout& {
   if (const auto found = unions_.find(union_type); found != unions_.end()) {
     return found->second;
   }
-  const lir::Type& stated = unit_->types.Get(union_type);
   const std::optional<std::span<const lir::TypeId>> members =
-      stated.UnionMembers();
+      lir::OverlaidMembers(*unit_, union_type);
   if (!members.has_value()) {
     throw InternalError(
         "llvm codegen: a union layout asked of a type that is no union");
@@ -373,15 +370,19 @@ auto CodeGenTypes::LayoutOfUnion(lir::TypeId union_type) -> const UnionLayout& {
         ends_with_nothing_to_do && LayoutOf(member).ends_with_nothing_to_do;
   }
   const value::Layout overlay = OverlayOf(*members);
-  const value::Layout whole =
-      stated.Is<lir::TaggedUnionType>()
-          ? value::TaggedUnionLayoutOf(overlay, members->size()).whole
-          : overlay;
+  std::optional<value::TagPlacement> tag;
+  value::Layout whole = overlay;
+  if (lir::IsTaggedUnion(*unit_, union_type)) {
+    const value::TaggedUnionLayout tagged =
+        value::TaggedUnionLayoutOf(overlay, members->size());
+    tag = tagged.tag;
+    whole = tagged.whole;
+  }
   return unions_
       .emplace(
           union_type,
           UnionLayout{
-              .members = *members,
+              .tag = tag,
               .storage =
                   {.size = static_cast<std::uint32_t>(whole.size),
                    .align = static_cast<std::uint32_t>(whole.align),
@@ -390,13 +391,13 @@ auto CodeGenTypes::LayoutOfUnion(lir::TypeId union_type) -> const UnionLayout& {
 }
 
 auto CodeGenTypes::TagOf(lir::TypeId tagged) -> value::TagPlacement {
-  if (!unit_->types.Get(tagged).Is<lir::TaggedUnionType>()) {
+  const std::optional<value::TagPlacement> tag = LayoutOfUnion(tagged).tag;
+  if (!tag.has_value()) {
     throw InternalError(
         "llvm codegen: a tag's placement asked of a type that is no tagged "
         "union");
   }
-  const std::span<const lir::TypeId> members = LayoutOfUnion(tagged).members;
-  return value::TaggedUnionLayoutOf(OverlayOf(members), members.size()).tag;
+  return *tag;
 }
 
 auto CodeGenTypes::OverlayOf(std::span<const lir::TypeId> members)
@@ -414,8 +415,15 @@ auto CodeGenTypes::KeepsAboveWidthsClear(lir::TypeId type) const -> bool {
   if (const auto* array = stated.As<lir::UnpackedArrayType>()) {
     return KeepsAboveWidthsClear(array->element_type);
   }
-  if (stated.Is<lir::UnionType>()) {
-    return false;
+  const std::optional<lir::RecordKind> kind = lir::RecordKindOf(*unit_, type);
+  if (kind.has_value()) {
+    switch (*kind) {
+      case lir::RecordKind::kStruct:
+      case lir::RecordKind::kTaggedUnion:
+        break;
+      case lir::RecordKind::kUnion:
+        return false;
+    }
   }
   const std::optional<std::span<const lir::TypeId>> parts =
       lir::ComponentTypes(*unit_, type);

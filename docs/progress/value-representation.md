@@ -48,9 +48,9 @@ against the run before it; the figures are in the pull requests that measured th
       both backends.
 - [x] Writing a character of a string changes that character where the string lies, on both
       backends, as the string's own `putc` does.
-- [ ] Writing a member of an unpacked union costs the part written. On both backends the store lies
-      where the member lies, but a union something waits on keeps the whole union from before the
-      write and compares all of it when the write ends.
+- [x] Writing a member of an unpacked union costs the part written, on both backends: the store lies
+      where the member lies, and the write keeps and compares only what it lands on below the member
+      while reporting the change to the whole union.
 - [ ] No one-word operation costs more than it did while the value library's word functions were
       marked to be inlined always, and a shift of a value of several words stays inline in an
       optimized C++ build. Under clang at `-O2` the one-word operations together cost fewer
@@ -58,16 +58,15 @@ against the run before it; the figures are in the pull requests that measured th
       and a right shift of a value of several words is a call where it was inline.
 - [x] A value is its words at every width, and a value too large for a frame is held through a box,
       so what a call takes from the stack does not follow a declared width. The widest packed type
-      accepted is the front end's, 16,777,215 bits (LRM 6.9.1 and 7.4.1 set the floor at 65,536): a
-      design declaring one, adding to it, shifting it, writing a part of it and passing it through a
-      function builds and runs on both backends, started directly under an 8 MiB stack. One bit
-      wider is refused by the front end, which names the limit.
+      the front end accepts (LRM 6.9.1, 7.4.1): a design declaring one, adding to it, shifting it,
+      writing a part of it and passing it through a function builds and runs on both backends under
+      a default stack. One bit wider is refused by the front end, which names the limit.
 - [x] The size past which a value is kept apart from a frame is decided by what a frame may hold and
       not by speed.
 - [x] A run of words a holder of a wide value released is found again by its length at the same cost
       however many wide lengths a design has; two lengths that share a slot evict each other.
-- [ ] A design building more than eight holders of one wide length at once keeps eight of their
-      runs, and the rest go back to the system each time. Not measured.
+- [ ] A design building more holders of one wide length at once than are kept keeps only that many
+      of their runs, and the rest go back to the system each time. Not measured.
 - [ ] An operator on a value wider than a word writes its answer once. Each clears the answer and
       then writes all of it, a second pass over the value. Not measured.
 - [ ] An operation over a value wider than a word is carried out several words at a time by every
@@ -188,6 +187,13 @@ against the run before it; the figures are in the pull requests that measured th
       member's common initial sequence reads what was written through another member (LRM 7.3), a
       union streams its first-declared member whichever was written last (LRM 11.4.14.1), and a
       net's drivers on different members fold as its first member, on both backends.
+- [x] Every operation on a whole value of a union, a tagged union or a fixed-size unpacked array --
+      the equalities, `$bits`, `$countbits`, `$isunknown`, the bit stream, the net folds, whether a
+      write changed it, and its copy and its end -- is code compiled for the type on both backends,
+      as a structure's is. A union's are stated once, by its declaration, as a structure's are; an
+      array's by each unit naming it. The prebuilt library is told an array's count and its
+      element's type for reaching an element, building one from elements and merging two, and no
+      description of a union.
 - [x] Runtime scalars that were packed values -- descriptors, seeds, counts, a takeover's generation
       -- are machine integers, and a constant passed as one is a constant of that machine integer. A
       delay's amount is not one of them: it crosses as its bits with its width, because an unknown

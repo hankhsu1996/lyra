@@ -47,10 +47,10 @@ struct ArrayLayout {
 
 // How a union is laid out: its members overlaid at its start, as large as the
 // largest and aligned as the strictest, and for a tagged union the tag after
-// them at its own alignment (LRM 7.3, 7.3.2). `storage` is what the union takes
-// of whatever holds it.
+// them at its own alignment (LRM 7.3, 7.3.2), and nothing for an untagged one.
+// `storage` is what the union takes of whatever holds it.
 struct UnionLayout {
-  std::span<const lir::TypeId> members;
+  std::optional<value::TagPlacement> tag;
   support::ObjectLayout storage{};
 };
 

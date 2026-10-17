@@ -10,7 +10,10 @@
 // the part is an element, a member, an element of an inner dimension, bits of
 // one element, a member of an element, or a part read inside a function the
 // block calls. Each procedure below counts its runs, and the count moves only
-// when something on its own list changed.
+// when something on its own list changed. Every member of an unpacked union
+// is one storage with the others (LRM 7.3), so a write to one member runs a
+// reader of another and a reader of the whole, unless it leaves the member as
+// it was.
 module Top;
   typedef struct {
     logic [3:0] x;
@@ -254,6 +257,26 @@ module Top;
   int cut_low_after_other_slice;
   int cut3_before, cut3_after_other_slice;
 
+  typedef union {
+    logic [7:0]  narrow;
+    logic [15:0] wide;
+  } overlay_t;
+  overlay_t overlay;
+  overlay_t overlay_copy;
+  logic [15:0] overlay_wide_out;
+  int overlay_wide_runs, overlay_whole_runs;
+  always_comb begin
+    overlay_wide_out = overlay.wide;
+    overlay_wide_runs = overlay_wide_runs + 1;
+  end
+  always_comb begin
+    overlay_copy = overlay;
+    overlay_whole_runs = overlay_whole_runs + 1;
+  end
+  int overlay_wide_before, overlay_whole_before;
+  int overlay_wide_after_member, overlay_whole_after_member;
+  int overlay_wide_after_same, overlay_whole_after_same;
+
   int event_after_sibling, event_after_own;
   int later0_before, later0_after;
   int kept_before, kept_after;
@@ -336,7 +359,34 @@ module Top;
     cut3_after_other_slice = cut_runs3;
   end
 
+  initial begin
+    overlay.wide = 16'h1234;
+    #30;
+    overlay_wide_before = overlay_wide_runs;
+    overlay_whole_before = overlay_whole_runs;
+    overlay.narrow = 8'h56;
+    #1;
+    overlay_wide_after_member = overlay_wide_runs;
+    overlay_whole_after_member = overlay_whole_runs;
+    overlay.narrow = 8'h56;
+    #1;
+    overlay_wide_after_same = overlay_wide_runs;
+    overlay_whole_after_same = overlay_whole_runs;
+  end
+
   final begin
+    if (overlay_wide_after_member !== overlay_wide_before + 1)
+      $fatal(1, "a write to one union member ran a reader of another %0d times",
+             overlay_wide_after_member - overlay_wide_before);
+    if (overlay_whole_after_member !== overlay_whole_before + 1)
+      $fatal(1, "a write to a union member ran a reader of the union %0d times",
+             overlay_whole_after_member - overlay_whole_before);
+    if (overlay_copy.narrow !== 8'h56)
+      $fatal(1, "a reader of the union held %h, expected 56",
+             overlay_copy.narrow);
+    if (overlay_wide_after_same !== overlay_wide_after_member ||
+        overlay_whole_after_same !== overlay_whole_after_member)
+      $fatal(1, "writing a union member the value it held ran its readers");
     if (event_after_sibling !== 0)
       $fatal(1, "a change to a sibling was %0d events for the element",
              event_after_sibling);

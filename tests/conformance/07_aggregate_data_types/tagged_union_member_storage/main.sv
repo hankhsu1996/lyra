@@ -7,7 +7,8 @@
 // structure, an array and a nested tagged union included, and a select or a
 // further member access applies to a member as to any other variable, checked
 // against the tag on the way (LRM 11.9), however large the member is beside
-// the part it names. Assigning one tagged union variable to another carries
+// the part it names; so is a method called on a member, which acts on the
+// member's own value. Assigning one tagged union variable to another carries
 // the tag across with the value, leaving the two independent afterwards (LRM
 // 7.3.2).
 module Top;
@@ -36,6 +37,13 @@ module Top;
     int pad[4096];
   } padded_t;
 
+  typedef int queue_t[$];
+
+  typedef union tagged {
+    queue_t entries;
+    string  text;
+  } held_t;
+
   typedef union tagged {
     int big[4096];
     padded_t record;
@@ -55,6 +63,10 @@ module Top;
   int copy_carries_tag;
   int element_read;
   int field_read;
+  int entries_size;
+  int entries_found[$];
+  int entries_size_after_push;
+  int text_len;
 
   initial begin
     vint_t v;
@@ -65,6 +77,7 @@ module Top;
     nest_t n;
     large_t in_array;
     large_t in_record;
+    held_t held;
 
     v = tagged Valid (23 + 34);
     valid_read = v.Valid;
@@ -108,6 +121,14 @@ module Top;
     in_record = tagged record '{count: 5, pad: '{default: 0}};
     element_read = in_array.big[3];
     field_read = in_record.record.count;
+
+    held = tagged entries '{4, 5, 6};
+    entries_size = held.entries.size();
+    entries_found = held.entries.find(x) with (x > 4);
+    held.entries.push_back(7);
+    entries_size_after_push = held.entries.size();
+    held = tagged text "lyra";
+    text_len = held.text.len();
   end
 
   final begin
@@ -139,6 +160,15 @@ module Top;
       $fatal(1, "element_read was %0d, expected 21", element_read);
     if (field_read !== 5)
       $fatal(1, "field_read was %0d, expected 5", field_read);
+    if (entries_size !== 3)
+      $fatal(1, "entries_size was %0d, expected 3", entries_size);
+    if (entries_found.size() !== 2 || entries_found[0] !== 5)
+      $fatal(1, "entries_found was %p, expected '{5, 6}", entries_found);
+    if (entries_size_after_push !== 4)
+      $fatal(1, "entries_size_after_push was %0d, expected 4",
+             entries_size_after_push);
+    if (text_len !== 4)
+      $fatal(1, "text_len was %0d, expected 4", text_len);
     $display("All checks passed");
   end
 endmodule

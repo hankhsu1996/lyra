@@ -42,6 +42,7 @@
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
@@ -629,14 +630,18 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
     const hir::Type& type = hir_->types.Get(hir_id);
     const mir::TypeId translated = unit_.types.Intern(TranslateType(type));
     type_translations_.Append(translated);
-    // A struct this unit declares took an identity with no declaration yet,
-    // which its type now names.
-    const auto* structure = unit_.types.Get(translated).As<mir::StructType>();
-    if (structure == nullptr) {
+    // A struct or a union this unit declares is settled, and its methods,
+    // which take values of its type, are stated once that type is interned.
+    const mir::RecordRef* record = mir::RecordOf(unit_.types.Get(translated));
+    const auto* id =
+        record == nullptr ? nullptr : std::get_if<mir::RecordId>(record);
+    if (id == nullptr) {
       continue;
     }
-    if (const auto* id = std::get_if<mir::StructId>(&structure->declaration)) {
-      DefineOwnStruct(type.Get<hir::UnpackedStructType>(), *id, translated);
+    if (const auto* structure = type.As<hir::UnpackedStructType>()) {
+      DefineStructMethods(*structure, *id, translated);
+    } else {
+      DefineUnionMethods(type.Get<hir::UnpackedUnionType>(), *id, translated);
     }
   }
 
@@ -672,7 +677,7 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
   }
 
   PublishAssignmentPatternTexts();
-  PublishTypeDefaults();
+  PublishTypeOperations();
 
   // Every class this unit holds is a type of one of its structural scopes'
   // instance (LRM 23.9, 6.22), which settles that class's shape and lowers its
@@ -708,10 +713,26 @@ void UnitLowerer::PublishAssignmentPatternTexts() {
   }
 }
 
-void UnitLowerer::PublishTypeDefaults() {
-  // Every element type first: building a default interns types, and a pool is
-  // not walked while it grows.
+void UnitLowerer::PublishTypeOperations() {
+  // A body built here interns types, so the pool is walked by position and
+  // its size read again at every step.
+  for (std::uint32_t i = 0; i < unit_.types.size(); ++i) {
+    const mir::TypeId type{.value = i};
+    if (!mir::OperationsAreStatedPerUnit(unit_.types.Get(type))) {
+      continue;
+    }
+    for (mir::TypeOperation& stated : ArrayOperationsOf(*this, type)) {
+      unit_.type_operations.push_back(std::move(stated));
+    }
+  }
+  // An element type whose operations the unit states has its default among
+  // them; every other is given one here.
+  const support::ValueOperation default_value =
+      support::BuiltinFn::kDeclaredDefault;
   for (const mir::TypeId element : mir::ArrayElementTypes(unit_.types)) {
+    if (mir::FindTypeOperation(unit_, element, default_value) != nullptr) {
+      continue;
+    }
     mir::CallableCode code = mir::CallableCode::Defined();
     code.result_type = element;
     mir::Block& block = code.Body();
@@ -719,8 +740,11 @@ void UnitLowerer::PublishTypeDefaults() {
         mir::ReturnStmt{
             .value =
                 block.exprs.Add(BuildDefaultValueExpr(unit_, block, element))});
-    unit_.type_defaults.push_back(
-        mir::TypeDefault{.type = element, .code = std::move(code)});
+    unit_.type_operations.push_back(
+        mir::TypeOperation{
+            .type = element,
+            .answers = default_value,
+            .code = std::move(code)});
   }
 }
 

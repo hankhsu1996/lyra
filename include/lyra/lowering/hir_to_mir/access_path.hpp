@@ -94,16 +94,23 @@ struct StepToComponent {
   base::ComponentIndex position;
 };
 
-// A member of an unpacked union, by its declaration-order position (LRM 7.3).
-// Every member lies at the start of the union's storage, so reading it and
-// writing it are the one field step on the place the union lies in, as a
-// component's are; but it has no identity of its own, so a write in progress
-// lands on the union before taking it. In a tagged union the step is valid
-// only while the tag names the member (LRM 11.9), which a read or a write
-// taking it checks first.
+// A member of an untagged unpacked union, by its declaration-order position
+// (LRM 7.3). Every member lies at the start of the union's storage, so reading
+// it and writing it are the one field step on the place the union lies in, as
+// a component's are; but it has no identity of its own, so a write in progress
+// lands on the union before taking it, and a read of it reads storage another
+// member may have written.
 struct StepToUnionMember {
   base::ComponentIndex position;
-  bool tagged = false;
+};
+
+// A member of an unpacked tagged union, by its declaration-order position, as
+// rustc's downcast to a variant is a projection of its own beside a field's.
+// It is taken as an untagged member is, and is valid only while the tag names
+// the member (LRM 11.9), which a read or a write taking it checks first; so it
+// never reads what another member wrote.
+struct StepToTaggedMember {
+  base::ComponentIndex position;
 };
 
 // One step of a descent into a value: which kind of part it reaches, and the
@@ -117,7 +124,8 @@ struct StepToUnionMember {
 struct DescentStep {
   std::variant<
       StepToBits, StepToElementRun, StepToElement, StepToAssocElement,
-      StepToCharacter, StepToQueueRun, StepToComponent, StepToUnionMember>
+      StepToCharacter, StepToQueueRun, StepToComponent, StepToUnionMember,
+      StepToTaggedMember>
       to;
   mir::TypeId part_type;
 };
@@ -138,7 +146,8 @@ void ForEachOperand(DescentStep& step, Visit visit) {
             visit(run.lowest);
             visit(run.highest);
           },
-          [](StepToComponent&) {}, [](StepToUnionMember&) {}},
+          [](StepToComponent&) {}, [](StepToUnionMember&) {},
+          [](StepToTaggedMember&) {}},
       step.to);
 }
 
@@ -159,11 +168,9 @@ void ForEachOperand(DescentStep& step, Visit visit) {
           [&](const StepToCharacter&) { return none(); },
           [&](const StepToQueueRun&) { return none(); },
           [&](const StepToComponent&) { return none(); },
-          [&](const StepToUnionMember& member)
+          [&](const StepToUnionMember&) { return none(); },
+          [](const StepToTaggedMember& member)
               -> std::optional<TagRequirement> {
-            if (!member.tagged) {
-              return std::nullopt;
-            }
             return HeldTag{.member = member.position};
           }},
       step.to);

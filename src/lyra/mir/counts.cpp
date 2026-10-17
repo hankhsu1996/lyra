@@ -50,7 +50,7 @@ void Add(const CompilationUnit& unit, const Class& cls, HeldByClasses& held) {
 
 auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
   // As for a class: every member of the unit is named here.
-  const auto& [name, body_name, source_name, types, integral_constants, enum_tables, builtins, classes, content, external_classes, callables, named_callables, type_defaults, static_variables, named_static_variables, foreign_scope_entries, structs, external_structs, closures, consumed_signatures] =
+  const auto& [name, body_name, source_name, types, integral_constants, enum_tables, builtins, classes, content, external_classes, callables, named_callables, type_operations, static_variables, named_static_variables, foreign_scope_entries, records, record_methods, external_records, closures, consumed_signatures] =
       unit;
 
   HeldByClasses in_classes;
@@ -61,6 +61,10 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
   std::uint64_t coroutines = in_classes.coroutines;
   for (const CallableDecl& callable : callables) {
     coroutines += IsCoroutine(unit, callable.code) ? 1 : 0;
+  }
+  std::uint64_t methods_of_records = 0;
+  for (const RecordMethods& methods : record_methods) {
+    methods_of_records += methods.size();
   }
   std::uint64_t captures = 0;
   for (const ClosureDecl& closure : closures) {
@@ -76,8 +80,9 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
       {.kind = "coroutines", .held = coroutines},
       {.kind = "closures", .held = closures.size()},
       {.kind = "captures", .held = captures},
-      {.kind = "structs", .held = structs.size()},
-      {.kind = "type defaults", .held = type_defaults.size()},
+      {.kind = "records", .held = records.size()},
+      {.kind = "record methods", .held = methods_of_records},
+      {.kind = "type operations", .held = type_operations.size()},
       {.kind = "static variables", .held = static_variables.size()},
       {.kind = "static properties", .held = in_classes.static_properties},
       {.kind = "class constants", .held = in_classes.constants},
@@ -86,7 +91,7 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
       {.kind = "types", .held = types.size()},
       {.kind = "foreign scope entries", .held = foreign_scope_entries.size()},
       {.kind = "external classes", .held = external_classes.size()},
-      {.kind = "external structs", .held = external_structs.size()},
+      {.kind = "external records", .held = external_records.size()},
       {.kind = "consumed signatures", .held = consumed_signatures.size()},
   };
 }

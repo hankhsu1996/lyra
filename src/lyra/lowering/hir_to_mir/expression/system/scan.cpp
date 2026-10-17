@@ -28,7 +28,7 @@
 #include "lyra/lowering/hir_to_mir/predicate.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
-#include "lyra/lowering/hir_to_mir/struct_methods.hpp"
+#include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -123,8 +123,8 @@ auto EmitScanOperandsKnown(
   std::vector<mir::ExprId> known;
   for (const mir::ExprId operand : operands) {
     if (!CarriesUnknowns(unit, body.exprs.Get(operand).type)) continue;
-    const mir::ExprId unknown_id = body.exprs.Add(MakeBuiltinCall(
-        unit, body, support::BuiltinFn::kIsUnknown, operand, {}, bit_t));
+    const mir::ExprId unknown_id =
+        ConvertToType(unit, body, BuildUnknownTest(unit, body, operand), bit_t);
     known.push_back(BuildLogicalNot(unit, body, unknown_id));
   }
   return BuildMirLogicalAnd(unit, body, bit_t, known);

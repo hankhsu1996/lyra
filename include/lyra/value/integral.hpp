@@ -16,6 +16,7 @@
 
 #include "lyra/base/fixed_array.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/support/value_domain.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/frame_bound.hpp"
 #include "lyra/value/integral_fwd.hpp"  // IWYU pragma: export
@@ -51,6 +52,31 @@ namespace lyra::value {
 [[nodiscard]] constexpr auto IntegralAlignFor(std::uint64_t width)
     -> std::size_t {
   return std::min<std::size_t>(PlaneBytesFor(width), 8);
+}
+
+// The domain a value of an integral type `width` bits wide is held in. Up to a
+// word that is the layout the value's bytes have -- the storage unit one plane
+// takes and whether an unknown plane follows it -- because what holds such a
+// value reads nothing else of its type. A wider one is its planes' words, as
+// many as its width asks for, so all its domain says is which planes it has.
+[[nodiscard]] constexpr auto IntegralDomainFor(
+    std::uint64_t width, StateDomain domain) -> support::ValueDomain {
+  using support::ValueDomain;
+  const bool four_state = domain == StateDomain::kFourState;
+  if (width > 64) {
+    return four_state ? ValueDomain::kLogicWide : ValueDomain::kBitWide;
+  }
+  const std::size_t plane = PlaneBytesFor(width);
+  if (plane == 1) {
+    return four_state ? ValueDomain::kLogic8 : ValueDomain::kBit8;
+  }
+  if (plane == 2) {
+    return four_state ? ValueDomain::kLogic16 : ValueDomain::kBit16;
+  }
+  if (plane == 4) {
+    return four_state ? ValueDomain::kLogic32 : ValueDomain::kBit32;
+  }
+  return four_state ? ValueDomain::kLogic64 : ValueDomain::kBit64;
 }
 
 // An integral type as code compiled once for every integral type is handed it:

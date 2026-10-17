@@ -49,7 +49,7 @@ RuntimeFixedArray::RuntimeFixedArray(AnyValue value)
 
 auto RuntimeFixedArray::CopyOf(const FixedArrayType& type, const void* laid_out)
     -> RuntimeFixedArray {
-  return RuntimeFixedArray(AnyValue::CopyOf(type, laid_out));
+  return RuntimeFixedArray(AnyValue::CopyOf(type.Type(), laid_out));
 }
 
 auto RuntimeFixedArray::FromElements(
@@ -78,8 +78,8 @@ auto RuntimeFixedArray::FromIntegral(
   return FromBytes(BytesOf(bits), type);
 }
 
-auto RuntimeFixedArray::Type() const -> const FixedArrayType& {
-  const FixedArrayType* type = LaidOutValue::Type().AsFixedArray();
+auto RuntimeFixedArray::ArrayType() const -> const FixedArrayType& {
+  const FixedArrayType* type = Type().AsFixedArray();
   if (type == nullptr) {
     throw InternalError(
         "RuntimeFixedArray: an array holds a value of another kind -- please "

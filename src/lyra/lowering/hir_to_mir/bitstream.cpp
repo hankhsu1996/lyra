@@ -3,12 +3,13 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
-#include "lyra/lowering/hir_to_mir/struct_methods.hpp"
+#include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -61,13 +62,24 @@ auto FixedStreamShapeOf(const mir::CompilationUnit& unit, mir::TypeId type)
     return StreamShape{
         .width = integral.bit_width, .state_kind = integral.state_kind};
   }
-  if (const std::optional<std::span<const mir::TypeId>> parts =
-          mir::ProductElements(unit, type)) {
-    return FixedStreamShapeOfParts(unit, *parts);
+  if (const auto* tuple = resolved.As<mir::TupleType>()) {
+    const std::vector<mir::TypeId> components = tuple->elements;
+    return FixedStreamShapeOfParts(unit, components);
   }
-  // LRM 11.4.14.1: an untagged union streams as its first member.
-  if (const auto* overlay = resolved.As<mir::UnionType>()) {
-    return FixedStreamShapeOf(unit, overlay->members.front());
+  // A structure streams its members end to end, an untagged union as its first
+  // member, and a tagged union not at all (LRM 11.4.14.1).
+  if (const mir::RecordRef* record = mir::RecordOf(resolved)) {
+    const std::span<const mir::TypeId> members =
+        mir::RecordElements(unit, *record);
+    switch (mir::RecordKindOf(unit, *record)) {
+      case mir::RecordKind::kStruct:
+        return FixedStreamShapeOfParts(unit, members);
+      case mir::RecordKind::kUnion:
+        return FixedStreamShapeOf(unit, members.front());
+      case mir::RecordKind::kTaggedUnion:
+        return std::nullopt;
+    }
+    throw InternalError("FixedStreamShapeOf: unknown record kind");
   }
   if (resolved.Is<mir::UnpackedArrayType>()) {
     const auto& array = resolved.Get<mir::UnpackedArrayType>();

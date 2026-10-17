@@ -488,9 +488,12 @@ auto MemberStep(
         .to = StepToComponent{.position = index}, .part_type = part_type};
   }
   if (const auto* unpacked = aggregate.As<hir::UnpackedUnionType>()) {
+    if (unpacked->tagged) {
+      return DescentStep{
+          .to = StepToTaggedMember{.position = index}, .part_type = part_type};
+    }
     return DescentStep{
-        .to = StepToUnionMember{.position = index, .tagged = unpacked->tagged},
-        .part_type = part_type};
+        .to = StepToUnionMember{.position = index}, .part_type = part_type};
   }
   const PackedProjection projection =
       ProjectPackedAggregate(unit_lowerer, aggregate);
@@ -499,7 +502,7 @@ auto MemberStep(
       TagInBitsOf(projection, index));
 }
 
-auto BuildTagTest(
+auto BuildHoldsMember(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId subject,
     hir::TypeId subject_type, base::ComponentIndex index) -> mir::ExprId {
   const std::optional<TagRequirement> tag = TagRequiredByMember(
@@ -780,22 +783,36 @@ auto IsTagCheckedRead(
 }
 
 template <ExprLowerer Lowerer>
-auto LowerTagCheckedRead(
-    Lowerer& lowerer, WalkFrame frame, const hir::Expr& select)
-    -> diag::Result<mir::Expr> {
+auto LowerTagCheckedUse(
+    Lowerer& lowerer, WalkFrame frame, const hir::Expr& select,
+    const TagCheckedUse& use) -> diag::Result<mir::Expr> {
   BlockBuilder steps(frame);
   mir::Block& body = steps.Body();
   auto path = lowerer.LowerAccessPath(select, steps.Frame());
   if (!path) return std::unexpected(std::move(path.error()));
   const SettledPath settled =
       SettledForRead(lowerer.Owner(), steps.Frame(), *std::move(path));
-  // A read answers with the storage it reached until its value is kept, so the
-  // value is kept here, before the steps end.
-  const mir::ExprId value =
-      PathValueAsDeclared(lowerer.Owner().Unit(), body, NamedIn(settled, body));
-  return steps.Build(body.ReadLocal(
-      steps.DeclareLocal(body.exprs.Get(value).type, value),
-      body.exprs.Get(value).type));
+  auto value = use(steps, NamedIn(settled, body));
+  if (!value) return std::unexpected(std::move(value.error()));
+  return steps.Build(*value);
+}
+
+template <ExprLowerer Lowerer>
+auto LowerTagCheckedRead(
+    Lowerer& lowerer, WalkFrame frame, const hir::Expr& select)
+    -> diag::Result<mir::Expr> {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  return LowerTagCheckedUse(
+      lowerer, frame, select,
+      [&](BlockBuilder& steps,
+          const AccessPath& path) -> diag::Result<mir::ExprId> {
+        // A read answers with the storage it reached until its value is kept,
+        // so the value is kept here, before the steps end.
+        mir::Block& body = steps.Body();
+        const mir::ExprId value = PathValueAsDeclared(unit, body, path);
+        const mir::TypeId type = body.exprs.Get(value).type;
+        return body.ReadLocal(steps.DeclareLocal(type, value), type);
+      });
 }
 
 // LRM 8.4: a class property is reached through the handle naming its object.
@@ -907,6 +924,12 @@ template auto IsTagCheckedRead(
     ProcessLowerer&, const WalkFrame&, const hir::Expr&) -> bool;
 template auto IsTagCheckedRead(
     const StructuralScopeLowerer&, const WalkFrame&, const hir::Expr&) -> bool;
+template auto LowerTagCheckedUse(
+    ProcessLowerer&, WalkFrame, const hir::Expr&, const TagCheckedUse&)
+    -> diag::Result<mir::Expr>;
+template auto LowerTagCheckedUse(
+    const StructuralScopeLowerer&, WalkFrame, const hir::Expr&,
+    const TagCheckedUse&) -> diag::Result<mir::Expr>;
 template auto LowerTagCheckedRead(ProcessLowerer&, WalkFrame, const hir::Expr&)
     -> diag::Result<mir::Expr>;
 template auto LowerTagCheckedRead(

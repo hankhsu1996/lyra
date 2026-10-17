@@ -24,7 +24,7 @@
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/local.hpp"
-#include "lyra/mir/struct_decl.hpp"
+#include "lyra/mir/record_decl.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
@@ -191,7 +191,7 @@ struct VerbatimName {
 // A name made from the scopes leading to a declaration, for one whose own name
 // does not tell it from every other name of the namespace it is declared in:
 // `sv_class_b1_g_c1_C` for class `C` declared in block `g`, and
-// `sv_struct_b1_g_t7_entry_t` for a structure `entry_t` declared there. `what`
+// `sv_type_b1_g_t7_entry_t` for a structure `entry_t` declared there. `what`
 // says which kind of declaration it is. Each step is the letter of its kind
 // and then the length of its name as a C++ identifier and that identifier, or
 // for a step with no name the position it stands at, and after a name whatever
@@ -308,7 +308,7 @@ void WriteOne(TargetText& out, BodyScope scope);
 }
 
 // `Top.opening.hpp`: the cells and functions the unit's namespace declares. Of
-// the program it includes only forward files and the files of the structs its
+// the program it includes only forward files and the files of the types its
 // declarations name, so any class file, of this unit or another, can include
 // it first.
 [[nodiscard]] inline auto UnitOpeningFileOf(std::string_view unit_name)
@@ -325,15 +325,15 @@ void WriteOne(TargetText& out, BodyScope scope);
   return TextOf(ToCppName(unit_name), ".forward.hpp");
 }
 
-// `Top.Pair.types.hpp`: one struct a unit declares, alone in its file, which a
-// value of it needs complete wherever it is held. It includes the file of each
-// struct it holds by value, so whichever file is included first, every struct
-// is defined after what it is built from. A struct cannot hold itself by value,
-// so those files form no cycle -- while two units' structs may each hold the
-// other's, so a file holding all of one unit's would.
-[[nodiscard]] inline auto UnitStructFileOf(
-    std::string_view unit_name, const CppName& struct_name) -> std::string {
-  return TextOf(ToCppName(unit_name), ".", struct_name, ".types.hpp");
+// `Top.Pair.types.hpp`: one struct or union a unit declares, alone in its
+// file, which a value of it needs complete wherever it is held. It includes the
+// file of each it holds by value, so whichever file is included first, every
+// one is defined after what it is built from. None can hold itself by value, so
+// those files form no cycle -- while two units' may each hold the other's, so a
+// file holding all of one unit's would.
+[[nodiscard]] inline auto UnitRecordFileOf(
+    std::string_view unit_name, const CppName& record_name) -> std::string {
+  return TextOf(ToCppName(unit_name), ".", record_name, ".types.hpp");
 }
 
 // `Top.Base.hpp`: one class the source declared, alone in its file, which a
@@ -706,21 +706,21 @@ inline void WriteOne(TargetText& out, ExternalClassPath path) {
                    unit_name, CppPublishedClassName(unit_name, class_path));
 }
 
-// The name the struct any unit reaches as `path` of its unit is declared
-// under, in the unit's types namespace below. The declaring unit and every
-// unit naming the struct ask here with the same path, so they spell it alike
-// with no record between them.
+// The name the struct or union any unit reaches as `path` of its unit is
+// declared under, in the unit's types namespace below. The declaring unit and
+// every unit naming it ask here with the same path, so they spell it alike with
+// nothing passed between them.
 //
-// A struct the unit's own scope declares under a name keeps that name, so the
-// output reads as the source does. Every other shares that namespace with
-// structs of other scopes that may carry its name -- one a generate block, a
-// class or a subroutine declares (LRM 6.22) -- or has none, and takes a name
-// made from its whole path.
-[[nodiscard]] inline auto CppStructNameOf(const support::DefPath& path)
+// One the unit's own scope declares under a name keeps that name, so the
+// output reads as the source does. Every other shares that namespace with types
+// of other scopes that may carry its name -- one a generate block, a class or a
+// subroutine declares (LRM 6.22) -- or has none, and takes a name made from its
+// whole path.
+[[nodiscard]] inline auto CppRecordNameOf(const support::DefPath& path)
     -> CppName {
   const std::span<const support::DefPathData> steps{path.data};
   const auto from_whole_path = [&]() -> CppName {
-    return MintedPathName{.what = "struct", .steps = steps};
+    return MintedPathName{.what = "type", .steps = steps};
   };
   if (steps.size() != 1) {
     return from_whole_path();
@@ -739,39 +739,41 @@ inline void WriteOne(TargetText& out, ExternalClassPath path) {
       steps.front());
 }
 
-// The name of a struct this unit declares.
-[[nodiscard]] inline auto CppStructName(const mir::StructDecl& decl)
+// The name of a struct or a union this unit declares.
+[[nodiscard]] inline auto CppRecordName(const mir::RecordDecl& decl)
     -> CppName {
-  return CppStructNameOf(decl.path);
+  return CppRecordNameOf(decl.path);
 }
 
-// The namespace inside a unit's own that the structs the source declares are
-// declared in, `sv_types`. A struct takes its name from the type names of the
-// scope declaring it, and the unit's namespace also holds the class an instance
-// of the unit is, which takes the unit's name from the name space of design
-// elements (LRM 3.13); keeping the two apart is what lets a module declare a
-// struct under its own name.
-[[nodiscard]] inline auto CppStructTypesNamespace() -> MintedWord {
+// The namespace inside a unit's own that the structs and unions the source
+// declares are declared in, `sv_types`. Each takes its name from the type names
+// of the scope declaring it, and the unit's namespace also holds the class an
+// instance of the unit is, which takes the unit's name from the name space of
+// design elements (LRM 3.13); keeping the two apart is what lets a module
+// declare a type under its own name.
+[[nodiscard]] inline auto CppRecordTypesNamespace() -> MintedWord {
   return MintedWord{.word = "types"};
 }
 
-// A struct as every unit names it, `::Unit::sv_types::Name`. A value of it is
-// held whole, so text naming it needs the struct defined ahead of it, and
-// writing the name says which file that is.
-struct StructRef {
+// A struct or a union as every unit names it, `::Unit::sv_types::Name`. A
+// value of it is held whole, so text naming it needs the type defined ahead of
+// it, and writing the name says which file that is.
+struct RecordQualifiedName {
   std::string_view unit_name;
   CppName name;
 };
 
-[[nodiscard]] inline auto CppStructRef(
-    std::string_view unit_name, const support::DefPath& path) -> StructRef {
-  return StructRef{.unit_name = unit_name, .name = CppStructNameOf(path)};
+[[nodiscard]] inline auto CppRecordQualifiedName(
+    std::string_view unit_name, const support::DefPath& path)
+    -> RecordQualifiedName {
+  return RecordQualifiedName{
+      .unit_name = unit_name, .name = CppRecordNameOf(path)};
 }
 
-inline void WriteOne(TargetText& out, const StructRef& ref) {
-  out.Require(UnitStructFileOf(ref.unit_name, ref.name));
+inline void WriteOne(TargetText& out, const RecordQualifiedName& ref) {
+  out.Require(UnitRecordFileOf(ref.unit_name, ref.name));
   Write(
-      out, CppUnitScope(ref.unit_name), "::", CppStructTypesNamespace(),
+      out, CppUnitScope(ref.unit_name), "::", CppRecordTypesNamespace(),
       "::", ref.name);
 }
 
@@ -817,28 +819,35 @@ inline void WriteOne(TargetText& out, const StructRef& ref) {
   return MintedCppName("const", c.value);
 }
 
-// The name a struct gives the library product it is built on, `sv_base`,
-// through which it takes that product's constructors as its own. A member of
-// the struct, so no source name reaches it.
-[[nodiscard]] inline auto CppTupleBaseName() -> MintedWord {
+// The name a struct or a union gives the library type it is built on,
+// `sv_base`, through which it takes that type's constructors as its own. A
+// member of the declared type, so no source name reaches it.
+[[nodiscard]] inline auto CppRecordBaseName() -> MintedWord {
   return MintedWord{.word = "base"};
 }
 
-// The library product's accessor for one component, `Component<I>()`, which a
-// field step to a struct's or a tuple's component is spelled through. It is
-// overloaded on the product's value category, so reading a component, writing
-// it and moving it out of an expiring product are the one access, as a C++
-// member access is.
+// The library type's accessor for one component, `Component<I>()`, which a
+// field step to a component of a struct, a union or a tuple is spelled through.
+// It is overloaded on the value category of what it is asked of, so reading a
+// component, writing it and moving it out of an expiring value are the one
+// access, as a C++ member access is.
 [[nodiscard]] inline auto CppTupleComponentAccessor() -> VerbatimName {
   return VerbatimName{.text = "Component"};
 }
 
-// The member a struct answers an operation on its whole value with: the
-// operator, or the identifier the library's entry for the question declares on
-// every value, so the library's own code asking a value of the struct finds it
-// by the name it asks every value by.
-[[nodiscard]] inline auto CppStructMethodName(support::ValueOperation operation)
-    -> VerbatimName {
+// The library tagged union's accessor for the position of the member it
+// holds, `Discriminant()`, which a read of a tag is spelled through.
+[[nodiscard]] inline auto CppDiscriminantAccessor() -> VerbatimName {
+  return VerbatimName{.text = "Discriminant"};
+}
+
+// The member a type answers an operation on its whole value with -- a record's
+// method, or the library array template's own: the operator, or the identifier
+// the library's entry for the question declares on every value, so the
+// library's own code asking a value of the type finds it by the name it asks
+// every value by.
+[[nodiscard]] inline auto CppValueOperationMemberName(
+    support::ValueOperation operation) -> VerbatimName {
   return std::visit(
       Overloaded{
           [](support::ValueOperator op) -> VerbatimName {
@@ -861,10 +870,10 @@ inline void WriteOne(TargetText& out, const StructRef& ref) {
                     },
                     [](const support::FreeFunction&) -> VerbatimName {
                       throw InternalError(
-                          "backend::cpp: a struct answers a question the "
-                          "library asks of a value or of its type, and this "
-                          "entry is declared on neither -- please report this "
-                          "as a bug");
+                          "backend::cpp: a type's own operation answers a "
+                          "question the library asks of a value or of its "
+                          "type, and this entry is declared on neither -- "
+                          "please report this as a bug");
                     }},
                 support::RuntimeEntryOf(fn).declaration);
           }},

@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <type_traits>
 
 #include "lyra/value/element_type.hpp"
 #include "lyra/value/value_type.hpp"
@@ -13,8 +15,7 @@ namespace lyra::value {
 // so a queue built at the type reads them here and is handed neither.
 //
 // Generated code states one of these for each queue type it hands the library
-// a queue of, as constant data of this class, so its layout is part of what
-// the two sides agree on.
+// a queue of, as constant data laid out as this record is.
 class QueueType {
  public:
   constexpr QueueType(const value::ElementType& element, std::int64_t bound)
@@ -32,12 +33,18 @@ class QueueType {
 
   // Where the type states each of its own parts, which code stating a type as
   // constant data places them by.
-  [[nodiscard]] auto ElementStatedAt() const -> StatedAt;
-  [[nodiscard]] auto BoundStatedAt() const -> StatedAt;
+  [[nodiscard]] static constexpr auto ElementStatedAt() -> std::size_t {
+    return offsetof(QueueType, element_);
+  }
+  [[nodiscard]] static constexpr auto BoundStatedAt() -> StatedAt {
+    return {.offset = offsetof(QueueType, bound_), .bytes = sizeof(bound_)};
+  }
 
  private:
   const value::ElementType* element_;
   std::int64_t bound_;
 };
+
+static_assert(std::is_standard_layout_v<QueueType>);
 
 }  // namespace lyra::value

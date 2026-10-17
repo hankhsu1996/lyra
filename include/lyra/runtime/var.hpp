@@ -1322,11 +1322,11 @@ class DesignatedBits;
 
 // A place designated within a write: the whole of what the write was opened
 // on, or a part of it reached by the steps below. It borrows the write. The
-// steps reach the parts that are storage of their own (LRM 13.5.2) -- an
-// element, reported to the write as it is formed, and a component -- each
-// answering with the part designated within the same write; bits are reached
-// by a reference to them and a run of elements is written in one call, each
-// telling the write what moved. Dereferencing it is where the write lands,
+// steps reach the parts a write lands on -- an element, reported to the write
+// as it is formed, a component, and a union's member (LRM 7.2, 7.3, 7.4) --
+// each answering with the part designated within the same write; bits are
+// reached by a reference to them and a run of elements is written in one call,
+// each telling the write what moved. Dereferencing it is where the write lands,
 // which is when the value from before the write is kept.
 template <class Sink, class Part>
 class Designation {
@@ -1350,7 +1350,7 @@ class Designation {
   }
 
   template <typename Key>
-  auto ElementRef(const Key& key) {
+  auto DesignateElement(const Key& key) {
     value::Formation formed{};
     auto& element = part_->ElementMut(key, formed);
     write_->Formed(formed);
@@ -1362,13 +1362,26 @@ class Designation {
   }
 
   template <std::size_t I>
-  auto ComponentRef() {
+  auto DesignateComponent() {
     auto& component = part_->template Component<I>();
     if (write_->Undecided()) {
       write_->Stepped(PartPath::Child(I));
     }
     return Designation<Sink, std::remove_reference_t<decltype(component)>>{
         *write_, component};
+  }
+
+  // A member of a union lies where every other member does (LRM 7.3), so no
+  // step of a path stands for it: the path stops at the union, which every
+  // member reads, while the write keeps only what it lands on below it.
+  template <std::size_t I>
+  auto DesignateMember() {
+    auto& member = part_->template Component<I>();
+    if (write_->Undecided()) {
+      write_->Stepped(PartPath::Inexact());
+    }
+    return Designation<Sink, std::remove_reference_t<decltype(member)>>{
+        *write_, member};
   }
 
   // A reference to the bits of a value of `Bits` at `position` within the

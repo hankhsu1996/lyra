@@ -94,8 +94,6 @@ auto ClassOfObject(const TypePool& types, TypeId object) -> DeclaredClassRef {
           [&](const ManagedRefType&) { return not_an_object(); },
           [&](const VectorType&) { return not_an_object(); },
           [&](const TupleType&) { return not_an_object(); },
-          [&](const UnionType&) { return not_an_object(); },
-          [&](const TaggedUnionType&) { return not_an_object(); },
           [&](const ObservableType&) { return not_an_object(); },
           [&](const ResolvedType&) { return not_an_object(); },
           [&](const DriverType&) { return not_an_object(); },
@@ -106,7 +104,7 @@ auto ClassOfObject(const TypePool& types, TypeId object) -> DeclaredClassRef {
           [&](const SampledHistoryType&) { return not_an_object(); },
           [&](const EvaluationAttemptsType&) { return not_an_object(); },
           [&](const LoopBlocksType&) { return not_an_object(); },
-          [&](const StructType&) { return not_an_object(); },
+          [&](const RecordType&) { return not_an_object(); },
           [&](const ClosureType&) { return not_an_object(); }});
 }
 

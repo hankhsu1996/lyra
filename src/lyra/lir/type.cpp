@@ -207,18 +207,16 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [&](const ManagedRefType& t) { Combine(seed, t.pointee); },
           [&](const VectorType& t) { Combine(seed, t.element); },
           [&](const TupleType& t) { Combine(seed, t.elements); },
-          [&](const StructType& t) {
+          [&](const RecordType& t) {
             std::visit(
                 Overloaded{
-                    [&](StructId id) { Combine(seed, id.value); },
+                    [&](RecordId id) { Combine(seed, id.value); },
                     [&](const TypeDeclarationRef& ref) {
                       Combine(seed, ref.unit_name);
                       Combine(seed, ref.path);
                     }},
                 t.declaration);
           },
-          [&](const UnionType& t) { Combine(seed, t.members); },
-          [&](const TaggedUnionType& t) { Combine(seed, t.members); },
           [&](const ResolvedType& t) { Combine(seed, t.value); },
           [&](const DriverType& t) { Combine(seed, t.value); },
           [&](const ObservableType& t) { Combine(seed, t.value); },
@@ -256,7 +254,7 @@ auto Type::KindName() const -> std::string_view {
           [](const CrossUnitClassType&) { return "cross-unit class"; },
           [](const RuntimeClassType&) { return "runtime class"; },
           [](const ClosureType&) { return "closure"; },
-          [](const StructType&) { return "struct"; },
+          [](const RecordType&) { return "record"; },
           [](const RuntimeEffectsType&) { return "runtime services"; },
           [](const FilesType&) { return "file table"; },
           [](const DiagnosticType&) { return "diagnostic dispatcher"; },
@@ -269,8 +267,6 @@ auto Type::KindName() const -> std::string_view {
           [](const ManagedRefType&) { return "managed reference"; },
           [](const VectorType&) { return "vector"; },
           [](const TupleType&) { return "tuple"; },
-          [](const UnionType&) { return "union"; },
-          [](const TaggedUnionType&) { return "tagged union"; },
           [](const ResolvedType&) { return "net resolution node"; },
           [](const DriverType&) { return "net driver"; },
           [](const ObservableType&) { return "observable cell"; },
@@ -294,9 +290,9 @@ auto Type::Declaration() const -> std::optional<TypeDeclaration> {
           [](const CrossUnitClassType& t) -> Declared { return t; },
           [](const ClosureType& t) -> Declared { return t; },
 
-          // A struct names a declaration too, but of a value, whose components
-          // are reached by position as a tuple's are rather than as members.
-          [&](const StructType&) { return names_none(); },
+          // A record names a declaration too, but of a value, whose members
+          // are reached by position as a tuple's components are.
+          [&](const RecordType&) { return names_none(); },
 
           // A value, however it is shaped and however its elements are held.
           [&](const IntegralType&) { return names_none(); },
@@ -310,8 +306,6 @@ auto Type::Declaration() const -> std::optional<TypeDeclaration> {
           [&](const ShortRealType&) { return names_none(); },
           [&](const ChandleType&) { return names_none(); },
           [&](const TupleType&) { return names_none(); },
-          [&](const UnionType&) { return names_none(); },
-          [&](const TaggedUnionType&) { return names_none(); },
           [&](const EmptyType&) { return names_none(); },
           [&](const VoidType&) { return names_none(); },
 
@@ -376,9 +370,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           // Parts side by side, or members overlaid, but never a sequence of
           // one type.
           [](const TupleType&) -> Element { return std::nullopt; },
-          [](const StructType&) -> Element { return std::nullopt; },
-          [](const UnionType&) -> Element { return std::nullopt; },
-          [](const TaggedUnionType&) -> Element { return std::nullopt; },
+          [](const RecordType&) -> Element { return std::nullopt; },
 
           // A single quantity or a single token.
           [](const WildcardIndexType&) -> Element { return std::nullopt; },
@@ -518,15 +510,11 @@ auto Type::HeldAs() const -> std::optional<Holding> {
           [](const ShortRealType&) -> Held { return ValueDomain::kShortReal; },
           // A chandle (LRM 6.14) is a value holding one host pointer.
           [](const ChandleType&) -> Held { return ValueDomain::kChandle; },
-          // A product is held the same way whether its components are all it
-          // is or a declaration names it.
-          [](const TupleType&) -> Held { return ValueDomain::kTuple; },
-          [](const StructType&) -> Held { return ValueDomain::kTuple; },
-          // A union of either kind is the storage its members overlay, laid
-          // out by its type, which says whether a tag follows them (LRM 7.3,
-          // 7.3.2).
-          [](const UnionType&) -> Held { return ValueDomain::kUnion; },
-          [](const TaggedUnionType&) -> Held { return ValueDomain::kUnion; },
+          // A value laid out by its type -- a tuple, a structure, a union of
+          // either kind -- is held as the bytes that type lays out, whatever
+          // the type says lies where.
+          [](const TupleType&) -> Held { return ValueDomain::kRecord; },
+          [](const RecordType&) -> Held { return ValueDomain::kRecord; },
           // A tagged union's `void` member (LRM 7.3.2) is a value carrying no
           // bits, a value of its own so a build's payload is uniform whatever
           // the member type.
@@ -683,20 +671,6 @@ auto Type::IsOwnedValue() const -> bool {
 auto Type::IsMoveOnly() const -> bool {
   const std::optional<Holding> held = HeldAs();
   return held.has_value() && std::holds_alternative<OwnedStorageAddress>(*held);
-}
-
-auto Type::IsProduct() const -> bool {
-  return Is<TupleType>() || Is<StructType>();
-}
-
-auto Type::UnionMembers() const -> std::optional<std::span<const TypeId>> {
-  if (const auto* untagged = As<UnionType>()) {
-    return std::span<const TypeId>{untagged->members};
-  }
-  if (const auto* tagged = As<TaggedUnionType>()) {
-    return std::span<const TypeId>{tagged->members};
-  }
-  return std::nullopt;
 }
 
 auto Type::MachineIntegerSignedness() const -> std::optional<Signedness> {

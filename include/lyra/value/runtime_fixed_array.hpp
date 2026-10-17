@@ -5,10 +5,8 @@
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/fixed_array_type.hpp"
-#include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/laid_out_value.hpp"
-#include "lyra/value/wide.hpp"
 
 namespace lyra::value {
 
@@ -36,8 +34,9 @@ class RuntimeFixedArray : public LaidOutValue<RuntimeFixedArray> {
   template <typename Build>
   [[nodiscard]] static auto Built(const FixedArrayType& type, Build build)
       -> RuntimeFixedArray {
-    return RuntimeFixedArray(
-        AnyValue::Built(type, [&](void* out) { type.BuildEach(out, build); }));
+    return RuntimeFixedArray(AnyValue::Built(type.Type(), [&](void* out) {
+      type.BuildEach(out, build);
+    }));
   }
 
   // LRM 7.6: an array of `type` holding copies of what `items` names, in
@@ -65,7 +64,7 @@ class RuntimeFixedArray : public LaidOutValue<RuntimeFixedArray> {
       const FixedArrayType& type, const ConstIntegralView& bits)
       -> RuntimeFixedArray;
 
-  [[nodiscard]] auto Type() const -> const FixedArrayType&;
+  [[nodiscard]] auto ArrayType() const -> const FixedArrayType&;
 };
 
 static_assert(LyraValue<RuntimeFixedArray>);

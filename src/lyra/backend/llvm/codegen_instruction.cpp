@@ -126,9 +126,9 @@ auto CodeGenFunction::LowerRvalue(
           [&](const lir::ReceiveDepartureInstr&) -> Lowered {
             return LowerReceiveDeparture();
           },
-          [&](const lir::TupleInstr& tuple) -> Lowered {
-            return LowerTuple(
-                tuple, result_type, EnsureDestination(destination));
+          [&](const lir::ProductInstr& product) -> Lowered {
+            return LowerProduct(
+                product, result_type, EnsureDestination(destination));
           },
           [&](const lir::UnionInstr& built) -> Lowered {
             return LowerUnion(
@@ -148,12 +148,11 @@ auto CodeGenFunction::LowerRvalue(
             return LowerDiscriminant(read, result_type);
           },
           [&](const lir::LoadInstr& load) -> Lowered {
-            if (ReachesOverlaidStorage(load.place) &&
-                module_->Types().KeepsAboveWidthsClear(result_type)) {
-              return LowerOverlaidLoad(
-                  load, result_type, EnsureDestination(destination));
-            }
             return LowerLoad(load, result_type);
+          },
+          [&](const lir::OverlaidLoadInstr& load) -> Lowered {
+            return LowerOverlaidLoad(
+                load, result_type, EnsureDestination(destination));
           },
           [&](const lir::AddrOfInstr& addr) -> Lowered {
             return LowerAddrOf(
@@ -301,8 +300,8 @@ auto CodeGenFunction::ValueCellContents(
 // Writing a place mirrors reading one, and a write through a wrapper is what
 // gives the write its meaning -- waking whoever subscribed to a cell, or giving
 // one driver's value to the net it feeds, which shows what its drivers then
-// determine -- which is why
-// it is the wrapper that performs the write rather than a store to an address.
+// determine -- which is why it is the wrapper that performs the write rather
+// than a store to an address.
 // What is stored crosses as a value the storage holds.
 auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
     -> diag::Result<llvm::Value*> {
@@ -313,22 +312,24 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
   // What a store is told is of the values its storage holds, which are of the
   // stored value's type.
   const lir::TypeId stored = OperandType(store.value);
-  // The store `symbol` names, made on the storage `args` holds as `arranged`
-  // says it crosses, with the stored value crossing after it as a store whose
-  // realization is told `told` reads the operand that follows the storage it
-  // acts on.
+  // The store `symbol` names, made on `storage`, stated as `storage_operand`,
+  // with the stored value crossing after it, each as `readings` reads it and
+  // as the realization for the stored value's domain told `told` is told.
   const auto stored_by =
-      [&](const std::string& symbol, std::vector<ArgAbi> arranged,
-          std::vector<llvm::Value*> args,
-          const support::OperandReadings& readings, const Told& told,
+      [&](const std::string& symbol, const support::OperandReadings& readings,
+          const Told& told, StatedOperand storage_operand, llvm::Value* storage,
           llvm::Value* value) -> diag::Result<llvm::Value*> {
-    arranged.push_back(arranger_.ArgOf(readings, 1, stored, told, stored));
-    auto crossed = module_->BuildCallArg(arranged.back().mode, value, args);
-    if (!crossed) {
-      return std::unexpected(std::move(crossed.error()));
+    const std::array<StatedOperand, 2> operands{
+        storage_operand, ValueOperand{.type = stored}};
+    const FnAbi abi = ArrangeCall(
+        *module_, readings, operands, Realization{.told = told, .of = stored},
+        std::nullopt, {}, ReturnDirect{.type = module_->Types().Void()});
+    const std::array<llvm::Value*, 2> values{storage, value};
+    auto args = module_->BuildCallArgs(abi, values);
+    if (!args) {
+      return std::unexpected(std::move(args.error()));
     }
-    return CallEntry(
-        symbol, module_->Types().Void(), std::move(arranged), args);
+    return builder_.CreateCall(module_->RuntimeFunction(symbol, abi), *args);
   };
   if (!wrapper->has_value()) {
     auto value = LowerOperand(store.value);
@@ -352,9 +353,10 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
         return nullptr;
       }
       return stored_by(
-          RuntimeSymbol(*cell, lir::ValueCellTarget::Op::kStore), Addresses(1),
-          {*address}, OperandReadingsOf(lir::ValueCellTarget::Op::kStore),
-          ToldOf(*cell, lir::ValueCellTarget::Op::kStore), *value);
+          RuntimeSymbol(*cell, lir::ValueCellTarget::Op::kStore),
+          OperandReadingsOf(lir::ValueCellTarget::Op::kStore),
+          ToldOf(*cell, lir::ValueCellTarget::Op::kStore),
+          MachineOperand{.type = module_->Types().Ptr()}, *address, *value);
     }
     // A store writes into a value that is already there, so whatever names
     // that storage goes on naming it.
@@ -377,23 +379,13 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
     return std::unexpected(std::move(value.error()));
   }
   // The wrapper and then the value, each as the wrapper's store reads it.
-  const support::OperandReadings readings =
-      support::RuntimeEntryOf(support::BuiltinFn::kSet).operands;
-  const Told told =
-      ToldOf(through.domain, through.kind, support::BuiltinFn::kSet);
-  const lir::TypeId wrapper_type =
-      ReachedType(store.place, std::ssize(store.place.chain) - 1);
-  std::vector<ArgAbi> arranged{
-      arranger_.ArgOf(readings, 0, wrapper_type, told, stored)};
-  std::vector<llvm::Value*> wrapper_args;
-  auto wrapper_crossed =
-      module_->BuildCallArg(arranged.front().mode, *address, wrapper_args);
-  if (!wrapper_crossed) {
-    return std::unexpected(std::move(wrapper_crossed.error()));
-  }
   return stored_by(
       RuntimeSymbol(through.domain, through.kind, support::BuiltinFn::kSet),
-      std::move(arranged), std::move(wrapper_args), readings, told, *value);
+      support::RuntimeEntryOf(support::BuiltinFn::kSet).operands,
+      ToldOf(through.domain, through.kind, support::BuiltinFn::kSet),
+      ValueOperand{
+          .type = ReachedType(store.place, std::ssize(store.place.chain) - 1)},
+      *address, *value);
 }
 
 // A value moved where an assignment puts it: into a transient it is the one
@@ -635,7 +627,7 @@ auto CodeGenFunction::ArrayElementAddress(
       break;
   }
   const FnAbi abi = FnAbiOf(
-      *module_, answered_by, {}, ToldNothing{}, {}, layout.element,
+      *module_, answered_by, {}, std::nullopt, layout.element,
       ReturnDirect{.type = ptr});
   auto args = module_->BuildCallArgs(abi, {});
   if (!args) {
@@ -807,27 +799,35 @@ auto CodeGenFunction::LowerBinary(
     return std::unexpected(std::move(domain.error()));
   }
   const std::string entry = RuntimeSymbol(*domain, binary.op);
-  // An operator's entry takes each operand as the value it is, and is told of
-  // them what the realizations for its domain are told.
-  const Told told = ToldOfAnOperator(*domain);
-  std::vector<ArgAbi> arranged;
-  std::vector<llvm::Value*> args;
-  const auto crossing = [&](const lir::Operand& operand,
-                            llvm::Value* value) -> diag::Result<void> {
-    arranged.push_back(arranger_.ArgOf(
-        support::OperandReadings{}, arranged.size(), OperandType(operand), told,
-        {}));
-    return module_->BuildCallArg(arranged.back().mode, value, args);
+  // An operator's entry takes each operand as the value it is, and is told what
+  // the realization for its domain is told.
+  const std::array<StatedOperand, 2> operands{
+      ValueOperand{.type = operand_type},
+      ValueOperand{.type = OperandType(binary.rhs)}};
+  const std::array<llvm::Value*, 2> values{*lhs, *rhs};
+  const Realization realization{
+      .told = ToldOfAnOperator(*domain), .of = operand_type};
+  const auto call = [&](ReturnInfo ret) -> diag::Result<llvm::CallInst*> {
+    const FnAbi abi = ArrangeCall(
+        *module_, support::OperandReadings{}, operands, realization,
+        std::nullopt, {}, ret);
+    auto args = module_->BuildCallArgs(abi, values);
+    if (!args) {
+      return std::unexpected(std::move(args.error()));
+    }
+    if (std::holds_alternative<ReturnIndirect>(ret)) {
+      args->push_back(out);
+    }
+    return builder_.CreateCall(module_->RuntimeFunction(entry, abi), *args);
   };
-  if (auto crossed = crossing(binary.lhs, *lhs); !crossed) {
-    return std::unexpected(std::move(crossed.error()));
-  }
-  if (auto crossed = crossing(binary.rhs, *rhs); !crossed) {
-    return std::unexpected(std::move(crossed.error()));
-  }
   switch (lir::BinaryAnswerOf(binary.op)) {
-    case lir::BinaryAnswer::kOperandType:
-      return BuildInto(entry, std::move(arranged), std::move(args), out);
+    case lir::BinaryAnswer::kOperandType: {
+      auto called = call(ReturnIndirect{.returned = module_->Types().Ptr()});
+      if (!called) {
+        return std::unexpected(std::move(called.error()));
+      }
+      return out;
+    }
     // The entry answers the scalar, which is held here as a value of the type
     // the instruction states.
     case lir::BinaryAnswer::kOneBit: {
@@ -838,10 +838,11 @@ auto CodeGenFunction::LowerBinary(
             "llvm codegen: a comparison is stated at no integral type -- "
             "please report this as a bug");
       }
-      StoreComparisonAnswer(
-          builder_,
-          CallEntry(entry, builder_.getInt8Ty(), std::move(arranged), args),
-          out, *answer);
+      auto called = call(ReturnDirect{.type = builder_.getInt8Ty()});
+      if (!called) {
+        return std::unexpected(std::move(called.error()));
+      }
+      StoreComparisonAnswer(builder_, *called, out, *answer);
       return out;
     }
   }
@@ -1576,7 +1577,7 @@ auto CodeGenFunction::LowerBitsStore(const lir::BitsStoreInstr& store)
       ValueOperand{.type = parts->back().start.type},
       ValueOperand{.type = written_type}};
   const FnAbi abi = FnAbiOf(
-      *module_, RuntimeOp::kInsertBits, stated, ToldNothing{}, {}, std::nullopt,
+      *module_, RuntimeOp::kInsertBits, stated, std::nullopt, std::nullopt,
       ReturnDirect{.type = module_->Types().Void()});
   const std::array<llvm::Value*, 4> operands{
       at, OuterBitsParts(std::span(*parts).first(parts->size() - 1)),
@@ -1804,19 +1805,20 @@ auto CodeGenFunction::LowerArray(
   return SpanOver(elements, element, storage);
 }
 
-// A tuple value is laid out in place: each component is built where the type's
-// layout puts it, from a value LIR ends on its own, so the tuple takes a copy.
-auto CodeGenFunction::LowerTuple(
-    const lir::TupleInstr& tuple, lir::TypeId result_type, llvm::Value* out)
+// A product value is laid out in place: each component is built where the
+// type's layout puts it, from a value LIR ends on its own, so the product takes
+// a copy.
+auto CodeGenFunction::LowerProduct(
+    const lir::ProductInstr& product, lir::TypeId result_type, llvm::Value* out)
     -> diag::Result<llvm::Value*> {
   const TupleLayout& layout = module_->Types().LayoutOfTuple(result_type);
-  if (layout.components.size() != tuple.components.size()) {
+  if (layout.components.size() != product.components.size()) {
     throw InternalError(
-        "llvm codegen: a tuple's result type does not describe the components "
-        "it is built from");
+        "llvm codegen: a product's result type does not describe the "
+        "components it is built from");
   }
-  for (std::size_t i = 0; i < tuple.components.size(); ++i) {
-    auto component = LowerOperand(tuple.components[i]);
+  for (std::size_t i = 0; i < product.components.size(); ++i) {
+    auto component = LowerOperand(product.components[i]);
     if (!component) {
       return std::unexpected(std::move(component.error()));
     }
@@ -1824,14 +1826,13 @@ auto CodeGenFunction::LowerTuple(
     // A component standing where an index of a wildcard-indexed array goes
     // has no type of its own (LRM 7.8.1), so the integral value put there is
     // kept with the type it was written in, as the array keeps an index.
-    const lir::TypeId stated = OperandType(tuple.components[i]);
+    const lir::TypeId stated = OperandType(product.components[i]);
     if (module_->Unit()
             .types.Get(layout.components[i])
             .Is<lir::WildcardIndexType>() &&
         module_->Types().IntegralShapeOf(stated).has_value()) {
       std::vector<ArgAbi> arranged{arranger_.ArgOf(
-          OperandReadingsOf(RuntimeOp::kMakeWildcardIndex), 0, stated,
-          ToldNothing{}, {})};
+          OperandReadingsOf(RuntimeOp::kMakeWildcardIndex), 0, stated)};
       std::vector<llvm::Value*> kept;
       auto crossed =
           module_->BuildCallArg(arranged.front().mode, *component, kept);
@@ -1860,8 +1861,8 @@ auto CodeGenFunction::SelectorArgs(
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
-    arranged.push_back(arranger_.ArgOf(
-        readings, i + 1, OperandType(operands[i]), ToldNothing{}, {}));
+    arranged.push_back(
+        arranger_.ArgOf(readings, i + 1, OperandType(operands[i])));
     auto crossed = module_->BuildCallArg(arranged.back().mode, *lowered, args);
     if (!crossed) {
       return std::unexpected(std::move(crossed.error()));
@@ -1902,11 +1903,13 @@ auto CodeGenFunction::LowerUnion(
   builder_.CreateMemSet(
       out, builder_.getInt8(0), layout.storage.size,
       llvm::Align(layout.storage.align));
-  auto copied = CopyValue(layout.members[built.member.value], *value, out);
+  auto copied = CopyValue(
+      (*lir::OverlaidMembers(module_->Unit(), result_type))[built.member.value],
+      *value, out);
   if (!copied) {
     return copied;
   }
-  if (module_->Unit().types.Get(result_type).Is<lir::TaggedUnionType>()) {
+  if (lir::IsTaggedUnion(module_->Unit(), result_type)) {
     const value::TagPlacement tag = module_->Types().TagOf(result_type);
     builder_.CreateStore(
         builder_.getIntN(8 * tag.bytes, built.member.value),
@@ -1935,9 +1938,9 @@ auto CodeGenFunction::LowerDiscriminant(
 }
 
 auto CodeGenFunction::LowerOverlaidLoad(
-    const lir::LoadInstr& load, lir::TypeId result_type, llvm::Value* out)
-    -> diag::Result<llvm::Value*> {
-  auto address = LowerLoad(load, result_type);
+    const lir::OverlaidLoadInstr& load, lir::TypeId result_type,
+    llvm::Value* out) -> diag::Result<llvm::Value*> {
+  auto address = LowerLoad(lir::LoadInstr{.place = load.place}, result_type);
   if (!address) {
     return std::unexpected(std::move(address.error()));
   }
@@ -1945,98 +1948,8 @@ auto CodeGenFunction::LowerOverlaidLoad(
   if (!copied) {
     return copied;
   }
-  auto cleared = ClearAboveWidthsAt(result_type, out);
-  if (!cleared) {
-    return std::unexpected(std::move(cleared.error()));
-  }
+  module_->EmitClearAboveWidths(builder_, result_type, out);
   return out;
-}
-
-auto CodeGenFunction::ClearAboveWidthsAt(lir::TypeId type, llvm::Value* at)
-    -> diag::Result<void> {
-  CodeGenTypes& types = module_->Types();
-  if (!types.KeepsAboveWidthsClear(type)) {
-    return {};
-  }
-  if (const std::optional<value::IntegralShape> shape =
-          types.IntegralShapeOf(type)) {
-    ClearIntegralAboveWidth(at, *shape);
-    return {};
-  }
-  const lir::Type& stated = module_->Unit().types.Get(type);
-  if (stated.Is<lir::UnpackedArrayType>()) {
-    const ArrayLayout& layout = types.LayoutOfArray(type);
-    llvm::Function* const fn = builder_.GetInsertBlock()->getParent();
-    llvm::LLVMContext& context = builder_.getContext();
-    llvm::BasicBlock* const before = builder_.GetInsertBlock();
-    llvm::BasicBlock* const each =
-        llvm::BasicBlock::Create(context, "clear_element", fn);
-    llvm::BasicBlock* const done =
-        llvm::BasicBlock::Create(context, "elements_cleared", fn);
-    builder_.CreateBr(each);
-    builder_.SetInsertPoint(each);
-    llvm::PHINode* const position =
-        builder_.CreatePHI(builder_.getInt64Ty(), 2);
-    position->addIncoming(builder_.getInt64(0), before);
-    auto element = ClearAboveWidthsAt(
-        layout.element,
-        builder_.CreateInBoundsGEP(
-            builder_.getInt8Ty(), at,
-            builder_.CreateMul(position, builder_.getInt64(layout.stride))));
-    if (!element) {
-      return element;
-    }
-    llvm::Value* const next =
-        builder_.CreateAdd(position, builder_.getInt64(1));
-    position->addIncoming(next, builder_.GetInsertBlock());
-    builder_.CreateCondBr(
-        builder_.CreateICmpULT(next, builder_.getInt64(layout.count)), each,
-        done);
-    builder_.SetInsertPoint(done);
-    return {};
-  }
-  // Which member a tagged union holds is its tag's to say while the program
-  // runs, so the library clears the member that tag names.
-  if (stated.Is<lir::TaggedUnionType>()) {
-    auto described = module_->ValueTypeOf(type);
-    if (!described) {
-      return std::unexpected(std::move(described.error()));
-    }
-    const std::array<llvm::Value*, 2> args{*described, at};
-    CallEntry(
-        RuntimeSymbol(RuntimeOp::kClearAboveWidths), types.Void(),
-        {CallArranger::Direct(types.Ptr()), CallArranger::Direct(types.Ptr())},
-        args);
-    return {};
-  }
-  const std::optional<std::span<const lir::TypeId>> components =
-      lir::ProductElements(module_->Unit(), type);
-  if (!components.has_value()) {
-    throw InternalError(
-        "llvm codegen: positions above a width are kept clear only in an "
-        "integral, an array, a product or a tagged union -- please report "
-        "this as a bug");
-  }
-  for (std::size_t i = 0; i < components->size(); ++i) {
-    auto component =
-        ClearAboveWidthsAt((*components)[i], ComponentAddress(type, at, i));
-    if (!component) {
-      return component;
-    }
-  }
-  return {};
-}
-
-auto CodeGenFunction::ReachesOverlaidStorage(const lir::Place& place) const
-    -> bool {
-  for (std::ptrdiff_t i = 0; i < std::ssize(place.chain); ++i) {
-    if (std::holds_alternative<lir::ComponentProjection>(
-            place.chain[static_cast<std::size_t>(i)]) &&
-        module_->Unit().types.Get(ReachedType(place, i)).Is<lir::UnionType>()) {
-      return true;
-    }
-  }
-  return false;
 }
 
 auto CodeGenFunction::LowerOperand(const lir::Operand& operand)

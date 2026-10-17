@@ -47,10 +47,11 @@ concept ElementPolicy =
       { p.HasUnknown(in) } -> std::same_as<bool>;
     };
 
-// A type whose default is the one its declaration states (LRM 7.2.2) rather
-// than what building one from nothing makes: a structure, and an array of
-// them. C++ builds that default only from the function stating it, since a
-// constructor handing on to another builds a copy first.
+// A type whose default is the one its declaration states (LRM 7.2.2, Table
+// 7-1) rather than what building one from nothing makes: a structure or a
+// union the source declared, and an array of either. C++ builds that default
+// only from the function stating it, since a constructor handing on to another
+// builds a copy first.
 template <typename T>
 concept HasDeclaredDefault = requires { T::DeclaredDefault(); };
 

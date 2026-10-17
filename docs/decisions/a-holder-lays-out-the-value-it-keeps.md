@@ -86,8 +86,8 @@ declaration states (LRM 7.2.2) is written by its initialization after it.
 value a variable held when a time slot began, a procedural continuous assignment's level and what it
 keeps beneath, a driver's contribution, a history's entries.
 
-**D7. A tuple's bytes state nothing of its type.** It crosses to the library as its bytes followed
-by its type, as a fixed-size unpacked array does, and an entry building one is told its type.
+**D7. A tuple's bytes state nothing of its type.** It crosses to the library as its bytes, its type
+told once per call after the operands, as a fixed-size unpacked array's is.
 
 ## Rejected
 
@@ -120,7 +120,7 @@ by its type, as a fixed-size unpacked array does, and an entry building one is t
 - [a-packed-value-is-its-words](a-packed-value-is-its-words.md) -- a value up to the bound lies in
   what holds it.
 - [a-fixed-array-is-laid-out-by-its-type](a-fixed-array-is-laid-out-by-its-type.md) -- an array
-  crosses as its bytes followed by its type; D6 superseded here.
+  crosses as its bytes, its type told once; D6 superseded here.
 - [a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md) -- a tuple's layout and its
   generated operations; its table in the bytes superseded here.
 - [a-value-is-its-machine-data](a-value-is-its-machine-data.md) -- what the prebuilt library may be

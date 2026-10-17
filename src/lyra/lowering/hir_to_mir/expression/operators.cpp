@@ -20,8 +20,8 @@
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/predicate.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/struct_methods.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -207,22 +207,18 @@ auto BuildMirBinaryExpr(
     -> mir::Expr {
   const mir::TypeId lhs_type = block.exprs.Get(lhs_named).type;
   const mir::TypeId rhs_type = block.exprs.Get(rhs_named).type;
-  // A struct is compared by its own methods, which borrow each operand where
-  // it lies; every other operator takes its operands' values.
-  const bool compared_by_its_methods =
-      unit.types.Get(lhs_type).Is<mir::StructType>();
-  const mir::ExprId lhs_id = compared_by_its_methods
-                                 ? lhs_named
-                                 : block.AsValue(unit.types, lhs_named);
-  const mir::ExprId rhs_id = compared_by_its_methods
-                                 ? rhs_named
-                                 : block.AsValue(unit.types, rhs_named);
+  // An equality takes its operands as named, since a type with operations of
+  // its own compares them where they lie; every other operator takes their
+  // values.
+  const auto lhs_value = [&] { return block.AsValue(unit.types, lhs_named); };
+  const auto rhs_value = [&] { return block.AsValue(unit.types, rhs_named); };
 
   const auto at_result_type = [&](mir::ExprId answer) {
     return block.exprs.Get(ConvertToType(unit, block, answer, result_type));
   };
   const auto apply = [&](mir::BinaryOp value_op) {
-    return MakeBinary(unit, block, value_op, lhs_id, rhs_id, result_type);
+    return MakeBinary(
+        unit, block, value_op, lhs_value(), rhs_value(), result_type);
   };
   // The entry that performs an operator a target cannot apply to two values of
   // one type. Three reasons put one here: its operands are not two values of
@@ -231,15 +227,16 @@ auto BuildMirBinaryExpr(
   // x and z as themselves, LRM 11.4.6); or it composes several operations into
   // one (power, xnor).
   const auto library = [&](support::BuiltinFn entry) {
-    return MakeBuiltinCall(unit, block, entry, lhs_id, {rhs_id}, result_type);
+    return MakeBuiltinCall(
+        unit, block, entry, lhs_value(), {rhs_value()}, result_type);
   };
   // LRM 11.4.6 `==?`: the answer can be unknown exactly where an operand can,
   // so it is stated at the one-bit type of the operands' own state domain, and
   // a context wanting another representation takes the conversion.
   const auto wildcard_equality = [&] {
     return block.exprs.Add(MakeBuiltinCall(
-        unit, block, support::BuiltinFn::kWildcardEquals, lhs_id, {rhs_id},
-        OneBitAnswerType(unit, std::array{lhs_type, rhs_type})));
+        unit, block, support::BuiltinFn::kWildcardEquals, lhs_value(),
+        {rhs_value()}, OneBitAnswerType(unit, std::array{lhs_type, rhs_type})));
   };
 
   // LRM 8.4 admits `null` as either operand of a handle comparison, and the
@@ -255,20 +252,14 @@ auto BuildMirBinaryExpr(
         unit.types.Get(lhs_type).Is<mir::ManagedRefType>() ? lhs_type
                                                            : rhs_type;
     return Comparands{
-        .lhs = OperandAtHandleType(unit, block, lhs_id, compared_at),
-        .rhs = OperandAtHandleType(unit, block, rhs_id, compared_at)};
+        .lhs = OperandAtHandleType(unit, block, lhs_named, compared_at),
+        .rhs = OperandAtHandleType(unit, block, rhs_named, compared_at)};
   };
-  // LRM 11.4.5 `==` and `!=`. A struct's are its type's own answers, stated at
-  // the width and state each has.
-  const auto logical_equality = [&](mir::BinaryOp value_op,
-                                    support::ValueOperator comparison) {
+  // LRM 11.4.5 `==` and `!=`.
+  const auto logical_equality = [&](support::ValueOperator comparison) {
     const Comparands compared = comparands();
-    if (compared_by_its_methods) {
-      return at_result_type(BuildStructComparison(
-          unit, block, comparison, compared.lhs, compared.rhs));
-    }
-    return MakeBinary(
-        unit, block, value_op, compared.lhs, compared.rhs, result_type);
+    return block.exprs.Get(BuildEquality(
+        unit, block, comparison, compared.lhs, compared.rhs, result_type));
   };
   // LRM 11.4.5 `===` over any data type, an aggregate included. The clause
   // makes the result always a known 1'b0 or 1'b1, so the question answers with
@@ -294,11 +285,9 @@ auto BuildMirBinaryExpr(
     case hir::BinaryOp::kLessThan:
       return apply(LowerBinaryOp(op));
     case hir::BinaryOp::kEquality:
-      return logical_equality(
-          mir::BinaryOp::kEquality, support::ValueOperator::kEquality);
+      return logical_equality(support::ValueOperator::kEquality);
     case hir::BinaryOp::kInequality:
-      return logical_equality(
-          mir::BinaryOp::kInequality, support::ValueOperator::kInequality);
+      return logical_equality(support::ValueOperator::kInequality);
     case hir::BinaryOp::kCaseEquality:
       return at_result_type(case_equality());
     case hir::BinaryOp::kCaseInequality:
@@ -325,8 +314,8 @@ auto BuildMirBinaryExpr(
     case hir::BinaryOp::kLogicalEquivalence:
       return at_result_type(block.exprs.Add(MakeBuiltinCall(
           unit, block, support::BuiltinFn::kLogicalEquivalence,
-          BuildLogicalOperand(unit, block, lhs_id),
-          {BuildLogicalOperand(unit, block, rhs_id)},
+          BuildLogicalOperand(unit, block, lhs_value()),
+          {BuildLogicalOperand(unit, block, rhs_value())},
           OneBitAnswerType(unit, std::array{lhs_type, rhs_type}))));
     case hir::BinaryOp::kLogicalAnd:
     case hir::BinaryOp::kLogicalOr:

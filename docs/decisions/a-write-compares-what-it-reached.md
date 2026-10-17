@@ -37,8 +37,17 @@ part tells the write what forming it did.**
   with a designation of the part rather than with the part and it is heard by the write. Where the
   write lands is where the designation is dereferenced, which is what lets a backend rendering one
   node at a time keep the part rather than the whole. A string's character is written after that by
-  the string's `putc` on the place landed on, and a union's member is a field step of that place,
-  since neither has an identity a write could designate (LRM 6.16, 7.3, 13.5.2).
+  the string's `putc` on the place landed on, since it lies inside the string's value (LRM 6.16).
+- **A union's member is designated too, and the path the write reports stops at the union** (revised
+  2026-10-15). A member lies where every other member does (LRM 7.3), so a write of one leaves every
+  byte outside it as it was, and the union changed exactly where the member did: the write keeps and
+  compares only what it lands on below the member. No step of a path stands for a member, since a
+  wait on one member reads bytes another member's write moves, so the path stops at the union as it
+  does at an associative array's entry, and the change is reported whole there, reaching every
+  member's waits. A designation is the write's own handle on where it lands and binds nothing the
+  program keeps, so LRM 13.5.2, which keeps a reference off a member, does not reach it. This
+  revises the earlier rule that landed a member write on the union and took the member as a field
+  step, which kept and compared the whole union for a write of one member.
 - **An element step and a slice step taken within a write report to it.** Forming an element can
   change the variable whatever is then written -- an associative array entry allocated by being
   written (LRM 7.8.7), a queue element appended at `$+1` (LRM 7.10.1) -- or reach no part of it at

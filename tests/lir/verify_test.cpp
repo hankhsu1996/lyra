@@ -73,7 +73,7 @@ TEST(LirVerifyTest, AValueMadeIntoAnEmptySlotInitializesIt) {
       Instr{
           .data = AssignInstr{
               .destination = PlaceOf(body.slot),
-              .value = TupleInstr{.components = {x, x}}}}));
+              .value = ProductInstr{.components = {x, x}}}}));
 }
 
 // A read makes no value: what it answers is owned by the storage it read, so

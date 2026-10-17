@@ -31,8 +31,7 @@ constexpr auto FamiliesCover(support::ValueDomain domain) -> bool {
     case support::ValueDomain::kShortReal:
     case support::ValueDomain::kChandle:
     case support::ValueDomain::kEmpty:
-    case support::ValueDomain::kTuple:
-    case support::ValueDomain::kUnion:
+    case support::ValueDomain::kRecord:
     case support::ValueDomain::kDynArray:
     case support::ValueDomain::kUnpackedArray:
     case support::ValueDomain::kQueue:

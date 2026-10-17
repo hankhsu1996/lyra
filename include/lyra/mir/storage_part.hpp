@@ -49,7 +49,8 @@ enum class PlaceKind : std::uint8_t {
 // The kind of the storage the place `place` of `block` names. A field step
 // takes the kind of the place it is taken on, or a union's member's where it
 // reaches one; a dereference of what a call answers into its receiver takes
-// the receiver's; every other place is ordinary.
+// the receiver's, and one of a place designated within a write takes the kind
+// of what the steps designating it reached; every other place is ordinary.
 auto KindOfPlace(const CompilationUnit& unit, const Block& block, ExprId place)
     -> PlaceKind;
 

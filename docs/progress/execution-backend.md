@@ -307,12 +307,17 @@ The value layer is realized two ways, and the breadth work above runs against th
   runtime holds it in that same layout and reaches those, and the methods a structure's declaration
   states in MIR for its whole-value operations, through the table the value carries
   (`../decisions/a-tuple-is-laid-out-by-its-type.md`,
-  `../decisions/a-structures-operations-are-stated-in-mir.md`). A fixed-size unpacked array is laid
-  out by the code generator too, as its elements and nothing else, and the runtime is handed the
-  array's type beside its bytes, a constant stating the count and the element's type, over which it
-  runs every whole-array operation (`../decisions/a-fixed-array-is-laid-out-by-its-type.md`). A
-  container whose size is a run-time quantity and a union stay one erased object, and a component
-  that is storage of its own is reached where it lies.
+  `../decisions/a-structures-operations-are-stated-in-mir.md`). A union is declared the same way,
+  laid out as one storage its members overlay, its methods and lifecycle compiled into one table in
+  the program by the unit declaring it. A fixed-size unpacked array is laid out as its elements and
+  nothing else, and each unit naming one compiles its whole-value operations and its lifecycle for
+  the type into the table its type constant holds; the runtime is told an array's count and its
+  element's type only to reach an element
+  (`../decisions/a-union-is-one-storage-its-members-overlay.md`,
+  `../decisions/a-fixed-array-is-laid-out-by-its-type.md`,
+  `../decisions/a-fixed-arrays-operations-are-stated-per-unit.md`). A container whose size is a
+  run-time quantity stays one erased object, and a component that is storage of its own is reached
+  where it lies.
 
 Both are correct and agree per source (the backend-agreement tests check this), but they are two
 implementations of the same value semantics. Every value domain added to the execution backend is a

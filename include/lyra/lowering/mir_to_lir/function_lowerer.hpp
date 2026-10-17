@@ -492,12 +492,6 @@ class FunctionLowerer {
   auto LowerReferenceIntoReceiver(
       const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
       -> diag::Result<lir::Operand>;
-  // Whether a tagged union's tag names the member a call names (LRM 11.9): the
-  // tag read where the union lies, as rustc reads an enum's discriminant, and
-  // compared with that member's position.
-  auto LowerTagMatches(
-      const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
-      -> diag::Result<lir::Operand>;
   // A reference to what a capability wrapper holds: the address of the
   // storage the wrapper represents.
   auto LowerReferenceToContents(

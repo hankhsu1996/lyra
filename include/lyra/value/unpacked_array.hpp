@@ -123,9 +123,9 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>, T> {
 
   UnpackedArray() = default;
 
-  // An array of structures defaults to each element at the default its
-  // structure's declaration states (LRM 7.4.5, 7.2.2), so the array's default
-  // is stated by its element's as a structure's is by its declaration.
+  // An array of structures or unions defaults to each element at the default
+  // its declaration states (LRM 7.4.5, 7.2.2), so the array's default is stated
+  // by its element's as a record's is by its declaration.
   [[nodiscard]] static auto DeclaredDefault() -> UnpackedArray
     requires HasDeclaredDefault<T>
   {

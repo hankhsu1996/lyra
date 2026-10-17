@@ -64,14 +64,6 @@ class CodeGenFunction::IntegralEmitter {
   auto StoreBitsOfPlace(
       llvm::Value* at, lir::TypeId whole, std::span<const BitsPartRef> parts,
       OperandRef bits) -> bool;
-  // The planes of the value of type `shape` lying at `at`, each loaded as the
-  // integer its bytes are and cut to the value's width.
-  auto LoadPlanes(llvm::Value* at, const value::IntegralShape& shape) -> Planes;
-  // The value of type `shape` lying at `at` laid back out there as its type
-  // holds one, every position above its width clear.
-  void ClearAboveWidth(llvm::Value* at, const value::IntegralShape& shape) {
-    StorePlanes(LoadPlanes(at, shape), at, shape);
-  }
 
  private:
   // The types `op` applied to `operands` and answering at `answer_type` is
@@ -83,10 +75,6 @@ class CodeGenFunction::IntegralEmitter {
   [[nodiscard]] auto ShapesOf(
       IntegralOp op, std::span<const OperandRef> operands,
       lir::TypeId answer_type) const -> IntegralShapes;
-  // Planes laid out at `at` as a value of type `shape`, each widened to its
-  // storage unit, which is what keeps every position above the width clear.
-  void StorePlanes(
-      Planes planes, llvm::Value* at, const value::IntegralShape& shape);
   // `target`, a value of `lying`, with `bits` written over the bits the parts
   // from `at` on name in it. A part between the value and the bits is taken
   // out as its bits lie -- at its own width and holding what `lying` holds, so
@@ -138,52 +126,6 @@ auto CodeGenFunction::IntegralEmitter::ShapesOf(
   shapes.answer = value::AnswerShapeOf(
       op, extents, module_->Types().IntegralShapeOf(answer_type));
   return shapes;
-}
-
-auto CodeGenFunction::IntegralEmitter::LoadPlanes(
-    llvm::Value* at, const value::IntegralShape& shape) -> Planes {
-  const std::size_t plane_bytes = value::PlaneBytesFor(shape.width);
-  llvm::Type* const unit =
-      builder_->getIntNTy(static_cast<unsigned>(8 * plane_bytes));
-  const llvm::Align align(value::IntegralAlignFor(shape.width));
-  llvm::Type* const exact =
-      builder_->getIntNTy(static_cast<unsigned>(shape.width));
-  const auto plane = [&](llvm::Value* plane_at) {
-    return builder_->CreateTrunc(
-        builder_->CreateAlignedLoad(unit, plane_at, align), exact);
-  };
-  llvm::Value* const value = plane(at);
-  return Planes{
-      .value = value,
-      .unknown = shape.IsFourState()
-                     ? plane(builder_->CreateConstInBoundsGEP1_64(
-                           builder_->getInt8Ty(), at, plane_bytes))
-                     : llvm::Constant::getNullValue(exact)};
-}
-
-void CodeGenFunction::IntegralEmitter::StorePlanes(
-    Planes planes, llvm::Value* at, const value::IntegralShape& shape) {
-  if (planes.value->getType()->getIntegerBitWidth() != shape.width) {
-    throw InternalError(
-        std::format(
-            "llvm codegen: an operation on planes answers {} bits where "
-            "its answer's type has {} -- please report this as a bug",
-            planes.value->getType()->getIntegerBitWidth(), shape.width));
-  }
-  const std::size_t plane_bytes = value::PlaneBytesFor(shape.width);
-  llvm::Type* const unit =
-      builder_->getIntNTy(static_cast<unsigned>(8 * plane_bytes));
-  const llvm::Align align(value::IntegralAlignFor(shape.width));
-  const auto plane = [&](llvm::Value* bits, llvm::Value* plane_at) {
-    builder_->CreateAlignedStore(
-        builder_->CreateZExt(bits, unit), plane_at, align);
-  };
-  plane(planes.value, at);
-  if (shape.IsFourState()) {
-    plane(
-        planes.unknown, builder_->CreateConstInBoundsGEP1_64(
-                            builder_->getInt8Ty(), at, plane_bytes));
-  }
 }
 
 auto CodeGenFunction::IntegralEmitter::EntryOf(IntegralOp op) -> llvm::Value* {
@@ -279,7 +221,8 @@ auto CodeGenFunction::IntegralEmitter::Lower(
     lir::TypeId answer_type, llvm::Value* out) -> llvm::Value* {
   const IntegralShapes shapes = ShapesOf(op, operands, answer_type);
   const auto planes = [&](std::size_t index) {
-    return LoadPlanes(operands[index].value, *shapes.operands.at(index));
+    return LoadPlanes(
+        *builder_, operands[index].value, *shapes.operands.at(index));
   };
   const auto machine = [&](std::size_t index) { return operands[index].value; };
   if (const std::optional<PlaneAnswer> on_planes = LowerOnPlanes(
@@ -288,7 +231,7 @@ auto CodeGenFunction::IntegralEmitter::Lower(
     return std::visit(
         Overloaded{
             [&](const Planes& answer) {
-              StorePlanes(answer, out, *shapes.answer);
+              StorePlanes(*builder_, answer, out, *shapes.answer);
               return out;
             },
             [](llvm::Value* answer) { return answer; }},
@@ -308,7 +251,7 @@ auto CodeGenFunction::IntegralEmitter::WithBitsWritten(
   const BitsPartRef& part = parts[at];
   const value::IntegralShape start_shape =
       module_->Types().RequiredIntegralShapeOf(part.start.type);
-  const Planes start = LoadPlanes(part.start.value, start_shape);
+  const Planes start = LoadPlanes(*builder_, part.start.value, start_shape);
   const auto no_machine_operand = [](std::size_t) -> llvm::Value* {
     throw InternalError(
         "llvm codegen: a part of an integral value is read or written over "
@@ -348,7 +291,7 @@ auto CodeGenFunction::IntegralEmitter::WithBitsWritten(
   if (at + 1 == parts.size()) {
     const value::IntegralShape bits_shape =
         module_->Types().RequiredIntegralShapeOf(bits.type);
-    return with(LoadPlanes(bits.value, bits_shape), bits_shape);
+    return with(LoadPlanes(*builder_, bits.value, bits_shape), bits_shape);
   }
   const value::IntegralShape part_lying{
       .width = module_->Types().RequiredIntegralShapeOf(part.type).width,
@@ -374,7 +317,9 @@ auto CodeGenFunction::IntegralEmitter::StoreBitsOfPlace(
     return false;
   }
   StorePlanes(
-      WithBitsWritten(LoadPlanes(at, lying), lying, parts, 0, bits), at, lying);
+      *builder_,
+      WithBitsWritten(LoadPlanes(*builder_, at, lying), lying, parts, 0, bits),
+      at, lying);
   return true;
 }
 
@@ -386,12 +331,7 @@ auto CodeGenFunction::LoadPosition(const OperandRef& position) -> Planes {
         "llvm codegen: an element is named by something that is not stated "
         "as a position -- please report this as a bug");
   }
-  return IntegralEmitter(*this).LoadPlanes(position.value, *stated);
-}
-
-void CodeGenFunction::ClearIntegralAboveWidth(
-    llvm::Value* at, const value::IntegralShape& shape) {
-  IntegralEmitter(*this).ClearAboveWidth(at, shape);
+  return LoadPlanes(builder_, position.value, *stated);
 }
 
 auto CodeGenFunction::StoreBitsOnPlanes(

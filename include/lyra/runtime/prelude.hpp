@@ -68,6 +68,7 @@
 #include "lyra/value/dpi_canonical.hpp"          // IWYU pragma: keep
 #include "lyra/value/dpi_open_array.hpp"         // IWYU pragma: keep
 #include "lyra/value/dynamic_array.hpp"          // IWYU pragma: keep
+#include "lyra/value/empty.hpp"                  // IWYU pragma: keep
 #include "lyra/value/enumeration.hpp"            // IWYU pragma: keep
 #include "lyra/value/format.hpp"                 // IWYU pragma: keep
 #include "lyra/value/integral.hpp"               // IWYU pragma: keep

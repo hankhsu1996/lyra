@@ -188,16 +188,13 @@ struct Declared {
   support::OperandReadings operands;
   Told told;
   support::AnswerTold answer_told;
-  // The operand whose representation names the realization, where that is a
-  // value laid out by its type: it is one whatever the call, so the
-  // type that crosses with it is no matter of which types the call states.
-  std::optional<std::size_t> own_laid_out = std::nullopt;
 };
 
 // Where `declared` and `parameters` disagree, or nothing where every operand
 // is taken as it is read: each declared reading takes the parameters its mode
 // crosses as, in order, and nothing after the stated operands tells the entry
-// of a type but what the declaration says it is told of its answer.
+// of a type but the type a realization for values laid out by it is told, and
+// what the declaration says it is told of its answer.
 auto Disagreement(
     const Declared& declared, std::span<const Parameter> parameters)
     -> std::optional<std::string> {
@@ -219,49 +216,10 @@ auto Disagreement(
     return "is declared told the type of the values it holds ahead of its "
            "operands and does not open with a type";
   }
-  // A realization for a value laid out by its type is told the type
-  // of every such value it is handed. Which other operands are such values
-  // follows from the types a call states, which no declaration holds, so a
-  // prototype says it by how it spells one: the parameter naming the value
-  // and, right after it, the parameter naming that one's type. Where such a
-  // value may stand is the rule's own answer, asked of it for an array type.
+  // A realization for a value laid out by its type is told that type once,
+  // after its operands and ahead of what it is told of its answer.
   const bool for_laid_out =
-      std::holds_alternative<ToldLaidOutTypes>(declared.told);
-  const lir::TypePool pool;
-  const lir::TypeId array = pool.Intern(
-      lir::Type{lir::UnpackedArrayType{
-          .element_type = pool.Intern(lir::Type{lir::EmptyType{}}),
-          .size = 1}});
-  const auto a_laid_out_value_crosses_with_its_type = [&](std::size_t operand) {
-    if (!for_laid_out) {
-      return false;
-    }
-    const std::optional<PassMode> told = ToldModeOf(
-        declared.told, operand, declared.operands.At(operand), array, array,
-        pool);
-    return told.has_value() && std::holds_alternative<PassWithType>(*told);
-  };
-  const auto take_the_type_of_the_one_before = [&] {
-    if (at > 0 && at < parameters.size() &&
-        parameters[at].hands == Hands::kTypeConstant &&
-        parameters[at].name == parameters[at - 1].name + "_type") {
-      ++at;
-      return true;
-    }
-    return false;
-  };
-  // An operand laid out by its type takes its type where it is the
-  // realization's own, and may take it wherever else the rule says such a
-  // value may stand.
-  const auto take_a_laid_out_values_type = [&](std::size_t operand) {
-    if (declared.own_laid_out == operand) {
-      return take_the_type_of_the_one_before();
-    }
-    if (a_laid_out_value_crosses_with_its_type(operand)) {
-      take_the_type_of_the_one_before();
-    }
-    return true;
-  };
+      std::holds_alternative<ToldLaidOutType>(declared.told);
   // The operand a realization is told something of crosses with it, or as it,
   // and every other operand as its reading says. Which type is told is no
   // part of a prototype's shape, so any type stands for it.
@@ -276,17 +234,10 @@ auto Disagreement(
             [&](const ToldNothing&) { return read; },
             [&](const ToldWidthMetadataAhead&) { return read; },
             [&](const ToldTypeMetadataAhead&) { return read; },
-            [&](const ToldByTheStorage&) { return read; },
             [&](const ToldWidthMetadata& t) {
               return told_at(t.after, PassWithWidth{.type = lir::TypeId{}});
             },
-            [&](const ToldLaidOutTypes& t) {
-              return t.reached_after.has_value()
-                         ? told_at(
-                               *t.reached_after,
-                               PassWithType{.type = lir::TypeId{}})
-                         : read;
-            },
+            [&](const ToldLaidOutType&) { return read; },
             [&](const ToldKeyType& t) {
               return told_at(t.after, PassWithType{.type = lir::TypeId{}});
             },
@@ -302,11 +253,8 @@ auto Disagreement(
               [](const ToldNothing&) -> std::size_t { return 0; },
               [](const ToldWidthMetadataAhead&) -> std::size_t { return 0; },
               [](const ToldTypeMetadataAhead&) -> std::size_t { return 0; },
-              [](const ToldByTheStorage&) -> std::size_t { return 0; },
               [](const ToldWidthMetadata& t) { return t.after + 1; },
-              [](const ToldLaidOutTypes& t) -> std::size_t {
-                return t.reached_after.has_value() ? *t.reached_after + 1 : 0;
-              },
+              [](const ToldLaidOutType&) -> std::size_t { return 0; },
               [](const ToldKeyType& t) { return t.after + 1; },
               [](const ToldEntryType& t) { return t.after + 1; }},
           declared.told));
@@ -314,9 +262,7 @@ auto Disagreement(
     const std::size_t began = at;
     const bool taken = std::visit(
         Overloaded{
-            [&](const PassDirect&) {
-              return take(Hands::kValue) && take_a_laid_out_values_type(i);
-            },
+            [&](const PassDirect&) { return take(Hands::kValue); },
             [&](const PassWithExtent&) {
               return take(Hands::kValue) && take(Hands::kWidth) &&
                      take(Hands::kFourState);
@@ -340,21 +286,14 @@ auto Disagreement(
     }
   }
   // An operand past the ones a reading is stated for is read as the thing it
-  // is, so a value laid out by its type among them is followed by its type
-  // like any other. What is left is what the entry is told of its answer.
+  // is. What is left is what the realization is told of the type it is for,
+  // and what the entry is told of its answer.
   std::vector<Parameter> told;
   std::vector<std::size_t> told_at;
-  for (std::size_t operand = stated; at < parameters.size();) {
+  while (at < parameters.size()) {
     switch (parameters[at].hands) {
       case Hands::kValue:
         ++at;
-        if (!take_a_laid_out_values_type(operand)) {
-          return std::format(
-              "does not take the type of operand {}, the value laid out by its "
-              "type its realization is named by, right after it",
-              operand);
-        }
-        ++operand;
         break;
       case Hands::kWidth:
       case Hands::kSignedness:
@@ -365,6 +304,24 @@ auto Disagreement(
         ++at;
         break;
     }
+  }
+  if (for_laid_out) {
+    if (told.empty() || told.front().hands != Hands::kTypeConstant) {
+      return "is declared told the type it is realized for and takes no type "
+             "after its operands";
+    }
+    // Only the storage the answer is built in may follow the type.
+    const bool an_operand_follows = std::ranges::any_of(
+        std::span(parameters).subspan(told_at.front() + 1),
+        [&](const Parameter& p) {
+          return p.hands == Hands::kValue &&
+                 !(&p == &parameters.back() && p.name == "out");
+        });
+    if (an_operand_follows) {
+      return "takes the type it is realized for ahead of an operand";
+    }
+    told.erase(told.begin());
+    told_at.erase(told_at.begin());
   }
   const auto told_names = [&] {
     std::string names;
@@ -392,12 +349,8 @@ auto Disagreement(
     return is_told_alone_as(name, 2) && parameters.back().name == "out";
   };
   switch (declared.answer_told) {
-    // A realization for values laid out by their type building one is
-    // told its type whatever its entry's declaration says, whether it builds
-    // one being the type the call answers at to say.
     case support::AnswerTold::kNothing:
-      if (told.empty() ||
-          (for_laid_out && is_told_of_its_answer_as("answer_type"))) {
+      if (told.empty()) {
         return std::nullopt;
       }
       return std::format(
@@ -488,26 +441,14 @@ auto DeclaredRealizations() -> Realizations {
     }
   };
   const auto builtin = [&](const std::string& symbol, support::BuiltinFn fn,
-                           const Told& told,
-                           std::optional<std::size_t> own_laid_out) {
+                           const Told& told) {
     const support::RuntimeEntry entry = support::RuntimeEntryOf(fn);
     state(
         symbol, Declared{
                     .operands = entry.operands,
                     .told = told,
-                    .answer_told = entry.answer_told,
-                    .own_laid_out = own_laid_out});
+                    .answer_told = entry.answer_told});
     all.functions.push_back(symbol);
-  };
-  // The operand naming a realization where that operand is laid out by its
-  // type, which is where the realization is told the types of such values it
-  // is handed.
-  const auto laid_out_at =
-      [](const Told& told, std::size_t operand) -> std::optional<std::size_t> {
-    if (!std::holds_alternative<ToldLaidOutTypes>(told)) {
-      return std::nullopt;
-    }
-    return operand;
   };
   const auto over_each = [&](std::span<const RealizedFor> realized,
                              const auto& stated) {
@@ -521,31 +462,21 @@ auto DeclaredRealizations() -> Realizations {
   };
 
   for (const support::BuiltinFn fn : builtins) {
-    const auto per_domain = [&](std::span<const RealizedFor> realized,
-                                std::optional<std::size_t> named_by) {
+    const auto per_domain = [&](std::span<const RealizedFor> realized) {
       over_each(realized, [&](support::ValueDomain domain) {
-        const Told told = ToldOf(domain, fn);
-        builtin(
-            RuntimeSymbol(domain, fn), fn, told,
-            named_by.has_value() ? laid_out_at(told, *named_by) : std::nullopt);
+        builtin(RuntimeSymbol(domain, fn), fn, ToldOf(domain, fn));
       });
     };
     std::visit(
         Overloaded{
             [&](const NamedAlone&) {
-              builtin(RuntimeSymbol(fn), fn, ToldNothing{}, std::nullopt);
+              builtin(RuntimeSymbol(fn), fn, ToldNothing{});
             },
             [](const OverIntegralValues&) {}, [](const NotRealized&) {},
-            [&](const NamedByValue& named) {
-              per_domain(named.realized, named.operand);
-            },
-            // What names these is what the call builds, or storage holding
-            // values, neither of which is an array operand.
-            [&](const NamedByResult& named) {
-              per_domain(named.realized, std::nullopt);
-            },
+            [&](const NamedByValue& named) { per_domain(named.realized); },
+            [&](const NamedByResult& named) { per_domain(named.realized); },
             [&](const NamedByStorageDomain& named) {
-              per_domain(named.realized, std::nullopt);
+              per_domain(named.realized);
             },
             [&](const NamedByWrapper& named) {
               for (const ThroughWrapper& one : named.realized) {
@@ -553,7 +484,7 @@ auto DeclaredRealizations() -> Realizations {
                   if (one.domains.Holds(domain)) {
                     builtin(
                         RuntimeSymbol(domain, one.wrapper, fn), fn,
-                        ToldOf(domain, one.wrapper, fn), std::nullopt);
+                        ToldOf(domain, one.wrapper, fn));
                   }
                 }
               }
@@ -562,7 +493,7 @@ auto DeclaredRealizations() -> Realizations {
               for (const Conversion& one : named.realized) {
                 builtin(
                     RuntimeSymbol(one.destination, fn, one.source), fn,
-                    ToldNothing{}, std::nullopt);
+                    ToldNothing{});
               }
             }},
         EntryNamingOf(fn));
@@ -641,12 +572,10 @@ auto DeclaredRealizations() -> Realizations {
         continue;
       }
       state(
-          symbol,
-          Declared{
-              .operands = {},
-              .told = ToldOfAnOperator(domain),
-              .answer_told = support::AnswerTold::kNothing,
-              .own_laid_out = laid_out_at(ToldOfAnOperator(domain), 0)});
+          symbol, Declared{
+                      .operands = {},
+                      .told = ToldOfAnOperator(domain),
+                      .answer_told = support::AnswerTold::kNothing});
     }
   }
   return all;
@@ -839,28 +768,44 @@ TEST(EntryPrototypeTest, WhatStorageIsToldAheadOpensItsPrototype) {
   EXPECT_TRUE(disagrees(ToldNothing{}, kTypeFirst));
 }
 
-// A realization for values laid out by their type named by such an operand
-// takes that operand's type right after it.
-TEST(
-    EntryPrototypeTest,
-    TheLaidOutValueARealizationIsNamedByCrossesWithItsType) {
-  const Declared declared{
-      .operands = {},
-      .told = ToldLaidOutTypes{},
-      .answer_told = support::AnswerTold::kNothing,
-      .own_laid_out = 0};
-  const auto parameters_of = [](std::string_view prototype) {
-    return PrototypesIn(prototype).at("lyra_rt_probe");
+// A realization for values laid out by their type takes that type once, after
+// its operands and ahead of what it is told of its answer, however many values
+// of it it takes.
+TEST(EntryPrototypeTest, ALaidOutTypeIsToldOnceAfterTheOperands) {
+  const auto declared = [](support::AnswerTold answer_told) {
+    return Declared{
+        .operands = {}, .told = ToldLaidOutType{}, .answer_told = answer_told};
   };
-  EXPECT_FALSE(Disagreement(
-                   declared, parameters_of(
-                                 "void lyra_rt_probe(const void* array, "
-                                 "const void* array_type);"))
-                   .has_value());
-  EXPECT_TRUE(
-      Disagreement(
-          declared, parameters_of("void lyra_rt_probe(const void* array);"))
-          .has_value());
+  const auto disagrees = [&](support::AnswerTold answer_told,
+                             std::string_view prototype) {
+    return Disagreement(
+               declared(answer_told),
+               PrototypesIn(prototype).at("lyra_rt_probe"))
+        .has_value();
+  };
+  constexpr auto kNothing = support::AnswerTold::kNothing;
+  EXPECT_FALSE(disagrees(
+      kNothing,
+      "void lyra_rt_probe(const void* lhs, const void* rhs, "
+      "const void* lhs_type);"));
+  EXPECT_FALSE(disagrees(
+      kNothing,
+      "auto lyra_rt_probe(const void* lhs, const void* rhs, "
+      "const void* lhs_type, void* out) -> void*;"));
+  EXPECT_TRUE(disagrees(
+      kNothing, "void lyra_rt_probe(const void* lhs, const void* rhs);"));
+  EXPECT_TRUE(disagrees(
+      kNothing,
+      "void lyra_rt_probe(const void* lhs, const void* lhs_type, "
+      "const void* rhs);"));
+  EXPECT_TRUE(disagrees(
+      kNothing,
+      "void lyra_rt_probe(const void* lhs, const void* lhs_type, "
+      "const void* rhs, const void* rhs_type);"));
+  EXPECT_FALSE(disagrees(
+      support::AnswerTold::kBuiltArray,
+      "auto lyra_rt_probe(const void* array, std::int64_t count, "
+      "const void* array_type, const void* answer_type, void* out) -> void*;"));
 }
 
 }  // namespace

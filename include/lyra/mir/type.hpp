@@ -12,7 +12,7 @@
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/integral_constant.hpp"
-#include "lyra/mir/struct_id.hpp"
+#include "lyra/mir/record_id.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/runtime_class.hpp"
@@ -442,24 +442,25 @@ struct CoroutineType {
   auto operator==(const CoroutineType&) const -> bool = default;
 };
 
-// Which declaration a struct type is: one this unit declares, reached by where
-// it sits in the unit's struct registry, or one another unit declares, named
-// the way that unit names it. Only a struct the source declared has a name, so
-// only such a struct is reached from another unit.
-using StructRef = std::variant<StructId, TypeDeclarationRef>;
+// Which declaration a record type is: one this unit declares, reached by where
+// it sits in the unit's record registry, or one another unit declares, named
+// the way that unit names it.
+using RecordRef = std::variant<RecordId, TypeDeclarationRef>;
 
-// A heterogeneous fixed product identified by its declaration (the C++, Rust
-// and Swift struct): two declarations with the same members are two types. Its
-// members are reached by position, as a tuple's components are. The source
-// declares one -- an SV unpacked structure (LRM 7.2, 6.22.1) -- and so does a
-// lowering, for the variables a scope must keep past its end (LRM 6.21), held
-// through a shared pointer the way a program in a language without a collector
-// would hold them. A value of one is a value: reference semantics come from the
-// wrapper around it, never from the type.
-struct StructType {
-  StructRef declaration;
+// A structure, a union or a tagged union the source declared (LRM 7.2, 7.3), as
+// clang's record type names its record declaration and rustc's ADT type its
+// definition: two declarations with the same members are two types (LRM
+// 6.22.1). The type is the declaration; which aggregate it is and its members'
+// types are the declaration's. A structure's members each hold storage of their
+// own; a union's overlay one storage, read through any member (LRM 7.3); a
+// tagged union's do too, with the position of the member it holds observable
+// as its tag (LRM 7.3.2, 11.9), and a `void` member carries `EmptyType`. A
+// member is reached by position. A value of one is a value: reference
+// semantics come from the wrapper around it, never from the type.
+struct RecordType {
+  RecordRef declaration;
 
-  auto operator==(const StructType&) const -> bool = default;
+  auto operator==(const RecordType&) const -> bool = default;
 };
 
 // The type of a closure value: an anonymous concrete callable value, named by
@@ -467,8 +468,8 @@ struct StructType {
 // declaration (its capture fields and one invoke body). Distinct per closure
 // site, so two closures of the same signature but different captures are
 // different types. Callable directly: a call resolves its signature from the
-// declaration's invoke. A separate category from `StructType`: a closure has an
-// invoke body, and a struct is a value with none.
+// declaration's invoke. A separate category from `RecordType`: a closure has an
+// invoke body, and a record is a value with none.
 struct ClosureType {
   ClosureId closure_id;
 
@@ -580,23 +581,15 @@ struct VectorType {
 };
 
 // A heterogeneous fixed product identified by its components (the Rust / Python
-// tuple, C++ `std::tuple`), where `VectorType` is the homogeneous one and
-// `StructType` the one identified by its declaration. A lowering composes one
-// for itself -- the `(key, value)` pair an associative literal is a sequence
-// of, a call's completion -- so two with the same components are one type.
+// tuple, C++ `std::tuple`), where `VectorType` is the homogeneous one and a
+// structure's `RecordType` the one identified by its declaration. A lowering
+// composes one for itself -- the `(key, value)` pair an associative literal is
+// a sequence of, a call's completion -- so two with the same components are one
+// type.
 struct TupleType {
   std::vector<TypeId> elements;
 
   auto operator==(const TupleType&) const -> bool = default;
-};
-
-// Overlapping member storage: one of an ordered list of member types is the
-// value at a time (the C `union`, distinct from the product and from a tagged
-// sum). The value-layer realization of an SV untagged unpacked union (LRM 7.3).
-struct UnionType {
-  std::vector<TypeId> members;
-
-  auto operator==(const UnionType&) const -> bool = default;
 };
 
 // A value type carrying no information: it has exactly one value, so nothing
@@ -607,21 +600,6 @@ struct UnionType {
 // a type that has a value, which absence-of-a-type cannot supply.
 struct EmptyType {
   auto operator==(const EmptyType&) const -> bool = default;
-};
-
-// Type-checked sum: one of an ordered list of component types is the value at
-// a time, with the tag observably part of the value. The value-layer
-// realization of an SV tagged unpacked union (LRM 7.3.2 / 11.9). Distinct from
-// `UnionType`: an untagged union erases the tag and gives a cross-member read
-// a deterministic fallback; here the tag is observable through the pattern-
-// matching surface (LRM 12.6) and a member access whose type is inconsistent
-// with the tag is a run-time error. A member's position is what the tag codes.
-// A `void` member -- allowed only in tagged unions (LRM 7.3.2) -- carries
-// `EmptyType`.
-struct TaggedUnionType {
-  std::vector<TypeId> members;
-
-  auto operator==(const TaggedUnionType&) const -> bool = default;
 };
 
 // Observable storage wrapper around a value type. Declares that a member's
@@ -769,11 +747,10 @@ class Type {
       MachineFunctionType, EventType, RealType, ShortRealType, ChandleType,
       VoidType, ObjectType, RuntimeClassType, RuntimeEffectsType, FilesType,
       DiagnosticType, RuntimeLibraryType, CoroutineType, VariableRefType,
-      ReferenceWrapperType, PointerType, ReferenceType, ManagedRefType, VectorType, TupleType,
-      UnionType, TaggedUnionType, EmptyType, ObservableType, ResolvedType,
-      DriverType, OpenWriteType, DesignationType, BitsReferenceType,
-      ObjectWriteType, SampledHistoryType, EvaluationAttemptsType, LoopBlocksType, StructType,
-      ClosureType>;
+      PointerType, ReferenceType, ManagedRefType, VectorType, TupleType,
+      EmptyType, ObservableType, ResolvedType, DriverType, OpenWriteType,
+      DesignationType, BitsReferenceType, ObjectWriteType, SampledHistoryType,
+      EvaluationAttemptsType, LoopBlocksType, RecordType, ClosureType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

@@ -162,10 +162,12 @@ auto MakesValue(const Rvalue& value) -> bool {
           // that storage owns; only a value the reader keeps is copied, and
           // keeping it is a step of its own.
           [](const LoadInstr&) { return false; },
+          // What the bits there stand for is made apart from them.
+          [](const OverlaidLoadInstr&) { return true; },
           [](const CastInstr&) { return false; },
           [](const HandleCastInstr&) { return true; },
           [](const DynamicCastInstr&) { return true; },
-          [](const TupleInstr&) { return true; },
+          [](const ProductInstr&) { return true; },
           [](const ClosureInstr&) { return true; },
           [](const UnionInstr&) { return true; },
           [](const VectorGetInstr&) { return true; },

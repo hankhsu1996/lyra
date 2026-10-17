@@ -18,6 +18,7 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/failure_context.hpp"
+#include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/integral_constant.hpp"
 #include "lyra/lir/operator.hpp"
@@ -66,12 +67,13 @@ auto Unsupported(std::string message) -> std::unexpected<diag::Diagnostic> {
 // element type laid down a known number of times. A type reaching here that
 // names neither is a producer that built a composite of something that is not
 // composed from parts.
-auto AssembledFrom(const lir::Type& built, std::vector<lir::Operand> parts)
-    -> lir::Rvalue {
-  if (built.IsProduct()) {
-    return lir::TupleInstr{.components = std::move(parts)};
+auto AssembledFrom(
+    const lir::CompilationUnit& unit, lir::TypeId built,
+    std::vector<lir::Operand> parts) -> lir::Rvalue {
+  if (lir::ProductElements(unit, built).has_value()) {
+    return lir::ProductInstr{.components = std::move(parts)};
   }
-  if (built.Is<lir::MachineArrayType>()) {
+  if (unit.types.Get(built).Is<lir::MachineArrayType>()) {
     return lir::ArrayInstr{.elements = std::move(parts)};
   }
   throw InternalError(
@@ -270,12 +272,20 @@ auto FunctionLowerer::LowerCallTarget(
                     },
                     // Reached by the symbol its declaring unit emits it under,
                     // from that unit and from any other alike.
-                    [&](const mir::StructMethodTarget& t)
+                    [&](const mir::RecordMethodTarget& t)
                         -> diag::Result<lir::CallTarget> {
                       return lir::CallTarget{lir::SymbolTarget{
-                          .symbol = lir::StructMethodSymbol(
+                          .symbol = lir::RecordMethodSymbol(
                               t.declaration.unit_name, t.declaration.path,
                               t.answers)}};
+                    },
+                    // A body this unit states for the type, which no other
+                    // unit names.
+                    [&](const mir::TypeOperationTarget& t)
+                        -> diag::Result<lir::CallTarget> {
+                      return lir::CallTarget{lir::FunctionTarget{
+                          .function =
+                              unit_->TypeOperationFunction(t.type, t.answers)}};
                     },
                     [&](const mir::ExternalBringUpTarget& t)
                         -> diag::Result<lir::CallTarget> {
@@ -1759,19 +1769,6 @@ auto ReferencedPartCall(const mir::Block& block, mir::ExprId step)
                                                                      : nullptr;
 }
 
-// The position a call reaching a component by its position names. The position
-// is fixed by the call rather than computed, so it rides on the callee.
-auto PositionOf(const mir::CallExpr& call) -> base::ComponentIndex {
-  const std::optional<base::ComponentIndex> position =
-      ComponentPartOf(std::get<mir::Direct>(call.callee));
-  if (!position.has_value()) {
-    throw InternalError(
-        "mir_to_lir: an entry reaching a part by its position names that "
-        "position, and this call names none -- please report this as a bug");
-  }
-  return *position;
-}
-
 // The one position a step to bits names where they start by.
 auto BitsStartOf(const mir::CallExpr& step) -> mir::ExprId {
   if (step.arguments.size() != 1) {
@@ -2291,6 +2288,9 @@ auto FunctionLowerer::LowerPlace(
           },
           [&](const mir::VectorGetExpr&) {
             return names_no_place("the handle a sequence answers with");
+          },
+          [&](const mir::DiscriminantExpr&) {
+            return names_no_place("the member a tagged union holds");
           }},
       expr.data);
 }
@@ -2306,6 +2306,10 @@ auto FunctionLowerer::LowerRead(const mir::Block& block, mir::ExprId place)
   auto named = LowerPlace(block, place, Reach::kRead);
   if (!named) {
     return std::unexpected(std::move(named.error()));
+  }
+  if (mir::KindOfPlace(unit_->Mir(), block, place) ==
+      mir::PlaceKind::kOverlaid) {
+    return Emit(type, lir::OverlaidLoadInstr{.place = *std::move(named)});
   }
   return Load(*std::move(named), type);
 }
@@ -2539,34 +2543,6 @@ auto FunctionLowerer::LowerReferenceIntoReceiver(
       unit_->TranslateType(type), lir::AddrOfInstr{.place = *std::move(place)});
 }
 
-auto FunctionLowerer::LowerTagMatches(
-    const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
-    -> diag::Result<lir::Operand> {
-  const std::optional<mir::ExprId> tagged = mir::CalleeReceiver(call.callee);
-  if (!tagged.has_value()) {
-    throw InternalError(
-        "mir_to_lir: a tag is asked of a tagged union, and this call names "
-        "none -- please report this as a bug");
-  }
-  auto place = PlaceHolding(block, *tagged, Reach::kRead);
-  if (!place) {
-    return std::unexpected(std::move(place.error()));
-  }
-  const lir::TypeId tag_type =
-      unit_->TranslateType(unit_->Mir().builtins.machine_int64);
-  const lir::Operand tag =
-      Emit(tag_type, lir::DiscriminantInstr{.place = *std::move(place)});
-  const lir::Operand member{lir::IntConst{
-      .value =
-          lir::IntegralConstant{
-              .value_words = {PositionOf(call).value}, .state_words = {}},
-      .type = tag_type}};
-  return Emit(
-      unit_->TranslateType(type),
-      lir::BinaryInstr{
-          .op = lir::BinaryOp::kEquality, .lhs = tag, .rhs = member});
-}
-
 auto FunctionLowerer::LowerReferenceToContents(
     const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
     -> diag::Result<lir::Operand> {
@@ -2689,9 +2665,6 @@ auto FunctionLowerer::LowerCallInto(
     return settled(LowerMutatingCall(block, call, *fn, type));
   }
 
-  if (mir::DirectBuiltinFn(call) == support::BuiltinFn::kTagMatches) {
-    return settled(LowerTagMatches(block, call, type));
-  }
   if (mir::AnswersReferenceIntoReceiver(call)) {
     return settled(LowerReferenceIntoReceiver(block, call, type));
   }
@@ -3309,6 +3282,7 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
           [&](const mir::CompositeExpr&) -> Lowered { return computed(); },
           [&](const mir::UnionExpr&) -> Lowered { return computed(); },
           [&](const mir::VectorGetExpr&) -> Lowered { return computed(); },
+          [&](const mir::DiscriminantExpr&) -> Lowered { return computed(); },
           [&](const mir::ClosureExpr&) -> Lowered { return computed(); },
           [&](const mir::UnaryExpr&) -> Lowered { return computed(); },
           [&](const mir::BinaryExpr&) -> Lowered { return computed(); },
@@ -3334,6 +3308,20 @@ auto FunctionLowerer::LowerRvalue(const mir::Block& block, mir::ExprId id)
       return std::unexpected(std::move(value.error()));
     }
     return of_type(ConsumeByCopyOrMove(*std::move(value)));
+  };
+  // A read of storage another member of an untagged union may have written
+  // makes a value of its own, so it is computed where it goes rather than
+  // first into a value of the whole read's size.
+  const auto read = [&](mir::ExprId place) -> Lowered {
+    if (mir::KindOfPlace(unit_->Mir(), block, place) !=
+        mir::PlaceKind::kOverlaid) {
+      return used();
+    }
+    auto named = LowerPlace(block, place, Reach::kRead);
+    if (!named) {
+      return std::unexpected(std::move(named.error()));
+    }
+    return of_type(lir::OverlaidLoadInstr{.place = *std::move(named)});
   };
   return std::visit(
       Overloaded{
@@ -3413,7 +3401,7 @@ auto FunctionLowerer::LowerRvalue(const mir::Block& block, mir::ExprId id)
             }
             const lir::TypeId built = unit_->TranslateType(type);
             return of_type(
-                AssembledFrom(unit_->Types().Get(built), *std::move(parts)));
+                AssembledFrom(unit_->Lir(), built, *std::move(parts)));
           },
           [&](const mir::UnionExpr& built) -> Lowered {
             auto value = LowerExpr(block, built.value);
@@ -3423,6 +3411,15 @@ auto FunctionLowerer::LowerRvalue(const mir::Block& block, mir::ExprId id)
             return of_type(
                 lir::UnionInstr{
                     .member = built.member, .value = *std::move(value)});
+          },
+          // The tag is read where the union lies, as rustc reads an enum's
+          // discriminant.
+          [&](const mir::DiscriminantExpr& read) -> Lowered {
+            auto place = PlaceHolding(block, read.tagged, Reach::kRead);
+            if (!place) {
+              return std::unexpected(std::move(place.error()));
+            }
+            return of_type(lir::DiscriminantInstr{.place = *std::move(place)});
           },
           [&](const mir::VectorGetExpr& get) -> Lowered {
             auto vector = LowerExpr(block, get.vector);
@@ -3533,8 +3530,8 @@ auto FunctionLowerer::LowerRvalue(const mir::Block& block, mir::ExprId id)
           [&](const mir::AssignExpr&) { return used(); },
           [&](const mir::ConditionalExpr&) { return used(); },
           [&](const mir::BlockExpr&) { return used(); },
-          [&](const mir::MoveExpr&) { return used(); },
-          [&](const mir::CopyExpr&) { return used(); },
+          [&](const mir::MoveExpr& move) { return read(move.operand); },
+          [&](const mir::CopyExpr& copy) { return read(copy.place); },
           [&](const mir::AwaitExpr&) { return used(); },
           [&](const mir::WaitExpr&) { return used(); },
       },
@@ -3592,6 +3589,7 @@ auto FunctionLowerer::LowerExprInto(
           [&](const mir::CompositeExpr&) { return assigned(); },
           [&](const mir::UnionExpr&) { return assigned(); },
           [&](const mir::VectorGetExpr&) { return assigned(); },
+          [&](const mir::DiscriminantExpr&) { return assigned(); },
           [&](const mir::ClosureExpr&) { return assigned(); },
           [&](const mir::FieldAccessExpr&) { return assigned(); },
           [&](const mir::DerefExpr&) { return assigned(); },

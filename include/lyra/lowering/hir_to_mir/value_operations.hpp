@@ -7,8 +7,8 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/struct_decl.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -27,17 +27,40 @@ class UnitLowerer;
 [[nodiscard]] auto StructMethodsOf(
     UnitLowerer& lowerer, const hir::UnpackedStructType& source,
     const mir::TypeDeclarationRef& declaration, mir::TypeId structure,
-    std::span<const mir::TypeId> members) -> std::vector<mir::StructMethod>;
+    std::span<const mir::TypeId> members) -> std::vector<mir::RecordMethod>;
+
+// A method for every operation on a whole value the union or the tagged union
+// `declaration` names has (LRM 7.3), over values of `overlay`, a union of
+// `kind` whose members are of `members`: an untagged union's is its first
+// member's, read as that member's type holds a value (LRM 7.3.2), and a tagged
+// union's is the member its tag names. Asked while the declaration is being
+// made, so what the union itself answers is read off its members.
+[[nodiscard]] auto UnionMethodsOf(
+    UnitLowerer& lowerer, const mir::TypeDeclarationRef& declaration,
+    mir::TypeId overlay, mir::RecordKind kind,
+    std::span<const mir::TypeId> members) -> std::vector<mir::RecordMethod>;
+
+// A body for every operation on a whole value the fixed-size unpacked array
+// `type` has (LRM 7.4.2), each element's in turn, which the unit naming the
+// type states as its own.
+[[nodiscard]] auto ArrayOperationsOf(UnitLowerer& lowerer, mir::TypeId type)
+    -> std::vector<mir::TypeOperation>;
+
+// Whether `operation` is one asked of a whole value, which a type with
+// operations of its own answers with its own body, rather than an operation of
+// a container's on its elements.
+[[nodiscard]] auto IsWholeValueOperation(support::ValueOperation operation)
+    -> bool;
 
 // `entry`'s question asked of a value, with `operands` after the value it is
-// asked of: the method of the struct's declaration where the type deciding it
-// is a struct the source declared -- `receiver`'s, or for a question asked of a
-// type rather than of a value, the result's -- and the library's entry for
-// every other value. The operands are the same either way, since a struct
-// answers the question with the parameters any value does. Each is handed as
-// it stands, a place or a value: the method borrows a place where it lies, as
-// clang settles an operand's conversion once overload resolution chose the
-// callee, and the library's entry takes each operand's value.
+// asked of: the type's own body where the type deciding it has its own
+// operations -- `receiver`'s, or for a question asked of a type rather than of
+// a value, the result's -- and the library's entry for every other value. The
+// operands are the same either way, since such a type answers the question
+// with the parameters any value does. Each is handed as it stands, a place or
+// a value: the body borrows a place where it lies, as clang settles an
+// operand's conversion once overload resolution chose the callee, and the
+// library's entry takes each operand's value.
 [[nodiscard]] auto BuildValueOperation(
     const mir::CompilationUnit& unit, mir::Block& block,
     support::BuiltinFn entry, std::optional<mir::ExprId> receiver,
@@ -54,13 +77,13 @@ class UnitLowerer;
     const mir::CompilationUnit& unit, std::span<const mir::TypeId> operands)
     -> mir::TypeId;
 
-// LRM 11.4.5 `==` or `!=` on two structs of one type, as the struct's method
-// for it: one bit, which can be unknown exactly where a member can hold an
-// unknown.
-[[nodiscard]] auto BuildStructComparison(
+// LRM 11.4.5 `==` or `!=` on `lhs` and `rhs`, answering at `result`: the
+// operand type's own body where it has one, which takes each operand where it
+// lies, and otherwise the operator on the two values.
+[[nodiscard]] auto BuildEquality(
     const mir::CompilationUnit& unit, mir::Block& block,
-    support::ValueOperator comparison, mir::ExprId lhs, mir::ExprId rhs)
-    -> mir::ExprId;
+    support::ValueOperator comparison, mir::ExprId lhs, mir::ExprId rhs,
+    mir::TypeId result) -> mir::ExprId;
 
 // LRM 11.4.5 `===`, a known bit.
 [[nodiscard]] auto BuildCaseEquality(

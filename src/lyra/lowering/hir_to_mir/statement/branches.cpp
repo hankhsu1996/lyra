@@ -23,7 +23,7 @@
 #include "lyra/lowering/hir_to_mir/qualified_statement_check.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
-#include "lyra/lowering/hir_to_mir/struct_methods.hpp"
+#include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"

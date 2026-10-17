@@ -25,16 +25,4 @@ auto ElementType::DiscardedWrite() const -> void* {
   return scratch_->discarded_write;
 }
 
-auto ElementType::TypeStatedAt() const -> StatedAt {
-  return StatedAtIn(this, type_);
-}
-
-auto ElementType::BuildDefaultStatedAt() const -> StatedAt {
-  return StatedAtIn(this, build_default_);
-}
-
-auto ElementType::ScratchStatedAt() const -> StatedAt {
-  return StatedAtIn(this, scratch_);
-}
-
 }  // namespace lyra::value

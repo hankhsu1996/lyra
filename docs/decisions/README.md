@@ -80,8 +80,8 @@ the detail lives in the entry itself.
 - [unpacked-array-representation](unpacked-array-representation.md) -- representation of a
   fixed-size unpacked array.
 - [unpacked-struct-representation](unpacked-struct-representation.md) -- an unpacked struct is a
-  nominal value product (`StructType`) and not an object, positional access, defaults synthesized at
-  lowering.
+  nominal value product (a record naming its declaration) and not an object, positional access,
+  defaults synthesized at lowering.
 - [unpacked-union-representation](unpacked-union-representation.md) -- the sibling the struct
   decision left open: overlapping storage is neither a product nor a sum, and this settles which one
   MIR models it as. Its active-member value is superseded by the entry below.
@@ -109,8 +109,9 @@ the detail lives in the entry itself.
 - [jit-aggregate-realization](jit-aggregate-realization.md) -- on the execution backend a union or a
   container is a runtime-owned object behind a handle, not structurally monomorphized, holding its
   elements as their type's bytes; the choice is below LIR, and LIR's aggregate operations stay
-  realization-agnostic. Superseded for tuples by the entry below, and for a fixed-size unpacked
-  array by the one after it.
+  realization-agnostic. Superseded for tuples by the entry below, for a fixed-size unpacked array by
+  the one after it, and for unions by
+  [a-union-is-one-storage-its-members-overlay](a-union-is-one-storage-its-members-overlay.md).
 - [a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md) -- on the execution backend
   a tuple has one form wherever it lies: its type's layout, opening with its type's operation table,
   as a C++ object with virtual functions opens with its vtable pointer. The code generator compiles
@@ -118,15 +119,21 @@ the detail lives in the entry itself.
   through the table. Call-chain 1,032.0 M -> 851.3 M instructions, a struct loop 278.7 M -> 236.3 M.
   A description the runtime walks and a tuple converted where it crosses are rejected. The table in
   the bytes, and holding a tuple in storage of the runtime's own, are superseded by the holder entry
-  below.
+  below, and the table's form as a vtable by the record-both-sides-read entry.
+- [a-type-is-told-to-the-library-as-a-record-both-sides-read](a-type-is-told-to-the-library-as-a-record-both-sides-read.md)
+  -- on the execution backend a type reaches the prebuilt library as a C-layout record declared once
+  and read by both the code generator and the library, opening with the address of a table of
+  function pointers each handed the type, as Swift's value witness table and Go's `abi.Type` are;
+  not a fabricated object of a library C++ class measured at compiler run time.
 - [a-fixed-array-is-laid-out-by-its-type](a-fixed-array-is-laid-out-by-its-type.md) -- on the
   execution backend a fixed-size unpacked array is its elements one after another at every size, an
   element reached by address arithmetic with the library answering only an index that names none.
-  The library is handed the array's type as constant data -- a count and the element's type -- and
-  runs every whole-array operation over it; an array crosses to it as its bytes followed by its
-  type, and a construction carries no count. Read it for why a type stated as data and a type passed
-  beside the bytes, both rejected for a tuple, are taken for an array. A function per array type, a
-  header in the bytes, and an element default handed to each construction are rejected.
+  The library is handed the array's type as constant data -- a count and the element's type, for
+  reaching an element -- whose table holds the whole-array operations compiled for the type; an
+  array crosses to it as its bytes, its type told once per call after the operands, and a
+  construction carries no count. Read it for why a type passed beside the bytes, rejected for a
+  tuple, is taken for an array. A header in the bytes and an element default handed to each
+  construction are rejected.
 - [a-holder-lays-out-the-value-it-keeps](a-holder-lays-out-the-value-it-keeps.md) -- on the
   execution backend a variable, a net and a procedural local of an integral value wider than a word,
   a tuple, a union or a fixed-size unpacked array are told its width or type where they are built
@@ -161,10 +168,17 @@ the detail lives in the entry itself.
   the fixed-size array ignoring it, omitting it only where the answer is a fixed-size array, a
   prototype standing for a type, and a bound as an operand are rejected.
 - [a-structures-operations-are-stated-in-mir](a-structures-operations-are-stated-in-mir.md) -- `==`,
-  `===`, `$bits`, `$countbits`, `$isunknown`, the bit stream and the net folds on a structure are
-  methods its declaration states in MIR, one per operation the type has, and the program's use is a
-  call of one. Each backend compiles them like any other declared body; the execution backend also
-  hands its runtime a table of them. Composing them in a backend is rejected.
+  `===`, `$bits`, `$countbits`, `$isunknown`, the bit stream and the net folds on a structure or a
+  union are methods its declaration states in MIR, one per operation the type has, and the program's
+  use is a call of one. Each backend compiles them like any other declared body; the execution
+  backend also hands its runtime a table of them. Composing them in a backend is rejected.
+- [a-fixed-arrays-operations-are-stated-per-unit](a-fixed-arrays-operations-are-stated-per-unit.md)
+  -- a fixed-size array, which has no declaration, has its whole-value operations stated as MIR
+  bodies by each unit naming the type, built from its elements' operations, and a use calls one by
+  the type and the operation. The execution backend compiles them into the type's table and
+  generates the type's lifecycle; the C++ backend spells the call as its library template's member.
+  The library carrying them out from a description of the type, the code generator instantiating
+  them itself, and a union stated the same way are rejected.
 - [slice-value-semantics](slice-value-semantics.md) -- a slice read materializes an owned value; the
   access model is value, not borrow.
 - [value-projection-write](value-projection-write.md) -- a value-aggregate interior write replaces
@@ -839,10 +853,11 @@ the detail lives in the entry itself.
   rejected, because a dereferenced pointer to a value already means a value cell.
 - [a-write-compares-what-it-reached](a-write-compares-what-it-reached.md) -- a write through a
   wrapper keeps the value of the part it lands on rather than of the variable: MIR takes each step
-  into a storage part on the write in progress, an element or slice step tells the write what
-  forming it did (an element made, an index naming none, an element moved), and a whole-value store
-  compares before writing. Observers keeping their own copies, and notifying without comparing, are
-  rejected, because an implicit sensitivity has nothing of its own to compare with.
+  into a part the write lands on -- a union's member included, reported at the union -- on the write
+  in progress, an element or slice step tells the write what forming it did (an element made, an
+  index naming none, an element moved), and a whole-value store compares before writing. Observers
+  keeping their own copies, and notifying without comparing, are rejected, because an implicit
+  sensitivity has nothing of its own to compare with.
 - [a-part-of-a-variable-is-named-by-its-steps](a-part-of-a-variable-is-named-by-its-steps.md) -- a
   part of a variable is named by the steps that reach it, a member's index or an element's ordinal,
   and by a range of bits inside a packed value; a wait, a write, a reference and a procedure's

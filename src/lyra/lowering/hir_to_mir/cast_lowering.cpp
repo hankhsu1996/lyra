@@ -360,8 +360,6 @@ auto BuildValueConversion(
           [&](const mir::ReferenceType& t) { return none(t); },
           [&](const mir::VectorType& t) { return none(t); },
           [&](const mir::TupleType& t) { return none(t); },
-          [&](const mir::UnionType& t) { return none(t); },
-          [&](const mir::TaggedUnionType& t) { return none(t); },
           [&](const mir::EmptyType& t) { return none(t); },
           [&](const mir::ObservableType& t) { return none(t); },
           [&](const mir::ResolvedType& t) { return none(t); },
@@ -373,7 +371,7 @@ auto BuildValueConversion(
           [&](const mir::SampledHistoryType& t) { return none(t); },
           [&](const mir::EvaluationAttemptsType& t) { return none(t); },
           [&](const mir::LoopBlocksType& t) { return none(t); },
-          [&](const mir::StructType& t) { return none(t); },
+          [&](const mir::RecordType& t) { return none(t); },
           [&](const mir::ClosureType& t) { return none(t); },
       });
 }

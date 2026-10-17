@@ -40,10 +40,8 @@ auto ValueDomainName(ValueDomain domain) -> std::string_view {
       return "chandle";
     case ValueDomain::kEmpty:
       return "empty";
-    case ValueDomain::kTuple:
-      return "tuple";
-    case ValueDomain::kUnion:
-      return "union";
+    case ValueDomain::kRecord:
+      return "record";
     case ValueDomain::kDynArray:
       return "dynarray";
     case ValueDomain::kUnpackedArray:
@@ -77,8 +75,7 @@ auto IsIntegralLayout(ValueDomain domain) -> bool {
     case ValueDomain::kShortReal:
     case ValueDomain::kChandle:
     case ValueDomain::kEmpty:
-    case ValueDomain::kTuple:
-    case ValueDomain::kUnion:
+    case ValueDomain::kRecord:
     case ValueDomain::kDynArray:
     case ValueDomain::kUnpackedArray:
     case ValueDomain::kQueue:

@@ -66,35 +66,44 @@ what the construct means.
   once to a referent that exists elsewhere and never null, so holding one says only that the
   referent is read where it lies rather than copied; and four categories: the **tuple**, the
   structural product (positional; interned by its components, so two with the same components are
-  one type); the **struct**, the nominal product (positional like the tuple, but its identity is its
-  declaration, so two with the same components are two types); the **closure**, an anonymous
-  concrete callable value (capture fields plus one invoke body, a distinct type per site); and the
-  **object** (`mir::Class`), the rich nominal object with methods and dispatch. The tuple and the
-  struct are the two products, and a component of either is reached the same way: by its position,
-  as a field step on the place holding the product, whether that place is a variable, a dereference
-  or a value held for the full-expression. The closure and the object share a **field substrate** --
-  a field declaration, a field id keyed within one declaration, and one access node -- while staying
-  distinct types; an access names the declaration it reaches into, so what the substrate shares is
-  the vocabulary and never the identity. Structural versus nominal, and storage versus callable, are
-  the ordinary generic-language distinctions (C++/Rust/LLVM carry them).
-- A struct is an unpacked structure the source declared (LRM 7.2). It carries the name another unit
-  reaches it by and a method for each operation the language defines on its whole value, which every
-  unit naming it calls through the declaration, handing it each value it asks about by reference, as
-  Rust's comparison operators borrow theirs; another unit holds it by that name. A local a scope
-  keeps past its end (LRM 6.21) is no struct: it is its own cell, reached through a `Shared<>`
-  wrapper. A closure is not a struct-with-invoke but its own callable-value category.
-- Every other aggregate the **source declared** is the generic type its value is: an unpacked union
-  a union and a tagged one a sum over its member types, and a packed structure or union the single
-  vector its members project onto. No member name is carried by any aggregate: an access names a
-  member by its declaration-order position, the carrier LLVM IR and Rust MIR both use, and what the
-  language reads a name for -- rendering a value (LRM 21.2.1.6) -- is computation built from the
-  source type before this layer. An enumeration's member list is part of what the type is, because
-  its value is asked for its member's name at run time (LRM 6.19.5).
+  one type); the **record**, a declared struct, union or tagged union (positional like the tuple,
+  but its identity is its declaration, so two with the same members are two types); the **closure**,
+  an anonymous concrete callable value (capture fields plus one invoke body, a distinct type per
+  site); and the **object** (`mir::Class`), the rich nominal object with methods and dispatch. A
+  component of a tuple or a record is reached the same way: by its position, as a field step on the
+  place holding it, whether that place is a variable, a dereference or a value held for the
+  full-expression; a union's members all lie at its start. The closure and the object share a
+  **field substrate** -- a field declaration, a field id keyed within one declaration, and one
+  access node -- while staying distinct types; an access names the declaration it reaches into, so
+  what the substrate shares is the vocabulary and never the identity. Structural versus nominal, and
+  storage versus callable, are the ordinary generic-language distinctions (C++/Rust/LLVM carry
+  them).
+- A record is an unpacked structure, union or tagged union the source declared (LRM 7.2, 7.3), as
+  rustc's struct, union and enum are one kind of declared type. It carries its kind, its members'
+  types, the name another unit reaches it by and a method for each operation the language defines on
+  its whole value, which every unit naming it calls through the declaration, handing it each value
+  it asks about by reference, as Rust's comparison operators borrow theirs; another unit holds it by
+  that name. A structure's type is the record and nothing else; a union's also carries its member
+  types, which a member access reads where it lies. A local a scope keeps past its end (LRM 6.21) is
+  no struct: it is its own cell, reached through a `Shared<>` wrapper. A closure is not a
+  struct-with-invoke but its own callable-value category.
+- A packed structure or union the **source declared** is the single vector its members project onto.
+  No member name is carried by any aggregate: an access names a member by its declaration-order
+  position, the carrier LLVM IR and Rust MIR both use, and what the language reads a name for --
+  rendering a value (LRM 21.2.1.6) -- is computation built from the source type before this layer.
+  An enumeration's member list is part of what the type is, because its value is asked for its
+  member's name at run time (LRM 6.19.5).
+- The operations of a fixed-size unpacked array, which has no declaration to state them: one body
+  per operation the language defines on its whole value, built from its elements' operations, which
+  a use calls by the type and the operation, handing each value by reference as a record's method
+  takes it. Each unit naming the type states them, as each translation unit instantiates a template
+  it names.
 - What a value of a type is before anything is written to it, for every type the unit holds an array
   of: the code that builds it, stated once for the type, because the source's declaration decides it
   -- a structure member's own initializer is part of it (LRM 7.2.2, 7.4.5) -- and nothing below this
   layer has that declaration. An array's type names its element type, so whatever builds, sizes or
-  answers an array of any kind learns how its elements start from the type.
+  answers an array of any kind learns how its elements start from the type. It is one of the type's
+  operations above, stated for the element type.
 - Capability wrappers: types that represent a storage place instead of being a value -- an
   observable cell, a reference, a net's resolved value, a net driver's contribution. A capability
   wrapper composes over the value type it represents, and the wrapper and that storage are distinct
@@ -303,9 +312,10 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
     place's kind. A method changing overlaid storage changes a read of it, held in a local, which is
     then written back, so what lands holds what its type requires. _Programming-language
     consequence: this is value category -- a THIR expression's place-or-value category in rustc, a
-    value kind and an object kind on every clang expression -- and like theirs it is a fact of the
-    expression, so no consumer works out from a finished tree which expressions name storage, and no
-    pair of nodes or entries differs only by whether it is read or written._
+    value kind and an object kind on every clang expression -- and like theirs it follows from the
+    expression's own nodes, read by one query every consumer asks, so no consumer works out from a
+    finished tree which expressions name storage by a rule of its own, and no pair of nodes or
+    entries differs only by whether it is read or written._
 
 ## Boundary to Adjacent Layers
 
@@ -591,25 +601,26 @@ of an element where it does not -- and what it ends in may be no place: bits are
 reference to them the packed value's `slice_mut` answers, taken once for each part they are reached
 through, and a window by its array's own `assign_element_slice`, each taken on the place the value
 lies in. Where the owner is a capability wrapper, the write is opened on it, the whole of the
-wrapper's contents is designated within it, and each step into a part that is storage of its own is
-taken within the write in progress rather than on the storage, so the write hears what forming each
-part did -- an element made by being written, an index naming none -- and it lands where what those
-steps designate is dereferenced, or, where the descent ends in bits or a window, the reference to
-the bits or the window's write is taken on the last designation; a step into a union's member is
-taken after that, as a field step of the place landed on. The write and a place designated within it
-are two types: the write is held by the writer, ended with the full-expression, which is when it
-reports, and names no place itself, while a designation borrows the write and ends with nothing to
-do. The variable learns whether the write changed it from what it heard and from the part it landed
-on (LRM 4.3). Whether a part is storage of its own is the language's fact about the type it is part
-of (`storage.md`), and the place states it as its kind (invariant 16), so no layer below works it
-out. A construct that binds the designated part rather than writing it -- an output pack component,
-a nonblocking update -- binds the same statement of owner and descent; it is owner-relative, so it
-names no interior pointer and aliases nothing the owner does not already own. A reference actual
-binds the part for as long as the callee holds it, and each write through it is a write of the owner
-at the moment it lands (LRM 13.5.2, 4.3), which no write ended with the caller's full-expression can
-be; so a reference is formed over the owner and each step into a part is taken on the reference
-(`refer_element`, `refer_component`), answering a reference to that part that belongs to the same
-owner.
+wrapper's contents is designated within it, and each step into a part a write lands on (an element,
+or a component, a union's member among them) is taken within the write in progress rather than on
+the storage. So the write hears what forming each part did -- an element made by being written, an
+index naming none -- and keeps only what it lands on. It lands where what those steps designate is
+dereferenced, or, where the descent ends in bits or a window, the reference to the bits or the
+window's write is taken on the last designation. A union's member is no storage of its own, so the
+change the write reports is to the union, whose bytes every member reads. The write and a place
+designated within it are two types: the write is held by the writer, ended with the full-expression,
+which is when it reports, and names no place itself, while a designation borrows the write and ends
+with nothing to do. The variable learns whether the write changed it from what it heard and from the
+part it landed on (LRM 4.3). Whether a part is storage of its own is the language's fact about the
+type it is part of (`storage.md`), and the place states it as its kind (invariant 16), so no layer
+below works it out. A construct that binds the designated part rather than writing it -- an output
+pack component, a nonblocking update -- binds the same statement of owner and descent; it is
+owner-relative, so it names no interior pointer and aliases nothing the owner does not already own.
+A reference actual binds the part for as long as the callee holds it, and each write through it is a
+write of the owner at the moment it lands (LRM 13.5.2, 4.3), which no write ended with the caller's
+full-expression can be; so a reference is formed over the owner and each step into a part is taken
+on the reference (`refer_element`, `refer_component`), answering a reference to that part that
+belongs to the same owner.
 
 Where the owner is a property of an object (LRM 8.4), the object is what hears the write (LRM
 9.4.2), and it is reached once, as the source reaches it once. A write is a write-in-progress value

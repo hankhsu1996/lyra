@@ -387,7 +387,7 @@ auto Renderer::BuildUnpackedAggregate(
     mir::ExprId chain = Text(frame, "");
     for (std::size_t i = fields.size(); i-- > 0;) {
       const auto index = base::ComponentIndex{static_cast<std::uint32_t>(i)};
-      const mir::ExprId live = BuildTagTest(
+      const mir::ExprId live = BuildHoldsMember(
           Owner(), block, frame.current_block->LocalPlace(value, mir_type),
           type, index);
       chain = block.exprs.Add(
@@ -435,7 +435,7 @@ auto Renderer::BuildPackedAggregate(
     mir::ExprId chain = Text(frame, "");
     for (std::size_t i = fields.size(); i-- > 0;) {
       const auto index = base::ComponentIndex{static_cast<std::uint32_t>(i)};
-      const mir::ExprId live = BuildTagTest(
+      const mir::ExprId live = BuildHoldsMember(
           Owner(), block, frame.current_block->LocalPlace(value, mir_type),
           type, index);
       chain = block.exprs.Add(

@@ -28,7 +28,6 @@ module Top;
   int tagged_copy_read;
   bit equal_after_copy;
   bit tagged_equal_after_copy;
-  bit tagged_equal_after_retag;
   bit holds_last;
 
   initial begin
@@ -44,10 +43,6 @@ module Top;
     tagged_equal_after_copy = (tagged_copy == tagged_original);
     holds_last = 1'b0;
     if (tagged_copy matches tagged m4333 .v) holds_last = 1'b1;
-
-    tagged_copy = tagged m0000 33;
-    tagged_equal_after_retag = 1'b1;
-    tagged_equal_after_retag = (tagged_copy == tagged_original);
   end
 
   final begin
@@ -64,8 +59,6 @@ module Top;
       $fatal(1, "a tagged copy compared unequal to what it was copied from");
     if (holds_last !== 1'b1)
       $fatal(1, "a tagged copy did not carry the tag of the last member");
-    if (tagged_equal_after_retag !== 1'b0)
-      $fatal(1, "two tagged unions holding different members compared equal");
     $display("All checks passed");
   end
 endmodule

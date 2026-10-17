@@ -36,8 +36,9 @@ auto BoxOf(const mir::CompilationUnit& unit, mir::TypeId pointee)
 // same rule boxes: a subroutine, a method, a closure, the constructor of an
 // object of this program's classes.
 // A runtime entry and a foreign one take what the call states as it is, and so
-// does a struct's method, which the library reaches through the struct type's
-// table by a convention of its own.
+// does an operation a type answers -- a record's method, or the body a unit
+// states for a type with no declaration -- which the library reaches through
+// the type's table by a convention of its own.
 auto EntersACompiledBody(
     const mir::CompilationUnit& unit, const mir::CallExpr& call,
     mir::TypeId result) -> bool {
@@ -47,7 +48,9 @@ auto EntersACompiledBody(
             return !std::holds_alternative<support::BuiltinFn>(direct.target) &&
                    !std::holds_alternative<mir::ForeignSymbolTarget>(
                        direct.target) &&
-                   !std::holds_alternative<mir::StructMethodTarget>(
+                   !std::holds_alternative<mir::RecordMethodTarget>(
+                       direct.target) &&
+                   !std::holds_alternative<mir::TypeOperationTarget>(
                        direct.target);
           },
           [](const mir::Indirect&) { return true; },
@@ -402,6 +405,7 @@ class BodyBoxing {
             [&](const mir::BlockExpr& e) { return left(e); },
             [&](const mir::MoveExpr& e) { return left(e); },
             [&](const mir::CopyExpr& e) { return left(e); },
+            [&](const mir::DiscriminantExpr& e) { return left(e); },
             [&](const mir::WaitExpr& e) { return left(e); },
             [&](const mir::VectorGetExpr& e) { return left(e); }},
         expr.data);
@@ -494,24 +498,15 @@ auto BoxLargeValues(mir::CompilationUnit unit) -> mir::CompilationUnit {
             }
             return decl;
           });
-  // The size of a value is read from the members of the structs the unit
-  // declares, so every struct method is rewritten before any struct is taken
-  // out of the unit to be replaced.
-  std::vector<std::vector<mir::CallableCode>> rewritten(unit.structs.size());
-  for (const mir::StructId id : unit.structs.Ids()) {
-    for (const mir::StructMethod& method : unit.structs.Get(id).methods) {
-      rewritten.at(id.value).push_back(BoxedCode(unit, captures, method.code));
-    }
-  }
-  unit.structs =
-      std::move(unit.structs)
-          .TransformValues([&](mir::StructId id, mir::StructDecl decl) {
-            for (std::size_t i = 0; i < decl.methods.size(); ++i) {
-              decl.methods.at(i).code = std::move(rewritten.at(id.value).at(i));
+  unit.record_methods =
+      std::move(unit.record_methods)
+          .TransformValues([&](mir::RecordId, mir::RecordMethods methods) {
+            for (mir::RecordMethod& method : methods) {
+              method.code = BoxedCode(unit, captures, std::move(method.code));
             }
-            return decl;
+            return methods;
           });
-  for (mir::TypeDefault& stated : unit.type_defaults) {
+  for (mir::TypeOperation& stated : unit.type_operations) {
     stated.code = BoxedCode(unit, captures, std::move(stated.code));
   }
   // A capture of a large value is held through its box, as a local is.

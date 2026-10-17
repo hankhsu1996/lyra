@@ -442,10 +442,10 @@ struct CallInstr {
   std::vector<Operand> args;
 };
 
-// Builds a product value -- a tuple or a struct -- from its components, in
+// Builds a product value -- a tuple or a structure -- from its components, in
 // position order. Its result is the product itself; the components keep their
 // own types.
-struct TupleInstr {
+struct ProductInstr {
   std::vector<Operand> components;
 };
 
@@ -467,7 +467,7 @@ struct ArrayInstr {
 
 // Builds a union holding member `member` as `value`, every other byte of its
 // storage zero, and, for a tagged union, the tag naming that member (LRM 7.3,
-// 7.3.2): the peer of a tuple's build for a value whose type overlays its
+// 7.3.2): the peer of a product's build for a value whose type overlays its
 // members, as rustc's MIR builds a union or an enum's variant by an aggregate
 // naming the field or the variant. Its result is the union.
 struct UnionInstr {
@@ -566,6 +566,15 @@ struct Place {
 // object names the cell; the value the cell holds is the place one dereference
 // further, and reading that is what goes through the cell's own access.
 struct LoadInstr {
+  Place place;
+};
+
+// Reads the value of the place's type that the bits at `place` stand for,
+// where another member of an untagged union may have written them (LRM
+// 7.3.2): a value of its own, with every position its type keeps clear made
+// clear, as a bit-field's load is its bits made a value of the field's type.
+// The result's type is the place's type.
+struct OverlaidLoadInstr {
   Place place;
 };
 
@@ -723,10 +732,11 @@ struct CloseVariablesInstr {
 // assignment: every instruction that yields one, a call to a callee answering
 // nothing included, whose value is the void one.
 using Rvalue = std::variant<
-    CallInstr, TupleInstr, UnionInstr, ClosureInstr, ArrayInstr, VectorGetInstr,
-    DiscriminantInstr, LoadInstr, AddrOfInstr, BinaryInstr, UnaryInstr,
-    CastInstr, HandleCastInstr, DynamicCastInstr, ReceiveDepartureInstr,
-    OpenVariablesInstr, VariableAddressInstr, UseInstr>;
+    CallInstr, ProductInstr, UnionInstr, ClosureInstr, ArrayInstr,
+    VectorGetInstr, DiscriminantInstr, LoadInstr, OverlaidLoadInstr,
+    AddrOfInstr, BinaryInstr, UnaryInstr, CastInstr, HandleCastInstr,
+    DynamicCastInstr, ReceiveDepartureInstr, OpenVariablesInstr,
+    VariableAddressInstr, UseInstr>;
 
 // A value computed once and consumed where it is used, with a pure dataflow
 // origin and no storage of its own to name.

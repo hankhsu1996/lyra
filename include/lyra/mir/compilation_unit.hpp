@@ -27,13 +27,14 @@
 #include "lyra/mir/external_class.hpp"
 #include "lyra/mir/foreign_linkage.hpp"
 #include "lyra/mir/integral_constant.hpp"
+#include "lyra/mir/record_decl.hpp"
+#include "lyra/mir/record_id.hpp"
 #include "lyra/mir/static_variable_id.hpp"
-#include "lyra/mir/struct_decl.hpp"
-#include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
+#include "lyra/support/value_operation.hpp"
 
 namespace lyra::mir {
 
@@ -121,25 +122,37 @@ struct ConsumedObjectEntry {
 using ConsumedSignature =
     std::variant<ConsumedNamespace, ConsumedClass, ConsumedObjectEntry>;
 
-// The body that builds the default value of `type` (LRM Table 6-7, Table 7-1),
-// taking nothing and answering the value. A declaration states its variable's
-// default as an expression where the variable comes into existence; this is the
-// same value for where no expression of the program stands -- a read through an
-// index naming no element answers the element type's default (LRM 7.4.5), and
-// an array that grows fills each new position with it (LRM 7.5.1).
+// Whether each unit naming `type` states its operations itself: a fixed-size
+// unpacked array, which the language identifies by its element and its range
+// rather than by a declaration (LRM 6.22.1 f), so no declaration states them
+// once for every unit, as a structure's and a union's does.
+[[nodiscard]] inline auto OperationsAreStatedPerUnit(const Type& type) -> bool {
+  return type.Is<UnpackedArrayType>();
+}
+
+// The body a unit states for the operation `answers` at `type`. A type whose
+// operations are stated per unit has every operation on its whole value stated
+// so (LRM 7.4.2), as rustc instantiates a generic function in each crate that
+// uses it: an array's is each element's in turn. Every type an array of
+// the unit has as its element, of whatever kind, has its default stated here
+// too (LRM Table 6-7, Table 7-1): what a read through an index naming no
+// element answers (LRM 7.4.5) and what an array that grows fills each new
+// position with (LRM 7.5.1). A container's default depends on its element
+// type, which the library's one type of each container does not know.
 //
-// No expression of the program calls it and no identifier reaches it: what
-// asks is the code that holds an array of the type, compiled before the type
-// existed. So it holds its body, as a struct's method does, and is no callable
-// of the unit's namespace.
-struct TypeDefault {
+// A use in the program calls one by the type and the operation; code compiled
+// before the type existed -- what holds a value of it, what an array grows
+// with -- reaches it through the type's table instead, which is why a body
+// nothing in the program calls is stated as well.
+struct TypeOperation {
   TypeId type;
+  support::ValueOperation answers;
   CallableCode code;
 };
 
 // Every type some array of `types` has as its element, whatever the array's
 // kind, each once and in the order the pool first names it: the types a unit
-// states a default for, and no other.
+// states a default for.
 [[nodiscard]] inline auto ArrayElementTypes(const TypePool& types)
     -> std::vector<TypeId> {
   std::vector<bool> taken(types.size(), false);
@@ -325,9 +338,10 @@ struct CompilationUnit {
   // 26.3). A subroutine the source declared is here because another unit spells
   // it; a body the compiler synthesized is not.
   std::vector<NamedCallable> named_callables;
-  // The default of each type this unit holds an array of, of any kind: one for
-  // each of its pool's array element types, and none for any other type.
-  std::vector<TypeDefault> type_defaults;
+  // The operations this unit states for each type it names whose operations
+  // are stated per unit, and the default of each type it holds an array of.
+  // One per type and operation.
+  std::vector<TypeOperation> type_operations;
   // Static variables the unit's namespace owns directly rather than through one
   // of its classes -- a package's variables (LRM 26.2), one program-global cell
   // each, shared and reached by name. A class's own static storage lives on
@@ -352,14 +366,16 @@ struct CompilationUnit {
   // party assembling the program keeps one; a definition up there calls that
   // unit's own subroutine and no other artifact can write it.
   std::vector<ForeignScopeEntry> foreign_scope_entries;
-  // Every struct this unit declares: the structures its source declares, and
-  // the storage a scope keeps past its end. A struct type names one of these
-  // by where it sits.
-  base::Registry<StructDecl, StructId> structs;
-  // Every struct of another unit this one holds a value of, found by the
+  // Every structure and union this unit's source declares, settled where its
+  // type is translated. A record type names one of these by where it sits.
+  base::Registry<RecordDecl, RecordId> records;
+  // The methods of each of those, by the same identity, stated once its type
+  // is interned, since a method reaches the record's own members.
+  base::Registry<RecordMethods, RecordId> record_methods;
+  // Every record of another unit this one holds a value of, found by the
   // declaration it is. A unit naming one states nothing about it beyond what
   // it read, and calls the declaring unit's methods.
-  std::vector<ExternalStruct> external_structs;
+  std::vector<ExternalRecord> external_records;
   // Every closure of this unit, one per closure site -- an anonymous concrete
   // callable value (capture fields plus one invoke). Its `ClosureId` is the
   // closure's type identity, in a separate registry from `structs`: a closure
@@ -503,14 +519,12 @@ struct CompilationUnit {
     classes.Define(id, std::move(value));
   }
 
-  [[nodiscard]] auto GetStruct(StructId id) const -> const StructDecl& {
-    return structs.Get(id);
+  [[nodiscard]] auto GetRecordMethods(RecordId id) const
+      -> const RecordMethods& {
+    return record_methods.Get(id);
   }
-
-  auto AddStruct(StructDecl value) -> StructId {
-    const StructId id = structs.Declare();
-    structs.Define(id, std::move(value));
-    return id;
+  [[nodiscard]] auto GetRecord(RecordId id) const -> const RecordDecl& {
+    return records.Get(id);
   }
 
   [[nodiscard]] auto GetClosure(ClosureId id) const -> const ClosureDecl& {
@@ -717,12 +731,12 @@ using NamespaceReach = std::variant<
   return ReachedByPosition{id};
 }
 
-// What this unit read of the struct another unit declares as `declaration`, or
-// null where it has read nothing of it yet.
-[[nodiscard]] inline auto FindExternalStruct(
+// What this unit read of the record another unit declares as `declaration`,
+// or null where it has read nothing of it yet.
+[[nodiscard]] inline auto FindExternalRecord(
     const CompilationUnit& unit, const TypeDeclarationRef& declaration)
-    -> const ExternalStruct* {
-  for (const ExternalStruct& external : unit.external_structs) {
+    -> const ExternalRecord* {
+  for (const ExternalRecord& external : unit.external_records) {
     if (external.declaration == declaration) {
       return &external;
     }
@@ -730,50 +744,133 @@ using NamespaceReach = std::variant<
   return nullptr;
 }
 
-// What this unit read of the struct another unit declares as `declaration`,
-// for a caller holding a value of it, which reading the struct preceded.
-[[nodiscard]] inline auto ExternalStructOf(
+// The body this unit states for `answers` at `type`, or null where it states
+// none.
+[[nodiscard]] inline auto FindTypeOperation(
+    const CompilationUnit& unit, TypeId type, support::ValueOperation answers)
+    -> const TypeOperation* {
+  for (const TypeOperation& stated : unit.type_operations) {
+    if (stated.type == type && stated.answers == answers) {
+      return &stated;
+    }
+  }
+  return nullptr;
+}
+
+// What this unit read of the record another unit declares as `declaration`,
+// for a caller holding a value of it, which reading the record preceded.
+[[nodiscard]] inline auto ExternalRecordOf(
     const CompilationUnit& unit, const TypeDeclarationRef& declaration)
-    -> const ExternalStruct& {
-  if (const ExternalStruct* external = FindExternalStruct(unit, declaration)) {
+    -> const ExternalRecord& {
+  if (const ExternalRecord* external = FindExternalRecord(unit, declaration)) {
     return *external;
   }
   throw InternalError(
-      "mir: a struct of another unit is named that this unit never read -- "
+      "mir: a record of another unit is named that this unit never read -- "
       "please report this as a bug");
 }
 
-// The members' types of the struct `type` is, wherever it was declared.
-[[nodiscard]] inline auto StructElements(
-    const CompilationUnit& unit, const StructType& type)
+// The members' types of the record `record` refers to, wherever it was
+// declared, in declaration order.
+[[nodiscard]] inline auto RecordElements(
+    const CompilationUnit& unit, const RecordRef& record)
     -> std::span<const TypeId> {
   return std::visit(
       Overloaded{
-          [&](StructId id) -> std::span<const TypeId> {
-            return unit.GetStruct(id).elements;
+          [&](RecordId id) -> std::span<const TypeId> {
+            return unit.GetRecord(id).elements;
           },
           [&](const TypeDeclarationRef& ref) -> std::span<const TypeId> {
-            return ExternalStructOf(unit, ref).elements;
+            return ExternalRecordOf(unit, ref).elements;
           }},
-      type.declaration);
+      record);
 }
 
-// The declaration any unit names the struct `type` is by.
-[[nodiscard]] inline auto StructDeclarationOf(
-    const CompilationUnit& unit, const StructType& type) -> TypeDeclarationRef {
+// Which aggregate the record `record` refers to is, wherever it was declared.
+[[nodiscard]] inline auto RecordKindOf(
+    const CompilationUnit& unit, const RecordRef& record) -> RecordKind {
   return std::visit(
       Overloaded{
-          [&](StructId id) -> TypeDeclarationRef {
+          [&](RecordId id) { return unit.GetRecord(id).kind; },
+          [&](const TypeDeclarationRef& ref) {
+            return ExternalRecordOf(unit, ref).kind;
+          }},
+      record);
+}
+
+// The record declaration `type` is, and nothing for any other type.
+[[nodiscard]] inline auto RecordOf(const Type& type) -> const RecordRef* {
+  if (const auto* record = type.As<RecordType>()) {
+    return &record->declaration;
+  }
+  return nullptr;
+}
+
+// Which aggregate `type` is, where it is a record, and nothing for any other
+// type.
+[[nodiscard]] inline auto RecordKindOf(const CompilationUnit& unit, TypeId type)
+    -> std::optional<RecordKind> {
+  const RecordRef* record = RecordOf(unit.types.Get(type));
+  if (record == nullptr) {
+    return std::nullopt;
+  }
+  return RecordKindOf(unit, *record);
+}
+
+// The members of the union or the tagged union `type` is, which overlay one
+// storage (LRM 7.3), and nothing for any other type.
+[[nodiscard]] inline auto OverlaidMembers(
+    const CompilationUnit& unit, TypeId type)
+    -> std::optional<std::span<const TypeId>> {
+  const RecordRef* record = RecordOf(unit.types.Get(type));
+  if (record == nullptr) {
+    return std::nullopt;
+  }
+  switch (RecordKindOf(unit, *record)) {
+    case RecordKind::kStruct:
+      return std::nullopt;
+    case RecordKind::kUnion:
+    case RecordKind::kTaggedUnion:
+      return RecordElements(unit, *record);
+  }
+  throw InternalError("mir: unknown record kind");
+}
+
+// Whether `type` is a tagged union, whose member is chosen by its tag (LRM
+// 7.3.2).
+[[nodiscard]] inline auto IsTaggedUnion(
+    const CompilationUnit& unit, TypeId type) -> bool {
+  const std::optional<RecordKind> kind = RecordKindOf(unit, type);
+  if (!kind.has_value()) {
+    return false;
+  }
+  switch (*kind) {
+    case RecordKind::kStruct:
+    case RecordKind::kUnion:
+      return false;
+    case RecordKind::kTaggedUnion:
+      return true;
+  }
+  throw InternalError("mir: unknown record kind");
+}
+
+// The declaration any unit names the record `record` refers to by.
+[[nodiscard]] inline auto RecordDeclarationOf(
+    const CompilationUnit& unit, const RecordRef& record)
+    -> TypeDeclarationRef {
+  return std::visit(
+      Overloaded{
+          [&](RecordId id) -> TypeDeclarationRef {
             return TypeDeclarationRef{
-                .unit_name = unit.name, .path = unit.GetStruct(id).path};
+                .unit_name = unit.name, .path = unit.GetRecord(id).path};
           },
           [](const TypeDeclarationRef& ref) -> TypeDeclarationRef {
             return ref;
           }},
-      type.declaration);
+      record);
 }
 
-// The components of a product -- a tuple or a struct, which are reached the
+// The components of a product -- a tuple or a structure, which are reached the
 // same way -- or nothing for a type that is no product.
 [[nodiscard]] inline auto ProductElements(
     const CompilationUnit& unit, TypeId type)
@@ -782,10 +879,18 @@ using NamespaceReach = std::variant<
   if (const auto* tuple = t.As<TupleType>()) {
     return std::span<const TypeId>{tuple->elements};
   }
-  if (const auto* structure = t.As<StructType>()) {
-    return StructElements(unit, *structure);
+  const RecordRef* record = RecordOf(t);
+  if (record == nullptr) {
+    return std::nullopt;
   }
-  return std::nullopt;
+  switch (RecordKindOf(unit, *record)) {
+    case RecordKind::kStruct:
+      return RecordElements(unit, *record);
+    case RecordKind::kUnion:
+    case RecordKind::kTaggedUnion:
+      return std::nullopt;
+  }
+  throw InternalError("mir: unknown record kind");
 }
 
 [[nodiscard]] inline auto MakeStringLiteral(
@@ -800,14 +905,14 @@ using NamespaceReach = std::variant<
 [[nodiscard]] inline auto TaggedComponentType(
     const CompilationUnit& unit, TypeId tagged_union,
     base::ComponentIndex tag_index) -> TypeId {
-  const auto* tu = unit.types.Get(tagged_union).As<TaggedUnionType>();
-  if (tu == nullptr) {
+  if (!IsTaggedUnion(unit, tagged_union)) {
     throw InternalError("TaggedComponentType: type is not a tagged union");
   }
-  if (tag_index.value >= tu->members.size()) {
+  const std::span<const TypeId> members = *OverlaidMembers(unit, tagged_union);
+  if (tag_index.value >= members.size()) {
     throw InternalError("TaggedComponentType: tag index out of range");
   }
-  return tu->members[tag_index.value];
+  return members[tag_index.value];
 }
 
 }  // namespace lyra::mir

@@ -156,9 +156,7 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           [&](const RealType&) { return wrap(); },
           [&](const ShortRealType&) { return wrap(); },
           [&](const TupleType&) { return wrap(); },
-          [&](const StructType&) { return wrap(); },
-          [&](const UnionType&) { return wrap(); },
-          [&](const TaggedUnionType&) { return wrap(); },
+          [&](const RecordType&) { return wrap(); },
           [&](const EmptyType&) { return wrap(); },
           // A variable naming an object or holding a pointer is value storage
           // too: LRM 9.4.2 makes a write to an object handle or a chandle an

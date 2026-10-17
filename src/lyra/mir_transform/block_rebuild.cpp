@@ -197,6 +197,10 @@ auto BlockRebuild::WithOperandsCarried(const mir::ExprData& data)
             e.place = Expr(e.place);
             return e;
           },
+          [&](mir::DiscriminantExpr e) -> mir::ExprData {
+            e.tagged = Expr(e.tagged);
+            return e;
+          },
           [&](mir::FieldAccessExpr e) -> mir::ExprData {
             e.receiver = Expr(e.receiver);
             return e;

@@ -139,53 +139,48 @@ struct FnAbi {
 auto PassModeOf(support::OperandReading reading, lir::TypeId operand)
     -> PassMode;
 
-// How operand `index`, of type `own` and read as `reading`, crosses where what
-// a realization is told concerns it -- with what it is told, or as it; nothing
-// where the realization is told nothing of that operand, which then crosses as
-// its reading says.
-auto ToldModeOf(
-    const Told& told, std::size_t index, support::OperandReading reading,
-    std::optional<lir::TypeId> acted_on, lir::TypeId own,
-    const lir::TypePool& pool) -> std::optional<PassMode>;
+// The realization of an entry that the library compiles once per
+// representation, chosen for one call: what it is told, and the type it is
+// realized for -- the value whose representation names it, or the values held
+// by the storage it acts on -- which is where what it is told of a type is
+// read from.
+struct Realization {
+  Told told;
+  lir::TypeId of;
+};
 
-// What a realization told `told` takes ahead of its operands, which is of the
-// type the call states the entry acts on.
-auto ImplicitArgOf(const Told& told, std::optional<lir::TypeId> acted_on)
-    -> ImplicitArg;
-
-// What an entry is handed after its operands by a call answering a value of
-// `answered` that comes back as `ret`. It is what the entry's declaration says
-// it is told of its answer, read from the type `called_at` the call is made at
-// or from `answered`; and a realization told the types of the tuples or arrays
-// it is handed, building one where its entry's declaration says it is told
-// nothing of its answer, is told that value's type, since the value's bytes
-// state none.
-auto TypeArgsOf(
-    const lir::TypePool& types, const Told& told, support::AnswerTold declared,
-    std::optional<lir::TypeId> called_at, lir::TypeId answered,
-    const ReturnInfo& ret) -> std::vector<TypeArg>;
+// How a call crosses to the entry `realization` realizes, none where the
+// library realizes it once: each of `operands` as `readings` reads the operand
+// at its place and as the realization is told of it, the part the callee
+// names, the type the realization is told after them and then what the entry
+// is told of its answer, and its answer coming back as `ret`. Every call on a
+// library entry is arranged here, the ones this target states on its own
+// account included.
+auto ArrangeCall(
+    CodeGenModule& module, const support::OperandReadings& readings,
+    std::span<const StatedOperand> operands,
+    const std::optional<Realization>& realization,
+    std::optional<NamedPartArg> named_part,
+    std::vector<TypeArg> told_of_the_answer, ReturnInfo ret) -> FnAbi;
 
 // How a call on `op`, an entry this target names by an operation of its own,
 // crosses where no call of the layer above states it: each of `operands` as
-// the entry's declaration reads the operand at its place and as its
-// realization, told `told` out of `types`, is told of it; the entry told what
-// its declaration says it is told of the type `called_at`; and its answer
-// coming back as `ret`.
+// the entry's declaration reads the operand at its place and as `realization`,
+// for values of a type, is told of it, none being chosen where the library
+// realizes the entry once; the entry told what its declaration says it is
+// told of the type `called_at`; and its answer coming back as `ret`.
 auto FnAbiOf(
     CodeGenModule& module, RuntimeOp op,
-    std::span<const StatedOperand> operands, const Told& told,
-    std::optional<lir::TypeId> acted_on, std::optional<lir::TypeId> called_at,
-    ReturnInfo ret) -> FnAbi;
+    std::span<const StatedOperand> operands,
+    const std::optional<Realization>& realization,
+    std::optional<lir::TypeId> called_at, ReturnInfo ret) -> FnAbi;
 
 // The library entry a call or an access enters: the symbol it is published
-// under, and what the realization that symbol names is told, with the types
-// that is read from.
+// under, and the realization that symbol names, none where the library
+// realizes the entry once whatever it is applied to.
 struct LibraryEntry {
   std::string symbol;
-  Told told;
-  // The type whose representation names the realization: the value the entry
-  // acts on, or, where it acts on storage, the values that storage holds.
-  std::optional<lir::TypeId> acted_on;
+  std::optional<Realization> realization;
 };
 
 // Arranges how the arguments of a call cross, apart from emitting the call, as
@@ -229,14 +224,13 @@ class CallArranger {
       const lir::CallInstr& call, lir::TypeId result) const
       -> diag::Result<std::string>;
 
-  // How operand `index`, of type `operand`, crosses to an entry that reads its
-  // operands as `readings` and whose realization is told `told`, held to what
-  // its reading asks of a type: an ordinal is stated as a position, and an
-  // operand read as the thing it is is no integral value.
+  // How operand `index`, of type `operand`, crosses to an entry realized once
+  // that reads its operands as `readings`, held to what its reading asks of a
+  // type: an ordinal is stated as a position, and an operand read as the thing
+  // it is is no integral value.
   [[nodiscard]] auto ArgOf(
       const support::OperandReadings& readings, std::size_t index,
-      lir::TypeId operand, const Told& told,
-      std::optional<lir::TypeId> acted_on) const -> ArgAbi;
+      lir::TypeId operand) const -> ArgAbi;
 
  private:
   // How the answer of `call`, a value of `result_type`, comes back: built in
@@ -245,26 +239,22 @@ class CallArranger {
   [[nodiscard]] auto ReturnOf(
       const lir::CallInstr& call, lir::TypeId result_type) const -> ReturnInfo;
   // The construction of a value of type `result`: its entry, how that entry
-  // reads the operands the construction states, what its realization is told,
-  // what the entry is told of the type it answers at, and what leads the
-  // operands.
+  // reads the operands the construction states, the realization it enters,
+  // none where the library realizes it once, and what the entry is told of
+  // the type it answers at.
   struct Construction {
     std::string symbol;
     support::OperandReadings operands;
-    Told told;
+    std::optional<Realization> realization;
     support::AnswerTold answer_told;
-    ImplicitArg implicit_arg;
   };
   [[nodiscard]] auto ConstructionOf(
       const lir::CallInstr& call, lir::TypeId result) const
       -> diag::Result<Construction>;
 
-  // A call's operands as an entry reading them as `readings`, whose
-  // realization is told `told`, takes them.
-  [[nodiscard]] auto ArgsAsRead(
-      const lir::CallInstr& call, const support::OperandReadings& readings,
-      const Told& told, std::optional<lir::TypeId> acted_on) const
-      -> std::vector<ArgAbi>;
+  // A call's operands as the values of their types they are.
+  [[nodiscard]] auto Stated(const lir::CallInstr& call) const
+      -> std::vector<StatedOperand>;
 
   [[nodiscard]] auto OperandType(const lir::Operand& operand) const
       -> lir::TypeId;
@@ -275,11 +265,9 @@ class CallArranger {
   // the handle itself, and either way reaches exactly one.
   [[nodiscard]] auto StorageReached(lir::TypeId operand) const
       -> const lir::Type&;
-  // The representation the values held by the storage an operand reaches are
-  // realized in, for an operation whose own name already says which storage it
-  // acts on.
-  [[nodiscard]] auto StorageDomainBehind(lir::TypeId operand) const
-      -> diag::Result<support::ValueDomain>;
+  // The type of the values held by the storage an operand reaches, for an
+  // operation whose own name already says which storage it acts on.
+  [[nodiscard]] auto ValuesBehind(lir::TypeId operand) const -> lir::TypeId;
 
   CodeGenModule* module_;
   const lir::Function* fn_;

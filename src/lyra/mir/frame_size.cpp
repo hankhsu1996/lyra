@@ -146,8 +146,22 @@ auto LayoutOf(const CompilationUnit& unit, TypeId type) -> value::Layout {
             return Sequence(unit, t.element, t.size);
           },
           [&](const TupleType& t) { return Product(unit, t.elements); },
-          [&](const StructType& t) {
-            return Product(unit, StructElements(unit, t));
+          // A structure's members side by side, a union's each at the start
+          // of one storage, and a tagged union's tag after them.
+          [&](const RecordType& t) {
+            const std::span<const TypeId> members =
+                RecordElements(unit, t.declaration);
+            switch (RecordKindOf(unit, t.declaration)) {
+              case RecordKind::kStruct:
+                return Product(unit, members);
+              case RecordKind::kUnion:
+                return Overlay(unit, members);
+              case RecordKind::kTaggedUnion:
+                return value::TaggedUnionLayoutOf(
+                           Overlay(unit, members), members.size())
+                    .whole;
+            }
+            throw InternalError("mir: unknown record kind");
           },
           [&](const ClosureType& t) {
             std::vector<TypeId> captures;
@@ -156,12 +170,6 @@ auto LayoutOf(const CompilationUnit& unit, TypeId type) -> value::Layout {
               captures.push_back(field.type);
             }
             return Product(unit, captures);
-          },
-          [&](const UnionType& t) { return Overlay(unit, t.members); },
-          [&](const TaggedUnionType& t) {
-            return value::TaggedUnionLayoutOf(
-                       Overlay(unit, t.members), t.members.size())
-                .whole;
           },
           [](const DynamicArrayType&) {
             return LayoutOfClass<value::RuntimeDynamicArray>();

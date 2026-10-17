@@ -26,18 +26,20 @@ So the conclusion inverts, for all five aggregates at once:
   the vector its members project onto. None carries a member name.
 - Two declarations with the same member types render their own names, because the rendering was
   never keyed by the MIR type. A conformance case pins exactly that pair. This revision also made
-  the two one type below the front end; a structure has since become a `StructType` naming its
-  declaration, for the operations its declaring unit states, so they are two types again and still
-  carry no member names ([unpacked-struct-representation](unpacked-struct-representation.md),
+  the two one type below the front end; a structure and a union have since become a record type
+  naming its declaration, for the operations its declaring unit states, so they are two types again
+  and still carry no member names
+  ([unpacked-struct-representation](unpacked-struct-representation.md),
   [a-structures-operations-are-stated-in-mir](a-structures-operations-are-stated-in-mir.md)).
 - `realtime` is `real` below the front end for the same reason: LRM 6.12 makes them synonyms and no
   consumer below the front end told them apart.
 
 What stands from this entry: the nominal-versus-structural survey is correct about identity -- LRM
-6.22.2 makes a declared aggregate nominal. For a union and a packed aggregate that identity is
-checked in the front end and nothing below it observes it (point 5 already said as much); an
-unpacked structure carries it below, in its `StructType`. Member access stays positional, as point 4
-decided. A member's declaration initializer stays off the type, as point 6 decided.
+6.22.2 makes a declared aggregate nominal. For a packed aggregate that identity is checked in the
+front end and nothing below it observes it (point 5 already said as much); an unpacked structure or
+union carries it below, in its record type (revised 2026-10-16: a union carried no declaration below
+the front end before). Member access stays positional, as point 4 decided. A member's declaration
+initializer stays off the type, as point 6 decided.
 
 ## Why this decision matters
 

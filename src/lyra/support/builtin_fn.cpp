@@ -119,8 +119,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = Method{"AssignSlice"},
           .mutates_receiver = true,
           .operands = {kMachine, kPosition, kMachine, kTyped}};
-    case BuiltinFn::kTagMatches:
-      return {.name = "tag_matches", .declaration = Method{"TagMatches"}};
     case BuiltinFn::kAssert:
       return {.name = "assert", .declaration = ValueFunction("Assert")};
     case BuiltinFn::kSize:
@@ -677,19 +675,24 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kDesignateElement:
       return {
           .name = "designate_element",
-          .declaration = Method{"ElementRef"},
+          .declaration = Method{"DesignateElement"},
           .selects = PartSelection::kElement,
           .operands = {kMachine, kPosition}};
     case BuiltinFn::kAssocDesignateElement:
       return {
           .name = "assocarray_designate_element",
-          .declaration = Method{"ElementRef"},
+          .declaration = Method{"DesignateElement"},
           .selects = PartSelection::kElement,
           .operands = {kMachine, kKey}};
     case BuiltinFn::kDesignateComponent:
       return {
           .name = "designate_component",
-          .declaration = Method{"ComponentRef"},
+          .declaration = Method{"DesignateComponent"},
+          .selects = PartSelection::kComponent};
+    case BuiltinFn::kDesignateMember:
+      return {
+          .name = "designate_member",
+          .declaration = Method{"DesignateMember"},
           .selects = PartSelection::kComponent};
     case BuiltinFn::kReferElement:
       return {

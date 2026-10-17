@@ -75,9 +75,11 @@ read as a value of another member type, which is a potential type loophole").
 ### D1. An untagged union is C's union
 
 Its storage is the largest member's size at the strictest member's alignment, and every member lies
-at offset 0. A member is a field step of the union's place (MIR's field step, overlaid). A write
-stores the member and leaves every other byte as it was. A copy is the whole storage, and an end
-does nothing.
+at offset 0. A member is a field step of the union's place (MIR's field step, overlaid), and within
+a write in progress it is designated by a step of its own, which names no position of a path, so the
+write keeps only what it lands on and reports the change at the union
+([a-write-compares-what-it-reached](a-write-compares-what-it-reached.md)). A write stores the member
+and leaves every other byte as it was. A copy is the whole storage, and an end does nothing.
 
 ### D2. Reading a member answers the member's type made from the bits there
 
@@ -92,8 +94,12 @@ As C does, because every byte may be read. The default is the first member at it
 ### D4. Every whole-value use of an untagged union reads its first member
 
 `%p`, streaming both ways, `%u` / `%z` and `$fread` as the standard says, and equality and net
-resolution, which it does not name, by the same rule. Whether a holder changed is whether its bytes
-did, since the bytes are what a read of any member sees.
+resolution, which it does not name, by the same rule. Whether a holder changed is whether a read
+through any of its members would see a change (revised 2026-10-15; it was whether its bytes did,
+which the library compared). Each of these operations is a method the union's declaration states, as
+a structure's are
+([a-structures-operations-are-stated-in-mir](a-structures-operations-are-stated-in-mir.md)), and a
+tagged union's answer the same questions through the member its tag names.
 
 ### D5. A member that owns something is refused in an untagged union
 
@@ -108,17 +114,22 @@ step whichever kind it is in, and the tag is the only thing a tagged union adds.
 
 ### D7. MIR checks the tag before every member read and write
 
-`assert(tag_matches(u, k))` with LRM 11.9's message, then the field step, of no-address kind. The
-check is rustc's `Assert`: a call that answers nothing, stated before the access, so the access
-reaches the union where it lies rather than through a value the check handed back. A read states it
-among the steps of the read, since it is part of evaluating the access (LRM 11.9), and the whole
-read -- every select written below the member -- is taken and its value kept among those same steps,
-so nothing else the expression evaluates runs between the check and the read: a sibling operand
-retagging the union would otherwise have the read land on a member the union no longer holds. A
-write states it as a statement before the write lands. A packed tagged union is checked the same
-way, over the tag bits. The step checks nothing, and neither does the library. A whole tagged value
-is built by storing the member and then the tag, and assigning one ends the old value first; copying
-and ending follow the tag.
+`assert(discriminant(u) == k)` with LRM 11.9's message, then the field step, of no-address kind. The
+tag is read by its own node, rustc's `Rvalue::Discriminant`, and compared with the member's position
+like any other machine integer (revised 2026-10-16: one call asked whether the tag named k, which
+the lowering to LIR turned into a read of the tag). The check is rustc's `Assert`: a call that
+answers nothing, stated before the access, so the access reaches the union where it lies rather than
+through a value the check handed back. A read states it among the steps of the read, since it is
+part of evaluating the access (LRM 11.9), and the whole read -- every select written below the
+member -- is taken and its value kept among those same steps, so nothing else the expression
+evaluates runs between the check and the read: a sibling operand retagging the union would otherwise
+have the read land on a member the union no longer holds. A call that only reads what the member
+selects is entered on it where it lies among the same steps, after its own operands, as rustc
+borrows `(u as V).0` after the discriminant test and calls on the borrow. A write states it as a
+statement before the write lands. A packed tagged union is checked the same way, over the tag bits.
+The step checks nothing, and neither does the library. A whole tagged value is built by storing the
+member and then the tag, and assigning one ends the old value first; copying and ending follow the
+tag.
 
 ## Where Lyra differs, and why
 
@@ -127,7 +138,7 @@ and ending follow the tag.
 | a read through another member  | undefined (clang, rustc)             | answers the bits, cleared above each width | SystemVerilog defines the read and has no undefined behaviour                                                                        |
 | bytes a literal does not write | zero in C, undefined in C++ and Rust | zero                                       | every byte may be read                                                                                                               |
 | where the tag lies             | first (rustc)                        | after the members                          | an SV member is one value and no member type has a niche, so a tag first buys nothing, and members at 0 keep one rule for both kinds |
-| the tag check                  | a test and a switch (rustc)          | one node asking whether the tag is k       | MIR has no multiway switch; the tag's only reader compares it to one member                                                          |
+| the tag check                  | a test and a switch (rustc)          | the tag read, then compared with k         | the tag's only reader compares it to one member, and MIR has no multiway switch                                                      |
 
 ## Rejected
 
@@ -149,7 +160,8 @@ and ending follow the tag.
 ## Consequences
 
 - The library's union objects and their entries leave both backends; a union is laid out by its type
-  like a structure.
+  like a structure, and its whole-value operations are code compiled for its type, on both backends,
+  not a description of the type the library reads.
 - A member access is a load or a store where the member lies, not a library call, and writing a
   member no longer rebuilds the union.
 - The common initial sequence, a cross read, `%p` of a union holding another member and streaming an

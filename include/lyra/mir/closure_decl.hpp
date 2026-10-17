@@ -16,7 +16,7 @@ namespace lyra::mir {
 //
 // A closure shares the field substrate (`FieldDecl` / `FieldId`) with the
 // object (`mir::Class`), since a capture is reached by the field id its
-// declaration gave it, as a property is. It is not a `StructDecl` with a body:
+// declaration gave it, as a property is. It is not a `RecordDecl` with a body:
 // a struct is a value whose components are reached by position and which has no
 // invoke, while a closure's one body is part of what it is.
 struct ClosureDecl {

@@ -1303,11 +1303,11 @@ class UnitLowerer {
   // is complete before any reference resolves.
   auto InternOwnClassDeclarations() -> diag::Result<void>;
 
-  // Interns every unpacked structure a typedef of this unit declares outside a
-  // body, in the same scopes classes are declared in, so the structure's type
-  // -- and with it the operations its declaration brings -- is in the unit that
+  // Interns every unpacked structure and union a typedef of this unit declares
+  // outside a body, in the same scopes classes are declared in, so the type --
+  // and with it the operations its declaration brings -- is in the unit that
   // declares it whatever the unit's bodies use.
-  auto InternOwnStructureDeclarations() -> diag::Result<void>;
+  auto InternOwnRecordDeclarations() -> diag::Result<void>;
 
   // A class whose declarations are settled and whose bodies are not. A class
   // body names what encloses the class the way any other body does, so it

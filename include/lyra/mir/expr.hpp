@@ -26,6 +26,7 @@
 #include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
+#include "lyra/mir/type_id.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
@@ -251,16 +252,28 @@ struct ExternalUnitClassMethodTarget {
   auto operator==(const ExternalUnitClassMethodTarget&) const -> bool = default;
 };
 
-// Identity of a method a struct's declaration has: the struct, and the
-// operation on a whole value the method answers. A struct the source declared
-// is identified by its declaration wherever it is named (LRM 6.22), and it has
-// one method per operation, so the pair names the method from the declaring
-// unit and from any other alike.
-struct StructMethodTarget {
+// Identity of a method a record's declaration has: the structure or the union,
+// and the operation on a whole value the method answers. A record the source
+// declared is identified by its declaration wherever it is named (LRM 6.22),
+// and it has one method per operation, so the pair names the method from the
+// declaring unit and from any other alike.
+struct RecordMethodTarget {
   TypeDeclarationRef declaration;
   support::ValueOperation answers;
 
-  auto operator==(const StructMethodTarget&) const -> bool = default;
+  auto operator==(const RecordMethodTarget&) const -> bool = default;
+};
+
+// Identity of the body a unit states for an operation on a whole value of a
+// type with no declaration -- a fixed-size unpacked array (LRM 7.4.2) -- or for
+// an array element type's default: the type, and the operation. Each unit
+// naming the type states that body itself, so the pair names it within the
+// unit.
+struct TypeOperationTarget {
+  TypeId type;
+  support::ValueOperation answers;
+
+  auto operator==(const TypeOperationTarget&) const -> bool = default;
 };
 
 // Identity of a class field at an access site: the class that declares the
@@ -318,9 +331,10 @@ using CallPart = std::variant<base::ComponentIndex, ClassFieldTarget>;
 // (`UnitCallableTarget`), the closed set of runtime library entries
 // (`BuiltinFn`), another compilation unit's namespace
 // (`ExternalUnitCallableTarget`) or one of its classes
-// (`ExternalUnitClassMethodTarget`), a declared struct's methods
-// (`StructMethodTarget`), the bodies another unit's namespace is brought up
-// through (`ExternalBringUpTarget`), and the DPI-C name space
+// (`ExternalUnitClassMethodTarget`), a declared struct's or union's methods
+// (`RecordMethodTarget`), the operations this unit states for a type with no
+// declaration (`TypeOperationTarget`), the bodies another unit's namespace is
+// brought up through (`ExternalBringUpTarget`), and the DPI-C name space
 // (`ForeignSymbolTarget`, LRM 35.4). Inside this unit a body is named by its
 // position and outside it by what the namespace published, so the two
 // namespace alternatives are total and do not overlap. Nothing here says
@@ -329,7 +343,8 @@ using CallPart = std::variant<base::ComponentIndex, ClassFieldTarget>;
 using DirectTarget = std::variant<
     CallableTarget, UnitCallableTarget, support::BuiltinFn,
     ExternalUnitCallableTarget, ExternalUnitClassMethodTarget,
-    StructMethodTarget, ExternalBringUpTarget, ForeignSymbolTarget>;
+    RecordMethodTarget, TypeOperationTarget, ExternalBringUpTarget,
+    ForeignSymbolTarget>;
 
 // A direct call whose callee is settled at compile time. The single shape for
 // every direct invocation: a user method, a built-in, a subroutine of this
@@ -502,6 +517,15 @@ struct MoveExpr {
 // type.
 struct CopyExpr {
   ExprId place;
+};
+
+// The position of the member the tagged union `tagged` holds: rustc's
+// `Rvalue::Discriminant`, which its MIR reads before it switches on a variant
+// (LRM 11.9). The union is taken as an object an operation is entered on, read
+// where it lies when it names storage. Whether it holds a given member is this
+// compared with that member's position. `Expr::type` is a machine integer.
+struct DiscriminantExpr {
+  ExprId tagged;
 };
 
 // Field access on an explicit receiver: `receiver.field`. The receiver is the
@@ -709,8 +733,9 @@ using ExprData = std::variant<
     StringLiteral, NullLiteral, MachineBoolLiteral, MachineIntLiteral,
     MachineFloatLiteral, ReferenceExpr, UnaryExpr, BinaryExpr, CastExpr,
     DynamicCastExpr, ConditionalExpr, BlockExpr, AssignExpr, CallExpr, NewExpr,
-    DerefExpr, AddressOfExpr, BorrowExpr, MoveExpr, CopyExpr, FieldAccessExpr,
-    ClosureExpr, CompositeExpr, UnionExpr, AwaitExpr, WaitExpr, VectorGetExpr>;
+    DerefExpr, AddressOfExpr, BorrowExpr, MoveExpr, CopyExpr, DiscriminantExpr,
+    FieldAccessExpr, ClosureExpr, CompositeExpr, UnionExpr, AwaitExpr, WaitExpr,
+    VectorGetExpr>;
 
 struct Expr {
   ExprData data;
@@ -853,24 +878,13 @@ struct Expr {
       .type = void_type};
 }
 
-// Whether the tag of the tagged union `subject` names the member at `index`
-// (LRM 11.9). The answer is a machine boolean, so a caller wanting a one-bit
-// integral converts it and the type here is not its to choose.
-[[nodiscard]] inline auto MakeTagMatchesExpr(
-    ExprId subject, base::ComponentIndex index, TypeId machine_boolean)
-    -> Expr {
-  return Expr{
-      .data =
-          CallExpr{
-              .callee =
-                  Direct{
-                      .target = support::BuiltinFn::kTagMatches,
-                      .receiver = subject,
-                      .part = index},
-              .arguments = {}},
-      .type = machine_boolean};
+// The position of the member the tagged union `tagged` holds.
+[[nodiscard]] inline auto MakeDiscriminantExpr(
+    ExprId tagged, TypeId machine_int) -> Expr {
+  return Expr{.data = DiscriminantExpr{.tagged = tagged}, .type = machine_int};
 }
 
+// A union's value holding `value` as its member `member`.
 [[nodiscard]] inline auto MakeUnionExpr(
     ExprId value, base::ComponentIndex member, TypeId built) -> Expr {
   return Expr{

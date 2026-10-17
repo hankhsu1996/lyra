@@ -292,9 +292,7 @@ auto LowerUnpackedUnion(
     const slang::ast::UnpackedUnionType& union_type, diag::SourceSpan decl_span,
     UnitLowerer& unit_lowerer) -> diag::Result<hir::UnpackedUnionType> {
   // Both the untagged overlapping-storage form (LRM 7.3) and the tagged
-  // type-checked sum form (LRM 7.3.2) come through here; HIR-to-MIR routes
-  // them to distinct MIR types (`UnionType` vs `TaggedUnionType`) by reading
-  // the `tagged` flag.
+  // type-checked sum form (LRM 7.3.2) come through here.
   //
   // An untagged union's members lie over one another's bytes, so a member
   // owning what it holds, or one whose value is no bits, has no such bytes to
@@ -317,6 +315,11 @@ auto LowerUnpackedUnion(
       LowerUnpackedAggregateFields(union_type.fields, decl_span, unit_lowerer);
   if (!fields_or) return std::unexpected(std::move(fields_or.error()));
   return hir::UnpackedUnionType{
+      .declaration =
+          hir::TypeDeclarationRef{
+              .unit_name = CompilationUnitName(
+                  UnitHomeOf(union_type), unit_lowerer.Specialization()),
+              .path = DefPathOf(union_type, unit_lowerer.Specialization())},
       .fields = *std::move(fields_or),
       .tagged = union_type.isTagged,
   };

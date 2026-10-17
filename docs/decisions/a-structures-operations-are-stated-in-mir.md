@@ -30,7 +30,7 @@ and emits a type's value witnesses in the defining module (both recalled, not re
 
 ## Decision
 
-**A structure type is its declaration -- in the declaring unit its place in that unit's struct
+**A structure type is its declaration -- in the declaring unit its place in that unit's record
 registry, in any other unit the declaring unit and the declaration's name there -- and the
 declaration states one method per whole-value operation the type has.** The operations are the
 questions every value type answers -- the equality operators, and the entries the runtime library
@@ -112,9 +112,18 @@ call, and so is every whole-value question a structure's own body asks of a memb
   made. A member that is itself a structure is declared first, so its methods are there to call.
 - The set a `$countbits` counts under is always four positions, the first admitted value repeated,
   so a structure's count takes one type.
-- A union and a tagged union are identified by their declarations too (LRM 6.22.1), but their
-  operations are still composed below MIR from their members', so nothing yet reads a union's
-  declaration and it is not carried.
+- A union and a tagged union are identified by their declarations too (LRM 6.22.1), and are
+  declarations in MIR the same way (revised 2026-10-16): the declaration states the same methods, an
+  untagged union's answered through its first member and a tagged union's through the member its tag
+  names ([a-union-is-one-storage-its-members-overlay](a-union-is-one-storage-its-members-overlay.md)
+  D4), and the C++ backend spells it as a type of the declaring unit built on the library's storage
+  for its members. The three are one MIR type, a record naming its declaration, as clang's record
+  type names its record declaration and rustc's ADT type its definition; which aggregate it is and
+  its members are the declaration's. The declaration is settled where its type is first translated,
+  and its methods stated beside it once that type is interned, as rustc's derived implementation is
+  an item beside the definition it derives from, since a method reaches the record's own members. A
+  fixed-size array has no declaration, and each unit naming one states its operations
+  ([a-fixed-arrays-operations-are-stated-per-unit](a-fixed-arrays-operations-are-stated-per-unit.md)).
 - [a-type-owned-computation-has-no-object](a-type-owned-computation-has-no-object.md) rejected a MIR
   target keyed by a type and a reading, because enumerating the readings would let the source
   language shape MIR's vocabulary. The methods here answer operations MIR already names -- the
