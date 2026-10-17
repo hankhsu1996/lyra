@@ -1,7 +1,7 @@
 # The front end's options each design of the benchmark suite is built with, on
-# every path, keyed by the design. Each asks for a text Lyra refuses unless
-# asked, and the design is built with it the way someone who cannot edit it
-# would build it, so what stands behind that text is still reached.
+# every path, keyed by the design. Each asks for a text the front end refuses
+# unless asked, and the design is built with it the way someone who cannot edit
+# it would build it, so what stands behind that text is still reached.
 # `docs/ci/README.md` says which texts an option may be listed for.
 #
 # A design that builds without one of its options fails the run until the option

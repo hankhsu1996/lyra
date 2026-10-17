@@ -96,7 +96,7 @@ of the clause, and its source can be read for the clause it relies on. It is nev
 ruling: a tool that accepts says only that it accepts.
 
 A design that is wrong is its author's to correct, and whoever builds it without being able to edit
-it asks for the reading it relies on by name (consequence 4). A front end that is wrong is reported
+it asks for the reading it relies on by name (consequence 6). A front end that is wrong is reported
 upstream. Neither is answered by changing what Lyra accepts.
 
 A forbidden text is not always its author's mistake. Where all three of these hold, the defect is
