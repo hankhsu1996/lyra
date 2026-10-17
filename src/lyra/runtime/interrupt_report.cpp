@@ -88,7 +88,7 @@ void InterruptReport::SayWhereTheRunWas(int signal) {
     const RuntimeProcess* running =
         run->current_process_.load(std::memory_order_relaxed);
     const std::string_view written_at =
-        running == nullptr ? std::string_view{} : running->WrittenAt();
+        running == nullptr ? std::string_view{} : running->Context().written_at;
     if (!written_at.empty()) {
       Write("note: ");
       Write(written_at);

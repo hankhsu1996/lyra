@@ -242,9 +242,11 @@ void lyra_rt_register_triggered(
     void* self, void* unit_instance, void* coroutine, const char* written_at);
 void lyra_rt_register_final(
     void* self, void* unit_instance, void* coroutine, const char* written_at);
+void lyra_rt_run_assertion_action(
+    void* self, void* unit_instance, void* coroutine, const char* written_at);
 
 void lyra_rt_enter_scope_static_init(void* runtime, void* unit_instance);
-void lyra_rt_enter_namespace_static_init(void* runtime);
+void lyra_rt_enter_namespace_static_init(void* runtime, const char* name);
 void lyra_rt_leave_static_init(void* runtime) noexcept;
 
 void lyra_rt_enter_dpi_scope(void* runtime, void* decl_scope);
@@ -403,15 +405,18 @@ auto lyra_rt_enumeration_prev(
 
 // Hands a callable to the region that will run it (LRM 4.4): the write a
 // non-blocking assignment defers, the print a `$strobe` postpones, and the
-// report a deferred assertion leaves for the observed region. Each takes
-// ownership of the closure, which is what lets the closure outlive the body
-// that built it.
+// report a violation leaves for the observed region. Each takes ownership of
+// the closure, which is what lets the closure outlive the body that built it.
 void lyra_rt_submit_nba(void* runtime, void* closure);
 void lyra_rt_submit_postponed(void* runtime, void* closure);
 void lyra_rt_submit_observed(void* runtime, void* closure);
 void lyra_rt_submit_violation_report(void* runtime, void* closure);
-void lyra_rt_submit_deferred_observed(void* runtime, void* closure);
-void lyra_rt_submit_deferred_final(void* runtime, void* closure);
+
+// Queues a deferred assertion's action, which is started as an execution of
+// its own once the report matures (LRM 16.4). Each takes ownership of the
+// coroutine `body` points at, built where the statement is.
+void lyra_rt_submit_deferred_observed(void* runtime, void* body);
+void lyra_rt_submit_deferred_final(void* runtime, void* body);
 
 // The NBA commit of an effect carrying a delay control (LRM 9.4.5): the region
 // is the same, the slot is the one `duration` steps of the scope's time unit

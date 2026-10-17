@@ -213,7 +213,7 @@ void Runtime::ReportSimulationControl(
 
 auto Runtime::ReportContext() const -> DiagnosticDispatcher::Context {
   const RuntimeProcess* const process = current_process_;
-  const Scope* scope = process == nullptr ? nullptr : process->OwningScope();
+  const Scope* scope = process == nullptr ? nullptr : process->Context().scope;
   if (scope == nullptr) {
     return {
         .scope_and_time = std::format("time {}", now_.load()), .procedure = {}};
@@ -222,7 +222,7 @@ auto Runtime::ReportContext() const -> DiagnosticDispatcher::Context {
       .scope_and_time = std::format(
           "{} at time {}", std::string_view{scope->HierarchicalPath().View()},
           now_.load()),
-      .procedure = process->WrittenAt()};
+      .procedure = process->Context().written_at};
 }
 
 void Runtime::ReportUnsettledSlot(std::span<const NotedProcedure> ran) {
@@ -250,12 +250,20 @@ void Runtime::ReportUnsettledSlot(std::span<const NotedProcedure> ran) {
   const std::size_t named = std::min(counted.size(), kMaxNamedProcedures);
   for (const Counted& one : std::span{counted}.first(named)) {
     const std::string_view written_at = one.procedure.written_at;
+    // A namespace's initializer runs in no scope, and an action it started
+    // keeps that.
+    const std::string where =
+        one.procedure.scope == nullptr
+            ? std::string{}
+            : std::format(
+                  " in {}",
+                  std::string_view{
+                      one.procedure.scope->HierarchicalPath().View()});
     diagnostic_.Note(
         std::format(
-            "note: {}{}this procedure in {} ran {} in the last {} passes",
-            written_at, written_at.empty() ? "" : ": ",
-            std::string_view{one.procedure.scope->HierarchicalPath().View()},
-            Times(one.runs), kNotedRegionPasses));
+            "note: {}{}this procedure{} ran {} in the last {} passes",
+            written_at, written_at.empty() ? "" : ": ", where, Times(one.runs),
+            kNotedRegionPasses));
   }
   if (named < counted.size()) {
     diagnostic_.Note(
@@ -301,6 +309,23 @@ void Runtime::AdoptProcess(std::shared_ptr<RuntimeProcess> process) {
   roots_.Adopt(std::move(process));
 }
 
+void Runtime::RunAction(
+    const ExecutionContext& context, Coroutine<void> coroutine, DrawRng rng) {
+  if (current_process_ != nullptr) {
+    throw InternalError(
+        "Runtime::RunAction: an action starts from the region it is due in, "
+        "between executions, and one is executing");
+  }
+  auto action =
+      std::make_shared<RuntimeProcess>(context, std::move(coroutine), rng);
+  RuntimeProcess& running = *action;
+  Activation* const top = action->TopActivation();
+  roots_.Adopt(std::move(action));
+  if (running.ResumeWith(*this, top)) {
+    RuntimeProcess::ReleaseTerminatedLineage(running);
+  }
+}
+
 void Runtime::QueueFinal(Activation* top) {
   top->Queue(finals_);
 }
@@ -339,15 +364,40 @@ void Runtime::StartFrom(std::size_t turn) {
 }
 
 auto Runtime::ClaimNamespaceInitialization(std::string_view name) -> bool {
-  return initialized_namespaces_.emplace(name).second;
+  return namespace_seeds_.try_emplace(std::string{name}).second;
 }
 
-void Runtime::EnterStaticInit(DrawRng rng) {
+auto Runtime::NamespaceSeeds(std::string_view name) -> InitializationRng& {
+  const auto found = namespace_seeds_.find(std::string{name});
+  if (found == namespace_seeds_.end()) {
+    throw InternalError(
+        "Runtime::NamespaceSeeds: a namespace is initialized only by the call "
+        "that claimed its bring-up");
+  }
+  return found->second;
+}
+
+void Runtime::EnterStaticInit(const ExecutionContext& context) {
   displacing_.push_back(
       DisplacingState{
-          .state = RunningState{.rng = rng, .import_calls = {}},
+          .state =
+              RunningState{
+                  .rng = context.SplitInitializationRng(), .import_calls = {}},
+          .context = context,
           .displaced = running_});
   running_ = &displacing_.back().state;
+}
+
+auto Runtime::RunningContext() const -> const ExecutionContext& {
+  if (const RuntimeProcess* const process = current_process_) {
+    return process->Context();
+  }
+  if (displacing_.empty()) {
+    throw InternalError(
+        "Runtime::RunningContext: generated code runs only inside a process "
+        "or a static initialization, and neither is running");
+  }
+  return displacing_.back().context;
 }
 
 void Runtime::LeaveStaticInit() {
@@ -403,8 +453,8 @@ void Runtime::ExecuteTimeSlot() {
             const RuntimeProcess& process = queued.activation->Process();
             ran.push_back(
                 NotedProcedure{
-                    .written_at = process.WrittenAt(),
-                    .scope = process.OwningScope()});
+                    .written_at = process.Context().written_at,
+                    .scope = process.Context().scope});
           });
     }
     RunRegion(*region);
@@ -497,9 +547,12 @@ void RegisterStartingProcess(
     StartKind kind, Scope* owning_scope, Scope* unit_instance,
     Coroutine<void> coroutine, const char* written_at) {
   Runtime& rt = AsRuntime(current_runtime());
+  const ExecutionContext context{
+      .scope = owning_scope,
+      .seeds = &unit_instance->InitializationSeeds(),
+      .written_at = written_at};
   auto process = std::make_shared<RuntimeProcess>(
-      owning_scope, std::move(coroutine),
-      unit_instance->InitializationSeeds().Split(), written_at);
+      context, std::move(coroutine), context.SplitInitializationRng());
   rt.QueueStart(kind, process->TopActivation());
   rt.AdoptProcess(std::move(process));
 }
@@ -542,26 +595,43 @@ void RegisterFinalProcess(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
     const char* written_at) {
   Runtime& rt = AsRuntime(current_runtime());
+  const ExecutionContext context{
+      .scope = owning_scope,
+      .seeds = &unit_instance->InitializationSeeds(),
+      .written_at = written_at};
   auto process = std::make_shared<RuntimeProcess>(
-      owning_scope, std::move(coroutine),
-      unit_instance->InitializationSeeds().Split(), written_at);
+      context, std::move(coroutine), context.SplitInitializationRng());
   rt.QueueFinal(process->TopActivation());
   rt.AdoptProcess(std::move(process));
 }
 
-void EnterScopeStaticInit(RuntimeEffects& runtime, Scope* unit_instance) {
-  AsRuntime(runtime).EnterStaticInit(
-      unit_instance->InitializationSeeds().Split());
+void RunAssertionAction(
+    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
+    const char* written_at) {
+  const ExecutionContext context{
+      .scope = owning_scope,
+      .seeds = &unit_instance->InitializationSeeds(),
+      .written_at = written_at};
+  AsRuntime(current_runtime())
+      .RunAction(
+          context, std::move(coroutine), context.SplitInitializationRng());
 }
 
-void EnterNamespaceStaticInit(RuntimeEffects& runtime) {
-  // A namespace is not instantiated, so nothing holds its seeds across runs of
-  // anything: its initialization RNG exists for this one bring-up and hands out
-  // the one generator it is ever asked for. Starting a fresh one here is that
-  // RNG, which is what gives every package the same starting point and keeps
-  // one package's draws out of another's (LRM 18.14.1).
-  InitializationRng seeds;
-  AsRuntime(runtime).EnterStaticInit(seeds.Split());
+void EnterScopeStaticInit(RuntimeEffects& runtime, Scope* unit_instance) {
+  AsRuntime(runtime).EnterStaticInit(
+      ExecutionContext{
+          .scope = unit_instance,
+          .seeds = &unit_instance->InitializationSeeds(),
+          .written_at = ""});
+}
+
+void EnterNamespaceStaticInit(RuntimeEffects& runtime, const char* name) {
+  Runtime& rt = AsRuntime(runtime);
+  rt.EnterStaticInit(
+      ExecutionContext{
+          .scope = nullptr,
+          .seeds = &rt.NamespaceSeeds(name),
+          .written_at = ""});
 }
 
 auto ClaimNamespaceInitialization(RuntimeEffects& runtime, const char* name)

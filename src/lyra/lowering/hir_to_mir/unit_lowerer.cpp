@@ -239,13 +239,19 @@ auto PopulateNamespaceOwnStorage(
 // A namespace's variable declaration assignments run before any procedure
 // starts (LRM 26.2), so a randomization call inside one draws from the
 // namespace's own initialization RNG rather than from any process's (LRM
-// 18.14.1). A namespace is not instantiated, so nothing is named here: the
-// entry starts the generator the standard gives every package.
+// 18.14.1). A namespace is not instantiated, so it is named by its name, which
+// is how the run holds that RNG.
 void WrapInNamespaceStaticInitExtent(
-    const UnitLowerer& unit_lowerer, mir::CallableCode& code) {
+    const UnitLowerer& unit_lowerer, mir::CompilationUnit& unit,
+    mir::CallableCode& code) {
   mir::Block extent;
+  const mir::ExprId name = extent.exprs.Add(
+      mir::Expr{
+          .data = mir::StringLiteral{.value = unit.name},
+          .type = unit.types.Intern(mir::Type{mir::MachineCStringType{}})});
   AppendRuntimeEffectStmt(
-      unit_lowerer, extent, support::BuiltinFn::kEnterNamespaceStaticInit, {});
+      unit_lowerer, extent, support::BuiltinFn::kEnterNamespaceStaticInit,
+      {name});
 
   mir::Block cleanup;
   AppendRuntimeEffectStmt(
@@ -333,7 +339,7 @@ void PublishNamespaceStorageBringUp(
     mir::CallableCode install_code, mir::CallableCode value_code) {
   const std::vector<std::string> reads =
       UnitsReadBy(value_code.Body(), unit.name);
-  WrapInNamespaceStaticInitExtent(unit_lowerer, value_code);
+  WrapInNamespaceStaticInitExtent(unit_lowerer, unit, value_code);
   GuardNamespaceInitialization(unit_lowerer, unit, value_code, reads);
 
   unit.content = mir::BroughtUpNamespace{

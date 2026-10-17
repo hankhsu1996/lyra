@@ -18,6 +18,7 @@
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/sampled_value.hpp"
+#include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/timer.hpp"
 #include "lyra/runtime/wait.hpp"
 #include "lyra/value/format.hpp"
@@ -59,6 +60,20 @@ auto AssertionReportValidity(RuntimeProcess& process)
   return DeferredReportValidity{
       .pass = process.CurrentDeferredReportEpoch(),
       .targets = process.DeferredReportTargets()};
+}
+
+// A deferred assertion's action, started once it is due, as an execution of no
+// lineage in the context of whatever reached the statement. No thread creates
+// it, so its generator is the next of that context's initialization RNG (LRM
+// 18.14.1), and the draws of whatever reached the statement do not move.
+auto StartWhenDue(RuntimeEffects& effects, Coroutine<void> action)
+    -> OwnedCall {
+  Runtime& runtime = AsRuntime(effects);
+  const ExecutionContext context = runtime.RunningContext();
+  return [&runtime, context, rng = context.SplitInitializationRng(),
+          action = std::move(action)]() mutable {
+    runtime.RunAction(context, std::move(action), rng);
+  };
 }
 
 }  // namespace
@@ -195,7 +210,8 @@ void RuntimeEffects::SubmitViolationReport(OwnedCall report) {
       });
 }
 
-void RuntimeEffects::SubmitDeferredObserved(OwnedCall action) {
+void RuntimeEffects::SubmitDeferredObserved(Coroutine<void> body) {
+  OwnedCall action = StartWhenDue(*this, std::move(body));
   RuntimeProcess* process = AsRuntime(*this).current_process_;
   if (process == nullptr) {
     // A deferred assertion outside any process (a static variable's
@@ -217,7 +233,8 @@ void RuntimeEffects::SubmitDeferredObserved(OwnedCall action) {
       });
 }
 
-void RuntimeEffects::SubmitDeferredFinal(OwnedCall action) {
+void RuntimeEffects::SubmitDeferredFinal(Coroutine<void> body) {
+  OwnedCall action = StartWhenDue(*this, std::move(body));
   RuntimeProcess* process = AsRuntime(*this).current_process_;
   if (process == nullptr) {
     Submit(Now(), Region::kPostponed, std::move(action));
@@ -316,8 +333,7 @@ auto RuntimeEffects::Spawn(Coroutine<void> coroutine)
   // one at its root and the order the branches then run in does not move any
   // of it.
   auto child = std::make_shared<RuntimeProcess>(
-      parent.OwningScope(), std::move(coroutine), parent.Running().rng.Split(),
-      parent.WrittenAt());
+      parent.Context(), std::move(coroutine), parent.Running().rng.Split());
   Activation* const activation = child->TopActivation();
   // The spawned activity is enabled within whatever disable targets the spawner
   // is inside (LRM 9.6.2), so it takes that membership here rather than
@@ -342,8 +358,7 @@ void RuntimeEffects::RunDetached(Coroutine<void> coroutine) {
   // no random values, and taking a generator out of the process that reached
   // the statement would move that process's own stream (LRM 18.14.1).
   auto carrier = std::make_shared<RuntimeProcess>(
-      reached_by->OwningScope(), std::move(coroutine), DrawRng{RandomSeed{0}},
-      reached_by->WrittenAt());
+      reached_by->Context(), std::move(coroutine), DrawRng{RandomSeed{0}});
   Activation* const activation = carrier->TopActivation();
   // No lineage and no disable membership: the standard makes no process of the
   // update this carries out, so nothing that names processes may find it. What

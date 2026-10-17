@@ -2,11 +2,13 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <utility>
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/hir/expr_id.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/field.hpp"
@@ -21,6 +23,18 @@ namespace lyra::lowering::hir_to_mir {
 
 class CallableBindings;
 struct SettledPath;
+struct WalkFrame;
+
+// The arguments of a call made later than its statement is reached, in a body
+// of its own: a deferred assertion's action, whose by-value arguments are
+// evaluated where the assertion is (LRM 16.4). Each of `operands` the call
+// reads as a value is lowered in `statement` and carried into the body, as a
+// C++ lambda's init-capture is; one it designates -- a `ref` actual -- is
+// designated in the body, when the call runs.
+struct ArgumentsEvaluatedEarlier {
+  std::span<const hir::ExprId> operands;
+  const WalkFrame* statement = nullptr;
+};
 
 // A class the walk can name, and the identity it was minted under. Reaching one
 // is reaching the other: a reference to a member reads its type off the
@@ -171,6 +185,10 @@ struct WalkFrame {
   // nothing that resolves a reference asks what kind of body it is in.
   StructuralBase structural_base;
 
+  // The call being lowered into a body that runs after its statement, whose
+  // by-value arguments that statement evaluates. Null elsewhere.
+  const ArgumentsEvaluatedEarlier* arguments_evaluated_earlier = nullptr;
+
   // How far out of `self` that instance sits, in class-chain steps. Answered
   // per alternative rather than by testing for one, so a body that reaches its
   // instance some further way has to say how far out it sits.
@@ -249,6 +267,13 @@ struct WalkFrame {
   [[nodiscard]] auto WithBodyCanWait(bool can_wait) const -> WalkFrame {
     WalkFrame next = *this;
     next.body_can_wait = can_wait;
+    return next;
+  }
+
+  [[nodiscard]] auto WithArgumentsEvaluatedEarlier(
+      const ArgumentsEvaluatedEarlier* arguments) const -> WalkFrame {
+    WalkFrame next = *this;
+    next.arguments_evaluated_earlier = arguments;
     return next;
   }
 

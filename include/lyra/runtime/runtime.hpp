@@ -10,6 +10,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <variant>
 #include <vector>
@@ -130,6 +131,15 @@ class Runtime final : public RuntimeEffects {
   // Public because the free registration functions live outside this class.
   void AdoptProcess(std::shared_ptr<RuntimeProcess> process);
 
+  // Runs an assertion's pass or fail statement as an execution of no lineage
+  // (LRM 16.4, 16.14.1), here and to its first stop, and keeps it until it
+  // ends. It runs at once rather than being queued: its caller is the region
+  // the statement is due in, where nothing runs ahead of it, or the end of the
+  // run, where nothing queued would run at all. Public because the entries
+  // that start an assertion's actions live outside this class.
+  void RunAction(
+      const ExecutionContext& context, Coroutine<void> coroutine, DrawRng rng);
+
   // LRM 9.2.3: a `final` procedure waits for the end of simulation, after the
   // last slot, rather than in any slot.
   void QueueFinal(Activation* top);
@@ -138,11 +148,19 @@ class Runtime final : public RuntimeEffects {
   void QueueStart(StartKind kind, Activation* top);
 
   // Takes a static initialization on as what is running, and gives it back.
-  // Its generator is `rng`, which the container's initialization RNG handed
-  // out (LRM 18.14.1). Public because the entries generated code reaches live
-  // outside this class.
-  void EnterStaticInit(DrawRng rng);
+  // It runs in `context`, whose initialization RNG hands it its generator (LRM
+  // 18.14.1). Public because the entries generated code reaches live outside
+  // this class.
+  void EnterStaticInit(const ExecutionContext& context);
   void LeaveStaticInit();
+
+  // What the running process or static initialization runs in.
+  [[nodiscard]] auto RunningContext() const -> const ExecutionContext&;
+
+  // The initialization RNG of the namespace named `name`, whose bring-up has
+  // been claimed (LRM 18.14.1). Held for the run, as an instance's is.
+  [[nodiscard]] auto NamespaceSeeds(std::string_view name)
+      -> InitializationRng&;
 
   // Takes the one bring-up a namespace's initializers get, answering false
   // where something already took it. A namespace's initializers run before any
@@ -289,11 +307,12 @@ class Runtime final : public RuntimeEffects {
   // code with no frame spanning them -- so the runtime holds the stack. A deque
   // because the pointer above stays valid across a push.
   std::deque<DisplacingState> displacing_;
-  // The namespaces whose one bring-up has been taken. A namespace reaches its
-  // initializers through whichever of its readers got there first, so what
-  // orders them is this set plus the calls each one makes, and no party holds
-  // the whole graph.
-  std::unordered_set<std::string> initialized_namespaces_;
+  // The initialization RNG of each namespace, by its name (LRM 18.14.1), held
+  // for the run as an instance holds its own. A namespace is here once its one
+  // bring-up has been taken: it reaches its initializers through whichever of
+  // its readers got there first, so what orders them is this map plus the calls
+  // each one makes, and no party holds the whole graph.
+  std::unordered_map<std::string, InitializationRng> namespace_seeds_;
   std::atomic<SimTime> now_ = 0;
   std::int8_t global_precision_power_ = kDefaultTimePrecisionPower;
   value::TimeFormat time_format_;
@@ -339,6 +358,15 @@ void RegisterFinalProcess(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
     const char* written_at);
 
+// Reached by the generated code running a concurrent assertion's pass or fail
+// statement in the Reactive region, or at the end of the run for an attempt
+// still pending (LRM 16.14.1, 16.12.2), with what a registered process is
+// started from. No process starts the action, so `wait fork` and
+// `disable fork` do not reach it (LRM 9.6.1, 9.6.3).
+void RunAssertionAction(
+    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
+    const char* written_at);
+
 // A static initializer runs before any procedure starts (LRM 10.5, 26.2), so
 // the generator it draws from cannot be a process's. LRM 18.14.1 names the one
 // it is instead: the initialization RNG of the module, interface, or program
@@ -349,10 +377,10 @@ void RegisterFinalProcess(
 //
 // `unit_instance` is the scope holding those seeds: the scope itself unless the
 // declaration sits in a generate scope, which keeps no seeds of its own. A
-// namespace has no instance at all (LRM 26.2), so its own entry names none and
-// starts from the default seed.
+// namespace has no instance at all (LRM 26.2); its entry names the namespace,
+// whose initialization RNG starts from the default seed.
 void EnterScopeStaticInit(RuntimeEffects& runtime, Scope* unit_instance);
-void EnterNamespaceStaticInit(RuntimeEffects& runtime);
+void EnterNamespaceStaticInit(RuntimeEffects& runtime, const char* name);
 void LeaveStaticInit(RuntimeEffects& runtime);
 
 // Whether this call is the one that brings up the namespace named `name`: 1 on

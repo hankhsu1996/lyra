@@ -30,12 +30,14 @@
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/external_class.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -533,6 +535,10 @@ class StructuralScopeLowerer {
   // no callable identity: its answer is storage alone, where a subroutine's is
   // a whole declared callable.
   base::Translation<hir::ProcessId, StaticVarBindings> process_static_bindings_;
+  // The same for a concurrent assertion's action block, whose block-local
+  // variables are static by default as any procedure's are (LRM 6.21).
+  base::Translation<hir::ConcurrentAssertionId, StaticVarBindings>
+      assertion_static_bindings_;
   mir::ClassId class_id_{};
   // Each is a constructor parameter after the prefix every scope takes, and is
   // filled from it before anything the construction does can read it.
@@ -642,5 +648,21 @@ auto ReachLoopBlock(
 auto DescendOwnedChildren(
     const StructuralScopeLowerer& scope, mir::Block& block, mir::ExprId object,
     std::span<const hir::OwnedChildStep> descent) -> mir::ExprId;
+
+// The call `start` makes of `body`, a callable of the scope `frame` stands on
+// whose result is the execution it runs as, written into `frame`'s block. An
+// execution of a scope starts from the scope, the instance holding the seeds
+// its generator is split from, and the place the source writes it, whether it
+// is a procedure the scope registers or an assertion's action it runs later.
+//
+// The instance is where LRM 18.14.1 keeps the seeds of what no thread creates.
+// It is the scope the artifact's own class tree is rooted at, a fixed number of
+// steps out from wherever the execution is declared, so the call reaches it by
+// typed navigation over a distance the walk already knows. The place is the
+// text a run names the execution by when it has to say what was running; one
+// no source text states passes no place.
+[[nodiscard]] auto BuildExecutionStart(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::CallableId body,
+    support::BuiltinFn start, diag::SourceSpan written_at) -> mir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir

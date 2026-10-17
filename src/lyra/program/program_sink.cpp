@@ -230,6 +230,7 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_register_initial", &lyra_rt_register_initial);
   add("lyra_rt_register_triggered", &lyra_rt_register_triggered);
   add("lyra_rt_register_final", &lyra_rt_register_final);
+  add("lyra_rt_run_assertion_action", &lyra_rt_run_assertion_action);
   add("lyra_rt_enter_scope_static_init", &lyra_rt_enter_scope_static_init);
   add("lyra_rt_enter_namespace_static_init",
       &lyra_rt_enter_namespace_static_init);

@@ -1305,6 +1305,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "register_final",
           .declaration = RuntimeFunction("RegisterFinalProcess")};
+    case BuiltinFn::kRunAssertionAction:
+      return {
+          .name = "run_assertion_action",
+          .declaration = RuntimeFunction("RunAssertionAction")};
     case BuiltinFn::kEnterReactionRunningFirst:
       return {
           .name = "enter_reaction_running_first",

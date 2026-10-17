@@ -195,11 +195,14 @@ struct AssertStmt {
   auto operator==(const AssertStmt&) const -> bool = default;
 };
 
-// LRM 16.3 simple immediate cover: success of the expression is a coverage
+// LRM 16.3 / 16.4 immediate cover: success of the expression is a coverage
 // goal, which inverts the disposition an assert has. A false expression is not
 // a failure, so the grammar gives this form a single statement rather than an
-// action block and there is no fail arm to carry.
+// action block and there is no fail arm to carry. A deferred one holds what it
+// records back with its statement, so that a value met only in passing is not
+// credited (LRM 16.4).
 struct CoverStmt {
+  AssertionTiming timing;
   ExprId condition;
   std::optional<StmtId> pass_stmt;
 

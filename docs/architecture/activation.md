@@ -68,9 +68,10 @@ the awaiter consumes, not of the scheduler.
 - The callable declaration and its signature, environment, and result type (`callable.md`,
   `mir.md`). An activation runs a callable; it is not one.
 - Deferred effects -- a non-blocking assignment's commit, a postponed `$strobe`, a deferred
-  assertion action. Those are closures submitted to a region (`scheduling.md`), not activations:
+  assertion's report. Those are closures submitted to a region (`scheduling.md`), not activations:
   they capture an environment, run later, and never suspend their submitter or settle a completion
-  an awaiter consumes.
+  an awaiter consumes. Where what a deferred effect does may wait, the effect starts an execution of
+  no lineage to do it (invariant 6).
 - Storage layout, frame allocation, and the machine-level suspend/resume protocol (LIR and below).
 
 ## Core Invariants
@@ -125,9 +126,13 @@ the awaiter consumes, not of the scheduler.
    and is observed by the engine (no continuation). A task activation inherits the enabler's process
    identity, completes with a typed payload, and resumes the enabler. A fork branch has its own
    process identity, is owned by the spawning process's lineage, completes `Void`, and is waited for
-   by its fork's join. A deferred effect is a closure submitted to a region, not an activation.
-   _Consequence: each kind reuses the activation core but binds its own ownership / continuation /
-   completion; deferred work never enters the activation/completion model._
+   by its fork's join. A deferred effect is a closure submitted to a region, not an activation. An
+   execution of no lineage -- the carrier of an update due on an event, an assertion's action -- is
+   a process in every respect but lineage: owned by the run, completes `Void`, observed by the
+   engine, and reached by nothing that names processes. A deferred effect may start one, which is
+   how deferred work that can wait enters this model. _Consequence: each kind reuses the activation
+   core but binds its own ownership / continuation / completion; a deferred effect itself never
+   enters the activation/completion model, and what it starts does so as an execution._
 
 7. **An activation's disposition is authoritative, and suspension saves the disposition it
    replaces.** A non-terminal activation is `Executing`, `Runnable` (entitled to run; the region it

@@ -1167,62 +1167,18 @@ void InstallScopeRoutes(
   InstallStoredRoutes(lowerer, resolve_frame, routes.disable_targets);
 }
 
-// Appends one process activation registration to the scope's `activate` body:
-// invokes `body` over the activate frame's `self` to produce the coroutine,
-// then registers it through `registration`, which says whether it starts with
-// the scope or runs at its shutdown (LRM 9.2). Startup and shutdown are
-// distinct registration callees, not one tagged call.
-//
-// The registration also names the unit instance the process belongs to, which
-// is where LRM 18.14.1 keeps the seeds a static process starts from. That
-// instance is the scope the artifact's own class tree is rooted at, a fixed
-// number of steps out from wherever the process is declared, so the call
-// reaches it by typed navigation over a distance this walk already knows.
-//
-// `written_at` is the source text the process runs, which the registration
-// hands on as the text a run names the process by when it has to say what was
-// running; a process no source text states passes no place.
+// Registers `body` in the scope's `activate` body through `registration`,
+// which says whether it starts with the scope or runs at its shutdown (LRM
+// 9.2). Startup and shutdown are distinct registration callees, not one tagged
+// call.
 void AppendProcessRegistration(
     UnitLowerer& unit_lowerer, const WalkFrame& activate_frame,
     mir::CallableId body, support::BuiltinFn registration,
     diag::SourceSpan written_at) {
-  mir::Block& block = *activate_frame.current_block;
-  const mir::ExprId body_self = BuildObjectDeref(
-      unit_lowerer.Unit(), block,
-      block.exprs.Add(MakeSelfRefExpr(activate_frame)));
-  const mir::ExprId body_call = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target =
-                              mir::CallableTarget{
-                                  .owner = activate_frame.current_class_id,
-                                  .slot = body},
-                          .receiver = body_self},
-                  .arguments = {}},
-          .type = unit_lowerer.Unit().builtins.coroutine_void});
-  const mir::ExprId reg_self =
-      block.Read(block.exprs.Add(MakeSelfRefExpr(activate_frame)));
-  const mir::ExprId unit_instance = BuildEnclosingScopeReceiver(
-      activate_frame, unit_lowerer.Unit(), activate_frame.HopsToUnitRoot());
-  const mir::ExprId place = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::StringLiteral{
-                  .value = diag::RuntimeOriginOf(
-                      written_at, unit_lowerer.SourceManager())},
-          .type = unit_lowerer.Unit().types.Intern(
-              mir::Type{mir::MachineCStringType{}})});
-  const mir::ExprId reg_call = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = mir::Direct{.target = registration},
-                  .arguments = {reg_self, unit_instance, body_call, place}},
-          .type = unit_lowerer.Unit().builtins.void_type});
-  block.AppendStmt(mir::ExprStmt{.expr = reg_call});
+  activate_frame.current_block->AppendStmt(
+      mir::ExprStmt{
+          .expr = BuildExecutionStart(
+              unit_lowerer, activate_frame, body, registration, written_at)});
 }
 
 // A variable declaration assignment runs before any procedure starts (LRM
@@ -2223,6 +2179,45 @@ auto LowerGenerateAsStmt(
 
 }  // namespace
 
+auto BuildExecutionStart(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::CallableId body,
+    support::BuiltinFn start, diag::SourceSpan written_at) -> mir::ExprId {
+  mir::Block& block = *frame.current_block;
+  const mir::ExprId body_self = BuildObjectDeref(
+      unit_lowerer.Unit(), block, block.exprs.Add(MakeSelfRefExpr(frame)));
+  const mir::ExprId body_call = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{
+                          .target =
+                              mir::CallableTarget{
+                                  .owner = frame.current_class_id,
+                                  .slot = body},
+                          .receiver = body_self},
+                  .arguments = {}},
+          .type = unit_lowerer.Unit().builtins.coroutine_void});
+  const mir::ExprId scope = block.Read(block.exprs.Add(MakeSelfRefExpr(frame)));
+  const mir::ExprId unit_instance = BuildEnclosingScopeReceiver(
+      frame, unit_lowerer.Unit(), frame.HopsToUnitRoot());
+  const mir::ExprId place = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::StringLiteral{
+                  .value = diag::RuntimeOriginOf(
+                      written_at, unit_lowerer.SourceManager())},
+          .type = unit_lowerer.Unit().types.Intern(
+              mir::Type{mir::MachineCStringType{}})});
+  return block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee = mir::Direct{.target = start},
+                  .arguments = {scope, unit_instance, body_call, place}},
+          .type = unit_lowerer.Unit().builtins.void_type});
+}
+
 auto ApplyInstanceSelects(
     UnitLowerer& unit_lowerer, mir::Block& block, ReachedObject reached,
     std::span<const std::uint32_t> selects) -> ReachedObject {
@@ -2698,6 +2693,18 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   }
   process_static_bindings_ = {
       hir_scope.processes.size(), std::move(process_statics)};
+
+  std::vector<StaticVarBindings> assertion_statics;
+  assertion_statics.reserve(hir_scope.concurrent_assertions.size());
+  for (const hir::ConcurrentAssertionId id :
+       hir_scope.concurrent_assertions.Ids()) {
+    assertion_statics.push_back(BindBodyStatics(
+        unit_lowerer, hir_scope.procedural_scopes,
+        InstanceStorage{.owner = class_id_, .shape = &shape},
+        hir_scope.concurrent_assertions.Get(id).action, {}));
+  }
+  assertion_static_bindings_ = {
+      hir_scope.concurrent_assertions.size(), std::move(assertion_statics)};
 
   // The classes this scope replicates settle their shapes against this one, and
   // before it is published: such a class keeps its cells here, as fields of the
@@ -3390,7 +3397,9 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     const hir::ConcurrentAssertionDecl& assertion =
         hir_scope.concurrent_assertions.Get(id);
     auto installed = LowerConcurrentAssertion(
-        *this, mir_class, ctor_frame, scopes_, id, assertion);
+        *this, mir_class, ctor_frame,
+        StorageBringUp{.install = install_frame, .value = init_frame}, scopes_,
+        assertion_static_bindings_.Get(id), id, assertion);
     if (!installed) return std::unexpected(std::move(installed.error()));
     for (const mir::CallableId process : installed->processes) {
       AppendProcessRegistration(

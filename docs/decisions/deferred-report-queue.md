@@ -1,9 +1,7 @@
 # The deferred report queue
 
-Date: 2026-09-08. Status: accepted, and realized on both backends for the deferred `assert` and
-`assume` forms the compiler carries. What the compiler does not yet carry is stated at the end: an
-assertion whose action block is a subroutine call, and the deferred `cover` form, are refused rather
-than lowered, so R9's argument evaluation has no realization to be right or wrong about.
+Date: 2026-09-08, D8 added 2026-10-17. Status: accepted, and realized on both backends for every
+deferred form: `assert`, `assume` and `cover`, with or without an action block.
 
 ## Why this decision matters
 
@@ -199,6 +197,21 @@ expressed as what each report captures, never as a second queue or a second flus
 **D7. MIR states the deferred action and where it matures, and nothing else.** No source, version,
 or queue appears at that layer; every part of this decision is the runtime's.
 
+**D8. The action is a body of its own, built where the statement is and started once it is due.**
+The action is one subroutine call, and the subroutine can be a task (16.4), so it may wait; what a
+report carries is therefore not a call to make but a body to run, started at maturity as an
+execution of its own in the region the report acts in. It belongs to no process's lineage -- no
+process started it, so `wait fork` and `disable fork` do not reach it -- and it takes the scope of
+whatever reached the statement and a generator split from the initialization RNG of that one's
+instance or package (LRM 18.14.1), so the draws of whatever reached the statement do not move. R9 is
+realized where the body is built: each argument the call reads as a value is evaluated at the
+statement and carried into the body, as a C++ lambda's init-capture is, and an argument the call
+designates -- a `ref` or `const ref` actual -- is designated in the body, when the call runs.
+Arguments are evaluated on every outcome that selects the action, so a later flush discards the call
+and keeps their side effects. The default report is the same shape with no call in it, and a
+deferred `cover` holds back the hit it records with its statement, so a withdrawn report credits
+nothing.
+
 ## Consequences
 
 - Selective and bulk cancellation stop being two mechanisms. Both are "a target's generation moved",
@@ -211,8 +224,9 @@ or queue appears at that layer; every part of this decision is the runtime's.
 - The observed form's residual glitch (R8) is reproduced rather than removed: a matured report is
   committed, and a later execution in the same time step creates its own. That is what the standard
   describes, and removing it would be divergence.
-- R9 is untouched by any of this. The action's arguments are evaluated where the assertion is
-  reached, whether or not the report they were evaluated for survives; deferral applies to the call.
+- R9 is untouched by the withdrawal model. The action's arguments are evaluated where the assertion
+  is reached, whether or not the report they were evaluated for survives; deferral applies to the
+  call (D8).
 
 ## Rejected alternatives
 
@@ -236,9 +250,6 @@ one-shot, whereas a scope that a `disable` cancelled has to be live again when i
 
 ## What this does not settle
 
-- The action block (LRM 16.4's single subroutine call) and, with it, where R9's argument evaluation
-  is realized. Until it exists a deferred assertion carrying one is refused.
-- The deferred `cover` form, likewise refused.
 - Whether the region fixes any order between the reports of different processes. D1 leaves the
   question moot, since every report sits in the region's own list and takes whatever order it gives.
 

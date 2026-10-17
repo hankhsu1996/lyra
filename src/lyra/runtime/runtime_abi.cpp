@@ -1178,38 +1178,6 @@ auto StreamOf(
       });
 }
 
-// Two contributions folded under the truth table `fold` names, which each
-// entry states outright.
-template <value::NetResolvable T>
-auto Resolved(
-    value::NetResolution fold, const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(out, value::Resolve(fold, Read<T>(lhs), Read<T>(rhs)));
-}
-
-template <value::NetResolvable T>
-auto Dominating(const void* stronger, const void* weaker, void* out) -> void* {
-  return Emplace(out, Read<T>(stronger).Dominating(Read<T>(weaker)));
-}
-
-// The scalar every bit of a filled value holds (LRM 6.7.1), which crosses as
-// the integral value a structure's own operation states it as.
-auto FillAt(const void* fill, std::int64_t width, bool is_four_state)
-    -> value::Logic {
-  return value::Logic::Filled(
-      value::LeastSignificantBit(BitsAt(fill, width, is_four_state).View()));
-}
-
-template <value::NetResolvable T>
-auto FilledLike(
-    const void* prototype, const void* fill, std::int64_t fill_width,
-    bool fill_is_four_state, void* out) -> void* {
-  return Emplace(
-      out,
-      T::FilledLike(
-          Read<T>(prototype), FillAt(fill, fill_width, fill_is_four_state)));
-}
-
 // A format operand borrowing an integral value, which reads under a conversion
 // through its planes (LRM 21.2.1) as the number its shape makes of them.
 auto IntegralFormatArg(const void* value, value::IntegralShape shape)
@@ -2545,14 +2513,14 @@ void lyra_rt_submit_violation_report(void* runtime, void* closure) {
       TakeClosure(closure));
 }
 
-void lyra_rt_submit_deferred_observed(void* runtime, void* closure) {
+void lyra_rt_submit_deferred_observed(void* runtime, void* body) {
   static_cast<RuntimeEffects*>(runtime)->SubmitDeferredObserved(
-      TakeClosure(closure));
+      std::move(*static_cast<Coroutine<void>*>(body)));
 }
 
-void lyra_rt_submit_deferred_final(void* runtime, void* closure) {
+void lyra_rt_submit_deferred_final(void* runtime, void* body) {
   static_cast<RuntimeEffects*>(runtime)->SubmitDeferredFinal(
-      TakeClosure(closure));
+      std::move(*static_cast<Coroutine<void>*>(body)));
 }
 
 auto lyra_rt_delay(
@@ -3029,14 +2997,21 @@ void lyra_rt_register_final(
       std::move(*static_cast<Coroutine<void>*>(coroutine)), written_at);
 }
 
+void lyra_rt_run_assertion_action(
+    void* self, void* unit_instance, void* coroutine, const char* written_at) {
+  RunAssertionAction(
+      static_cast<Scope*>(self), static_cast<Scope*>(unit_instance),
+      std::move(*static_cast<Coroutine<void>*>(coroutine)), written_at);
+}
+
 void lyra_rt_enter_scope_static_init(void* runtime, void* unit_instance) {
   EnterScopeStaticInit(
       *static_cast<RuntimeEffects*>(runtime),
       static_cast<Scope*>(unit_instance));
 }
 
-void lyra_rt_enter_namespace_static_init(void* runtime) {
-  EnterNamespaceStaticInit(*static_cast<RuntimeEffects*>(runtime));
+void lyra_rt_enter_namespace_static_init(void* runtime, const char* name) {
+  EnterNamespaceStaticInit(*static_cast<RuntimeEffects*>(runtime), name);
 }
 
 void lyra_rt_leave_static_init(void* runtime) noexcept {
