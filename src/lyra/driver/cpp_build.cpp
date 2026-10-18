@@ -339,7 +339,7 @@ auto FormatSources(
     return diag::Fail(
         diag::DiagCode::kHostIoError,
         std::format(
-            "clang-format failed on the emitted sources: {}",
+            "clang-format failed on the emitted sources ({})",
             run->stderr_text));
   }
   return {};
@@ -697,7 +697,7 @@ auto AssembleProject(
   if (ec) {
     return IoError(
         std::format(
-            "failed to mark '{}' executable: {}", script_path.string(),
+            "failed to mark '{}' executable ({})", script_path.string(),
             ec.message()));
   }
 

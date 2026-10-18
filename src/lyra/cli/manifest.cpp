@@ -56,7 +56,7 @@ auto Fail(const fs::path& file, std::string message)
     -> std::unexpected<diag::Diagnostic> {
   return diag::Fail(
       diag::DiagCode::kHostInvalidManifest,
-      std::format("{}: {}", file.string(), message));
+      std::format("in {}, {}", file.string(), message));
 }
 
 auto CheckKeys(
@@ -70,12 +70,13 @@ auto CheckKeys(
     if (Contains(kInvocationKeys, name)) {
       return Fail(
           file, std::format(
-                    "[{}] {}: this names a property of one invocation or one "
+                    "[{}] {} names a property of one invocation or one "
                     "machine, not of what the file declares; pass it on the "
                     "command line",
                     table, name));
     }
-    return Fail(file, std::format("[{}] {}: unrecognized key", table, name));
+    return Fail(
+        file, std::format("[{}] {} is not a recognized key", table, name));
   }
   return {};
 }
@@ -88,12 +89,12 @@ auto ReadStrings(
   }
   const auto* array = node->as_array();
   if (array == nullptr) {
-    return Fail(file, std::format("{}: expected an array of strings", where));
+    return Fail(file, std::format("{} is not an array of strings", where));
   }
   for (const auto& element : *array) {
     const auto* text = element.as_string();
     if (text == nullptr) {
-      return Fail(file, std::format("{}: expected an array of strings", where));
+      return Fail(file, std::format("{} is not an array of strings", where));
     }
     out.emplace_back(text->get());
   }
@@ -117,10 +118,11 @@ auto ReadPaths(
       return Fail(
           file,
           std::format(
-              "{}: '{}' is a pattern. A declaration names its parts, and a "
+              "{} names '{}', which is a pattern; a declaration names its "
+              "parts, and a "
               "pattern names whatever the filesystem happens to hold -- which "
               "also leaves source order undefined, and source order is "
-              "significant. List the files, and use searchdir with searchext "
+              "significant; list the files, and use searchdir with searchext "
               "to find a cell by name",
               where, entry));
     }
@@ -137,7 +139,7 @@ auto ReadString(
   }
   const auto* text = node->as_string();
   if (text == nullptr) {
-    return Fail(file, std::format("{}: expected a string", where));
+    return Fail(file, std::format("{} is not a string", where));
   }
   out = text->get();
   return {};
@@ -151,7 +153,7 @@ auto ReadBool(
   }
   const auto* flag = node->as_boolean();
   if (flag == nullptr) {
-    return Fail(file, std::format("{}: expected true or false", where));
+    return Fail(file, std::format("{} is neither true nor false", where));
   }
   out = flag->get();
   return {};
@@ -179,7 +181,7 @@ auto ReadAssertionPolicy(
   return Fail(
       file,
       std::format(
-          "[compile] assertions: '{}' is not one of check, skip", *spelled));
+          "[compile] assertions '{}' is not one of check, skip", *spelled));
 }
 
 struct SourceSetField {
@@ -281,15 +283,15 @@ auto ReadDependencies(
     if (!support::IsSimpleIdentifier(name)) {
       return Fail(
           file, std::format(
-                    "[dependencies] {}: '{}' is not an identifier, which a "
+                    "[dependencies] {} is not an identifier, which a "
                     "library's name has to be (LRM 33.3.1)",
-                    name, name));
+                    name));
     }
     const auto* spec = entry.second.as_table();
     if (spec == nullptr) {
       return Fail(
           file, std::format(
-                    "[dependencies] {}: expected a table saying where the "
+                    "[dependencies] {} is not a table saying where the "
                     "library is declared, as in {{ path = \"../{}\" }}",
                     name, name));
     }
@@ -308,8 +310,8 @@ auto ReadDependencies(
     if (!directory) {
       return Fail(
           file, std::format(
-                    "[{}] path: a dependency has to say which directory "
-                    "declares it",
+                    "[{}] has no path, and a dependency has to say which "
+                    "directory declares it",
                     table_name));
     }
     written.push_back(
@@ -374,7 +376,7 @@ class ReachedLibraries {
         return Fail(
             from.path,
             std::format(
-                "{}: this names the library declared by {}, and the build "
+                "{} names the library declared by {}, and the build "
                 "already holds a library of that name, declared by {}",
                 where, file.string(), met->second.string()));
       }
@@ -386,8 +388,8 @@ class ReachedLibraries {
         }
         return Fail(
             from.path, std::format(
-                           "{}: a library cannot depend on itself ({}{})",
-                           where, chain, dependency.name));
+                           "{} makes a library depend on itself ({}{})", where,
+                           chain, dependency.name));
       }
       return {};
     }
@@ -395,9 +397,9 @@ class ReachedLibraries {
     std::error_code ec;
     if (!fs::exists(dependency.manifest, ec)) {
       return Fail(
-          from.path,
-          std::format(
-              "{}: there is no {}", where, dependency.manifest.string()));
+          from.path, std::format(
+                         "{} names {}, which does not exist", where,
+                         dependency.manifest.string()));
     }
     auto loaded = LoadManifest(dependency.manifest);
     if (!loaded) {
@@ -406,7 +408,7 @@ class ReachedLibraries {
     if (loaded->library.name != dependency.name) {
       return Fail(
           from.path, std::format(
-                         "{}: {} declares library '{}'", where,
+                         "{} names {}, which declares library '{}'", where,
                          dependency.manifest.string(), loaded->library.name));
     }
     if (auto ok = CheckReadableBesideTheRoot(*loaded); !ok) {
@@ -428,7 +430,7 @@ class ReachedLibraries {
       return Fail(
           library.path,
           std::format(
-              "[compile] std: library '{}' is declared for {} and {} for {}; "
+              "[compile] std declares library '{}' for {} and {} for {}; "
               "reading the libraries of one build under different language "
               "versions is not yet supported",
               library.library.name, Spelled(library.language_version),
@@ -438,7 +440,7 @@ class ReachedLibraries {
       return Fail(
           library.path,
           std::format(
-              "[compile] timescale: library '{}' is declared for {} and {} "
+              "[compile] timescale declares library '{}' for {} and {} "
               "for {}; giving the libraries of one build different default "
               "time scales is not yet supported",
               library.library.name, Spelled(library.timescale),
@@ -459,8 +461,9 @@ auto LoadManifest(const fs::path& path) -> diag::Result<Manifest> {
     const auto& error = parsed.error();
     return Fail(
         path, std::format(
-                  "line {}, column {}: {}", error.source().begin.line,
-                  error.source().begin.column, error.description()));
+                  "the text at line {}, column {} does not parse ({})",
+                  error.source().begin.line, error.source().begin.column,
+                  error.description()));
   }
 
   const toml::table& root = parsed.table();
@@ -473,14 +476,14 @@ auto LoadManifest(const fs::path& path) -> diag::Result<Manifest> {
         return Fail(
             path,
             std::format(
-                "{}: this names a property of one invocation or one machine, "
+                "{} names a property of one invocation or one machine, "
                 "not of what the file declares; pass it on the command line",
                 name));
       }
-      return Fail(path, std::format("{}: unrecognized table", name));
+      return Fail(path, std::format("[{}] is not a recognized table", name));
     }
     if (entry.second.as_table() == nullptr) {
-      return Fail(path, std::format("{}: expected a table", name));
+      return Fail(path, std::format("{} is not a table", name));
     }
   }
 
@@ -544,12 +547,14 @@ auto LoadManifest(const fs::path& path) -> diag::Result<Manifest> {
   // rather than as a missing name. A file with no name is the shape this one is
   // not: a bag of options, which the command line already carries better.
   if (manifest.library.name.empty()) {
-    return Fail(path, "[library] name: a library has to say what it is called");
+    return Fail(
+        path,
+        "[library] has no name, and a library has to say what it is called");
   }
   if (!support::IsSimpleIdentifier(manifest.library.name)) {
     return Fail(
         path, std::format(
-                  "[library] name: '{}' is not an identifier, which a "
+                  "[library] name '{}' is not an identifier, which a "
                   "library's name has to be (LRM 33.3.1)",
                   manifest.library.name));
   }

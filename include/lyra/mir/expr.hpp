@@ -1089,11 +1089,13 @@ struct Expr {
       .type = void_type};
 }
 
-// `cell.BeginTakeover(level)` -- puts a cell under a procedural continuous
-// assignment, superseding whatever held that level, and yields the generation
-// the new evaluation carries (LRM 10.6).
+// `cell.BeginTakeover(level, lsb, count)` -- puts the bits `lsb` and `count`
+// name of what a cell holds, or all of it where `count` is zero, under a
+// procedural continuous assignment, superseding whatever held them at that
+// level, and yields the generation the new evaluation carries (LRM 10.6).
 [[nodiscard]] inline auto MakeBeginTakeoverCallExpr(
-    ExprId cell, ExprId level, TypeId generation_type) -> Expr {
+    ExprId cell, ExprId level, ExprId lsb, ExprId count, TypeId generation_type)
+    -> Expr {
   return Expr{
       .data =
           CallExpr{
@@ -1101,13 +1103,14 @@ struct Expr {
                   Direct{
                       .target = support::BuiltinFn::kBeginTakeover,
                       .receiver = cell},
-              .arguments = {level}},
+              .arguments = {level, lsb, count}},
       .type = generation_type};
 }
 
 // `cell.DriveTakeover(level, generation, value)` -- states what a takeover's
-// evaluation produced, and yields whether that evaluation is still the one in
-// effect (LRM 10.6).
+// evaluation produced, as a value of what the cell holds of which the bits the
+// takeover holds are read, and yields whether that evaluation still holds any
+// (LRM 10.6).
 [[nodiscard]] inline auto MakeDriveTakeoverCallExpr(
     ExprId cell, ExprId level, ExprId generation, ExprId value,
     TypeId bool_type) -> Expr {
@@ -1122,10 +1125,12 @@ struct Expr {
       .type = bool_type};
 }
 
-// `cell.EndTakeover(level)` -- takes a cell back out of the procedural
-// continuous assignment at `level` (LRM 10.6).
+// `cell.EndTakeover(level, lsb, count)` -- takes the bits `lsb` and `count`
+// name of what a cell holds, or all of it where `count` is zero, back out of
+// the procedural continuous assignment at `level` (LRM 10.6).
 [[nodiscard]] inline auto MakeEndTakeoverCallExpr(
-    ExprId cell, ExprId level, TypeId void_type) -> Expr {
+    ExprId cell, ExprId level, ExprId lsb, ExprId count, TypeId void_type)
+    -> Expr {
   return Expr{
       .data =
           CallExpr{
@@ -1133,7 +1138,7 @@ struct Expr {
                   Direct{
                       .target = support::BuiltinFn::kEndTakeover,
                       .receiver = cell},
-              .arguments = {level}},
+              .arguments = {level, lsb, count}},
       .type = void_type};
 }
 

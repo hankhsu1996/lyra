@@ -136,10 +136,10 @@ constexpr std::array<std::string_view, 8> kFoldedByTheWritePath = {
     "lyra::runtime::Observable::HasMembers() const",
     "lyra::runtime::IntrusiveList<lyra::runtime::WaitMembership>::Empty() "
     "const",
-    "lyra::runtime::VariableCell::AdmitsWrite() const",
+    "lyra::runtime::VariableCell::OverridesWrites() const",
     "lyra::runtime::VariableCell::Watched() const",
     "lyra::runtime::VariableCell::Rare() const",
-    "lyra::runtime::ErasedReference::Admits() const",
+    "lyra::runtime::ErasedReference::OverridesWrites() const",
     "lyra::runtime::ErasedReference::Watched() const",
     "lyra::runtime::PartPath::PartPath()"};
 

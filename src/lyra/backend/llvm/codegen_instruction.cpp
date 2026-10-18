@@ -1029,8 +1029,8 @@ auto CodeGenFunction::LowerCast(
       module_->Unit().types.Get(operand_type).MachineIntegerSignedness();
   if (!signedness) {
     return Unsupported(
-        "llvm codegen: cast between two types this target has no conversion "
-        "between");
+        "the llvm backend has no conversion between the two types of this "
+        "cast");
   }
   return builder_.CreateIntCast(
       *operand, target, *signedness == lir::Signedness::kSigned);
@@ -2018,8 +2018,7 @@ auto CodeGenFunction::LowerIntConst(const lir::IntConst& constant)
   if (machine == nullptr) {
     return Unsupported(
         std::format(
-            "llvm codegen: a constant of type {} has no native form on this "
-            "backend",
+            "a constant of type {} has no native form on the llvm backend",
             module_->Unit().types.Get(constant.type).KindName()));
   }
   return llvm::ConstantInt::get(
@@ -2045,8 +2044,8 @@ auto CodeGenFunction::LowerRealConst(const lir::RealConst& constant)
   if (machine == nullptr) {
     return Unsupported(
         std::format(
-            "llvm codegen: a real constant of type {} has no native form on "
-            "this backend",
+            "a real constant of type {} has no native form on the llvm "
+            "backend",
             module_->Unit().types.Get(constant.type).KindName()));
   }
   return llvm::ConstantFP::get(

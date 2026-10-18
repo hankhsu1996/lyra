@@ -10,7 +10,7 @@
 # getting all the way.
 Caliptra:default:hello:
   stops: build
-  says: taking over part of a target is not yet supported
+  says: closure is read as a declaration a value holds part of
 HammerBlade:16x8:hello:
   stops: run
   says: did not end within

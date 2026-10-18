@@ -32,8 +32,7 @@ auto ValidateDpiLinkInputs(std::span<const std::string> sources)
       return diag::Fail(
           diag::DiagCode::kHostInvalidCliArgs,
           std::format(
-              "unsupported DPI-C link input '{}': only .c and .cpp are "
-              "supported",
+              "DPI-C link input '{}' is neither a .c nor a .cpp source",
               source));
     }
     std::error_code ec;
@@ -100,7 +99,8 @@ auto CompileDpiObjects(
     return diag::Fail(
         diag::DiagCode::kHostIoError,
         std::format(
-            "failed to create '{}': {}", work_dir.string(), created.message()));
+            "failed to create '{}' ({})", work_dir.string(),
+            created.message()));
   }
   std::vector<ProcessRequest> requests;
   std::vector<std::string> names;

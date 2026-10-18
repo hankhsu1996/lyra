@@ -46,7 +46,7 @@ auto CopyTree(
         diag::Make(
             diag::DiagCode::kHostIoError,
             std::format(
-                "failed to walk '{}': {}", from.string(), ec.message())));
+                "failed to walk '{}' ({})", from.string(), ec.message())));
   }
   return {};
 }
@@ -61,7 +61,7 @@ auto ResolveRuntimeLocation(std::string_view binary_path)
   if (!runfiles) {
     return diag::Fail(
         diag::DiagCode::kHostIoError,
-        std::format("cannot access the Lyra runtime: {}", rf_error));
+        std::format("cannot access the Lyra runtime ({})", rf_error));
   }
   // The surface is staged under a root holding it and nothing else, so the
   // root around any one of its headers is the whole of what a project gets.

@@ -60,7 +60,7 @@ auto WriteFile(const std::filesystem::path& path, std::string_view content)
   if (ec) {
     return std::unexpected(IoError(
         std::format(
-            "failed to create '{}': {}", path.parent_path().string(),
+            "failed to create '{}' ({})", path.parent_path().string(),
             ec.message())));
   }
   std::ofstream out(path, std::ios::binary);

@@ -42,8 +42,9 @@ auto LowerPattern(
   switch (pattern.kind) {
     case slang::ast::PatternKind::Invalid:
       return diag::Fail(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "invalid pattern reached HIR lowering");
+          span, diag::DiagCode::kErrorInvalidFrontendSemantics,
+          "the warning above lets this pattern through, but it has no "
+          "behaviour to simulate");
 
     case slang::ast::PatternKind::Wildcard:
       return hir::Pattern{

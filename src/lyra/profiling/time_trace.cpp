@@ -75,7 +75,7 @@ auto TimeTraceWrite(const std::filesystem::path& path)
   if (ec) {
     return std::unexpected(
         std::format(
-            "failed to write the time trace to '{}': {}", path.string(),
+            "failed to write the time trace to '{}' ({})", path.string(),
             ec.message()));
   }
   llvm::timeTraceProfilerWrite(out);

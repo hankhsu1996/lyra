@@ -99,8 +99,8 @@ auto ResolveCompiler(const CommandContext& ctx)
   ctx.sink->Report(
       diag::Make(
           diag::DiagCode::kHostIoError,
-          "no C++ compiler found: neither clang++ nor c++ is on PATH; name "
-          "one with --cxx"));
+          "no C++ compiler found, since neither clang++ nor c++ is on PATH; "
+          "name one with --cxx"));
   return std::nullopt;
 }
 
@@ -832,7 +832,7 @@ auto RunEmitCommand(const Invocation& invocation) -> int {
   if (ec) {
     (*invocation.report)(diag::Make(
         diag::DiagCode::kHostIoError,
-        std::format("cannot write '{}': {}", dir.string(), ec.message())));
+        std::format("cannot write '{}' ({})", dir.string(), ec.message())));
     return 1;
   }
   return RunOnRequest(
@@ -854,8 +854,8 @@ auto RunCacheClear(const Invocation& invocation) -> int {
     report(
         diag::Make(
             diag::DiagCode::kHostIoError,
-            "no cache directory is known: neither XDG_CACHE_HOME nor HOME "
-            "names an absolute path; name one with --cache-dir"));
+            "no cache directory is known, since neither XDG_CACHE_HOME nor "
+            "HOME names an absolute path; name one with --cache-dir"));
     return 1;
   }
   const std::size_t cleared = driver::ClearStore(*parsed->store);
@@ -897,8 +897,8 @@ auto StartSelfReport(const CliOptions& options) -> diag::Result<SelfReport> {
   if (options.time_trace_granularity.has_value() && !options.time_trace) {
     return diag::Fail(
         diag::DiagCode::kHostInvalidCliArgs,
-        "--time-trace-granularity: there is no time trace to apply it to; "
-        "name one with --time-trace");
+        "--time-trace-granularity has no time trace to apply to; name one "
+        "with --time-trace");
   }
   SelfReport report;
   if (options.time_trace) {
@@ -910,7 +910,7 @@ auto StartSelfReport(const CliOptions& options) -> diag::Result<SelfReport> {
       return diag::Fail(
           diag::DiagCode::kHostInvalidCliArgs,
           std::format(
-              "--time-trace-granularity: '{}' is not a duration", granularity));
+              "--time-trace-granularity '{}' is not a duration", granularity));
     }
     auto claimed = driver::ClaimedFile::Claim(*options.time_trace);
     if (!claimed) {

@@ -266,7 +266,7 @@ auto ReadReport::RunsTheBody() const -> std::int64_t {
 void RefuseReport(std::string_view why) {
   throw SimulationError(
       "waiting on an expression that calls this function is not yet "
-      "supported: " +
+      "supported, because " +
       std::string{why});
 }
 

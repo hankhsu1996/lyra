@@ -193,7 +193,7 @@ auto Perform(
   std::filesystem::create_directories(dir, ec);
   if (ec) {
     return IoError(
-        std::format("failed to create '{}': {}", dir.string(), ec.message()));
+        std::format("failed to create '{}' ({})", dir.string(), ec.message()));
   }
   const auto made = dir / "output";
   if (auto performed = step(made); !performed) {
@@ -429,7 +429,7 @@ auto CopyOut(const std::filesystem::path& from, const std::filesystem::path& to)
     }
     return IoError(
         std::format(
-            "failed to copy '{}' to '{}': {}", from.string(), to.string(),
+            "failed to copy '{}' to '{}' ({})", from.string(), to.string(),
             ec.message()));
   }
   std::filesystem::permissions(
@@ -440,7 +440,7 @@ auto CopyOut(const std::filesystem::path& from, const std::filesystem::path& to)
     std::error_code ignored;
     std::filesystem::remove(temporary, ignored);
     return IoError(
-        std::format("failed to write '{}': {}", to.string(), ec.message()));
+        std::format("failed to write '{}' ({})", to.string(), ec.message()));
   }
   return true;
 }

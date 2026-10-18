@@ -34,15 +34,13 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>, T> {
   // LRM 7.5.1 `new[N]`: `n` elements, each the element type's default. `n` is
   // a longint per LRM 7.5.1; the negative-N case throws at construction.
   explicit DynamicArray(std::int64_t n)
-      : core_(StaticElem<T>{}, CountOf(n, "dynamic array new[N]"), nullptr) {
+      : core_(StaticElem<T>{}, CountOf(n), nullptr) {
   }
 
   // LRM 7.5.1 `new[N](other)`: the first `N` of `other`'s elements, padded with
   // the element type's default where `other` has fewer.
   DynamicArray(std::int64_t n, const DynamicArray& src)
-      : core_(
-            StaticElem<T>{}, CountOf(n, "dynamic array new[N](src)"),
-            &src.core_) {
+      : core_(StaticElem<T>{}, CountOf(n), &src.core_) {
   }
 
   // LRM 10.9.1 assignment-pattern construction: the elements of the pattern's
@@ -203,11 +201,10 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>, T> {
   friend class OrdinalArrayMethods<DynamicArray<T>, T>;
 
   // A run-time element count (LRM 7.5.1), which a negative one has none of.
-  [[nodiscard]] static auto CountOf(std::int64_t count, const char* what)
-      -> std::size_t {
+  [[nodiscard]] static auto CountOf(std::int64_t count) -> std::size_t {
     if (count < 0) {
       throw SimulationError(
-          std::string(what) + ": size operand is negative (LRM 7.5.1)");
+          "the size given to a dynamic array's new[] is negative (LRM 7.5.1)");
     }
     return static_cast<std::size_t>(count);
   }

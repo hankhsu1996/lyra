@@ -434,27 +434,37 @@ auto LowerStatement(
           span, diag::DiagCode::kUnsupportedStatementForm,
           "`randsequence` is not yet supported (LRM 18.17)");
 
-    // The front end reports some departures from the standard as warnings and
-    // goes on, and where it could give the text no meaning it leaves this in
-    // its place. Its own diagnostic says what the text was.
+    // The front end goes on past a diagnostic it was asked to relax, and where
+    // it built no statement to carry out it leaves this around the text. Its
+    // own diagnostic, unless silenced, says what the text was.
     //
-    // The placeholder also wraps every statement around the one that has no
-    // meaning, outward to the procedure's body, so what it wraps is lowered as
-    // written and the refusal comes from inside it. The innermost statement so
-    // wrapped is the smallest text the refusal can be placed at, since the
-    // placeholders themselves cover none.
+    // The placeholder also wraps every statement holding such a one, outward
+    // to the procedure's body, so what it wraps is lowered as written and a
+    // refusal from inside it is passed on, placed here where it names no
+    // place, since the placeholders themselves cover no text. A wrapped
+    // statement that lowers met no refusal on the way -- the text with nothing
+    // to carry out is the statement itself, or sits where nothing was lowered
+    // -- and is refused where it was written.
     case slang::ast::StatementKind::Invalid: {
+      const auto nothing_to_carry_out = [](diag::DiagSpan where) {
+        return diag::Fail(
+            where, diag::DiagCode::kErrorInvalidFrontendSemantics,
+            "the warning above lets this statement through, but it has no "
+            "behaviour to simulate");
+      };
       const auto* wrapped = stmt.as<slang::ast::InvalidStatement>().child;
       if (wrapped == nullptr) {
-        return diag::Fail(
-            diag::DiagCode::kUnsupportedStatementForm,
-            "this statement cannot be simulated: the front end could give it "
-            "no meaning");
+        return nothing_to_carry_out(diag::UnknownSpan{});
       }
       auto lowered = LowerStatement(proc, frame, *wrapped);
-      const auto place = frontend::SpanOf(wrapped->sourceRange);
-      if (!lowered && place != diag::SourceSpan{} &&
-          std::holds_alternative<diag::UnknownSpan>(
+      const auto written = frontend::SpanOf(wrapped->sourceRange);
+      const diag::DiagSpan place = written == diag::SourceSpan{}
+                                       ? diag::DiagSpan{diag::UnknownSpan{}}
+                                       : diag::DiagSpan{written};
+      if (lowered) {
+        return nothing_to_carry_out(place);
+      }
+      if (std::holds_alternative<diag::UnknownSpan>(
               lowered.error().primary.span)) {
         lowered.error().primary.span = place;
       }

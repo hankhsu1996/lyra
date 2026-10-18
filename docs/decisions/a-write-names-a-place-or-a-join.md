@@ -128,8 +128,8 @@ rustc's early return for an ordinary left side.
 - A blocking assignment to a concatenation whose later member's index an earlier member changes now
   writes the element named when the statement was reached, where it wrote the one named after the
   earlier member's store.
-- A takeover on part of a variable or of a net is refused inside a join as it is outside one: a
-  takeover is state on whole storage, and LRM 10.6.2's constant part-select of a net is not carried.
+- A takeover on part of a net is refused inside a join as it is outside one, and bits of a variable
+  a caller asks for are taken over inside one as outside it.
 - A dynamically sized value in a stream target is refused as it is anywhere a stream meets one,
   since no type yet names a bit count the program fixes.
 - A seed argument that is not a variable is refused with the clause that requires one (LRM 20.14.1),

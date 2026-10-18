@@ -88,7 +88,7 @@ auto MakeForeignExecution(OwnedCall entry)
 void YieldForeignExecution() {
   if (RunningFiberSlot() == nullptr) {
     throw SimulationError(
-        "an exported task suspended outside a foreign call: a task that "
+        "an exported task suspended outside a foreign call, and a task that "
         "consumes simulation time is callable only from a foreign call the "
         "simulation made (LRM 35.5.3)");
   }
@@ -126,7 +126,7 @@ auto EnterForeignTask(
 auto CurrentForeignProcess() -> RuntimeProcess& {
   if (ForeignProcessSlot() == nullptr) {
     throw SimulationError(
-        "DPI export reached from outside a foreign call: an exported "
+        "a DPI export was reached from outside a foreign call, and an exported "
         "subroutine runs as the process that entered the foreign call, so "
         "there must be one (LRM 35.5.3)");
   }

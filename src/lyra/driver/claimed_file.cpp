@@ -20,7 +20,7 @@ auto CannotWrite(const std::filesystem::path& destination, std::string_view why)
     -> diag::Diagnostic {
   return diag::Make(
       diag::DiagCode::kHostIoError,
-      std::format("cannot write '{}': {}", destination.string(), why));
+      std::format("cannot write '{}' ({})", destination.string(), why));
 }
 
 }  // namespace

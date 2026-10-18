@@ -57,10 +57,10 @@ target and why a forced value is not a driver; this file does not restate it.
 ## Sub-steps
 
 - [x] PCA1 -- A variable carries a takeover: a source expression installed at a stated precedence,
-      evaluated continuously while installed, with a procedural write discarded while one is in
-      effect. The evaluation is the loop a continuous assignment already runs, and a source nothing
-      can change ends it after one pass rather than leaving it parked -- a takeover is created per
-      execution, so anything it leaves behind accumulates.
+      evaluated continuously while installed, with a procedural write discarded at the positions it
+      holds while one is in effect. The evaluation is the loop a continuous assignment already runs,
+      and a source nothing can change ends it after one pass rather than leaving it parked -- a
+      takeover is created per execution, so anything it leaves behind accumulates.
 
 - [ ] PCA2 -- `assign` and `deassign` on a variable (LRM 10.6.1), including a second `assign` to an
       already-assigned variable ending the first, and a concatenation of variables as the target.
@@ -72,22 +72,25 @@ target and why a forced value is not a driver; this file does not restate it.
       both endings the standard gives: the value retained where nothing else drives the variable,
       and the continuous assignment or active `assign` reestablished and rescheduled where one does.
       A release hands the variable back to an `assign` underneath it, or to the continuous
-      assignment driving it, with the value that source holds at that moment. A variable that stands
-      for what its port connection drives it with is forced without what drives it being touched:
-      it, every port it is handed on to, and every wait on either follow the forced value until the
-      release, and show what drives it again from then. Such a port is forced as any variable is,
-      alone or as a member of a concatenation. A variable of every type a takeover may name is taken
-      over on both backends -- integral, `real`, `shortreal`, `string` and a class handle -- and the
-      same holds for `assign` and `deassign`. A `chandle` may not be named (LRM 6.14), and the front
-      end refuses it.
+      assignment driving it, with the value that source holds once the reevaluation the release
+      schedules runs. A variable that stands for what its port connection drives it with is forced
+      without what drives it being touched: it, every port it is handed on to, and every wait on
+      either follow the forced value until the release, and show what drives it again from then.
+      Such a port is forced as any variable is, alone or as a member of a concatenation. A variable
+      of every type a takeover may name is taken over on both backends -- integral, `real`,
+      `shortreal`, `string` and a class handle -- and the same holds for `assign` and `deassign`. A
+      `chandle` may not be named (LRM 6.14), and the front end refuses it.
 
 - [x] PCA4 -- `force` and `release` on a net, overriding the resolution rather than contributing to
       it, and on release resolving the drivers immediately so the net takes their value in the same
       step. The drivers go on updating their contributions while the force is in effect, which is
       what makes that release answer with a current value.
 
-- [ ] PCA5 -- A constant bit-select or part-select of a vector net as a force target, which is what
-      makes the range the unit of a takeover rather than the signal.
+- [ ] PCA5 -- A constant bit-select or part-select of a vector net as a force target. A variable's
+      takeover already holds bits rather than the whole (PCA7), and a net resolving several drivers
+      could take the same; what is missing is a net showing its one driver's value or the variable
+      that driver carries, whose bits nobody forced have to go on following that source while the
+      rest is forced. Refused today, as a force on part of a net.
 
 - [ ] PCA6 -- A `force` or an `assign` naming a whole variable of an unpacked structure, union or
       array type -- fixed-size, dynamic, queue or associative -- is refused. The variable either may
@@ -97,12 +100,16 @@ target and why a forced value is not a driver; this file does not restate it.
       execution backend ends the build as a failure of the compiler's own.
 
 - [ ] PCA7 -- A force on part of a variable, when the caller asks for it. The standard forbids it,
-      but its meaning follows from the rules for a whole variable: a procedural write leaves the
-      forced part as it is while the force is in effect, and the release keeps the forced value of
-      that part until the next procedural assignment to it, or hands it back to a continuous
-      assignment that drives it. Built on PCA5's range, since this is the same range on a variable;
-      a write to such a variable then keeps the forced part and stores the rest. Lyra refuses it
-      today even when asked, and a design that leans on it stops there.
+      and Lyra runs it as an extension whose meaning is the rules for a whole variable applied to
+      each forced bit: a procedural write leaves the forced part as it is while the force is in
+      effect, and the release keeps the forced value of that part until the next procedural
+      assignment to it, or hands it back to a continuous assignment that drives it. Bits of a packed
+      variable are carried on both backends: a takeover holds some bits of what its target holds, a
+      write of any part of the variable keeps the forced bits and stores the rest, a later force of
+      overlapping bits takes them from the earlier one, and a release of some bits ends the force on
+      those alone. Refused still: an element or a member of an unpacked variable, and part of a port
+      that stands for what its connection drives, where what is not forced has to go on following
+      its own source.
 
 - [ ] PCA8 -- A takeover of an `event` variable (LRM 10.6, 15.5.5). Refused where it is written, as
       giving an event a value is.
@@ -118,21 +125,23 @@ target and why a forced value is not a driver; this file does not restate it.
 value model: if a takeover shadows a target, a read has to consult the shadow, and almost no target
 ever carries one. Reading 10.6.1 closes it instead. An `assign` overrides _all_ procedural
 assignments to the variable, and after a `deassign` the variable keeps the value it was last given
--- so a procedural write made while a takeover is in effect is never observable, at any later time.
-There is nothing to shadow.
+-- so a procedural write made while a takeover is in effect is never observable at the positions it
+holds, at any later time. There is nothing to shadow.
 
 So a takeover's value lives in the target's own storage, a procedural write arriving while one is in
-effect is discarded, and removing a takeover restores nothing because nothing was displaced. Reads
-are untouched, and the whole cost sits on the write path, where the check is one comparison against
-state the target already has to carry.
+effect is discarded at the positions it holds and lands everywhere else, and removing a takeover
+restores nothing because nothing was displaced. Reads are untouched, and the whole cost sits on the
+write path, where the check is one comparison against state the target already has to carry.
 
 **A release still owes one thing that is not removal.** Where a lower source is active underneath --
 a continuous assignment, or an `assign` beneath a `force` -- the standard requires that source to be
 reestablished and a reevaluation scheduled (LRM 10.6.2). An `assign` goes on recording what it
 evaluates to while a force covers it, and what a continuous assignment writes while one does is kept
-beneath it rather than discarded, so in both cases the release shows that value with nothing
-recomputed and nobody woken. That value is part of the takeover's own state, so it exists only while
-something covers the variable, and no read consults it.
+beneath it rather than discarded, so in both cases nothing is recomputed. The release leaves the
+variable as it is and schedules the reevaluation, which shows that value when it runs in the Active
+region; until then the process that released still reads the forced value. That value is part of the
+takeover's own state, so it exists only while something covers the variable or the reevaluation is
+still to run, and no read consults it.
 
 ## Open questions
 

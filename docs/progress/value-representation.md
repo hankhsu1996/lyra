@@ -141,10 +141,9 @@ against the run before it; the figures are in the pull requests that measured th
       width where it is installed. A reference, and a part designated within a write, are told the
       width at each access, and a store into a procedural local is told nothing.
 - [x] A whole write of a value wider than 64 bits compares the arriving bytes with the words the
-      holder has and takes them there: a store into a variable, a force on a variable or a net, a
-      push into a sampled history and a driver's contribution. The first value a forced variable
-      takes after a force begins is the one exception, since the level holds nothing to take it into
-      until then.
+      holder has and takes them there: a store into a variable, a push into a sampled history and a
+      driver's contribution. A force keeps each value its evaluation produces apart from what it
+      covers, since it may hold only some of its positions.
 - [x] A comparison answers 0, 1 or x as one scalar wherever it is carried out, and generated code
       stores it at the type the language gives the answer. A net's positions are words and a count.
       No record of an integral type is made while the program runs.

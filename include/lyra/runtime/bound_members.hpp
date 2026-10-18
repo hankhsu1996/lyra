@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/var.hpp"
 
@@ -134,20 +135,33 @@ void BindAlias(VariableRef<T>& alias, const VariableRef<T>& bound) {
 [[nodiscard]] auto ForcedMember(
     const ErasedReference& reference, std::int64_t level) -> ErasedReference&;
 
+// A member given storage of the assignment's own stops showing what its
+// connection drives, so only the whole of it can be taken over that way: the
+// rest of it would have to go on following its source.
+inline void RequireWholeMember(std::int64_t count) {
+  if (count != 0) {
+    throw SimulationError(
+        "a force on part of a port that stands for what its connection drives "
+        "is not yet supported (LRM 10.6.2)");
+  }
+}
+
 // The three operations of a procedural continuous assignment (LRM 10.6)
 // through a reference, on what it names, over the class `C` of the cells the
-// variables it names are: a variable is taken over where it lies, and a member
-// is given storage of the assignment's own to name. `fresh` makes that storage
-// holding what a cell holds, and `refer` forms the reference that names it, in
-// whichever form the references of the running program take.
+// variables it names are, at the positions `lsb` and `count` name of it: a
+// variable is taken over where it lies, and a member is given storage of the
+// assignment's own to name. `fresh` makes that storage holding what a cell
+// holds, and `refer` forms the reference that names it, in whichever form the
+// references of the running program take.
 
 template <class C, class Fresh, class Refer>
 auto BeginTakeoverThrough(
-    const ErasedReference& reference, std::int64_t level, Fresh fresh,
-    Refer refer) -> std::int64_t {
+    const ErasedReference& reference, std::int64_t level, std::int64_t lsb,
+    std::int64_t count, Fresh fresh, Refer refer) -> std::int64_t {
   if (!NamesAMember(reference)) {
-    return WholeVariable<C>(reference).BeginTakeover(level);
+    return WholeVariable<C>(reference).BeginTakeover(level, lsb, count);
   }
+  RequireWholeMember(count);
   ErasedReference& member = ForcedMember(reference, level);
   BoundMembers& bound = current_runtime().Bound();
   if (!bound.Forced(member)) {
@@ -181,11 +195,14 @@ auto DriveTakeoverThrough(
 // that value first, as any write, and whoever waits on the member is told
 // exactly when the release changed what it shows.
 template <class C>
-void EndTakeoverThrough(const ErasedReference& reference, std::int64_t level) {
+void EndTakeoverThrough(
+    const ErasedReference& reference, std::int64_t level, std::int64_t lsb,
+    std::int64_t count) {
   if (!NamesAMember(reference)) {
-    WholeVariable<C>(reference).EndTakeover(level);
+    WholeVariable<C>(reference).EndTakeover(level, lsb, count);
     return;
   }
+  RequireWholeMember(count);
   ErasedReference& member = ForcedMember(reference, level);
   BoundMembers& bound = current_runtime().Bound();
   if (bound.Forced(member)) {
@@ -195,9 +212,11 @@ void EndTakeoverThrough(const ErasedReference& reference, std::int64_t level) {
 }
 
 template <value::LyraValue T>
-auto VariableRef<T>::BeginTakeover(std::int64_t level) const -> std::int64_t {
+auto VariableRef<T>::BeginTakeover(
+    std::int64_t level, std::int64_t lsb, std::int64_t count) const
+    -> std::int64_t {
   return BeginTakeoverThrough<Var<T>>(
-      erased_, level,
+      erased_, level, lsb, count,
       [](const Var<T>& showing) {
         auto forced = std::make_shared<Var<T>>();
         forced->Initialize(showing.Get());
@@ -219,8 +238,9 @@ auto VariableRef<T>::DriveTakeover(
 }
 
 template <value::LyraValue T>
-void VariableRef<T>::EndTakeover(std::int64_t level) const {
-  EndTakeoverThrough<Var<T>>(erased_, level);
+void VariableRef<T>::EndTakeover(
+    std::int64_t level, std::int64_t lsb, std::int64_t count) const {
+  EndTakeoverThrough<Var<T>>(erased_, level, lsb, count);
 }
 
 }  // namespace lyra::runtime
