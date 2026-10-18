@@ -753,6 +753,14 @@ struct Expr {
 // constant or to code names something that is no storage, so it is a value.
 [[nodiscard]] auto IsPlace(const ExprData& data) -> bool;
 
+// Whether `data` is a constant: a value the same wherever and whenever it is
+// evaluated, which is what its kind is -- a literal, or a reference to a value
+// the unit states once, such as an integral constant, an enumeration's table
+// or a body's code. Nothing about such a node changes between two evaluations,
+// so it computes nothing and may be stated again wherever it is wanted, as C++
+// names a variable usable in constant expressions without odr-using it.
+[[nodiscard]] auto IsConstant(const ExprData& data) -> bool;
+
 // The value the place `place` of type `type` holds.
 [[nodiscard]] inline auto MakeCopyExpr(ExprId place, TypeId type) -> Expr {
   return Expr{.data = CopyExpr{.place = place}, .type = type};

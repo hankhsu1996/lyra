@@ -16,12 +16,18 @@ namespace lyra::mir_transform {
 class BlockRebuild;
 
 // What a rewrite says about the nodes of a block being rebuilt. Each is asked
-// of every node the rebuild reaches, in every block nested in it, and answers
-// the node standing in its place -- built from new ids, through the rebuild --
-// or nothing, for the node to be carried over as it is.
+// of every node the rebuild reaches, in every block nested in it, by the id it
+// has in the block rebuilt from, since what a node may become can depend on
+// what takes it. It answers the node standing in its place -- built from new
+// ids, through the rebuild -- or nothing, for the node to be carried over as
+// it is. A node that is one of its operands is answered by naming that
+// operand, a node of the same block, which then stands in its place, as LLVM's
+// InstSimplify answers with a value that already exists.
 struct RebuildRules {
-  std::function<std::optional<mir::Expr>(BlockRebuild&, const mir::Expr&)>
-      expr = [](BlockRebuild&, const mir::Expr&) { return std::nullopt; };
+  std::function<std::optional<mir::ExprId>(const mir::Block&, mir::ExprId)>
+      stands_for = [](const mir::Block&, mir::ExprId) { return std::nullopt; };
+  std::function<std::optional<mir::Expr>(BlockRebuild&, mir::ExprId)> expr =
+      [](BlockRebuild&, mir::ExprId) { return std::nullopt; };
   std::function<std::optional<mir::StmtData>(BlockRebuild&, const mir::Stmt&)>
       stmt = [](BlockRebuild&, const mir::Stmt&) { return std::nullopt; };
 };

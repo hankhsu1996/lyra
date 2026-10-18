@@ -215,6 +215,15 @@ operation is a call into a separately compiled runtime, and the optimizer cannot
       of one word now takes a straight-line path. The model is
       [../decisions/a-select-names-a-position.md](../decisions/a-select-names-a-position.md).
 
+- [x] A select of every bit of a value from its first, at the value's own type, is the value. A
+      parameterized flop writing `dout[WIDTH-1:0] <= din[WIDTH-1:0]` went through the partial-write
+      protocol on every clock although it names the whole vector; it is now the vector's own write,
+      and reading such a select reads the vector, on both backends and wherever the select stands. A
+      nonblocking assignment no longer keeps a constant among what it defers, since a constant has
+      no moment of evaluation to keep. Where the select's type differs from the vector's -- a signed
+      vector's whole select is unsigned (LRM 11.8.1) -- a read converts and a write still writes the
+      bits.
+
 - [ ] An emitted program is optimized without the runtime library it spends its time in. The
       design's translation units and the runtime are compiled separately and linked as native
       objects, so every value operation a design performs is a call the optimizer cannot see into --
@@ -238,6 +247,24 @@ operation is a call into a separately compiled runtime, and the optimizer cannot
       **Target shape**: the runtime ships in a form the optimizer can read, and a design build says
       whether to use it. It is the run-time half of the same axis `--release` already names, so it
       belongs to that flag's question rather than to a new one.
+
+- [ ] Writing part of a variable costs many times what writing the whole of it does, on both
+      backends, and most of it is not the bits written. A write to some bits of a variable opens a
+      write on the variable, designates the whole of what it holds, inserts the bits through a
+      routine general over every width and position, and ends the write, each a call into the
+      runtime, and clears a buffer each time. Reading those same bits at a position the compiler
+      knows already compiles to a shift and a mask; the write is the half that does not. What the
+      operation is, where the position is known and the bits lie in one word, is a read-modify-write
+      of that word and a test of whether the bits it changed are bits anything is watching, the
+      runtime reached only to wake what is. A write of the whole variable carries a smaller share of
+      the same protocol. Not measured on a design apart from the one profile that found it, where
+      writes into storage were one of the largest shares.
+
+      **Target shape**: a write of bits at a known position within a word is that word's masked
+      store and an inline change test, with the call into the runtime left to the case where
+      something watches the bits that changed. It meets the entry below from the other side: an
+      optimizer that sees the runtime's definitions recovers part of this by itself, and what it
+      cannot recover is the protocol's own work.
 
 - [ ] Which optimization level a release build asks the host compiler for, and whether a user names
       it. `--release` asks for the second level on the C++ backend. An operation on a value of one

@@ -5,6 +5,7 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/verify.hpp"
 #include "lyra/mir_transform/box_large_values.hpp"
+#include "lyra/mir_transform/inst_simplify.hpp"
 #include "lyra/mir_transform/reaction.hpp"
 #include "lyra/profiling/time_trace.hpp"
 
@@ -14,7 +15,7 @@ auto Transform(mir::CompilationUnit unit) -> mir::CompilationUnit {
   const profiling::TimeTraceScope span(
       "transform MIR", [&] { return unit.name; });
   mir::CompilationUnit transformed =
-      SplitReactions(BoxLargeValues(std::move(unit)));
+      SplitReactions(BoxLargeValues(InstSimplify(std::move(unit))));
   mir::Verify(transformed);
   return transformed;
 }
