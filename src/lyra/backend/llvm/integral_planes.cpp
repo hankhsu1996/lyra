@@ -997,7 +997,10 @@ auto LowerOnPlanes(
       return words.Dominating(load(0), load(1));
     // Long work at every width, which the library carries out: a power, a
     // count of bits, a logarithm, a reversal of blocks, and a value read out
-    // of text or of what a foreign call left.
+    // of text or of what a foreign call left. The positions a procedural
+    // continuous assignment shows are the library's too, since only a write it
+    // overrides asks for them.
+    case IntegralOp::kTakePositions:
     case IntegralOp::kPower:
     case IntegralOp::kCountBits:
     case IntegralOp::kCeilLog2:

@@ -186,6 +186,13 @@ auto MakeBinary(
       std::move(binary));
 }
 
+auto BuildMachineIntBinary(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::BinaryOp op,
+    mir::ExprId lhs, mir::ExprId rhs) -> mir::ExprId {
+  return block.exprs.Add(
+      MakeBinary(unit, block, op, lhs, rhs, unit.builtins.machine_int64));
+}
+
 auto MakeUnary(
     const mir::CompilationUnit& unit, const mir::Block& block, mir::UnaryOp op,
     mir::ExprId operand, mir::TypeId result_type) -> mir::Expr {

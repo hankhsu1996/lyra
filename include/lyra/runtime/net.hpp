@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <variant>
@@ -15,6 +16,7 @@
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/bound_members.hpp"
 #include "lyra/runtime/observable.hpp"
+#include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/storage_for.hpp"
 #include "lyra/runtime/takeover.hpp"
@@ -117,8 +119,9 @@ void ShowDriverValue(
 // resolves again. The one driver of a net it decides writes the value the net
 // shows, and whoever waits on what moved is told, where a wait is enrolled at
 // all (LRM 4.3). While a procedural continuous assignment covers such a net
-// the write lands in what is kept beneath it, which the net shows again once
-// nothing covers it (LRM 10.6.2), and nothing follows.
+// the write lands in that driver's contribution too, and the net resolves
+// again, so the positions no takeover holds show it and the rest show it once
+// released (LRM 10.6.2).
 template <class T>
 struct Contributing {
   T* contribution;
@@ -129,11 +132,7 @@ struct Showing {
   bool watched;
 };
 template <class T>
-struct KeptBeneath {
-  T* kept;
-};
-template <class T>
-using DriverLanding = std::variant<Contributing<T>, Showing<T>, KeptBeneath<T>>;
+using DriverLanding = std::variant<Contributing<T>, Showing<T>>;
 
 // The driver's value as it stands, wherever its writes land, of a type the
 // net holds as the value itself.
@@ -143,8 +142,7 @@ template <class T>
   return std::visit(
       Overloaded{
           [](const Contributing<T>& to) -> T& { return *to.contribution; },
-          [](const Showing<T>& to) -> T& { return to.shown->Storage(); },
-          [](const KeptBeneath<T>& to) -> T& { return *to.kept; }},
+          [](const Showing<T>& to) -> T& { return to.shown->Storage(); }},
       landing);
 }
 
@@ -156,8 +154,7 @@ template <class T>
           [](const Contributing<T>& to) -> void* {
             return HandleTo(*to.contribution);
           },
-          [](const Showing<T>& to) -> void* { return to.shown->Bytes(); },
-          [](const KeptBeneath<T>& to) -> void* { return HandleTo(*to.kept); }},
+          [](const Showing<T>& to) -> void* { return to.shown->Bytes(); }},
       landing);
 }
 
@@ -361,14 +358,16 @@ class NetShowing {
 
   // Something now covers the net: its own value takes what it showed, and the
   // member and whatever is bound from it name that, where a covering value then
-  // lands.
-  void Cover() {
+  // lands. Each change to the source from then on runs what `follow` makes of
+  // it, so the positions nothing covers go on showing it.
+  void Cover(
+      const std::function<OwnedCall(const ErasedReference& source)>& follow) {
     BoundMembers& bound = current_runtime().Bound();
     if (!started_ || bound.Forced(shown_)) {
       return;
     }
     own_value_->AssignBytes(Shown());
-    bound.Force(shown_, own_, nullptr);
+    bound.Force(shown_, own_, follow);
   }
 
  private:
@@ -759,10 +758,10 @@ class ResolvedNet<T> : public ConnectableNet {
   //
   // What is forced is the physical net, so the value shows under every name
   // reaching those positions.
-  auto BeginTakeover(std::int64_t level, std::int64_t lsb, std::int64_t count)
+  auto BeginTakeover(std::int64_t level, std::int64_t first, std::int64_t count)
       -> std::int64_t {
     return std::int64_t{WholePhysicalNet().BeginTakeover(
-        TakeoverLevelOf(level), PositionsNamed(lsb, count, AllPositions()))};
+        TakeoverLevelOf(level), PositionsNamed(first, count))};
   }
 
   auto DriveTakeover(
@@ -779,11 +778,10 @@ class ResolvedNet<T> : public ConnectableNet {
         level, generation, value::WideViewAt(bytes, count_, T::kDomain));
   }
 
-  void EndTakeover(std::int64_t level, std::int64_t lsb, std::int64_t count) {
+  void EndTakeover(std::int64_t level, std::int64_t first, std::int64_t count) {
     PhysicalNet& physical = WholePhysicalNet();
     if (!physical.EndTakeover(
-            TakeoverLevelOf(level),
-            PositionsNamed(lsb, count, AllPositions()))) {
+            TakeoverLevelOf(level), PositionsNamed(first, count))) {
       return;
     }
     RuntimeEffects& runtime = current_runtime();
@@ -792,19 +790,12 @@ class ResolvedNet<T> : public ConnectableNet {
       return;
     }
     switch (Decision()) {
-      case NetDecision::kResolution:
-        physical.Reresolve(runtime);
-        return;
       // Nothing covers a net one driver decides any longer, so it shows what
-      // that driver produced meanwhile (LRM 10.6.2), where an override ever
-      // gave a value at all.
+      // that driver produced meanwhile (LRM 10.6.2), which its contribution
+      // took while the net was covered.
+      case NetDecision::kResolution:
       case NetDecision::kOneDriver:
-        if (const std::unique_ptr<T> kept = std::move(kept_beneath_)) {
-          ShowDriverValue(
-              runtime, *this, held_.Get(),
-              [&] { return held_.IsBitIdentical(*kept); },
-              [&] { held_.Assign(*kept); });
-        }
+        physical.Reresolve(runtime);
         return;
       // The object its driver carries is what such a net shows once nothing
       // covers it, from the driver's turn on; before that it shows what an
@@ -941,34 +932,53 @@ class ResolvedNet<T> : public ConnectableNet {
       std::int64_t level, std::int64_t generation,
       const value::ConstIntegralView& forced) -> bool {
     PhysicalNet& physical = WholePhysicalNet();
+    const bool was_covered = name_.Overridden();
     if (!physical.DriveTakeover(
             TakeoverLevelOf(level), TakeoverGenerationOf(generation), forced)) {
       return false;
     }
-    // The first override to cover a net one driver decides finds in it what
-    // that driver last produced, which is kept beneath for the net to show
-    // again once nothing covers it (LRM 10.6.2). One showing the object its
-    // driver carries goes back to its own storage, which the forced value then
-    // lands in, so the object is never forced with it.
-    switch (Decision()) {
-      case NetDecision::kResolution:
-        break;
-      case NetDecision::kOneDriver:
-        if (kept_beneath_ == nullptr) {
-          kept_beneath_ = std::make_unique<T>(held_.AsOwned());
-        }
-        break;
-      case NetDecision::kShowsSource:
-        showing_.Cover();
-        break;
+    if (!was_covered) {
+      Covered();
     }
     physical.Reresolve(current_runtime());
     return true;
   }
 
-  // Every position of this net.
-  [[nodiscard]] auto AllPositions() const -> value::BitPositions {
-    return {.lsb = 0, .width = count_};
+  // An override has come to cover the net. One driver deciding it gave what
+  // the net shows, which its contribution now holds, so that what it gives
+  // from here on resolves under the override and shows wherever the override
+  // holds no position (LRM 10.6.2). One showing the object its driver carries
+  // goes back to its own storage, which the forced value then lands in, so the
+  // object is never forced with it; that driver's contribution then holds what
+  // the object holds, and the cover keeps it following the object.
+  void Covered() {
+    switch (Decision()) {
+      case NetDecision::kResolution:
+        return;
+      case NetDecision::kOneDriver:
+        TakeIntoDriverContribution(held_.Bytes());
+        return;
+      case NetDecision::kShowsSource:
+        showing_.Cover([this](const ErasedReference& source) {
+          return OwnedCall([this, &source] {
+            TakeIntoDriverContribution(source.storage);
+            ReresolveJoint(current_runtime(), Change::Whole());
+          });
+        });
+        TakeIntoDriverContribution(held_.Bytes());
+        return;
+    }
+  }
+
+  // Sets the one driver's contribution to the value lying at `bytes`, of the
+  // net's own type.
+  void TakeIntoDriverContribution(const void* bytes) {
+    T& contribution = ContributionOf(0).value;
+    if constexpr (value::TakesBytesInPlace<T>) {
+      contribution.AssignBytes(bytes);
+    } else {
+      contribution = *static_cast<const T*>(bytes);
+    }
   }
 
   // The physical net this name reaches, where it reaches one covering the whole
@@ -1020,8 +1030,8 @@ class ResolvedNet<T> : public ConnectableNet {
       case NetDecision::kResolution:
         return Contributing<T>{.contribution = &ContributionOf(index).value};
       case NetDecision::kOneDriver:
-        if (kept_beneath_ != nullptr) {
-          return KeptBeneath<T>{.kept = kept_beneath_.get()};
+        if (name_.Overridden()) {
+          return Contributing<T>{.contribution = &ContributionOf(index).value};
         }
         return Showing<T>{.shown = &held_, .watched = this->HasMembers()};
       case NetDecision::kShowsSource:
@@ -1045,8 +1055,7 @@ class ResolvedNet<T> : public ConnectableNet {
                   runtime, *this, to.shown->Get(),
                   [&] { return to.shown->IsBitIdentical(value); },
                   [&] { to.shown->Assign(value); });
-            },
-            [&](const KeptBeneath<T>& to) { *to.kept = value; }},
+            }},
         LandingOf(index));
   }
 
@@ -1071,8 +1080,7 @@ class ResolvedNet<T> : public ConnectableNet {
                   runtime, *this, to.shown->Get(),
                   [&] { return to.shown->IsBitIdenticalTo(bytes); },
                   [&] { to.shown->AssignBytes(bytes); });
-            },
-            [&](const KeptBeneath<T>& to) { to.kept->AssignBytes(bytes); }},
+            }},
         LandingOf(index));
   }
 
@@ -1090,8 +1098,7 @@ class ResolvedNet<T> : public ConnectableNet {
             },
             [&](const Showing<T>&) {
               runtime.WakeParkedOn(*this, reached, change);
-            },
-            [](const KeptBeneath<T>&) {}},
+            }},
         LandingOf(index));
   }
 
@@ -1127,9 +1134,6 @@ class ResolvedNet<T> : public ConnectableNet {
   std::uint32_t count_;
   bool installed_ = false;
   std::optional<NetDecision> decision_;
-  // What the one driver deciding this net produced while a procedural
-  // continuous assignment covers the net (LRM 10.6.2), absent otherwise.
-  std::unique_ptr<T> kept_beneath_;
   Name name_{*this};
   std::vector<DriveContribution<T>> contributions_;
   // The handles this net has issued. They are the net's rather than each
@@ -1257,16 +1261,15 @@ class ResolvedNet<T> : public Observable {
   // Puts the net under a procedural continuous assignment and takes it back
   // out (LRM 10.6.2). A `force` overrides every driver, so what it changes is
   // what the net shows, never the contributions, which are what the net
-  // answers with again once released. A net of this kind holds an unpacked
-  // value, of which a force names no bits (LRM 10.6.2), so what a force names
-  // of it is always the whole.
-  auto BeginTakeover(std::int64_t level, std::int64_t lsb, std::int64_t count)
+  // answers with again once released. What a force names of the net is
+  // positions of its value, which its type numbers part by part.
+  auto BeginTakeover(std::int64_t level, std::int64_t first, std::int64_t count)
       -> std::int64_t {
     if (takeovers_ == nullptr) {
       takeovers_ = std::make_unique<Takeovers<T>>();
     }
     return std::int64_t{takeovers_->Begin(
-        TakeoverLevelOf(level), PositionsNamed(lsb, count, kHeldWhole))};
+        TakeoverLevelOf(level), PositionsNamed(first, count))};
   }
 
   auto DriveTakeover(
@@ -1281,32 +1284,23 @@ class ResolvedNet<T> : public Observable {
   {
     return RecordTakeover(level, generation, held_.ToOwned(bytes));
   }
-  void EndTakeover(std::int64_t level, std::int64_t lsb, std::int64_t count) {
+  void EndTakeover(std::int64_t level, std::int64_t first, std::int64_t count) {
     if (takeovers_ == nullptr) {
       return;
     }
-    takeovers_->End(
-        TakeoverLevelOf(level), PositionsNamed(lsb, count, kHeldWhole));
+    takeovers_->End(TakeoverLevelOf(level), PositionsNamed(first, count));
     RuntimeEffects& runtime = current_runtime();
     if (Overridden()) {
       Reresolve(runtime);
       return;
     }
     switch (Decision()) {
-      case NetDecision::kResolution:
-        Reresolve(runtime);
-        return;
       // Nothing covers a net one driver decides any longer, so it shows what
-      // that driver produced meanwhile (LRM 10.6.2), where an override ever
-      // gave a value at all.
+      // that driver produced meanwhile (LRM 10.6.2), which its contribution
+      // took while the net was covered.
+      case NetDecision::kResolution:
       case NetDecision::kOneDriver:
-        if (const T* kept = takeovers_->Beneath()) {
-          ShowDriverValue(
-              runtime, *this, held_.Get(),
-              [&] { return held_.IsBitIdentical(*kept); },
-              [&] { held_.Assign(*kept); });
-        }
-        takeovers_->DropBeneath();
+        Reresolve(runtime);
         return;
       // The object its driver carries is what such a net shows once nothing
       // covers it, from the driver's turn on; before that it shows what an
@@ -1342,25 +1336,50 @@ class ResolvedNet<T> : public Observable {
             evaluated)) {
       return false;
     }
-    // The first override to cover a net one driver decides finds in it what
-    // that driver last produced, which is kept beneath for the net to show
-    // again once nothing covers it (LRM 10.6.2). One showing the object its
-    // driver carries goes back to its own storage, so the object is never
-    // forced with it.
     if (!was_covered) {
-      switch (Decision()) {
-        case NetDecision::kResolution:
-          break;
-        case NetDecision::kOneDriver:
-          takeovers_->KeepBeneath(held_.AsOwned());
-          break;
-        case NetDecision::kShowsSource:
-          showing_.Cover();
-          break;
-      }
+      Covered();
     }
     Reresolve(current_runtime());
     return true;
+  }
+
+  // An override has come to cover the net. One driver deciding it gave what
+  // the net shows, which its contribution now holds, so that what it gives
+  // from here on resolves under the override and shows wherever the override
+  // holds no position (LRM 10.6.2). One showing the object its driver carries
+  // goes back to its own storage, so the object is never forced with it; that
+  // driver's contribution then holds what the object holds, and the cover
+  // keeps it following the object.
+  void Covered() {
+    switch (Decision()) {
+      case NetDecision::kResolution:
+        return;
+      case NetDecision::kOneDriver:
+        TakeIntoDriverContribution(held_.Bytes());
+        return;
+      case NetDecision::kShowsSource:
+        showing_.Cover([this](const ErasedReference& source) {
+          return OwnedCall([this, &source] {
+            TakeIntoDriverContribution(source.storage);
+            Reresolve(current_runtime());
+          });
+        });
+        TakeIntoDriverContribution(held_.Bytes());
+        return;
+    }
+  }
+
+  // Sets the one driver's contribution to the value lying at `bytes`, of the
+  // net's own type, built where the contribution lies, since a value of it may
+  // be larger than a frame keeps.
+  void TakeIntoDriverContribution(const void* bytes) {
+    value::RebuildFrom(ContributionOf(0).value, [&] -> T {
+      if constexpr (value::LaidOutByType<T>) {
+        return held_.ToOwned(bytes);
+      } else {
+        return *static_cast<const T*>(bytes);
+      }
+    });
   }
 
   void Install(
@@ -1469,8 +1488,8 @@ class ResolvedNet<T> : public Observable {
       case NetDecision::kResolution:
         return Contributing<T>{.contribution = &ContributionOf(index).value};
       case NetDecision::kOneDriver:
-        if (T* kept = takeovers_ == nullptr ? nullptr : takeovers_->Beneath()) {
-          return KeptBeneath<T>{.kept = kept};
+        if (Overridden()) {
+          return Contributing<T>{.contribution = &ContributionOf(index).value};
         }
         return Showing<T>{.shown = &held_, .watched = this->HasMembers()};
       case NetDecision::kShowsSource:
@@ -1494,8 +1513,7 @@ class ResolvedNet<T> : public Observable {
                   runtime, *this, to.shown->Get(),
                   [&] { return to.shown->IsBitIdentical(value); },
                   [&] { to.shown->Assign(value); });
-            },
-            [&](const KeptBeneath<T>& to) { *to.kept = value; }},
+            }},
         LandingOf(index));
   }
 
@@ -1520,8 +1538,7 @@ class ResolvedNet<T> : public Observable {
                   runtime, *this, to.shown->Get(),
                   [&] { return to.shown->IsBitIdenticalTo(bytes); },
                   [&] { to.shown->AssignBytes(bytes); });
-            },
-            [&](const KeptBeneath<T>& to) { to.kept->AssignBytes(bytes); }},
+            }},
         LandingOf(index));
   }
 
@@ -1540,8 +1557,7 @@ class ResolvedNet<T> : public Observable {
             },
             [&](const Showing<T>&) {
               runtime.WakeParkedOn(*this, reached, change);
-            },
-            [](const KeptBeneath<T>&) {}},
+            }},
         LandingOf(index));
   }
 
@@ -1738,7 +1754,7 @@ class Driver {
 
   // The `MutationSink` surface, each answer read off where this driver's
   // writes land. A driver's write is never overridden: under an override it
-  // lands in what the net keeps beneath it, which nothing watches.
+  // lands in its contribution.
   [[nodiscard]] auto MutationStorage() const -> T&
     requires(!DynamicallySized<T>)
   {
@@ -1748,8 +1764,7 @@ class Driver {
     return std::visit(
         Overloaded{
             [](const Contributing<T>&) { return true; },
-            [](const Showing<T>& to) { return to.watched; },
-            [](const KeptBeneath<T>&) { return false; }},
+            [](const Showing<T>& to) { return to.watched; }},
         Landing());
   }
   void PublishTransition(const PartPath& reached, const Change& change) const {

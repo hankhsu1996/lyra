@@ -106,6 +106,11 @@ class LaidOutValue {
       const LaidOutValue& prototype, const Logic& fill) -> LaidOutValue {
     return LaidOutValue(AnyValue::FilledLike(Held(prototype), fill));
   }
+  [[nodiscard]] auto TakePositions(
+      const LaidOutValue& from, std::int64_t first, std::int64_t count) const
+      -> LaidOutValue {
+    return LaidOutValue(value_.TakePositions(Held(from), first, count));
+  }
   [[nodiscard]] auto IsBitIdentical(const LaidOutValue& other) const -> bool {
     return value_.IsBitIdentical(Held(other));
   }

@@ -69,6 +69,10 @@ enum class IntegralOp : std::uint8_t {
   // replaced.
   kSlice,
   kWithSlice,
+  // A value with the positions a run names taken from another of its type, a
+  // count of bits from a first one, both machine numbers: what a procedural
+  // continuous assignment holding those positions shows there (LRM 10.6.2).
+  kTakePositions,
   // LRM 6.24.1 one integral type's value as another's; a machine number or
   // predicate carried into an integral type (LRM 11.6.1); a value read out as
   // a machine number (LRM 6.12.1); and the position an index names (LRM
@@ -194,7 +198,7 @@ enum class IntegralAnswer : std::uint8_t {
 class IntegralOperands {
  public:
   // The most operands any operation takes.
-  static constexpr std::size_t kMost = 3;
+  static constexpr std::size_t kMost = 4;
 
   constexpr IntegralOperands(std::initializer_list<IntegralOperandKind> kinds)
       : count_(kinds.size()) {
@@ -429,6 +433,11 @@ inline constexpr std::array kIntegralOperations = {
         .op = IntegralOp::kWithSlice,
         .name = "with_slice",
         .operands = {kBits, kNumber, kBits},
+        .answer = IntegralAnswer::kOfFirstOperand},
+    IntegralOperation{
+        .op = IntegralOp::kTakePositions,
+        .name = "take_positions",
+        .operands = {kBits, kSameType, kMachineInt, kMachineInt},
         .answer = IntegralAnswer::kOfFirstOperand},
     IntegralOperation{
         .op = IntegralOp::kConvert,

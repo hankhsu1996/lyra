@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <vector>
@@ -52,6 +53,14 @@ class UnitLowerer;
 // type states as its own.
 [[nodiscard]] auto ArrayOperationsOf(UnitLowerer& lowerer, mir::TypeId type)
     -> std::vector<mir::TypeOperation>;
+
+// How many positions a procedural continuous assignment may hold some of in a
+// value of `type` (LRM 10.6.2): an integral value's bits, a structure's
+// members' and a fixed-size unpacked array's elements' positions one part
+// after another, the first part's first, and one for any other value, which is
+// held whole.
+[[nodiscard]] auto PositionCountOf(
+    const mir::CompilationUnit& unit, mir::TypeId type) -> std::uint64_t;
 
 // Whether `operation` is one asked of a whole value, which a type with
 // operations of its own answers with its own body, rather than an operation of

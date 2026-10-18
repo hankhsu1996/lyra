@@ -83,6 +83,7 @@ using PlaneAnswer = std::variant<Planes, llvm::Value*>;
     case support::IntegralOp::kSubtract:
     case support::IntegralOp::kNegate:
     case support::IntegralOp::kPower:
+    case support::IntegralOp::kTakePositions:
     case support::IntegralOp::kBitwiseAnd:
     case support::IntegralOp::kBitwiseOr:
     case support::IntegralOp::kBitwiseXor:

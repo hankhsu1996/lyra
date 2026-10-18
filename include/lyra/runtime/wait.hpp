@@ -52,16 +52,19 @@ using Resumption =
 class ProgramThreads;
 class PropertyEvaluation;
 class SampledValue;
+class SourceFollower;
 
 // What is enrolled on a place to be told of what happens there: the awaiter of
 // a wait, told so that the execution parked on it may be woken; a sampled
-// value, which wakes nothing; a program, told as each of its initial
+// value, which wakes nothing; what keeps forced storage showing its source,
+// which wakes nothing either; a program, told as each of its initial
 // procedures ends, which ends the rest of its threads at once once they all
 // have (LRM 24.3); or an expect statement's evaluation, told of each tick of
 // its clock and each change its disable condition reads, which wakes nothing
 // either (LRM 16.17).
-using Observer =
-    std::variant<Awaiter*, SampledValue*, ProgramThreads*, PropertyEvaluation*>;
+using Observer = std::variant<
+    Awaiter*, SampledValue*, SourceFollower*, ProgramThreads*,
+    PropertyEvaluation*>;
 
 // One place an observer watches: an observable, a named event, a join, a `wait
 // fork` condition, a process's termination. It stands for as long as the

@@ -226,7 +226,7 @@ nothing rewritten: `mubi_t'(j)`. A design that cannot be edited is built with
 Refused by default and run when the caller asks for it by name, with the meaning stated here. The
 author is not reported to.
 
-#### A `force` on bits of a variable, a member of a packed structure among them
+#### A `force` on part of a variable
 
 ```systemverilog
 typedef struct packed { logic [8:0] next; logic we; } field_t;
@@ -238,26 +238,37 @@ always_comb hwif = '0;
 for (genvar slot = 0; slot < 4; slot++) begin : g
   initial force hwif.ctrl[slot].we = 1'b1;
 end
+
+typedef struct { logic we; logic [7:0] next; } entry_t;
+entry_t entries [4];
+initial force entries[2].we = 1'b1;
 ```
 
-10.6.2: the target "shall not be a bit-select or a part-select of a variable". 7.2.1: a packed
-structure is "a mechanism for subdividing a vector into subfields", so a member of `hwif` is bits of
-one vector variable. Forbidden.
+10.6.2: the target "can be a reference to a singular variable, a net, a constant bit-select of a
+vector net, a constant part-select of a vector net, or a concatenation of these. It shall not be a
+bit-select or a part-select of a variable". 7.2.1: a packed structure is "a mechanism for
+subdividing a vector into subfields", so a member of `hwif` is bits of one vector variable. A member
+of an unpacked structure and an element of an unpacked array are named nowhere in the list, which is
+read as complete. Forbidden.
 
-All three conditions hold. The front end keeps the refusal as a warning raised to an error, in the
-set it relaxes because "some tools violate the standard", and an open simulator takes the text. No
-allowed text says the same: forcing the whole variable restates every member the design drives, and
+All three conditions hold. The front end keeps the refusal of every one of these as one warning
+raised to an error, in the set it relaxes because "some tools violate the standard", and an open
+simulator takes the text, forcing bits of a variable and an element of an unpacked array alike. No
+allowed text says the same: forcing the whole variable restates every part the design drives, and
 forcing a net adds one to the design for the testbench's sake.
 
 The meaning Lyra gives it is the standard's rules for forcing a whole variable, applied to each
-forced bit on its own. A procedural assignment does not change a forced bit while the force is in
-effect, and changes the bits nobody forced as it would without one. After the release a bit keeps
-the forced value until the next procedural assignment, unless a continuous assignment or an `assign`
-drives the variable, which is then reestablished there and reevaluated. This is a choice, not a
-reading the standard forces: the open simulator, which keeps the forced value of a whole variable as
-10.6.2 says, takes the value `always_comb` last wrote after the release of a part. The meaning
-reaches bits of one vector value; an element or a member of an unpacked variable is not covered (see
-_A `force` on a member of an element of a variable_ below).
+forced position on its own, where a value's type numbers its positions part by part: an integral
+value's bits, a structure's members and an array's elements one after another. A procedural
+assignment does not change a forced position while the force is in effect, and changes the positions
+nobody forced as it would without one. After the release a position keeps the forced value until the
+next procedural assignment, unless a continuous assignment or an `assign` drives the variable, which
+is then reestablished there and reevaluated. A port that stands for what its connection drives goes
+on showing that wherever nothing is forced. This is a choice, not a reading the standard forces: the
+open simulator, which keeps the forced value of a whole variable as 10.6.2 says, takes the value
+`always_comb` last wrote after the release of a part. A member of an unpacked union, one storage its
+members read differently (7.3), and a part of a string, a queue, a dynamic array or an associative
+array, whose parts lie at no fixed place in the value (7.10.3), are not yet carried out.
 
 `-Wno-error=bad-procedural-force` asks for it, and so does `--compat all`.
 
@@ -319,26 +330,6 @@ A design that cannot be edited is built with `-Wno-error=duplicate-definition` o
 description of the name says the same, since every reading then runs one design. Where they differ,
 the front end under that option runs the last and the open simulator the first, so the text still
 has no meaning to run.
-
-#### A `force` on a member of an element of a variable
-
-```systemverilog
-typedef struct { logic we; logic [7:0] next; } field_t;
-field_t ctrl [4];
-
-for (genvar slot = 0; slot < 4; slot++) begin : g
-  initial force ctrl[slot].we = 1'b1;
-end
-```
-
-10.6.2: the target "can be a reference to a singular variable, a net, a constant bit-select of a
-vector net, a constant part-select of a vector net, or a concatenation of these. It shall not be a
-bit-select or a part-select of a variable".
-
-The sentence lists what a target can be and names neither a member nor an array element. Whether a
-member of an element is "a singular variable" is a reading, and the list is read as complete. A
-member of a packed structure leaves no such reading, since it is a part-select of a variable
-(above).
 
 #### A width given by `$bits` of a name reached through an instance
 

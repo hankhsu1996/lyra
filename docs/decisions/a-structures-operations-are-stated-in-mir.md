@@ -101,7 +101,7 @@ call, and so is every whole-value question a structure's own body asks of a memb
 
 ## Consequences
 
-- A unit states up to fifteen methods for each structure it declares, used or not. A unit naming a
+- A unit states up to eighteen methods for each structure it declares, used or not. A unit naming a
   structure another unit declares states none.
 - A method asked of the type takes what the library's entry takes of any value, which is the stream
   alone: the type it builds is its own, as every type's reading of a stream knows its type

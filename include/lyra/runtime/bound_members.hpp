@@ -1,12 +1,14 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <unordered_map>
 #include <vector>
 
-#include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/observable.hpp"
+#include "lyra/runtime/owned_call.hpp"
+#include "lyra/runtime/source_follower.hpp"
 #include "lyra/runtime/var.hpp"
 
 namespace lyra::runtime {
@@ -22,9 +24,11 @@ namespace lyra::runtime {
 // A force gives a member storage of the force's own to name, together with
 // every member bound from it and every wait enrolled through any of them, so
 // that what the member drives sees the forced value and what drives the member
-// does not. What drove the member goes on holding its own value, untouched, and
-// a release makes them all name it again. The storage lasts from the force to
-// the release, whatever becomes of the process that made it.
+// does not. What drove the member goes on holding its own value, untouched,
+// and the storage follows it wherever the force holds no position, as the
+// connection it stands for would carry it (LRM 23.3.3); a release makes them
+// all name it again. The storage lasts from the force to the release, whatever
+// becomes of the process that made it.
 class BoundMembers {
  public:
   BoundMembers();
@@ -48,27 +52,26 @@ class BoundMembers {
   // Whether a force is in effect on `member`.
   [[nodiscard]] auto Forced(const ErasedReference& member) const -> bool;
 
-  // Puts `member` under a force: it and what follows it name `forced`, which
-  // `storage` keeps alive until the release.
+  // Where storage a force gives `member` to name is kept: none until the
+  // first force on it, and from then on the same storage for every force, so
+  // what is evaluating a force it gave up never mistakes a later one for its
+  // own.
+  [[nodiscard]] auto ForcedStorage(const ErasedReference& member)
+      -> std::shared_ptr<void>&;
+
+  // Puts `member` under a force: it and what follows it name `forced`, and
+  // each change to what drives it runs what `follow` makes of that driver
+  // until the release.
   void Force(
       ErasedReference& member, const ErasedReference& forced,
-      std::shared_ptr<void> storage);
-
-  // Starts an evaluation of the force on `member`, superseding the one before
-  // it, and answers the generation it carries.
-  auto NextGeneration(ErasedReference& member) -> std::int64_t;
-
-  // Whether the evaluation that began at `generation` is still the one driving
-  // the force on `member`.
-  [[nodiscard]] auto StillForcing(
-      const ErasedReference& member, std::int64_t generation) const -> bool;
+      const std::function<OwnedCall(const ErasedReference& driver)>& follow);
 
   // What drives `member`, which is what it names when nothing forces it.
   [[nodiscard]] auto DriverOf(const ErasedReference& member) const
       -> ErasedReference;
 
   // Ends the force on `member`: it and what follows it name what drives it
-  // again, and whatever was evaluating the force finds it superseded.
+  // again.
   void Release(ErasedReference& member);
 
  private:
@@ -78,9 +81,12 @@ class BoundMembers {
     // What the member named before a force made it name other storage; the
     // force is in effect exactly while this holds one.
     std::unique_ptr<ErasedReference> driver;
-    // The storage the force gave the member to name.
+    // The storage a force gives the member to name, kept from the first
+    // force on.
     std::shared_ptr<void> forced;
-    std::int64_t generation = 0;
+    // What keeps that storage showing the driver wherever the force holds no
+    // position, while the force is in effect.
+    std::unique_ptr<SourceFollower> follower;
   };
 
   // What a change of what `member` names reaches. A member bound from it names
@@ -135,89 +141,103 @@ void BindAlias(VariableRef<T>& alias, const VariableRef<T>& bound) {
 [[nodiscard]] auto ForcedMember(
     const ErasedReference& reference, std::int64_t level) -> ErasedReference&;
 
-// A member given storage of the assignment's own stops showing what its
-// connection drives, so only the whole of it can be taken over that way: the
-// rest of it would have to go on following its source.
-inline void RequireWholeMember(std::int64_t count) {
-  if (count != 0) {
-    // LRM 10.6.2.
-    throw SimulationError(
-        "a force on part of a port that stands for what its connection drives "
-        "is not yet supported");
-  }
-}
-
 // The three operations of a procedural continuous assignment (LRM 10.6)
 // through a reference, on what it names, over the class `C` of the cells the
-// variables it names are, at the positions `lsb` and `count` name of it: a
-// variable is taken over where it lies, and a member is given storage of the
-// assignment's own to name. `fresh` makes that storage holding what a cell
-// holds, and `refer` forms the reference that names it, in whichever form the
+// variables it names are, at the positions `first` and `count` name of it: a
+// variable is taken over where it lies, and a member is given a cell of its
+// own to name, which is taken over as a variable is and goes on showing what
+// drives the member wherever the takeovers hold no position, as the connection
+// the member stands for carries it continuously (LRM 23.3.3). `fresh` makes
+// that cell holding what a cell holds, the first time the member is forced,
+// and `refer` forms the reference that names it, in whichever form the
 // references of the running program take.
 
 template <class C, class Fresh, class Refer>
 auto BeginTakeoverThrough(
-    const ErasedReference& reference, std::int64_t level, std::int64_t lsb,
+    const ErasedReference& reference, std::int64_t level, std::int64_t first,
     std::int64_t count, Fresh fresh, Refer refer) -> std::int64_t {
   if (!NamesAMember(reference)) {
-    return WholeVariable<C>(reference).BeginTakeover(level, lsb, count);
+    return WholeVariable<C>(reference).BeginTakeover(level, first, count);
   }
-  RequireWholeMember(count);
   ErasedReference& member = ForcedMember(reference, level);
   BoundMembers& bound = current_runtime().Bound();
   if (!bound.Forced(member)) {
-    // The storage first holds what the member showed, so naming it changes
-    // nothing a wait could see; the forced value then arrives as any write.
-    std::shared_ptr<C> forced = fresh(WholeVariable<C>(member));
-    bound.Force(member, refer(*forced), forced);
+    // The cell first holds what the member showed, so naming it changes
+    // nothing a wait could see; the forced value then arrives as any
+    // takeover's does.
+    std::shared_ptr<void>& kept = bound.ForcedStorage(member);
+    if (kept == nullptr) {
+      std::shared_ptr<C> made = fresh(WholeVariable<C>(member));
+      current_runtime().DriveContinuously(*made);
+      kept = made;
+    } else {
+      static_cast<C*>(kept.get())->SetFrom(WholeVariable<C>(member));
+    }
+    C& cell = *static_cast<C*>(kept.get());
+    bound.Force(member, refer(cell), [&cell](const ErasedReference& driver) {
+      return OwnedCall(
+          [&cell, &driver] { cell.SetFrom(WholeVariable<C>(driver)); });
+    });
   }
-  return bound.NextGeneration(member);
+  return WholeVariable<C>(member).BeginTakeover(level, first, count);
 }
 
-// `drive` states the evaluation's value to a variable under its own takeover,
-// answering whether that evaluation is still in effect; `write` writes it to
-// the storage a member's force gave it, as any write.
-template <class C, class Drive, class Write>
+// `drive` states the evaluation's value to the variable under the takeover,
+// answering whether that evaluation is still in effect.
+template <class C, class Drive>
 auto DriveTakeoverThrough(
-    const ErasedReference& reference, std::int64_t level,
-    std::int64_t generation, Drive drive, Write write) -> bool {
+    const ErasedReference& reference, std::int64_t level, Drive drive) -> bool {
   if (!NamesAMember(reference)) {
     return drive(WholeVariable<C>(reference));
   }
   const ErasedReference& member = ForcedMember(reference, level);
-  if (!current_runtime().Bound().StillForcing(member, generation)) {
+  if (!current_runtime().Bound().Forced(member)) {
     return false;
   }
-  write(WholeVariable<C>(member));
-  return true;
+  return drive(WholeVariable<C>(member));
 }
 
-// A member shows what drives it from here on, so the force's storage takes
-// that value first, as any write, and whoever waits on the member is told
-// exactly when the release changed what it shows.
+// A member's cell is a variable its connection drives continuously, so a
+// release reestablishes that and schedules its reevaluation (LRM 10.6.2), as
+// it does for any such variable. Once nothing holds a position of the cell,
+// the member names what drives it again, from the same reevaluation: the cell
+// takes that value first, as any write, so whoever waits on the member is told
+// exactly when the release changed what it shows, and a force begun before then
+// keeps the cell.
 template <class C>
 void EndTakeoverThrough(
-    const ErasedReference& reference, std::int64_t level, std::int64_t lsb,
+    const ErasedReference& reference, std::int64_t level, std::int64_t first,
     std::int64_t count) {
   if (!NamesAMember(reference)) {
-    WholeVariable<C>(reference).EndTakeover(level, lsb, count);
+    WholeVariable<C>(reference).EndTakeover(level, first, count);
     return;
   }
-  RequireWholeMember(count);
   ErasedReference& member = ForcedMember(reference, level);
-  BoundMembers& bound = current_runtime().Bound();
-  if (bound.Forced(member)) {
-    WholeVariable<C>(member).SetFrom(WholeVariable<C>(bound.DriverOf(member)));
+  RuntimeEffects& runtime = current_runtime();
+  if (!runtime.Bound().Forced(member)) {
+    return;
   }
-  bound.Release(member);
+  C& cell = WholeVariable<C>(member);
+  cell.EndTakeover(level, first, count);
+  if (cell.TakenOver()) {
+    return;
+  }
+  runtime.Submit(runtime.Now(), Region::kActive, [&member, &cell] {
+    BoundMembers& bound = current_runtime().Bound();
+    if (!bound.Forced(member) || cell.TakenOver()) {
+      return;
+    }
+    cell.SetFrom(WholeVariable<C>(bound.DriverOf(member)));
+    bound.Release(member);
+  });
 }
 
 template <value::LyraValue T>
 auto VariableRef<T>::BeginTakeover(
-    std::int64_t level, std::int64_t lsb, std::int64_t count) const
+    std::int64_t level, std::int64_t first, std::int64_t count) const
     -> std::int64_t {
   return BeginTakeoverThrough<Var<T>>(
-      erased_, level, lsb, count,
+      erased_, level, first, count,
       [](const Var<T>& showing) {
         auto forced = std::make_shared<Var<T>>();
         forced->Initialize(showing.Get());
@@ -230,18 +250,15 @@ template <value::LyraValue T>
 auto VariableRef<T>::DriveTakeover(
     std::int64_t level, std::int64_t generation, const T& new_val) const
     -> bool {
-  return DriveTakeoverThrough<Var<T>>(
-      erased_, level, generation,
-      [&](Var<T>& variable) {
-        return variable.DriveTakeover(level, generation, new_val);
-      },
-      [&](Var<T>& forced) { forced.Set(new_val); });
+  return DriveTakeoverThrough<Var<T>>(erased_, level, [&](Var<T>& variable) {
+    return variable.DriveTakeover(level, generation, new_val);
+  });
 }
 
 template <value::LyraValue T>
 void VariableRef<T>::EndTakeover(
-    std::int64_t level, std::int64_t lsb, std::int64_t count) const {
-  EndTakeoverThrough<Var<T>>(erased_, level, lsb, count);
+    std::int64_t level, std::int64_t first, std::int64_t count) const {
+  EndTakeoverThrough<Var<T>>(erased_, level, first, count);
 }
 
 }  // namespace lyra::runtime

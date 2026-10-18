@@ -10,6 +10,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/object_ref.hpp"
+#include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/trigger.hpp"
 
@@ -23,6 +24,10 @@ VariableCell::~VariableCell() = default;
 
 void VariableCell::InstallRare(std::unique_ptr<RareWriteState> rare) {
   rare_ = std::move(rare);
+}
+
+void VariableCell::WritePart(OwnedCall write) {
+  rare_->WritePart(std::move(write));
 }
 
 namespace {
@@ -118,6 +123,12 @@ void ErasedReference::DriveContinuously() const {
           },
           [](GcObject*) {}, [](HeldByNet) {}},
       holder);
+}
+
+void ErasedReference::WritePart(OwnedCall write) const {
+  if (VariableCell* const* variable = std::get_if<VariableCell*>(&holder)) {
+    (*variable)->WritePart(std::move(write));
+  }
 }
 
 void ErasedReference::AdmitStep() const {

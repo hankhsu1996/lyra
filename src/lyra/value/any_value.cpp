@@ -88,6 +88,14 @@ auto AnyValue::Dominating(const AnyValue& weaker) const -> AnyValue {
   return FoldedBy(&ValueType::Dominating, weaker);
 }
 
+auto AnyValue::TakePositions(
+    const AnyValue& from, std::int64_t first, std::int64_t count) const
+    -> AnyValue {
+  return Built(Type(), [&](void* out) {
+    Type().TakePositions(Bytes(), from.Bytes(), first, count, out);
+  });
+}
+
 auto AnyValue::FilledLike(const AnyValue& prototype, const Logic& fill)
     -> AnyValue {
   const ValueType& type = prototype.Type();

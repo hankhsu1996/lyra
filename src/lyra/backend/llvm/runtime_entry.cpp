@@ -195,9 +195,11 @@ constexpr DomainSet kVariableObjects =
 constexpr DomainSet kVariableValues = kIntegral | kVariableObjects;
 // What a variable a procedural continuous assignment takes over may hold: a
 // singular value (LRM 10.6.1, 10.6.2, 6.4), but no chandle, which no
-// continuous assignment may name (LRM 6.14).
+// continuous assignment may name (LRM 6.14); and a value laid out by its type,
+// of which a caller may ask for a member or an element to be forced.
 constexpr DomainSet kVariableValuesTakenOver =
-    kIntegral | kReals | DomainSet{Domain::kString, Domain::kManagedRef};
+    kIntegral | kReals | kLaidOutByType |
+    DomainSet{Domain::kString, Domain::kManagedRef};
 
 constexpr std::array kForAssociativeArrays{
     RealizedFor{.domains = {Domain::kAssocArray}}};
@@ -281,13 +283,17 @@ constexpr std::array kForAggregateNets{
     RealizedFor{.domains = kLaidOutByType, .told = ToldNothing{}}};
 
 // A variable is taken over whether reached through its cell or through storage
-// lent for it.
+// lent for it. A takeover through a reference acts on the variable the
+// reference names, whose cell knows its own type, so it is told nothing of a
+// value laid out by its type.
 constexpr std::array kTakeovers{
     ThroughWrapper{
         .wrapper = WrapperKind::kCell, .domains = kVariableValuesTakenOver},
     ThroughWrapper{.wrapper = WrapperKind::kNet, .domains = kNetValues},
     ThroughWrapper{
-        .wrapper = WrapperKind::kRef, .domains = kVariableValuesTakenOver}};
+        .wrapper = WrapperKind::kRef,
+        .domains = kVariableValuesTakenOver,
+        .told = ToldNothing{}}};
 // A variable's cell is installed with its declaration's value. A cell of words
 // was told its width where it was built, and one of a value laid out by its
 // type that type.
@@ -1436,6 +1442,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kIntegralResolveWiredAnd:
     case support::BuiltinFn::kIntegralResolveWiredOr:
     case support::BuiltinFn::kIntegralDominating:
+    case support::BuiltinFn::kIntegralTakePositions:
     case support::BuiltinFn::kIntegralMergeConditional:
     case support::BuiltinFn::kIntegralFromInt:
     case support::BuiltinFn::kIntegralConvert:
@@ -1575,12 +1582,14 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kResolveWiredOr:
     case support::BuiltinFn::kDominating:
     case support::BuiltinFn::kFilledLike:
+    case support::BuiltinFn::kTakePositions:
       return NamedByValue{.realized = {}};
     case support::BuiltinFn::kMergeConditional:
       return NamedByValue{.realized = kForSequences};
     // What a structure's declaration states, which the structure's own
     // generated body answers and nothing the library holds does.
     case support::BuiltinFn::kDeclaredDefault:
+    case support::BuiltinFn::kPositionCount:
       return NamedByResult{.realized = {}};
 
     // The factories. Each builds a value out of operands that are the material

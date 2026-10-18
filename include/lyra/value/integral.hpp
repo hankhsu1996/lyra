@@ -997,6 +997,20 @@ template <IntegralValue T, IntegralValue P, IntegralValue Bits>
   return out;
 }
 
+// `into` with the `count` bits from `first` taken from `from`, which a
+// procedural continuous assignment holding those bits shows (LRM 10.6.2).
+template <IntegralValue T>
+[[nodiscard]] constexpr auto TakePositions(
+    const T& into, const T& from, std::int64_t first, std::int64_t count) -> T {
+  T out = into;
+  lyra::value::TakePositions(
+      out.MutableView(), into.View(), from.View(),
+      BitPositions{
+          .lsb = static_cast<std::uint64_t>(first),
+          .width = static_cast<std::uint64_t>(count)});
+  return out;
+}
+
 // LRM 11.5.1: writes `bits` at `start`, leaving every other position; a
 // position outside the value is not written. Answers the positions written.
 template <IntegralValue T, IntegralValue Bits>

@@ -10,6 +10,7 @@
 
 #include "lyra/support/takeover_level.hpp"
 #include "lyra/value/integral_words.hpp"
+#include "lyra/value/positions.hpp"
 
 namespace lyra::runtime {
 
@@ -28,32 +29,26 @@ namespace lyra::runtime {
   return static_cast<std::uint32_t>(generation);
 }
 
-// The positions a takeover entry names of a value whose positions are
-// `whole`: `count` bits from `lsb`, counted from the value's least significant
-// bit, or all of them where `count` is zero, as a wait names the part it reads.
-[[nodiscard]] inline auto PositionsNamed(
-    std::int64_t lsb, std::int64_t count, value::BitPositions whole)
+// The positions a takeover entry names of a value: `count` of them from
+// `first`, numbered as the value's type numbers them (LRM 10.6.2) -- an
+// integral value's bits from its least significant, an aggregate's parts' one
+// part after another, and the one position of any other value.
+[[nodiscard]] inline auto PositionsNamed(std::int64_t first, std::int64_t count)
     -> value::BitPositions {
-  if (count == 0) {
-    return whole;
-  }
   return {
-      .lsb = static_cast<std::uint64_t>(lsb),
+      .lsb = static_cast<std::uint64_t>(first),
       .width = static_cast<std::uint64_t>(count)};
 }
 
-// A value a takeover may hold some of the bits of (LRM 10.6.2): one written
-// position by position. A takeover holds any other value whole.
+// A value a takeover may hold some of the bits of in place (LRM 10.6.2): one
+// written position by position.
 template <class T>
 concept TakenOverByBits = requires(T& value, const T& other) {
   value.MutableView();
   other.View();
 };
 
-// The positions of a value a takeover holds whole: one.
-inline constexpr value::BitPositions kHeldWhole{.lsb = 0, .width = 1};
-
-// The positions a takeover still holds: runs of bits, none overlapping
+// The positions a takeover still holds: runs of positions, none overlapping
 // another. It starts with the one run it was begun over and only ever loses
 // positions, to a later takeover at its level or to a release, which leaves
 // none, one or two pieces of each run it reaches.
@@ -145,6 +140,12 @@ class Takeovers {
     Remove(level, positions);
   }
 
+  // Whether any takeover holds a position, whether or not it has produced a
+  // value yet.
+  [[nodiscard]] auto Holds() const -> bool {
+    return !takeovers_.empty();
+  }
+
   // Whether any takeover shows at any position: one whose evaluation has
   // produced a value. Between its beginning and its first evaluation a
   // takeover holds positions and shows nothing there.
@@ -207,7 +208,7 @@ class Takeovers {
 
   [[nodiscard]] auto GenerationOf(support::TakeoverLevel level)
       -> std::uint32_t& {
-    return generations_[static_cast<std::size_t>(level)];
+    return generations_.at(static_cast<std::size_t>(level));
   }
 
   // Every takeover at `level` stops holding `positions`, and one left holding
@@ -226,7 +227,9 @@ class Takeovers {
     if constexpr (TakenOverByBits<T>) {
       value::InsertWithin(written.MutableView(), held.View(), 0, run);
     } else {
-      written = held;
+      written = value::PositionsTaken(
+          written, held, static_cast<std::int64_t>(run.lsb),
+          static_cast<std::int64_t>(run.width));
     }
   }
 

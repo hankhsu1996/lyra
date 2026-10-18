@@ -68,10 +68,15 @@ released. For this a reference says which member of a scope it was bound into, a
 which members were bound from which, and a wait records the member it was reached through.
 
 The forced storage belongs to the sink, from the force to the release, whatever becomes of the
-process that made the force. It first holds what the sink showed and is then written with the forced
-value as any variable is, and a release writes what drives the sink into it before the bindings go
-back; so whoever waits on the sink is told of the force and of the release exactly when the value it
-shows changed. These are the three operations a procedural continuous assignment has on any target
+process that made the force. It first holds what the sink showed and is then taken over as any
+variable is; and since a force may hold only part of it, it is driven continuously by the source, as
+the connection the sink stands for carries it, so whatever no takeover holds goes on showing the
+source (revised 2026-10-18). A release of a variable port reestablishes that assignment and
+schedules its reevaluation, as it does for any variable a continuous assignment drives (LRM 10.6.2);
+once no part is forced, that reevaluation writes what drives the sink into it before the bindings go
+back, where a release used to do so at once. So whoever waits on the sink is told of the force and
+of the release exactly when the value it shows changed. These are the three operations a procedural
+continuous assignment has on any target
 ([procedural-continuous-assignment](procedural-continuous-assignment.md) decision 6).
 
 `inout` ports are already one resolved net and do not change. A `ref` port is no sink: a name of it
@@ -93,8 +98,10 @@ connection's turn at time zero; where the connection is then the port's one driv
 the member to the source, so the port shows that object where it lies, a wait on the port is a wait
 on the object, and the connection runs nothing more. The port's own value first takes the source's
 as any write, so its first value is a change as it is under any driver. A force on the port is D3's
-force on the member, onto the net's own value, and never reaches the source. A child reads such a
-port through the member, one load more, as D1's reference costs.
+force on the member, onto the net's own value, and never reaches the source; while it is in effect
+the connection's contribution follows the source, so the net resolves it under the force and the
+positions nobody forced go on showing it. A child reads such a port through the member, one load
+more, as D1's reference costs.
 
 ## Rejected
 

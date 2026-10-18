@@ -144,6 +144,21 @@ nothing to preserve and nothing for a read to choose between.
    entries where a forced signal is read, which D2 rules out here, so the overlay is made where a
    write lands instead.
 
+   **Every value's positions are numbered by its type** (added 2026-10-18). A caller may ask for a
+   member of an unpacked structure or an element of a fixed-size unpacked array as well, so a
+   position is what the type of the whole numbers part by part: an integral value's bits, a
+   structure's members and an array's elements one after another, and one for any other value, which
+   is held whole. The lowering states the first position a place names and how many, counting what
+   lies before the part each step reaches, and the whole is all of them. Showing what a takeover
+   holds at a run of positions is then one question every type answers, its operation of taking
+   those positions from another value of it: the library's for an integral value and for a value
+   held whole, and for a structure and an array a body stated as each of their whole-value
+   operations is
+   ([a-structures-operations-are-stated-in-mir](a-structures-operations-are-stated-in-mir.md)).
+   Verilator's force list numbers the same way, by flattened element and bit within it. A part of a
+   value whose parts move -- a string, a queue, a dynamic or an associative array -- and a member of
+   a union lie at no fixed position, so neither is a run of positions.
+
 2. **What a target shows is what its storage holds, so reads are untouched and the cost sits on the
    write path.** What a takeover records under D4 is the value it computed, never a copy of anything
    it displaced.
@@ -204,15 +219,25 @@ nothing to preserve and nothing for a read to choose between.
    it writes, once, as the design is built, and the engine keeps that apart from the variables, to
    be asked only as a takeover first covers one.
 
+   **A net its one driver decides keeps that driver's value in the driver's own contribution** while
+   a takeover covers it (revised 2026-10-18), where it was kept beneath the takeovers before. The
+   net then resolves its contributions under the takeovers as any net does, so the positions no
+   takeover holds show what the driver gives, which a value kept apart from the resolution could not
+   do once a takeover holds only some of them.
+
 6. **A target that owns no storage answers the same three operations.** A port that stands for what
    its connection drives it with holds nothing a takeover could be state on, and a takeover on the
-   storage it names would force its source as well. Beginning one gives it storage of the takeover's
-   own to name, driving writes that storage, and ending it names what drives it again:
-   [a-port-shares-its-sources-storage](a-port-shares-its-sources-storage.md) D3. A takeover reached
-   through a reference acts on what the reference names: such a port, or a variable, which is what a
-   `ref` port connected to a variable names (LRM 23.3.3.2). Which one it is follows from how each
-   instance is connected, so it is the reference's own fact, and the statement is lowered one way
-   whatever its target.
+   storage it names would force its source as well. Beginning one gives it a variable of its own to
+   name, which is taken over as any variable is and is driven continuously by the connection the
+   port stands for (LRM 23.3.3), so the positions no takeover holds go on following the source; and
+   the reevaluation the release of the last takeover schedules names what drives it again:
+   [a-port-shares-its-sources-storage](a-port-shares-its-sources-storage.md) D3. The variable is
+   kept from the first force for every later one, so the generations of its takeovers go on counting
+   and an evaluation of a force already released never takes a later one for its own. A takeover
+   reached through a reference acts on what the reference names: such a port, or a variable, which
+   is what a `ref` port connected to a variable names (LRM 23.3.3.2). Which one it is follows from
+   how each instance is connected, so it is the reference's own fact, and the statement is lowered
+   one way whatever its target.
 
 ## Consequences
 

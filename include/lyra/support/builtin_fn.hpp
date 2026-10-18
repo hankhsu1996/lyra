@@ -260,6 +260,14 @@ enum class BuiltinFn : std::uint16_t {
   kResolveWiredOr,
   kDominating,
   kFilledLike,
+  // The positions a procedural continuous assignment may hold some of (LRM
+  // 10.6.2): an integral value's bits, an unpacked structure's and a
+  // fixed-size unpacked array's parts' positions one part after another, and
+  // one for any other value, which is held whole. How many a type has, asked
+  // of the type, and a value with the run of positions a first one and a
+  // count name taken from another of its type.
+  kPositionCount,
+  kTakePositions,
   // The value a variable of an aggregate starts as (LRM Table 7-1): a
   // structure's each member at the initial value its declaration assigns (LRM
   // 7.2.2), and at its own type's default where it assigns none; a union's its
@@ -443,11 +451,12 @@ enum class BuiltinFn : std::uint16_t {
   kNetJoin,
   // Putting a variable or a net, reached through its cell or a reference naming
   // it, under a procedural continuous assignment and taking it back out (LRM
-  // 10.6), over the bits a least significant one and a count name, or all of
-  // it where the count is zero. Beginning one answers with the generation its
+  // 10.6), over the positions a first one and a count name, as the target's
+  // type numbers them. Beginning one answers with the generation its
   // evaluation carries; driving states what that evaluation produced, as a
   // value of what the target holds, and answers whether it still holds any
-  // bits, which is how an evaluation superseded by a later takeover, or ended
+  // positions, which is how an evaluation superseded by a later takeover, or
+  // ended
   // by a `deassign` or `release`, learns to stop.
   kBeginTakeover,
   kDriveTakeover,
@@ -1151,6 +1160,7 @@ enum class BuiltinFn : std::uint16_t {
   kIntegralResolveWiredAnd,
   kIntegralResolveWiredOr,
   kIntegralDominating,
+  kIntegralTakePositions,
   kIntegralMergeConditional,
   kIntegralFromInt,
   kIntegralConvert,

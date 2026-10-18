@@ -233,6 +233,13 @@ struct ValueWitnessesOf {
     }
   };
 
+  // A value the library holds is held whole, as one position, so a run of its
+  // positions is all of it.
+  static constexpr auto TakePositions =
+      [](const ValueType&, const void*, const void* from, const std::int64_t*,
+         const std::int64_t*,
+         void* out) { std::construct_at(static_cast<T*>(out), Of(from)); };
+
   // An index type's own order where it keys an associative array (LRM 7.8),
   // which for a handle is no SV operator at all; otherwise the type's `<`.
   static constexpr auto OrderBefore = [](const ValueType&, const void* lhs,

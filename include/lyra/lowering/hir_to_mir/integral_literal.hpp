@@ -27,6 +27,11 @@ namespace lyra::lowering::hir_to_mir {
     const mir::CompilationUnit& unit, mir::Block& block, std::int64_t value)
     -> mir::ExprId;
 
+// A machine integer `op` makes of two machine integers.
+[[nodiscard]] auto BuildMachineIntBinary(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::BinaryOp op,
+    mir::ExprId lhs, mir::ExprId rhs) -> mir::ExprId;
+
 // A declared range as whichever layer states one: its left bound and its
 // right.
 template <typename Range>

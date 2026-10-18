@@ -1472,6 +1472,21 @@ constexpr auto Insert(
       dst, src, start, BitPositions{.lsb = 0, .width = dst.width});
 }
 
+// `into` with the positions `run` names taken from `from`, a value of its
+// width: what a procedural continuous assignment holding them shows there (LRM
+// 10.6.2).
+template <
+    PlaneWord WrittenWord, std::size_t kWrittenValueWords,
+    std::size_t kWrittenUnknownWords>
+constexpr void TakePositions(
+    IntegralViewOf<WrittenWord, kWrittenValueWords, kWrittenUnknownWords> out,
+    AnyConstIntegralView auto into, AnyConstIntegralView auto from,
+    BitPositions run) {
+  detail::Copy(into.value, out.value);
+  detail::Copy(into.unknown, out.unknown);
+  InsertWithin(out, from, 0, run);
+}
+
 // LRM 11.4.10: a shift moves every bit by the number the amount holds, read
 // unsigned, and an amount holding an x or z makes the whole result x. An
 // amount at or past the width moves every bit out.

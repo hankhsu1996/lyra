@@ -86,30 +86,32 @@ target and why a forced value is not a driver; this file does not restate it.
       step. The drivers go on updating their contributions while the force is in effect, which is
       what makes that release answer with a current value.
 
-- [ ] PCA5 -- A constant bit-select or part-select of a vector net as a force target. A variable's
-      takeover already holds bits rather than the whole (PCA7), and a net resolving several drivers
-      could take the same; what is missing is a net showing its one driver's value or the variable
-      that driver carries, whose bits nobody forced have to go on following that source while the
-      rest is forced. Refused today, as a force on part of a net.
+- [x] PCA5 -- A constant bit-select or part-select of a vector net as a force target, on both
+      backends: the bits nobody forced go on showing what the net's drivers resolve to, its one
+      driver gives, or the object that driver carries, and a released bit takes that value at once.
 
 - [ ] PCA6 -- A `force` or an `assign` naming a whole variable of an unpacked structure, union or
       array type -- fixed-size, dynamic, queue or associative -- is refused. The variable either may
       name is a singular one (LRM 10.6.1, 10.6.2), which none of those is (LRM 6.4), and no open
       simulator takes the text, so nothing argues for running it on request. The front end accepts
-      it today, which is its defect to correct; until then the C++ backend carries it out and the
-      execution backend ends the build as a failure of the compiler's own.
+      it today, which is its defect to correct; until then the C++ backend carries it out, and the
+      execution backend does so for a structure, a union and a fixed-size array and ends the build
+      as a failure of the compiler's own for the rest.
 
-- [ ] PCA7 -- A force on part of a variable, when the caller asks for it. The standard forbids it,
+- [x] PCA7 -- A force on part of a variable, when the caller asks for it. The standard forbids it,
       and Lyra runs it as an extension whose meaning is the rules for a whole variable applied to
-      each forced bit: a procedural write leaves the forced part as it is while the force is in
+      each forced position: a procedural write leaves the forced part as it is while the force is in
       effect, and the release keeps the forced value of that part until the next procedural
       assignment to it, or hands it back to a continuous assignment that drives it. Bits of a packed
-      variable are carried on both backends: a takeover holds some bits of what its target holds, a
-      write of any part of the variable keeps the forced bits and stores the rest, a later force of
-      overlapping bits takes them from the earlier one, and a release of some bits ends the force on
-      those alone. Refused still: an element or a member of an unpacked variable, and part of a port
-      that stands for what its connection drives, where what is not forced has to go on following
-      its own source.
+      variable, a member of an unpacked structure, an element or a slice of a fixed-size unpacked
+      array, and bits within any of them are carried on both backends: a write of any part of the
+      variable -- whole, through a member, through a `ref` argument -- keeps the forced positions
+      and stores the rest, a later force of overlapping positions takes them from the earlier one,
+      and a release of some positions ends the force on those alone. Part of a port that stands for
+      what its connection drives goes on following that source where nothing is forced. Refused
+      still: a member of an unpacked union, which is one storage its members read differently (LRM
+      7.3), and part of a string, a queue, a dynamic array or an associative array, whose parts lie
+      at no fixed place in the value (LRM 7.10.3).
 
 - [ ] PCA8 -- A takeover of an `event` variable (LRM 10.6, 15.5.5). Refused where it is written, as
       giving an event a value is.

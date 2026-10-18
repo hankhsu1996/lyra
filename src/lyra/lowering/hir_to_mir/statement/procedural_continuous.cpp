@@ -1,10 +1,10 @@
 #include "lyra/lowering/hir_to_mir/statement/procedural_continuous.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <variant>
@@ -18,14 +18,17 @@
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
+#include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/deferred_effect.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
+#include "lyra/lowering/hir_to_mir/value_operations.hpp"
+#include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/integral_constant.hpp"
-#include "lyra/support/builtin_fn.hpp"
+#include "lyra/mir/type.hpp"
 #include "lyra/support/takeover_level.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -39,12 +42,11 @@ auto LevelOperand(
 }
 
 // One place of a takeover's target as the takeover acts on it: what holds the
-// place, and which of the positions of what it holds the place is, as a pair of
-// machine integers: the least significant bit and how many, a count of zero
-// standing for the whole of it (LRM 10.6.2).
+// place, and which positions of what it holds the place is, as a pair of
+// machine integers: the first and how many (LRM 10.6.2).
 struct TakenPart {
   mir::ExprId holder;
-  mir::ExprId lsb;
+  mir::ExprId first;
   mir::ExprId count;
 };
 
@@ -65,45 +67,99 @@ auto TakeoverHolder(const AccessPath& place) -> mir::ExprId {
       place.owner);
 }
 
-// The part one place of a takeover's target names. LRM 10.6.1 admits only a
-// whole variable and 10.6.2 adds a constant part-select of a net, and a caller
-// may ask for bits of a variable as well, run with the rules 10.6.2 gives a
-// whole variable applied to each bit, so a descent here is a run of steps into
-// bits of a packed value.
+// The positions of its holder one place of a takeover's target names. LRM
+// 10.6.1 admits only a whole variable and 10.6.2 adds a constant part-select of
+// a net, and a caller may ask for any part of a variable as well, run with the
+// rules 10.6.2 gives a whole variable applied to each position. A value's type
+// numbers its positions part by part, so each step moves the first position on
+// by what lies before the part it reaches: the elements before it, the members
+// before it, the bits below it. A part of a value of a dynamic type, and a
+// member of a union, which is one storage its members read differently (LRM
+// 7.3), lie at no position of a fixed numbering.
 auto TakeoverPart(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& place,
     diag::SourceSpan span) -> diag::Result<TakenPart> {
-  const auto into_bits = [](const DescentStep& step) {
-    return std::holds_alternative<StepToBits>(step.to);
+  const auto dynamic = [&]() -> diag::Result<mir::ExprId> {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedStatementForm,
+        "a force on part of a string, a queue, a dynamic array or an "
+        "associative array is not yet supported");
   };
-  if (!std::ranges::all_of(place.descent, into_bits)) {
+  const auto union_member = [&]() -> diag::Result<mir::ExprId> {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedStatementForm,
-        "taking over an element or a member of an unpacked value is not yet "
-        "supported");
+        "a force on a member of an unpacked union is not yet supported");
+  };
+  const auto elements_from =
+      [&](mir::TypeId within, mir::ExprId start,
+          mir::TypeId element) -> diag::Result<mir::ExprId> {
+    if (!unit.types.Get(within).Is<mir::UnpackedArrayType>()) {
+      return dynamic();
+    }
+    return BuildMachineIntBinary(
+        unit, block, mir::BinaryOp::kMul, BuildToInt64Call(unit, block, start),
+        BuildMachineIntLiteral(
+            unit, block,
+            static_cast<std::int64_t>(PositionCountOf(unit, element))));
+  };
+  mir::TypeId within = OwnerValueType(unit, block, place.owner);
+  mir::ExprId first = BuildMachineIntLiteral(unit, block, 0);
+  for (const DescentStep& step : place.descent) {
+    auto before = std::visit(
+        Overloaded{
+            [&](const StepToBits& bits) -> diag::Result<mir::ExprId> {
+              return BuildToInt64Call(unit, block, bits.start);
+            },
+            [&](const StepToElement& element) -> diag::Result<mir::ExprId> {
+              return elements_from(within, element.position, step.part_type);
+            },
+            [&](const StepToElementRun& run) -> diag::Result<mir::ExprId> {
+              const mir::TypeId element =
+                  *unit.types.Get(within).ContainerElementType();
+              return elements_from(within, run.start, element);
+            },
+            [&](const StepToComponent& component) -> diag::Result<mir::ExprId> {
+              const std::span<const mir::TypeId> members =
+                  *mir::ProductElements(unit, within);
+              std::uint64_t at = 0;
+              for (const mir::TypeId member :
+                   members.first(component.position.value)) {
+                at += PositionCountOf(unit, member);
+              }
+              return BuildMachineIntLiteral(
+                  unit, block, static_cast<std::int64_t>(at));
+            },
+            [&](const StepToUnionMember&) -> diag::Result<mir::ExprId> {
+              return union_member();
+            },
+            [&](const StepToTaggedMember&) -> diag::Result<mir::ExprId> {
+              return union_member();
+            },
+            [&](const StepToAssocElement&) -> diag::Result<mir::ExprId> {
+              return dynamic();
+            },
+            [&](const StepToCharacter&) -> diag::Result<mir::ExprId> {
+              return dynamic();
+            },
+            [&](const StepToQueueRun&) -> diag::Result<mir::ExprId> {
+              return dynamic();
+            }},
+        step.to);
+    if (!before) return std::unexpected(std::move(before.error()));
+    first =
+        BuildMachineIntBinary(unit, block, mir::BinaryOp::kAdd, first, *before);
+    within = step.part_type;
   }
-  const mir::ExprId holder = TakeoverHolder(place);
-  if (place.descent.empty()) {
-    return TakenPart{
-        .holder = holder,
-        .lsb = BuildMachineIntLiteral(unit, block, 0),
-        .count = BuildMachineIntLiteral(unit, block, 0)};
-  }
-  if (unit.types.Get(block.exprs.Get(holder).type).Is<mir::ResolvedType>()) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedStatementForm,
-        "a force on part of a net is not yet supported");
-  }
-  const PathPositions bits = BitsWithinOwner(unit, block, place);
   return TakenPart{
-      .holder = holder,
-      .lsb = BuildToInt64Call(unit, block, bits.first),
+      .holder = TakeoverHolder(place),
+      .first = first,
       .count = BuildMachineIntLiteral(
-          unit, block, static_cast<std::int64_t>(bits.width))};
+          unit, block,
+          static_cast<std::int64_t>(PositionCountOf(unit, within)))};
 }
 
 // Every part a takeover's target names, in the order the source wrote them: a
-// variable or a net, bits of one, or each member of a concatenation of them
+// variable or a net, a part of one, or each member of a concatenation of them
 // (LRM 10.6.1, 10.6.2).
 auto TakeoverParts(
     ProcessLowerer& process, const WalkFrame& frame, const hir::Expr& target)
@@ -126,21 +182,27 @@ auto TakeoverParts(
 
 // What an evaluation hands the takeover of `share`'s place: a value of the
 // type its holder holds, of which the takeover reads the positions it holds.
-// Where the place is bits of that value they are put at their positions in a
-// value of it, whose other positions nothing reads.
+// Where the place is part of that value, the share is written at the part in a
+// value of it built for the purpose, whose other positions nothing reads.
 auto DrivenValue(
-    mir::CompilationUnit& unit, mir::Block& block, const Share& share)
+    mir::CompilationUnit& unit, BlockBuilder& pass, const Share& share)
     -> mir::ExprId {
   if (share.place.descent.empty()) {
     return share.value;
   }
+  mir::Block& block = pass.Body();
   const mir::TypeId held = OwnerValueType(unit, block, share.place.owner);
-  const PathPositions bits = BitsWithinOwner(unit, block, share.place);
-  return block.exprs.Add(MakeBuiltinCall(
-      unit, block, support::BuiltinFn::kWithSlice, std::nullopt,
-      {BuildIntegralLiteral(unit, block, held, mir::IntegralConstant{}),
-       bits.first, share.value},
-      held));
+  const mir::LocalId built = pass.DeclareLocal(
+      held, block.exprs.Add(BuildDefaultValueExpr(unit, block, held)));
+  block.AppendStmt(
+      mir::ExprStmt{
+          .expr = block.exprs.Add(BuildStoreExpr(
+              unit, block,
+              AccessPath{
+                  .owner = block.LocalPlace(built, held),
+                  .descent = share.place.descent},
+              share.value))});
+  return block.ReadLocal(built, held);
 }
 
 }  // namespace
@@ -169,7 +231,7 @@ auto LowerProceduralContinuousAssignStmt(
   for (const TakenPart& part : *outer_parts) {
     const mir::ExprId begin = wrapper.exprs.Add(
         mir::MakeBeginTakeoverCallExpr(
-            part.holder, LevelOperand(unit, wrapper, pca.level), part.lsb,
+            part.holder, LevelOperand(unit, wrapper, pca.level), part.first,
             part.count, builtins.machine_int64));
     generations.push_back(DeclareLocal(
         closure.Frame(),
@@ -203,7 +265,7 @@ auto LowerProceduralContinuousAssignStmt(
                 TakeoverHolder(share.place),
                 LevelOperand(unit, driving, pca.level),
                 driving.ReadLocal(generations[i], builtins.machine_int64),
-                DrivenValue(unit, driving, share), builtins.machine_bool))));
+                DrivenValue(unit, pass, share), builtins.machine_bool))));
   }
   const auto read_owned = [&](mir::LocalId local) {
     return driving.ReadLocal(local, builtins.machine_bool);
@@ -275,8 +337,8 @@ auto LowerProceduralContinuousEndStmt(
         mir::ExprStmt{
             .expr = block.exprs.Add(
                 mir::MakeEndTakeoverCallExpr(
-                    part.holder, LevelOperand(unit, block, pce.level), part.lsb,
-                    part.count, unit.builtins.void_type))});
+                    part.holder, LevelOperand(unit, block, pce.level),
+                    part.first, part.count, unit.builtins.void_type))});
   }
   mir::Stmt stmt = steps.BuildStatement();
   stmt.label = std::move(label);
