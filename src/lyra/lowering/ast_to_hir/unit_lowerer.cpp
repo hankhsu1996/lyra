@@ -355,6 +355,14 @@ void UnitLowerer::DeclareMemberIdentities(
       DeclareSubroutine(
           member.as<slang::ast::SubroutineSymbol>(), decls, published, frame);
       return;
+    // An anonymous program opens no scope: what it declares are members of
+    // this one (LRM 24.6).
+    case SymbolKind::AnonymousProgram:
+      for (const auto& item :
+           member.as<slang::ast::AnonymousProgramSymbol>().members()) {
+        if (Owns(item)) DeclareMemberIdentities(item, decls, published, frame);
+      }
+      return;
     case SymbolKind::Modport:
       DeclareModportEvaluators(
           member.as<slang::ast::ModportSymbol>(), decls, published);
@@ -430,7 +438,6 @@ void UnitLowerer::DeclareMemberIdentities(
     case SymbolKind::CheckerInstanceBody:
     case SymbolKind::PrimitiveInstance:
     case SymbolKind::RandSeqProduction:
-    case SymbolKind::AnonymousProgram:
     case SymbolKind::UninstantiatedDef:
     case SymbolKind::PredefinedIntegerType:
     case SymbolKind::ScalarType:
@@ -1355,6 +1362,11 @@ auto ContributionOf(const slang::ast::Symbol& member, const UnitLowerer& owner)
     // one a loop's control variables live in -- is reached only by the walk
     // that lowers it, which mints its identity there.
     return {.minted = block.name.empty() ? nullptr : &member, .walked = &block};
+  }
+  // An anonymous program opens no scope, so its subroutines are this scope's
+  // (LRM 24.6).
+  if (member.kind == slang::ast::SymbolKind::AnonymousProgram) {
+    return {.walked = &member.as<slang::ast::AnonymousProgramSymbol>()};
   }
   return {};
 }

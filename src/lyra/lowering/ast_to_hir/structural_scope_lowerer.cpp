@@ -19,6 +19,7 @@
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
+#include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
@@ -477,6 +478,18 @@ auto StructuralScopeLowerer::PopulateMember(
       return PopulateInstanceArrayMember(
           member.as<slang::ast::InstanceArraySymbol>(), frame);
 
+    // An anonymous program opens no scope: what it declares are members of
+    // this one (LRM 24.6). It holds only subroutines and classes, so all of
+    // them belong to the walk that lays out declarations.
+    case SymbolKind::AnonymousProgram:
+      for (const auto& item :
+           member.as<slang::ast::AnonymousProgramSymbol>().members()) {
+        if (!owner_->Owns(item)) continue;
+        auto r = PopulateMember(item, frame);
+        if (!r) return std::unexpected(std::move(r.error()));
+      }
+      return {};
+
     // A named sequence or property declares no storage and no behavior: what
     // an instance of one stands for is its body with the actual arguments
     // substituted, and the front end hands over that expansion at the instance
@@ -509,7 +522,6 @@ auto StructuralScopeLowerer::PopulateMember(
     // different design than the source describes.
     case SymbolKind::PrimitiveInstance:
     case SymbolKind::RandSeqProduction:
-    case SymbolKind::AnonymousProgram:
     case SymbolKind::UninstantiatedDef:
       return diag::Fail(
           frontend::PointSpanOf(member.location),

@@ -6,8 +6,8 @@ The numeric IDs (P1..P20, T1..T7) are stable references and do **not** imply exe
 
 ## Actionable
 
-Every numbered item is closed but P12 and P20. What stays open otherwise is the forms recorded as
-rejected under each item, and the conformance gaps at the end.
+Every numbered item is closed but P12. What stays open otherwise is the forms recorded as rejected
+under each item, and the conformance gaps at the end.
 
 ## Blocked
 
@@ -312,9 +312,12 @@ rejected under each item, and the conformance gaps at the end.
       started, and once every program has ended the run ends by an implicit `$finish`, with `final`
       procedures run (LRM 24.3). `$exit` ends the program the calling thread originates in, and from
       any other thread is ignored with a warning (LRM 24.7).
-- [ ] P20 -- An anonymous program (LRM 24.6) is refused as a declaration form not yet supported, and
-      a name reaching one of its items is refused with it. A program nested in a module reading the
-      module's variables is refused as a nested module doing so is, which `hierarchy.md` tracks.
+- [x] P20 -- An anonymous program (LRM 24.6) declares its subroutines and classes in the package or
+      `$unit` scope around it, and a program reaches them by the scope's name, by import or as
+      `$unit` items; a task of one called from a program runs in the program's thread, so in the
+      reactive region set (LRM 24.5). That only programs may name them is the front end's check.
+  - [ ] A program nested in a module reading the module's variables is refused as a nested module
+        doing so is, which `hierarchy.md` tracks.
 
 ### Generate
 

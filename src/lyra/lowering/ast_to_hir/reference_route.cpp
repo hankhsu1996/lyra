@@ -71,23 +71,6 @@ auto NarrowOutermost(
   return open;
 }
 
-// The compilation unit a value is declared directly in when that unit is a
-// namespace -- a package (LRM 26.2) or the anonymous `$unit` scope (LRM
-// 3.12.1) -- or nullptr when the value belongs to an instantiated scope and is
-// reached by a route. A namespace unit has no instance, so its declarations are
-// one program-global cell each, named rather than routed to.
-auto DeclaringUnitOfValue(const slang::ast::ValueSymbol& value)
-    -> const slang::ast::Symbol* {
-  const slang::ast::Scope* scope = value.getParentScope();
-  if (scope == nullptr) return nullptr;
-  const slang::ast::Symbol& owner = scope->asSymbol();
-  if (owner.kind != slang::ast::SymbolKind::Package &&
-      owner.kind != slang::ast::SymbolKind::CompilationUnit) {
-    return nullptr;
-  }
-  return &owner;
-}
-
 // Whether a scope is one procedural code opens rather than one the design
 // hierarchy is built from: a `begin ... end` or a `fork ... join` (LRM 9.3.4 /
 // 9.3.2), or a task or function, which LRM 23.9 puts on the path beside them.
@@ -1164,7 +1147,7 @@ auto UnitLowerer::ResolveValueTarget(
   // than by a route out of the reader's own storage (LRM 26.2, 3.12.1). The
   // same by-name form serves a referrer in another unit and the owning unit's
   // own body, neither of which has a receiver to route through.
-  if (const auto* unit = DeclaringUnitOfValue(value)) {
+  if (const auto* unit = DeclaringNamespaceUnit(value)) {
     auto value_type = InternType(value.getType(), span);
     if (!value_type) return std::unexpected(std::move(value_type.error()));
     return hir::ValueTarget{hir::ExternalUnitValueRef{
