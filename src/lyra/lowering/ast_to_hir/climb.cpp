@@ -77,10 +77,12 @@ auto Encloses(
   return false;
 }
 
-// The scopes the classes `ref` passes through belong to (LRM 6.22): the class
-// of each value its path holds a handle of, and the class each member it names
-// is declared in.
-auto ClassScopesAlong(const slang::ast::HierarchicalReference& ref)
+// The scopes the classes a name passes through belong to (LRM 6.22): the class
+// of each value it holds a handle of, and the class each member it names is
+// declared in. A name written plainly passes through only what it found.
+auto ClassScopesAlong(
+    const slang::ast::Symbol& found,
+    const slang::ast::HierarchicalReference& written)
     -> std::vector<const slang::ast::Scope*> {
   std::vector<const slang::ast::Scope*> scopes;
   const auto note = [&](const slang::ast::ClassType& cls) {
@@ -89,8 +91,7 @@ auto ClassScopesAlong(const slang::ast::HierarchicalReference& ref)
       scopes.push_back(scope);
     }
   };
-  for (const auto& element : ref.path) {
-    const slang::ast::Symbol& symbol = *element.symbol;
+  const auto note_classes_of = [&](const slang::ast::Symbol& symbol) {
     if (const auto* value = symbol.as_if<slang::ast::ValueSymbol>()) {
       if (const auto* cls = value->getType()
                                 .getCanonicalType()
@@ -103,17 +104,38 @@ auto ClassScopesAlong(const slang::ast::HierarchicalReference& ref)
         note(*cls);
       }
     }
+  };
+  if (written.path.empty()) note_classes_of(found);
+  for (const auto& element : written.path) {
+    note_classes_of(*element.symbol);
   }
   return scopes;
 }
 
-// The scope `ref`, written in `reader`, lands in once it leaves `reader`, or
-// nothing when it never does.
-auto LandingScope(
-    const slang::ast::HierarchicalReference& ref,
+// The scope enclosing `reader` that the upward search found `head` in, or
+// nothing where `head` is the reader's own.
+auto FoundAbove(
+    const slang::ast::Symbol& head,
     const slang::ast::InstanceBodySymbol& reader) -> const slang::ast::Scope* {
-  if (ref.path.empty() || ref.isViaIfacePort()) return nullptr;
-  const slang::ast::Symbol& head = *ref.path.front().symbol;
+  const slang::ast::Scope* found_in = head.getHierarchicalParent();
+  if (found_in == nullptr || Within(*found_in, reader)) return nullptr;
+  const slang::ast::SymbolKind kind = found_in->asSymbol().kind;
+  if (kind != slang::ast::SymbolKind::InstanceBody &&
+      kind != slang::ast::SymbolKind::GenerateBlock) {
+    return nullptr;
+  }
+  return found_in;
+}
+
+// The scope the name `found`, reached by `written` in `reader`, lands in once
+// it leaves `reader`, or nothing when it never does.
+auto LandingScope(
+    const slang::ast::Symbol& found,
+    const slang::ast::HierarchicalReference& written,
+    const slang::ast::InstanceBodySymbol& reader) -> const slang::ast::Scope* {
+  if (written.isViaIfacePort()) return nullptr;
+  if (written.path.empty()) return FoundAbove(found, reader);
+  const slang::ast::Symbol& head = *written.path.front().symbol;
   // The upward search matches only a scope or an instance (LRM 23.8); a name
   // that starts at a value -- a virtual interface, a class handle -- reaches
   // through whatever that value holds and climbs nowhere.
@@ -126,8 +148,9 @@ auto LandingScope(
   // A path written from `$root` starts at the top-level instance it names
   // next (LRM 23.6).
   if (head.kind == slang::ast::SymbolKind::Root) {
-    if (ref.path.size() < 2) return nullptr;
-    const auto* top = ref.path[1].symbol->as_if<slang::ast::InstanceSymbol>();
+    if (written.path.size() < 2) return nullptr;
+    const auto* top =
+        written.path[1].symbol->as_if<slang::ast::InstanceSymbol>();
     if (top == nullptr || &top->body == &reader) return nullptr;
     return &top->body;
   }
@@ -148,23 +171,17 @@ auto LandingScope(
 
   // The search found the name in a scope enclosing the reader's instance,
   // and continues from that scope.
-  const slang::ast::Scope* found_in = head.getHierarchicalParent();
-  if (found_in == nullptr || Within(*found_in, reader)) return nullptr;
-  const slang::ast::SymbolKind kind = found_in->asSymbol().kind;
-  if (kind != slang::ast::SymbolKind::InstanceBody &&
-      kind != slang::ast::SymbolKind::GenerateBlock) {
-    return nullptr;
-  }
-  return found_in;
+  return FoundAbove(head, reader);
 }
 
 }  // namespace
 
 auto ClimbOutOf(
-    const slang::ast::HierarchicalReference& reference,
+    const slang::ast::Symbol& found,
+    const slang::ast::HierarchicalReference& written,
     const slang::ast::InstanceBodySymbol& reader)
     -> std::optional<ClimbAnchor> {
-  const slang::ast::Scope* landed = LandingScope(reference, reader);
+  const slang::ast::Scope* landed = LandingScope(found, written, reader);
   if (landed == nullptr) return std::nullopt;
   const slang::ast::InstanceBodySymbol* instance = InstanceBodyAround(landed);
   if (instance == nullptr) {
@@ -175,7 +192,7 @@ auto ClimbOutOf(
   return ClimbAnchor{
       .scope = landed,
       .instance = instance,
-      .carries = ClassScopesAlong(reference)};
+      .carries = ClassScopesAlong(found, written)};
 }
 
 auto StartOfReach(

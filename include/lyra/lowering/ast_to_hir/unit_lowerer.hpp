@@ -1429,13 +1429,15 @@ class UnitLowerer {
       const WalkFrame& frame, const slang::ast::Scope& target,
       RouteOrigin origin) -> std::optional<ScopeRoute>;
 
-  // Where `reference`, written in this unit, starts: through an interface port
-  // or upward at the enclosing scope it landed in, where it leaves the unit's
+  // Where a name written in this unit starts: through an interface port or
+  // upward at the enclosing scope it landed in, where it leaves the unit's
   // instance, and at the reader for a name that never leaves and for every
   // name a namespace unit writes, since a namespace has no instance to leave.
+  // The name is `found`, reached by `written`, the path the source wrote to it,
+  // empty for a name written plainly; how it was spelled decides nothing.
   [[nodiscard]] auto StartOf(
-      const WalkFrame& frame,
-      const slang::ast::HierarchicalReference& reference) -> RouteOrigin;
+      const WalkFrame& frame, const slang::ast::Symbol& found,
+      const slang::ast::HierarchicalReference& written) -> RouteOrigin;
 
   // Where a route to `target` starts when no name says so -- a scope reached
   // because a type belongs to it: at the reader where `target` stands in this

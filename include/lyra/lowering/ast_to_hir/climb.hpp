@@ -9,6 +9,7 @@ namespace slang::ast {
 class HierarchicalReference;
 class InstanceBodySymbol;
 class Scope;
+class Symbol;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
@@ -31,11 +32,16 @@ struct ClimbAnchor {
   std::vector<const slang::ast::Scope*> carries;
 };
 
-// Where `reference`, written in `reader`, lands once it leaves `reader`, or
-// nothing when it never does -- a name resolved inside the instance, or through
-// one of its interface ports.
+// Where a name written in `reader` lands once it leaves `reader`, or nothing
+// when it never does -- a name resolved inside the instance, or through one of
+// its interface ports. The name is `found`, the declaration the search found,
+// reached by `written`, the path the source wrote to it, which is empty for a
+// name written plainly. A plain name lands where the search found it, in the
+// scope enclosing the reader that declares it, as a module declared inside
+// another reaches what that module declares (LRM 23.4, 24.3).
 [[nodiscard]] auto ClimbOutOf(
-    const slang::ast::HierarchicalReference& reference,
+    const slang::ast::Symbol& found,
+    const slang::ast::HierarchicalReference& written,
     const slang::ast::InstanceBodySymbol& reader) -> std::optional<ClimbAnchor>;
 
 // Where a reader starts reaching a scope it writes no path to -- the scope a

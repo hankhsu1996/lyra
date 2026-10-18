@@ -111,9 +111,15 @@ Unlocks the runtime side of `instantiation/param_slots`.
       33.4.1.4 to 33.4.1.6, 33.4.2). Two modules may each declare a module of one name inside them,
       beside one declared outside both (LRM 23.4), and a nested module reads the parameters of the
       module declaring it. A `bind` written in each of two cells of one name is two directives.
-- [ ] B12 -- A module declared inside another that reads a variable or a net of the module declaring
-      it (LRM 23.9) is refused: a body reaches storage outside itself only through a hierarchical
-      name or a port.
+- [x] B12 -- A module, an interface or a program declared inside another module uses what that
+      module declares by the plain name, as it would by a hierarchical one (LRM 23.4, 24.3): it
+      reads, writes, drives, forces and waits on a variable, a net, a port or an event, is woken by
+      them in `always_comb`, calls a function or a task, reads through a class handle, builds an
+      object of a class the module declares, names an instance of it, disables a named block and
+      hands an interface instance on as a port actual. So does one nested two deep, and one the
+      module never instantiates and which is therefore instantiated once by its own name. Each
+      instance reaches the instance of the declaring module that holds it, and a unit is compiled
+      once per specialization of that module.
 - [x] B13 -- `%l` and `%L` (LRM 33.7) print the library and cell an instance is bound to, as
       `library.cell`, in a literal format string and in one known only when it is formatted. The
       text is the same for every instance of a cell. A module declared inside another prints the

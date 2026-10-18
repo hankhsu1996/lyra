@@ -1131,7 +1131,8 @@ auto LowerSubroutineCall(
   // resolved it to in the instance being lowered: in another instance of this
   // unit the same text reaches another object. Only a name that stays inside
   // the instance may enable a subroutine this unit declares as its own.
-  RouteOrigin start = unit_lowerer.StartOf(frame, call.lookupInfo.hierRef);
+  RouteOrigin start =
+      unit_lowerer.StartOf(frame, *sym, call.lookupInfo.hierRef);
   const auto binding = std::holds_alternative<FromReader>(start)
                            ? unit_lowerer.LookupSubroutineBinding(*sym)
                            : std::nullopt;
