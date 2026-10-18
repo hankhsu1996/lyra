@@ -88,7 +88,7 @@ auto RefuseAssignmentPatternText(Lowerer& lowerer, hir::ExprId hir_arg)
       diag::DiagCode::kUnsupportedAssignmentPatternText,
       "the assignment pattern conversion is not yet supported for an operand "
       "holding an associative array with a wildcard index type, whose entries "
-      "the standard gives no way to enumerate (LRM 7.8.1, 21.2.1.6)");
+      "the standard gives no way to enumerate");
 }
 
 // Whether the text a conversion gives an integral operand follows from the
@@ -365,8 +365,7 @@ auto FailFormatParse(
     case value::FormatParseError::kUnsupportedSpecifier:
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedSubroutineArgument,
-          std::format(
-              "the '%{}' conversion is not yet supported", parsed.spec_char));
+          "the '%{}' conversion is not yet supported", parsed.spec_char);
     case value::FormatParseError::kUnknownSpecifier:
     case value::FormatParseError::kWidthOverflow:
     case value::FormatParseError::kPrecisionOverflow:

@@ -7,6 +7,7 @@
 #include <string_view>
 #include <unordered_map>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
@@ -35,15 +36,16 @@ class DiagnosticDispatcher {
   using DiagnosticSink = std::function<void(std::string_view)>;
   // Where in the design and when a report is being made, as the run answers it.
   struct Context {
-    // The scope the report is made in and the simulation time, as one phrase.
-    std::string scope_and_time;
+    // The instance the report is made in and the simulation time, as the
+    // phrase a note says them in.
+    std::string where;
     // Where the procedure the report is made under is written; empty where
     // none is running or no source text states it.
     std::string_view procedure;
   };
   using ContextSource = std::function<Context()>;
 
-  // Per-(origin, severity) suppression after this many emits in one run.
+  // Per-(place, severity) suppression after this many emits in one run.
   // Zero disables rate limiting.
   static constexpr std::uint32_t kDefaultRateLimit = 10;
 
@@ -66,23 +68,25 @@ class DiagnosticDispatcher {
   // A report the tool writes for the design, which reaches no severity task and
   // so names no source location of its own. What it can name is the procedure
   // it is made under, and it does.
-  void Report(Severity severity, std::string_view body);
+  void Report(Severity severity, const base::DiagMessage& message);
 
-  // A line about the run rather than about the design: what a simulation
-  // control task did (LRM 20.2, Table 20-1), and why the tool could not carry
-  // on. It carries no severity and is written every time, having no call site
-  // to attribute or to count.
-  void Note(std::string_view text);
+  // A whole line about the run rather than about the design, opening with its
+  // own word: what a simulation control task did (LRM 20.2, Table 20-1), what
+  // kept a time slot from ending, and why the tool could not carry on. It is
+  // written every time, having no call site to attribute or to count.
+  void Line(std::string_view line);
 
   // LRM 20.10: a fatal report terminates the simulation with an error code, so
   // whether one was made is what the run's exit status answers to.
   [[nodiscard]] auto ReportedFatal() const -> bool;
 
  private:
-  void Emit(Severity severity, std::string_view origin, std::string_view body);
+  void Emit(
+      Severity severity, std::string_view word, std::string_view origin,
+      std::string_view body);
 
   struct CountKey {
-    std::string origin;
+    std::string place;
     Severity severity;
 
     auto operator==(const CountKey&) const -> bool = default;

@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <expected>
 #include <optional>
-#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -21,6 +20,7 @@
 #include <slang/ast/types/Type.h>
 #include <slang/numeric/ConstantValue.h>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -42,10 +42,12 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-auto PortConnectionUnsupported(diag::SourceSpan span, std::string message)
+auto PortConnectionUnsupported(
+    diag::SourceSpan span, base::DiagFormat<> message)
     -> std::unexpected<diag::Diagnostic> {
   return diag::Fail(
-      span, diag::DiagCode::kUnsupportedPortConnectionForm, std::move(message));
+      span, diag::DiagCode::kUnsupportedPortConnectionForm,
+      base::DiagMessage(message));
 }
 
 // The child instance one set of connections reaches, and how this scope reaches
@@ -414,7 +416,7 @@ auto ConnectDataPort(
   const auto* port = conn.port.as_if<slang::ast::PortSymbol>();
   if (port == nullptr) {
     return PortConnectionUnsupported(
-        span, "non-variable port connection is not yet supported");
+        span, "connecting a port of this kind is not yet supported");
   }
   auto connected = ConnectedProjection(data.target, span);
   if (!connected) return std::unexpected(std::move(connected.error()));
@@ -435,7 +437,9 @@ auto ConnectDataPort(
       unit_lowerer.ImportSignatureType(*child.signature, data.type);
   if (!unit_lowerer.Unit().types.Get(type_id).IsValueChangeObservable()) {
     return PortConnectionUnsupported(
-        span, "port connection of a handle / event type is not yet supported");
+        span,
+        "connecting a port whose type is a handle or an event is not yet "
+        "supported");
   }
   // Which cell that member is, is the child's own statement of it, so the
   // parent never reads the child's declaration to find out. The route ends at
@@ -565,7 +569,7 @@ auto ConnectDataPort(
     // not the rebindable plain `ref`.
     case hir::PortDirection::kConstRef:
       return PortConnectionUnsupported(
-          span, "const ref port connection is not yet supported");
+          span, "connecting a 'const ref' port is not yet supported");
     case hir::PortDirection::kInOut: {
       // A bidirectional connection is not a directional edge: it states that
       // positions of the nets on both sides are one physical net, resolving

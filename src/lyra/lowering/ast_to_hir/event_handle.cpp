@@ -10,9 +10,10 @@ auto RefuseGivingAnEventAValue(
   if (!target.isEvent()) {
     return {};
   }
+  // LRM 15.5.5.
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedExpressionForm,
-      "giving an event a value (LRM 15.5.5) is not yet supported");
+      "giving an event a value is not yet supported");
 }
 
 auto RefuseReadingAnEventAsAValue(
@@ -21,9 +22,10 @@ auto RefuseReadingAnEventAsAValue(
   if (!operand.isEvent()) {
     return {};
   }
+  // LRM 15.5.5.3.
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedExpressionForm,
-      "reading an event as a value (LRM 15.5.5.3) is not yet supported");
+      "reading an event as a value is not yet supported");
 }
 
 auto RefuseTakingOverAnEvent(
@@ -32,10 +34,10 @@ auto RefuseTakingOverAnEvent(
   if (!target.isEvent()) {
     return {};
   }
+  // LRM 10.6, 15.5.5.
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedStatementForm,
-      "a procedural continuous assignment to an event (LRM 10.6, 15.5.5) is "
-      "not yet supported");
+      "a procedural continuous assignment to an event is not yet supported");
 }
 
 }  // namespace lyra::lowering::ast_to_hir

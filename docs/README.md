@@ -18,6 +18,8 @@ the doc.
 - `design-process.md` -- how to arrive at a design and how to falsify one.
 - `style.md` -- writing contract for these docs and for the READMEs above them.
 - `code-comments.md` -- when a comment earns its place in the source, and when it does not.
+- `messages.md` -- the form of every text Lyra prints for a user to read, and what the build checks
+  of it.
 - `profiling.md` -- how to measure the compiler and an emitted program honestly.
 
 ## Reading Order

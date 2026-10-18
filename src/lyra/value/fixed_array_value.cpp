@@ -1,7 +1,6 @@
 #include "lyra/value/fixed_array_value.hpp"
 
 #include <cstddef>
-#include <format>
 #include <span>
 #include <string_view>
 #include <utility>
@@ -47,11 +46,11 @@ auto ArrayFromElements(
     const FixedArrayType& type, std::span<const void* const> items)
     -> LaidOutValue {
   if (items.size() != type.Count()) {
+    // LRM 7.6.
     throw SimulationError(
-        std::format(
-            "a fixed-size unpacked array of {} elements cannot be assigned an "
-            "array of {} (LRM 7.6)",
-            type.Count(), items.size()));
+        "a fixed-size unpacked array of {} elements cannot be assigned an "
+        "array of {}",
+        type.Count(), items.size());
   }
   return BuiltArray(type, [&](std::size_t i, void* out) {
     type.ElementType().Type().Copy(items[i], out);

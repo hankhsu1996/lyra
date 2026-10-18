@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <expected>
 #include <filesystem>
-#include <format>
 #include <fstream>
 #include <ios>
 #include <string>
@@ -11,21 +10,20 @@
 #include <system_error>
 #include <utility>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/diag/diagnostic.hpp"
 
 namespace lyra::driver {
 
 namespace {
 
-auto IoError(std::string message) -> diag::Diagnostic {
-  return diag::Make(diag::DiagCode::kHostIoError, std::move(message));
-}
-
 auto ReadContent(const std::filesystem::path& path)
-    -> std::expected<std::string, std::string> {
+    -> std::expected<std::string, base::DiagMessage> {
   std::ifstream in(path, std::ios::binary | std::ios::ate);
   if (!in) {
-    return std::unexpected(std::format("failed to read '{}'", path.string()));
+    return std::unexpected(
+        base::DiagMessage("cannot read '{}'", path.string()));
   }
   const auto size = static_cast<std::streamsize>(in.tellg());
   if (size <= 0) {
@@ -35,7 +33,8 @@ auto ReadContent(const std::filesystem::path& path)
   in.seekg(0);
   in.read(content.data(), size);
   if (!in) {
-    return std::unexpected(std::format("failed to read '{}'", path.string()));
+    return std::unexpected(
+        base::DiagMessage("cannot read '{}'", path.string()));
   }
   return content;
 }
@@ -58,17 +57,16 @@ auto WriteFile(const std::filesystem::path& path, std::string_view content)
   std::error_code ec;
   std::filesystem::create_directories(path.parent_path(), ec);
   if (ec) {
-    return std::unexpected(IoError(
-        std::format(
-            "failed to create '{}' ({})", path.parent_path().string(),
-            ec.message())));
+    return diag::Fail(
+        diag::DiagCode::kHostIoError, "cannot create '{}' ({})",
+        path.parent_path().string(), ec.message());
   }
   std::ofstream out(path, std::ios::binary);
   out << content;
   out.flush();
   if (!out) {
-    return std::unexpected(
-        IoError(std::format("failed to write '{}'", path.string())));
+    return diag::Fail(
+        diag::DiagCode::kHostIoError, "cannot write '{}'", path.string());
   }
   return {};
 }
@@ -78,7 +76,7 @@ auto CopyFile(
     -> diag::Result<void> {
   auto content = ReadContent(from);
   if (!content) {
-    return std::unexpected(IoError(std::move(content.error())));
+    return diag::Fail(diag::DiagCode::kHostIoError, std::move(content.error()));
   }
   return WriteFile(to, *content);
 }

@@ -1,12 +1,13 @@
 #include "lyra/base/simulation_error.hpp"
 
-#include <string>
 #include <utility>
+
+#include "lyra/base/diag_message.hpp"
 
 namespace lyra {
 
-SimulationError::SimulationError(std::string message)
-    : std::runtime_error(std::move(message)) {
+SimulationError::SimulationError(base::DiagMessage message)
+    : std::runtime_error(std::move(message).TakeText()) {
 }
 
 SimulationError::~SimulationError() = default;

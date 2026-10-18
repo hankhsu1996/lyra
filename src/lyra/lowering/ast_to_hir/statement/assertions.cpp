@@ -16,6 +16,7 @@
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/syntax/SyntaxNode.h>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
@@ -93,13 +94,14 @@ auto NodeSpan(const slang::ast::AssertionExpr& expr, diag::SourceSpan enclosing)
   return frontend::SpanOf(expr.syntax->sourceRange());
 }
 
-auto RefuseAssertionForm(diag::SourceSpan span, std::string_view what)
+auto RefuseAssertionForm(diag::SourceSpan span, base::DiagFormat<> what)
     -> std::unexpected<diag::Diagnostic> {
-  return diag::Fail(
-      span, diag::DiagCode::kUnsupportedStatementForm,
-      std::string{what} +
-          " is not yet supported in a concurrent assertion; pass --assertions "
-          "skip to elide it");
+  return std::unexpected(
+      diag::Make(
+          span, diag::DiagCode::kUnsupportedStatementForm,
+          "{} is not yet supported in a concurrent assertion",
+          base::DiagMessage(what).Text())
+          .WithNote("pass '--assertions skip' to leave the assertion out"));
 }
 
 // LRM 16.7's `$` is a window with no end, so an evaluation that enters one can
@@ -109,7 +111,7 @@ auto RefuseAssertionForm(diag::SourceSpan span, std::string_view what)
 auto TickRangeOf(const slang::ast::SequenceRange& range, diag::SourceSpan span)
     -> diag::Result<hir::TickRange> {
   if (!range.max.has_value()) {
-    return RefuseAssertionForm(span, "a `$` bound on a delay or repetition");
+    return RefuseAssertionForm(span, "a '$' bound on a delay or repetition");
   }
   return hir::TickRange{.min = range.min, .max = *range.max};
 }
@@ -164,7 +166,7 @@ auto ArmSampledReads(
       frame.reader_scope == nullptr) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedStatementForm,
-        "a concurrent assertion outside a design element's scope is not yet "
+        "a concurrent assertion outside a design element is not yet "
         "supported");
   }
   auto& unit_lowerer = proc.Owner();
@@ -210,7 +212,7 @@ auto ApplyRepetition(
   }
   if (repetition->kind != slang::ast::SequenceRepetition::Consecutive) {
     return RefuseAssertionForm(
-        span, "a nonconsecutive or goto repetition (`[=]`, `[->]`)");
+        span, "a nonconsecutive or goto repetition ('[=]', '[->]')");
   }
   if (repetition->range.min == 0) {
     return RefuseAssertionForm(span, "a repetition that admits an empty match");
@@ -290,8 +292,9 @@ auto LowerSequenceExpr(
     const slang::ast::AssertionExpr& expr, diag::SourceSpan enclosing)
     -> diag::Result<hir::SequenceExpr> {
   const diag::SourceSpan span = NodeSpan(expr, enclosing);
+  // LRM 16.10.
   if (CarriesLocalVars(expr)) {
-    return RefuseAssertionForm(span, "a local variable (LRM 16.10)");
+    return RefuseAssertionForm(span, "a local variable");
   }
   if (const auto* body = InstanceBodyOf(expr); body != nullptr) {
     return LowerSequenceExpr(proc, frame, *body, span);
@@ -318,10 +321,9 @@ auto LowerSequenceExpr(
     case slang::ast::AssertionExprKind::SequenceWithMatch: {
       const auto& with = expr.as<slang::ast::SequenceWithMatchExpr>();
       if (!with.matchItems.empty()) {
+        // LRM 16.11.
         return RefuseAssertionForm(
-            span,
-            "a subroutine call or assignment attached to a match (LRM "
-            "16.11)");
+            span, "a subroutine call or assignment attached to a match");
       }
       auto inner_or = LowerSequenceExpr(proc, frame, with.expr, span);
       if (!inner_or) return std::unexpected(std::move(inner_or.error()));
@@ -334,13 +336,14 @@ auto LowerSequenceExpr(
     case slang::ast::AssertionExprKind::Binary:
       return RefuseAssertionForm(
           span,
-          "composing operands with `and`, `or`, `intersect`, `throughout` or "
-          "`within`");
+          "composing operands with 'and', 'or', 'intersect', 'throughout' or "
+          "'within'");
     case slang::ast::AssertionExprKind::FirstMatch:
-      return RefuseAssertionForm(span, "`first_match`");
+      return RefuseAssertionForm(span, "'first_match'");
     case slang::ast::AssertionExprKind::Clocking:
+      // LRM 16.13.
       return RefuseAssertionForm(
-          span, "a sequence carrying a clocking event of its own (LRM 16.13)");
+          span, "a sequence carrying a clocking event of its own");
 
     // The property-only operators. The front end holds a sequence position to
     // sequence forms, so one of these arriving here means what it accepts has
@@ -402,8 +405,9 @@ auto LowerPropertyExpr(
     const slang::ast::AssertionExpr& expr, hir::SequenceStrength strength,
     diag::SourceSpan enclosing) -> diag::Result<hir::PropertyExpr> {
   const diag::SourceSpan span = NodeSpan(expr, enclosing);
+  // LRM 16.10.
   if (CarriesLocalVars(expr)) {
-    return RefuseAssertionForm(span, "a local variable (LRM 16.10)");
+    return RefuseAssertionForm(span, "a local variable");
   }
   if (const auto* body = InstanceBodyOf(expr); body != nullptr) {
     return LowerPropertyExpr(proc, frame, *body, strength, span);
@@ -432,11 +436,11 @@ auto LowerPropertyExpr(
         case slang::ast::BinaryAssertionOperator::SUntilWith:
           return RefuseAssertionForm(
               span,
-              "a property connective (`implies`, `iff`, `until`, `s_until`)");
+              "a property connective ('implies', 'iff', 'until', 's_until')");
         case slang::ast::BinaryAssertionOperator::OverlappedFollowedBy:
         case slang::ast::BinaryAssertionOperator::NonOverlappedFollowedBy:
           return RefuseAssertionForm(
-              span, "a followed-by operator (`#-#`, `#=#`)");
+              span, "a followed-by operator ('#-#', '#=#')");
 
         // Composition the grammar admits on sequences, which the sequence
         // path already names.
@@ -461,20 +465,21 @@ auto LowerPropertyExpr(
     case slang::ast::AssertionExprKind::Unary:
       return RefuseAssertionForm(
           span,
-          "a property operator over time (`not`, `nexttime`, `always`, "
-          "`eventually`)");
+          "a property operator over time ('not', 'nexttime', 'always', "
+          "'eventually')");
     case slang::ast::AssertionExprKind::Conditional:
     case slang::ast::AssertionExprKind::Case:
       return RefuseAssertionForm(span, "a property selecting between arms");
     case slang::ast::AssertionExprKind::Abort:
       return RefuseAssertionForm(
-          span, "an abort operator (`accept_on`, `reject_on`)");
+          span, "an abort operator ('accept_on', 'reject_on')");
     case slang::ast::AssertionExprKind::Clocking:
+      // LRM 16.13.
       return RefuseAssertionForm(
-          span, "a property carrying more than one clocking event (LRM 16.13)");
+          span, "a property carrying more than one clocking event");
     case slang::ast::AssertionExprKind::DisableIff:
       return RefuseAssertionForm(
-          span, "a `disable iff` clause anywhere but on the property itself");
+          span, "a 'disable iff' clause anywhere but on the property itself");
 
     // A sequence standing where a property does, which LRM 16.12.2 reads at
     // the strength the statement demands.
@@ -740,11 +745,10 @@ auto LowerConcurrentAssertion(
     case slang::ast::AssertionKind::CoverProperty:
       return hir::ConcurrentAssertion{hir::ConcurrentCoverStmt{
           .spec = *std::move(spec_or), .pass_stmt = pass_stmt}};
+    // A cover sequence counts every match of an attempt rather than the
+    // attempt (LRM 16.14.3).
     case slang::ast::AssertionKind::CoverSequence:
-      return RefuseAssertionForm(
-          span,
-          "a cover sequence statement, which counts every match of an "
-          "attempt rather than the attempt");
+      return RefuseAssertionForm(span, "a 'cover sequence' statement");
     case slang::ast::AssertionKind::Restrict:
       throw InternalError(
           "LowerConcurrentAssertion: a restrict is not checked in simulation, "

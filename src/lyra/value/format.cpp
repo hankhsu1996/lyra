@@ -111,8 +111,7 @@ auto Format(const FormatSpec& spec, FormatArg arg, const FormatContext& ctx)
   // this can answer.
   if (arg.format_fn == nullptr) {
     throw SimulationError(
-        "an aggregate is printed only by the assignment pattern conversion "
-        "(LRM 21.2.1.6)");
+        "an aggregate is printed only by the assignment pattern conversion");
   }
   return arg.format_fn(spec, arg, ctx);
 }
@@ -147,15 +146,13 @@ auto FormatRuntime(
       break;
     case FormatParseError::kUnsupportedSpecifier:
       throw SimulationError(
-          std::format(
-              "the '%{}' conversion is not yet supported", parsed.spec_char));
+          "the '%{}' conversion is not yet supported", parsed.spec_char);
     case FormatParseError::kUnknownSpecifier:
     case FormatParseError::kWidthOverflow:
     case FormatParseError::kPrecisionOverflow:
     case FormatParseError::kModifierNotPermitted:
       throw SimulationError(
-          std::format(
-              "malformed format string at offset {}", parsed.error_offset));
+          "the format string is malformed at offset {}", parsed.error_offset);
   }
 
   const FormatContext ctx{.time_format = &time_format};
@@ -228,8 +225,8 @@ auto FormatIntegralOperand(
 auto Formatter<String>::Format(const FormatSpec& spec, const String& value)
     -> std::string {
   if (spec.kind == FormatKind::kTime) {
-    throw SimulationError(
-        "a string operand cannot be formatted as %t (LRM 21.2.1.3)");
+    // LRM 21.2.1.3.
+    throw SimulationError("a string operand cannot be formatted as '%t'");
   }
   std::string body{value.View()};
   // LRM 21.2.1.6: a string element of an assignment pattern prints quoted, and
@@ -245,9 +242,9 @@ namespace {
 auto FormatHandleIdentity(const FormatSpec& spec, const void* identity)
     -> std::string {
   if (spec.kind != FormatKind::kAssignmentPattern) {
+    // LRM 21.2.1.6.
     throw SimulationError(
-        "a handle is printed only by the assignment pattern conversion "
-        "(LRM 21.2.1.6)");
+        "a handle is printed only by the assignment pattern conversion");
   }
   if (identity == nullptr) {
     return std::string{"null"};

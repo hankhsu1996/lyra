@@ -407,8 +407,8 @@ auto CodeGenModule::EndOwnedStorage(
   if (pointed.Is<lir::ObjectType>() || pointed.Is<lir::CrossUnitClassType>()) {
     return diag::Fail(
         diag::DiagCode::kUnsupportedExpressionForm,
-        "ending an object a unique pointer owns is not yet supported on the "
-        "llvm backend");
+        "ending an object a unique pointer owns is not yet supported with "
+        "'--backend llvm'");
   }
   if (!types_.LayoutOf(pointee).ends_with_nothing_to_do) {
     const std::array<llvm::Value*, 1> args{storage};
@@ -910,9 +910,8 @@ auto CodeGenModule::PlaceMembers(
     if (!storage) {
       return diag::Fail(
           diag::DiagCode::kUnsupportedTypeKind,
-          std::format(
-              "{} of type {} has no storage realization on the llvm backend",
-              what, unit_->types.Get(type).KindName()));
+          "{} of type '{}' is not yet supported with '--backend llvm'", what,
+          unit_->types.Get(type).KindName());
     }
     const support::ObjectLayout layout = MemberLayout(type, *storage);
     const std::uint64_t offset =
@@ -1695,9 +1694,8 @@ auto CodeGenModule::DomainOf(lir::TypeId type) const
   if (!domain) {
     return diag::Fail(
         diag::DiagCode::kUnsupportedTypeKind,
-        std::format(
-            "a value of type {} has no runtime library realization",
-            unit_->types.Get(type).KindName()));
+        "a value of type '{}' is not yet supported with '--backend llvm'",
+        unit_->types.Get(type).KindName());
   }
   return *domain;
 }
@@ -1709,10 +1707,9 @@ auto CodeGenModule::SharedStorageOf(const lir::StaticStorage& storage)
   if (!described) {
     return diag::Fail(
         diag::DiagCode::kUnsupportedTypeKind,
-        std::format(
-            "a shared cell of type {} has no storage realization on the llvm "
-            "backend",
-            unit_->types.Get(storage.type).KindName()));
+        "a shared variable of type '{}' is not yet supported with "
+        "'--backend llvm'",
+        unit_->types.Get(storage.type).KindName());
   }
   return *described;
 }
@@ -1788,10 +1785,9 @@ auto CodeGenModule::DefinitionOf(lir::TypeId type)
   if (!symbol.has_value()) {
     return diag::Fail(
         diag::DiagCode::kUnsupportedExpressionForm,
-        std::format(
-            "a value of type {} has no definition the runtime builds values "
-            "of",
-            unit_->types.Get(type).KindName()));
+        "building a value of type '{}' is not yet supported with "
+        "'--backend llvm'",
+        unit_->types.Get(type).KindName());
   }
   return DefinitionGlobal(*symbol);
 }

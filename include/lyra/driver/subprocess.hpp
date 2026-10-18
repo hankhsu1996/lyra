@@ -8,6 +8,8 @@
 #include <string_view>
 #include <vector>
 
+#include "lyra/base/diag_message.hpp"
+
 namespace lyra::driver {
 
 // How a process ended and what it wrote. A process may write any amount, so
@@ -30,14 +32,14 @@ struct ProcessRequest {
 // Resolve an executable `name` to an absolute path. An absolute or
 // parent-qualified name is checked directly; a bare name is searched on PATH.
 auto FindOnPath(std::string_view name)
-    -> std::expected<std::filesystem::path, std::string>;
+    -> std::expected<std::filesystem::path, base::DiagMessage>;
 
 // Run `exe args...` capturing stdout and stderr. A non-zero exit code is a
 // successful result (reported via ProcessResult::exit_code); an error is
 // returned only when the process cannot be spawned or reaped.
 auto RunProcessCaptured(
     const std::filesystem::path& exe, std::span<const std::string> args)
-    -> std::expected<ProcessResult, std::string>;
+    -> std::expected<ProcessResult, base::DiagMessage>;
 
 // Run every request, keeping at most `max_concurrent` of them alive at once,
 // and answer with one result per request in the order given. Every request is
@@ -47,14 +49,14 @@ auto RunProcessCaptured(
 // statistics.
 auto RunProcessesCaptured(
     std::span<const ProcessRequest> requests, std::size_t max_concurrent)
-    -> std::expected<std::vector<ProcessResult>, std::string>;
+    -> std::expected<std::vector<ProcessResult>, base::DiagMessage>;
 
 // The same, with every request a piece of the phase the command says it is in:
 // counted, and shown under its entry in `names` for as long as it runs.
 auto RunProcessesCaptured(
     std::span<const ProcessRequest> requests, std::size_t max_concurrent,
     std::span<const std::string> names)
-    -> std::expected<std::vector<ProcessResult>, std::string>;
+    -> std::expected<std::vector<ProcessResult>, base::DiagMessage>;
 
 // Run `exe args...` inheriting this process's stdout and stderr, so the child's
 // output streams straight to the terminal. Returns the child's exit code. This
@@ -62,6 +64,6 @@ auto RunProcessesCaptured(
 // statistics do not count it.
 auto RunProcessStreaming(
     const std::filesystem::path& exe, std::span<const std::string> args)
-    -> std::expected<int, std::string>;
+    -> std::expected<int, base::DiagMessage>;
 
 }  // namespace lyra::driver

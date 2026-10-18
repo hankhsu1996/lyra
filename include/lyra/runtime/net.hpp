@@ -978,10 +978,11 @@ class ResolvedNet<T> : public ConnectableNet {
   [[nodiscard]] auto WholePhysicalNet() -> PhysicalNet& {
     const std::vector<NetReach>& reaches = name_.Reaches();
     if (reaches.size() != 1 || reaches.front().count != count_) {
+      // LRM 10.6.2.
       throw SimulationError(
           "a procedural continuous assignment names a net that a connection "
           "reaches over part of one resolution, so what it overrides is part "
-          "of a physical net, which is not yet supported (LRM 10.6.2)");
+          "of a physical net, which is not yet supported");
     }
     return *reaches.front().physical;
   }

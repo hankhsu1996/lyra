@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
-#include <format>
 #include <fstream>
 #include <functional>
 #include <iterator>
@@ -19,6 +18,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 
 namespace lyra::support {
@@ -194,7 +194,7 @@ void RecordChild(std::string command, ChildUsage usage) {
 }
 
 auto WriteStatistics(const std::filesystem::path& path)
-    -> std::expected<void, std::string> {
+    -> std::expected<void, base::DiagMessage> {
   Statistics& statistics = TheStatistics();
   const std::scoped_lock lock(statistics.lock);
 
@@ -247,7 +247,7 @@ auto WriteStatistics(const std::filesystem::path& path)
   out.flush();
   if (!out) {
     return std::unexpected(
-        std::format("failed to write statistics to '{}'", path.string()));
+        base::DiagMessage("cannot write statistics to '{}'", path.string()));
   }
   return {};
 }

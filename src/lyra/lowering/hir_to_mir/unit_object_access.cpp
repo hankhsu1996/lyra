@@ -5,6 +5,7 @@
 #include <utility>
 #include <variant>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/external_scope_class.hpp"
 #include "lyra/hir/external_scope_ref.hpp"
@@ -169,7 +170,8 @@ auto ReachHeldInterface(
           .type = unit.builtins.machine_bool});
   const mir::ExprId message = body.exprs.Add(
       mir::MakeStringLiteral(
-          unit.builtins.string, "use of a null virtual interface (LRM 25.9)"));
+          unit.builtins.string,
+          base::DiagMessage("use of a null virtual interface").TakeText()));
   body.AppendStmt(
       mir::ExprStmt{
           .expr = body.exprs.Add(

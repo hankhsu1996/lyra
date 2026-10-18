@@ -80,7 +80,7 @@ auto TakeoverPart(
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedStatementForm,
         "taking over an element or a member of an unpacked value is not yet "
-        "supported (LRM 10.6.2)");
+        "supported");
   }
   const mir::ExprId holder = TakeoverHolder(place);
   if (place.descent.empty()) {
@@ -92,7 +92,7 @@ auto TakeoverPart(
   if (unit.types.Get(block.exprs.Get(holder).type).Is<mir::ResolvedType>()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedStatementForm,
-        "a force on part of a net is not yet supported (LRM 10.6.2)");
+        "a force on part of a net is not yet supported");
   }
   const PathPositions bits = BitsWithinOwner(unit, block, place);
   return TakenPart{

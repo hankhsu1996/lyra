@@ -375,22 +375,25 @@ TEST(LyraManifest, RefusesWhatAFileCannotDeclare) {
   static constexpr std::array<Refusal, 8> kRefusals = {
       {{.name = "unknown-key.toml",
         .body = "[design]\ntops = [\"a\"]\n",
-        .expected = "is not a recognized key"},
+        .expected = "unknown-key.toml:2:1: error: '[design] tops' is not a "
+                    "recognized key"},
        {.name = "roots-in-the-library.toml",
         .body = "[library]\nname = \"a\"\ntop = [\"a\"]\n",
-        .expected = "[library] top is not a recognized key"},
+        .expected = "roots-in-the-library.toml:3:1: error: '[library] top' is "
+                    "not a recognized key"},
        {.name = "unknown-table.toml",
         .body = "[designs]\ntop = [\"a\"]\n",
         .expected = "is not a recognized table"},
        {.name = "invocation-key.toml",
         .body = "[compile]\nrelease = true\n",
-        .expected = "pass it on the command line"},
+        .expected = "note: pass '--release' on the command line instead"},
        {.name = "pattern.toml",
         .body = "[library]\nfiles = [\"rtl/*.sv\"]\n",
         .expected = "is a pattern"},
        {.name = "bad-policy.toml",
         .body = "[compile]\nassertions = \"loud\"\n",
-        .expected = "is not one of check, skip"},
+        .expected = "bad-policy.toml:2:14: error: 'loud' given to '[compile] "
+                    "assertions' is neither 'check' nor 'skip'"},
        {.name = "no-name.toml",
         .body = "[design]\ntop = [\"a\"]\n",
         .expected = "a library has to say what it is called"},
@@ -597,7 +600,8 @@ TEST(LyraManifest, RefusesADependencyThatIsNotOneLibrary) {
       {{.dependencies = "prim = \"../prim\"\n",
         .expected = "is not a table saying where the library is declared"},
        {.dependencies = "prim = { git = \"https://example.com/prim\" }\n",
-        .expected = "[dependencies.prim] git is not a recognized key"},
+        .expected = "lyra.toml:5:10: error: '[dependencies.prim] git' is not a "
+                    "recognized key"},
        {.dependencies = "prim = {}\n",
         .expected = "a dependency has to say which directory declares it"},
        {.dependencies = "prim = { path = \"../nowhere\" }\n",
@@ -821,7 +825,7 @@ TEST(LyraCommandLine, TextTheFrontEndRefusesIsRefusedUnlessToleranceIsAsked) {
     const std::string place =
         std::format("{}:6:{}: ", source, meaningless.column);
     const std::size_t refusal = refused.stderr_text.find(
-        place + "error: the warning above lets this expression through");
+        place + "error: this expression has no behaviour to simulate");
     ASSERT_NE(refusal, std::string::npos)
         << source << ": " << refused.stderr_text;
     EXPECT_NE(
@@ -876,11 +880,14 @@ TEST(LyraRun, ATextTheFrontEndAcceptsRunsAsItAnalyzedIt) {
   const auto fatal = RunLyraFrom(
       lyra, *tmp_or, "run --backend llvm --top Test message_first.sv");
   EXPECT_NE(fatal.exit_code, 0) << fatal.stderr_text;
-  EXPECT_NE(fatal.stderr_text.find("7 (Test at time 3)"), std::string::npos)
+  EXPECT_NE(
+      fatal.stderr_text.find("fatal:           7\nnote: in 'Test' at time 3"),
+      std::string::npos)
       << fatal.stderr_text;
   EXPECT_EQ(fatal.stderr_text.find("Randomize"), std::string::npos)
       << "the text in the level's place was printed: " << fatal.stderr_text;
-  EXPECT_NE(fatal.stderr_text.find("$finish at time 3"), std::string::npos)
+  EXPECT_NE(
+      fatal.stderr_text.find("note: '$finish' at time 3"), std::string::npos)
       << "the run did not end at level 1: " << fatal.stderr_text;
 
   WriteFile(
@@ -901,7 +908,8 @@ TEST(LyraRun, ATextTheFrontEndAcceptsRunsAsItAnalyzedIt) {
   const auto finished = RunLyraFrom(
       lyra, *tmp_or, "run --backend llvm --top Test level_out_of_range.sv");
   ASSERT_EQ(finished.exit_code, 0) << finished.stderr_text;
-  EXPECT_NE(finished.stderr_text.find("$finish at time 4"), std::string::npos)
+  EXPECT_NE(
+      finished.stderr_text.find("note: '$finish' at time 4"), std::string::npos)
       << "the run did not end at level 1: " << finished.stderr_text;
 
   WriteFile(
@@ -1156,8 +1164,7 @@ TEST(LyraRun, AForceOnPartOfAVariableHoldsOnlyThatPart) {
   EXPECT_NE(stream.exit_code, 0) << stream.stdout_text;
   EXPECT_NE(
       stream.stderr_text.find(
-          "error: the warning above lets this statement through, but it has "
-          "no behaviour to simulate"),
+          "error: this statement has no behaviour to simulate"),
       std::string::npos)
       << stream.stderr_text;
 }
@@ -1298,7 +1305,7 @@ TEST(LyraManifest, ReportsNoInputAndWhyThereIsNone) {
   EXPECT_NE(searched.stderr_text.find("no input files"), std::string::npos)
       << searched.stderr_text;
   EXPECT_NE(
-      searched.stderr_text.find("searched for lyra.toml"), std::string::npos)
+      searched.stderr_text.find("searched for 'lyra.toml'"), std::string::npos)
       << searched.stderr_text;
 
   std::ofstream(*tmp_or / "lyra.toml") << "[library]\nname = \"hollow\"\n";
@@ -1353,10 +1360,10 @@ TEST(LyraRun, ADesignErrorEndsTheRunThroughItsFinalProcedures) {
       run.stderr_text.find("a dynamic array's new[] is negative"),
       std::string::npos)
       << run.stderr_text;
-  // The error has no call site to name, so it names the procedure it was
-  // raised under: the `initial` that called the task.
+  // The error has no call site to name, so it is placed at the procedure it
+  // was raised under: the `initial` that called the task.
   EXPECT_NE(
-      run.stderr_text.find("in the procedure at test.sv:7:3"),
+      run.stderr_text.find("test.sv:7:3: error: the size given"),
       std::string::npos)
       << run.stderr_text;
   EXPECT_NE(run.stdout_text.find("reached the end"), std::string::npos)
@@ -1512,11 +1519,11 @@ TEST(LyraRun, ARunWhoseTimeNeverAdvancesNamesTheProceduresKeepingItThere) {
   EXPECT_NE(run.stderr_text.find("time never advances"), std::string::npos)
       << run.stderr_text;
   EXPECT_NE(
-      run.stderr_text.find("test.sv:3:3: this procedure in Test ran"),
+      run.stderr_text.find("test.sv:3:3: note: this procedure in 'Test' ran"),
       std::string::npos)
       << run.stderr_text;
   EXPECT_NE(
-      run.stderr_text.find("test.sv:4:3: this procedure in Test ran"),
+      run.stderr_text.find("test.sv:4:3: note: this procedure in 'Test' ran"),
       std::string::npos)
       << run.stderr_text;
   EXPECT_EQ(run.stderr_text.find("test.sv:5:3"), std::string::npos)
@@ -1543,10 +1550,10 @@ TEST(LyraRun, ARunWhoseTimeNeverAdvancesNamesTheProceduresKeepingItThere) {
   const auto stuck = RunChildProcess(lyra, clocked_args, 120s);
   ASSERT_EQ(stuck.termination, TerminationKind::kExitedNonZero)
       << stuck.stdout_text << stuck.stderr_text;
-  const auto generator =
-      stuck.stderr_text.find("clocked.sv:8:3: this procedure in Test ran");
-  const auto registers =
-      stuck.stderr_text.find("clocked.sv:3:3: this procedure in Test.held[");
+  const auto generator = stuck.stderr_text.find(
+      "clocked.sv:8:3: note: this procedure in 'Test' ran");
+  const auto registers = stuck.stderr_text.find(
+      "clocked.sv:3:3: note: this procedure in 'Test.held[");
   ASSERT_NE(generator, std::string::npos) << stuck.stderr_text;
   ASSERT_NE(registers, std::string::npos) << stuck.stderr_text;
   EXPECT_LT(generator, registers) << stuck.stderr_text;
@@ -1588,7 +1595,7 @@ TEST(LyraRun, ARunStoppedFromOutsideSaysWhichProcedureWasRunning) {
   EXPECT_NE(run.stderr_text.find("interrupted at time 7"), std::string::npos)
       << run.stderr_text;
   EXPECT_NE(
-      run.stderr_text.find("test.sv:3:3: this procedure was running"),
+      run.stderr_text.find("test.sv:3:3: note: this procedure was running"),
       std::string::npos)
       << run.stderr_text;
 }
@@ -1904,25 +1911,25 @@ TEST(LyraCommandLine, RefusesAnOptionTheCommandDoesNotActOn) {
   };
   const std::vector<Refusal> refusals = {
       {.args = {"dump", "ast", "--release", src.string()},
-       .expected = "--release means nothing to `dump ast`"},
+       .expected = "'--release' means nothing to 'dump ast'"},
       {.args = {"check", "--backend", "llvm", src.string()},
-       .expected = "--backend means nothing to `check`"},
+       .expected = "'--backend' means nothing to 'check'"},
       {.args =
            {"emit", "cpp", "--backend", "llvm", "-o",
             (*tmp_or / "out").string(), src.string()},
-       .expected = "--backend means nothing to `emit cpp`"},
+       .expected = "'--backend' means nothing to 'emit cpp'"},
       {.args =
            {"build", "-o", (*tmp_or / "p").string(), src.string(), "--",
             "+trace"},
-       .expected = "arguments after `--` means nothing to `build`"},
+       .expected = "arguments after '--' mean nothing to 'build'"},
       {.args = {"cache", "clear", "--rebuild"},
-       .expected = "--rebuild means nothing to `cache clear`"}};
+       .expected = "'--rebuild' means nothing to 'cache clear'"}};
   for (const Refusal& refusal : refusals) {
     const auto refused = RunChildProcess(lyra, refusal.args, 60s);
     EXPECT_NE(refused.exit_code, 0) << refusal.expected << ": accepted";
     EXPECT_NE(refused.stderr_text.find(refusal.expected), std::string::npos)
         << refused.stderr_text;
-    EXPECT_NE(refused.stderr_text.find("it is taken by"), std::string::npos)
+    EXPECT_NE(refused.stderr_text.find("taken by"), std::string::npos)
         << refused.stderr_text;
   }
 
@@ -1934,6 +1941,59 @@ TEST(LyraCommandLine, RefusesAnOptionTheCommandDoesNotActOn) {
       src.string()};
   const auto built = RunChildProcess(lyra, acted_on, 120s);
   EXPECT_EQ(built.exit_code, 0) << built.stderr_text;
+
+  // Each option refused is an error of its own.
+  const auto both = RunChildProcess(
+      lyra,
+      std::vector<std::string>{"cache", "clear", "--rebuild", "--release"},
+      60s);
+  EXPECT_NE(both.exit_code, 0);
+  EXPECT_NE(
+      both.stderr_text.find(
+          "error: '--release' means nothing to 'cache clear'"),
+      std::string::npos)
+      << both.stderr_text;
+  EXPECT_NE(
+      both.stderr_text.find(
+          "error: '--rebuild' means nothing to 'cache clear'"),
+      std::string::npos)
+      << both.stderr_text;
+}
+
+// A command line that names no command Lyra has is refused by what it named,
+// and the commands it could have named follow as a note rather than inside the
+// error.
+TEST(LyraCommandLine, RefusesAWordThatIsNoCommand) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  const auto unknown =
+      RunChildProcess(lyra, std::vector<std::string>{"frobnicate"}, 60s);
+  EXPECT_NE(unknown.exit_code, 0);
+  EXPECT_NE(
+      unknown.stderr_text.find("error: 'frobnicate' is not a command\n"),
+      std::string::npos)
+      << unknown.stderr_text;
+  EXPECT_NE(
+      unknown.stderr_text.find(
+          "note: start the command line with one of 'check', "),
+      std::string::npos)
+      << unknown.stderr_text;
+
+  const auto none = RunChildProcess(lyra, std::vector<std::string>{}, 60s);
+  EXPECT_NE(none.exit_code, 0);
+  EXPECT_NE(
+      none.stderr_text.find("error: no command is given\n"), std::string::npos)
+      << none.stderr_text;
+
+  const auto half =
+      RunChildProcess(lyra, std::vector<std::string>{"dump"}, 60s);
+  EXPECT_NE(half.exit_code, 0);
+  EXPECT_NE(
+      half.stderr_text.find(
+          "error: 'dump' requires 'ast', 'hir', 'mir', 'lir' or 'llvm'"),
+      std::string::npos)
+      << half.stderr_text;
 }
 
 // How many entries a directory holds, none where there is no directory.
@@ -2058,7 +2118,7 @@ TEST(LyraCommandLine, LeavesBehindOnlyWhatItWasAskedFor) {
   WriteTrivialSource(work / "design.sv");
 
   auto sh_or = lyra::driver::FindOnPath("sh");
-  ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
+  ASSERT_TRUE(sh_or.has_value()) << sh_or.error().Text();
   const auto run = [&](std::string_view args) {
     const std::vector<std::string> argv = {
         "-c",
@@ -2250,7 +2310,7 @@ TEST(LyraBuild, ABuildThatIsEndedLeavesNothingItStarted) {
          "in, which is what the next build is then seen to remove";
 
   auto sh_or = lyra::driver::FindOnPath("sh");
-  ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
+  ASSERT_TRUE(sh_or.has_value()) << sh_or.error().Text();
   const std::vector<std::string> next = {
       "-c", std::format(
                 "TMPDIR='{}' '{}' build --backend llvm --cache-dir '{}' --top "
@@ -2736,7 +2796,8 @@ TEST(LyraBuild, ACommandThatIsSoonOverShowsNoStatus) {
   EXPECT_NE(refused.exit_code, 0);
   EXPECT_NE(
       refused.stderr_text.find(
-          "--progress 'loud' is not one of auto, plain, none"),
+          "'loud' given to '--progress' is not one of 'auto', 'plain' or "
+          "'none'"),
       std::string::npos)
       << refused.stderr_text;
 }
@@ -2757,7 +2818,7 @@ TEST(LyraBuild, ALongBuildSaysWhichPhaseItIsIn) {
   WriteCompilerThatNeverFinishes(compiler, root / "started");
 
   auto sh_or = lyra::driver::FindOnPath("sh");
-  ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
+  ASSERT_TRUE(sh_or.has_value()) << sh_or.error().Text();
   const std::string script = std::format(
       "TMPDIR='{0}' '{1}' build --rebuild --backend llvm --cxx '{2}' "
       "--cache-dir '{3}' --top Test -o '{4}' '{5}' 2> '{6}' &\n"

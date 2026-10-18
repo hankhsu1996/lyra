@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <expected>
-#include <format>
 #include <optional>
 #include <string>
 #include <utility>
@@ -23,6 +22,7 @@
 #include <slang/ast/types/AllTypes.h>
 #include <slang/ast/types/Type.h>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
@@ -230,6 +230,12 @@ class ReadsCollector : public slang::ast::ASTVisitor<
   }
 
  private:
+  // Why no report can be made reaches the user as the reason a refusal gives,
+  // so it is held to the form of a message.
+  void LeaveUnreportable(base::DiagFormat<> why) {
+    reads_.unreportable = base::DiagMessage(why).TakeText();
+  }
+
   // Adds `expr`, lowered where the reads are stated, to the frame's
   // expressions; absent, with the failure kept, where it does not lower.
   auto AddLowered(const slang::ast::Expression& expr)
@@ -327,10 +333,10 @@ class ReadsCollector : public slang::ast::ASTVisitor<
   void ReachThroughInterface(const slang::ast::MemberAccessExpression& access) {
     const slang::ast::Expression& handle = access.value();
     if (!CanEvaluate(standpoint_, handle)) {
-      reads_.unreportable =
+      LeaveUnreportable(
           "a variable of the interface instance a virtual interface holds, "
           "reached through what the function's own variables hold, is not yet "
-          "watched";
+          "watched");
       return;
     }
     const std::optional<hir::ExprId> lowered = AddLowered(handle);
@@ -378,9 +384,9 @@ class ReadsCollector : public slang::ast::ASTVisitor<
         AddEveryObject();
       }
       if (IsVirtualInterface(*actual.type)) {
-        reads_.unreportable =
+        LeaveUnreportable(
             "a virtual interface a call is handed from what the function's own "
-            "variables hold is not yet followed";
+            "variables hold is not yet followed");
       }
       return hir::ReportedArgument::kDefaulted;
     };
@@ -404,9 +410,9 @@ class ReadsCollector : public slang::ast::ASTVisitor<
     for (std::size_t i = 0; i < actuals.size(); ++i) {
       if (formals[i]->direction == slang::ast::ArgumentDirection::Ref &&
           !CanEvaluate(standpoint_, *actuals[i])) {
-        reads_.unreportable =
-            "a `ref` argument naming what the function's own variables hold "
-            "is not yet followed";
+        LeaveUnreportable(
+            "a 'ref' argument naming what the function's own variables hold "
+            "is not yet followed");
       }
       reporting.arguments.push_back(pass(*actuals[i]));
     }
@@ -495,10 +501,9 @@ auto ReadsOfProcedure(
   if (reads->unreportable.has_value()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedStatementForm,
-        std::format(
-            "an always_comb or always_latch reading this is not yet "
-            "supported, because {}",
-            *reads->unreportable));
+        "an 'always_comb' or 'always_latch' reading this is not yet "
+        "supported, because {}",
+        *reads->unreportable);
   }
   auto added = AddAccesses(
       proc, proc.Owner().Sensitivity().AnalyzeProcedureText(procedure), frame,

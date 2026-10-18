@@ -38,13 +38,15 @@ auto TranslateNetType(
     case slang::ast::NetType::TriReg:
       return hir::NetType::kTrireg;
     case slang::ast::NetType::Interconnect:
+      // LRM 6.6.8.
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedTypeKind,
-          "an interconnect net (LRM 6.6.8) is not yet supported");
+          "an 'interconnect' net is not yet supported");
     case slang::ast::NetType::UserDefined:
+      // LRM 6.6.7.
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedTypeKind,
-          "a user-defined nettype (LRM 6.6.7) is not yet supported");
+          "a user-defined 'nettype' is not yet supported");
     case slang::ast::NetType::Unknown:
       break;
   }

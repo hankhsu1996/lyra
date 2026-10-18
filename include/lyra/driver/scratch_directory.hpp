@@ -3,8 +3,9 @@
 #include <dirent.h>
 #include <expected>
 #include <filesystem>
-#include <string>
 #include <utility>
+
+#include "lyra/base/diag_message.hpp"
 
 namespace lyra::driver {
 
@@ -18,7 +19,7 @@ namespace lyra::driver {
 // removes every other that nobody holds.
 class ScratchDirectory {
  public:
-  static auto Create() -> std::expected<ScratchDirectory, std::string>;
+  static auto Create() -> std::expected<ScratchDirectory, base::DiagMessage>;
 
   ScratchDirectory(ScratchDirectory&& other) noexcept
       : path_(std::exchange(other.path_, {})),

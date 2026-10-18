@@ -56,7 +56,7 @@ auto MaterializeConstantExpr(
             if (arr == nullptr && st == nullptr) {
               return diag::Fail(
                   span, diag::DiagCode::kUnsupportedExpressionForm,
-                  "constant of aggregate type is not yet supported");
+                  "a constant of an aggregate type is not yet supported");
             }
             std::vector<hir::ExprId> element_ids;
             element_ids.reserve(components.size());
@@ -110,7 +110,7 @@ auto MakeConstantValue(const slang::ConstantValue& cv, diag::SourceSpan span)
   }
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedExpressionForm,
-      "constant of this type is not yet supported");
+      "a constant of this type is not yet supported");
 }
 
 auto MakeConstantValueExpr(

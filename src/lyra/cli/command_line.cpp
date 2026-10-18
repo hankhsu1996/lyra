@@ -26,6 +26,8 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/cli/manifest.hpp"
+#include "lyra/diag/diag_code.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/driver/action_cache.hpp"
 #include "lyra/driver/pch.hpp"
 #include "lyra/driver/project_layout.hpp"
@@ -247,7 +249,7 @@ auto Spelling(LyraOption option) -> std::string_view {
     case LyraOption::kProgress:
       return "--progress";
     case LyraOption::kSimulationArgs:
-      return "arguments after `--`";
+      return "--";
   }
   throw InternalError("an option has no spelling");
 }
@@ -395,77 +397,83 @@ auto RequiresOut(CommandKind cmd) -> bool {
   return FindCommand(cmd).requires_out;
 }
 
-auto CommandList() -> std::string {
-  std::string commands;
+// Every command, those sharing a verb as one: `dump hir|mir|lir|llvm`.
+auto CommandNames() -> std::vector<std::string> {
+  std::vector<std::string> names;
   std::string_view grouped_verb;
   for (const auto& spec : kCommands) {
     if (spec.verb == grouped_verb) {
-      commands += std::format("|{}", spec.object);
+      names.back() += std::format("|{}", spec.object);
       continue;
     }
-    if (!commands.empty()) {
-      commands += ", ";
-    }
-    commands += CommandSpelling(spec.kind);
+    names.push_back(CommandSpelling(spec.kind));
     grouped_verb = spec.verb;
+  }
+  return names;
+}
+
+auto CommandList() -> std::string {
+  std::string commands;
+  for (const std::string& name : CommandNames()) {
+    commands += std::format("{}{}", commands.empty() ? "" : ", ", name);
   }
   return commands;
 }
 
-auto Usage() -> std::string {
-  return std::format(
-      "usage: lyra <command> [options] [files...] [-- <program args>]\n"
-      "commands: {}\n",
-      CommandList());
-}
-
-// The objects a verb accepts, spelled as prose for the message a caller reads
-// when they named the verb but not the object.
-auto ObjectChoices(std::string_view verb) -> std::string {
-  std::vector<std::string> quoted;
-  for (const auto& spec : kCommands) {
-    if (spec.verb == verb && !spec.object.empty()) {
-      quoted.push_back(std::format("'{}'", spec.object));
-    }
-  }
+// Words as prose naming each in quotes, the last joined by `conjunction`:
+// 'a', 'b' or 'c'.
+auto QuotedList(
+    std::span<const std::string> words, std::string_view conjunction)
+    -> std::string {
   std::string out;
-  for (std::size_t i = 0; i < quoted.size(); ++i) {
+  for (std::size_t i = 0; i < words.size(); ++i) {
     if (i > 0) {
-      out += quoted.size() > 2 ? ", " : " ";
-      if (i + 1 == quoted.size()) {
-        out += "or ";
-      }
+      out += i + 1 == words.size() ? std::format(" {} ", conjunction) : ", ";
     }
-    out += quoted[i];
+    out += std::format("'{}'", words[i]);
   }
   return out;
+}
+
+// What a caller reads when the command line names no command it has.
+auto NoSuchCommand(std::string_view verb) -> diag::Diagnostic {
+  auto refused = verb.empty() ? diag::Make(
+                                    diag::DiagCode::kHostInvalidCliArgs,
+                                    "no command is given")
+                              : diag::Make(
+                                    diag::DiagCode::kHostInvalidCliArgs,
+                                    "'{}' is not a command", verb);
+  return std::move(refused).WithNote(
+      "start the command line with one of {}",
+      QuotedList(CommandNames(), "or"));
 }
 
 // Reads the leading words that name the command. They are positional and
 // consumed here rather than registered as options, because a command chooses
 // which options even apply.
 auto ParseCommand(std::span<char* const> words)
-    -> std::expected<std::pair<CommandKind, std::size_t>, std::string> {
+    -> diag::Result<std::pair<CommandKind, std::size_t>> {
   const auto word = [&](std::size_t i) -> std::string_view {
     return i < words.size() ? std::string_view(words[i]) : std::string_view{};
   };
   const auto verb = word(0);
   const auto object = word(1);
 
-  bool verb_exists = false;
+  std::vector<std::string> objects;
   for (const auto& spec : kCommands) {
     if (spec.verb != verb) {
       continue;
     }
-    verb_exists = true;
     if (spec.object.empty()) return std::pair{spec.kind, 1UZ};
     if (spec.object == object) return std::pair{spec.kind, 2UZ};
+    objects.emplace_back(spec.object);
   }
-  if (verb_exists) {
-    return std::unexpected(
-        std::format("{} requires {}", verb, ObjectChoices(verb)));
+  if (objects.empty()) {
+    return std::unexpected(NoSuchCommand(verb));
   }
-  return std::unexpected(Usage());
+  return diag::Fail(
+      diag::DiagCode::kHostInvalidCliArgs, "'{}' requires {}", verb,
+      QuotedList(objects, "or"));
 }
 
 }  // namespace
@@ -480,7 +488,7 @@ void RegisterCliOptions(slang::CommandLine& cmd, CliOptions& opts) {
       "reformat the emitted C++ with clang-format (skipped if absent)");
   cmd.add(
       "--assertions", opts.assertions,
-      "hold the design to its assertions, or elide them during lowering",
+      "hold the design to its assertions, or leave them out of the build",
       "check|skip");
   cmd.add(
       "--config", opts.config,
@@ -507,7 +515,7 @@ void RegisterCliOptions(slang::CommandLine& cmd, CliOptions& opts) {
       "<program>");
   cmd.add(
       "-j,--jobs", opts.jobs,
-      "how many of the design's units to lower and compile at once; "
+      "how many of the design's units to build at once; "
       "0 asks for one per processor",
       "<count>");
   cmd.add(
@@ -579,21 +587,17 @@ void PrintHelp(slang::driver::Driver& driver) {
                     CommandList())));
 }
 
-auto ParseCommandWords(slang::driver::Driver& driver, std::vector<char*>& words)
-    -> std::expected<CommandKind, std::string> {
+auto TakeCommandWords(std::vector<char*>& words) -> diag::Result<CommandKind> {
   auto command = ParseCommand(
       std::span<char* const>(words).subspan(words.empty() ? 0 : 1));
   if (!command) {
-    return std::unexpected(command.error());
+    return std::unexpected(std::move(command.error()));
   }
   // What the parser sees is the program name followed by options and sources.
   words.erase(
       std::next(words.begin()),
       std::next(
           words.begin(), 1 + static_cast<std::ptrdiff_t>(command->second)));
-  if (!driver.parseCommandLine(static_cast<int>(words.size()), words.data())) {
-    return std::unexpected("");
-  }
   return command->first;
 }
 
@@ -603,30 +607,34 @@ void PredefineToolIdentity(slang::driver::Driver& driver) {
 
 auto RefuseOptionsNotTaken(
     const CliOptions& opts, CommandKind cmd, bool has_simulation_args)
-    -> std::expected<void, std::string> {
-  std::string refused;
+    -> std::vector<diag::Diagnostic> {
+  std::vector<diag::Diagnostic> refused;
   for (std::size_t i = 0; i < kLyraOptionCount; ++i) {
     const auto option = static_cast<LyraOption>(i);
     if (!IsGiven(option, opts, has_simulation_args) ||
         FindCommand(cmd).takes.Contains(option)) {
       continue;
     }
-    std::string takers;
+    std::vector<std::string> takers;
     for (const CommandSpec& spec : kCommands) {
       if (spec.takes.Contains(option)) {
-        takers += std::format(
-            "{}`{}`", takers.empty() ? "" : ", ", CommandSpelling(spec.kind));
+        takers.push_back(CommandSpelling(spec.kind));
       }
     }
-    refused += std::format(
-        "{}{} means nothing to `{}`; it is taken by {}",
-        refused.empty() ? "" : "\n", Spelling(option), CommandSpelling(cmd),
-        takers);
+    const std::string taken_by = QuotedList(takers, "and");
+    refused.push_back(
+        option == LyraOption::kSimulationArgs
+            ? diag::Make(
+                  diag::DiagCode::kHostInvalidCliArgs,
+                  "arguments after '{}' mean nothing to '{}'; they are taken "
+                  "by {}",
+                  Spelling(option), CommandSpelling(cmd), taken_by)
+            : diag::Make(
+                  diag::DiagCode::kHostInvalidCliArgs,
+                  "'{}' means nothing to '{}'; it is taken by {}",
+                  Spelling(option), CommandSpelling(cmd), taken_by));
   }
-  if (refused.empty()) {
-    return {};
-  }
-  return std::unexpected(std::move(refused));
+  return refused;
 }
 
 auto UseColor(const CliOptions& opts) -> bool {
@@ -676,12 +684,13 @@ auto DisplayOf(CommandKind cmd, Progress asked) -> status::Display {
 }  // namespace
 
 auto StatusLookOf(CommandKind cmd, const CliOptions& opts, bool use_color)
-    -> std::expected<status::Look, std::string> {
+    -> diag::Result<status::Look> {
   const auto asked = ParseProgress(opts.progress.value_or("auto"));
   if (!asked) {
-    return std::unexpected(
-        std::format(
-            "--progress '{}' is not one of auto, plain, none", *opts.progress));
+    return diag::Fail(
+        diag::DiagCode::kHostInvalidCliArgs,
+        "'{}' given to '--progress' is not one of 'auto', 'plain' or 'none'",
+        *opts.progress);
   }
   return status::Look{
       .display = DisplayOf(cmd, *asked),
@@ -699,12 +708,14 @@ auto StatusLookOf(CommandKind cmd, const CliOptions& opts, bool use_color)
 // Zero is how the caller says "this machine is mine", which is the claim a
 // person at a terminal is making and a wrapping tool is not.
 auto ResolveCompileWidth(std::optional<std::int32_t> jobs)
-    -> std::expected<std::size_t, std::string> {
+    -> diag::Result<std::size_t> {
   if (!jobs.has_value()) {
     return 1;
   }
   if (*jobs < 0) {
-    return std::unexpected(std::format("-j '{}' is not a count", *jobs));
+    return diag::Fail(
+        diag::DiagCode::kHostInvalidCliArgs,
+        "'{}' given to '--jobs' is not a count", *jobs);
   }
   if (*jobs > 0) {
     return static_cast<std::size_t>(*jobs);
@@ -714,11 +725,11 @@ auto ResolveCompileWidth(std::optional<std::int32_t> jobs)
 }
 
 auto ResolveDesignDeclaration(
-    const CliOptions& opts, const slang::driver::Driver& driver)
+    const CliOptions& opts, slang::driver::Driver& driver)
     -> diag::Result<DesignDeclaration> {
-  const auto load =
-      [](const std::filesystem::path& path) -> diag::Result<DesignDeclaration> {
-    auto loaded = LoadDeclarations(path);
+  const auto load = [&driver](const std::filesystem::path& path)
+      -> diag::Result<DesignDeclaration> {
+    auto loaded = LoadDeclarations(path, driver.sourceManager);
     if (!loaded) {
       return std::unexpected(std::move(loaded.error()));
     }
@@ -756,9 +767,8 @@ auto AddIncludeDirectories(
             driver.sourceManager.addUserDirectories(dir)) {
       return diag::Fail(
           diag::DiagCode::kHostInvalidManifest,
-          std::format(
-              "include directory '{}' named in {} cannot be used ({})", dir,
-              manifest.path.string(), ec.message()));
+          "include directory '{}' named in '{}' cannot be used ({})", dir,
+          manifest.path.string(), ec.message());
     }
   }
   return {};
@@ -833,9 +843,8 @@ auto AddLibrary(
       if (!std::filesystem::is_directory(dir, ec)) {
         return diag::Fail(
             diag::DiagCode::kHostInvalidManifest,
-            std::format(
-                "include directory '{}' named in {} is not a directory", dir,
-                manifest.path.string()));
+            "include directory '{}' named in '{}' is not a directory", dir,
+            manifest.path.string());
       }
     }
   }
@@ -918,8 +927,7 @@ auto ApplyDeclarations(
 
 auto ResolveCliOptions(
     const CliOptions& opts, const Declarations* declared, CommandKind cmd,
-    std::span<const std::string> simulation_args)
-    -> std::expected<ParsedArgs, std::string> {
+    std::span<const std::string> simulation_args) -> diag::Result<ParsedArgs> {
   ParsedArgs out;
   out.simulation_args.assign(simulation_args.begin(), simulation_args.end());
   out.formatting = opts.format.value_or(false) ? driver::SourceFormatting::kOn
@@ -971,9 +979,10 @@ auto ResolveCliOptions(
   if (opts.assertions) {
     auto policy = ParseAssertionPolicy(*opts.assertions);
     if (!policy) {
-      return std::unexpected(
-          std::format(
-              "--assertions '{}' is not one of check, skip", *opts.assertions));
+      return diag::Fail(
+          diag::DiagCode::kHostInvalidCliArgs,
+          "'{}' given to '--assertions' is neither 'check' nor 'skip'",
+          *opts.assertions);
     }
     out.assertions = *policy;
   }
@@ -981,15 +990,18 @@ auto ResolveCliOptions(
   if (opts.backend) {
     auto backend = ParseBackend(*opts.backend);
     if (!backend) {
-      return std::unexpected(
-          std::format("--backend '{}' is not one of cpp, llvm", *opts.backend));
+      return diag::Fail(
+          diag::DiagCode::kHostInvalidCliArgs,
+          "'{}' given to '--backend' is neither 'cpp' nor 'llvm'",
+          *opts.backend);
     }
     out.backend = *backend;
   }
 
   if (RequiresOut(cmd) && !out.out) {
-    return std::unexpected(
-        std::format("{} requires --out\n{}", CommandSpelling(cmd), Usage()));
+    return diag::Fail(
+        diag::DiagCode::kHostInvalidCliArgs, "'{}' requires '--out'",
+        CommandSpelling(cmd));
   }
   return out;
 }

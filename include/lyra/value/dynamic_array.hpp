@@ -204,7 +204,7 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>, T> {
   [[nodiscard]] static auto CountOf(std::int64_t count) -> std::size_t {
     if (count < 0) {
       throw SimulationError(
-          "the size given to a dynamic array's new[] is negative (LRM 7.5.1)");
+          "the size given to a dynamic array's new[] is negative");
     }
     return static_cast<std::size_t>(count);
   }

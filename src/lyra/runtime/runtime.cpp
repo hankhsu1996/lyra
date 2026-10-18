@@ -186,14 +186,14 @@ void Runtime::RequestToolStop() {
   state_ = ToolStopped{};
 }
 
-void Runtime::ReportDesignError(std::string_view message) {
+void Runtime::ReportDesignError(const base::DiagMessage& message) {
   diagnostic_.Report(Severity::kFatal, message);
   RequestSimulationEnd();
 }
 
 void Runtime::ReportToolFailure(std::string_view message) {
   tool_failed_ = true;
-  diagnostic_.Note(std::format("lyra: {}", message));
+  diagnostic_.Line(std::format("error: {}", message));
   RequestToolStop();
 }
 
@@ -211,29 +211,30 @@ void Runtime::ReportSimulationControl(
     line += origin;
     line += ": ";
   }
-  line += std::format("{} at time {}", task, now_.load());
+  line += std::format("note: '{}' at time {}", task, now_.load());
   if (selected == 2) {
     line += std::format(", {:.3f}s of processor time", ProcessorSeconds());
   }
-  diagnostic_.Note(line);
+  diagnostic_.Line(line);
 }
 
 auto Runtime::ReportContext() const -> DiagnosticDispatcher::Context {
   const RuntimeProcess* const process = current_process_;
   const Scope* scope = process == nullptr ? nullptr : process->Context().scope;
   if (scope == nullptr) {
-    return {
-        .scope_and_time = std::format("time {}", now_.load()), .procedure = {}};
+    return {.where = std::format("at time {}", now_.load()), .procedure = {}};
   }
   return {
-      .scope_and_time = std::format(
-          "{} at time {}", std::string_view{scope->HierarchicalPath().View()},
-          now_.load()),
+      .where = std::format(
+          "in '{}' at time {}",
+          std::string_view{scope->HierarchicalPath().View()}, now_.load()),
       .procedure = process->Context().written_at};
 }
 
 void Runtime::ReportUnsettledSlot(std::span<const NotedProcedure> ran) {
-  ReportDesignError("the design keeps scheduling work and time never advances");
+  ReportDesignError(
+      base::DiagMessage(
+          "the design keeps scheduling work and time never advances"));
 
   // Each procedure once, in the order they first ran, with how many times it
   // ran.
@@ -263,17 +264,17 @@ void Runtime::ReportUnsettledSlot(std::span<const NotedProcedure> ran) {
         one.procedure.scope == nullptr
             ? std::string{}
             : std::format(
-                  " in {}",
+                  " in '{}'",
                   std::string_view{
                       one.procedure.scope->HierarchicalPath().View()});
-    diagnostic_.Note(
+    diagnostic_.Line(
         std::format(
-            "note: {}{}this procedure{} ran {} in the last {} passes",
+            "{}{}note: this procedure{} ran {} in the last {} passes",
             written_at, written_at.empty() ? "" : ": ", where, Times(one.runs),
             kNotedRegionPasses));
   }
   if (named < counted.size()) {
-    diagnostic_.Note(
+    diagnostic_.Line(
         std::format("note: and {} more procedures", counted.size() - named));
   }
 }
@@ -473,9 +474,11 @@ void Runtime::ExecuteTimeSlot() {
   }
   RunRegion(Region::kPostponed);
   if (std::holds_alternative<Running>(state_) && !current_slot_.Empty()) {
+    // LRM 4.4.2.9.
     ReportDesignError(
-        "the postponed region scheduled work back into the time slot that "
-        "ends with it (LRM 4.4.2.9)");
+        base::DiagMessage(
+            "the postponed region scheduled work back into the time slot that "
+            "ends with it"));
   }
 }
 

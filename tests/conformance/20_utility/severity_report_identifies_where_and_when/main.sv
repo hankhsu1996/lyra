@@ -1,4 +1,4 @@
-// @reports: Top.probe at time 37
+// @reports: in 'Top.probe' at time 37
 //
 // Every severity system task prints a tool-specific message, and that message
 // shall include the file name and line number of the call, the hierarchical

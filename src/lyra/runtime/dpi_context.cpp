@@ -65,9 +65,11 @@ void CheckImportTaskAcknowledged(
   if (!IsDisabled(effects) || returned == 1) {
     return;
   }
+  // LRM 35.9 item b.
   effects.ReportDesignFailure(
-      "an imported task returned while its execution thread was in the "
-      "disabled state without returning 1 (LRM 35.9 item b)");
+      base::DiagMessage(
+          "an imported task returned while its execution thread was in the "
+          "disabled state without returning 1"));
 }
 
 void CheckImportFunctionAcknowledged(RuntimeEffects& effects) {
@@ -78,18 +80,22 @@ void CheckImportFunctionAcknowledged(RuntimeEffects& effects) {
   if (running != nullptr && running->import_calls.InnermostAcknowledgedStop()) {
     return;
   }
+  // LRM 35.9 item c.
   effects.ReportDesignFailure(
-      "an imported function returned while its execution thread was in the "
-      "disabled state without calling svAckDisabledState (LRM 35.9 item c)");
+      base::DiagMessage(
+          "an imported function returned while its execution thread was in "
+          "the disabled state without calling 'svAckDisabledState'"));
 }
 
 void CheckExportReachable(RuntimeEffects& effects) {
   if (!IsDisabled(effects)) {
     return;
   }
+  // LRM 35.9 item d.
   effects.ReportDesignFailure(
-      "foreign code called an exported subroutine after its execution thread "
-      "entered the disabled state (LRM 35.9 item d)");
+      base::DiagMessage(
+          "foreign code called an exported subroutine after its execution "
+          "thread entered the disabled state"));
 }
 
 }  // namespace lyra::runtime

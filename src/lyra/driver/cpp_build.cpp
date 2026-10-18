@@ -1,5 +1,6 @@
 #include "lyra/driver/cpp_build.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdlib>
@@ -38,10 +39,6 @@
 namespace lyra::driver {
 
 namespace {
-
-auto IoError(std::string message) {
-  return diag::Fail(diag::DiagCode::kHostIoError, std::move(message));
-}
 
 // Replace every `@KEY@` occurrence in `tpl` with its mapped substitution.
 // Tokens left unbound are passed through unchanged (build.sh shell syntax
@@ -336,11 +333,11 @@ auto FormatSources(
     return diag::Fail(diag::DiagCode::kHostIoError, std::move(run.error()));
   }
   if (run->exit_code != 0) {
-    return diag::Fail(
-        diag::DiagCode::kHostIoError,
-        std::format(
-            "clang-format failed on the emitted sources ({})",
-            run->stderr_text));
+    return std::unexpected(
+        diag::Make(
+            diag::DiagCode::kHostIoError,
+            "'clang-format' failed on the emitted sources")
+            .WithNote("{}", run->stderr_text));
   }
   return {};
 }
@@ -421,7 +418,7 @@ auto CompileOne(
   if (prelude.has_value()) {
     auto fast = run(&*prelude);
     if (!fast) {
-      return IoError(std::move(fast.error()));
+      return diag::Fail(diag::DiagCode::kHostIoError, std::move(fast.error()));
     }
     if (fast->exit_code == 0) {
       return {};
@@ -429,14 +426,14 @@ auto CompileOne(
   }
   auto plain = run(nullptr);
   if (!plain) {
-    return IoError(std::move(plain.error()));
+    return diag::Fail(diag::DiagCode::kHostIoError, std::move(plain.error()));
   }
   if (plain->exit_code != 0) {
-    return diag::Fail(
-        diag::DiagCode::kHostBuildFailed,
-        std::format(
-            "compiling '{}' failed:\n{}", source.filename().string(),
-            plain->stderr_text));
+    return std::unexpected(
+        diag::Make(
+            diag::DiagCode::kHostBuildFailed, "compiling '{}' failed",
+            source.filename().string())
+            .WithNote("{}", plain->stderr_text));
   }
   if (prelude.has_value()) {
     actions.Evict(*prelude);
@@ -467,8 +464,9 @@ auto CompileTranslationUnits(
   compiled.reserve(translation_units.size());
   // A build whose emitted text does not compile is a defect in Lyra, and
   // seeing every such file at once is what saves the run it would otherwise
-  // take to find the next.
-  std::string failures;
+  // take to find the next, so the first failure carries every later one as
+  // notes of its own.
+  std::optional<diag::Diagnostic> failures;
   base::ProduceInOrder(
       translation_units.size(), host.compile_width,
       [&](std::size_t i) -> diag::Result<ActionResult> {
@@ -484,14 +482,22 @@ auto CompileTranslationUnits(
       },
       [&](diag::Result<ActionResult> result) {
         if (!result) {
-          failures += (failures.empty() ? "" : "\n");
-          failures += result.error().primary.message;
+          if (!failures) {
+            failures = std::move(result.error());
+            return;
+          }
+          failures->notes.push_back(
+              diag::NoteDiagItem{
+                  .span = result.error().primary.span,
+                  .message = std::move(result.error().primary.message)});
+          std::ranges::move(
+              result.error().notes, std::back_inserter(failures->notes));
           return;
         }
         compiled.push_back(*std::move(result));
       });
-  if (!failures.empty()) {
-    return diag::Fail(diag::DiagCode::kHostBuildFailed, std::move(failures));
+  if (failures) {
+    return std::unexpected(*std::move(failures));
   }
   return compiled;
 }
@@ -512,12 +518,14 @@ auto LinkProgram(
   const status::Phase phase("Linking");
   auto result_or = RunProcessCaptured(cxx, args);
   if (!result_or) {
-    return IoError(std::move(result_or.error()));
+    return diag::Fail(
+        diag::DiagCode::kHostIoError, std::move(result_or.error()));
   }
   if (result_or->exit_code != 0) {
-    return diag::Fail(
-        diag::DiagCode::kHostBuildFailed,
-        std::format("linking the program failed:\n{}", result_or->stderr_text));
+    return std::unexpected(
+        diag::Make(
+            diag::DiagCode::kHostBuildFailed, "linking the program failed")
+            .WithNote("{}", result_or->stderr_text));
   }
   return {};
 }
@@ -695,10 +703,9 @@ auto AssembleProject(
           std::filesystem::perms::others_exec,
       std::filesystem::perm_options::add, ec);
   if (ec) {
-    return IoError(
-        std::format(
-            "failed to mark '{}' executable ({})", script_path.string(),
-            ec.message()));
+    return diag::Fail(
+        diag::DiagCode::kHostIoError, "cannot make '{}' executable ({})",
+        script_path.string(), ec.message());
   }
 
   return ExportRuntimeTree(runtime, dir);

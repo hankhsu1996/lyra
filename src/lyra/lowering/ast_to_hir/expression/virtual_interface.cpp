@@ -92,10 +92,11 @@ auto ReachThroughHandle(
   const auto published = scope.FindMember(
       item->name, support::Extended(scope.class_path, descent->place.within));
   if (!published.has_value()) {
+    // LRM 25.9.
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "only a variable or a net of an interface is reachable through a "
-        "virtual interface yet (LRM 25.9)");
+        "reaching anything but a variable or a net of an interface through a "
+        "virtual interface is not yet supported");
   }
   return HeldMember{
       .access =
@@ -122,10 +123,11 @@ auto DescendThroughHandle(
   std::optional<PublishedDescent> descended =
       unit_lowerer.DescendPublished(held, handle_type.iface.body, scope);
   if (!descended.has_value()) {
+    // LRM 25.9.
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "this name is not yet reachable through a virtual interface (LRM "
-        "25.9)");
+        "reaching this name through a virtual interface is not yet "
+        "supported");
   }
   // A descent to a scope selects one object at every step, since a scope is
   // inside one of them.

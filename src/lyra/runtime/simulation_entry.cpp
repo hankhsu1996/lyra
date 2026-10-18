@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/memory_watch.hpp"
 #include "lyra/base/stack_watch.hpp"
 #include "lyra/runtime/ambient_run_context.hpp"
@@ -22,10 +23,38 @@
 #include "lyra/runtime/plusargs.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/value/queue_bound.hpp"
 
 namespace lyra::runtime {
 
 namespace {
+
+// For as long as the run lasts, a bounded queue that drops what the design
+// wrote past its bound (LRM 7.10.5) is said as one of the run's own reports,
+// placed and timed like any other.
+class BoundOverflowReport {
+ public:
+  BoundOverflowReport() : replaced_(value::ListenForBoundOverflow(&Say)) {
+  }
+  ~BoundOverflowReport() {
+    value::ListenForBoundOverflow(replaced_);
+  }
+  BoundOverflowReport(const BoundOverflowReport&) = delete;
+  auto operator=(const BoundOverflowReport&) -> BoundOverflowReport& = delete;
+  BoundOverflowReport(BoundOverflowReport&&) = delete;
+  auto operator=(BoundOverflowReport&&) -> BoundOverflowReport& = delete;
+
+ private:
+  static void Say() {
+    AmbientRunContext::Current().Effects().Diagnostic().Report(
+        Severity::kWarning,
+        base::DiagMessage(
+            "a bounded queue grew past its declared bound, and the elements "
+            "past it were dropped"));
+  }
+
+  value::BoundOverflowListener replaced_;
+};
 
 // Drives a bound Runtime to completion. The run accounts for a design's own
 // run-time error and for a failure of the tool discovered while it is under
@@ -40,6 +69,7 @@ auto RunSimulation(Runtime& runtime) -> int {
     // 10.5, 35.5.3).
     const AmbientRunContext run_context{&runtime.DesignRoot(), runtime};
     const InterruptReport interrupt_report{runtime};
+    const BoundOverflowReport bound_overflow_report;
     return runtime.Run();
   } catch (const std::exception&) {
     ReportRaisedError(runtime, std::current_exception());
@@ -48,11 +78,12 @@ auto RunSimulation(Runtime& runtime) -> int {
 }
 
 constexpr std::string_view kOutOfStack =
-    "error: the simulation ran out of stack. A subroutine of the design calls "
-    "itself, or others, more deeply than the stack this program was started "
-    "with allows.\n";
+    "error: the simulation ran out of stack\n"
+    "note: a subroutine of the design calls itself, or others, more deeply "
+    "than the stack this program was started with allows\n";
 
-constexpr std::string_view kOutOfMemory = "lyra: out of memory\n";
+constexpr std::string_view kOutOfMemory =
+    "error: the simulation ran out of memory\n";
 
 }  // namespace
 

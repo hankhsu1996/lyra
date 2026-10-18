@@ -3,7 +3,6 @@
 #include <atomic>
 #include <expected>
 #include <filesystem>
-#include <format>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -69,13 +68,13 @@ auto TimeTraceStarted() -> bool {
 }
 
 auto TimeTraceWrite(const std::filesystem::path& path)
-    -> std::expected<void, std::string> {
+    -> std::expected<void, base::DiagMessage> {
   std::error_code ec;
   llvm::raw_fd_ostream out(path.string(), ec, llvm::sys::fs::OF_Text);
   if (ec) {
     return std::unexpected(
-        std::format(
-            "failed to write the time trace to '{}' ({})", path.string(),
+        base::DiagMessage(
+            "cannot write the time trace to '{}' ({})", path.string(),
             ec.message()));
   }
   llvm::timeTraceProfilerWrite(out);

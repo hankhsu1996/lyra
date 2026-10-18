@@ -8,7 +8,6 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -26,6 +25,7 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -358,12 +358,14 @@ auto FindPortRequiringConnection(const slang::ast::InstanceBodySymbol& body)
   return std::nullopt;
 }
 
-auto WhyItMustBeConnected(PortConnectionRule rule) -> std::string_view {
+auto WhyItMustBeConnected(PortConnectionRule rule) -> base::DiagMessage {
   switch (rule) {
+    // LRM 23.3.3.4.
     case PortConnectionRule::kInterfacePort:
-      return "an interface port cannot be left unconnected (LRM 23.3.3.4)";
+      return base::DiagMessage("an interface port cannot be left unconnected");
+    // LRM 23.3.3.2.
     case PortConnectionRule::kRefPort:
-      return "a 'ref' port cannot be left unconnected (LRM 23.3.3.2)";
+      return base::DiagMessage("a 'ref' port cannot be left unconnected");
   }
   throw InternalError(
       "WhyItMustBeConnected: a port connection rule the language does not "
@@ -385,15 +387,13 @@ auto TopLevelUnits(
           diag::Make(
               frontend::PointSpanOf(required->port->location),
               diag::DiagCode::kErrorTopLevelPortMustBeConnected,
-              std::format(
-                  "'{}' cannot be a simulation top because nothing "
-                  "instantiates a top to connect its ports, and {}",
-                  inst->name, WhyItMustBeConnected(required->rule)))
+              "'{}' cannot be a simulation top because nothing "
+              "instantiates a top to connect its ports, and {}",
+              inst->name, WhyItMustBeConnected(required->rule).Text())
               .WithNote(
-                  std::format(
-                      "instantiate '{}' from a module that connects this port, "
-                      "and make that module the top",
-                      inst->name)));
+                  "instantiate '{}' from a module that connects this port, "
+                  "and make that module the top",
+                  inst->name));
     }
     tops.emplace_back(
         TopLevelUnit{

@@ -2,7 +2,6 @@
 
 #include <expected>
 #include <filesystem>
-#include <format>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -42,11 +41,9 @@ auto CopyTree(
     }
   }
   if (ec) {
-    return std::unexpected(
-        diag::Make(
-            diag::DiagCode::kHostIoError,
-            std::format(
-                "failed to walk '{}' ({})", from.string(), ec.message())));
+    return diag::Fail(
+        diag::DiagCode::kHostIoError, "cannot read the directory '{}' ({})",
+        from.string(), ec.message());
   }
   return {};
 }
@@ -60,8 +57,8 @@ auto ResolveRuntimeLocation(std::string_view binary_path)
       Runfiles::Create(std::string(binary_path), &rf_error)};
   if (!runfiles) {
     return diag::Fail(
-        diag::DiagCode::kHostIoError,
-        std::format("cannot access the Lyra runtime ({})", rf_error));
+        diag::DiagCode::kHostIoError, "cannot access the Lyra runtime ({})",
+        rf_error);
   }
   // The surface is staged under a root holding it and nothing else, so the
   // root around any one of its headers is the whole of what a project gets.

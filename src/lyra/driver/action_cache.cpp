@@ -56,10 +56,6 @@ auto EntriesOf(const std::filesystem::path& store)
   return entries;
 }
 
-auto IoError(std::string message) {
-  return diag::Fail(diag::DiagCode::kHostIoError, std::move(message));
-}
-
 auto ReadWholeFile(const std::filesystem::path& path) -> std::string {
   std::ifstream in(path, std::ios::binary);
   return std::string{
@@ -84,7 +80,8 @@ auto DigestOfFile(const std::filesystem::path& file)
     -> diag::Result<stable_hash::Fingerprint> {
   std::error_code ec;
   if (!std::filesystem::is_regular_file(file, ec)) {
-    return IoError(std::format("failed to read '{}'", file.string()));
+    return diag::Fail(
+        diag::DiagCode::kHostIoError, "cannot read '{}'", file.string());
   }
   return stable_hash::FingerprintOfText(ReadWholeFile(file));
 }
@@ -192,8 +189,9 @@ auto Perform(
   std::error_code ec;
   std::filesystem::create_directories(dir, ec);
   if (ec) {
-    return IoError(
-        std::format("failed to create '{}' ({})", dir.string(), ec.message()));
+    return diag::Fail(
+        diag::DiagCode::kHostIoError, "cannot create '{}' ({})", dir.string(),
+        ec.message());
   }
   const auto made = dir / "output";
   if (auto performed = step(made); !performed) {
@@ -427,10 +425,9 @@ auto CopyOut(const std::filesystem::path& from, const std::filesystem::path& to)
     if (!std::filesystem::exists(from, ignored)) {
       return false;
     }
-    return IoError(
-        std::format(
-            "failed to copy '{}' to '{}' ({})", from.string(), to.string(),
-            ec.message()));
+    return diag::Fail(
+        diag::DiagCode::kHostIoError, "cannot copy '{}' to '{}' ({})",
+        from.string(), to.string(), ec.message());
   }
   std::filesystem::permissions(
       temporary, std::filesystem::status(from, ec).permissions(),
@@ -439,8 +436,9 @@ auto CopyOut(const std::filesystem::path& from, const std::filesystem::path& to)
   if (ec) {
     std::error_code ignored;
     std::filesystem::remove(temporary, ignored);
-    return IoError(
-        std::format("failed to write '{}' ({})", to.string(), ec.message()));
+    return diag::Fail(
+        diag::DiagCode::kHostIoError, "cannot write '{}' ({})", to.string(),
+        ec.message());
   }
   return true;
 }

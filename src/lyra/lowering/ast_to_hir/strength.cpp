@@ -22,10 +22,10 @@ auto TranslateDriveStrength(
     return support::StrengthLevel::kStrong;
   }
   if (zero != one) {
+    // LRM 28.11.
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedContinuousAssignForm,
-        "a driver whose 0 and 1 strengths differ (LRM 28.11) is not yet "
-        "supported");
+        "a driver whose 0 and 1 strengths differ is not yet supported");
   }
   switch (*zero) {
     case slang::ast::DriveStrength::Supply:

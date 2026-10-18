@@ -4,6 +4,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
@@ -150,14 +151,15 @@ auto BuildReportCallExpr(
 
 void AppendToolReportStmt(
     const UnitLowerer& unit_lowerer, mir::Block& block,
-    support::BuiltinFn severity, std::string text, diag::SourceSpan span) {
+    support::BuiltinFn severity, base::DiagMessage text,
+    diag::SourceSpan span) {
   const mir::CompilationUnit& unit = unit_lowerer.Unit();
   const mir::ExprId diagnostic_id =
       block.exprs.Add(BuildDiagnosticCallExpr(unit, block));
   const mir::ExprId origin_id = BuildStringValueExpr(
       unit, block, diag::RuntimeOriginOf(span, unit_lowerer.SourceManager()));
   const mir::ExprId text_id =
-      BuildStringValueExpr(unit, block, std::move(text));
+      BuildStringValueExpr(unit, block, std::move(text).TakeText());
   block.AppendStmt(
       mir::ExprStmt{
           .expr = block.exprs.Add(BuildReportCallExpr(

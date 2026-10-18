@@ -179,10 +179,9 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>, T> {
   [[nodiscard]] static auto ConformSize(const C& parts) -> UnpackedArray {
     if (parts.RawSize() != N) {
       throw SimulationError(
-          std::format(
-              "unpacked array concatenation yields {} elements but the "
-              "fixed-size target has {} (LRM 10.10)",
-              parts.RawSize(), N));
+          "an unpacked array concatenation yields {} elements, while the "
+          "fixed-size target has {}",
+          parts.RawSize(), N);
     }
     return Of(parts);
   }
@@ -196,10 +195,9 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>, T> {
   [[nodiscard]] static auto FromArray(const C& source) -> UnpackedArray {
     if (source.RawSize() != N) {
       throw SimulationError(
-          std::format(
-              "a fixed-size unpacked array of {} elements cannot be assigned "
-              "an array of {} (LRM 7.6)",
-              N, source.RawSize()));
+          "a fixed-size unpacked array of {} elements cannot be assigned an "
+          "array of {}",
+          N, source.RawSize());
     }
     return Of(source);
   }

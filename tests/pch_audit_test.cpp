@@ -189,7 +189,7 @@ TEST(PchCoverage, EveryInputIsCovered) {
                    prelude.string(), "-o", "/dev/null"});
 
   auto result_or = lyra::driver::RunProcessCaptured(*cxx_or, args);
-  ASSERT_TRUE(result_or) << result_or.error();
+  ASSERT_TRUE(result_or) << result_or.error().Text();
   ASSERT_EQ(result_or->exit_code, 0) << "PCH-trace build failed:\n"
                                      << result_or->stderr_text;
 
@@ -292,7 +292,7 @@ TEST(PchStaleness, CurrencyIsDecidedByContent) {
   };
 
   auto baseline = compile_against(built->path);
-  ASSERT_TRUE(baseline) << baseline.error();
+  ASSERT_TRUE(baseline) << baseline.error().Text();
   ASSERT_EQ(baseline->exit_code, 0) << baseline->stderr_text;
 
   WriteWhole(probe, ReadWhole(probe));
@@ -305,7 +305,7 @@ TEST(PchStaleness, CurrencyIsDecidedByContent) {
       << "the same bytes were given a different cache entry";
 
   auto reused = compile_against(after_rewrite->path);
-  ASSERT_TRUE(reused) << reused.error();
+  ASSERT_TRUE(reused) << reused.error().Text();
   EXPECT_EQ(reused->exit_code, 0)
       << "a header rewritten byte for byte was read as a change:\n"
       << reused->stderr_text;
@@ -313,7 +313,7 @@ TEST(PchStaleness, CurrencyIsDecidedByContent) {
   WriteWhole(probe, "#pragma once\n// omega\n");
   AgeByADay(probe);
   auto stale = compile_against(built->path);
-  ASSERT_TRUE(stale) << stale.error();
+  ASSERT_TRUE(stale) << stale.error().Text();
   EXPECT_NE(stale->exit_code, 0) << "a changed header was accepted by a "
                                     "precompiled header built before it";
 }

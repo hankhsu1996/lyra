@@ -133,10 +133,11 @@ auto LowerExpressionStmt(
     if (support::ElidesAssertions(proc.Owner().AssertionPolicy())) {
       return LowerEmptyStmt(span);
     }
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedStatementForm,
-        "assertion control tasks are not supported; pass "
-        "--assertions skip to elide them");
+    return std::unexpected(
+        diag::Make(
+            span, diag::DiagCode::kUnsupportedStatementForm,
+            "an assertion control task is not yet supported")
+            .WithNote("pass '--assertions skip' to leave it out"));
   }
   // LRM 9.4.5: an intra-assignment timing control on a blocking assignment
   // suspends the procedure between reading the right-hand side and making the
@@ -201,8 +202,7 @@ auto LowerProceduralContinuousAssignStmt(
   if (pa.assignment.kind != slang::ast::ExpressionKind::Assignment) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedStatementForm,
-        "this procedural continuous assignment form is not yet supported "
-        "(LRM 10.6)");
+        "this form of procedural continuous assignment is not yet supported");
   }
   const auto& assign = pa.assignment.as<slang::ast::AssignmentExpression>();
   if (auto refused = RefuseTakingOverAnEvent(*assign.left().type, span);
@@ -407,9 +407,10 @@ auto LowerStatement(
           span);
 
     case slang::ast::StatementKind::WaitOrder:
+      // LRM 15.5.4.
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedStatementForm,
-          "`wait_order` is not yet supported (LRM 15.5.4)");
+          "'wait_order' is not yet supported");
 
     // LRM 17 checkers observe the design and never drive it, so a design with
     // them removed behaves identically and the policy may drop them whole.
@@ -419,24 +420,27 @@ auto LowerStatement(
       if (support::ElidesAssertions(proc.Owner().AssertionPolicy())) {
         return LowerEmptyStmt(span);
       }
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedStatementForm,
-          "a checker instantiation is not supported; pass --assertions skip "
-          "to elide it");
+      return std::unexpected(
+          diag::Make(
+              span, diag::DiagCode::kUnsupportedStatementForm,
+              "a checker instantiation is not yet supported")
+              .WithNote("pass '--assertions skip' to leave it out"));
 
     case slang::ast::StatementKind::RandCase:
+      // LRM 18.16.
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedStatementForm,
-          "`randcase` is not yet supported (LRM 18.16)");
+          "'randcase' is not yet supported");
 
     case slang::ast::StatementKind::RandSequence:
+      // LRM 18.17.
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedStatementForm,
-          "`randsequence` is not yet supported (LRM 18.17)");
+          "'randsequence' is not yet supported");
 
-    // The front end goes on past a diagnostic it was asked to relax, and where
-    // it built no statement to carry out it leaves this around the text. Its
-    // own diagnostic, unless silenced, says what the text was.
+    // Where the front end built no statement to carry out it leaves this around
+    // the text -- past a diagnostic it was asked to relax, and in places it
+    // reports nothing at all, such as a branch it judges never to run.
     //
     // The placeholder also wraps every statement holding such a one, outward
     // to the procedure's body, so what it wraps is lowered as written and a
@@ -449,8 +453,7 @@ auto LowerStatement(
       const auto nothing_to_carry_out = [](diag::DiagSpan where) {
         return diag::Fail(
             where, diag::DiagCode::kErrorInvalidFrontendSemantics,
-            "the warning above lets this statement through, but it has no "
-            "behaviour to simulate");
+            "this statement has no behaviour to simulate");
       };
       const auto* wrapped = stmt.as<slang::ast::InvalidStatement>().child;
       if (wrapped == nullptr) {

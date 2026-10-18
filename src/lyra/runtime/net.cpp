@@ -345,10 +345,11 @@ void NetName::MergePhysical(
   if (keep->fold_ != folded->fold_ || keep->own_kind_ != folded->own_kind_ ||
       keep->own_.strength != folded->own_.strength ||
       keep->own_fill_ != folded->own_fill_) {
+    // LRM 23.3.3.7, 10.11.
     throw SimulationError(
         "a connection makes one physical net of positions whose nets state "
         "dissimilar net types; a resolution over net types that resolve "
-        "differently (LRM 23.3.3.7, 10.11) is not yet supported");
+        "differently is not yet supported");
   }
   // Both cover the same number of positions and the coupling puts their first
   // ones together, so each name keeps the offset it had among its own.

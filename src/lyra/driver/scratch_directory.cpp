@@ -14,6 +14,7 @@
 #include <system_error>
 #include <utility>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/driver/signals.hpp"
 
 namespace lyra::driver {
@@ -57,12 +58,13 @@ void RemoveAbandoned(const std::filesystem::path& parent) {
 }  // namespace
 
 auto ScratchDirectory::Create()
-    -> std::expected<ScratchDirectory, std::string> {
+    -> std::expected<ScratchDirectory, base::DiagMessage> {
   std::error_code ec;
   const std::filesystem::path parent = std::filesystem::temp_directory_path(ec);
   if (ec) {
     return std::unexpected(
-        std::format("there is no temporary directory ({})", ec.message()));
+        base::DiagMessage(
+            "there is no temporary directory ({})", ec.message()));
   }
   RemoveAbandoned(parent);
 
@@ -74,7 +76,8 @@ auto ScratchDirectory::Create()
     std::string name = (parent / std::format("{}XXXXXX", kNamePrefix)).string();
     if (::mkdtemp(name.data()) == nullptr) {
       return std::unexpected(
-          std::format("mkdtemp('{}') failed ({})", name, std::strerror(errno)));
+          base::DiagMessage(
+              "cannot make a directory '{}' ({})", name, std::strerror(errno)));
     }
     DIR* const held = TryHold(name);
     if (held == nullptr) {
@@ -89,7 +92,7 @@ auto ScratchDirectory::Create()
     return ScratchDirectory(std::filesystem::path(std::move(name)), held);
   }
   return std::unexpected(
-      std::format(
+      base::DiagMessage(
           "no directory made under '{}' could be kept", parent.string()));
 }
 

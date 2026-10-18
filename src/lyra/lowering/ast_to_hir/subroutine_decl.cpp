@@ -110,7 +110,7 @@ auto ClassifyDpiCarrier(const slang::ast::Type& type, diag::SourceSpan span)
     }
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedDpi,
-        "DPI-C shortreal is not yet supported");
+        "passing a 'shortreal' through DPI-C is not yet supported");
   }
   if (t.isIntegral()) {
     // A 1-bit scalar crosses by value as svBit / svLogic (LRM Table H.1).
@@ -139,7 +139,8 @@ auto ClassifyDpiCarrier(const slang::ast::Type& type, diag::SourceSpan span)
       }
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedDpi,
-          "DPI-C integer type is not yet supported");
+          "passing an integer type of this width through DPI-C is not yet "
+          "supported");
     }
     // A packed array of bit / logic crosses by pointer as a canonical vector.
     if (t.isPackedArray()) {
@@ -147,10 +148,12 @@ auto ClassifyDpiCarrier(const slang::ast::Type& type, diag::SourceSpan span)
     }
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedDpi,
-        "packed struct / union DPI-C arguments are not yet supported");
+        "passing a packed structure or union through DPI-C is not yet "
+        "supported");
   }
   return diag::Fail(
-      span, diag::DiagCode::kUnsupportedDpi, "DPI-C type is not yet supported");
+      span, diag::DiagCode::kUnsupportedDpi,
+      "passing a value of this type through DPI-C is not yet supported");
 }
 
 // LRM 35.5.6.1: a formal leaving at least one dimension unsized crosses as an
@@ -197,10 +200,11 @@ auto ClassifyOpenArray(const slang::ast::Type& type, diag::SourceSpan span)
       };
   if (!open.packed_unsized &&
       !std::ranges::any_of(open.unpacked, dimension_is_unsized)) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedDpi,
-        "a sized unpacked array is not yet supported as a DPI-C argument; "
-        "leave a dimension unsized to pass it as an open array");
+    return std::unexpected(
+        diag::Make(
+            span, diag::DiagCode::kUnsupportedDpi,
+            "passing a sized unpacked array through DPI-C is not yet supported")
+            .WithNote("leave a dimension unsized to pass it as an open array"));
   }
   // The foreign side reaches an element through the indexing entries Annex
   // H.12.3 specializes for one, two, and three indices. Its variable-argument

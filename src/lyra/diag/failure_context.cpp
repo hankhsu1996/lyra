@@ -94,17 +94,17 @@ auto InternalFailure(const std::exception& failure) -> Diagnostic {
   // defect to report as an invariant the compiler checked itself.
   const auto* checked = dynamic_cast<const InternalError*>(&failure);
   const Trail trail = std::exchange(Work().trail, Trail{});
-  std::string message =
-      checked != nullptr
-          ? std::string(checked->Invariant())
-          : std::format("an exception nothing handles: {}", failure.what());
-  if (!trail.names.empty()) {
-    message += std::format(" ({})", trail.names);
+  const DiagSpan place = trail.place.has_value() ? DiagSpan{*trail.place}
+                                                 : DiagSpan{UnknownSpan{}};
+  const std::string names =
+      trail.names.empty() ? std::string{} : std::format(" ({})", trail.names);
+  if (checked != nullptr) {
+    return Make(
+        place, DiagCode::kInternalFailure, "{}{}", checked->Invariant(), names);
   }
   return Make(
-      trail.place.has_value() ? DiagSpan{*trail.place}
-                              : DiagSpan{UnknownSpan{}},
-      DiagCode::kInternalFailure, std::move(message));
+      place, DiagCode::kInternalFailure, "an exception nothing handles ({}){}",
+      failure.what(), names);
 }
 
 }  // namespace lyra::diag

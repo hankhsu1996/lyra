@@ -26,6 +26,7 @@
 #include <slang/ast/types/AllTypes.h>
 #include <slang/numeric/SVInt.h>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/expr_builders.hpp"
@@ -147,7 +148,7 @@ auto RecordSampledCells(
         var->flags.has(slang::ast::VariableFlags::RefStatic)) {
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedExpressionForm,
-          "a sampled value of a `ref static` argument is not yet supported");
+          "a sampled value of a 'ref static' argument is not yet supported");
     }
     if (SampledAsCurrent(*read.symbol)) {
       ++counted.current;
@@ -172,7 +173,7 @@ auto RecordSampledCells(
   if (cells->size() < armed.size()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "a sampled value of storage this design element holds no cell of is "
+        "a sampled value of storage this design element does not hold is "
         "not yet supported");
   }
   std::vector<hir::ValueTarget>& sampled =
@@ -260,9 +261,9 @@ auto ResolveClockingEvent(
   }
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedExpressionForm,
-      std::string{"'"} + std::string{name} +
-          "' names no clocking event and none is settled where it is written, "
-          "so there is no event whose ticks it could count");
+      "'{}' names no clocking event and none is settled where it is "
+      "written, so there is no event whose ticks it could count",
+      name);
 }
 
 // How far back a read reaches: the expression the source wrote, or the 1 the
@@ -309,8 +310,7 @@ auto RecordSampledHistory(
   if constexpr (!std::same_as<Lowerer, ProcessLowerer>) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
-        std::string{"'"} + std::string{name} +
-            "' is not yet supported outside a procedure");
+        "'{}' is not yet supported outside a procedure", name);
   } else {
     auto event_or = LowerEventControl(lowerer, scope_frame, **clock_or, span);
     if (!event_or) return std::unexpected(std::move(event_or.error()));
@@ -318,8 +318,7 @@ auto RecordSampledHistory(
     if (value_change == nullptr) {
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedExpressionForm,
-          std::string{"'"} + std::string{name} +
-              "' counting ticks of a named event is not yet supported");
+          "'{}' counting ticks of a named event is not yet supported", name);
     }
     // The gate belongs to the event, and the event already carries a qualifier
     // of exactly that shape -- the LRM 9.4.2.3 `iff`, read when what is watched
@@ -414,9 +413,9 @@ auto LowerSampledHistoryExpr(
   if (operand_reads->current != 0) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        std::string{"'"} + std::string{name} +
-            "' of an expression reading both an automatic variable and one "
-            "the design element holds is not yet supported");
+        "'{}' of an expression reading both an automatic variable and one "
+        "the design element holds is not yet supported",
+        name);
   }
 
   if (past) {
@@ -531,14 +530,15 @@ auto LowerObjectSubroutineCall(
     const slang::ast::SubroutineSymbol& sym,
     std::vector<std::optional<hir::ExprId>> arguments, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  const auto refuse = [&](std::string message) {
+  const auto refuse = [&](base::DiagFormat<> message) {
     return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm, std::move(message));
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        base::DiagMessage(message));
   };
   const slang::ast::Scope* owner = sym.getParentScope();
   if (owner == nullptr) {
     return refuse(
-        "a subroutine declared in this scope kind is not yet supported");
+        "a subroutine declared in this kind of scope is not yet supported");
   }
   auto walked =
       unit_lowerer.RouteToScopeOrRefuse(frame, *owner, std::move(origin), span);
@@ -893,8 +893,7 @@ auto LowerSystemCall(
     // carry: a legitimate but unimplemented construct, not a compiler bug.
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        std::string{"system task / function '"} + std::string{name} +
-            "' is not yet supported");
+        "the system subroutine '{}' is not yet supported", name);
   }
   const auto frontend_kind = FromSlangSubroutineKind(info.subroutine->kind);
   if (desc->kind != frontend_kind) {

@@ -41,11 +41,12 @@ auto PositionsOf(
   const slang::ast::ValueSymbol* root = path.rootSymbol();
   if (path.lsp != &expr || path.rootExpr == nullptr || root == nullptr ||
       root->kind != slang::ast::SymbolKind::Net) {
+    // LRM 10.11.
     return diag::Fail(
         span, code,
-        "an operand that is neither a net nor a constant select of one "
-        "(LRM 10.11) is not yet supported where a connection or an alias "
-        "names some of a net's bits");
+        "an operand that is neither a net nor a constant select of one is not "
+        "yet supported where a connection or an alias names some of a net's "
+        "bits");
   }
   // Positions are counted in the bits of a vector. A net whose data type is an
   // unpacked aggregate resolves per bit as well (LRM 6.7.1), but it keeps no

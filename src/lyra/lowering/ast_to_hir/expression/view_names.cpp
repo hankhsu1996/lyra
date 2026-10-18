@@ -122,7 +122,7 @@ auto ResolveRoutedViewName(
   if (on == nullptr) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "a name a view offers, reached this way, is not yet supported");
+        "a name a modport offers, reached this way, is not yet supported");
   }
   const hir::ExternalScopeClassId scope_class = on->scope_class;
   return ViewNameOnInstance{

@@ -1,7 +1,6 @@
 #include "lyra/driver/pch.hpp"
 
 #include <filesystem>
-#include <format>
 #include <optional>
 #include <string>
 #include <system_error>
@@ -19,10 +18,6 @@
 namespace lyra::driver::pch {
 
 namespace {
-
-auto IoError(std::string message) {
-  return diag::Fail(diag::DiagCode::kHostIoError, std::move(message));
-}
 
 // True when the resolved compiler is clang-based. PCH file format and the
 // `-include-pch` driver flag are clang-specific; gcc uses `.gch` placed next
@@ -85,14 +80,15 @@ auto BuildAt(
   const status::Phase phase("Preparing runtime header");
   auto result_or = RunProcessCaptured(cxx, args);
   if (!result_or) {
-    return IoError(std::move(result_or.error()));
+    return diag::Fail(
+        diag::DiagCode::kHostIoError, std::move(result_or.error()));
   }
   if (result_or->exit_code != 0) {
-    return diag::Fail(
-        diag::DiagCode::kHostBuildFailed,
-        std::format(
-            "PCH build exited with {}:\n{}", result_or->exit_code,
-            result_or->stderr_text));
+    return std::unexpected(
+        diag::Make(
+            diag::DiagCode::kHostBuildFailed,
+            "preparing the runtime header exited with {}", result_or->exit_code)
+            .WithNote("{}", result_or->stderr_text));
   }
   return {};
 }

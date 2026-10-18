@@ -1,12 +1,28 @@
 #include "lyra/value/queue_bound.hpp"
 
-#include <iostream>
+#include <utility>
 
 namespace lyra::value {
 
+namespace {
+
+auto CurrentListener() -> BoundOverflowListener& {
+  static BoundOverflowListener listener = nullptr;
+  return listener;
+}
+
+}  // namespace
+
 void ReportBoundOverflow() {
-  std::cerr << "warning: bounded queue exceeded its declared bound; elements "
-               "beyond the bound were discarded (LRM 7.10.5)\n";
+  if (const BoundOverflowListener listener = CurrentListener();
+      listener != nullptr) {
+    listener();
+  }
+}
+
+auto ListenForBoundOverflow(BoundOverflowListener listener)
+    -> BoundOverflowListener {
+  return std::exchange(CurrentListener(), listener);
 }
 
 }  // namespace lyra::value

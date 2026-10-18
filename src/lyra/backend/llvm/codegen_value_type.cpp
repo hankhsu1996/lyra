@@ -1275,9 +1275,8 @@ auto CodeGenValueTypes::GetAddrOfValueType(lir::TypeId type)
   const auto unrealized = [&]() -> Answer {
     return diag::Fail(
         diag::DiagCode::kUnsupportedTypeKind,
-        std::format(
-            "a value of type {} has no runtime library realization",
-            unit_->types.Get(type).KindName()));
+        "a value of type '{}' is not yet supported with '--backend llvm'",
+        unit_->types.Get(type).KindName());
   };
   const std::optional<lir::Holding> held = unit_->types.Get(type).HeldAs();
   if (!held.has_value()) {

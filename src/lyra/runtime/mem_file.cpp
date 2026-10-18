@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <format>
 #include <fstream>
 #include <functional>
 #include <optional>
@@ -11,8 +10,10 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/value/format.hpp"
@@ -25,24 +26,32 @@ namespace {
 
 enum class Direction : std::uint8_t { kLoad, kStore };
 
-auto TaskName(unsigned base, Direction dir) -> value::String {
+auto TaskName(unsigned base, Direction dir) -> std::string_view {
   const bool store = dir == Direction::kStore;
   if (base == 2U) {
-    return value::String(store ? "$writememb" : "$readmemb");
+    return store ? "$writememb" : "$readmemb";
   }
-  return value::String(store ? "$writememh" : "$readmemh");
+  return store ? "$writememh" : "$readmemh";
 }
 
+// A file the task could not read or write is the design's to answer for, and
+// the run goes on (LRM 21.4), so the report is an error or a warning made where
+// the calling procedure is written, never a fatal one.
+template <typename... Args>
 void Warn(
-    RuntimeEffects& runtime, unsigned base, Direction dir,
-    const std::string& text) {
-  runtime.Diagnostic().EmitWarning(TaskName(base, dir), value::String(text));
+    RuntimeEffects& runtime, base::DiagFormatFor<Args...> format,
+    Args&&... args) {
+  runtime.Diagnostic().Report(
+      Severity::kWarning,
+      base::DiagMessage(format, std::forward<Args>(args)...));
 }
 
+template <typename... Args>
 void Error(
-    RuntimeEffects& runtime, unsigned base, Direction dir,
-    const std::string& text) {
-  runtime.Diagnostic().EmitError(TaskName(base, dir), value::String(text));
+    RuntimeEffects& runtime, base::DiagFormatFor<Args...> format,
+    Args&&... args) {
+  runtime.Diagnostic().Report(
+      Severity::kError, base::DiagMessage(format, std::forward<Args>(args)...));
 }
 
 // Reads the whole named file, or emits a "cannot open" error and returns
@@ -53,8 +62,8 @@ auto SlurpFile(
   std::ifstream in{std::string{filename.View()}};
   if (!in.is_open()) {
     Error(
-        runtime, base, Direction::kLoad,
-        std::format("cannot open file '{}'", std::string{filename.View()}));
+        runtime, "'{}' cannot open the file '{}'",
+        TaskName(base, Direction::kLoad), filename.View());
     return std::nullopt;
   }
   std::ostringstream contents;
@@ -70,8 +79,8 @@ auto CreateFile(
   std::ofstream out{std::string{filename.View()}};
   if (!out.is_open()) {
     Error(
-        runtime, base, Direction::kStore,
-        std::format("cannot open file '{}'", std::string{filename.View()}));
+        runtime, "'{}' cannot open the file '{}'",
+        TaskName(base, Direction::kStore), filename.View());
     return std::nullopt;
   }
   return out;
@@ -132,8 +141,8 @@ auto ParseAtAddress(
           address, value::DigitRadix::kHex,
           std::string_view{token}.substr(1))) {
     Error(
-        runtime, base, Direction::kLoad,
-        std::format("malformed address '{}'", token));
+        runtime, "'{}' read a malformed address '{}'",
+        TaskName(base, Direction::kLoad), token);
     return std::nullopt;
   }
   return address.ToInt64();
@@ -142,8 +151,8 @@ auto ParseAtAddress(
 void MalformedWord(
     RuntimeEffects& runtime, unsigned base, const std::string& token) {
   Error(
-      runtime, base, Direction::kLoad,
-      std::format("malformed data word '{}'", token));
+      runtime, "'{}' read a malformed data word '{}'",
+      TaskName(base, Direction::kLoad), token);
 }
 
 }  // namespace
@@ -175,8 +184,8 @@ void ReadMemKeyedCore(
       if (!a) return;
       if (bounded && (*a < active_lo || *a > active_hi)) {
         Error(
-            runtime, base, Direction::kLoad,
-            std::format("address {} is outside the load range", *a));
+            runtime, "'{}' read address {}, which is outside the load range",
+            TaskName(base, Direction::kLoad), *a);
         return;
       }
       cursor = *a;
@@ -242,8 +251,8 @@ void ReadMemGridCore(
       if (!a) return;
       if (*a < active_lo || *a > active_hi) {
         Error(
-            runtime, base, Direction::kLoad,
-            std::format("address {} is outside the load range", *a));
+            runtime, "'{}' read address {}, which is outside the load range",
+            TaskName(base, Direction::kLoad), *a);
         return;
       }
       cursor = *a;
@@ -273,10 +282,10 @@ void ReadMemGridCore(
         (active_hi - active_lo + 1) * static_cast<std::int64_t>(inner_count);
     if (words != expected) {
       Warn(
-          runtime, base, Direction::kLoad,
-          std::format(
-              "file holds {} words but the address range spans {}", words,
-              expected));
+          runtime,
+          "'{}' read a file holding {} words, while the address range "
+          "spans {}",
+          TaskName(base, Direction::kLoad), words, expected);
     }
   }
 }

@@ -172,7 +172,7 @@ auto PopulateNamespaceOwnStorage(
     if (var == nullptr) {
       return diag::Fail(
           diag::DiagCode::kUnsupportedExpressionForm,
-          "a net declared in a package is not supported");
+          "a net declared in a package is not yet supported");
     }
     const mir::TypeId value_type = unit_lowerer.TranslateType(d.type);
     const mir::TypeId cell_type = mir::ObservableCellOf(unit.types, value_type);

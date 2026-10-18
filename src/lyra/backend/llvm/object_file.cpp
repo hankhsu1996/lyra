@@ -112,9 +112,8 @@ auto WriteObjectFile(
   llvm::raw_fd_ostream out(path, opened, llvm::sys::fs::OF_None);
   if (opened) {
     return diag::Fail(
-        diag::DiagCode::kHostIoError,
-        std::format(
-            "failed to open '{}' for writing ({})", path, opened.message()));
+        diag::DiagCode::kHostIoError, "cannot open '{}' for writing ({})", path,
+        opened.message());
   }
   llvm::legacy::PassManager passes;
   if (machine->addPassesToEmitFile(
@@ -132,8 +131,8 @@ auto WriteObjectFile(
     const std::error_code failed = out.error();
     out.clear_error();
     return diag::Fail(
-        diag::DiagCode::kHostIoError,
-        std::format("failed to write '{}' ({})", path, failed.message()));
+        diag::DiagCode::kHostIoError, "cannot write '{}' ({})", path,
+        failed.message());
   }
   return {};
 }

@@ -15,6 +15,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/bound_members.hpp"
 #include "lyra/runtime/coroutine.hpp"
@@ -115,7 +116,7 @@ class Runtime final : public RuntimeEffects {
 
   // A run-time error of the design: the fatal report LRM 20.10 asks a tool to
   // make for it, and the implicit `$finish` that follows one.
-  void ReportDesignError(std::string_view message);
+  void ReportDesignError(const base::DiagMessage& message);
 
   // A failure of the tool itself, which no SystemVerilog construct can express
   // and no severity describes, so it is stated plainly and ends the run

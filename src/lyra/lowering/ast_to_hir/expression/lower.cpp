@@ -219,10 +219,10 @@ auto LowerExprImpl(
     case slang::ast::ExpressionKind::ValueRange: {
       const auto& vr = expr.as<slang::ast::ValueRangeExpression>();
       if (vr.rangeKind != slang::ast::ValueRangeKind::Simple) {
+        // LRM 11.4.13.
         return diag::Fail(
             span, diag::DiagCode::kUnsupportedExpressionForm,
-            "tolerance-range form of a value range is not yet supported "
-            "(LRM 11.4.13)");
+            "a value range with a tolerance is not yet supported");
       }
       // LRM 11.4.13: `$` as a bound of a value range is the lowest or highest
       // value of the type, never a queue's last index, whatever select the
@@ -275,8 +275,8 @@ auto LowerExprImpl(
         // write it.
         return diag::Fail(
             span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
-            "a queue index of `$` is not yet supported outside procedural "
-            "code (LRM 7.10)");
+            "a queue index of '$' is not yet supported outside procedural "
+            "code");
       }
 
     case slang::ast::ExpressionKind::Concatenation:
@@ -344,9 +344,10 @@ auto LowerExprImpl(
           expr.as<slang::ast::StreamingConcatenationExpression>(), span);
 
     case slang::ast::ExpressionKind::TypeReference:
+      // LRM 6.23.
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedExpressionForm,
-          "the `type` operator is not yet supported (LRM 6.23)");
+          "the 'type' operator is not yet supported");
 
     case slang::ast::ExpressionKind::DataType:
       return diag::Fail(
@@ -371,19 +372,22 @@ auto LowerExprImpl(
           expr.as<slang::ast::MinTypMaxExpression>().selected());
 
     case slang::ast::ExpressionKind::CopyClass:
+      // LRM 8.12.
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedExpressionForm,
-          "a shallow copy of an object is not yet supported (LRM 8.12)");
+          "a shallow copy of an object is not yet supported");
 
     case slang::ast::ExpressionKind::Dist:
+      // LRM 18.5.3.
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedExpressionForm,
-          "a distribution constraint is not yet supported (LRM 18.5)");
+          "a distribution constraint is not yet supported");
 
     case slang::ast::ExpressionKind::NewCovergroup:
+      // LRM 19.
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedExpressionForm,
-          "constructing a covergroup is not yet supported (LRM 19)");
+          "constructing a covergroup is not yet supported");
 
     case slang::ast::ExpressionKind::AssertionInstance:
       return diag::Fail(
@@ -395,16 +399,15 @@ auto LowerExprImpl(
           span, diag::DiagCode::kUnsupportedExpressionForm,
           "a clocking event in an expression is not yet supported");
 
-    // The front end goes on past a diagnostic it was asked to relax, and where
-    // it built no expression to carry out it leaves this in its place. Its own
-    // diagnostic, unless silenced, says what the text was. The placeholder
-    // covers no text, so the refusal names no place; the statement holding it
-    // does.
+    // Where the front end built no expression to carry out it leaves this in
+    // its place -- past a diagnostic it was asked to relax, and in places it
+    // reports nothing at all, such as a branch it judges never to run. The
+    // placeholder covers no text, so the refusal names no place; the statement
+    // holding it does.
     case slang::ast::ExpressionKind::Invalid:
       return diag::Fail(
           diag::DiagCode::kErrorInvalidFrontendSemantics,
-          "the warning above lets this expression through, but it has no "
-          "behaviour to simulate");
+          "this expression has no behaviour to simulate");
   }
   throw InternalError("LowerExpr: unknown slang ExpressionKind");
 }

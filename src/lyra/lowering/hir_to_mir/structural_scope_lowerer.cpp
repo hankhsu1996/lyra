@@ -1706,7 +1706,7 @@ auto InstallPortConnections(
         if (!peer_or->descent.empty()) {
           return diag::Fail(
               pc.span, diag::DiagCode::kUnsupportedExpressionForm,
-              "a ref port connected to an element or a member of a variable "
+              "a 'ref' port connected to an element or a member of a variable "
               "is not yet supported");
         }
         resolve_block.AppendStmt(

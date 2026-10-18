@@ -15,9 +15,7 @@ namespace lyra::value {
 // variable holds is a value the design computed, so the access is the design's
 // own failure and answers to the run rather than to the host.
 [[noreturn]] inline void RaiseNullObjectHandleAccess() {
-  throw SimulationError(
-      "a member reached through a null object handle "
-      "(LRM 8.4)");
+  throw SimulationError("a member reached through a null object handle");
 }
 
 // A reference to an object the simulator owns (LRM 8.3), with the pointer of
@@ -101,9 +99,7 @@ class ObjectRef {
   // yet; the execution backend answers a handle the same way. A structure with
   // a handle member asks these only where the program measures it.
   [[noreturn]] static auto BitstreamWidth() -> Int {
-    throw SimulationError(
-        "$bits of a class object is not yet supported on this backend; please "
-        "open an issue asking for support");
+    throw SimulationError("'$bits' of a class object is not yet supported");
   }
   // LRM 20.9 counts over the bit stream.
   template <IntegralValue Control>
@@ -118,8 +114,7 @@ class ObjectRef {
  private:
   [[noreturn]] static auto Stream() -> Bit {
     throw SimulationError(
-        "reading this value as a stream of bits is not yet supported on this "
-        "backend; please open an issue asking for support");
+        "reading a class object as a stream of bits is not yet supported");
   }
 
   ManagedRef handle_;

@@ -90,9 +90,8 @@ void InterruptReport::SayWhereTheRunWas(int signal) {
     const std::string_view written_at =
         running == nullptr ? std::string_view{} : running->Context().written_at;
     if (!written_at.empty()) {
-      Write("note: ");
       Write(written_at);
-      Write(": this procedure was running\n");
+      Write(": note: this procedure was running\n");
     }
   }
   // Blocked while this handler runs, so it is delivered as the handler returns.

@@ -1,7 +1,9 @@
 #pragma once
 
 #include <stdexcept>
-#include <string>
+#include <utility>
+
+#include "lyra/base/diag_message.hpp"
 
 namespace lyra {
 
@@ -19,7 +21,14 @@ namespace lyra {
 // condition and ends the simulation the way `$fatal` does (LRM 20.10).
 class SimulationError final : public std::runtime_error {
  public:
-  explicit SimulationError(std::string message);
+  explicit SimulationError(base::DiagMessage message);
+
+  template <typename... Args>
+  explicit SimulationError(base::DiagFormatFor<Args...> format, Args&&... args)
+      : SimulationError(
+            base::DiagMessage(format, std::forward<Args>(args)...)) {
+  }
+
   SimulationError(const SimulationError&) = default;
   auto operator=(const SimulationError&) -> SimulationError& = default;
   SimulationError(SimulationError&&) = default;

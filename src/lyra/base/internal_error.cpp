@@ -9,7 +9,7 @@ namespace lyra {
 namespace {
 
 constexpr std::string_view kBugReportRequest =
-    "This is a bug in Lyra. Please report at: "
+    "note: this is a bug in Lyra; report it at "
     "https://github.com/hankhsu1996/lyra/issues";
 
 }  // namespace

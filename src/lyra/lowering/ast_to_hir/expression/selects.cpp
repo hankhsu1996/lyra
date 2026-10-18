@@ -36,8 +36,8 @@ auto LowerUnboundedLiteralProc(
   if (!frame.within_queue_select) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "`$` is supported only as a queue index or slice bound (LRM 7.10) and "
-        "as a bound of a value range (LRM 11.4.13)");
+        "'$' is not yet supported except as a queue index, a slice bound, or "
+        "a bound of a value range");
   }
   return hir::Expr{
       .type = proc.Owner().Unit().builtins.int_type,
@@ -60,7 +60,8 @@ auto LowerElementSelectExpr(
       !sel.value().type->isUnpackedArray()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "element-select on non-integral operand is not yet supported");
+        "an element select of a value that is not integral, a string, or an "
+        "unpacked array is not yet supported");
   }
   auto base_or = lowerer.LowerExpr(sel.value(), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
@@ -93,8 +94,8 @@ auto LowerRangeSelectExpr(
   if (!sel.value().type->isIntegral() && !sel.value().type->isUnpackedArray()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "range-select on non-integral, non-unpacked operand is not yet "
-        "supported");
+        "a range select of a value that is neither integral nor an unpacked "
+        "array is not yet supported");
   }
 
   auto base_or = lowerer.LowerExpr(sel.value(), frame);
@@ -225,7 +226,8 @@ auto LowerMemberAccessExpr(
   }
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedExpressionForm,
-      "member access target is not a struct field or class property");
+      "a member access naming neither a structure member nor a class "
+      "property is not yet supported");
 }
 
 // One concrete instantiation per pass class; the templates are defined here so

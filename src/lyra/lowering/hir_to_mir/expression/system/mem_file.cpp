@@ -91,10 +91,9 @@ auto DescribeMemory(
             if (key.Is<mir::WildcardIndexType>()) {
               return diag::Fail(
                   span, diag::DiagCode::kUnsupportedSubroutineArgument,
-                  std::format(
-                      "{} with an associative memory of wildcard index is not "
-                      "yet supported",
-                      task));
+                  "'{}' with an associative memory of wildcard index is not "
+                  "yet supported",
+                  task);
             }
             if (!key.IsIntegral()) {
               throw InternalError(
@@ -153,8 +152,10 @@ auto LowerMemFileSystemSubroutineCallStmt(
   auto& unit = unit_lowerer.Unit();
   const auto& hir_proc = process.HirBody();
   const bool is_store = info.direction == support::MemFileDirection::kStore;
-  const std::string_view task =
-      is_store ? "$writememh / $writememb" : "$readmemh / $readmemb";
+  const bool is_binary = info.base == 2U;
+  const std::string_view task = is_store
+                                    ? (is_binary ? "$writememb" : "$writememh")
+                                    : (is_binary ? "$readmemb" : "$readmemh");
 
   // LRM 21.4 / 21.5: arg[0] is the file name, arg[1] the memory, arg[2] /
   // arg[3] the optional start / finish addresses.
@@ -176,10 +177,9 @@ auto LowerMemFileSystemSubroutineCallStmt(
   if (!unit.types.Get(elem_mir).IsIntegral()) {
     return diag::Fail(
         mem_hir.span, diag::DiagCode::kUnsupportedSubroutineArgument,
-        std::format(
-            "{} with a memory of more than one dimension, one of them not of "
-            "fixed size, is not yet supported",
-            task));
+        "'{}' with a memory of more than one dimension, one of them not of "
+        "fixed size, is not yet supported",
+        task);
   }
 
   auto name_or = process.LowerExpr(hir_proc.exprs.Get(head[0]), step_frame);

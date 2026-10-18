@@ -512,21 +512,27 @@ auto StructuralScopeLowerer::PopulateMember(
       if (support::ElidesAssertions(owner_->AssertionPolicy())) {
         return {};
       }
-      return diag::Fail(
-          frontend::PointSpanOf(member.location),
-          diag::DiagCode::kUnsupportedStructuralMember,
-          "assertion and checker declarations are not supported; pass "
-          "--assertions skip to elide them");
+      return std::unexpected(
+          diag::Make(
+              frontend::PointSpanOf(member.location),
+              diag::DiagCode::kUnsupportedStructuralMember,
+              "an assertion or checker declaration is not yet supported")
+              .WithNote("pass '--assertions skip' to leave it out"));
 
     // Behavior the design depends on: skipping one would hand the backend a
     // different design than the source describes.
+    // LRM 28, 29.
     case SymbolKind::PrimitiveInstance:
+      return diag::Fail(
+          frontend::PointSpanOf(member.location),
+          diag::DiagCode::kUnsupportedStructuralMember,
+          "a gate or user-defined primitive instance is not yet supported");
     case SymbolKind::RandSeqProduction:
     case SymbolKind::UninstantiatedDef:
       return diag::Fail(
           frontend::PointSpanOf(member.location),
           diag::DiagCode::kUnsupportedStructuralMember,
-          "this declaration form is not supported yet");
+          "this kind of declaration is not yet supported");
 
     // Naming a type creates no structure. Whatever declares an object of it
     // interns the type at its own declaration.
@@ -655,7 +661,7 @@ auto StructuralScopeLowerer::PopulateVariableMember(
     return diag::Fail(
         frontend::PointSpanOf(var.location),
         diag::DiagCode::kUnsupportedNonStaticVariableLifetime,
-        "only static variables are supported");
+        "an automatic variable is not yet supported here");
   }
   auto type_id_or =
       owner_->InternType(var.getType(), frontend::PointSpanOf(var.location));
@@ -736,12 +742,13 @@ auto StructuralScopeLowerer::PopulateNetMember(
   if (net.getDelay() != nullptr && init == nullptr) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedTypeKind,
-        "a net delay (LRM 28.16) is not yet supported");
+        "a net delay is not yet supported");
   }
   if (HoldsTaggedUnion(net.getType())) {
+    // LRM 6.7.1, 7.3.2.
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedTypeKind,
-        "a net holding a tagged union (LRM 6.7.1, 7.3.2) is not yet supported");
+        "a net holding a tagged union is not yet supported");
   }
 
   frame.current_structural_scope->structural_data_objects.Define(

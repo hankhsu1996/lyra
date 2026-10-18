@@ -6,6 +6,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/kind.hpp"
 #include "lyra/diag/source_span.hpp"
@@ -45,15 +46,32 @@ struct Diagnostic {
 
   auto operator==(const Diagnostic&) const -> bool = default;
 
-  auto WithNote(SourceSpan span, std::string msg) && -> Diagnostic {
-    notes.push_back(NoteDiagItem{.span = span, .message = std::move(msg)});
+  auto WithNote(SourceSpan span, base::DiagMessage msg) && -> Diagnostic {
+    notes.push_back(
+        NoteDiagItem{.span = span, .message = std::move(msg).TakeText()});
     return std::move(*this);
   }
 
-  auto WithNote(std::string msg) && -> Diagnostic {
+  auto WithNote(base::DiagMessage msg) && -> Diagnostic {
     notes.push_back(
-        NoteDiagItem{.span = UnknownSpan{}, .message = std::move(msg)});
+        NoteDiagItem{
+            .span = UnknownSpan{}, .message = std::move(msg).TakeText()});
     return std::move(*this);
+  }
+
+  template <typename... Args>
+  auto WithNote(
+      SourceSpan span, base::DiagFormatFor<Args...> format,
+      Args&&... args) && -> Diagnostic {
+    return std::move(*this).WithNote(
+        span, base::DiagMessage(format, std::forward<Args>(args)...));
+  }
+
+  template <typename... Args>
+  auto WithNote(
+      base::DiagFormatFor<Args...> format, Args&&... args) && -> Diagnostic {
+    return std::move(*this).WithNote(
+        base::DiagMessage(format, std::forward<Args>(args)...));
   }
 };
 
@@ -62,32 +80,65 @@ using Result = std::expected<T, Diagnostic>;
 
 // Builds a Diagnostic for the report-and-continue path (a warning, or a
 // diagnostic handed straight to a sink). The kind comes from the code.
-inline auto Make(DiagSpan span, DiagCode code, std::string msg) -> Diagnostic {
+inline auto Make(DiagSpan span, DiagCode code, base::DiagMessage msg)
+    -> Diagnostic {
   return Diagnostic{
       .primary =
           {.kind = DiagCodeKind(code),
            .span = span,
            .code = code,
-           .message = std::move(msg)},
+           .message = std::move(msg).TakeText()},
       .notes = {},
   };
 }
 
-inline auto Make(DiagCode code, std::string msg) -> Diagnostic {
+inline auto Make(DiagCode code, base::DiagMessage msg) -> Diagnostic {
   return Make(UnknownSpan{}, code, std::move(msg));
+}
+
+template <typename... Args>
+auto Make(
+    DiagSpan span, DiagCode code, base::DiagFormatFor<Args...> format,
+    Args&&... args) -> Diagnostic {
+  return Make(
+      span, code, base::DiagMessage(format, std::forward<Args>(args)...));
+}
+
+template <typename... Args>
+auto Make(DiagCode code, base::DiagFormatFor<Args...> format, Args&&... args)
+    -> Diagnostic {
+  return Make(
+      UnknownSpan{}, code,
+      base::DiagMessage(format, std::forward<Args>(args)...));
 }
 
 // Builds a std::unexpected<Diagnostic> for the recoverable-failure path, so a
 // lowering call site reads `return diag::Fail(...)` instead of
 // `return std::unexpected(diag::Make(...))`.
-inline auto Fail(DiagSpan span, DiagCode code, std::string msg)
+inline auto Fail(DiagSpan span, DiagCode code, base::DiagMessage msg)
     -> std::unexpected<Diagnostic> {
   return std::unexpected(Make(span, code, std::move(msg)));
 }
 
-inline auto Fail(DiagCode code, std::string msg)
+inline auto Fail(DiagCode code, base::DiagMessage msg)
     -> std::unexpected<Diagnostic> {
   return std::unexpected(Make(UnknownSpan{}, code, std::move(msg)));
+}
+
+template <typename... Args>
+auto Fail(
+    DiagSpan span, DiagCode code, base::DiagFormatFor<Args...> format,
+    Args&&... args) -> std::unexpected<Diagnostic> {
+  return std::unexpected(
+      Make(span, code, base::DiagMessage(format, std::forward<Args>(args)...)));
+}
+
+template <typename... Args>
+auto Fail(DiagCode code, base::DiagFormatFor<Args...> format, Args&&... args)
+    -> std::unexpected<Diagnostic> {
+  return std::unexpected(Make(
+      UnknownSpan{}, code,
+      base::DiagMessage(format, std::forward<Args>(args)...)));
 }
 
 }  // namespace lyra::diag

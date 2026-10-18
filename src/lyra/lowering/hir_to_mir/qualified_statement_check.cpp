@@ -1,6 +1,5 @@
 #include "lyra/lowering/hir_to_mir/qualified_statement_check.hpp"
 
-#include <format>
 #include <optional>
 #include <span>
 #include <string>
@@ -8,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/diag/source_span.hpp"
@@ -162,16 +162,10 @@ auto BuildUniquenessReportBody(
   std::vector<mir::RuntimePrintItem> items;
   items.emplace_back(
       mir::RuntimePrintLiteral{
-          .text = std::format("{} violation: ", KeywordOf(check))});
-  items.emplace_back(
-      mir::RuntimePrintValue(
-          report.ReadLocal(count, int_type), int_type,
-          mir::FormatSpec(
-              value::FormatKind::kDecimal, mir::FormatModifiers{})));
-  items.emplace_back(
-      mir::RuntimePrintLiteral{
-          .text = std::format(
-              " of {} {} matched", arms.size(), NounFor(arm_kind).many)});
+          .text = base::DiagMessage(
+                      "'{}' violation; more than one of the {} {} matched",
+                      KeywordOf(check), arms.size(), NounFor(arm_kind).many)
+                      .TakeText()});
   AppendReportEmit(unit, report, std::move(items), std::move(origin));
 
   const mir::ExprId violated = body.exprs.Add(MakeBinary(
@@ -196,9 +190,10 @@ auto BuildTotalityReportScope(
   std::vector<mir::RuntimePrintItem> items;
   items.emplace_back(
       mir::RuntimePrintLiteral{
-          .text = std::format(
-              "{} violation: no {} matched", KeywordOf(check),
-              NounFor(arm_kind).one)});
+          .text = base::DiagMessage(
+                      "'{}' violation; no {} matched", KeywordOf(check),
+                      NounFor(arm_kind).one)
+                      .TakeText()});
   AppendReportEmit(
       unit_lowerer.Unit(), closure.Body(), std::move(items),
       diag::RuntimeOriginOf(span, unit_lowerer.SourceManager()));

@@ -28,13 +28,13 @@ auto WidenedWith(StreamShape shape, StreamShape part) -> StreamShape {
 
 // Several kinds of type reach here -- one whose bit count only the running
 // program has, and one whose stream the value layer does not carry yet -- and
-// this cannot tell them apart, so it names neither.
+// this cannot tell them apart, so it names neither. LRM 6.24.3.
 auto RefuseUnfixedStream(diag::SourceSpan span)
     -> std::unexpected<diag::Diagnostic> {
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedExpressionForm,
-      "reading a value of this type as a stream of bits is not yet supported "
-      "(LRM 6.24.3)");
+      "reading a value of this type as a stream of bits is not yet "
+      "supported");
 }
 
 }  // namespace

@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <format>
 #include <optional>
 #include <span>
 #include <string>
@@ -115,10 +114,9 @@ void SkipSourceWhitespace(ScanCursor& src) {
   const auto* slot = std::get_if<IntegralView>(&target);
   if (slot == nullptr) {
     throw SimulationError(
-        std::format(
-            "the $sscanf or $fscanf conversion '%{}' expects an integral "
-            "output argument, but the corresponding actual is not integral",
-            spec));
+        "the '$sscanf' or '$fscanf' conversion '%{}' expects an integral "
+        "output argument, but the corresponding actual is not integral",
+        spec);
   }
   return *slot;
 }
@@ -128,10 +126,9 @@ void SkipSourceWhitespace(ScanCursor& src) {
   auto* const* slot = std::get_if<value::String*>(&target);
   if (slot == nullptr) {
     throw SimulationError(
-        std::format(
-            "the $sscanf or $fscanf conversion '%{}' expects a string output "
-            "argument, but the corresponding actual is not a string",
-            spec));
+        "the '$sscanf' or '$fscanf' conversion '%{}' expects a string output "
+        "argument, but the corresponding actual is not a string",
+        spec);
   }
   return *slot;
 }
@@ -259,7 +256,7 @@ struct DecimalResult {
     -> std::optional<unsigned char> {
   if (max_width > 1U) {
     throw SimulationError(
-        "a maximum field width on a $sscanf or $fscanf '%c' conversion is "
+        "a maximum field width on a '$sscanf' or '$fscanf' '%c' conversion is "
         "not yet supported");
   }
   const int ch = src.Consume();
@@ -336,7 +333,7 @@ void WriteChar(unsigned char ch, const IntegralView& dest) {
     ++fmt_ix;
     if (fmt_ix >= fmt.size()) {
       throw SimulationError(
-          "a $sscanf or $fscanf format string ends after '%' with no "
+          "a '$sscanf' or '$fscanf' format string ends after '%' with no "
           "conversion specifier");
     }
 
@@ -346,7 +343,7 @@ void WriteChar(unsigned char ch, const IntegralView& dest) {
       ++fmt_ix;
       if (fmt_ix >= fmt.size()) {
         throw SimulationError(
-            "a $sscanf or $fscanf format string ends after '%*' with no "
+            "a '$sscanf' or '$fscanf' format string ends after '%*' with no "
             "conversion specifier");
       }
     }
@@ -360,8 +357,8 @@ void WriteChar(unsigned char ch, const IntegralView& dest) {
     }
     if (fmt_ix >= fmt.size()) {
       throw SimulationError(
-          "a $sscanf or $fscanf format string ends inside a conversion with "
-          "no specifier");
+          "a '$sscanf' or '$fscanf' format string ends inside a conversion "
+          "with no specifier");
     }
     const char spec = fmt[fmt_ix];
     ++fmt_ix;
@@ -369,7 +366,7 @@ void WriteChar(unsigned char ch, const IntegralView& dest) {
     if (spec == '%') {
       if (suppress || max_width != 0) {
         throw SimulationError(
-            "a $sscanf or $fscanf '%%' takes no assignment suppression or "
+            "a '$sscanf' or '$fscanf' '%%' takes no assignment suppression or "
             "field width");
       }
       const int ch = src.Peek();
@@ -385,7 +382,7 @@ void WriteChar(unsigned char ch, const IntegralView& dest) {
 
     if (!suppress && target_ix >= targets.size()) {
       throw SimulationError(
-          "a $sscanf or $fscanf format string has more conversions that "
+          "a '$sscanf' or '$fscanf' format string has more conversions that "
           "assign than output arguments");
     }
 
@@ -460,10 +457,9 @@ void WriteChar(unsigned char ch, const IntegralView& dest) {
       }
       default:
         throw SimulationError(
-            std::format(
-                "the $sscanf or $fscanf conversion specifier '%{}' is not "
-                "yet supported",
-                spec));
+            "the '$sscanf' or '$fscanf' conversion specifier '%{}' is not yet "
+            "supported",
+            spec);
     }
 
     if (!ok) {
