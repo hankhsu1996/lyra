@@ -24,6 +24,7 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/deferred_effect.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -31,6 +32,7 @@
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
+#include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -38,6 +40,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/event_edge.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -68,30 +71,64 @@ auto LowerTimedWaitWrapper(
 }
 
 // The LRM 9.4.2.3 `iff` qualifier, as the closure that answers it whenever what
-// it gates moves. It answers a one-bit value the standard's own truth rule
-// (LRM 12.4) has already decided, because that rule is the language's and
-// belongs where the expression is compiled rather than in the runtime that
-// reads the answer.
+// it gates moves. It answers whether the qualifier holds, by the standard's own
+// truth rule (LRM 12.4), because that rule is the language's and belongs where
+// the expression is compiled rather than in the runtime that reads the answer.
 template <ExprLowerer Lowerer>
 auto BuildConditionClosure(
     Lowerer& lowerer, WalkFrame frame, mir::Block& block, hir::ExprId condition)
     -> diag::Result<mir::ExprId> {
   auto& unit = lowerer.Owner().Unit();
-  ClosureBuilder closure(unit, frame);
+  ClosureBuilder closure(unit, frame, support::ClosureKind::kFn);
   auto cond_or =
       lowerer.LowerExpr(lowerer.HirExprs().Get(condition), closure.Frame());
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
   mir::Block& body = closure.Body();
   const mir::ExprId raw_id = body.exprs.Add(*std::move(cond_or));
-  const mir::ExprId held_id = body.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::ConditionalExpr{
-                  .condition = ReduceToCondition(unit, body, raw_id),
-                  .then_value = BuildBit1Literal(unit, body, true),
-                  .else_value = BuildBit1Literal(unit, body, false)},
-          .type = unit.builtins.bit1});
-  return block.exprs.Add(closure.Build(held_id));
+  return BuildKeptClosure(
+      unit, block, closure.Build(ReduceToCondition(unit, body, raw_id)));
+}
+
+// Whether the event `edge` names occurred between `before` and `now` (LRM
+// 9.4.2): any change of its bits, or an edge of the one bit an edge
+// reads, which LRM 9.4.2 Table 9-2 states: leaving 0 is a posedge and leaving
+// 1 a negedge whatever the destination, and from x or z only arrival at 1 or
+// 0 names one.
+auto BuildEventOccurred(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    support::EventEdge edge, mir::LocalId before, mir::LocalId now,
+    mir::TypeId type) -> mir::ExprId {
+  const auto is = [&](mir::LocalId bit, bool one) {
+    return BuildBitIdentity(
+        unit, block, block.ReadLocal(bit, type),
+        ConvertToType(unit, block, BuildBit1Literal(unit, block, one), type));
+  };
+  const auto leaves = [&](bool one) {
+    const std::array left{
+        is(before, one), BuildConditionNot(unit, block, is(now, one))};
+    const std::array arrived{
+        BuildConditionNot(unit, block, is(before, !one)), is(now, !one)};
+    const std::array either{
+        AllHold(unit, block, left), AllHold(unit, block, arrived)};
+    return AnyHolds(unit, block, either);
+  };
+  switch (edge) {
+    case support::EventEdge::kAnyChange:
+      return BuildConditionNot(
+          unit, block,
+          BuildBitIdentity(
+              unit, block, block.ReadLocal(before, type),
+              block.ReadLocal(now, type)));
+    case support::EventEdge::kPosedge:
+      return leaves(false);
+    case support::EventEdge::kNegedge:
+      return leaves(true);
+    case support::EventEdge::kBothEdges: {
+      const std::array either{leaves(false), leaves(true)};
+      return AnyHolds(unit, block, either);
+    }
+  }
+  throw InternalError("BuildEventOccurred: unknown event edge");
 }
 
 // What an event control reads of the expression it watches (LRM 9.4.2), as a
@@ -124,16 +161,21 @@ auto BuildWatchedPart(
   throw InternalError("BuildWatchedPart: unknown event edge");
 }
 
-// The observation one event expression is watched through (LRM 9.4.2): a
-// closure that answers what the wait reads of the expression now, and the
-// `iff` qualifier where the source wrote one. It is one value every leaf of
-// that expression names, since the value being watched is the expression's and
-// there is one of it.
+// The observation one event expression is watched through (LRM 9.4.2): the
+// expression's watch, and the `iff` qualifier where the source wrote one. It is
+// one value every leaf of that expression names, since the value being watched
+// is the expression's and there is one of it.
+//
+// The watch keeps what the wait last read of the expression, and is asked
+// either to arm -- to take what it reads now as that -- or whether the event
+// the control names occurred between what it keeps and what it reads now;
+// either way what it read becomes what it keeps. It compares as the
+// expression's type does, so the runtime asking it knows no type.
 //
 // Where the waiting process decides the wait, `report` holds a pointer to the
-// report each evaluation states what it reaches in, and the closure states
-// there every cell the expression reads and every place it reaches beyond
-// them, as it reaches each.
+// report each evaluation states what it reaches in, and the watch states there
+// every cell the expression reads and every place it reaches beyond them, as
+// it reaches each.
 template <ExprLowerer Lowerer>
 auto BuildObservationLocal(
     Lowerer& lowerer, WalkFrame frame, mir::Block& block,
@@ -141,7 +183,8 @@ auto BuildObservationLocal(
     -> diag::Result<mir::LocalId> {
   auto& unit = lowerer.Owner().Unit();
 
-  ClosureBuilder closure(unit, frame);
+  ClosureBuilder closure(unit, frame, support::ClosureKind::kFnMut);
+  const mir::LocalId arming = closure.AddParam(unit.builtins.machine_bool);
   WalkFrame evaluation = closure.Frame();
   if (report.has_value()) {
     const mir::ExprId held = SnapshotValueIntoClosure(
@@ -158,17 +201,45 @@ auto BuildObservationLocal(
   auto value_or =
       lowerer.LowerExpr(lowerer.HirExprs().Get(trigger.signal), evaluation);
   if (!value_or) return std::unexpected(std::move(value_or.error()));
+  mir::Block& body = closure.Body();
   const mir::ExprId value_id = BuildWatchedPart(
-      unit, closure.Body(), trigger.edge,
-      closure.Body().exprs.Add(*std::move(value_or)));
+      unit, body, trigger.edge, body.exprs.Add(*std::move(value_or)));
+  const mir::TypeId watched = body.exprs.Get(value_id).type;
 
-  std::vector<mir::ExprId> arguments{
-      block.exprs.Add(closure.Build(value_id)),
-      BuildMachineIntLiteral(
-          unit, block, static_cast<std::int64_t>(trigger.edge))};
+  const BodyBindingRef previous = SnapshotBindingIntoClosure(
+      lowerer.Owner(), frame, closure,
+      block.exprs.Add(BuildDefaultValueExpr(unit, block, watched)));
+  const mir::LocalId now = DeclareLocal(evaluation, value_id);
+  const mir::LocalId before = DeclareLocal(
+      evaluation,
+      body.exprs.Add(closure.Bindings().MakeBindingPlace(previous, body)));
+  const mir::LocalId occurred = DeclareLocal(
+      evaluation,
+      body.exprs.Add(
+          mir::Expr{
+              .data =
+                  mir::ConditionalExpr{
+                      .condition =
+                          body.ReadLocal(arming, unit.builtins.machine_bool),
+                      .then_value = BuildMachineBool(unit, body, false),
+                      .else_value = BuildEventOccurred(
+                          unit, body, trigger.edge, before, now, watched)},
+              .type = unit.builtins.machine_bool}));
+  body.AppendStmt(
+      mir::ExprStmt{
+          .expr = body.exprs.Add(
+              mir::MakeAssignExpr(
+                  unit.builtins,
+                  body.exprs.Add(
+                      closure.Bindings().MakeBindingPlace(previous, body)),
+                  body.ReadLocal(now, watched)))});
+
+  std::vector<mir::ExprId> arguments{BuildKeptClosure(
+      unit, block,
+      closure.Build(body.ReadLocal(occurred, unit.builtins.machine_bool)))};
   if (!trigger.condition.has_value()) {
     return DeclareObservation(
-        unit, frame, block, support::BuiltinFn::kObservationOfValue,
+        unit, frame, block, support::BuiltinFn::kObservationOfWatch,
         std::move(arguments));
   }
   auto condition =
@@ -176,13 +247,13 @@ auto BuildObservationLocal(
   if (!condition) return std::unexpected(std::move(condition.error()));
   arguments.push_back(*condition);
   return DeclareObservation(
-      unit, frame, block, support::BuiltinFn::kObservationOfValueQualified,
+      unit, frame, block, support::BuiltinFn::kObservationOfWatchQualified,
       std::move(arguments));
 }
 
 // What a wait carries where the only thing that can hold it back is an `iff`
 // qualifier (LRM 9.4.2.3): a named event's trigger is the event, so there is no
-// value to have moved. Without a qualifier nothing further decides, and being
+// value to have changed. Without a qualifier nothing further decides, and being
 // reached is the whole condition.
 auto BuildQualifierObservationLocal(
     ProcessLowerer& process, WalkFrame frame, mir::Block& block,
@@ -459,7 +530,7 @@ auto BuildChangeDecidedEventWaitStmt(
 }
 
 // A named event's wait a change decides (LRM 4.7, 15.5.2): the trigger is the
-// event itself, so nothing has a value to have moved and the observation
+// event itself, so nothing has a value to have changed and the observation
 // carries the `iff` qualifier alone (LRM 9.4.2.3), evaluated where the trigger
 // lands.
 auto BuildChangeDecidedNamedEventWaitStmt(

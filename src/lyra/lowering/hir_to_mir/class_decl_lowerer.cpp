@@ -15,6 +15,7 @@
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
+#include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
@@ -128,8 +129,8 @@ auto BehaviorSlot(
       behavior);
 }
 
-// One body of the class and the static-lifetime locals it declared, paired so
-// the bring-up can apply each initializer in the arena the expression was
+// One body of the class and the static-lifetime variables it declared, paired
+// so the bring-up can apply each initializer in the arena the expression was
 // written in.
 struct BodyStatics {
   const hir::ProceduralBody* body;
@@ -147,9 +148,9 @@ struct BodyStatics {
 // source-written value then stores through the cell in the value phase, and the
 // default case needs no statement there, being fully expressed by the
 // installation already. The value order is declaration order, because an
-// initializer may read a property declared before it. A static-lifetime local
-// of one of the class's bodies follows, its cell being the class's for the same
-// reason.
+// initializer may read a property declared before it. A static-lifetime
+// variable of one of the class's bodies follows, its cell being the class's for
+// the same reason.
 auto LowerStaticStorageInto(
     UnitLowerer& unit_lowerer, const StructuralScopeLowerer* declaring_scope,
     const hir::ClassDecl& hir_class, const ClassShape& shape,
@@ -321,7 +322,7 @@ auto ClassDeclLowerer::DeclareShape(
   // class a namespace unit declares owns its cells, and one a structural scope
   // declares is replicated with that scope, so its cells are fields of the
   // instance and each instance has its own. Static properties, the
-  // static-lifetime locals of its bodies, and what a `disable` naming one of
+  // static-lifetime variables of its bodies, and what a `disable` naming one of
   // its blocks invalidates all take the same answer, because the question is
   // the same one.
   const StaticStorageOwner class_storage =
@@ -378,8 +379,7 @@ auto ClassDeclLowerer::DeclareShape(
 
   const auto bind_statics = [&](const hir::SubroutineDecl& decl) {
     return BindBodyStatics(
-        unit_lowerer, hir_class.procedural_scopes, class_storage, decl.body,
-        SignatureBoundVars(decl));
+        unit_lowerer, hir_class.procedural_scopes, class_storage, decl.body);
   };
 
   // Everything a peer may need about a method before its body exists is
@@ -388,7 +388,7 @@ auto ClassDeclLowerer::DeclareShape(
   // bodies reach (LRM 13.7), and the signature published alongside it is the
   // method's canonical dispatch role, which a peer reads to pick between
   // direct and virtual invocation with no cross-class MIR read. Its
-  // static-lifetime locals take their cells on this same shape, so a static
+  // static-lifetime variables take their cells on this same shape, so a static
   // write from a body routes to the exact cell the shape declares.
   std::vector<DeclaredCallable> declared_methods;
   declared_methods.reserve(hir_class.methods.size());
@@ -465,6 +465,7 @@ auto ClassDeclLowerer::PopulateBodies(
   // one, which is written into the member the object records it in for the
   // object's later bodies to read.
   BoundImplicitParameters bound = BindImplicitParameters(
+      unit_lowerer,
       BodyFrame(declaring_frame, mir_class, scope_link)
           .WithBlock(&ctor_block)
           .WithBindings(&ctor_bindings)

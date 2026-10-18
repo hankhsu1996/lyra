@@ -30,6 +30,7 @@
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/callable_bounds.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -92,7 +93,8 @@ void AppendReportEmit(
 // body the region runs rather than emitted in place.
 void SubmitToObservedRegion(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::Expr body) {
-  const mir::ExprId body_id = block.exprs.Add(std::move(body));
+  const mir::ExprId body_id =
+      BuildKeptClosure(unit_lowerer.Unit(), block, std::move(body));
   const mir::ExprId runtime_id =
       block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
   const mir::ExprId submit_id = block.exprs.Add(
@@ -126,7 +128,7 @@ auto BuildUniquenessReportBody(
     std::span<const HeldArm> arms, std::string origin) -> mir::Expr {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   const mir::TypeId int_type = unit.builtins.int_type;
-  ClosureBuilder closure(unit, frame);
+  ClosureBuilder closure(unit, frame, support::ClosureKind::kFn);
   mir::Block& body = closure.Body();
 
   const mir::LocalId count = closure.Bindings().DeclareAnonymous(int_type);
@@ -186,7 +188,8 @@ auto BuildTotalityReportScope(
     hir::UniquePriorityCheck check, QualifiedArmKind arm_kind,
     diag::SourceSpan span) -> mir::Block {
   mir::Block scope;
-  ClosureBuilder closure(unit_lowerer.Unit(), frame.WithBlock(&scope));
+  ClosureBuilder closure(
+      unit_lowerer.Unit(), frame.WithBlock(&scope), support::ClosureKind::kFn);
   std::vector<mir::RuntimePrintItem> items;
   items.emplace_back(
       mir::RuntimePrintLiteral{
@@ -245,8 +248,8 @@ auto BuildUniquenessCheck(
   arms.reserve(held.size());
   locals.reserve(held.size());
   for (const mir::ExprId arm_held : held) {
-    const BindingOriginId origin =
-        BindingOriginId::Synthesized(unit_lowerer.NextSynthesizedSite(), 0);
+    const BindingOriginId origin = SynthesizedOrigin{
+        .owner_site = unit_lowerer.NextSynthesizedSite(), .ordinal = 0};
     const mir::LocalId local = SnapshotExprToLocal(
         unit_lowerer, frame, block, unit.builtins.bit1,
         ConditionAsBit(unit, block, arm_held), origin);

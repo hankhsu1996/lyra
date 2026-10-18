@@ -19,14 +19,12 @@
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
-#include "lyra/hir/with_clause_id.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
-#include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/closure_builder.hpp"
+#include "lyra/lowering/hir_to_mir/expression/array_iterator_method.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/expression/enum_method.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
@@ -98,67 +96,6 @@ auto LowerAssociativeTraversal(
   return BuildAssociativeTraversal(
       unit_lowerer, steps, b.method, map_read_id, *std::move(idx_lhs_or),
       key_type, result_type);
-}
-
-// LRM 7.12.1 / 7.12.2 / 7.12.3 with-clause closure synthesis. The element and
-// index are the closure's two parameters (LRM 7.12.4); an `IterationBindingRef`
-// in the body resolves to one of them by the clause identity registered here.
-// When the source has no `with` clause LRM 7.12.1 defines the default as
-// `with (item)`; this synthesises the identity closure (body returns the
-// element parameter) so MIR always carries the closure argument and downstream
-// consumers see one uniform shape.
-template <ExprLowerer Lowerer>
-auto BuildArrayMethodClosure(
-    Lowerer& lowerer, WalkFrame frame, hir::TypeId hir_receiver_type,
-    const hir::WithClause* with_clause) -> diag::Result<mir::Expr> {
-  const auto& unit_lowerer = lowerer.Owner();
-  const auto& hir_exprs = lowerer.HirExprs();
-  const hir::Type& hir_recv_ty =
-      unit_lowerer.Hir().types.Get(hir_receiver_type);
-  // The LRM 7.12 family shares one closure shape across every unpacked-array
-  // receiver; only the element type differs.
-  const auto element_type = hir_recv_ty.ContainerElementType();
-  if (!element_type.has_value()) {
-    throw InternalError(
-        "BuildArrayMethodClosure: receiver is not an unpacked-array type");
-  }
-  const mir::TypeId item_type = unit_lowerer.TranslateType(*element_type);
-  const mir::TypeId index_type = ArrayMethodIndexType(
-      unit_lowerer.Unit(), unit_lowerer.TranslateType(hir_receiver_type));
-  ClosureBuilder closure(lowerer.Owner().Unit(), frame);
-  mir::Block& body = closure.Body();
-
-  mir::ExprId body_return_value{};
-  if (with_clause != nullptr) {
-    // `item` and `item.index` (LRM 7.12.4) are this clause's two per-invocation
-    // parameters, declared under the clause's iterator origins so the body
-    // resolves each reference by identity and captures it -- through the same
-    // forwarding machinery as any binding -- when it crosses a closure boundary
-    // (a clause nested in the body still reaches this outer iterator).
-    closure.AddNamedParam(
-        BindingOriginId::Iterator(
-            with_clause->id.value,
-            static_cast<std::uint32_t>(hir::IterationBindingRole::kElement)),
-        with_clause->element_name, item_type);
-    closure.AddParam(
-        BindingOriginId::Iterator(
-            with_clause->id.value,
-            static_cast<std::uint32_t>(hir::IterationBindingRole::kIndex)),
-        index_type);
-    auto body_expr_or =
-        lowerer.LowerExpr(hir_exprs.Get(with_clause->expr), closure.Frame());
-    if (!body_expr_or) return std::unexpected(std::move(body_expr_or.error()));
-    body_return_value = body.exprs.Add(*std::move(body_expr_or));
-  } else {
-    // A built-in reduction (no with-clause) returns the bare element. The
-    // source wrote no iteration variable for it, so neither parameter answers
-    // to an identifier, and neither carries a cross-body identity because
-    // nothing can capture them.
-    const mir::LocalId item_binding = closure.AddParamAnonymous(item_type);
-    closure.AddParamAnonymous(index_type);
-    body_return_value = body.ReadLocal(item_binding, item_type);
-  }
-  return closure.Build(body_return_value);
 }
 
 // A structural context admits only a pure value query -- one that reads state
@@ -384,29 +321,13 @@ auto LowerBuiltinMethodCall(
       [&](WalkFrame at) -> diag::Result<std::vector<mir::ExprId>> {
     mir::Block& into = *at.current_block;
     std::vector<mir::ExprId> args;
-    args.reserve(c.arguments.size() + 1);
+    args.reserve(c.arguments.size());
     for (const hir::ExprId operand : RequiredOperands(c)) {
       auto arg_or = lowerer.LowerExpr(hir_exprs.Get(operand), at);
       if (!arg_or) return std::unexpected(std::move(arg_or.error()));
       args.push_back(StatedAsRead(
           unit, into, entry.operands.At(leading + args.size()),
           into.exprs.Add(*std::move(arg_or))));
-    }
-    // LRM 7.12.1: reduction / ordering / locator array methods take a
-    // closure. The user's `with` clause is used if present; otherwise LRM
-    // defines the default as `with (item)`, which HIR-to-MIR synthesises so
-    // MIR always carries the closure argument and downstream consumers see
-    // one uniform shape per kind.
-    if (entry.takes_closure) {
-      auto closure_or = BuildArrayMethodClosure(
-          lowerer, at, hir_exprs.Get(ObjectActedOn(b)).type,
-          c.with_clause.has_value() ? &*c.with_clause : nullptr);
-      if (!closure_or) return std::unexpected(std::move(closure_or.error()));
-      args.push_back(into.exprs.Add(*std::move(closure_or)));
-    } else if (c.with_clause.has_value()) {
-      throw InternalError(
-          "BuiltinMethodRef with-clause on a method kind that does not "
-          "accept a with-clause (LRM 7.12.1 family only)");
     }
     return args;
   };
@@ -522,12 +443,6 @@ auto BuildBuiltinMethodCall(
       answered);
 }
 
-auto ArrayMethodIndexType(const mir::CompilationUnit& unit, mir::TypeId array)
-    -> mir::TypeId {
-  const auto* keyed = unit.types.Get(array).As<mir::AssociativeArrayType>();
-  return keyed != nullptr ? keyed->key_type : unit.builtins.int_type;
-}
-
 auto BuildAssociativeTraversal(
     UnitLowerer& unit_lowerer, BlockBuilder& steps, support::BuiltinFn method,
     mir::ExprId array, AccessPath index, mir::TypeId key_type,
@@ -614,6 +529,9 @@ auto LowerHirCallExpr(
           },
           [&](const hir::EnumMethodRef& e) -> diag::Result<mir::Expr> {
             return LowerEnumMethod(lowerer, frame, c, e, result_type);
+          },
+          [&](const hir::ArrayIteratorMethodRef& a) -> diag::Result<mir::Expr> {
+            return LowerArrayIteratorMethod(lowerer, frame, c, a, result_type);
           },
           [&](const hir::PastValueRef& p) -> diag::Result<mir::Expr> {
             return LowerPastValueCall(lowerer, frame, c, p);

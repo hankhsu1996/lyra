@@ -10,7 +10,6 @@
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/static_property_id.hpp"
-#include "lyra/hir/subroutine.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/expr.hpp"
@@ -24,16 +23,16 @@ class UnitLowerer;
 struct WalkFrame;
 struct ClassShape;
 
-// Where a static-lifetime local keeps its one cell (LRM 6.21). What decides it
-// is what the declaration belongs to, never what reaches it. A body in the
+// Where a static-lifetime variable keeps its one cell (LRM 6.21). What decides
+// it is what the declaration belongs to, never what reaches it. A body in the
 // design hierarchy is replicated with its instance, so its cell is a field of
 // that instance's class and every instance has its own. A class method's
-// declaration belongs to the class: the standard makes such a variable
-// "roughly equivalent to C static variables declared within a function", so one
-// cell serves every call however many objects exist, and a method being
-// automatic (LRM 8.6) governs its ordinary locals rather than this one. A
-// package subroutine's belongs to the unit's namespace, which owns one
-// program-global cell (LRM 26.2).
+// declaration belongs to the class: the standard makes such a variable "roughly
+// equivalent to C static variables declared within a function", so one cell
+// serves every call however many objects exist, and a method being automatic
+// (LRM 8.6) governs its ordinary locals rather than this one. A package
+// subroutine's belongs to the unit's namespace, which owns one program-global
+// cell (LRM 26.2).
 //
 // "One cell for the class" is one cell per class declaration, which is not the
 // same as one for the program: a class declared inside a structural scope is a
@@ -58,8 +57,8 @@ struct ClassCellHome {
 };
 
 // A cell the unit's namespace owns. Only bodies of that same unit reach one of
-// these -- a static-lifetime local is a local, whatever storage outlives it --
-// so the declaration's own position is what a reference needs.
+// these -- a static-lifetime variable is the body's, whatever storage outlives
+// it -- so the declaration's own position is what a reference needs.
 struct UnitCellHome {
   mir::StaticVariableId variable;
 };
@@ -67,8 +66,9 @@ struct UnitCellHome {
 using StaticStorageHome =
     std::variant<InstanceFieldHome, ClassCellHome, UnitCellHome>;
 
-// A cell already placed for a static-lifetime local a scope published, which
-// the walk binding the body's locals takes rather than declaring a second one.
+// A cell already placed for a static-lifetime variable a scope published, which
+// the walk binding the body's variables takes rather than declaring a second
+// one.
 struct PlacedStatic {
   hir::ProceduralVarId var;
   mir::ClassFieldTarget field;
@@ -104,17 +104,17 @@ struct UnitStorage {
 using StaticStorageOwner =
     std::variant<InstanceStorage, ClassStorage, UnitStorage>;
 
-// The cell one static-lifetime body local became. `cell_type` is the type the
-// home was declared with -- an observable cell where something outside the body
-// can reach it, the plain value type where nothing can -- settled once here so
-// no reader recomputes it.
+// The cell one static-lifetime body variable became. `cell_type` is the type
+// the home was declared with -- an observable cell where something outside the
+// body can reach it, the plain value type where nothing can -- settled once
+// here so no reader recomputes it.
 struct StaticVarBinding {
   hir::ProceduralVarId var;
   StaticStorageHome home;
   mir::TypeId cell_type;
 };
 
-// One entry per static-lifetime local a body declares. A body that declares
+// One entry per static-lifetime variable a body declares. A body that declares
 // none has an empty one; nothing about the shape tells that apart from a body
 // that declares one or many, and no reader has to.
 using StaticVarBindings = std::vector<StaticVarBinding>;
@@ -128,17 +128,9 @@ using StaticVarBindings = std::vector<StaticVarBinding>;
     const StaticStorageOwner& owner, mir::TypeId cell_type)
     -> StaticStorageHome;
 
-// The vars a callable's signature already binds: its formals and, for a
-// non-void function, the implicit result variable (LRM 13.4.1). Their storage
-// is the call's own data flow -- a parameter, or a component of the completion
-// payload -- so the walk below gives them none, whatever lifetime their
-// declarations carry. A process binds none.
-[[nodiscard]] auto SignatureBoundVars(const hir::SubroutineDecl& decl)
-    -> std::vector<hir::ProceduralVarId>;
-
-// Gives every static-lifetime local one body declares its cell in `owner`. The
-// walk descends the body's scope tree because that is where the declarations
-// are -- a scope lists what it declares.
+// Gives every static-lifetime variable one body declares its cell in `owner`.
+// The walk descends the body's scope tree because that is where the
+// declarations are -- a scope lists what it declares.
 //
 // Sibling callables sharing a source identifier, and nested blocks repeating
 // one, need nothing done to stay distinct: each cell is a position in the pool
@@ -147,8 +139,8 @@ auto BindBodyStatics(
     const UnitLowerer& unit_lowerer,
     const base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>&
         scopes,
-    const StaticStorageOwner& owner, const hir::ProceduralBody& body,
-    std::span<const hir::ProceduralVarId> signature_bound) -> StaticVarBindings;
+    const StaticStorageOwner& owner, const hir::ProceduralBody& body)
+    -> StaticVarBindings;
 
 // The expression a body reaches one of these cells through. Each home is one
 // access from where the body stands: a field off the instance `hops` out from

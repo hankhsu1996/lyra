@@ -19,7 +19,6 @@
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/object_ref.hpp"
 #include "lyra/value/real.hpp"
-#include "lyra/value/reduction.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
 #include "lyra/value/runtime_queue.hpp"
@@ -241,30 +240,14 @@ struct ValueWitnessesOf {
          void* out) { std::construct_at(static_cast<T*>(out), Of(from)); };
 
   // An index type's own order where it keys an associative array (LRM 7.8),
-  // which for a handle is no SV operator at all; otherwise the type's `<`.
+  // which for a handle is no SV operator at all.
   static constexpr auto OrderBefore = [](const ValueType&, const void* lhs,
                                          const void* rhs) -> bool {
     if constexpr (requires { typename AssocKeyTraits<T>::Less; }) {
       return typename AssocKeyTraits<T>::Less{}(Of(lhs), Of(rhs));
-    } else if constexpr (requires { Of(lhs) < Of(rhs); }) {
-      return static_cast<bool>(Of(lhs) < Of(rhs));
     } else {
       LacksOperation();
     }
-  };
-  static constexpr auto IsTrue = [](const ValueType&,
-                                    const void* value) -> bool {
-    if constexpr (requires { Of(value).IsTruthy(); }) {
-      return Of(value).IsTruthy();
-    } else {
-      LacksOperation();
-    }
-  };
-  static constexpr auto Reduce = [](const ValueType&, Reduction reduction,
-                                    const void* lhs, const void* rhs,
-                                    void* out) {
-    std::construct_at(
-        static_cast<T*>(out), Reduced(reduction, Of(lhs), Of(rhs)));
   };
 
   static constexpr const PartsWitnessTable* kParts =

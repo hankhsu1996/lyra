@@ -44,59 +44,48 @@ auto BuildInitialValue(
   return ConvertToType(process.Owner().Unit(), block, value, type);
 }
 
-auto LowerAutomaticVarDeclaration(
-    ProcessLowerer& process, WalkFrame frame, hir::ProceduralVarId var,
-    const hir::ProceduralVarDecl& hir_local, mir::TypeId type)
-    -> diag::Result<mir::Stmt> {
-  auto& block = *frame.current_block;
-  mir::CompilationUnit& unit = process.Owner().Unit();
-  const DeclaredVariable variable = DeclareVariable(
-      unit, *frame.bindings, block, BindingOriginId::Procedural(var),
-      hir_local.name, type, frame.body_can_wait);
-  process.MapProceduralVar(var, AutomaticVarBinding{.type = variable.type});
-
-  auto initial = BuildInitialValue(process, frame, hir_local, type);
-  if (!initial) return std::unexpected(std::move(initial.error()));
-  return InitializeVariable(unit, block, variable, *initial);
+// Binds a promoted variable to the cell its scope's entry made, so every
+// reference to it -- its own initializer's among them -- reaches that cell.
+auto BindPromotedVar(ProcessLowerer& process, hir::ProceduralVarId var)
+    -> PromotedVarBinding {
+  const PromotedVarBinding promoted = process.TakePendingActivation(var);
+  process.MapProceduralVar(var, promoted);
+  return promoted;
 }
 
-// A lifetime-extended automatic (LRM 6.21) is a cell held by a shared pointer;
-// its declaration initializes that cell through the handle rather than a
-// local's own. The handle was recorded where the scope declaring the variable
-// was entered; the declaration takes it and binds the variable to it, which is
-// what every later reference resolves through.
-auto LowerPromotedVarDeclaration(
-    ProcessLowerer& process, WalkFrame frame, hir::ProceduralVarId var,
-    const hir::ProceduralVarDecl& hir_local, mir::TypeId type)
-    -> diag::Result<mir::Stmt> {
-  const PromotedVarBinding pb = process.TakePendingActivation(var);
-  process.MapProceduralVar(var, pb);
-  auto& block = *frame.current_block;
+auto InitializePromotedVar(
+    ProcessLowerer& process, const WalkFrame& frame,
+    const PromotedVarBinding& promoted, mir::ExprId initial) -> mir::Stmt {
+  mir::Block& block = *frame.current_block;
   mir::CompilationUnit& unit = process.Owner().Unit();
-  const mir::ExprId target =
-      block.exprs.Add(PromotedVarPlace(unit.types, frame, pb));
-  auto initial = BuildInitialValue(process, frame, hir_local, type);
-  if (!initial) return std::unexpected(std::move(initial.error()));
+  const mir::ExprId cell =
+      block.exprs.Add(PromotedVarPlace(unit.types, frame, promoted));
   return mir::Stmt{
       .label = std::nullopt,
       .data = mir::ExprStmt{
           .expr = block.exprs.Add(
               mir::MakeCapabilityInstallCallExpr(
-                  target, *initial, support::BuiltinFn::kInitialize,
+                  cell, initial, support::BuiltinFn::kInitialize,
                   unit.builtins.void_type))}};
 }
 
 }  // namespace
 
-auto LowerVarDeclaration(
-    ProcessLowerer& process, WalkFrame frame, hir::ProceduralVarId var)
+auto LowerVarStart(
+    ProcessLowerer& process, WalkFrame frame, hir::ProceduralVarId var,
+    const std::optional<std::string>& name, const InitialValue& initial)
     -> diag::Result<mir::Stmt> {
   const auto& hir_local = process.HirBody().procedural_vars.Get(var);
-  const mir::TypeId type = process.Owner().TranslateType(hir_local.type);
+  // A lifetime-extended automatic (LRM 6.21) is a cell held by a shared
+  // pointer, recorded where the scope declaring it was entered; its
+  // declaration takes that pointer and initializes the cell through it.
   if (hir_local.lifetime_extended) {
-    return LowerPromotedVarDeclaration(process, frame, var, hir_local, type);
+    const PromotedVarBinding promoted = BindPromotedVar(process, var);
+    auto value = initial();
+    if (!value) return std::unexpected(std::move(value.error()));
+    return InitializePromotedVar(process, frame, promoted, *value);
   }
-  // LRM 6.21: a static-lifetime body local keeps a cell that outlives every
+  // LRM 6.21: a static-lifetime variable keeps a cell that outlives every
   // activation, so its storage and its binding are both settled before the body
   // lowers and its declaration assignment runs where that cell is brought up,
   // before any process starts. Reaching the declaration is therefore not an
@@ -104,7 +93,25 @@ auto LowerVarDeclaration(
   if (hir_local.lifetime == hir::VariableLifetime::kStatic) {
     return mir::Stmt{.label = std::nullopt, .data = mir::EmptyStmt{}};
   }
-  return LowerAutomaticVarDeclaration(process, frame, var, hir_local, type);
+  mir::Block& block = *frame.current_block;
+  mir::CompilationUnit& unit = process.Owner().Unit();
+  const DeclaredVariable variable = DeclareVariable(
+      unit, *frame.bindings, block, ProceduralOrigin{.var = var}, name,
+      process.Owner().TranslateType(hir_local.type), frame.body_can_wait);
+  process.MapProceduralVar(var, AutomaticVarBinding{.type = variable.type});
+  auto value = initial();
+  if (!value) return std::unexpected(std::move(value.error()));
+  return InitializeVariable(unit, block, variable, *value);
+}
+
+auto LowerVarDeclaration(
+    ProcessLowerer& process, WalkFrame frame, hir::ProceduralVarId var)
+    -> diag::Result<mir::Stmt> {
+  const auto& hir_local = process.HirBody().procedural_vars.Get(var);
+  const mir::TypeId type = process.Owner().TranslateType(hir_local.type);
+  return LowerVarStart(process, frame, var, hir_local.name, [&] {
+    return BuildInitialValue(process, frame, hir_local, type);
+  });
 }
 
 auto LowerVarDeclStmt(
@@ -128,10 +135,11 @@ auto LowerReturnStmt(
     explicit_value = block.exprs.Add(*std::move(value_or));
   }
   // The returned value is the completion payload: this return's explicit value
-  // (or the implicit result variable) plus each output / inout local, assembled
-  // by the subroutine's lowering so the copy-out rides the result (LRM 13.5).
+  // (or the implicit result variable) plus each output / inout formal,
+  // assembled by the subroutine's lowering so the copy-out rides the result
+  // (LRM 13.5).
   const std::optional<mir::ExprId> payload =
-      process.BuildReturnPayload(block, explicit_value);
+      process.BuildReturnPayload(frame, explicit_value);
   return mir::Stmt{
       .label = std::move(label), .data = mir::ReturnStmt{.value = payload}};
 }

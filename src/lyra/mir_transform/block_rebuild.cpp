@@ -36,11 +36,13 @@ auto BlockRebuild::Expr(mir::ExprId old) -> mir::ExprId {
     return id;
   }
   std::optional<mir::Expr> replaced = rules_->expr(*this, old);
-  const mir::ExprId id =
+  mir::Expr standing =
       replaced.has_value()
-          ? Add(*std::move(replaced))
-          : Add(mir::Expr{
-                .data = WithOperandsCarried(expr.data), .type = expr.type});
+          ? *std::move(replaced)
+          : mir::Expr{
+                .data = WithOperandsCarried(expr.data), .type = expr.type};
+  standing.type = rules_->type(standing.type);
+  const mir::ExprId id = Add(std::move(standing));
   carried_exprs_.at(old.value) = id;
   return id;
 }

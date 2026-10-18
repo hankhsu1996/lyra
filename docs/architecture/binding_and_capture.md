@@ -29,6 +29,8 @@ both; this doc owns only the lexical half.
   owning handle -- a _view_).
 - **The receiver as an ordinary binding.** `self` is one logical binding whose role is metadata; it
   carries no capture machinery of its own.
+- **The share a body holds of its object.** Where the object a body runs on lives while referenced,
+  the share keeping it alive is a binding of that body, and the one a closure carries.
 
 ## Does Not Own
 
@@ -77,13 +79,25 @@ both; this doc owns only the lexical half.
    never a path that depends on the materializing frame still being live.
 
 7. **The receiver is an ordinary binding.** `self` is one logical binding with a receiver role used
-   only by callable lowering and diagnostics; the role never changes capture semantics. A member
+   only by callable lowering and diagnostics; the role never changes how capture forwards. A member
    access resolves the receiver binding through invariants 1-6, then applies object-graph navigation
-   to that resolved receiver value.
+   to that resolved receiver value. Where the object lives while referenced, the receiver a closure
+   uses is reached through the share it captured (invariant 9) rather than captured beside it.
 
 8. **Block structure does not resolve references.** Block nesting governs declaration placement,
    lexical visibility, and cleanup ordering. It is never the mechanism by which a reference locates
    its binding.
+
+9. **An object that lives while referenced is carried by a share of it.** A body that takes an
+   object of a class whose objects live while referenced -- a method, a constructor -- holds a share
+   of that object from where the body begins, as an ordinary binding of its own, because a body may
+   outlive its caller's hold on the object (a task waits, a function drops the last handle itself)
+   and the object stays while a body runs on it (LRM 8.29). A closure that reaches the object
+   captures that share, by the same forwarding as any binding, and reaches the object through it:
+   its receiver is derived from the captured share where the closure's body begins, never captured
+   as a borrowed pointer beside it. This is invariant 6 applied to the receiver: a borrowed pointer
+   carries no lifetime, and a branch a method forks outlives the method. `this` (LRM 8.11) is a copy
+   of the body's share, so a body forms a handle to its own object in one place.
 
 ## Boundary to Adjacent Layers
 
@@ -112,9 +126,14 @@ both; this doc owns only the lexical half.
 - **One materialization used as identity.** Using a single body's local id as the cross-body key for
   a binding, so deduplication or forwarding keys off a physical slot rather than the logical
   identity.
-- **A receiver special case.** A privileged receiver capture slot, a per-form receiver mechanism, or
-  any capture-time branch on "is this the receiver". The receiver is captured exactly as any
-  binding.
+- **A privileged receiver slot.** A receiver capture slot of its own, or a receiver mechanism per
+  callable form. The receiver and its object's share are binding origins, materialized and forwarded
+  as every binding is (invariant 7), so no closure construction needs to know either exists.
+- **A closure that keeps an object alive by a borrowed pointer.** Capturing the receiver as a
+  pointer -- alone, or beside a share of the same object -- where the object lives while referenced.
+  A pointer carries no lifetime (invariant 6), and two carriers of one object are two facts that
+  must agree; the closure carries the share and derives the receiver from it (invariant 9), the one
+  derivation canonical carrier uniqueness permits.
 - **Blind carrier propagation.** Forcing every intervening body to adopt an inner body's view --
   propagating "by value" or "by reference" unchanged through a forwarding chain instead of choosing
   a carrier per boundary and a view per body.
@@ -147,7 +166,9 @@ Every closure shape is a consequence of this single recursion, with no per-shape
   that body never names it -- the intervening materialization is created by the recursion, not by
   syntactic use.
 - A member access resolves its receiver binding by the same recursion (the receiver is captured per
-  boundary), then navigates the object graph from the resolved receiver to the member.
+  boundary), then navigates the object graph from the resolved receiver to the member. Where the
+  object lives while referenced, what the recursion forwards is the share, and the closure's body
+  derives its receiver from the captured share where it begins.
 
 The receiver sits at the intersection of the two axes: it is a lexical binding (captured per body by
 this model) used as the starting object for object-graph navigation (resolved by
@@ -187,7 +208,7 @@ storage and of any body's materialization. It is the key under which a binding i
 forwarded across boundaries.
 
 - A **source origin** names a source-level entity: a procedural variable, a `with`-clause iterator,
-  or a receiver parameter.
+  a receiver parameter, or the share a body holds of its receiver's object (invariant 9).
 - A **synthesized origin** names a lowering-created entity that must cross a callable boundary (a
   non-blocking-assignment value snapshot, a shared-activation handle). It is identified by its
   deterministic semantic owner -- the source-level site that caused it, plus a purpose and an
@@ -212,7 +233,9 @@ body binding = Local(local id) | Field(field id)
 - `Field` names a field of the body's closure, read as ordinary field access over the closure
   receiver (the closure itself). It carries a stable field id, not a physical layout position.
 - The receiver is a `Local` (a receiver-role parameter at the start of the arena) when a callable is
-  invoked directly, and a `Field` when a closure binds it. It is never a privileged slot.
+  invoked directly. In a closure it is a `Field` where the object lives for the run, and a `Local`
+  derived where the body begins from the captured share where the object lives while referenced
+  (invariant 9). It is never a privileged slot.
 
 A reference carries no navigation distance: within a callable there are no hops (one arena); across
 a callable it is a `Field`, resolved by forwarding.
@@ -349,9 +372,9 @@ the canonical carrier (a projection or temporary) or they are in fact distinct c
 ### Reconciliation with sibling contracts
 
 - `mir.md`: the binding arena is the callable's, not a per-block one. The body's receiver is an
-  ordinary binding: `self` for a directly-invoked instance callable, the closure itself for a
-  closure. A captured source-level `self` is a field of the closure, distinct from the closure
-  receiver.
+  ordinary binding: `self` for a directly-invoked instance callable, a borrow of the closure or its
+  box, by its kind, for a closure. A captured source-level `self`, or the share it is reached
+  through, is a field of the closure, distinct from the closure receiver.
 - `callable.md`: the captured state is the closure (`compiler_generated_storage.md`), a
   per-closure-site nominal value type, not a prefix of the per-invocation parameter list and not a
   general value product. The snapshot-or-alias-by-type rule (`callable.md` invariant 5) is retained

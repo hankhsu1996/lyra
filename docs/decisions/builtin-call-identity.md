@@ -42,11 +42,10 @@ see. The LRM defines two such operations as built-in methods, and each keeps its
 layer that still holds what answers it.
 
 LRM 7.12.4 `item.index` is answered by the with-clause binding it names. The receiver is discarded
-and the value is the enclosing closure's index parameter -- a closure over an LRM 7.12 array method
-carries both `item` and `index`, supplied per iteration -- so nothing is left to call, and
-AST-to-HIR resolves it to the same iteration-binding reference `item` itself resolves to, differing
-in which of the two roles it names. HIR therefore holds one shape for the pair the LRM defines
-together, and no callee names it.
+and the value is the index variable of the method's loop -- the loop holds both `item` and `index`,
+set at each entry -- so nothing is left to call, and AST-to-HIR resolves it to the same
+iteration-binding reference `item` itself resolves to, differing in which of the two roles it names.
+HIR therefore holds one shape for the pair the LRM defines together, and no callee names it.
 
 LRM 6.19.5's enumerated type methods are answered from the enumeration's declared members: `first` /
 `last` / `num` are constants of that member list, and `name` / `next` / `prev` are questions put to
@@ -160,9 +159,9 @@ LRM 7.12.
   atoms, and a reference indistinguishable from `IntegerLiteral` / `StructuralVarRef` in a dump or a
   consumer visitor loses that. What answers it is that a primary of its own -- one naming the
   with-clause it belongs to and which of the clause's two bindings it is -- is neither a leaf atom
-  nor a call. The construct LRM 7.12 defines is the pair of bindings a closure carries, `item` and
-  `index` together, and one HIR shape carrying both at their real grammar level is what preserves
-  it; a callee arm would have named half the pair and called it a call besides.
+  nor a call. The construct LRM 7.12 defines is the pair of variables the method's loop holds,
+  `item` and `index` together, and one HIR shape carrying both at their real grammar level is what
+  preserves it; a callee arm would have named half the pair and called it a call besides.
 
 - **Folding a front-end-answered operation into the flat enum.** Considered as a way to keep "every
   built-in identity in one place". Rejected because the shared namespace would then carry a name for
@@ -261,9 +260,10 @@ that row names. No render-side special case for any entry.
 - The backend reads `BuiltinFn` plus receiver MIR type and renders without any family-axis switch.
   Every property of an entry -- what the library calls it, how a call site reaches it, whether it
   updates the object it acts on or hands it back, which operands carry an index, a spread part or a
-  closure, what it is told of the type it answers, whether the call carries the engine handle,
-  whether it parks the caller -- is one row of one declaration in the support layer, so a consumer
-  reads the property it needs and no consumer lists the entries that have it.
+  closure, what it asks of each closure it is handed and how long it keeps it, what it is told of
+  the type it answers, whether the call carries the engine handle, whether it parks the caller -- is
+  one row of one declaration in the support layer, so a consumer reads the property it needs and no
+  consumer lists the entries that have it.
 - Neither layer carries a per-family variant arm or per-family enum. The per-family scaffolding (one
   `*MethodKind` enum and one `*MethodInfo` wrapper per LRM chapter) is gone from both HIR and MIR;
   the LRM-chapter organization survives only as comment-level grouping inside the flat

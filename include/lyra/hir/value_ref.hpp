@@ -143,9 +143,9 @@ struct StaticPropertyRef {
 };
 
 // A reference to a `with`-clause iteration value (LRM 7.12.4), named by the
-// owning clause's identity and the role. Both element and index are closure
-// parameters; HIR-to-MIR resolves this to that clause's parameter, capturing it
-// when the reference sits inside a deeper clause's closure body.
+// owning clause's identity and the role. Both element and index are variables
+// of the loop the method is lowered to, so a clause nested in another's
+// expression reads the outer one's by that identity, as any variable is read.
 struct IterationBindingRef {
   WithClauseId clause;
   IterationBindingRole role = IterationBindingRole::kElement;

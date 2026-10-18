@@ -19,6 +19,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/function_ref.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/ambient_run_context.hpp"
@@ -65,7 +66,7 @@
 #include "lyra/runtime/value_families.hpp"
 #include "lyra/runtime/value_handle.hpp"
 #include "lyra/runtime/var.hpp"
-#include "lyra/support/event_edge.hpp"
+#include "lyra/support/callable_bounds.hpp"
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/assert.hpp"
 #include "lyra/value/chandle.hpp"
@@ -86,7 +87,7 @@
 #include "lyra/value/managed_ref.hpp"
 #include "lyra/value/queue_type.hpp"
 #include "lyra/value/real.hpp"
-#include "lyra/value/runtime_array_manipulation.hpp"
+#include "lyra/value/runtime_array_ordering.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
 #include "lyra/value/runtime_memory.hpp"
@@ -142,33 +143,6 @@ class GeneratedCoroutine {
   std::coroutine_handle<> handle_;
 };
 
-// A body run by a site that does not stay to supply its environment per
-// invocation -- a process, a spawned branch, an enabled task: its frame, built
-// and not yet begun, and whatever that frame reads that nothing else keeps
-// alive. A body reaching its members through a receiver reads storage that
-// outlives every activation reading it, so it keeps nothing here; a branch
-// reads captures copied where the `fork` ran, which outlive nothing on their
-// own, so the closure holding them is kept here and ends after the frame does.
-class GeneratedBody {
- public:
-  GeneratedBody(void* frame, OwnedClosure captures)
-      : captures_(std::move(captures)), frame_(frame) {
-  }
-
-  [[nodiscard]] auto Done() const -> bool {
-    return frame_.Done();
-  }
-  void Resume() const {
-    frame_.Resume();
-  }
-
- private:
-  // Declared ahead of the frame so it is destroyed after it: the frame reads
-  // the captures until it ends.
-  OwnedClosure captures_;
-  GeneratedCoroutine frame_;
-};
-
 // The runtime-owned coroutine that is the process the engine schedules, and
 // which drives the generated body's own coroutine.
 //
@@ -180,12 +154,11 @@ class GeneratedBody {
 // resumes this rather than the generated body.
 //
 // This is the activation. It holds what the generated body needs and cannot
-// hold itself -- that body's own coroutine, what it reads that nothing else
-// keeps alive, and this execution's value store -- so all are released
-// together, on every path this leaves. The ramp laid the body's frame out and
-// stopped before its first statement, so no generated code has run yet and
-// nothing has reached for the store.
-auto RunGeneratedProcess(GeneratedBody generated) -> Coroutine<void> {
+// hold itself -- that body's own coroutine and this execution's value store --
+// so both are released together, on every path this leaves. The ramp laid the
+// body's frame out and stopped before its first statement, so no generated
+// code has run yet and nothing has reached for the store.
+auto RunGeneratedProcess(GeneratedCoroutine generated) -> Coroutine<void> {
   ActivationValueStore values;
 
   // Every stretch of the body runs in a scope of its own naming this store, and
@@ -216,7 +189,7 @@ auto RunGeneratedProcess(GeneratedBody generated) -> Coroutine<void> {
 // statement, in the storage the enabling body gave it. Whoever enables it hands
 // it straight to the engine or to an awaiting frame, either of which takes it
 // from there, so nothing is left in that storage to end.
-auto StartGeneratedProcess(void* out, GeneratedBody body) -> void* {
+auto StartGeneratedProcess(void* out, GeneratedCoroutine body) -> void* {
   return std::construct_at(
       static_cast<Coroutine<void>*>(out), RunGeneratedProcess(std::move(body)));
 }
@@ -1224,10 +1197,12 @@ auto MachineIntsOf(LyraSpan values) -> std::span<const std::int64_t> {
   return {static_cast<const std::int64_t*>(values.data), values.count};
 }
 
-// What a body holding a closure hands over when something longer-lived takes
-// it: the closure's one owner. The closure itself stays where it was made.
-auto TakeOwner(void* closure) -> OwnedClosure {
-  return std::move(*static_cast<OwnedClosure*>(closure));
+// What a body hands over when something longer-lived takes a closure: the box
+// it made the closure in, called at the signature the entry taking it states.
+// The closure itself stays where it was made.
+template <typename Signature>
+auto AdoptClosure(void* closure) -> OwnedClosure<Signature> {
+  return OwnedClosure<Signature>(static_cast<ClosureValue*>(closure));
 }
 
 // One domain's own whole-value operations, which a structure's functions apply
@@ -1297,83 +1272,13 @@ auto IntegralFormatArg(const void* value, value::IntegralShape shape)
   return arg;
 }
 
-// A submitted closure runs after the body that built it has returned, so the
-// region takes it rather than borrowing it.
-auto TakeClosure(void* closure) -> OwnedCall {
-  return [held = TakeOwner(closure)] { held->Invoke(); };
-}
-
-// Whether an `iff` qualifier holds (LRM 12.4), which is the whole of what an
-// event control reads of it.
-struct QualifierTruth {
-  bool holds;
-
-  [[nodiscard]] auto IsTruthy() const -> bool {
-    return holds;
-  }
-};
-
-// A closure an observation keeps and runs each time it is asked -- what the
-// watched expression is worth now, or whether an `iff` qualifier holds. The
-// observation outlives the body that built the closure, so it takes it.
-auto TakeCondition(void* closure) {
-  return [held = TakeOwner(closure)] {
-    return QualifierTruth{.holds = held->RunTruth()};
-  };
-}
-
-// What an edge event control watches of its expression: the least significant
-// bit, which is the whole of what an edge is a transition of (LRM 9.4.2).
-struct WatchedBit {
-  value::FourStateBit bit;
-
-  [[nodiscard]] auto Lsb() const -> value::FourStateBit {
-    return bit;
-  }
-  [[nodiscard]] auto IsBitIdentical(const WatchedBit& other) const -> bool {
-    return bit == other.bit;
-  }
-};
-
-// An observation of what `closure` answers, which `observe` builds from what
-// evaluates it. An edge is a transition of one bit, which is what a body
-// watched for one answers (LRM 9.4.2); any other event is a change anywhere in
-// a value of whatever type the body answers.
-template <typename Observe>
-auto ObservingClosure(void* closure, std::int64_t edge, Observe observe)
-    -> Observation {
-  OwnedClosure held = TakeOwner(closure);
-  switch (EventEdgeOf(edge)) {
-    case support::EventEdge::kAnyChange:
-      return observe(
-          [held = std::move(held)] { return held->RunValue(); }, edge);
-    case support::EventEdge::kPosedge:
-    case support::EventEdge::kNegedge:
-    case support::EventEdge::kBothEdges:
-      return observe(
-          [held = std::move(held)] {
-            return WatchedBit{.bit = held->RunWatchedBit()};
-          },
-          edge);
-  }
-  throw InternalError("runtime abi: unknown event edge");
-}
-
-// The body an LRM 7.12 method runs, as the value layer takes it. The closure is
-// borrowed rather than taken: the method runs it to completion before
-// returning, so the frame that built it is still alive for the whole walk.
-auto ArrayBody(void* body) -> value::ArrayMethodBody {
-  return [closure = Read<OwnedClosure>(body).get()](
-             const void* item, const void* index) -> value::AnyValue {
-    return closure->RunPerElement(item, index);
-  };
-}
-
-// A value the library holds in storage of its own, moved into the storage the
-// call handed over. What is left behind is ended with its holder.
-auto AnswerInto(void* out, value::AnyValue answer) -> void* {
-  answer.Type().Move(answer.Bytes(), out);
-  return out;
+// The order an LRM 7.12.2 sort is handed, as the value layer takes it. The
+// closure is borrowed rather than taken: the sort asks it only before
+// returning, while the frame that made it is still alive.
+auto BorrowedOrder(void* order)
+    -> base::FunctionRef<lyra::support::OrderSignature> {
+  return Borrow<lyra::support::OrderSignature>(
+      *static_cast<ClosureValue*>(order));
 }
 
 // A value of one of the library's own kinds, held with its type.
@@ -2004,6 +1909,7 @@ auto Compared(const R& answer) -> std::uint8_t {
 }  // namespace lyra::runtime
 
 using lyra::runtime::Activation;
+using lyra::runtime::AdoptClosure;
 using lyra::runtime::AdoptObject;
 using lyra::runtime::AllocateValueCell;
 using lyra::runtime::ArmWholeVariable;
@@ -2026,7 +1932,6 @@ using lyra::runtime::CellBeginTakeover;
 using lyra::runtime::CellDriveTakeover;
 using lyra::runtime::CellEndTakeover;
 using lyra::runtime::ChannelCancellation;
-using lyra::runtime::ClosureDefinition;
 using lyra::runtime::ClosureValue;
 using lyra::runtime::Compared;
 using lyra::runtime::ConstructionTable;
@@ -2050,6 +1955,7 @@ using lyra::runtime::DriveFromVariable;
 using lyra::runtime::DriveOnForeignStack;
 using lyra::runtime::DriverOf;
 using lyra::runtime::Emplace;
+using lyra::runtime::EndClosure;
 using lyra::runtime::EnterCancellationTarget;
 using lyra::runtime::EnterForeignTask;
 using lyra::runtime::ErasedAt;
@@ -2095,7 +2001,6 @@ using lyra::runtime::ObjectDefinition;
 using lyra::runtime::Observable;
 using lyra::runtime::Observation;
 using lyra::runtime::ObservationHandles;
-using lyra::runtime::ObservingClosure;
 using lyra::runtime::OpenCellWrite;
 using lyra::runtime::OpenDriverWrite;
 using lyra::runtime::OpenRefWrite;
@@ -2103,7 +2008,6 @@ using lyra::runtime::OpenTailCellWrite;
 using lyra::runtime::OpenTailDriverWrite;
 using lyra::runtime::OpenTailRefWrite;
 using lyra::runtime::OpenWrite;
-using lyra::runtime::OwnedClosure;
 using lyra::runtime::OwnedLaidOutCopy;
 using lyra::runtime::ParkAt;
 using lyra::runtime::PositionNamedAt;
@@ -2152,9 +2056,6 @@ using lyra::runtime::SpawnAll;
 using lyra::runtime::STimeInUnit;
 using lyra::runtime::TailRefSampledGet;
 using lyra::runtime::TakeBranches;
-using lyra::runtime::TakeClosure;
-using lyra::runtime::TakeCondition;
-using lyra::runtime::TakeOwner;
 using lyra::runtime::TestPlusargs;
 using lyra::runtime::Timer;
 using lyra::runtime::Trigger;
@@ -2407,10 +2308,9 @@ void lyra_rt_record_coverage(void* runtime, const void* site, bool succeeded) {
       Read<String>(site), succeeded);
 }
 
-auto lyra_rt_enter_coroutine_borrowed_environment(
-    void* frame, void* out) noexcept -> void* {
+auto lyra_rt_enter_coroutine(void* frame, void* out) noexcept -> void* {
   return lyra::runtime::StartGeneratedProcess(
-      out, lyra::runtime::GeneratedBody(frame, nullptr));
+      out, lyra::runtime::GeneratedCoroutine(frame));
 }
 
 auto lyra_rt_enter_reaction_running_first(
@@ -2427,17 +2327,6 @@ auto lyra_rt_enter_reaction_stopping_first(
   return std::construct_at(
       static_cast<Coroutine<void>*>(out),
       lyra::runtime::EnterReactionStoppingFirst(receiver, setup, pass));
-}
-
-// The site holds only the closure's owner, which generated code cannot see
-// through, so the frame is built here, and the owner is kept for as long as
-// that frame can run.
-auto lyra_rt_enter_coroutine_owned_environment(
-    void* closure, void* out) noexcept -> void* {
-  OwnedClosure captures = TakeOwner(closure);
-  void* frame = captures->Start();
-  return lyra::runtime::StartGeneratedProcess(
-      out, lyra::runtime::GeneratedBody(frame, std::move(captures)));
 }
 
 auto lyra_rt_await_coroutine(void* runtime, void* activation) -> bool {
@@ -2527,11 +2416,8 @@ void lyra_rt_process_resume(const void* self, void* runtime) {
   ProcessResume(ProcessOf(self), *static_cast<RuntimeEffects*>(runtime));
 }
 
-auto lyra_rt_closure_make(const void* definition, void* out) -> void* {
-  OwnedClosure* owner = std::construct_at(
-      static_cast<OwnedClosure*>(out),
-      ClosureValue::Make(static_cast<const ClosureDefinition*>(definition)));
-  return owner->get();
+void lyra_rt_closure_box_end(void* closure) {
+  EndClosure{}(static_cast<ClosureValue*>(closure));
 }
 
 auto lyra_rt_object_adopt(void* object, void* out) -> void* {
@@ -2580,7 +2466,8 @@ auto lyra_rt_shared_pointer_deref(void* handle) -> void* {
 }
 
 void lyra_rt_submit_nba(void* runtime, void* closure) {
-  static_cast<RuntimeEffects*>(runtime)->SubmitNba(TakeClosure(closure));
+  static_cast<RuntimeEffects*>(runtime)->SubmitNba(
+      AdoptClosure<lyra::support::EffectSignature>(closure));
 }
 
 void lyra_rt_submit_nba_after(
@@ -2590,14 +2477,16 @@ void lyra_rt_submit_nba_after(
   const lyra::value::LoadedWords amount = NumberAt(
       duration, duration_width, duration_is_signed, duration_is_four_state);
   static_cast<RuntimeEffects*>(runtime)->SubmitNbaAfter(
-      amount.View(), unit_power, precision_power, TakeClosure(closure));
+      amount.View(), unit_power, precision_power,
+      AdoptClosure<lyra::support::EffectSignature>(closure));
 }
 
 void lyra_rt_submit_nba_after_real(
     void* runtime, const void* duration, std::int64_t unit_power,
     std::int64_t precision_power, void* closure) {
   static_cast<RuntimeEffects*>(runtime)->SubmitNbaAfterReal(
-      Read<Real>(duration), unit_power, precision_power, TakeClosure(closure));
+      Read<Real>(duration), unit_power, precision_power,
+      AdoptClosure<lyra::support::EffectSignature>(closure));
 }
 
 void lyra_rt_run_detached(void* runtime, void* carrier) {
@@ -2606,16 +2495,18 @@ void lyra_rt_run_detached(void* runtime, void* carrier) {
 }
 
 void lyra_rt_submit_postponed(void* runtime, void* closure) {
-  static_cast<RuntimeEffects*>(runtime)->SubmitPostponed(TakeClosure(closure));
+  static_cast<RuntimeEffects*>(runtime)->SubmitPostponed(
+      AdoptClosure<lyra::support::EffectSignature>(closure));
 }
 
 void lyra_rt_submit_observed(void* runtime, void* closure) {
-  static_cast<RuntimeEffects*>(runtime)->SubmitObserved(TakeClosure(closure));
+  static_cast<RuntimeEffects*>(runtime)->SubmitObserved(
+      AdoptClosure<lyra::support::EffectSignature>(closure));
 }
 
 void lyra_rt_submit_violation_report(void* runtime, void* closure) {
   static_cast<RuntimeEffects*>(runtime)->SubmitViolationReport(
-      TakeClosure(closure));
+      AdoptClosure<lyra::support::EffectSignature>(closure));
 }
 
 void lyra_rt_submit_deferred_observed(void* runtime, void* body) {
@@ -2687,7 +2578,8 @@ auto lyra_rt_vector_propagation_delay(
 }
 
 void lyra_rt_timer_bind(void* timer, void* closure) {
-  static_cast<Timer*>(timer)->Bind(TakeClosure(closure));
+  static_cast<Timer*>(timer)->Bind(
+      AdoptClosure<lyra::support::EffectSignature>(closure));
 }
 
 void lyra_rt_timer_arm(
@@ -2718,27 +2610,24 @@ auto lyra_rt_observation_on_reaching(void* out) -> void* {
   return Emplace(out, Observation::OnReaching());
 }
 
-auto lyra_rt_observation_of_value(
-    void* expression, std::int64_t edge, void* out) -> void* {
+auto lyra_rt_observation_of_watch(void* watch, void* out) -> void* {
   return Emplace(
-      out, ObservingClosure(
-               expression, edge, [](auto evaluate, std::int64_t stated) {
-                 return Observation::OfValue(std::move(evaluate), stated);
-               }));
+      out,
+      Observation::OfWatch(AdoptClosure<lyra::support::WatchSignature>(watch)));
 }
 
-auto lyra_rt_observation_of_value_qualified(
-    void* expression, std::int64_t edge, void* condition, void* out) -> void* {
+auto lyra_rt_observation_of_watch_qualified(
+    void* watch, void* condition, void* out) -> void* {
   return Emplace(
-      out, ObservingClosure(
-               expression, edge, [&](auto evaluate, std::int64_t stated) {
-                 return Observation::OfValueQualified(
-                     std::move(evaluate), stated, TakeCondition(condition));
-               }));
+      out, Observation::OfWatchQualified(
+               AdoptClosure<lyra::support::WatchSignature>(watch),
+               AdoptClosure<lyra::support::ConditionSignature>(condition)));
 }
 
 auto lyra_rt_observation_qualified(void* condition, void* out) -> void* {
-  return Emplace(out, Observation::Qualified(TakeCondition(condition)));
+  return Emplace(
+      out, Observation::Qualified(
+               AdoptClosure<lyra::support::ConditionSignature>(condition)));
 }
 
 auto lyra_rt_observation_fires(const void* observation) -> std::int64_t {
@@ -2780,7 +2669,9 @@ auto lyra_rt_attempts_of(void* wait) -> void* {
 
 void lyra_rt_bind_property_evaluation(void* wait, void* step, void* test) {
   BindPropertyEvaluation(
-      static_cast<Wait*>(wait), TakeClosure(step), TakeClosure(test));
+      static_cast<Wait*>(wait),
+      AdoptClosure<lyra::support::EffectSignature>(step),
+      AdoptClosure<lyra::support::EffectSignature>(test));
 }
 
 void lyra_rt_disable_property_evaluation(void* wait) {
@@ -3195,10 +3086,9 @@ auto lyra_rt_find_export_entry(void* scope, const void* subroutine)
 }
 
 auto lyra_rt_run_foreign_task_on_fiber(void* runtime, void* closure) -> bool {
-  auto& effects = *static_cast<RuntimeEffects*>(runtime);
-  return !EnterForeignTask(
-      effects, effects.CurrentProcess().CurrentLeaf(),
-      MakeForeignExecution(TakeClosure(closure)));
+  return lyra::runtime::RunForeignTaskOnFiber(
+      *static_cast<RuntimeEffects*>(runtime),
+      AdoptClosure<lyra::support::EffectSignature>(closure));
 }
 
 void lyra_rt_run_exported_task_to_completion(void* activation) {
@@ -3930,7 +3820,8 @@ void lyra_rt_evaluation_attempts_install(
     void* pass_action, void* fail_action) {
   static_cast<EvaluationAttempts*>(attempts)->Install(
       *static_cast<RuntimeEffects*>(effects), words, pending_holds,
-      TakeClosure(pass_action), TakeClosure(fail_action));
+      AdoptClosure<lyra::support::EffectSignature>(pass_action),
+      AdoptClosure<lyra::support::EffectSignature>(fail_action));
 }
 
 void lyra_rt_evaluation_attempts_seed_word(
@@ -5675,625 +5566,22 @@ auto lyra_rt_assocarray_value_cell_load(void* cell) noexcept -> void* {
   return &LocalAt<RuntimeAssociativeArray>(cell).Storage();
 }
 
-auto lyra_rt_laidout_sum(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void* {
-  return lyra::runtime::AnswerInto(
-      out, lyra::value::RuntimeArraySum(
-               ArrayAt(receiver, receiver_type), lyra::runtime::ArrayBody(body),
-               lyra::runtime::TypeAt(answer_type)));
-}
-
-auto lyra_rt_laidout_product(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void* {
-  return lyra::runtime::AnswerInto(
-      out, lyra::value::RuntimeArrayProduct(
-               ArrayAt(receiver, receiver_type), lyra::runtime::ArrayBody(body),
-               lyra::runtime::TypeAt(answer_type)));
-}
-
-auto lyra_rt_laidout_and(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void* {
-  return lyra::runtime::AnswerInto(
-      out, lyra::value::RuntimeArrayAnd(
-               ArrayAt(receiver, receiver_type), lyra::runtime::ArrayBody(body),
-               lyra::runtime::TypeAt(answer_type)));
-}
-
-auto lyra_rt_laidout_or(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void* {
-  return lyra::runtime::AnswerInto(
-      out, lyra::value::RuntimeArrayOr(
-               ArrayAt(receiver, receiver_type), lyra::runtime::ArrayBody(body),
-               lyra::runtime::TypeAt(answer_type)));
-}
-
-auto lyra_rt_laidout_xor(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void* {
-  return lyra::runtime::AnswerInto(
-      out, lyra::value::RuntimeArrayXor(
-               ArrayAt(receiver, receiver_type), lyra::runtime::ArrayBody(body),
-               lyra::runtime::TypeAt(answer_type)));
-}
-
-auto lyra_rt_laidout_find(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayFind(
-               ArrayAt(receiver, receiver_type), lyra::runtime::ArrayBody(body),
-               QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_laidout_find_index(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayFindIndex(
-               ArrayAt(receiver, receiver_type), lyra::runtime::ArrayBody(body),
-               QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_laidout_find_first(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayFindFirst(
-               ArrayAt(receiver, receiver_type), lyra::runtime::ArrayBody(body),
-               QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_laidout_find_first_index(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayFindFirstIndex(
-               ArrayAt(receiver, receiver_type), lyra::runtime::ArrayBody(body),
-               QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_laidout_find_last(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayFindLast(
-               ArrayAt(receiver, receiver_type), lyra::runtime::ArrayBody(body),
-               QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_laidout_find_last_index(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayFindLastIndex(
-               ArrayAt(receiver, receiver_type), lyra::runtime::ArrayBody(body),
-               QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_laidout_min(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayMin(
-               ArrayAt(receiver, receiver_type), lyra::runtime::ArrayBody(body),
-               QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_laidout_max(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayMax(
-               ArrayAt(receiver, receiver_type), lyra::runtime::ArrayBody(body),
-               QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_laidout_unique(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayUnique(
-               ArrayAt(receiver, receiver_type), lyra::runtime::ArrayBody(body),
-               QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_laidout_unique_index(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayUniqueIndex(
-               ArrayAt(receiver, receiver_type), lyra::runtime::ArrayBody(body),
-               QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_laidout_map(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayMap(
-               ArrayAt(receiver, receiver_type), lyra::runtime::ArrayBody(body),
-               ArrayTypeAt(answer_type)));
-}
-
-auto lyra_rt_dynarray_sum(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return lyra::runtime::AnswerInto(
-      out,
-      lyra::value::RuntimeArraySum(
-          Read<RuntimeDynamicArray>(receiver), lyra::runtime::ArrayBody(body),
-          lyra::runtime::TypeAt(answer_type)));
-}
-
-auto lyra_rt_dynarray_product(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return lyra::runtime::AnswerInto(
-      out,
-      lyra::value::RuntimeArrayProduct(
-          Read<RuntimeDynamicArray>(receiver), lyra::runtime::ArrayBody(body),
-          lyra::runtime::TypeAt(answer_type)));
-}
-
-auto lyra_rt_dynarray_and(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return lyra::runtime::AnswerInto(
-      out,
-      lyra::value::RuntimeArrayAnd(
-          Read<RuntimeDynamicArray>(receiver), lyra::runtime::ArrayBody(body),
-          lyra::runtime::TypeAt(answer_type)));
-}
-
-auto lyra_rt_dynarray_or(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return lyra::runtime::AnswerInto(
-      out,
-      lyra::value::RuntimeArrayOr(
-          Read<RuntimeDynamicArray>(receiver), lyra::runtime::ArrayBody(body),
-          lyra::runtime::TypeAt(answer_type)));
-}
-
-auto lyra_rt_dynarray_xor(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return lyra::runtime::AnswerInto(
-      out,
-      lyra::value::RuntimeArrayXor(
-          Read<RuntimeDynamicArray>(receiver), lyra::runtime::ArrayBody(body),
-          lyra::runtime::TypeAt(answer_type)));
-}
-
-auto lyra_rt_dynarray_find(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayFind(
-               Read<RuntimeDynamicArray>(receiver),
-               lyra::runtime::ArrayBody(body), QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_dynarray_find_index(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayFindIndex(
-               Read<RuntimeDynamicArray>(receiver),
-               lyra::runtime::ArrayBody(body), QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_dynarray_find_first(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayFindFirst(
-               Read<RuntimeDynamicArray>(receiver),
-               lyra::runtime::ArrayBody(body), QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_dynarray_find_first_index(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayFindFirstIndex(
-               Read<RuntimeDynamicArray>(receiver),
-               lyra::runtime::ArrayBody(body), QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_dynarray_find_last(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayFindLast(
-               Read<RuntimeDynamicArray>(receiver),
-               lyra::runtime::ArrayBody(body), QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_dynarray_find_last_index(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayFindLastIndex(
-               Read<RuntimeDynamicArray>(receiver),
-               lyra::runtime::ArrayBody(body), QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_dynarray_min(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayMin(
-               Read<RuntimeDynamicArray>(receiver),
-               lyra::runtime::ArrayBody(body), QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_dynarray_max(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayMax(
-               Read<RuntimeDynamicArray>(receiver),
-               lyra::runtime::ArrayBody(body), QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_dynarray_unique(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayUnique(
-               Read<RuntimeDynamicArray>(receiver),
-               lyra::runtime::ArrayBody(body), QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_dynarray_unique_index(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayUniqueIndex(
-               Read<RuntimeDynamicArray>(receiver),
-               lyra::runtime::ArrayBody(body), QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_dynarray_map(
-    const void* receiver, void* body, const void* answer_element_type,
-    void* out) -> void* {
-  return Emplace(
-      out,
-      lyra::value::RuntimeArrayMap(
-          Read<RuntimeDynamicArray>(receiver), lyra::runtime::ArrayBody(body),
-          lyra::runtime::ElementTypeAt(answer_element_type)));
-}
-
-auto lyra_rt_queue_sum(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return lyra::runtime::AnswerInto(
-      out, lyra::value::RuntimeArraySum(
-               Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
-               lyra::runtime::TypeAt(answer_type)));
-}
-
-auto lyra_rt_queue_product(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return lyra::runtime::AnswerInto(
-      out, lyra::value::RuntimeArrayProduct(
-               Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
-               lyra::runtime::TypeAt(answer_type)));
-}
-
-auto lyra_rt_queue_and(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return lyra::runtime::AnswerInto(
-      out, lyra::value::RuntimeArrayAnd(
-               Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
-               lyra::runtime::TypeAt(answer_type)));
-}
-
-auto lyra_rt_queue_or(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return lyra::runtime::AnswerInto(
-      out, lyra::value::RuntimeArrayOr(
-               Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
-               lyra::runtime::TypeAt(answer_type)));
-}
-
-auto lyra_rt_queue_xor(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return lyra::runtime::AnswerInto(
-      out, lyra::value::RuntimeArrayXor(
-               Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
-               lyra::runtime::TypeAt(answer_type)));
-}
-
-auto lyra_rt_queue_find(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayFind(
-               Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
-               QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_queue_find_index(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayFindIndex(
-               Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
-               QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_queue_find_first(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayFindFirst(
-               Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
-               QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_queue_find_first_index(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayFindFirstIndex(
-               Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
-               QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_queue_find_last(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayFindLast(
-               Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
-               QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_queue_find_last_index(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayFindLastIndex(
-               Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
-               QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_queue_min(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayMin(
-               Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
-               QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_queue_max(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayMax(
-               Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
-               QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_queue_unique(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayUnique(
-               Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
-               QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_queue_unique_index(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayUniqueIndex(
-               Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
-               QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_queue_map(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayMap(
-               Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
-               QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_assocarray_sum(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return lyra::runtime::AnswerInto(
-      out,
-      lyra::value::RuntimeArraySum(
-          Read<RuntimeAssociativeArray>(receiver),
-          lyra::runtime::ArrayBody(body), lyra::runtime::TypeAt(answer_type)));
-}
-
-auto lyra_rt_assocarray_product(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return lyra::runtime::AnswerInto(
-      out,
-      lyra::value::RuntimeArrayProduct(
-          Read<RuntimeAssociativeArray>(receiver),
-          lyra::runtime::ArrayBody(body), lyra::runtime::TypeAt(answer_type)));
-}
-
-auto lyra_rt_assocarray_and(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return lyra::runtime::AnswerInto(
-      out,
-      lyra::value::RuntimeArrayAnd(
-          Read<RuntimeAssociativeArray>(receiver),
-          lyra::runtime::ArrayBody(body), lyra::runtime::TypeAt(answer_type)));
-}
-
-auto lyra_rt_assocarray_or(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return lyra::runtime::AnswerInto(
-      out,
-      lyra::value::RuntimeArrayOr(
-          Read<RuntimeAssociativeArray>(receiver),
-          lyra::runtime::ArrayBody(body), lyra::runtime::TypeAt(answer_type)));
-}
-
-auto lyra_rt_assocarray_xor(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return lyra::runtime::AnswerInto(
-      out,
-      lyra::value::RuntimeArrayXor(
-          Read<RuntimeAssociativeArray>(receiver),
-          lyra::runtime::ArrayBody(body), lyra::runtime::TypeAt(answer_type)));
-}
-
-auto lyra_rt_assocarray_find(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayFind(
-               Read<RuntimeAssociativeArray>(receiver),
-               lyra::runtime::ArrayBody(body), QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_assocarray_find_index(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayFindIndex(
-               Read<RuntimeAssociativeArray>(receiver),
-               lyra::runtime::ArrayBody(body), QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_assocarray_find_first(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayFindFirst(
-               Read<RuntimeAssociativeArray>(receiver),
-               lyra::runtime::ArrayBody(body), QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_assocarray_find_first_index(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayFindFirstIndex(
-               Read<RuntimeAssociativeArray>(receiver),
-               lyra::runtime::ArrayBody(body), QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_assocarray_find_last(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayFindLast(
-               Read<RuntimeAssociativeArray>(receiver),
-               lyra::runtime::ArrayBody(body), QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_assocarray_find_last_index(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayFindLastIndex(
-               Read<RuntimeAssociativeArray>(receiver),
-               lyra::runtime::ArrayBody(body), QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_assocarray_min(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayMin(
-               Read<RuntimeAssociativeArray>(receiver),
-               lyra::runtime::ArrayBody(body), QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_assocarray_max(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayMax(
-               Read<RuntimeAssociativeArray>(receiver),
-               lyra::runtime::ArrayBody(body), QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_assocarray_unique(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayUnique(
-               Read<RuntimeAssociativeArray>(receiver),
-               lyra::runtime::ArrayBody(body), QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_assocarray_unique_index(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayUniqueIndex(
-               Read<RuntimeAssociativeArray>(receiver),
-               lyra::runtime::ArrayBody(body), QueueTypeAt(answer_type)));
-}
-
-auto lyra_rt_assocarray_map(
-    const void* receiver, void* body, const void* answer_element_type,
-    void* out) -> void* {
-  return Emplace(
-      out, lyra::value::RuntimeArrayMap(
-               Read<RuntimeAssociativeArray>(receiver),
-               lyra::runtime::ArrayBody(body),
-               lyra::runtime::ElementTypeAt(answer_element_type)));
-}
-
 // LRM 7.12.2 ordering methods, which reorder the array where it lies.
 void lyra_rt_laidout_sort(
-    void* receiver, void* body, const void* receiver_type) {
+    void* receiver, void* order, const void* receiver_type) {
   lyra::value::RuntimeArraySort(
-      ArrayTypeAt(receiver_type), receiver, lyra::runtime::ArrayBody(body));
+      ArrayTypeAt(receiver_type), receiver,
+      lyra::runtime::BorrowedOrder(order));
 }
 
-void lyra_rt_laidout_rsort(
-    void* receiver, void* body, const void* receiver_type) {
-  lyra::value::RuntimeArrayRsort(
-      ArrayTypeAt(receiver_type), receiver, lyra::runtime::ArrayBody(body));
-}
-
-void lyra_rt_dynarray_sort(void* receiver, void* body) {
+void lyra_rt_dynarray_sort(void* receiver, void* order) {
   auto& target = *static_cast<RuntimeDynamicArray*>(receiver);
-  lyra::value::RuntimeArraySort(target, lyra::runtime::ArrayBody(body));
+  lyra::value::RuntimeArraySort(target, lyra::runtime::BorrowedOrder(order));
 }
 
-void lyra_rt_dynarray_rsort(void* receiver, void* body) {
-  auto& target = *static_cast<RuntimeDynamicArray*>(receiver);
-  lyra::value::RuntimeArrayRsort(target, lyra::runtime::ArrayBody(body));
-}
-
-void lyra_rt_queue_sort(void* receiver, void* body) {
+void lyra_rt_queue_sort(void* receiver, void* order) {
   auto& target = *static_cast<RuntimeQueue*>(receiver);
-  lyra::value::RuntimeArraySort(target, lyra::runtime::ArrayBody(body));
-}
-
-void lyra_rt_queue_rsort(void* receiver, void* body) {
-  auto& target = *static_cast<RuntimeQueue*>(receiver);
-  lyra::value::RuntimeArrayRsort(target, lyra::runtime::ArrayBody(body));
+  lyra::value::RuntimeArraySort(target, lyra::runtime::BorrowedOrder(order));
 }
 
 void lyra_rt_laidout_reverse(void* receiver, const void* receiver_type) {
@@ -6965,9 +6253,6 @@ void lyra_rt_assocarray_destroy(void* object) {
 void lyra_rt_managedref_destroy(void* object) {
   std::destroy_at(static_cast<ObjectRef*>(object));
 }
-void lyra_rt_closure_destroy(void* object) {
-  std::destroy_at(static_cast<OwnedClosure*>(object));
-}
 void lyra_rt_hierarchy_segment_destroy(void* object) {
   std::destroy_at(static_cast<HierarchySegment*>(object));
 }
@@ -7099,9 +6384,6 @@ auto lyra_rt_assocarray_move(void* value, void* out) -> void* {
 }
 auto lyra_rt_managedref_move(void* value, void* out) -> void* {
   return Emplace(out, std::move(*static_cast<ObjectRef*>(value)));
-}
-auto lyra_rt_closure_move(void* value, void* out) -> void* {
-  return Emplace(out, TakeOwner(value));
 }
 auto lyra_rt_shared_pointer_move(void* value, void* out) -> void* {
   return Emplace(out, std::move(*static_cast<SharedPointer*>(value)));

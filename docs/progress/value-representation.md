@@ -17,8 +17,7 @@ against the run before it; the figures are in the pull requests that measured th
 - [x] A runtime facility that acts on a value of any type -- formatting, DPI conversion, file and
       memory-image reading and writing, sampled history, a wait's comparison -- is handed the
       functions the compiler generated for that type. A value held beside its type's constant
-      survives on the execution backend where an associative array holds its key, and a closure or a
-      `with` clause its answer.
+      survives on the execution backend only where an associative array holds its key.
 - [x] A write reports the range it reached, and a wait decided at the write tests that range against
       what it watches on the words, without materializing either side.
 - [x] On the execution backend, a queue, a dynamic array, an associative array and a fixed-size
@@ -78,18 +77,21 @@ against the run before it; the figures are in the pull requests that measured th
       that costs a design evaluating one often is not measured.
 - [x] A local, a parameter taken by value, and an argument handed to one, of a type too large for a
       frame, is held through a box the compiler states in MIR before either backend reads it, so
-      both keep the value off the stack by translating what they are given
-      (`../decisions/a-value-too-large-for-a-frame-is-held-through-a-box.md`). A variable's cell
-      keeps such a value in storage of its own on both backends, as every holder does, so a cell is
-      never boxed.
+      both keep the value off the stack by translating what they are given. A parameter is boxed
+      wherever its signature is stated, so a call through the address of a body passes what the body
+      takes. A variable's cell keeps such a value in storage of its own on both backends, as every
+      holder does, so a cell is never boxed.
 - [x] A list of elements an array is built from is made, elements and all, in its box where it is
       too large for a frame, on both backends.
 - [x] A value of such a type that an expression makes is made in a box and read through it, a member
-      of one is read through its box, and one a condition chooses is chosen as its box. A value a
-      box is built from is made in the box's storage on both backends, never in a frame first, so a
-      call answering one makes it in the box. What a suspending call completes with is kept out of
-      every frame on both backends where it is too large for one.
-- [x] A closure capturing such a value holds it through a box, which the closure owns and ends.
+      of one is read through its box, and the arm a condition chooses, or the value a block of steps
+      ends with, is made where the condition's or the block's value is. A value a box is built from
+      is made in the box's storage on both backends, never in a frame first, so a call answering one
+      makes it in the box. What a suspending call completes with is kept out of every frame on both
+      backends where it is too large for one.
+- [x] A closure capturing such a value holds it through a box, which the closure owns and ends, and
+      a closure is as large as its captures as it holds them, so one whose captures together pass
+      the bound is itself held through a box.
 - [x] A structure's operations on its whole value -- equality, case equality, the unknown tests, the
       stream conversions, a net's resolution -- refer to the structure they are asked of and to
       every operand of the same type where it lies, as Rust's comparison operators borrow theirs; an

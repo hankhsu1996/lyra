@@ -2115,16 +2115,10 @@ auto CodeGenFunction::LowerClosure(
   if (!placed) {
     return std::unexpected(std::move(placed.error()));
   }
-  // The entry builds what owns the closure in `out` and answers the closure
-  // itself, which is where its captures are laid out.
-  const std::array<llvm::Value*, 2> made{*definition, out};
-  llvm::Value* closure = builder_.CreateCall(
-      module_->RuntimeFunction(
-          RuntimeSymbol(RuntimeOp::kClosureMake),
-          CallArranger::Arrange(
-              Addresses(1),
-              ReturnIndirect{.returned = module_->Types().Ptr()})),
-      made);
+  // The closure is made in `out`, where its value lies: the library's part
+  // at its start is the address of its definition, stored as a constructor
+  // stores a class's table address, and its captures lie after it.
+  builder_.CreateStore(*definition, out);
   for (std::size_t i = 0; i < built.captures.size(); ++i) {
     auto value = LowerOperand(built.captures[i]);
     if (!value) {
@@ -2132,7 +2126,7 @@ auto CodeGenFunction::LowerClosure(
     }
     const lir::TypeId type = (*placed)->types.at(i);
     llvm::Value* slot = builder_.CreateConstInBoundsGEP1_64(
-        builder_.getInt8Ty(), closure, (*placed)->offsets.at(i));
+        builder_.getInt8Ty(), out, (*placed)->offsets.at(i));
     if (module_->Types().HasAggregateEvaluationKind(type)) {
       auto copied = CopyValue(type, *value, slot);
       if (!copied) {

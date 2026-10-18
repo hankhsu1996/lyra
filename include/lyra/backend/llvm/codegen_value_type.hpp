@@ -19,7 +19,7 @@
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
-#include "lyra/support/runtime_object.hpp"
+#include "lyra/support/machine_signature.hpp"
 #include "lyra/support/value_operation.hpp"
 #include "lyra/value/layout.hpp"
 
@@ -39,24 +39,6 @@ struct CompilationUnit;
 namespace lyra::backend::llvm_backend {
 
 class CodeGenModule;
-
-// The machine type one parameter or the answer of a function of a type's table
-// has where a body of this module fills that function's place.
-enum class MachineKind : std::uint8_t {
-  kVoid,
-  kAddress,
-  kTruth,
-  kInt8,
-  kInt32,
-  kInt64,
-};
-
-// What a function of a type's table takes after the type it is handed, and
-// what it answers, read off the table's declaration of it.
-struct WitnessSignature {
-  MachineKind returns;
-  std::vector<MachineKind> takes;
-};
 
 // The lifecycle of each type a module lays out whose operations the design
 // compiles, and the constant stating the type to the runtime: a product, a
@@ -157,23 +139,22 @@ class CodeGenValueTypes {
   // with its tag `placed`, each emitting what `held` emits for the member the
   // tag names, and nothing where it names none; `b` is left after the branches
   // meet.
-  void ForHeldMember(
+  static void ForHeldMember(
       llvm::IRBuilderBase& b, std::span<const lir::TypeId> members,
       const value::TagPlacement& placed, llvm::Value* value,
       const std::function<void(llvm::IRBuilderBase&, lir::TypeId)>& held);
-  [[nodiscard]] auto MachineTypeOf(MachineKind kind) const -> llvm::Type*;
   // A body for the witness `witness` of signature `stands_in_for`, declared
   // and left for its caller to fill: it takes the type it is handed and then
   // what that witness takes, and answers what it answers.
   auto DeclareBody(
       lir::TypeId type, std::string_view witness,
-      const WitnessSignature& stands_in_for) -> llvm::Function*;
+      const support::MachineSignature& stands_in_for) -> llvm::Function*;
   // The body the type's table holds as the witness `witness`, which does what
   // `filling` does, or the library's failing of an operation the language
   // does not define for the type where nothing fills it.
   auto Body(
       lir::TypeId type, std::string_view witness,
-      const WitnessSignature& stands_in_for, llvm::Function* filling)
+      const support::MachineSignature& stands_in_for, llvm::Function* filling)
       -> llvm::Constant*;
   // A body doing what a type's own function does where the two differ in how
   // one integral value crosses, opened and left for its caller to fill: it
@@ -186,7 +167,8 @@ class CodeGenValueTypes {
       lir::FunctionId method, std::size_t index) const -> lir::TypeId;
   auto OpenThunkBody(
       lir::TypeId type, std::string_view witness,
-      const WitnessSignature& stands_in_for, lir::TypeId stated) -> ThunkBody;
+      const support::MachineSignature& stands_in_for, lir::TypeId stated)
+      -> ThunkBody;
   // What a witness whose method answers a comparison answers: the scalar the
   // comparison came to, or whether it holds where it is never unknown (LRM
   // 11.4.5).
@@ -199,19 +181,19 @@ class CodeGenValueTypes {
   // stream; and of the one whose method takes a count's control bits.
   auto ScalarAnswerBody(
       lir::TypeId type, std::string_view witness,
-      const WitnessSignature& stands_in_for, lir::FunctionId method,
+      const support::MachineSignature& stands_in_for, lir::FunctionId method,
       ComparisonAnswered answered) -> llvm::Constant*;
   auto StreamWriteBody(
       lir::TypeId type, std::string_view witness,
-      const WitnessSignature& stands_in_for, lir::FunctionId method)
+      const support::MachineSignature& stands_in_for, lir::FunctionId method)
       -> llvm::Constant*;
   auto StreamReadBody(
       lir::TypeId type, std::string_view witness,
-      const WitnessSignature& stands_in_for, lir::FunctionId method)
+      const support::MachineSignature& stands_in_for, lir::FunctionId method)
       -> llvm::Constant*;
   auto ControlReadBody(
       lir::TypeId type, std::string_view witness,
-      const WitnessSignature& stands_in_for, lir::FunctionId method)
+      const support::MachineSignature& stands_in_for, lir::FunctionId method)
       -> llvm::Constant*;
   // At `b`, the component lying at `value` built as its own type builds a
   // value before anything writes it, through that type's table.
@@ -221,7 +203,7 @@ class CodeGenValueTypes {
   // its own type builds one.
   auto ComponentWiseDefaultBody(
       lir::TypeId tuple, std::string_view witness,
-      const WitnessSignature& stands_in_for) -> llvm::Constant*;
+      const support::MachineSignature& stands_in_for) -> llvm::Constant*;
   // The function clearing every position above a width in a value of `type`,
   // made once per type.
   auto ClearFunction(lir::TypeId type) -> llvm::Function*;

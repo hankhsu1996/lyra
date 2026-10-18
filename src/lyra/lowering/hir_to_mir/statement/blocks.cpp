@@ -66,8 +66,8 @@ void OpenActivationScope(
             .pointee = cell_type,
             .ownership = mir::PointerOwnership::kShared,
             .mutability = mir::Mutability::kMutable}});
-    const BindingOriginId handle_origin =
-        BindingOriginId::Synthesized(site, static_cast<std::uint32_t>(i));
+    const BindingOriginId handle_origin = SynthesizedOrigin{
+        .owner_site = site, .ordinal = static_cast<std::uint32_t>(i)};
     const mir::LocalId handle =
         frame.bindings->Declare(handle_origin, handle_type);
     block.AppendStmt(
@@ -152,7 +152,8 @@ auto BuildCancellableRegion(
       mir::Type{mir::RuntimeLibraryType{
           .kind = mir::RuntimeLibraryKind::kControlEffect}});
   const std::uint32_t site = unit_lowerer.NextSynthesizedSite();
-  const BindingOriginId origin = BindingOriginId::Synthesized(site, 0);
+  const BindingOriginId origin =
+      SynthesizedOrigin{.owner_site = site, .ordinal = 0};
   const mir::LocalId caught = frame.bindings->Declare(origin, effect_type);
 
   // The handler is a scope of its own, so its test and its raise are lowered

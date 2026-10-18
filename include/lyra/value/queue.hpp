@@ -8,14 +8,13 @@
 #include <utility>
 #include <vector>
 
-#include "lyra/value/array_manipulation.hpp"
+#include "lyra/value/array_ordering.hpp"
 #include "lyra/value/basic_queue.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/element_policy.hpp"
 #include "lyra/value/element_sequence.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral.hpp"
-#include "lyra/value/reduction.hpp"
 #include "lyra/value/take_built.hpp"
 
 namespace lyra::value {
@@ -23,162 +22,31 @@ namespace lyra::value {
 template <typename T, std::int64_t kBound = -1>
 class Queue;
 
-// The LRM 7.12 methods of an unpacked array whose index is the ordinal
-// position -- a fixed-size array, a dynamic array, a queue -- over the C++
-// closures the C++ backend writes, each closure taking an element and its
-// position. A located family answers with a queue (LRM 7.12.1); `map` answers
-// with an array of the receiver's own kind over the closure's result type
-// (LRM 7.12.5), which `Self` names as its `Rebound`. A reduction of no entries
-// answers the default of the closure's result type, LRM 7.12.3 stating no
-// answer of its own.
-template <typename Self, typename T>
+// The LRM 7.12.2 ordering methods of an unpacked array whose index is the
+// ordinal position -- a fixed-size array, a dynamic array, a queue. A sort is
+// handed whether the element at one position comes before the one at another,
+// which the program answers, and moves the elements into that order; how they
+// move is the container's own.
+template <typename Self>
 class OrdinalArrayMethods {
  public:
-  template <typename F>
-  [[nodiscard]] auto Sum(F key) const {
-    return Reduced(key, Reduction::kSum);
-  }
-  template <typename F>
-  [[nodiscard]] auto Product(F key) const {
-    return Reduced(key, Reduction::kProduct);
-  }
-  template <typename F>
-  [[nodiscard]] auto And(F key) const {
-    return Reduced(key, Reduction::kAnd);
-  }
-  template <typename F>
-  [[nodiscard]] auto Or(F key) const {
-    return Reduced(key, Reduction::kOr);
-  }
-  template <typename F>
-  [[nodiscard]] auto Xor(F key) const {
-    return Reduced(key, Reduction::kXor);
-  }
-
-  template <typename F>
-  [[nodiscard]] auto Find(F pred) const {
-    return Elements(detail::MatchingPositions(Count(), KeyOf(pred)));
-  }
-  template <typename F>
-  [[nodiscard]] auto FindIndex(F pred) const {
-    return Indices(detail::MatchingPositions(Count(), KeyOf(pred)));
-  }
-  template <typename F>
-  [[nodiscard]] auto FindFirst(F pred) const {
-    return Elements(detail::FirstMatching(Count(), KeyOf(pred)));
-  }
-  template <typename F>
-  [[nodiscard]] auto FindFirstIndex(F pred) const {
-    return Indices(detail::FirstMatching(Count(), KeyOf(pred)));
-  }
-  template <typename F>
-  [[nodiscard]] auto FindLast(F pred) const {
-    return Elements(detail::LastMatching(Count(), KeyOf(pred)));
-  }
-  template <typename F>
-  [[nodiscard]] auto FindLastIndex(F pred) const {
-    return Indices(detail::LastMatching(Count(), KeyOf(pred)));
-  }
-  template <typename F>
-  [[nodiscard]] auto Min(F key) const {
-    return Elements(detail::LeastPosition(Count(), KeyOf(key)));
-  }
-  template <typename F>
-  [[nodiscard]] auto Max(F key) const {
-    return Elements(detail::GreatestPosition(Count(), KeyOf(key)));
-  }
-  template <typename F>
-  [[nodiscard]] auto Unique(F key) const {
-    return Elements(detail::UniquePositions(Count(), KeyOf(key)));
-  }
-  template <typename F>
-  [[nodiscard]] auto UniqueIndex(F key) const {
-    return Indices(detail::UniquePositions(Count(), KeyOf(key)));
-  }
-
-  template <typename F>
-  [[nodiscard]] auto Map(F closure) const {
-    const auto mapped = detail::KeysOf(Count(), KeyOf(closure));
-    using U = typename decltype(mapped)::value_type;
-    return typename Self::template Rebound<U>(std::span<const U>{mapped});
-  }
-
-  // LRM 7.12.2 ordering: a positional permutation, by the closure-projected key
-  // with the ordinal position as index for `sort` / `rsort`; `reverse` takes no
-  // closure. How the elements move under it is the container's own.
   auto Reverse() -> void {
     MutableThis().Permute(detail::ReversedPositions(Count()));
   }
-  template <typename F>
-  auto Sort(F key) -> void {
-    MutableThis().Permute(SortOrder(key, false));
-  }
-  template <typename F>
-  auto Rsort(F key) -> void {
-    MutableThis().Permute(SortOrder(key, true));
+  template <typename Before>
+  auto Sort(Before before) -> void {
+    MutableThis().Permute(detail::SortedPositions(Count(), before));
   }
 
  private:
   friend Self;
   OrdinalArrayMethods() = default;
 
-  [[nodiscard]] auto This() const -> const Self& {
-    return static_cast<const Self&>(*this);
-  }
   [[nodiscard]] auto MutableThis() -> Self& {
     return static_cast<Self&>(*this);
   }
-
-  // The order `key` puts the elements in, ascending or descending.
-  template <typename F>
-  [[nodiscard]] auto SortOrder(F& key, bool descending) const
-      -> std::vector<std::size_t> {
-    return detail::SortedPositions(
-        detail::KeysOf(Count(), KeyOf(key)), descending);
-  }
   [[nodiscard]] auto Count() const -> std::size_t {
-    return This().RawSize();
-  }
-
-  // What `closure` answers for the element at a position and that position.
-  template <typename F>
-  [[nodiscard]] auto KeyOf(F& closure) const {
-    return [this, &closure](std::size_t i) {
-      return closure(
-          This().RawAt(i), Int::FromInt(static_cast<std::int64_t>(i)));
-    };
-  }
-
-  template <typename F>
-  [[nodiscard]] auto Reduced(F& key, Reduction reduction) const {
-    using R = std::remove_cvref_t<std::invoke_result_t<F&, const T&, Int>>;
-    return detail::Folded(
-        Count(), KeyOf(key), reduction, detail::DefaultOf<R>());
-  }
-
-  // The located elements, or positions, as the queue a locator answers with
-  // (LRM 7.12.1), a position being an `int`. Each is a template so that it
-  // builds a queue only where it is instantiated, which is after the queue is
-  // complete.
-  template <typename Element = T>
-  [[nodiscard]] auto Elements(const std::vector<std::size_t>& positions) const
-      -> Queue<Element> {
-    std::vector<Element> found;
-    found.reserve(positions.size());
-    for (const std::size_t i : positions) {
-      found.push_back(This().RawAt(i));
-    }
-    return Queue<Element>(std::span<const Element>{found});
-  }
-  template <IntegralValue Index = Int>
-  [[nodiscard]] static auto Indices(const std::vector<std::size_t>& positions)
-      -> Queue<Index> {
-    std::vector<Index> found;
-    found.reserve(positions.size());
-    for (const std::size_t i : positions) {
-      found.push_back(Index::FromInt(static_cast<std::int64_t>(i)));
-    }
-    return Queue<Index>(std::span<const Index>{found});
+    return static_cast<const Self&>(*this).RawSize();
   }
 };
 
@@ -192,18 +60,15 @@ struct StaticBound {
 
 // SystemVerilog queue (LRM 7.10) of the C++ type `T`, holding no element whose
 // index exceeds `kBound` (LRM 7.10.5), a bound below zero being none: the
-// queue every element type shares, with its elements read and written as `T`
-// and the LRM 7.12 methods run over the closures the C++ backend writes.
+// queue every element type shares, with its elements read and written as `T`.
 // Default value is the empty queue (LRM Table 6-7). What an invalid-index read
 // returns, and what growth (the `q[$+1]` append) and an empty-queue pop start
 // as, is the element type's default (LRM Table 7-1), which `T`'s own default
 // construction builds.
 template <typename T, std::int64_t kBound>
-class Queue : public OrdinalArrayMethods<Queue<T, kBound>, T> {
+class Queue : public OrdinalArrayMethods<Queue<T, kBound>> {
  public:
   using ElementType = T;
-  template <typename U>
-  using Rebound = Queue<U>;
 
   Queue() = default;
 
@@ -362,7 +227,7 @@ class Queue : public OrdinalArrayMethods<Queue<T, kBound>, T> {
   }
 
  private:
-  friend class OrdinalArrayMethods<Queue<T, kBound>, T>;
+  friend class OrdinalArrayMethods<Queue<T, kBound>>;
   template <typename, std::int64_t>
   friend class Queue;
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <format>
 #include <optional>
 #include <span>
 #include <string>
@@ -7,6 +8,7 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -86,6 +88,24 @@ struct ExternalClass {
     }
   }
   return nullptr;
+}
+
+// The class `other` extends, as the unit declaring it published it. A class
+// this unit reaches an object of is one some signature it consumed carries, so
+// one with no record is a defect of whatever named it.
+[[nodiscard]] inline auto BaseOfExternalClass(
+    std::span<const ExternalClass> records, const CrossUnitClassRef& other)
+    -> std::optional<ClassRef> {
+  const ExternalClass* record =
+      FindExternalClass(records, other.unit_name, other.class_path);
+  if (record == nullptr) {
+    throw InternalError(
+        std::format(
+            "mir: class '{}' of unit '{}' is reached with no record of what "
+            "its unit published -- please report this as a bug",
+            support::DisplayOf(other.class_path), other.unit_name));
+  }
+  return record->base;
 }
 
 }  // namespace lyra::mir

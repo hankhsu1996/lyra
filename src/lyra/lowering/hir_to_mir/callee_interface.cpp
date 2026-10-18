@@ -181,8 +181,7 @@ auto BuildPrototype(
     -> mir::CallableCode {
   mir::CallableCode code;
   CallableBindings bindings(unit_lowerer.Unit(), code);
-  std::vector<mir::LocalId> params{
-      bindings.Declare(BindingOriginId::Receiver(), self)};
+  std::vector<mir::LocalId> params{bindings.Declare(ReceiverOrigin{}, self)};
   params.reserve(formals.size() + 2);
   for (const PrototypeFormal& formal : formals) {
     const std::optional<mir::TypeId> type =
@@ -191,7 +190,7 @@ auto BuildPrototype(
     params.push_back(
         formal.declared.has_value()
             ? bindings.DeclareProcedural(
-                  BindingOriginId::Procedural(formal.declared->var),
+                  ProceduralOrigin{.var = formal.declared->var},
                   formal.declared->name, *type)
             : bindings.DeclareAnonymous(*type));
   }

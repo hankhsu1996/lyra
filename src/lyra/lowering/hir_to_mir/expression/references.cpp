@@ -1,6 +1,5 @@
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 
-#include <cstdint>
 #include <string_view>
 #include <variant>
 
@@ -84,19 +83,15 @@ auto LowerHirNullLiteral(mir::TypeId type) -> mir::Expr {
 }
 
 // LRM 8.11 `this`: the handle referring to the object the subroutine was
-// invoked on. The body holds a borrowed pointer to that object, which serves
-// every member access, and a handle is not something that pointer can be read
-// as -- so it is produced by an operation taking the receiver rather than by
-// loading anything through it.
-auto LowerHirThisHandle(const WalkFrame& frame, mir::TypeId type) -> mir::Expr {
-  const mir::ExprId self_ref = frame.current_block->Read(
-      frame.current_block->exprs.Add(MakeSelfRefExpr(frame)));
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = mir::Direct{.target = support::BuiltinFn::kSelfHandle},
-              .arguments = {self_ref}},
-      .type = type};
+// invoked on. Every body of a class holds a share of its object from where it
+// begins, which is such a handle (LRM 8.29), so `this` is a copy of it.
+auto LowerHirThisHandle(const WalkFrame& frame) -> mir::Expr {
+  const BodyBindingRef share =
+      frame.bindings->EnsureCarrier(ReceiverShareOrigin{});
+  return mir::MakeCopyExpr(
+      frame.current_block->exprs.Add(
+          frame.bindings->MakeBindingPlace(share, *frame.current_block)),
+      frame.bindings->TypeOf(share));
 }
 
 // LRM 7.10.1 `$`: the index of the last element of the queue the enclosing
@@ -162,25 +157,21 @@ auto LowerRoutedObjectRefExpr(
 auto LowerPatternVarRefExpr(WalkFrame frame, const hir::PatternVarRef& r)
     -> mir::Expr {
   const BodyBindingRef ref =
-      frame.bindings->EnsureCarrier(BindingOriginId::Pattern(r.pattern));
+      frame.bindings->EnsureCarrier(PatternOrigin{.pattern = r.pattern});
   return frame.bindings->MakeBindingPlace(ref, *frame.current_block);
 }
 
-// LRM 7.12.4: a with-clause iteration reference reads the named clause's
-// element or index closure parameter. The parameter is found by clause
-// identity, then resolved by the same rule as any body-local: read directly
-// when the reference is in the clause's own closure, captured when it is inside
-// a deeper clause's closure (the parameter's declaration sits above that
-// closure's boundary).
+// LRM 7.12.4: a with-clause iteration reference reads the variable the
+// method's loop holds the named clause's element or index in. It is found by
+// the clause's identity and role, and resolved by the same rule as any binding
+// of the body: read directly, and captured where the reference lies in a
+// closure the clause's expression makes. The read's type is the binding's own,
+// so the caller supplies none.
 auto LowerIterationBindingRefExpr(
     const hir::IterationBindingRef& ref, WalkFrame frame) -> mir::Expr {
-  // The parameter's identity across bodies is its clause and role, and a
-  // capture forwards it one closure boundary at a time. The read's type is the
-  // resolved binding's own, so the caller supplies none.
   return frame.bindings->MakeBindingPlace(
       frame.bindings->EnsureCarrier(
-          BindingOriginId::Iterator(
-              ref.clause.value, static_cast<std::uint32_t>(ref.role))),
+          IteratorOrigin{.clause = ref.clause, .role = ref.role}),
       *frame.current_block);
 }
 
@@ -214,7 +205,7 @@ auto LowerProceduralVarRefExpr(
           // it is a cell.
           [&](const AutomaticVarBinding&) {
             const BodyBindingRef ref =
-                frame.bindings->EnsureCarrier(BindingOriginId::Procedural(var));
+                frame.bindings->EnsureCarrier(ProceduralOrigin{.var = var});
             return frame.bindings->MakeBindingPlace(ref, *frame.current_block);
           }},
       process.LookupProceduralVar(var));
@@ -327,7 +318,7 @@ auto LowerHirPrimaryExprProc(
             return LowerHirNullLiteral(result_type);
           },
           [&](const hir::ThisHandle&) -> mir::Expr {
-            return LowerHirThisHandle(frame, result_type);
+            return LowerHirThisHandle(frame);
           },
           [&](const hir::QueueLastIndex&) -> mir::Expr {
             return LowerHirQueueLastIndex(process.Owner(), frame, result_type);

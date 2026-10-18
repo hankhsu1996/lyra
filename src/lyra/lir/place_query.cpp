@@ -128,8 +128,7 @@ auto CallMakesValue(const CallTarget& target) -> bool {
 auto CallBuildsExecution(const CallTarget& target) -> bool {
   if (const auto* coroutine = std::get_if<CoroutineTarget>(&target)) {
     switch (coroutine->op) {
-      case CoroutineTarget::Op::kEnterBorrowedEnvironment:
-      case CoroutineTarget::Op::kEnterOwnedEnvironment:
+      case CoroutineTarget::Op::kEnter:
         return true;
       case CoroutineTarget::Op::kAwait:
       case CoroutineTarget::Op::kRelease:

@@ -334,6 +334,11 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
           [&](const mir::ClosureType& c) -> lir::Type {
             return lir::Type{lir::ClosureType{
                 .closure_id = ClosureDeclaration(c.closure_id)}};
+          },
+          [&](const mir::ErasedCallableType& e) -> lir::Type {
+            return lir::Type{lir::ErasedCallableType{
+                .params = TranslateTypes(e.params),
+                .result = TranslateType(e.result)}};
           }});
 }
 

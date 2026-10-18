@@ -516,6 +516,16 @@ class MirDumper {
             [](const ClosureType& c) -> std::string {
               return std::format("Closure[{}]", c.closure_id.value);
             },
+            [](const ErasedCallableType& e) -> std::string {
+              std::string params;
+              for (std::size_t i = 0; i < e.params.size(); ++i) {
+                if (i > 0) params += ", ";
+                params += std::format("Type[{}]", e.params[i].value);
+              }
+              return std::format(
+                  "ErasedCallable({}({}) -> Type[{}])",
+                  support::ClosureKindName(e.kind), params, e.result.value);
+            },
             [](const VariableRefType& r) -> std::string {
               return std::format(
                   "VariableRef({}pointee=Type[{}])",
@@ -698,6 +708,9 @@ class MirDumper {
                   R"(callable=Class[{}].{} "{}")", c.owner.value, c.slot.value,
                   CallableLabel(
                       unit_->GetClass(c.owner).named_callables, c.slot));
+            },
+            [](const ClosureTarget& c) -> std::string {
+              return std::format("closure=Closure[{}]", c.closure.value);
             },
             [this](const UnitCallableTarget& c) -> std::string {
               return std::format(

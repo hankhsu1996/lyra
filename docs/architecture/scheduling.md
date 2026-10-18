@@ -24,8 +24,7 @@ holds the activation token and resumes the body; a `co_await` in the body suspen
 state -- procedural locals, the implicit program counter -- lives in the coroutine frame, which the
 engine does not introspect. A body that stops only at the head of its loop is not compiled as one:
 it is a setup and a pass, plain bodies that one coroutine of the runtime calls, and that coroutine
-is what the scheduler resumes, holding the wait between passes
-(`decisions/a-process-stopping-only-at-its-loop-head-is-called.md`). The engine sees one kind of
+is what the scheduler resumes, holding the wait between passes. The engine sees one kind of
 execution either way.
 
 Every wait is part of that state too. It is built where what it waits for stops changing and enrols
@@ -35,7 +34,7 @@ stop for one only the stop can name, a delay's amount or a fork's branches, or o
 variable the body declares. A stop only marks the activation as parked on it; an occurrence while
 one is parked wakes it, and any other occurrence is ignored. That is the C++ and Rust shape of the
 same thing -- an awaitable is a local of the coroutine, declared where its inputs are known, and a
-stop only awaits it. `decisions/a-wait-is-storage-of-its-activation.md` holds why.
+stop only awaits it.
 
 A task is enabled with `co_await`: enabling a time-consuming task suspends the enabling process
 until the task completes (LRM 13.3). The scheduler resumes the innermost suspended frame, and each
@@ -248,23 +247,53 @@ because no call was made. `$exit` ends the program the calling thread originates
 with it, and from any other thread does nothing but warn (LRM 24.7). The program's continuous
 assignments are not its threads, so neither ending reaches them.
 
-## Closure capture lifetime
+## What a deferred closure may refer to
 
-A closure's captures are either by-value or by-reference (see `mir.md` for the MIR-level shape). The
-two have different lifetime rules:
+**Every reference a closure holds is valid for every run of the closure that can use it, and the
+compiler establishes this for every closure alike.** No construct carries a check of its own, so a
+construct that gains a deferred form is covered from the start.
 
-- **By-value capture** is always safe. The snapshot lives inside the closure's storage; the engine
-  destroys it when the closure fires or when the closure is dropped without firing.
-- **By-reference capture of a `StructuralVarRef`** is always safe. Structural-scope storage
-  (module-level variables) lives for the entire simulation; any closure can hold a reference into it
-  indefinitely.
-- **By-reference capture of a `ProceduralVarRef`** is safe only if the closure fires while the
-  process's coroutine frame is still alive. The procedural frame is destroyed when the process body
-  returns and when the run ends; references into the frame are invalid after either event.
+Three questions are kept apart, because each has its own owner and none answers another:
 
-The third case is the one a lowering pass must reason about. A lowering that emits a closure
-capturing a procedural lvalue is responsible for establishing the fire-before-frame-dies guarantee,
-or it must refuse the capture.
+- Whether the program may refer to a variable there at all is the language's, and the front end
+  answers it. LRM 6.21 and 13.3.2 forbid a nonblocking or continuous assignment to an automatic, and
+  tracing one with a system task such as `$monitor`, which the front end reads as covering `$strobe`
+  too; LRM 9.3.2 forbids a `ref` argument inside a `join_any` or `join_none` branch.
+- What the closure sees when it runs -- the value at the statement, or the variable as it is then --
+  is the construct's, and the standard states it construct by construct. A nonblocking assignment
+  fixes its value and its target at the statement (LRM 10.4.2); `$strobe` evaluates its arguments
+  when it prints (LRM 21.2.2); a deferred assertion's report takes its arguments at the failure (LRM
+  16.4); a procedural concurrent assertion takes its automatics when it is queued (LRM 16.14.6.1); a
+  fork branch shares the enclosing variables (LRM 6.21).
+- Whether the storage a reference names still exists when it is used is the compiler's. This section
+  is about that one.
+
+How long a closure can run, measured against the body that made it, is one of three, and the runtime
+entry it is handed to states which, beside the kind it asks of the closure
+(`compiler_generated_storage.md` invariant 10), as a Rust callee bounds a callable parameter by a
+kind and a lifetime, the lifetime being none past the call for `sort_by`, the scope's for a scoped
+thread and `'static` for `spawn`. The erased type the closure is handed over at carries its kind and
+its signature and no lifetime:
+
+| How it is handed on                         | Examples                                                                         | What its references must reach                                                                                                                                                        |
+| ------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| lent for a call                             | a sort's order                                                                   | anything alive across the call                                                                                                                                                        |
+| held while the execution that made it waits | an event control's watch, an `iff` condition, a foreign task's body              | anything alive while that execution waits, because what holds the closure ends when the wait does, however the wait ends                                                              |
+| detached: able to run after its scope ended | a deferred effect, a delayed assignment's timer, an assertion's action, a branch | static storage, a variable whose storage the closure keeps alive through a handle it owns, or an object it holds a share of -- followed through every closure it was captured through |
+
+A fork branch that `join` waits for is the second kind; one under `join_any` or `join_none` is the
+third. The second kind relies on the runtime: what keeps a waiting closure is owned by the wait the
+execution's frame holds (`activation.md` invariant 4), so stopping the execution from outside ends
+it with the wait, and nothing the runtime keeps can call into a frame that is gone.
+
+**Storage is extended only where the language requires a reference to outlive its scope.** Of every
+detached closure, only a fork branch refers to an enclosing automatic: every other one is held by
+the language to a value it took or to static storage. So the automatic variables a detached branch
+names -- a subroutine's formal arguments among them -- are held in a cell of their own that the
+declaring scope and each such branch keep alive, and every reference to the variable reaches that
+one cell. Extending a variable's storage changes nothing else about it: not when anything is
+evaluated, not when an `output` or `inout` argument is copied back to the caller, which happens when
+the task completes (LRM 13.3), and not when a closure that refers to it is cancelled.
 
 ## MIR boundary: a place model, not storage layout
 
@@ -272,8 +301,7 @@ MIR carries a place model in the shape of Rust MIR and LLVM IR: a borrowed point
 (pointer -> place) and its dual `AddressOfExpr` (place -> pointer), a reference type for `ref`
 formals and alias captures, a pointer cast, and a null pointer literal. `self` is a borrowed
 pointer. What MIR does not carry is storage _layout_ -- offsets, byte sizes, alignment -- which
-belongs to LIR; the engine, not MIR, owns where storage lives. See
-`decisions/address-of-primitive.md`.
+belongs to LIR; the engine, not MIR, owns where storage lives.
 
 The deferred-write pattern -- "this place, written later" for an NBA commit, a postponed strobe, a
 callback -- is still expressed as a closure whose capture list owns the place. Whether a captured

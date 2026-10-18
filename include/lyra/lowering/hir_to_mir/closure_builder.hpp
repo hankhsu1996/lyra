@@ -1,9 +1,7 @@
 #pragma once
 
-#include <string>
 #include <vector>
 
-#include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/closure_decl.hpp"
@@ -13,6 +11,7 @@
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/support/callable_bounds.hpp"
 
 namespace lyra::mir {
 class CompilationUnit;
@@ -27,7 +26,7 @@ namespace lyra::lowering::hir_to_mir {
 // callable, so a reference to an enclosing binding while the body is lowered
 // through `Frame()` becomes a captured field, forwarded one boundary at a time.
 // `self` is not a builder concept: a body that reaches its enclosing object's
-// fields resolves the receiver through the same capture machinery as any
+// fields resolves the receiver through its binding context, as it resolves any
 // binding, so the builder never special-cases it.
 //
 // A body's call protocol is its result type, fixed when the closure is
@@ -35,21 +34,26 @@ namespace lyra::lowering::hir_to_mir {
 // synchronous body with its value's type. `policy` is the capture policy -- a
 // fork branch passes the origins of its own block-item declarations as the
 // snapshot set (those snapshot, deeper-enclosing bindings alias); a synchronous
-// body passes the default (every forwarded binding aliases).
+// body passes the default (every forwarded binding aliases). `kind` is what
+// the body does to the closure it is entered on, as rustc's closure kinds say,
+// fixed here because every captured read goes through that receiver: a body
+// started by its one call takes the box over (`FnOnce`), one that writes what
+// it keeps borrows it mutably (`FnMut`), and any other borrows it to read
+// (`Fn`).
 //
-// A closure is a value, and which value follows from that protocol: a
-// synchronous body yields a callable a holder invokes later, a coroutine body
-// yields the coroutine itself. What the site then does with it -- a fork spawn,
-// a deferred submit, a with-clause iteration, an await -- is the site's
-// concern, not the builder's. A body that runs where it is written is no
-// callable value at all and takes the block-expression shape instead.
+// Whatever the protocol, the closure is a value of its closure type, and the
+// protocol is what calling it answers. What the site then does with it --
+// keep it in a box for the runtime, lend it for one call, or call it to start
+// its body -- is the site's concern, not the builder's. A body that runs where
+// it is written is no callable value at all and takes the block-expression
+// shape instead.
 // Non-movable: `Frame()` and `Bindings()` hand out references into the owned
 // closure and binding context.
 class ClosureBuilder {
  public:
   ClosureBuilder(
       mir::CompilationUnit& unit, const WalkFrame& enclosing,
-      CapturePolicy policy = {});
+      support::ClosureKind kind, CapturePolicy policy = {});
 
   ClosureBuilder(const ClosureBuilder&) = delete;
   auto operator=(const ClosureBuilder&) -> ClosureBuilder& = delete;
@@ -72,31 +76,23 @@ class ClosureBuilder {
     return bindings_;
   }
 
-  // Declares a per-invocation parameter (LRM 7.12.4 with-clause) with its
-  // cross-body origin, so a nested clause can capture it. Allocates the body
-  // slot and records the parameter; returns its binding. `AddNamedParam` is for
-  // the iterator the clause declares, whose identifier the source wrote; the
-  // index beside it is one the language supplies rather than the design, so it
-  // answers to no identifier of its own.
-  auto AddNamedParam(BindingOriginId origin, std::string name, mir::TypeId type)
-      -> mir::LocalId;
-  auto AddParam(BindingOriginId origin, mir::TypeId type) -> mir::LocalId;
-
-  // A per-invocation parameter with no cross-body identity: the body reaches it
-  // directly and no nested closure can capture it. Only a call with no
-  // with-clause takes these, and such a call declares no iteration variable, so
-  // there is no named form of this.
-  auto AddParamAnonymous(mir::TypeId type) -> mir::LocalId;
+  // A parameter whoever calls the closure hands it on each call. It has no
+  // cross-body identity: the body reaches it directly and no nested closure
+  // captures it.
+  auto AddParam(mir::TypeId type) -> mir::LocalId;
 
   // Closes the body with `return result`, finalizes the closure, and yields the
   // closure value typed as its closure type. Single-use.
   [[nodiscard]] auto Build(mir::ExprId result) -> mir::Expr;
-  // Closes a fork-branch body with `co_return` and yields the closure value.
-  // Single-use.
-  [[nodiscard]] auto BuildCoroutine() -> mir::Expr;
   // Yields a closure whose body is already self-contained (no result
   // expression). Single-use.
   [[nodiscard]] auto BuildVoid() -> mir::Expr;
+  // Closes the body with `co_return`, makes the closure in a box of its own
+  // in the block its captures were read in, and calls it: the call hands the
+  // box to the body, which owns it from there, so the body can outlive the
+  // statement starting it (rustc's `call_once`). It answers the coroutine.
+  // Single-use.
+  [[nodiscard]] auto BuildCallOnce() -> mir::Expr;
 
  private:
   auto Finish(mir::TypeId result_type) -> mir::Expr;
@@ -109,5 +105,25 @@ class ClosureBuilder {
   WalkFrame frame_;
   std::vector<mir::LocalId> invocation_params_;
 };
+
+// `closure`, a synchronous closure value, added to `block` as a library
+// compiled before the program keeps it: made in a box of its own, since it
+// outlives the statement building it and so never lies in that statement's
+// frame, as Rust's thread spawn keeps the closure it is handed in a `Box`. A
+// cast makes the box one of a closure of no known type, called with what its
+// body takes and answering what its body answers, as the library asks of it.
+// `block` is the one the closure's captures were read in.
+auto BuildKeptClosure(
+    mir::CompilationUnit& unit, mir::Block& block, mir::Expr closure)
+    -> mir::ExprId;
+
+// The closure lying at `closure`, a place in `block`, borrowed by a library
+// compiled before the program for as long as the statement borrowing it runs:
+// a reference to a closure of no known type, called as its body is, as Rust
+// hands `sort_by` a `&dyn Fn`. The body reads what it captured, so it is
+// called only while the closure lies where it was made.
+auto BuildBorrowedClosure(
+    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId closure)
+    -> mir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir

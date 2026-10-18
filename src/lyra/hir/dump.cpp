@@ -1014,6 +1014,49 @@ class HirDumper {
     throw InternalError("HirDumper::FormatEnumMethod: unknown method");
   }
 
+  static auto FormatArrayIteratorMethod(ArrayIteratorMethod m)
+      -> std::string_view {
+    switch (m) {
+      case ArrayIteratorMethod::kSort:
+        return "sort";
+      case ArrayIteratorMethod::kRsort:
+        return "rsort";
+      case ArrayIteratorMethod::kSum:
+        return "sum";
+      case ArrayIteratorMethod::kProduct:
+        return "product";
+      case ArrayIteratorMethod::kAnd:
+        return "and";
+      case ArrayIteratorMethod::kOr:
+        return "or";
+      case ArrayIteratorMethod::kXor:
+        return "xor";
+      case ArrayIteratorMethod::kFind:
+        return "find";
+      case ArrayIteratorMethod::kFindIndex:
+        return "find_index";
+      case ArrayIteratorMethod::kFindFirst:
+        return "find_first";
+      case ArrayIteratorMethod::kFindFirstIndex:
+        return "find_first_index";
+      case ArrayIteratorMethod::kFindLast:
+        return "find_last";
+      case ArrayIteratorMethod::kFindLastIndex:
+        return "find_last_index";
+      case ArrayIteratorMethod::kMin:
+        return "min";
+      case ArrayIteratorMethod::kMax:
+        return "max";
+      case ArrayIteratorMethod::kUnique:
+        return "unique";
+      case ArrayIteratorMethod::kUniqueIndex:
+        return "unique_index";
+      case ArrayIteratorMethod::kMap:
+        return "map";
+    }
+    throw InternalError("HirDumper::FormatArrayIteratorMethod: unknown method");
+  }
+
   [[nodiscard]] auto FormatSubroutineRef(const SubroutineRef& callee) const
       -> std::string {
     return std::visit(
@@ -1068,6 +1111,17 @@ class HirDumper {
             [](const EnumMethodRef& e) -> std::string {
               return std::format(
                   "EnumMethod \"{}\"", FormatEnumMethod(e.method));
+            },
+            [](const ArrayIteratorMethodRef& a) -> std::string {
+              return std::format(
+                  "ArrayIteratorMethod \"{}\"{}",
+                  FormatArrayIteratorMethod(a.method),
+                  a.with_clause.has_value()
+                      ? std::format(
+                            " with={{element=\"{}\", expr=Expr[{}]}}",
+                            a.with_clause->element_name,
+                            a.with_clause->expr.value)
+                      : std::string{});
             },
             [](const PastValueRef& p) -> std::string {
               return std::format("PastValue history={}", p.history.value);
@@ -1264,15 +1318,9 @@ class HirDumper {
                   args += "<elided>";
                 }
               }
-              std::string with_text;
-              if (c.with_clause.has_value()) {
-                with_text = std::format(
-                    " with={{element=\"{}\", expr=Expr[{}]}}",
-                    c.with_clause->element_name, c.with_clause->expr.value);
-              }
               return std::format(
-                  "CallExpr callee={} args=[{}]{}",
-                  FormatSubroutineRef(c.callee), args, with_text);
+                  "CallExpr callee={} args=[{}]", FormatSubroutineRef(c.callee),
+                  args);
             },
             [](const ConversionExpr& cv) -> std::string {
               return std::format(

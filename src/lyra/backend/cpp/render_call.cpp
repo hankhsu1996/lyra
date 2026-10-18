@@ -14,8 +14,10 @@
 #include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/mir/closure_signature.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/callable_bounds.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -269,6 +271,27 @@ void WriteDirectCallee(
                 ReceiverPlacement::kIntoCalleeName,
                 CppClassPath(view.Unit(), t.owner),
                 "::", CppClassCallableName(view.Unit(), cls, t.slot));
+          },
+          // A closure's body, as its type's call operator on the closure it
+          // borrows, `c.sv_closure_3::operator()(x)`, or as the type's
+          // function taking the box the closure was made in over,
+          // `sv_closure_3::sv_call_once(box)`.
+          [&](const mir::ClosureTarget& t) {
+            const MintedName name = CppClosureName(t.closure);
+            switch (mir::ClosureKindOf(
+                view.Unit().types, view.Unit().GetClosure(t.closure))) {
+              case support::ClosureKind::kFn:
+              case support::ClosureKind::kFnMut:
+                callee.Named(
+                    ReceiverPlacement::kIntoCalleeName, name, "::operator()");
+                return;
+              case support::ClosureKind::kFnOnce:
+                callee.Named(
+                    ReceiverPlacement::kIntoArgumentList, name,
+                    "::", CppClosureCallOnceName());
+                return;
+            }
+            throw InternalError("backend::cpp: unknown ClosureKind");
           },
           // A function of this unit's namespace is qualified the same way as
           // another unit's: `::Top::f`.

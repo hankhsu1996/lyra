@@ -23,7 +23,6 @@
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
-#include "lyra/lowering/hir_to_mir/declared_variable.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -45,10 +44,11 @@ struct AutomaticVarBinding {
   mir::TypeId type;
 };
 
-// LRM 6.21: an automatic local a detached fork branch borrows and can
-// outlive is lifted into a cell of its own, held by a shared pointer. Its
-// reads and writes reach the cell through the pointer; a branch captures the
-// pointer by value to keep the cell alive across the declaring frame's return.
+// LRM 6.21: an automatic variable -- a local, a formal, a function's result --
+// a detached fork branch borrows and can outlive is promoted into a cell of its
+// own, held by a shared pointer. Its reads and writes reach the cell through
+// the pointer; a branch captures the pointer by value to keep the cell alive
+// across the declaring frame's return.
 struct PromotedVarBinding {
   BindingOriginId handle_origin;
   // The cell the handle holds, the observable cell every variable a body
@@ -65,9 +65,9 @@ struct PromotedVarBinding {
 // Where one HIR procedural var of this body keeps its storage: an in-frame
 // local for an automatic, a cell behind a shared pointer for a
 // lifetime-extended automatic, or a cell that outlives every activation for a
-// static-lifetime local (LRM 6.21). Every var
-// the body reaches has exactly one of these, so a reader visits the answer
-// rather than probing one registry and falling back to another.
+// static-lifetime variable (LRM 6.21). Every var the body reaches has exactly
+// one of these, so a reader visits the answer rather than probing one registry
+// and falling back to another.
 using ProceduralVarBinding =
     std::variant<AutomaticVarBinding, PromotedVarBinding, StaticVarBinding>;
 
@@ -91,7 +91,8 @@ class ProcessLowerer {
   // declaration. `owner_ctor_frame` carries the owner class into the body --
   // a frame naming no class is a namespace context, whose body has no `self`.
   // `scopes` is what each procedural scope of the declaration scope owns at run
-  // time, and `statics` the storage this body's own static locals were given.
+  // time, and `statics` the storage this body's own static variables were
+  // given.
   ProcessLowerer(
       UnitLowerer& unit_lowerer,
       const StructuralScopeLowerer* enclosing_scope_lowerer,
@@ -109,7 +110,7 @@ class ProcessLowerer {
         // so this is the protocol every body starts with; lowering a subroutine
         // replaces it with the one its completion payload states.
         result_type_(unit_lowerer.Unit().builtins.coroutine_void) {
-    // Where every static-lifetime local of this body keeps its storage is
+    // Where every static-lifetime variable of this body keeps its storage is
     // settled before the body lowers, so each one is bound here. Reaching a
     // static's declaration statement then binds nothing and emits nothing --
     // the walk carries no part of the answer.
@@ -123,22 +124,23 @@ class ProcessLowerer {
   // caller registers.
   auto Run(const hir::Process& src) -> diag::Result<mir::CallableCode>;
 
-  // Lowers a HIR subroutine declaration into its callable code. Pre-registers
-  // the formal params as body locals so call references resolve, then walks the
-  // body. A function with a non-void result closes with a trailing `return` of
-  // the implicit result variable. The leading `self` parameter is seeded only
-  // when the body sits in an owner class (an instance method, LRM 8.6); a body
-  // in a namespace context (a package function, LRM 26.3) carries no receiver.
-  // Deferred static initializers are drained the same way as for a process
-  // body.
+  // Lowers a HIR subroutine declaration into its callable code. Binds each
+  // formal where its lifetime puts it -- the parameter, a frame variable, its
+  // promoted cell, or the static cell every call shares -- so references
+  // resolve, then walks the body. A function with a non-void result closes with
+  // a trailing `return` of the implicit result variable. The leading `self`
+  // parameter is seeded only when the body sits in an owner class (an instance
+  // method, LRM 8.6); a body in a namespace context (a package function, LRM
+  // 26.3) carries no receiver. Deferred static initializers are drained the
+  // same way as for a process body.
   auto Run(const hir::SubroutineDecl& src) -> diag::Result<mir::CallableCode>;
 
-  // Registers each of the constructor's input formals as a MIR body local,
-  // appending its `LocalId` to `params`. Split from body-statement lowering
-  // so the caller can evaluate base-constructor arguments -- which LRM 8.7
-  // orders before the body and which may reference the ctor's formals --
-  // in the same procedural-var registry the body will use. A non-input
-  // formal is a compiler-bug invariant.
+  // Binds each of the constructor's input formals where its lifetime puts it,
+  // appending the parameter it arrives through to `params`. Split from
+  // body-statement lowering so the caller can evaluate base-constructor
+  // arguments -- which LRM 8.7 orders before the body and which may reference
+  // the ctor's formals -- in the same procedural-var registry the body will
+  // use. A non-input formal is a compiler-bug invariant.
   auto RegisterConstructorFormals(
       const hir::SubroutineDecl& ctor, const WalkFrame& frame,
       std::vector<mir::LocalId>& params) -> diag::Result<void>;
@@ -282,14 +284,10 @@ class ProcessLowerer {
   }
 
   // Where the named var keeps its storage. Every var a reference can name is
-  // bound before anything reads it -- a static when the body opens, a formal by
-  // the signature, an automatic by its declaration -- so an unbound var is a
-  // reference reaching a declaration the walk has not passed, which is a
-  // compiler bug rather than an answer.
-  // What binds a var is not its HIR lifetime: a subroutine's formals and its
-  // result variable are bound by the signature whatever lifetime their
-  // declarations report, which is why a reader asks here rather than reading
-  // the declaration.
+  // bound before anything reads it -- a static when the body opens, an
+  // automatic formal by the signature, any other automatic by its declaration
+  // -- so an unbound var is a reference reaching a declaration the walk has
+  // not passed, which is a compiler bug rather than an answer.
   [[nodiscard]] auto LookupProceduralVar(hir::ProceduralVarId hir_id) const
       -> const ProceduralVarBinding& {
     const ProceduralVarBinding* binding = bindings_.Find(hir_id);
@@ -306,11 +304,11 @@ class ProcessLowerer {
     return *binding;
   }
 
-  // An activation scope is opened at block entry -- each lifted var's cell and
-  // its handle are built then -- but a promoted var's binding must register in
-  // HIR id order at its declaration like any other. So block entry leaves the
-  // slot here and the declaration takes it back out, which is where the binding
-  // lands in order.
+  // An activation scope is opened at block entry -- each promoted var's cell
+  // and its handle are built then -- but a promoted var's binding must register
+  // in HIR id order at its declaration like any other. So block entry leaves
+  // the slot here and the declaration takes it back out, which is where the
+  // binding lands in order.
   void RecordPendingActivation(
       hir::ProceduralVarId hir_id, PromotedVarBinding binding) {
     pending_activation_.insert_or_assign(hir_id, binding);
@@ -361,14 +359,14 @@ class ProcessLowerer {
   // Assembles the completion-payload value a `return` should carry in the
   // subroutine being lowered: the product of the function's explicit return
   // value (or its implicit result variable when a `return` supplies none)
-  // followed by each `output` / `inout` local. A subroutine always carries one,
-  // a product of no components included, so the caller never decides whether a
-  // return has a value; nullopt means the body is a process, which completes
-  // for no caller. `explicit_value` is the lowered `return expr` operand,
-  // absent for a bare `return;`. Reads the pack locals at `frame`'s depth, so a
-  // return nested in an inner block resolves the correct hops.
+  // followed by each `output` / `inout` formal. A subroutine always carries
+  // one, a product of no components included, so the caller never decides
+  // whether a return has a value; nullopt means the body is a process, which
+  // completes for no caller. `explicit_value` is the lowered `return expr`
+  // operand, absent for a bare `return;`. Reads each variable where `frame`
+  // stands, the way any reference to it there does.
   [[nodiscard]] auto BuildReturnPayload(
-      mir::Block& block, std::optional<mir::ExprId> explicit_value)
+      const WalkFrame& frame, std::optional<mir::ExprId> explicit_value)
       -> std::optional<mir::ExprId>;
 
  private:
@@ -396,10 +394,10 @@ class ProcessLowerer {
   // carries from it -- a body that completes for no caller carries nothing,
   // and one that completes for a caller carries its completion payload. What
   // fills that payload is the result variable, if the body has one, followed
-  // by each output / inout local.
+  // by each output / inout formal.
   mir::TypeId result_type_;
-  std::optional<DeclaredVariable> result_var_;
-  std::vector<DeclaredVariable> output_locals_;
+  std::optional<hir::ProceduralVarId> result_var_;
+  std::vector<hir::ProceduralVarId> output_vars_;
 
   std::map<hir::ProceduralVarId, PromotedVarBinding> pending_activation_;
   std::uint32_t loop_label_count_ = 0;

@@ -2,7 +2,7 @@
 
 // Lowering of CallExpression (LRM 13.x subroutine calls and 8.x method calls).
 // Handles system subroutines, user-defined subroutines, type method calls, and
-// the array-method `with`-clause closure construction.
+// the array methods whose `with` clause binds an iterator (LRM 7.12).
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"

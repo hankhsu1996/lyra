@@ -17,10 +17,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
-#include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
-#include "lyra/lowering/hir_to_mir/condition.hpp"
-#include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
@@ -236,49 +233,6 @@ auto IteratedValue(const Nest& nest, const WalkFrame& frame, std::size_t depth)
   return PathValue(unit, block, reached);
 }
 
-// The loop over an associative dimension (LRM 7.9.4, 7.9.6): a `for` whose
-// counter holds what `first` and then `next` answer, and whose every step
-// leaves the key it visited in the loop variable. An array holding no entry
-// answers 0 to `first`, so the body never runs, and a `continue` lands on the
-// step, which is what advances the key (LRM 12.8). The `for` declares the
-// counter; the key is the loop variable, which the traversal writes.
-auto BuildKeyLoopStmt(
-    const Nest& nest, const WalkFrame& frame, std::size_t depth,
-    mir::BlockId body_scope, std::optional<mir::LoopLabelId> break_label)
-    -> mir::Stmt {
-  UnitLowerer& unit_lowerer = nest.process->Owner();
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
-  const Level& level = nest.levels[depth];
-  const mir::TypeId int_type = unit.builtins.int_type;
-  const mir::LocalId more = frame.bindings->DeclareAnonymous(int_type);
-
-  const auto traversal = [&](support::BuiltinFn method) {
-    BlockBuilder steps(frame);
-    const mir::ExprId array = IteratedValue(nest, steps.Frame(), depth);
-    return block.exprs.Add(BuildAssociativeTraversal(
-        unit_lowerer, steps, method, array,
-        IndexPath(nest, steps.Frame(), level), level.index_type, int_type));
-  };
-  const mir::ExprId first = traversal(support::BuiltinFn::kAssocFirst);
-  const mir::ExprId next = traversal(support::BuiltinFn::kAssocNext);
-  const mir::ExprId advance = block.exprs.Add(
-      mir::MakeAssignExpr(
-          unit.builtins, block.LocalPlace(more, int_type), next));
-
-  std::vector<mir::ForInit> init;
-  init.emplace_back(mir::ForInitDecl{.induction_var = more, .init = first});
-  return mir::Stmt{
-      .label = std::nullopt,
-      .data = mir::ForStmt{
-          .init = std::move(init),
-          .condition =
-              ReduceToCondition(unit, block, block.ReadLocal(more, int_type)),
-          .step = {advance},
-          .scope = body_scope,
-          .break_label = break_label}};
-}
-
 // The loop of the level at `depth`, standing in the frame's block: its body is
 // the loop of the level inside it, and the innermost level's body is the
 // source's own. A count the loop samples ahead of itself is appended to that
@@ -339,9 +293,17 @@ auto BuildLevelLoopStmt(
                 unit, frame, block, count, IndexPath(nest, frame, level),
                 body_scope, break_label);
           },
+          // The key each step visits is left in the loop variable, which the
+          // traversal writes (LRM 7.9.4).
           [&](const KeysHeld&) {
             return BuildKeyLoopStmt(
-                nest, frame, depth, body_scope, break_label);
+                process.Owner(), frame,
+                [&](const WalkFrame& at) {
+                  return IteratedValue(nest, at, depth);
+                },
+                [&](const WalkFrame& at) { return IndexPath(nest, at, level); },
+                level.index_type, WalkOrder::kFromFirst, body_scope,
+                break_label);
           }},
       level.indices);
 }
@@ -393,7 +355,7 @@ auto LowerForeachStmt(
   // LRM 12.7.3 makes each loop variable a variable of the implicit block around
   // the loop, so each is declared where that block is entered, ahead of every
   // loop, the way any variable a block declares is. One a detached fork branch
-  // still reads after the loop ends is lifted as any such variable is (LRM
+  // still reads after the loop ends is promoted as any such variable is (LRM
   // 6.21).
   std::vector<hir::ProceduralVarId> loop_vars;
   loop_vars.reserve(levels.size());

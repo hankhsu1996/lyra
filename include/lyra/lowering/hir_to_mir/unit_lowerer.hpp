@@ -400,8 +400,8 @@ class UnitLowerer {
   // Mints a fresh owner-site id for a synthesized binding origin -- a carrier a
   // lowering creates that has no source-level variable (an activation handle, a
   // non-blocking-assignment snapshot). The id only has to be unit-unique and
-  // deterministic so the carrier's `BindingOriginId::Synthesized` is a stable,
-  // collision-free key across every synthesizer in the unit; a monotonic count
+  // deterministic so the carrier's origin is a stable, collision-free key
+  // across every synthesizer in the unit; a monotonic count
   // over the deterministic lowering walk provides that (never a global
   // cross-unit counter, so identity stays stable under incremental / parallel
   // compilation).

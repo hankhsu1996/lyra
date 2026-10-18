@@ -270,15 +270,12 @@ concept AssocIndexable = requires(T& t, const K& key) {
   { t.ElementMut(key) };
 };
 
-// Sortable: in-place ordering family. Conforming containers expose
-// `Sort(F)` / `Rsort(F)` taking a with-clause key closure (LRM 7.12.2) plus
-// the no-closure `Reverse()`. C++ concepts cannot probe templated methods
-// without instantiation, so the concept enforces `Reverse()` as the family
-// marker; drift on the closure-taking siblings is caught when they are
-// instantiated by their callers (HIR-to-MIR's with-clause synthesis).
+// Sortable: the in-place ordering family (LRM 7.12.2). A sort is handed
+// whether the element at one position comes before the one at another.
 template <typename T>
-concept Sortable = requires(T& t) {
+concept Sortable = requires(T& t, bool (*before)(std::int64_t, std::int64_t)) {
   { t.Reverse() };
+  { t.Sort(before) };
 };
 
 // IndexTraversal: associative-array ordered-index navigation (LRM 7.9.4 --
@@ -305,15 +302,6 @@ concept OrdinalElements = requires(const T& t, std::size_t ordinal) {
   { t.RawSize() } -> std::same_as<std::size_t>;
   { t.RawAt(ordinal) };
 };
-
-// Reducible and Searchable are documented for completeness but not exposed
-// as compile-time concepts: every method in those families is templated on
-// a closure F, and C++ concepts cannot probe templated methods without
-// providing a concrete F. Their members are instead enforced through their
-// callers (HIR-to-MIR's with-clause closure synthesis) -- any drift on
-// `Sum/Product/And/Or/Xor` (Reducible, LRM 7.12.3) or
-// `Find/FindIndex/.../Min/Max/Unique` (Searchable, LRM 7.12.1) breaks the
-// caller, not the concept.
 
 // A held value that compares itself with, and takes, the bytes of a value laid
 // out as it is itself: an integral value as wide, or a tuple, a union or an

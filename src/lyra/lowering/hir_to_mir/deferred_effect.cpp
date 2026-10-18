@@ -140,7 +140,8 @@ auto SubmitToDueRegion(
     const std::optional<hir::DelayControl>& delay, mir::Expr closure)
     -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
-  const mir::ExprId closure_id = block.exprs.Add(std::move(closure));
+  const mir::ExprId closure_id =
+      BuildKeptClosure(process.Owner().Unit(), block, std::move(closure));
   const mir::ExprId runtime_id =
       block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
   if (!delay.has_value()) {
@@ -173,9 +174,9 @@ auto AppendArrivalAtDueRegion(
 }
 
 auto RunCarrierDetached(
-    ProcessLowerer& process, WalkFrame frame, mir::Expr carrier) -> mir::Expr {
+    ProcessLowerer& process, WalkFrame frame, mir::Expr started) -> mir::Expr {
   auto& block = *frame.current_block;
-  const mir::ExprId carrier_id = block.exprs.Add(std::move(carrier));
+  const mir::ExprId started_id = block.exprs.Add(std::move(started));
   const mir::ExprId runtime_id =
       block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
   return mir::Expr{
@@ -185,7 +186,7 @@ auto RunCarrierDetached(
                   mir::Direct{
                       .target = support::BuiltinFn::kRunDetached,
                       .receiver = runtime_id},
-              .arguments = {carrier_id}},
+              .arguments = {started_id}},
       .type = process.Owner().Unit().builtins.void_type};
 }
 

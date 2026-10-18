@@ -20,6 +20,8 @@ struct Block;
 
 namespace lyra::lowering::hir_to_mir {
 
+class UnitLowerer;
+
 // A body once the parameters it takes ahead of its formals are bound: the
 // parameters in order, and the frame its statements lower under.
 struct BoundImplicitParameters {
@@ -33,16 +35,18 @@ struct BoundImplicitParameters {
 // class belongs to an instance, that instance for a body no object records it
 // for -- a type-associated one, or a constructor, which enters its base before
 // its object records anything (LRM 8.7). A body handed the instance reaches it
-// through that parameter; any other keeps the way `frame` reaches it.
+// through that parameter; any other keeps the way `frame` reaches it. A body
+// taking an object that lives while referenced also holds a share of it from
+// where it begins (LRM 8.29), which its closures capture to keep the object.
 auto BindImplicitParameters(
-    const WalkFrame& frame, const ClassShape& owner, CallableForm form)
-    -> BoundImplicitParameters;
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    const ClassShape& owner, CallableForm form) -> BoundImplicitParameters;
 
 // Makes the place of the current body's `self` binding: a direct `LocalRef` in
-// a directly-invoked body, or a field access over the closure receiver when
-// `self` was captured. The receiver is an ordinary binding resolved through the
-// same capture machinery as any other; forming it appends any closure-receiver
-// operand to `frame.current_block`, and the caller adds the returned place to
+// a directly-invoked body or where a closure took the address from the share
+// it captured, or a field access over the closure receiver where `self`
+// itself was captured. Forming it appends any closure-receiver operand to
+// `frame.current_block`, and the caller adds the returned place to
 // that same block, reading it where it stands as a value. The place is typed
 // as the binding is, the borrowed pointer to the enclosing object. This is the
 // one place the self place is formed -- every field access, cross-unit deref,
@@ -110,8 +114,8 @@ auto BuildImplicitInstanceArgument(
 // storage type, read from the enclosing scope reached by `hops` (a wrapper
 // type for observable storage, the value type otherwise) -- a fact that lives
 // only in the MIR scope, not in HIR, so it is read here rather than passed
-// down. Serves both a structural-var reference and a static-lifetime local
-// promoted to a per-instance structural var (LRM 13.3.1), which reach their
+// down. Serves both a structural-var reference and a static-lifetime variable
+// kept as a per-instance structural var (LRM 13.3.1), which reach their
 // storage identically.
 auto BuildStructuralFieldAccessExpr(
     const WalkFrame& frame, const mir::CompilationUnit& unit,
@@ -129,9 +133,9 @@ auto BuildStructuralFieldAccessExpr(
 // A reference to the cell `cell` denotes (LRM 13.5.2): a reference
 // construction added to `block`, whose result type is a `VariableRefType` over
 // `pointee` -- or `cell` itself where it already is a reference of either
-// kind. The body that
-// holds the resulting reference reads / writes the live cell through it. Used
-// for a `ref` / `const ref` actual and for a by-reference closure capture.
+// kind. The body that holds the resulting reference reads / writes the live
+// cell through it. Used for a `ref` / `const ref` actual and for a
+// by-reference closure capture.
 auto BuildReferenceArg(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId cell,
     mir::TypeId pointee) -> mir::ExprId;

@@ -3,7 +3,9 @@
 // element, so a key that runs opposite to the element reverses the result.
 // reverse turns the order end for end. Each of them reorders the receiver in
 // place and returns nothing, and a queue with no elements is left with none
-// (LRM 7.12.2).
+// (LRM 7.12.2). A sort by key orders the same wherever it stands: in a task
+// that waits on either side of it, in a function a loop leaves by returning
+// right after it, and in a forked branch.
 module Top;
   int ascending [$] = '{3, -1, 2, -5};
   int descending [$] = '{3, -1, 2, -5};
@@ -11,6 +13,25 @@ module Top;
   int even_length [$] = '{1, 2, 3, 4};
   int by_key [$] = '{3, -1, 2, -5};
   int no_elements [$];
+  int across_waits [$] = '{4, 9, 1};
+  int forked [$] = '{8, 2, 5};
+  int first_after_return;
+
+  task automatic sort_between_waits();
+    #1;
+    across_waits.sort with (-item);
+    #1;
+  endtask
+
+  function automatic int first_sorted_then_return(int rounds);
+    int scratch [$];
+    for (int i = 0; i < rounds; i++) begin
+      scratch = '{i + 3, i + 1, i + 2};
+      scratch.sort with (item);
+      if (i == 1) return scratch[0];
+    end
+    return -1;
+  endfunction
 
   initial begin
     ascending.sort();
@@ -19,6 +40,14 @@ module Top;
     even_length.reverse();
     by_key.sort with (10 - item);
     no_elements.sort();
+    sort_between_waits();
+    first_after_return = first_sorted_then_return(4);
+    fork
+      begin
+        #1;
+        forked.rsort with (item);
+      end
+    join
   end
 
   final begin
@@ -75,6 +104,13 @@ module Top;
 
     if (no_elements.size() !== 0)
       $fatal(1, "no_elements.size() was %0d, expected 0", no_elements.size());
+
+    if (across_waits[0] !== 9 || across_waits[1] !== 4 || across_waits[2] !== 1)
+      $fatal(1, "across_waits was %p, expected '{9, 4, 1}", across_waits);
+    if (first_after_return !== 2)
+      $fatal(1, "first_after_return was %0d, expected 2", first_after_return);
+    if (forked[0] !== 8 || forked[1] !== 5 || forked[2] !== 2)
+      $fatal(1, "forked was %p, expected '{8, 5, 2}", forked);
     $display("All checks passed");
   end
 endmodule

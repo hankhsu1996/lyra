@@ -162,13 +162,15 @@ auto LayoutOf(const CompilationUnit& unit, TypeId type) -> support::Layout {
             }
             throw InternalError("mir: unknown record kind");
           },
+          // A closure opens with the address of the definition the library
+          // runs and ends it through, and its captures lie after it.
           [&](const ClosureType& t) {
-            std::vector<TypeId> captures;
+            std::vector<support::Layout> parts{kAddress};
             for (const FieldDecl& field :
                  unit.GetClosure(t.closure_id).fields) {
-              captures.push_back(field.type);
+              parts.push_back(LayoutOf(unit, field.type));
             }
-            return Product(unit, captures);
+            return value::ProductLayoutOf(parts).whole;
           },
           [](const DynamicArrayType&) {
             return LayoutOfClass<value::RuntimeDynamicArray>();
@@ -204,6 +206,11 @@ auto LayoutOf(const CompilationUnit& unit, TypeId type) -> support::Layout {
           },
           [&](const MachineCStringType& t) { return handle(t); },
           [&](const MachineFunctionType& t) { return handle(t); },
+          [](const ErasedCallableType&) -> support::Layout {
+            throw InternalError(
+                "mir: an erased callable is laid out only behind a box or a "
+                "borrow -- please report this as a bug");
+          },
           [&](const PointerType& t) { return handle(t); },
           [&](const ReferenceType& t) { return handle(t); },
           [&](const VariableRefType& t) { return handle(t); },
@@ -235,6 +242,15 @@ auto LayoutOf(const CompilationUnit& unit, TypeId type) -> support::Layout {
 
 auto IsTooLargeForAFrame(const CompilationUnit& unit, TypeId type) -> bool {
   return LayoutOf(unit, type).size > value::kMaxInlineBytes;
+}
+
+auto TakesAValueTooLargeForAFrame(const CompilationUnit& unit, TypeId type)
+    -> bool {
+  const auto* code = unit.types.Get(type).As<MachineFunctionType>();
+  return code != nullptr &&
+         std::ranges::any_of(code->params, [&](TypeId param) {
+           return IsTooLargeForAFrame(unit, param);
+         });
 }
 
 }  // namespace lyra::mir

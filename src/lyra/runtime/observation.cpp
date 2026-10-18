@@ -1,31 +1,14 @@
 #include "lyra/runtime/observation.hpp"
 
-#include <cstdint>
-#include <functional>
 #include <memory>
+#include <optional>
 #include <utility>
-
-#include "lyra/support/event_edge.hpp"
-#include "lyra/value/integral_words.hpp"
 
 namespace lyra::runtime {
 
-auto EventEdgeOf(std::int64_t edge) -> support::EventEdge {
-  return static_cast<support::EventEdge>(edge);
-}
-
-auto IsEdge(
-    support::EventEdge edge, value::FourStateBit before,
-    value::FourStateBit now) -> bool {
-  return EdgeMatches(edge, ClassifyEdge(before, now));
-}
-
-ValueWatch::ValueWatch() = default;
-ValueWatch::~ValueWatch() = default;
-
 ArmedObservation::ArmedObservation(
-    std::unique_ptr<ValueWatch> watch,
-    std::move_only_function<bool()> condition)
+    std::optional<OwnedClosure<support::WatchSignature>> watch,
+    std::optional<OwnedClosure<support::ConditionSignature>> condition)
     : watch_(std::move(watch)), condition_(std::move(condition)) {
 }
 
@@ -40,6 +23,25 @@ Observation::~Observation() = default;
 
 auto Observation::OnReaching() -> Observation {
   return Observation{};
+}
+
+auto Observation::OfWatch(OwnedClosure<support::WatchSignature> watch)
+    -> Observation {
+  return Observation{
+      std::make_shared<ArmedObservation>(std::move(watch), std::nullopt)};
+}
+
+auto Observation::OfWatchQualified(
+    OwnedClosure<support::WatchSignature> watch,
+    OwnedClosure<support::ConditionSignature> condition) -> Observation {
+  return Observation{std::make_shared<ArmedObservation>(
+      std::move(watch), std::move(condition))};
+}
+
+auto Observation::Qualified(OwnedClosure<support::ConditionSignature> condition)
+    -> Observation {
+  return Observation{
+      std::make_shared<ArmedObservation>(std::nullopt, std::move(condition))};
 }
 
 void Observation::Arm() const {

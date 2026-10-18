@@ -64,20 +64,22 @@ what the construct means.
   vector, a pointer stating its ownership -- unique, shared or borrowed, the last two written
   `Shared<T>` and `Borrowed<T>` in these docs -- and a reference, as in Rust and C++, being bound
   once to a referent that exists elsewhere and never null, so holding one says only that the
-  referent is read where it lies rather than copied; and four categories: the **tuple**, the
+  referent is read where it lies rather than copied; and five categories: the **tuple**, the
   structural product (positional; interned by its components, so two with the same components are
   one type); the **record**, a declared struct, union or tagged union (positional like the tuple,
   but its identity is its declaration, so two with the same members are two types); the **closure**,
   an anonymous concrete callable value (capture fields plus one invoke body, a distinct type per
-  site); and the **object** (`mir::Class`), the rich nominal object with methods and dispatch. A
-  component of a tuple or a record is reached the same way: by its position, as a field step on the
-  place holding it, whether that place is a variable, a dereference or a value held for the
-  full-expression; a union's members all lie at its start. The closure and the object share a
-  **field substrate** -- a field declaration, a field id keyed within one declaration, and one
-  access node -- while staying distinct types; an access names the declaration it reaches into, so
-  what the substrate shares is the vocabulary and never the identity. Structural versus nominal, and
-  storage versus callable, are the ordinary generic-language distinctions (C++/Rust/LLVM carry
-  them).
+  site); the **erased callable**, a closure of a type unknown where it is called, reached only
+  through a box or a borrow, of a signature of machine types and nothing else
+  (`compiler_generated_storage.md` invariant 10); and the **object** (`mir::Class`), the rich
+  nominal object with methods and dispatch. A component of a tuple or a record is reached the same
+  way: by its position, as a field step on the place holding it, whether that place is a variable, a
+  dereference or a value held for the full-expression; a union's members all lie at its start. The
+  closure and the object share a **field substrate** -- a field declaration, a field id keyed within
+  one declaration, and one access node -- while staying distinct types; an access names the
+  declaration it reaches into, so what the substrate shares is the vocabulary and never the
+  identity. Structural versus nominal, and storage versus callable, are the ordinary
+  generic-language distinctions (C++/Rust/LLVM carry them).
 - A record is an unpacked structure, union or tagged union the source declared (LRM 7.2, 7.3), as
   rustc's struct, union and enum are one kind of declared type. It carries its kind, its members'
   types, the name another unit reaches it by and a method for each operation the language defines on
@@ -140,10 +142,10 @@ what the construct means.
   bit. The set is closed under what a generic programming-language AST needs to express; it does not
   grow to model a particular backend's storage realization or runtime library shape.
 - Which values are held through a uniquely owning pointer because a value of their type is too large
-  for a frame: a local, a parameter taken by value, a made value, a block's value and a capture,
-  each written as a box by a rewrite of the stage before any consumer reads the unit, so every
-  backend keeps such a value off the stack by translating what it is given
-  (`../decisions/a-value-too-large-for-a-frame-is-held-through-a-box.md`).
+  for a frame: a local, a parameter taken by value wherever its signature is stated, a made value
+  and a capture, each written as a box by a rewrite of the stage before any consumer reads the unit,
+  so every backend keeps such a value off the stack by translating what it is given. A closure kept
+  past the statement building it is likewise made in a box its keeper takes.
 - Action shapes for constructs that bind behavior to schedule events (always blocks, continuous
   assignments, deferred assertions, concurrent assertions).
 - A textual dumper that serializes MIR for inspection. The dumper is not a backend; its output is
@@ -330,7 +332,7 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
   consumer reads. A consumer cannot tell a node a rewrite built from one the lowering built, so a
   cost the program's meaning does not decide -- how a process that stops only at the head of its
   loop is compiled -- is taken out once for both backends, and HIR-to-MIR still states the meaning
-  one way (`../decisions/a-process-stopping-only-at-its-loop-head-is-called.md`).
+  one way.
 - `binding_and_capture.md` owns the lexical reference contract MIR's value references obey: a
   reference names a binding materialized in its own callable body, and a binding crosses a closure
   boundary only as a captured environment field. MIR carries no navigation distance to a
@@ -439,10 +441,13 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
   HIR-to-MIR, so what reaches here is one concrete pair -- and a classification stored beside the
   thing it is derived from is a second copy that can disagree with it. What the pair does not excuse
   is a backend passing a value through for a pair it cannot realize: a no-op is stated only where
-  the two representations are provably the same, and every other unhandled pair is refused. A
-  conversion that reshapes a _value_ (integral resize, real <-> integral, packed <-> string) is a
-  library call, never a cast node. (A node states a fact once; a backend refuses what it cannot do
-  rather than doing nothing.)
+  the two representations are provably the same, and every other unhandled pair is refused. A cast
+  does nothing but read the value as the other type: a conversion that reshapes a _value_ (integral
+  resize, real <-> integral, packed <-> string) is a library call, and one that allocates, hands
+  owned storage over, or runs a check that can fail is a node of its own -- a class handle's checked
+  downcast is the dynamic cast, a box handed on is a move. A backend whose spelling of a cast does
+  any of those has performed an operation MIR did not state. (A node states a fact once; a backend
+  refuses what it cannot do rather than doing nothing.)
 - A backend that recovers a semantic fact MIR does not state by inferring it from a node's body
   contents or any side signal, instead of reading it from an explicit node or reference. A node's
   own structural context is not a side signal: the type of an operand it was handed, and the node

@@ -170,7 +170,7 @@ enum class RuntimeOp : std::uint8_t {
   kRunProgram,
   kSequenceMake,
   kSequenceElement,
-  kClosureMake,
+  kClosureBoxEnd,
   kObjectAdopt,
   kSharedCellMake,
   kSharedPointerDeref,

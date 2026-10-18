@@ -11,7 +11,10 @@ using lyra::runtime::SelfHandle;
 using lyra::runtime::ViewAs;
 using lyra::value::ObjectRef;
 
-struct Counted {
+// Every object the runtime holds is one of a class extending the part every
+// object starts with, which is what holds its creator's reference until a
+// handle takes it over.
+struct Counted : GcObject {
   static inline int alive = 0;
   Counted() {
     ++alive;
@@ -20,7 +23,7 @@ struct Counted {
   auto operator=(const Counted&) -> Counted& = delete;
   Counted(Counted&&) = delete;
   auto operator=(Counted&&) -> Counted& = delete;
-  ~Counted() {
+  ~Counted() override {
     --alive;
   }
 };
@@ -36,6 +39,26 @@ TEST_F(ObjectRefTest, LastReferenceDropReleasesObject) {
   {
     auto a = AdoptObject(new Counted());
     EXPECT_EQ(Counted::alive, 1);
+  }
+  EXPECT_EQ(Counted::alive, 0);
+}
+
+// An object refers to itself from its first moment, so a reference its
+// constructor hands out shares ownership with the one `new` answers.
+struct Registers : Counted {
+  static inline ObjectRef last;
+  Registers() {
+    last = SelfHandle(this);
+  }
+};
+
+TEST_F(ObjectRefTest, ConstructorHandsOutAReferenceToItself) {
+  {
+    auto a = AdoptObject(new Registers());
+    EXPECT_EQ(a, Registers::last);
+    a = nullptr;
+    EXPECT_EQ(Counted::alive, 1);
+    Registers::last = nullptr;
   }
   EXPECT_EQ(Counted::alive, 0);
 }
@@ -82,10 +105,9 @@ TEST_F(ObjectRefTest, DerefOnANullReferenceIsTheDesignsFailure) {
   EXPECT_THROW(std::ignore = a.Deref<Counted>(), lyra::SimulationError);
 }
 
-// Carries a Counted so that reclaiming a node is observable; a node holding
-// only a reference would be reclaimed or leaked with the same result.
-struct Node {
-  Counted marker;
+// Is a Counted so that reclaiming a node is observable; a node holding only a
+// reference would be reclaimed or leaked with the same result.
+struct Node : Counted {
   int value = 0;
   ObjectRef next;
 };

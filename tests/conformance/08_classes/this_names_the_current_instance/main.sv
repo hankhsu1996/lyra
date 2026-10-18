@@ -7,7 +7,8 @@
 // same member, including one inherited from a base class and one the class owns
 // rather than each instance. Used on its own the keyword is that handle, so it
 // may be returned, passed, and compared for identity with a handle the caller
-// holds; it also names the current instance's own type
+// holds -- a constructor's included, before `new` has handed the object to
+// its caller; it also names the current instance's own type
 // (LRM 8.11, 8.9, 8.13, 6.23).
 module Top;
   class Demo #(int P = 7);
@@ -68,6 +69,14 @@ module Top;
     endfunction
   endclass
 
+  class Registered;
+    static Registered last;
+
+    function new();
+      last = this;
+    endfunction
+  endclass
+
   interface class Drivable;
     pure virtual function int Level();
   endclass
@@ -111,6 +120,7 @@ module Top;
   bit other_object_differs = 1;
   bit conforming_this_is_same = 0;
   bit conforming_this_matches_a_contract_view = 0;
+  bit constructor_this_is_same = 0;
 
   initial begin
     Demo #(3) d;
@@ -120,7 +130,10 @@ module Top;
     Node h;
     Conforming k;
     Drivable k_as_drivable;
+    Registered r;
 
+    r = new();
+    constructor_this_is_same = (Registered::last == r);
     d = new(5);
     qualified_argument = d.x;
 
@@ -200,6 +213,9 @@ module Top;
     if (conforming_this_matches_a_contract_view !== 1)
       $fatal(1, "conforming_this_matches_a_contract_view was %0d, expected 1",
              conforming_this_matches_a_contract_view);
+    if (constructor_this_is_same !== 1)
+      $fatal(1, "constructor_this_is_same was %0d, expected 1",
+             constructor_this_is_same);
     $display("All checks passed");
   end
 endmodule

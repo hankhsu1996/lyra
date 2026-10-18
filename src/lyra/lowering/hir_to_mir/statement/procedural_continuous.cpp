@@ -29,6 +29,7 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/takeover_level.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -218,7 +219,7 @@ auto LowerProceduralContinuousAssignStmt(
 
   mir::Block wrapper;
   const WalkFrame outer = frame.WithBlock(&wrapper);
-  ClosureBuilder closure(unit, outer);
+  ClosureBuilder closure(unit, outer, support::ClosureKind::kFnOnce);
 
   // The takeover of each place is in effect from here, before anything
   // evaluates: a `release` reaching the place in the same time step must find
@@ -312,7 +313,7 @@ auto LowerProceduralContinuousAssignStmt(
   wrapper.AppendStmt(
       mir::ExprStmt{
           .expr = wrapper.exprs.Add(
-              RunCarrierDetached(process, outer, closure.BuildCoroutine()))});
+              RunCarrierDetached(process, outer, closure.BuildCallOnce()))});
 
   const mir::BlockId scope_id =
       frame.current_block->child_scopes.Add(std::move(wrapper));

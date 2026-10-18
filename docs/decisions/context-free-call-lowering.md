@@ -58,26 +58,25 @@ remaining symmetric step.
 The pass classes themselves stay distinct (`generic-lowering-machinery.md`): one builds a callable,
 the other a class. It is the dispatch, not the pass class, that is shared.
 
-### The `with`-clause element and index are co-equal closure parameters
+### The `with`-clause element and index are co-equal loop variables
 
-An LRM 7.12 array-manipulation method with a `with` clause iterates an ordered entry stream of
-`(index, element)` pairs (`array-manipulation-entry-stream.md`). At HIR-to-MIR the clause becomes a
-closure (`callable.md`) whose two per-invocation parameters are the element and the index --
-co-equal, exactly as every modern array callback passes them: JavaScript
-`arr.map((element, index) => ...)`, Rust `arr.iter().enumerate()` yielding `(index, element)`,
-Python `enumerate`, C++23 `views::enumerate`. None of these treats the index as an attribute of the
-element; SV's `item.index` member syntax is surface spelling, not a semantic relationship.
+An LRM 7.12 array-manipulation method with a `with` clause walks the receiver's entries, each an
+`(index, element)` pair (`an-array-method-is-a-loop-at-its-call.md`). At HIR-to-MIR the walk is a
+loop whose two variables are the element and the index -- co-equal, exactly as every modern array
+callback passes them: JavaScript `arr.map((element, index) => ...)`, Rust `arr.iter().enumerate()`
+yielding `(index, element)`, Python `enumerate`, C++23 `views::enumerate`. None of these treats the
+index as an attribute of the element; SV's `item.index` member syntax is surface spelling, not a
+semantic relationship.
 
 So the element (`item`) and the index (`item.index`) both lower to one `IterationBindingRef` value
 reference, naming the clause it belongs to and which of the two roles it is. Neither is a variable
-of the enclosing scope -- they are the clause's own parameters. Naming the clause by identity (not a
+of the enclosing scope -- they are the clause's own. Naming the clause by identity (not a
 "currently-active" marker) keeps a reference stable however deeply the referencing clause is nested,
-so a clause nested in another's body still names the outer clause's parameter; HIR-to-MIR resolves
-each identity to the synthesized closure's parameter and captures it when the reference sits in a
-deeper clause's closure body. With that, the call handler reaches the pass class only through the
-duck-typed surface and becomes one template like every other family, at both lowering boundaries.
-The frontend's value system functions on the structural path (`$time` and the like) are the one form
-not yet wired and return an unsupported diagnostic.
+so a clause nested in another's body still names the outer clause's variable; HIR-to-MIR resolves
+each identity to the variable the clause's loop holds it in. With that, the call handler reaches the
+pass class only through the duck-typed surface and becomes one template like every other family, at
+both lowering boundaries. The frontend's value system functions on the structural path (`$time` and
+the like) are the one form not yet wired and return an unsupported diagnostic.
 
 `$isunknown` falls out as an ordinary instance built-in call `(x).IsUnknown()` returning the SV
 `bit` shape (`builtin-call-identity.md`), now reachable in both procedural and continuous-assign
@@ -93,8 +92,8 @@ positions.
 - **The iteration element as a procedural-body local.** Modeling the `with`-clause iteration
   variable as a local in the enclosing body's arena, resolved through the procedural-var registry,
   coupled call lowering to a procedural body a structural scope does not have. It was the sole
-  dependency that kept the call family procedural-only, and it misrepresents the variable: a closure
-  parameter scoped to the clause is not a variable of the enclosing scope.
+  dependency that kept the call family procedural-only, and it misrepresents the variable: a
+  variable of the clause's own loop is not a variable of the enclosing scope.
 
 - **The element as a value reference, the index as a member-access call.** Taking SV's `item.index`
   spelling literally models the index as an attribute reached through the element -- a different IR
@@ -108,10 +107,7 @@ positions.
 - `generic-lowering-machinery.md` -- context-free expression handlers are one template over the pass
   class; this decision completes that migration with the dispatcher and the call family, its last
   holdouts.
-- `array-manipulation-entry-stream.md` -- the `(index, element)` entry-stream model the element and
-  index refer into.
-- `callable.md` -- the `with` clause lowers to a closure whose per-invocation parameters are the
-  element and the index.
+- `an-array-method-is-a-loop-at-its-call.md` -- the loop the element and index are variables of.
 - `runtime_model.md` -- constructor-time (structural) versus simulation-time (process) expressions;
   a continuous-assign right-hand side is simulation-time, so it carries the full value-expression
   set.

@@ -410,31 +410,35 @@ each meets the same lifetime question above.
       dimension, whatever its nesting depth, a dynamic array or queue the dense space its current
       size spans, and an associative memory its own keys. A load answers through its completion,
       like every other service that reports through an argument.
-- [x] **A body the runtime runs on the program's behalf, one alternative per call protocol.** Three
-      run here: the effect a region runs once the stretch that built it has returned (a non-blocking
-      assignment, a postponed print, a deferred assertion's action), the branch a `fork` spawns, and
-      the `with` expression an array method evaluates once per entry of its receiver. Each
-      alternative carries an entry of its own signature, because what a body is called with and
-      answers is what its type says; the alternative a body is, is read off what its own invoke
-      answers rather than recorded beside it. What no type carries is what C says nothing about --
-      how the captured state is laid out, and which representation a result comes back in -- and
-      those ride with the body in the definition its unit emits.
+- [x] **A body the runtime runs on the program's behalf, called at the one signature it has.** The
+      library holds such a closure without knowing its type and calls it at the signature the entry
+      holding it names: an effect, handed nothing and answering nothing, which a region runs once
+      the stretch that built it has returned (a non-blocking assignment, a postponed print, a
+      deferred assertion's action) or a foreign task runs on a stack of its own; the condition an
+      `iff` qualifier reads; the watch an event control asks whether its expression moved; and the
+      order a sort puts an array's elements in. Nothing records which of these a closure is: its
+      definition carries the one call its body is, and every signature takes and answers machine
+      values only, so the library knows no type of the program.
 
       What a body captures is independent of what it is called with, so the captured state is one
       block whatever the body is, laid out where the closure is built, filled by that code, and
-      ended by a body its definition names. A captured value is a copy taken where the body was
-      built, so nothing a body reads points into storage that may already be gone. A `fork` branch differs in what becomes
-      of that storage: entering the branch takes the captures rather than borrowing them, since the
-      execution outlives the stretch that built them and nothing else owns them.
+      ended through its definition. Both backends hand the library the same thing: the closure's
+      box, whose definition says how to run it and how to end it, or a borrow of the closure for a
+      sort's order. What a body may refer to without owning it is bounded by how long the library
+      keeps the body, and the compiler refuses a body kept past the frame that made it which refers
+      into that frame. A `fork` branch is a closure the program calls where it is spawned, which
+      takes its box over, since the execution outlives the stretch that built it.
 
 - [x] **Storage a block keeps for the branches it spawned.** LRM 6.21 gives a scope enclosing a
       fork-join block the lifetime of every process that block spawned, so a branch detached by
       `join_none` or `join_any` goes on naming the enclosing scope's automatics after control has
       left the block -- reading what the parent wrote after the `fork`, and writing what the parent
-      reads later. Such a scope's declarations are one block of member storage, described exactly as
-      an object's properties are, and what a branch captures is a hold on it rather than an address.
-      A hold ends with whatever owns it, so the storage ends once the last branch and the declaring
-      frame have both let go, and nothing releases one by hand on any way out.
+      reads later. Each automatic such a branch names, a subroutine's formal arguments included, is
+      a cell of its own, and what a branch captures is a hold on it rather than an address. A hold
+      ends with whatever owns it, so the cell ends once the last branch and the declaring frame have
+      both let go, and nothing releases one by hand on any way out. An `output` or `inout` argument
+      is still copied back when its task completes. A branch, or any method, running on an object a
+      handle names holds a share of that object, so the object stays while either runs.
 
       Counting holds is exact here rather than an approximation of reachability, and that is a
       property of the language rather than of the mechanism: a program cannot store a reference to
@@ -459,17 +463,16 @@ each meets the same lifetime question above.
       the caller could read. The two backends therefore disagreed on the same source, which is the
       one difference between them the agreement contract does not allow.
 
-- [x] **A method that runs a body the call supplies, once per entry** (LRM 7.12). The locator,
-      reduction, projection and ordering families run here over every unpacked container. A `with`
-      clause is a callable value the call hands the entry, which enters it once per entry with the
-      element and that entry's index and takes back the value it settled on; where the source wrote
-      no clause the identity one is supplied, so one shape reaches every consumer. What crosses in
-      each direction is what its own type names, and the one thing no type names -- which
-      representation a handle is in -- is recorded where the thing it describes is registered, the
-      body's answer on the body's definition. An answer that is an array follows the clause rather
-      than the receiver, so the call tells the entry the type of the array it builds and hands it no
-      value of that type. Erasing an index and an element makes them one type, so the algorithms are
-      the ones the other backend runs rather than a second family beside them.
+- [x] **The array methods that ask something of each entry** (LRM 7.12). The locator, reduction,
+      projection and ordering families run over every unpacked container. Each is a loop over the
+      entries compiled where the call is, with the `with` clause's expression -- the element itself
+      where the source wrote no clause -- evaluated at every entry as ordinary code of the type the
+      clause has, so no value crosses to the library to be called back. An entry's index is its own
+      index in the array, so `item.index` and every index locator answer the index a fixed-size
+      array's declaration gives the entry, whatever its range's bounds and direction (LRM 7.12.4). A
+      sort leaves only its last step to the library: it hands the library the order its keys stand
+      in -- the keys the clause gathered, or the elements themselves where it wrote none -- and the
+      library moves the elements by that order; `rsort` is the same step handed the reversed order.
 - [x] **Storage reached by name rather than through a receiver.** A cell the whole program shares is
       named by its linkage symbol, a place opens at that symbol and dereferences it, and the
       program's link resolves the name to the address the design's own storage sits at. A cell a

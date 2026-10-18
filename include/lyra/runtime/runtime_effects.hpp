@@ -8,12 +8,14 @@
 
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/time.hpp"
+#include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
 #include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/running_state.hpp"
 #include "lyra/runtime/trigger.hpp"
+#include "lyra/support/callable_bounds.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/real.hpp"
@@ -114,7 +116,9 @@ class RuntimeEffects {
   // The regions a deferred effect is written into, one entry each: the
   // construct that writes it fixes the region within the writing thread's
   // region set, and the slot is the current one unless the entry takes a delay.
-  void SubmitNba(OwnedCall closure);
+  // Each takes the program's closure over and runs it once, where it lands,
+  // unless something withdraws it first.
+  void SubmitNba(OwnedClosure<support::EffectSignature> closure);
   // LRM 9.4.5: a nonblocking effect carrying a delay control schedules its
   // update into the NBA region of its thread's region set -- Re-NBA for a
   // program's -- in the slot that delay names (LRM 4.4.2.4, 4.4.2.8).
@@ -123,28 +127,30 @@ class RuntimeEffects {
   // planes.
   void SubmitNbaAfter(
       const value::ConstIntegralView& duration, std::int64_t unit_power,
-      std::int64_t precision_power, OwnedCall closure);
+      std::int64_t precision_power,
+      OwnedClosure<support::EffectSignature> closure);
   template <value::IntegralValue T>
   void SubmitNbaAfter(
       const T& duration, std::int64_t unit_power, std::int64_t precision_power,
-      OwnedCall closure) {
+      OwnedClosure<support::EffectSignature> closure) {
     SubmitNbaAfter(
         duration.AsWords().View(), unit_power, precision_power,
         std::move(closure));
   }
   void SubmitNbaAfterReal(
       const value::Real& duration, std::int64_t unit_power,
-      std::int64_t precision_power, OwnedCall closure);
-  void SubmitPostponed(OwnedCall closure);
+      std::int64_t precision_power,
+      OwnedClosure<support::EffectSignature> closure);
+  void SubmitPostponed(OwnedClosure<support::EffectSignature> closure);
   // LRM 16.5: a concurrent assertion is evaluated in the Observed region of the
   // tick's own time step, once every region in which that step settles the
   // values it reads has run. Nothing withdraws it: what an attempt reads is
   // sampled, so no flush point of the process that submitted it can change the
   // answer.
-  void SubmitObserved(OwnedCall effect);
+  void SubmitObserved(OwnedClosure<support::EffectSignature> effect);
   // LRM 12.4.2.1: a violation report matures in the Observed region unless the
   // process that raised it reaches a flush point first.
-  void SubmitViolationReport(OwnedCall report);
+  void SubmitViolationReport(OwnedClosure<support::EffectSignature> report);
   // LRM 16.4: a deferred immediate assertion's action is queued where the
   // statement is reached and acts later only if every source that could
   // withdraw it still stands -- the executing process's pass, and the disable

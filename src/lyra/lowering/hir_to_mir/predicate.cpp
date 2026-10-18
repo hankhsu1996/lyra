@@ -87,17 +87,6 @@ auto BuildIsKnownFalse(
   return ReduceToCondition(unit, block, BuildLogicalNot(unit, block, value));
 }
 
-void AppendAssign(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId local,
-    mir::ExprId value) {
-  const mir::TypeId type = block.exprs.Get(value).type;
-  block.AppendStmt(
-      mir::ExprStmt{
-          .expr = block.exprs.Add(
-              mir::MakeAssignExpr(
-                  unit.builtins, block.LocalPlace(local, type), value))});
-}
-
 // The selection where no predicate can be unknown, which is the chain of its
 // arms: each predicate after the first, and every value, is evaluated only
 // where the chain reaches it.
@@ -170,7 +159,7 @@ auto BuildMergingSelection(
     const mir::LocalId held = DeclareLocal(at, *value_or);
     const mir::ExprId combined =
         BuildCombinedArms(unit, block, answer, held, result_type);
-    AppendAssign(
+    AssignLocal(
         unit, block, answer,
         BuildSelectionChain(
             block,
@@ -178,7 +167,7 @@ auto BuildMergingSelection(
                 .selected = block.ReadLocal(answered, boolean),
                 .value = combined}},
             block.ReadLocal(held, result_type), result_type));
-    AppendAssign(unit, block, answered, BuildMachineBool(unit, block, true));
+    AssignLocal(unit, block, answered, BuildMachineBool(unit, block, true));
     return {};
   };
   const auto append_unless_ended = [&](mir::Block step) {
@@ -198,7 +187,7 @@ auto BuildMergingSelection(
     mir::Block taken;
     auto contributed = contribute(taken, arm.value);
     if (!contributed) return std::unexpected(std::move(contributed.error()));
-    AppendAssign(
+    AssignLocal(
         unit, taken, ended,
         BuildIsKnownTrue(
             unit, taken, taken.ReadLocal(predicate, predicate_type)));
@@ -360,7 +349,7 @@ auto BuildOpenSearch(
     mir::Block step;
     auto term_or = term.evaluate(steps.Frame().WithBlock(&step));
     if (!term_or) return std::unexpected(std::move(term_or.error()));
-    AppendAssign(
+    AssignLocal(
         unit, step, answer,
         folded(step, step.ReadLocal(answer, type), truth(step, *term_or)));
     body.AppendIfThen(is_open(body.ReadLocal(answer, type)), std::move(step));

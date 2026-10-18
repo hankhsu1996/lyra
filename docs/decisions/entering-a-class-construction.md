@@ -2,8 +2,9 @@
 
 Date: 2026-09-09 Status: accepted, with who allocates and when the handle opens superseded by
 [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md) D7. The storage
-comes from the host's `operator new`, and the handle owns the object only once its constructor has
-run. That the definition carries no constructor and that the asking code enters it stand.
+comes from the host's `operator new`, and the object is referred to by its creator while its
+constructor runs. That the definition carries no constructor and that the asking code enters it
+stand.
 
 ## Context
 
@@ -82,7 +83,11 @@ execution backend translates each mechanically and decides nothing.
 
 - **Let the object answer with the handle referring to it, so the runtime keeps holding one across
   the construction.** That record is what a shared-owner realization needs and a traced one does
-  not, so adding it now buys a property the reclamation model is meant to make unnecessary.
+  not, so adding it now buys a property the reclamation model is meant to make unnecessary. Revised
+  2026-10-17: a traced collector needs the same, as a root the constructing frame holds, and none
+  exists to make it unnecessary; without it a constructor could not hand `this` on (LRM 8.11). The
+  object now holds its creator's reference from the moment it is built, as
+  [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md) D7 states.
 
 ## Consequences
 

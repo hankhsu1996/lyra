@@ -41,6 +41,7 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/callable_bounds.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -473,7 +474,7 @@ auto LowerContinuousDrive(
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(unit, code);
   const mir::LocalId self_id =
-      bindings.Declare(BindingOriginId::Receiver(), self_ptr_type);
+      bindings.Declare(ReceiverOrigin{}, self_ptr_type);
   const WalkFrame entry_frame =
       ctor_frame.WithBindings(&bindings).WithBlock(&code.Body());
 
@@ -509,7 +510,7 @@ auto LowerContinuousDrive(
                        mir::Type{mir::RuntimeLibraryType{
                            .kind = mir::RuntimeLibraryKind::kTimer}}));
 
-    ClosureBuilder propagation(unit, entry_frame);
+    ClosureBuilder propagation(unit, entry_frame, support::ClosureKind::kFn);
     if (auto stored = store(
             propagation.Frame(),
             propagation.Body().AsValue(
@@ -519,7 +520,8 @@ auto LowerContinuousDrive(
         !stored) {
       return std::unexpected(std::move(stored.error()));
     }
-    const mir::ExprId fire = entry.exprs.Add(propagation.BuildVoid());
+    const mir::ExprId fire =
+        BuildKeptClosure(unit, entry, propagation.BuildVoid());
     entry.AppendStmt(
         mir::ExprStmt{
             .expr = entry.exprs.Add(

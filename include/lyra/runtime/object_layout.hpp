@@ -6,6 +6,7 @@
 #include <string_view>
 #include <variant>
 
+#include "lyra/support/layout.hpp"
 #include "lyra/support/member_storage_kind.hpp"
 #include "lyra/support/runtime_class.hpp"
 #include "lyra/support/runtime_object.hpp"
@@ -58,11 +59,10 @@ auto HeldContentsOf(support::DeclaredMemberStorage storage)
 // the class's own storage begins.
 auto LayoutOf(support::RuntimeClass klass) -> support::ObjectLayout;
 
-// Where a closure value's captures begin, after what this library keeps in the
-// value: the code building a closure lays its captures out from there, as a
-// class extending one of this library's classes lays its own storage out from
-// where that class's part ends.
-auto ClosureCapturesAt() -> std::uint64_t;
+// What this library keeps at the start of a closure value: the code building
+// a closure lays its captures out after it, as a class extending one of this
+// library's classes lays its own storage out after that class's part.
+auto ClosurePart() -> support::Layout;
 
 // The symbol of that class's type information (C++ ABI 2.9.4), which the
 // description of a class extending it names as its base. Read off the class

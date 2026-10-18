@@ -1,9 +1,12 @@
 #include "lyra/support/builtin_fn.hpp"
 
+#include <optional>
 #include <string_view>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/integral_operation.hpp"
+#include "lyra/support/machine_signature.hpp"
 
 namespace lyra::support {
 
@@ -52,6 +55,44 @@ auto IntegralEntry(
       .selects = selects,
       .integral = op};
 }
+
+constexpr MachineSignature kEffect = MachineSignatureOf<EffectSignature>::Get();
+constexpr MachineSignature kCondition =
+    MachineSignatureOf<ConditionSignature>::Get();
+constexpr MachineSignature kWatch = MachineSignatureOf<WatchSignature>::Get();
+constexpr MachineSignature kOrder = MachineSignatureOf<OrderSignature>::Get();
+
+// The bounds of a callable an entry asks of: it calls it at one of the
+// signatures above, many times through a shared view (`Fn`), many times as its
+// only holder (`FnMut`) or once (`FnOnce`), or it starts it; and it keeps it
+// for the call, while what it answers is waited on, or past its caller.
+constexpr CallableBounds kOrderFnForTheCall{
+    .trait = CalledClosure{.asks = ClosureKind::kFn, .signature = kOrder},
+    .kept = CallableHold::kForTheCall};
+constexpr CallableBounds kEffectFnPastTheCaller{
+    .trait = CalledClosure{.asks = ClosureKind::kFn, .signature = kEffect},
+    .kept = CallableHold::kPastTheCaller};
+constexpr CallableBounds kEffectFnWhileWaited{
+    .trait = CalledClosure{.asks = ClosureKind::kFn, .signature = kEffect},
+    .kept = CallableHold::kWhileWaited};
+constexpr CallableBounds kEffectFnOnceWhileWaited{
+    .trait = CalledClosure{.asks = ClosureKind::kFnOnce, .signature = kEffect},
+    .kept = CallableHold::kWhileWaited};
+constexpr CallableBounds kEffectFnOncePastTheCaller{
+    .trait = CalledClosure{.asks = ClosureKind::kFnOnce, .signature = kEffect},
+    .kept = CallableHold::kPastTheCaller};
+constexpr CallableBounds kConditionFnWhileWaited{
+    .trait = CalledClosure{.asks = ClosureKind::kFn, .signature = kCondition},
+    .kept = CallableHold::kWhileWaited};
+constexpr CallableBounds kWatchFnMutWhileWaited{
+    .trait = CalledClosure{.asks = ClosureKind::kFnMut, .signature = kWatch},
+    .kept = CallableHold::kWhileWaited};
+constexpr CallableBounds kStartedForTheCall{
+    .trait = StartedBody{}, .kept = CallableHold::kForTheCall};
+constexpr CallableBounds kStartedWhileWaited{
+    .trait = StartedBody{}, .kept = CallableHold::kWhileWaited};
+constexpr CallableBounds kStartedPastTheCaller{
+    .trait = StartedBody{}, .kept = CallableHold::kPastTheCaller};
 
 }  // namespace
 
@@ -169,125 +210,8 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "sort",
           .declaration = Method{"Sort"},
           .mutates_receiver = true,
-          .takes_closure = true};
-    case BuiltinFn::kRsort:
-      return {
-          .name = "rsort",
-          .declaration = Method{"Rsort"},
-          .mutates_receiver = true,
-          .takes_closure = true};
-    case BuiltinFn::kSum:
-      return {
-          .name = "sum",
-          .declaration = Method{"Sum"},
-          .takes_closure = true,
           .operands = {kMachine, kMachine},
-          .answer_told = AnswerTold::kAnswerType};
-    case BuiltinFn::kProduct:
-      return {
-          .name = "product",
-          .declaration = Method{"Product"},
-          .takes_closure = true,
-          .operands = {kMachine, kMachine},
-          .answer_told = AnswerTold::kAnswerType};
-    case BuiltinFn::kAnd:
-      return {
-          .name = "and",
-          .declaration = Method{"And"},
-          .takes_closure = true,
-          .operands = {kMachine, kMachine},
-          .answer_told = AnswerTold::kAnswerType};
-    case BuiltinFn::kOr:
-      return {
-          .name = "or",
-          .declaration = Method{"Or"},
-          .takes_closure = true,
-          .operands = {kMachine, kMachine},
-          .answer_told = AnswerTold::kAnswerType};
-    case BuiltinFn::kXor:
-      return {
-          .name = "xor",
-          .declaration = Method{"Xor"},
-          .takes_closure = true,
-          .operands = {kMachine, kMachine},
-          .answer_told = AnswerTold::kAnswerType};
-    case BuiltinFn::kFind:
-      return {
-          .name = "find",
-          .declaration = Method{"Find"},
-          .takes_closure = true,
-          .operands = {kMachine, kMachine},
-          .answer_told = AnswerTold::kBuiltArray};
-    case BuiltinFn::kFindIndex:
-      return {
-          .name = "find_index",
-          .declaration = Method{"FindIndex"},
-          .takes_closure = true,
-          .operands = {kMachine, kMachine},
-          .answer_told = AnswerTold::kBuiltArray};
-    case BuiltinFn::kFindFirst:
-      return {
-          .name = "find_first",
-          .declaration = Method{"FindFirst"},
-          .takes_closure = true,
-          .operands = {kMachine, kMachine},
-          .answer_told = AnswerTold::kBuiltArray};
-    case BuiltinFn::kFindFirstIndex:
-      return {
-          .name = "find_first_index",
-          .declaration = Method{"FindFirstIndex"},
-          .takes_closure = true,
-          .operands = {kMachine, kMachine},
-          .answer_told = AnswerTold::kBuiltArray};
-    case BuiltinFn::kFindLast:
-      return {
-          .name = "find_last",
-          .declaration = Method{"FindLast"},
-          .takes_closure = true,
-          .operands = {kMachine, kMachine},
-          .answer_told = AnswerTold::kBuiltArray};
-    case BuiltinFn::kFindLastIndex:
-      return {
-          .name = "find_last_index",
-          .declaration = Method{"FindLastIndex"},
-          .takes_closure = true,
-          .operands = {kMachine, kMachine},
-          .answer_told = AnswerTold::kBuiltArray};
-    case BuiltinFn::kMin:
-      return {
-          .name = "min",
-          .declaration = Method{"Min"},
-          .takes_closure = true,
-          .operands = {kMachine, kMachine},
-          .answer_told = AnswerTold::kBuiltArray};
-    case BuiltinFn::kMax:
-      return {
-          .name = "max",
-          .declaration = Method{"Max"},
-          .takes_closure = true,
-          .operands = {kMachine, kMachine},
-          .answer_told = AnswerTold::kBuiltArray};
-    case BuiltinFn::kUnique:
-      return {
-          .name = "unique",
-          .declaration = Method{"Unique"},
-          .takes_closure = true,
-          .operands = {kMachine, kMachine},
-          .answer_told = AnswerTold::kBuiltArray};
-    case BuiltinFn::kUniqueIndex:
-      return {
-          .name = "unique_index",
-          .declaration = Method{"UniqueIndex"},
-          .takes_closure = true,
-          .operands = {kMachine, kMachine},
-          .answer_told = AnswerTold::kBuiltArray};
-    case BuiltinFn::kMap:
-      return {
-          .name = "map",
-          .declaration = Method{"Map"},
-          .takes_closure = true,
-          .operands = {kMachine, kMachine},
-          .answer_told = AnswerTold::kBuiltArray};
+          .callables = {kOrderFnForTheCall}};
     case BuiltinFn::kInsert:
       return {
           .name = "insert",
@@ -452,7 +376,8 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kEvaluationAttemptsInstall:
       return {
           .name = "evaluation_attempts_install",
-          .declaration = Method{"Install"}};
+          .declaration = Method{"Install"},
+          .callables = {kEffectFnPastTheCaller, kEffectFnPastTheCaller}};
     case BuiltinFn::kEvaluationAttemptsSeedWord:
       return {
           .name = "evaluation_attempts_seed_word",
@@ -510,13 +435,17 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kBindPropertyEvaluation:
       return {
           .name = "bind_property_evaluation",
-          .declaration = RuntimeFunction("BindPropertyEvaluation")};
+          .declaration = RuntimeFunction("BindPropertyEvaluation"),
+          .callables = {kEffectFnWhileWaited, kEffectFnWhileWaited}};
     case BuiltinFn::kDisablePropertyEvaluation:
       return {
           .name = "disable_property_evaluation",
           .declaration = RuntimeFunction("DisablePropertyEvaluation")};
     case BuiltinFn::kTimerBind:
-      return {.name = "timer_bind", .declaration = Method{"Bind"}};
+      return {
+          .name = "timer_bind",
+          .declaration = Method{"Bind"},
+          .callables = {kEffectFnPastTheCaller}};
     case BuiltinFn::kTimerArm:
       return {
           .name = "timer_arm",
@@ -807,23 +736,27 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "submit_nba",
           .declaration = Method{"SubmitNba"},
-          .takes_the_runtime_handle = true};
+          .takes_the_runtime_handle = true,
+          .callables = {kEffectFnOncePastTheCaller}};
     case BuiltinFn::kSubmitNbaAfter:
       return {
           .name = "submit_nba_after",
           .declaration = Method{"SubmitNbaAfter"},
           .takes_the_runtime_handle = true,
-          .operands = {kMachine, kNumber}};
+          .operands = {kMachine, kNumber},
+          .callables = {kEffectFnOncePastTheCaller}};
     case BuiltinFn::kSubmitNbaAfterReal:
       return {
           .name = "submit_nba_after_real",
           .declaration = Method{"SubmitNbaAfterReal"},
-          .takes_the_runtime_handle = true};
+          .takes_the_runtime_handle = true,
+          .callables = {kEffectFnOncePastTheCaller}};
     case BuiltinFn::kRunDetached:
       return {
           .name = "run_detached",
           .declaration = Method{"RunDetached"},
-          .takes_the_runtime_handle = true};
+          .takes_the_runtime_handle = true,
+          .callables = {kStartedPastTheCaller}};
     case BuiltinFn::kResumeInNbaRegion:
       return {
           .name = "resume_in_nba_region",
@@ -832,27 +765,32 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "submit_postponed",
           .declaration = Method{"SubmitPostponed"},
-          .takes_the_runtime_handle = true};
+          .takes_the_runtime_handle = true,
+          .callables = {kEffectFnOncePastTheCaller}};
     case BuiltinFn::kSubmitObserved:
       return {
           .name = "submit_observed",
           .declaration = Method{"SubmitObserved"},
-          .takes_the_runtime_handle = true};
+          .takes_the_runtime_handle = true,
+          .callables = {kEffectFnOncePastTheCaller}};
     case BuiltinFn::kSubmitViolationReport:
       return {
           .name = "submit_violation_report",
           .declaration = Method{"SubmitViolationReport"},
-          .takes_the_runtime_handle = true};
+          .takes_the_runtime_handle = true,
+          .callables = {kEffectFnOncePastTheCaller}};
     case BuiltinFn::kSubmitDeferredObserved:
       return {
           .name = "submit_deferred_observed",
           .declaration = Method{"SubmitDeferredObserved"},
-          .takes_the_runtime_handle = true};
+          .takes_the_runtime_handle = true,
+          .callables = {kStartedPastTheCaller}};
     case BuiltinFn::kSubmitDeferredFinal:
       return {
           .name = "submit_deferred_final",
           .declaration = Method{"SubmitDeferredFinal"},
-          .takes_the_runtime_handle = true};
+          .takes_the_runtime_handle = true,
+          .callables = {kStartedPastTheCaller}};
     case BuiltinFn::kFiles:
       return {
           .name = "files",
@@ -1054,18 +992,21 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "observation_on_reaching",
           .declaration = StaticFactory{"OnReaching"}};
-    case BuiltinFn::kObservationOfValue:
+    case BuiltinFn::kObservationOfWatch:
       return {
-          .name = "observation_of_value",
-          .declaration = StaticFactory{"OfValue"}};
-    case BuiltinFn::kObservationOfValueQualified:
+          .name = "observation_of_watch",
+          .declaration = StaticFactory{"OfWatch"},
+          .callables = {kWatchFnMutWhileWaited}};
+    case BuiltinFn::kObservationOfWatchQualified:
       return {
-          .name = "observation_of_value_qualified",
-          .declaration = StaticFactory{"OfValueQualified"}};
+          .name = "observation_of_watch_qualified",
+          .declaration = StaticFactory{"OfWatchQualified"},
+          .callables = {kWatchFnMutWhileWaited, kConditionFnWhileWaited}};
     case BuiltinFn::kObservationQualified:
       return {
           .name = "observation_qualified",
-          .declaration = StaticFactory{"Qualified"}};
+          .declaration = StaticFactory{"Qualified"},
+          .callables = {kConditionFnWhileWaited}};
     case BuiltinFn::kObservationFires:
       return {.name = "observation_fires", .declaration = Method{"Fires"}};
     case BuiltinFn::kWaitRecollecting:
@@ -1256,17 +1197,20 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "fork_wait_all",
           .declaration = RuntimeFunction("ForkWaitAll"),
-          .takes_the_runtime_handle = true};
+          .takes_the_runtime_handle = true,
+          .callables = {kStartedWhileWaited}};
     case BuiltinFn::kForkWaitFirst:
       return {
           .name = "fork_wait_first",
           .declaration = RuntimeFunction("ForkWaitFirst"),
-          .takes_the_runtime_handle = true};
+          .takes_the_runtime_handle = true,
+          .callables = {kStartedPastTheCaller}};
     case BuiltinFn::kSpawnAll:
       return {
           .name = "spawn_all",
           .declaration = RuntimeFunction("SpawnAll"),
-          .takes_the_runtime_handle = true};
+          .takes_the_runtime_handle = true,
+          .callables = {kStartedPastTheCaller}};
     case BuiltinFn::kWaitFork:
       return {
           .name = "wait_fork",
@@ -1335,27 +1279,33 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kRegisterAlways:
       return {
           .name = "register_always",
-          .declaration = RuntimeFunction("RegisterAlwaysProcess")};
+          .declaration = RuntimeFunction("RegisterAlwaysProcess"),
+          .callables = {kStartedPastTheCaller}};
     case BuiltinFn::kRegisterContinuousDriver:
       return {
           .name = "register_continuous_driver",
-          .declaration = RuntimeFunction("RegisterContinuousDriver")};
+          .declaration = RuntimeFunction("RegisterContinuousDriver"),
+          .callables = {kStartedPastTheCaller}};
     case BuiltinFn::kRegisterInitial:
       return {
           .name = "register_initial",
-          .declaration = RuntimeFunction("RegisterInitialProcess")};
+          .declaration = RuntimeFunction("RegisterInitialProcess"),
+          .callables = {kStartedPastTheCaller}};
     case BuiltinFn::kRegisterTriggered:
       return {
           .name = "register_triggered",
-          .declaration = RuntimeFunction("RegisterTriggeredProcess")};
+          .declaration = RuntimeFunction("RegisterTriggeredProcess"),
+          .callables = {kStartedPastTheCaller}};
     case BuiltinFn::kRegisterFinal:
       return {
           .name = "register_final",
-          .declaration = RuntimeFunction("RegisterFinalProcess")};
+          .declaration = RuntimeFunction("RegisterFinalProcess"),
+          .callables = {kStartedPastTheCaller}};
     case BuiltinFn::kRunAssertionAction:
       return {
           .name = "run_assertion_action",
-          .declaration = RuntimeFunction("RunAssertionAction")};
+          .declaration = RuntimeFunction("RunAssertionAction"),
+          .callables = {kStartedPastTheCaller}};
     case BuiltinFn::kEnterReactionRunningFirst:
       return {
           .name = "enter_reaction_running_first",
@@ -1485,11 +1435,13 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "run_foreign_task_on_fiber",
           .declaration = RuntimeFunction("RunForeignTaskOnFiber"),
-          .takes_the_runtime_handle = true};
+          .takes_the_runtime_handle = true,
+          .callables = {kEffectFnOnceWhileWaited}};
     case BuiltinFn::kRunExportedTaskToCompletion:
       return {
           .name = "run_exported_task_to_completion",
-          .declaration = RuntimeFunction("RunExportedTaskToCompletion")};
+          .declaration = RuntimeFunction("RunExportedTaskToCompletion"),
+          .callables = {kStartedForTheCall}};
     case BuiltinFn::kCurrentExportScope:
       return {
           .name = "current_export_scope",

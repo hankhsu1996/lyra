@@ -9,6 +9,7 @@
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/parsing/KnownSystemName.h>
 
+#include "lyra/hir/array_iterator_method.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/enum_method.hpp"
@@ -61,8 +62,14 @@ auto ImportedRuntimeClassOf(const slang::ast::ClassType& cls)
 auto LowerProcessMethodName(std::string_view name)
     -> std::optional<support::BuiltinFn>;
 
+// The array methods the library carries out as they stand, asking nothing of
+// an entry (LRM 7.5, 7.9, 7.10, 7.12.2).
 auto LowerArrayMethodName(std::string_view name)
     -> std::optional<support::BuiltinFn>;
+// The LRM 7.12 methods that evaluate an expression at each entry, which only
+// the layer still holding the `with` clause can state.
+auto LowerArrayIteratorMethodName(std::string_view name)
+    -> std::optional<hir::ArrayIteratorMethod>;
 
 // The two families whose `delete` has both an empty-the-container form and a
 // drop-one-entry form (LRM 7.9.3 / 7.10.2.3) read `argument_count` -- how many

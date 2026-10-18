@@ -120,9 +120,9 @@ struct ClassShape {
   // Where each of the class's HIR declarations landed in the pools above. The
   // two id spaces are separate, and neither pool holds only what the source
   // wrote: the static pool also takes what the class's bodies keep for the
-  // whole class -- a static-lifetime local, and what a `disable` naming a block
-  // of a method invalidates -- so a declaration's position in a pool is not its
-  // HIR position.
+  // whole class -- a static-lifetime variable, and what a `disable` naming a
+  // block of a method invalidates -- so a declaration's position in a pool is
+  // not its HIR position.
   base::Translation<hir::FieldId, mir::FieldId> field_translation;
   // Where each static property's cell was placed. It is a home rather than a
   // slot because which pool holds it follows from what replicates the class

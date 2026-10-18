@@ -10,6 +10,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type_id.hpp"
 
 namespace lyra::mir_transform {
 
@@ -22,7 +23,8 @@ class BlockRebuild;
 // ids, through the rebuild -- or nothing, for the node to be carried over as
 // it is. A node that is one of its operands is answered by naming that
 // operand, a node of the same block, which then stands in its place, as LLVM's
-// InstSimplify answers with a value that already exists.
+// InstSimplify answers with a value that already exists. `type` answers the
+// type each node standing there is stated at, carried over or not.
 struct RebuildRules {
   std::function<std::optional<mir::ExprId>(const mir::Block&, mir::ExprId)>
       stands_for = [](const mir::Block&, mir::ExprId) { return std::nullopt; };
@@ -30,6 +32,9 @@ struct RebuildRules {
       [](BlockRebuild&, mir::ExprId) { return std::nullopt; };
   std::function<std::optional<mir::StmtData>(BlockRebuild&, const mir::Stmt&)>
       stmt = [](BlockRebuild&, const mir::Stmt&) { return std::nullopt; };
+  std::function<mir::TypeId(mir::TypeId)> type = [](mir::TypeId type) {
+    return type;
+  };
 };
 
 // A block built anew from another, a node at a time. Every node the new block

@@ -5,6 +5,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/hir/array_iterator_method.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/enum_method.hpp"
 #include "lyra/hir/expr_id.hpp"
@@ -161,6 +162,18 @@ struct EnumMethodRef {
   auto operator==(const EnumMethodRef&) const -> bool = default;
 };
 
+// Calls a method LRM 7.12 defines on an unpacked array that evaluates an
+// expression at each entry. The array is the leading argument; `with_clause`
+// is the expression, absent where the call writes none and the element itself
+// is asked (LRM 7.12.1). As with an enumeration's methods, no runtime library
+// declares these.
+struct ArrayIteratorMethodRef {
+  ArrayIteratorMethod method;
+  std::optional<WithClause> with_clause;
+
+  auto operator==(const ArrayIteratorMethodRef&) const -> bool = default;
+};
+
 // The two shapes a sampled value function that reaches across the ticks of a
 // clocking event takes (LRM 16.9.3). Both name a history, because which event's
 // ticks the call counts is settled where the source is -- written at the call,
@@ -256,8 +269,8 @@ struct StaticMethodCallRef {
 
 using SubroutineRef = std::variant<
     StructuralSubroutineRef, MethodCallRef, StaticMethodCallRef,
-    SystemSubroutineRef, BuiltinMethodRef, EnumMethodRef, PastValueRef,
-    ValueChangeRef, ForeignImportRef, ExternalUnitSubroutineRef,
-    ExternalUnitMethodRef>;
+    SystemSubroutineRef, BuiltinMethodRef, EnumMethodRef,
+    ArrayIteratorMethodRef, PastValueRef, ValueChangeRef, ForeignImportRef,
+    ExternalUnitSubroutineRef, ExternalUnitMethodRef>;
 
 }  // namespace lyra::hir

@@ -24,6 +24,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/file_descriptor.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
@@ -112,7 +113,7 @@ auto LowerStrobeCall(
             .type = unit.builtins.channel_cancellation});
   }
 
-  ClosureBuilder closure(unit, frame);
+  ClosureBuilder closure(unit, frame, support::ClosureKind::kFn);
   mir::Block& body = closure.Body();
   const WalkFrame& body_frame = closure.Frame();
 
@@ -143,10 +144,11 @@ auto LowerStrobeCall(
             .else_scope = std::nullopt});
   }
 
-  // Items lower through the closure's frame: an enclosing procedural-local
-  // read becomes a by-value capture, while a module-signal read flows
-  // through the closure's own `self` capture and re-reads at fire time
-  // (LRM 21.2.2 sample-at-end-of-slot for signals).
+  // Items lower through the closure's frame, so each argument is evaluated
+  // when the print fires, at the end of the time slot (LRM 21.2.2). An
+  // automatic variable cannot be traced (LRM 13.3.2), so what they read is
+  // static storage or a property of the object the closure holds a share of,
+  // and outlives the closure.
   const std::size_t arg_offset = is_file_sink ? 1 : 0;
   auto items_or = BuildDisplayListPrintItems(
       process, body_frame, call, print.radix, arg_offset);
@@ -162,7 +164,8 @@ auto LowerStrobeCall(
       process, body, items_array, body_fd, print.append_newline);
   body.AppendStmt(mir::ExprStmt{.expr = write_call});
 
-  const mir::ExprId closure_id = block.exprs.Add(closure.BuildVoid());
+  const mir::ExprId closure_id =
+      BuildKeptClosure(unit, block, closure.BuildVoid());
   const mir::ExprId runtime_id =
       block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
   return mir::Expr{

@@ -139,7 +139,10 @@ under each item, and the conformance gaps at the end.
       it after detaching. An automatic local a detached fork branch still reads outlives the scope
       that declared it, whether a declaration statement declares it or a `foreach` does as its loop
       variable (LRM 12.7.3). A bare declaration takes the module's static default. Static locals
-      that share a name across sibling or nested blocks of one process are kept distinct. See
+      that share a name across sibling or nested blocks of one process are kept distinct. A
+      subroutine's formal arguments follow the same rule: those of a static task or function are one
+      variable each, shared by every call in progress and keeping what the last call left in them
+      (LRM 13.3.2, 13.4.2), while an automatic subroutine's are each call's own. See
       `decisions/variable-lifetime-storage.md` for the storage rationale.
 
 ### Procedural assignments

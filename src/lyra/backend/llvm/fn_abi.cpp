@@ -873,6 +873,9 @@ auto CallArranger::ConstructionOf(
           [&](const lir::MachineFunctionType&) -> Built {
             return no_construct();
           },
+          [&](const lir::ErasedCallableType&) -> Built {
+            return no_construct();
+          },
           [&](const lir::CoroutineType&) -> Built { return no_construct(); },
 
           // A node of the object tree. What brings one into existence is the

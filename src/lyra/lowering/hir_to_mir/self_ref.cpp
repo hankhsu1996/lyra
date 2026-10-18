@@ -6,10 +6,15 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/external_class.hpp"
+#include "lyra/mir/object_lifetime.hpp"
+#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
@@ -17,12 +22,12 @@ namespace lyra::lowering::hir_to_mir {
 
 auto MakeSelfRefExpr(const WalkFrame& frame) -> mir::Expr {
   // The receiver is an ordinary binding: resolve it as the body-local carrier
-  // for the receiver origin (a parameter in a directly-invoked body, a captured
-  // field in a closure), forwarded across closure boundaries by the resolver,
-  // then named through the uniform binding path, which types it as the
-  // binding was declared: the enclosing object's borrowed pointer.
-  const BodyBindingRef self =
-      frame.bindings->EnsureCarrier(BindingOriginId::Receiver());
+  // for the receiver origin -- a parameter in a directly-invoked body; in a
+  // closure, a captured field, or, for an object that lives while referenced,
+  // a local holding the address taken from the share of it the closure
+  // captures -- then named through the uniform binding path, which types it
+  // as the binding was declared: the enclosing object's borrowed pointer.
+  const BodyBindingRef self = frame.bindings->EnsureCarrier(ReceiverOrigin{});
   return frame.bindings->MakeBindingPlace(self, *frame.current_block);
 }
 
@@ -51,9 +56,45 @@ auto ObjectAs(mir::Block& block, mir::ExprId object, mir::TypeId pointer)
       mir::Expr{.data = mir::CastExpr{.operand = object}, .type = pointer});
 }
 
+namespace {
+
+// Declares a share of the object the body runs on, made where the body begins,
+// which keeps the object alive for as long as the body runs. Whoever called a
+// method may let go of the object before the method is done -- a task can
+// wait, and a function can drop the last handle itself -- yet the object stays
+// while a body runs on it (LRM 8.29). A constructor's object is held by the
+// process creating it from its first moment (LRM 8.29), so the share is one a
+// constructor can take too.
+void HoldReceiverShare(
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    mir::LocalId receiver, mir::TypeId self_pointer_type) {
+  mir::Block& body = *frame.current_block;
+  const mir::TypeId share_type = unit.types.Intern(
+      mir::Type{mir::ManagedRefType{
+          .pointee =
+              mir::ObjectReachedThrough(unit.types, self_pointer_type)}});
+  const mir::LocalId share =
+      frame.bindings->Declare(ReceiverShareOrigin{}, share_type);
+  body.AppendStmt(
+      mir::LocalDeclStmt{
+          .target = share,
+          .init = body.exprs.Add(
+              mir::Expr{
+                  .data =
+                      mir::CallExpr{
+                          .callee =
+                              mir::Direct{
+                                  .target = support::BuiltinFn::kSelfHandle},
+                          .arguments = {body.ReadLocal(
+                              receiver, self_pointer_type)}},
+                  .type = share_type})});
+}
+
+}  // namespace
+
 auto BindImplicitParameters(
-    const WalkFrame& frame, const ClassShape& owner, CallableForm form)
-    -> BoundImplicitParameters {
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    const ClassShape& owner, CallableForm form) -> BoundImplicitParameters {
   struct Takes {
     bool object;
     bool instance;
@@ -72,12 +113,35 @@ auto BindImplicitParameters(
   CallableBindings& bindings = *frame.bindings;
   BoundImplicitParameters bound{.params = {}, .frame = frame};
   if (takes.object) {
-    bound.params.push_back(
-        bindings.Declare(BindingOriginId::Receiver(), owner.self_pointer_type));
+    const mir::LocalId receiver =
+        bindings.Declare(ReceiverOrigin{}, owner.self_pointer_type);
+    bound.params.push_back(receiver);
+    const mir::ObjectLifetime lifetime = mir::LifetimeOfLineage(
+        mir::IntraUnitClassRef{.class_id = frame.current_class_id},
+        [&](const mir::DeclaredClassRef& declared) {
+          return std::visit(
+              Overloaded{
+                  [&](const mir::IntraUnitClassRef& own) {
+                    return unit_lowerer.GetClassShape(own.class_id).base;
+                  },
+                  [&](const mir::CrossUnitClassRef& other) {
+                    return mir::BaseOfExternalClass(
+                        unit_lowerer.Unit().external_classes, other);
+                  }},
+              declared);
+        });
+    switch (lifetime) {
+      case mir::ObjectLifetime::kTheRun:
+        break;
+      case mir::ObjectLifetime::kWhileReferenced:
+        HoldReceiverShare(
+            unit_lowerer.Unit(), frame, receiver, owner.self_pointer_type);
+        break;
+    }
   }
   if (takes.instance && owner.declaring_instance.has_value()) {
     bound.params.push_back(bindings.Declare(
-        BindingOriginId::DeclaringInstance(), owner.declaring_instance->type));
+        DeclaringInstanceOrigin{}, owner.declaring_instance->type));
     bound.frame = bound.frame.WithStructuralBase(ScopeThroughParameter{});
   }
   return bound;
@@ -122,8 +186,8 @@ auto BuildEnclosingScopeReceiver(
                                 .cls->self_pointer_type});
           },
           [&](const ScopeThroughParameter&) {
-            const BodyBindingRef instance = frame.bindings->EnsureCarrier(
-                BindingOriginId::DeclaringInstance());
+            const BodyBindingRef instance =
+                frame.bindings->EnsureCarrier(DeclaringInstanceOrigin{});
             return block.exprs.Add(
                 mir::Expr{
                     .data =

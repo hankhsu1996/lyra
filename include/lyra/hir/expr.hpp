@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <optional>
-#include <string>
 #include <variant>
 #include <vector>
 
@@ -124,20 +123,6 @@ struct ConstantExpr {
   auto operator==(const ConstantExpr&) const -> bool = default;
 };
 
-// LRM 7.12 array-method `with` clause. `id` names this clause; the element
-// (`item`) and its index (`item.index`) are referenced inside `expr` by that
-// identity and role (`IterationBindingRef`), so a clause nested in `expr` that
-// reads an outer iterator still names the outer clause. `element_name` is the
-// source iterator name, kept so the synthesized iteration closure's element
-// parameter renders readably.
-struct WithClause {
-  WithClauseId id;
-  std::string element_name;
-  ExprId expr;
-
-  auto operator==(const WithClause&) const -> bool = default;
-};
-
 // LRM 21.3.4.4 form 2d (`$fread(mem, fd, , count)`) and any future
 // system-call positional-elision case lands here as `std::nullopt` at the
 // elided slot; user calls and most system calls leave every entry filled.
@@ -146,7 +131,6 @@ struct WithClause {
 struct CallExpr {
   SubroutineRef callee;
   std::vector<std::optional<ExprId>> arguments;
-  std::optional<WithClause> with_clause = std::nullopt;
 
   auto operator==(const CallExpr&) const -> bool = default;
 };

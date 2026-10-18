@@ -64,6 +64,10 @@ auto IsErasedFunction(const TypePool& types, TypeId id) -> bool;
 // that says what was assumed.
 auto ErasedPointer(const TypePool& types) -> TypeId;
 
+// A box of `value`: a pointer uniquely owning storage of dynamic duration
+// holding one, as Rust's `Box` is.
+auto BoxOf(const TypePool& types, TypeId value) -> TypeId;
+
 // What a new-expression yielding `owner` allocates: the pointee of a uniquely
 // owning pointer, or the object a class handle refers to. Nothing for a type no
 // new-expression yields.

@@ -210,8 +210,6 @@ class FunctionLowerer {
   void EmitScopeDrop(const ValueEnd& end);
   void EmitScopeDrop(const SlotEnd& end);
   void EmitScopeDrop(const StorageRelease& release);
-  // Brings a slot's bytes into use with the first value it is to own.
-  void InitializeSlot(lir::ValueId slot, lir::Operand value);
   auto LowerIfInto(const mir::Block& block, const mir::IfStmt& stmt)
       -> diag::Result<void>;
   auto LowerForInto(const mir::Block& block, const mir::ForStmt& stmt)
@@ -541,6 +539,9 @@ class FunctionLowerer {
   auto LowerConditional(
       const mir::Block& block, const mir::ConditionalExpr& cond,
       mir::TypeId type) -> diag::Result<lir::Operand>;
+  auto LowerConditionalInto(
+      const mir::Block& block, const mir::ConditionalExpr& cond,
+      const lir::Place& destination) -> diag::Result<void>;
 
   // `value` computed and put where `destination` says, as rustc's
   // `push_assign`; a transient holding an owned value owes its end here.
@@ -559,10 +560,16 @@ class FunctionLowerer {
   // What a step yielding nothing stands as where a value is wanted.
   auto VoidValue() -> lir::Operand;
   auto NewPlaceLocal(lir::TypeId type) -> lir::ValueId;
+  // A new frame slot of `type`, its bytes in use from here where it is to own
+  // what it holds, not yet holding a value.
+  auto NewLiveSlot(lir::TypeId type) -> lir::ValueId;
   // Answers the frame slot the local became where that slot owns its value,
   // for the caller to end with the extent the local belongs to.
   auto BindLocal(mir::LocalId local, lir::TypeId type, lir::Operand init)
       -> std::optional<lir::ValueId>;
+  // The frame slot a local the body gave no storage of its own becomes, in
+  // use from here and not yet holding a value.
+  auto OpenLocalSlot(mir::LocalId local, lir::TypeId type) -> lir::ValueId;
   auto Load(lir::Place place, lir::TypeId type) -> lir::Operand;
   auto Store(lir::Place place, lir::Operand value) -> lir::Operand;
 
@@ -605,9 +612,17 @@ class FunctionLowerer {
   void Terminate(lir::TerminatorData data);
   [[nodiscard]] auto Terminated() const -> bool;
 
-  // Binds a closure invoke's receiver: the one parameter its signature leads
-  // with, naming the storage its captures live in.
-  void BindCaptureReceiver(mir::LocalId receiver);
+  // Takes one parameter of the body's signature, a closure invoke's receiver
+  // included: the argument it is handed. One handed over rather than lent is
+  // the body's from here, and ends on every way out of the body.
+  auto TakeParam(mir::LocalId param) -> lir::ValueId;
+  // Binds a taken parameter's local to its argument, which needs the body's
+  // variables open.
+  void BindParam(mir::LocalId param, lir::ValueId argument);
+  // A coroutine body stops before its first statement, so that whoever drives
+  // it runs every stretch of it, the first included. Ended there, it ends what
+  // it was handed and nothing else, since nothing else is open yet.
+  auto EmitInitialSuspend() -> diag::Result<void>;
 
   // A class's constructor and the class it builds, held together because the
   // base the one names is entered with what the other states, and the symbol
@@ -659,6 +674,10 @@ class FunctionLowerer {
     lir::TypeId type;
   };
   std::optional<CompletionCell> completion_cell_;
+  // The block every stretch of the body runs after: the entry block, or for a
+  // coroutine the one its first stop resumes into. What the body allocates
+  // once for all its calls is allocated there, inside a stretch.
+  lir::BlockId stretch_start_;
 };
 
 }  // namespace lyra::lowering::mir_to_lir

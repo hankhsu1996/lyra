@@ -20,6 +20,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/callable_bounds.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -86,11 +87,12 @@ auto BuildDeferredSubmit(
     Fill fill) -> diag::Result<mir::Block> {
   mir::Block scope;
   const WalkFrame scope_frame = frame.WithBlock(&scope);
-  ClosureBuilder body(process.Owner().Unit(), scope_frame);
+  ClosureBuilder body(
+      process.Owner().Unit(), scope_frame, support::ClosureKind::kFnOnce);
   if (auto filled = fill(body, scope_frame); !filled) {
     return std::unexpected(std::move(filled.error()));
   }
-  const mir::ExprId body_id = scope.exprs.Add(body.BuildCoroutine());
+  const mir::ExprId body_id = scope.exprs.Add(body.BuildCallOnce());
   const mir::ExprId runtime_id =
       scope.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
   scope.AppendStmt(

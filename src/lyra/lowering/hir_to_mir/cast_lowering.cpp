@@ -373,6 +373,7 @@ auto BuildValueConversion(
           [&](const mir::LoopBlocksType& t) { return none(t); },
           [&](const mir::RecordType& t) { return none(t); },
           [&](const mir::ClosureType& t) { return none(t); },
+          [&](const mir::ErasedCallableType& t) { return none(t); },
       });
 }
 

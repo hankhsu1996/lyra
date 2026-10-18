@@ -11,7 +11,6 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -22,11 +21,13 @@
 #include <llvm/IR/Function.h>
 #include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 
 #include "lyra/backend/llvm/codegen_module.hpp"
 #include "lyra/backend/llvm/constant_record.hpp"
 #include "lyra/backend/llvm/integral_planes.hpp"
+#include "lyra/backend/llvm/machine_signature.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
@@ -74,36 +75,9 @@ auto CallStreamEntry(
   return b.CreateCall(module.RuntimeFunction(RuntimeSymbol(op), abi), *args);
 }
 
-// The machine type a C++ parameter or answer of type `T` crosses as.
-template <typename T>
-constexpr auto MachineKindOf() -> MachineKind {
-  if constexpr (std::is_void_v<T>) {
-    return MachineKind::kVoid;
-  } else if constexpr (std::is_pointer_v<T> || std::is_reference_v<T>) {
-    return MachineKind::kAddress;
-  } else if constexpr (std::is_same_v<T, bool>) {
-    return MachineKind::kTruth;
-  } else {
-    static_assert(
-        std::is_integral_v<T> || std::is_enum_v<T>,
-        "a function of a type's table takes or answers a type no body of "
-        "this module could");
-    if constexpr (sizeof(T) == 1) {
-      return MachineKind::kInt8;
-    } else if constexpr (sizeof(T) == 4) {
-      return MachineKind::kInt32;
-    } else {
-      static_assert(sizeof(T) == 8);
-      return MachineKind::kInt64;
-    }
-  }
-}
-
-// The operations a container's algorithms ask of an element or of what a
-// `with` clause answers -- an order, a truth, a reduction (LRM 7.8, 7.12, 12.4)
-// -- none of which is asked of a structure, a union or a fixed-size array: none
-// has a relational or arithmetic operator to order, test or fold by, and an
-// associative array indexed by one is refused where it is declared.
+// The order an associative array keeps its indices in (LRM 7.8), which no
+// structure, union or fixed-size array is asked for: an associative array
+// indexed by one is refused where it is declared.
 struct NeverAsked {};
 
 // What storage of the type holds before anything writes it.
@@ -144,7 +118,7 @@ using WitnessFilling = std::variant<
 struct Witness {
   std::string_view name;
   std::size_t offset;
-  WitnessSignature stands_in_for;
+  support::MachineSignature stands_in_for;
   WitnessFilling filled_by;
 };
 
@@ -154,9 +128,8 @@ template <typename Function>
 struct WitnessSignatureOf;
 template <typename R, typename... Params>
 struct WitnessSignatureOf<R (*)(const value::ValueType&, Params...)> {
-  static auto Get() -> WitnessSignature {
-    return {
-        .returns = MachineKindOf<R>(), .takes = {MachineKindOf<Params>()...}};
+  static auto Get() -> support::MachineSignature {
+    return support::MachineSignatureOf<R(Params...)>::Get();
   }
 };
 template <typename R, typename... Params>
@@ -252,8 +225,6 @@ auto Witnesses() {
           "take_positions", &ValueWitnessTable::take_positions,
           OwnOperationWitness{.answers = BuiltinFn::kTakePositions}),
       WitnessOf("order_before", &ValueWitnessTable::order_before, NeverAsked{}),
-      WitnessOf("is_true", &ValueWitnessTable::is_true, NeverAsked{}),
-      WitnessOf("reduce", &ValueWitnessTable::reduce, NeverAsked{}),
   });
 }
 
@@ -394,6 +365,9 @@ auto CodeGenValueTypes::ComponentKey(lir::TypeId component) -> std::string {
           },
           [&](const lir::OwnedStorageAddress&) -> std::string {
             throw InternalError(kNoDomain);
+          },
+          [&](const lir::ClosureStorage&) -> std::string {
+            throw InternalError(kNoDomain);
           }},
       *held);
 }
@@ -429,44 +403,28 @@ auto CodeGenValueTypes::Function(lir::TypeId type, LifecycleStep step)
   return fn;
 }
 
-auto CodeGenValueTypes::MachineTypeOf(MachineKind kind) const -> llvm::Type* {
-  llvm::LLVMContext& ctx = owner_->Module().getContext();
-  switch (kind) {
-    case MachineKind::kVoid:
-      return llvm::Type::getVoidTy(ctx);
-    case MachineKind::kAddress:
-      return types_->Ptr();
-    case MachineKind::kTruth:
-      return llvm::Type::getInt1Ty(ctx);
-    case MachineKind::kInt8:
-      return llvm::Type::getInt8Ty(ctx);
-    case MachineKind::kInt32:
-      return llvm::Type::getInt32Ty(ctx);
-    case MachineKind::kInt64:
-      return llvm::Type::getInt64Ty(ctx);
-  }
-  throw InternalError("llvm codegen: unknown machine kind");
-}
-
 auto CodeGenValueTypes::DeclareBody(
     lir::TypeId type, std::string_view witness,
-    const WitnessSignature& stands_in_for) -> llvm::Function* {
+    const support::MachineSignature& stands_in_for) -> llvm::Function* {
+  llvm::LLVMContext& context = owner_->Module().getContext();
   std::vector<llvm::Type*> params{types_->Ptr()};
-  params.reserve(1 + stands_in_for.takes.size());
-  for (const MachineKind taken : stands_in_for.takes) {
-    params.push_back(MachineTypeOf(taken));
+  params.reserve(1 + stands_in_for.Takes().size());
+  for (const support::MachineKind taken : stands_in_for.Takes()) {
+    params.push_back(ToLlvmType(context, taken));
   }
-  return llvm::Function::Create(
+  llvm::Function* body = llvm::Function::Create(
       llvm::FunctionType::get(
-          MachineTypeOf(stands_in_for.returns), params, false),
+          ToLlvmType(context, stands_in_for.Returns()), params, false),
       llvm::GlobalValue::InternalLinkage,
       std::format("lyra.type{}.type.{}", KeyOf(type), witness),
       owner_->Module());
+  MarkBoolsAsCpp(body);
+  return body;
 }
 
 auto CodeGenValueTypes::Body(
     lir::TypeId type, std::string_view witness,
-    const WitnessSignature& stands_in_for, llvm::Function* filling)
+    const support::MachineSignature& stands_in_for, llvm::Function* filling)
     -> llvm::Constant* {
   llvm::Module& module = owner_->Module();
   if (filling == nullptr) {
@@ -483,22 +441,25 @@ auto CodeGenValueTypes::Body(
   llvm::Function* body = DeclareBody(type, witness, stands_in_for);
   llvm::IRBuilder<> b(llvm::BasicBlock::Create(module.getContext(), "", body));
   std::vector<llvm::Value*> args;
-  args.reserve(stands_in_for.takes.size());
+  args.reserve(stands_in_for.Takes().size());
   for (std::size_t i = 1; i < body->arg_size(); ++i) {
     args.push_back(body->getArg(static_cast<unsigned>(i)));
   }
   llvm::Value* answered = b.CreateCall(filling, args);
   // A function answering in storage it was handed answers with that storage
   // too, which the witness it fills does not.
-  switch (stands_in_for.returns) {
-    case MachineKind::kVoid:
+  switch (stands_in_for.Returns()) {
+    case support::MachineKind::kVoid:
       b.CreateRetVoid();
       break;
-    case MachineKind::kAddress:
-    case MachineKind::kTruth:
-    case MachineKind::kInt8:
-    case MachineKind::kInt32:
-    case MachineKind::kInt64:
+    case support::MachineKind::kAddress:
+    case support::MachineKind::kTruth:
+    case support::MachineKind::kInt8:
+    case support::MachineKind::kInt32:
+    case support::MachineKind::kInt64:
+    case support::MachineKind::kFloat:
+    case support::MachineKind::kDouble:
+    case support::MachineKind::kAggregate:
       b.CreateRet(answered);
       break;
   }
@@ -523,7 +484,8 @@ struct CodeGenValueTypes::ThunkBody {
 
 auto CodeGenValueTypes::OpenThunkBody(
     lir::TypeId type, std::string_view witness,
-    const WitnessSignature& stands_in_for, lir::TypeId stated) -> ThunkBody {
+    const support::MachineSignature& stands_in_for, lir::TypeId stated)
+    -> ThunkBody {
   const std::optional<value::IntegralShape> shape =
       types_->IntegralShapeOf(stated);
   if (!shape.has_value()) {
@@ -542,7 +504,7 @@ auto CodeGenValueTypes::OpenThunkBody(
       b.CreateAlloca(llvm::ArrayType::get(b.getInt8Ty(), layout.layout.size));
   storage->setAlignment(llvm::Align(layout.layout.align));
   std::vector<llvm::Value*> args;
-  args.reserve(stands_in_for.takes.size());
+  args.reserve(stands_in_for.Takes().size());
   for (std::size_t i = 1; i < body->arg_size(); ++i) {
     args.push_back(body->getArg(static_cast<unsigned>(i)));
   }
@@ -584,7 +546,7 @@ auto CodeGenValueTypes::ParamReferent(
 // scalar that value holds.
 auto CodeGenValueTypes::ScalarAnswerBody(
     lir::TypeId type, std::string_view witness,
-    const WitnessSignature& stands_in_for, lir::FunctionId method,
+    const support::MachineSignature& stands_in_for, lir::FunctionId method,
     ComparisonAnswered answered) -> llvm::Constant* {
   const ThunkBody thunk = OpenThunkBody(
       type, witness, stands_in_for, unit_->functions.Get(method).result_type);
@@ -613,7 +575,7 @@ auto CodeGenValueTypes::ScalarAnswerBody(
 // or reads it out first, so the body here holds nothing.
 auto CodeGenValueTypes::StreamWriteBody(
     lir::TypeId type, std::string_view witness,
-    const WitnessSignature& stands_in_for, lir::FunctionId method)
+    const support::MachineSignature& stands_in_for, lir::FunctionId method)
     -> llvm::Constant* {
   llvm::Function* const body = DeclareBody(type, witness, stands_in_for);
   llvm::IRBuilder<> b(
@@ -629,7 +591,7 @@ auto CodeGenValueTypes::StreamWriteBody(
 
 auto CodeGenValueTypes::StreamReadBody(
     lir::TypeId type, std::string_view witness,
-    const WitnessSignature& stands_in_for, lir::FunctionId method)
+    const support::MachineSignature& stands_in_for, lir::FunctionId method)
     -> llvm::Constant* {
   llvm::Function* const body = DeclareBody(type, witness, stands_in_for);
   llvm::IRBuilder<> b(
@@ -652,23 +614,17 @@ auto CodeGenValueTypes::ForwardToEntry(
   for (llvm::Value* const arg : args) {
     takes.push_back(arg->getType());
   }
-  llvm::FunctionCallee entry = owner_->CreateRuntimeFunction(
-      llvm::FunctionType::get(answers, takes, false), RuntimeSymbol(op));
-  // The entry reads a flag as a C++ `bool`, a whole byte.
-  auto* const declared = llvm::cast<llvm::Function>(entry.getCallee());
-  for (unsigned i = 0; i < args.size(); ++i) {
-    if (args[i]->getType()->isIntegerTy(1)) {
-      declared->addParamAttr(i, llvm::Attribute::ZExt);
-    }
-  }
-  return b.CreateCall(entry, args);
+  return b.CreateCall(
+      owner_->CreateRuntimeFunction(
+          llvm::FunctionType::get(answers, takes, false), RuntimeSymbol(op)),
+      args);
 }
 
 // The function takes a count's control bits as a value of the type its own
 // code states, which the value the type was handed is read into first.
 auto CodeGenValueTypes::ControlReadBody(
     lir::TypeId type, std::string_view witness,
-    const WitnessSignature& stands_in_for, lir::FunctionId method)
+    const support::MachineSignature& stands_in_for, lir::FunctionId method)
     -> llvm::Constant* {
   const ThunkBody thunk =
       OpenThunkBody(type, witness, stands_in_for, ParamReferent(method, 1));
@@ -706,7 +662,7 @@ void CodeGenValueTypes::CallBuildDefault(
 // Each component's type builds its own part, so the body asks each in turn.
 auto CodeGenValueTypes::ComponentWiseDefaultBody(
     lir::TypeId tuple, std::string_view witness,
-    const WitnessSignature& stands_in_for) -> llvm::Constant* {
+    const support::MachineSignature& stands_in_for) -> llvm::Constant* {
   llvm::Function* const body = DeclareBody(tuple, witness, stands_in_for);
   llvm::IRBuilder<> b(
       llvm::BasicBlock::Create(owner_->Module().getContext(), "", body));
@@ -1301,7 +1257,8 @@ auto CodeGenValueTypes::GetAddrOfValueType(lir::TypeId type)
           [&](support::LibraryObject) -> Answer { return unrealized(); },
           [&](const lir::OwnedStorageAddress&) -> Answer {
             return unrealized();
-          }},
+          },
+          [&](const lir::ClosureStorage&) -> Answer { return unrealized(); }},
       *held);
 }
 

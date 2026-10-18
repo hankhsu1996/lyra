@@ -1,6 +1,6 @@
 # An object model fixed at compile time, and a library reached through constants
 
-Date: 2026-09-29 Status: accepted; D4 and D5 revised and D9 added 2026-10-02
+Date: 2026-09-29 Status: accepted; D4 and D5 revised and D9 added 2026-10-02, D7 revised 2026-10-17
 
 **D8 is reversed by
 [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**, and
@@ -50,17 +50,17 @@ a descriptor in the format Itanium 2.9.4 defines, and `$cast` calls the host's `
 **D4. What the library reads by name comes from one constant per class, which the declaring unit
 emits.** The constant is a structure the library defines, holding the tables a name is answered
 from, each entry taking the object first, and for a class of the design hierarchy its timescale. A
-closure's definition is such a constant too, stating its body, the size of a value holding its
-captures, and the body ending them. A unit names another unit's class's constant by symbol, which
-its signature already makes an explicit dependency. Nothing is declared to the library at run time,
-and the library composes no record. The constant is a value MIR states like any other: the class
-holds it, and the arrays its tables point at, as constants whose values are ordinary expressions --
-a structure composed from its members, an array from its elements, a name, an address, a body named
-as code. A table is the address of its array and a count, as a table is in C and a slice is in Rust.
-A body the library enters is a body of the class that takes no receiver, stated in MIR too. So a
-backend translates the constant with what it translates every expression with and writes nothing of
-its own; the execution backend emits it as data, each member at the offset the library's structure
-gives it, which is read off the structure itself where the compiler is built rather than restated.
+closure's definition is such a constant too, stating its body and the body ending its captures. A
+unit names another unit's class's constant by symbol, which its signature already makes an explicit
+dependency. Nothing is declared to the library at run time, and the library composes no record. The
+constant is a value MIR states like any other: the class holds it, and the arrays its tables point
+at, as constants whose values are ordinary expressions -- a structure composed from its members, an
+array from its elements, a name, an address, a body named as code. A table is the address of its
+array and a count, as a table is in C and a slice is in Rust. A body the library enters is a body of
+the class that takes no receiver, stated in MIR too. So a backend translates the constant with what
+it translates every expression with and writes nothing of its own; the execution backend emits it as
+data, each member at the offset the library's structure gives it, which is read off the structure
+itself where the compiler is built rather than restated.
 
 **D5. The compiler does not link a C++ front end.** The only C++ a program meets is the library Lyra
 ships and is built with, so every fact generated code needs about it is a fact of that library read
@@ -109,8 +109,14 @@ library's constructor of that part, as the C++ backend's base initializer does. 
 then runs its class's prologue: the value takes the class's tables, including those of the interface
 class parts, and the class's members come into existence. A base being constructed thus dispatches
 as itself, as C++ gives it through construction virtual tables (Itanium 2.6). A `new` object is
-handed to the handle owning it only once its constructor has run. The design root is built through
-its unit's object entry, as an instance of another unit is. No construction is entered through a
+referred to by its creator from the moment the part every object starts with is built, and the
+new-expression hands that reference to its handle once the constructor has run. Revised 2026-10-17:
+this had made the handle the object's first owner, after the constructor, which left a constructor
+unable to hand `this` on (LRM 8.11) -- to store it, to call a method holding its object, or to fork
+a branch reading a property -- since nothing referred to the object yet. A new object's count starts
+at one in Swift (`RefCount.h`) and in CPython (`new_reference`, before `type_call` runs `tp_init`),
+and an Objective-C `alloc` answers an object its creator owns. The design root is built through its
+unit's object entry, as an instance of another unit is. No construction is entered through a
 constant, and the library allocates no object.
 
 **D8. A name reaching a method of a class the referrer cannot name is settled to a body while the

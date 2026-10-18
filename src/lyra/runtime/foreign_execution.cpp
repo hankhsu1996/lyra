@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
@@ -135,8 +136,9 @@ auto CurrentForeignProcess() -> RuntimeProcess& {
   return *ForeignProcessSlot();
 }
 
-auto RunForeignTaskOnFiber(RuntimeEffects& effects, OwnedCall foreign_call)
-    -> bool {
+auto RunForeignTaskOnFiber(
+    RuntimeEffects& effects,
+    OwnedClosure<support::EffectSignature> foreign_call) -> bool {
   return !EnterForeignTask(
       effects, effects.CurrentProcess().CurrentLeaf(),
       MakeForeignExecution(std::move(foreign_call)));

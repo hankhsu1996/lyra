@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <utility>
@@ -14,6 +15,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
+#include "lyra/mir/closure_signature.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/type.hpp"
@@ -289,7 +291,16 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           [&](const mir::VoidType&) { out += "void"; },
           [&](const mir::PointerType& p) {
             switch (p.ownership) {
+              // A box of a closure of no known type is the library's, which
+              // calls the closure at the signature the type states and ends
+              // it, both through the definition it opens with.
               case mir::PointerOwnership::kUnique:
+                if (unit.types.Get(p.pointee).Is<mir::ErasedCallableType>()) {
+                  Write(
+                      out, "lyra::runtime::OwnedClosure<",
+                      CppCallSignature(unit, p.pointee), ">");
+                  return;
+                }
                 Write(out, "std::unique_ptr<", type(p.pointee), ">");
                 return;
               case mir::PointerOwnership::kShared:
@@ -307,6 +318,15 @@ void WriteOne(TargetText& out, const CppType& spelling) {
             throw InternalError("backend::cpp: unknown PointerOwnership");
           },
           [&](const mir::ReferenceType& r) {
+            // A borrow of a closure of no known type is where the closure lies
+            // and how to call it, as Rust's `&dyn Fn` is, at the signature the
+            // type states.
+            if (unit.types.Get(r.referent).Is<mir::ErasedCallableType>()) {
+              Write(
+                  out, "lyra::base::FunctionRef<",
+                  CppCallSignature(unit, r.referent), ">");
+              return;
+            }
             switch (r.mutability) {
               case mir::Mutability::kReadOnly:
                 Write(out, "const ", type(r.referent), "&");
@@ -375,6 +395,14 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           },
           [&](const mir::ClosureType& c) {
             Write(out, CppClosureName(c.closure_id));
+          },
+          // A closure of no known type is held only through a box or a borrow,
+          // each of which is spelled whole above.
+          [&](const mir::ErasedCallableType&) {
+            throw InternalError(
+                "backend::cpp: a closure of no known type is named apart from "
+                "the box or the borrow holding it -- please report this as a "
+                "bug");
           },
       });
 }
@@ -520,6 +548,7 @@ auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [&](const mir::LoopBlocksType&) { return reaches_nothing(); },
           [&](const mir::RecordType&) { return reaches_nothing(); },
           [&](const mir::ClosureType&) { return reaches_nothing(); },
+          [&](const mir::ErasedCallableType&) { return reaches_nothing(); },
       });
 }
 
@@ -559,6 +588,10 @@ auto ConversionAsCpp(
   if (from_ref != nullptr && to_ref != nullptr) {
     return ConvertedThroughView{
         .from = from_ref->pointee, .to = to_ref->pointee};
+  }
+  if (const std::optional<mir::ClosureErasure> erasure =
+          mir::ClosureErasureOf(unit.types, from, to)) {
+    return ConvertedByUnsize{.erased = erasure->erased};
   }
   if (CastNotationRelates(source, destination) ||
       (destination.Is<mir::MachineBoolType>() && HasTruthValue(source))) {
@@ -694,6 +727,11 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           [&](const mir::EvaluationAttemptsType& t) { by_naming_itself(t); },
           [&](const mir::LoopBlocksType& t) { by_naming_itself(t); },
           [&](const mir::ClosureType& t) { by_naming_itself(t); },
+          [](const mir::ErasedCallableType&) {
+            throw InternalError(
+                "backend::cpp: a closure of no known type is made by a cast "
+                "of the box or the borrow holding it, so none is constructed");
+          },
       });
 }
 
@@ -743,6 +781,23 @@ void WriteOne(TargetText& out, const CppRecordBase& base) {
       return;
   }
   throw InternalError("backend::cpp: unknown record kind");
+}
+
+auto CppClosureBase() -> std::string_view {
+  return "lyra::runtime::ClosureValue";
+}
+
+auto CppClosureDefinitionOf() -> std::string_view {
+  return "lyra::runtime::DefinitionOf";
+}
+
+void WriteOne(TargetText& out, const CppCallSignature& signature) {
+  const mir::CompilationUnit& unit = signature.Unit();
+  const auto& erased =
+      unit.types.Get(signature.Erased()).Get<mir::ErasedCallableType>();
+  Write(out, CppType(unit, erased.result), "(");
+  WriteTypeList(out, unit, erased.params);
+  out += ")";
 }
 
 void WriteOne(TargetText& out, const CppClassRef& ref) {

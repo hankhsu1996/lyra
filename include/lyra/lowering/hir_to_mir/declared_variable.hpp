@@ -44,9 +44,4 @@ auto InitializeVariable(
     mir::CompilationUnit& unit, mir::Block& block,
     const DeclaredVariable& variable, mir::ExprId value) -> mir::Stmt;
 
-// A read of what the variable holds.
-auto ReadVariable(
-    mir::CompilationUnit& unit, mir::Block& block,
-    const DeclaredVariable& variable) -> mir::ExprId;
-
 }  // namespace lyra::lowering::hir_to_mir

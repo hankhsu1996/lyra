@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <span>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -79,7 +80,11 @@ class ProcessLowerer {
   // outlive (LRM 6.21), as a set of slang symbols. Run once over the body
   // before it is lowered, so each declaration's status is settled when the
   // declaration is created rather than back-patched at a later reference.
-  void AnalyzeLifetimeExtended(const slang::ast::Statement& body);
+  // `declared_ahead` are what the body's scope declares before its first
+  // statement: a subroutine's formals and result, and nothing for a process.
+  void AnalyzeLifetimeExtended(
+      std::span<const slang::ast::VariableSymbol* const> declared_ahead,
+      const slang::ast::Statement& body);
 
   // Mints the identity of a name the body declares -- a local, or a constant
   // it holds -- and registers it: the slang-to-HIR binding for `var`, and
