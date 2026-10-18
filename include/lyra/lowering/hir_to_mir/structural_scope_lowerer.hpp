@@ -650,27 +650,15 @@ auto DescendOwnedChildren(
     std::span<const hir::OwnedChildStep> descent) -> mir::ExprId;
 
 // The call `start` makes of `body`, a callable of the scope `frame` stands on
-// whose result is the execution it runs as, written into `frame`'s block. An
-// execution of a scope starts from the scope, the instance holding the seeds
-// its generator is split from, and the place the source writes it, whether it
-// is a procedure the scope registers or an assertion's action it runs later.
-//
-// The instance is where LRM 18.14.1 keeps the seeds of what no thread creates.
-// It is the scope the artifact's own class tree is rooted at, a fixed number of
-// steps out from wherever the execution is declared, so the call reaches it by
-// typed navigation over a distance the walk already knows. The place is the
-// text a run names the execution by when it has to say what was running; one
-// no source text states passes no place.
+// whose result is the execution it runs as, written into `frame`'s block,
+// whether it is a procedure the scope registers or an assertion's action it
+// runs later. The call names the scope; the instance whose text creates the
+// execution, which holds the seeds LRM 18.14.1 splits its generator from and
+// whose code it evaluates; and where the source writes it. A continuous driver
+// is not started here, because it may evaluate another instance's code and so
+// also names the instance it runs as.
 [[nodiscard]] auto BuildExecutionStart(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::CallableId body,
     support::BuiltinFn start, diag::SourceSpan written_at) -> mir::ExprId;
-
-// The same, for an execution belonging to `unit_instance` rather than to the
-// instance the frame stands in: the drive across a child's output port, which
-// evaluates the child's code and so runs as the child's does (LRM 24.3.2).
-[[nodiscard]] auto BuildExecutionStartIn(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame,
-    mir::ExprId unit_instance, mir::CallableId body, support::BuiltinFn start,
-    diag::SourceSpan written_at) -> mir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir

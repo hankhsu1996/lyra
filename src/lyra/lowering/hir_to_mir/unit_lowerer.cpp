@@ -248,9 +248,7 @@ void WrapInNamespaceStaticInitExtent(
     mir::CallableCode& code) {
   mir::Block extent;
   const mir::ExprId name = extent.exprs.Add(
-      mir::Expr{
-          .data = mir::StringLiteral{.value = unit.name},
-          .type = unit.types.Intern(mir::Type{mir::MachineCStringType{}})});
+      mir::MakeStringLiteral(unit.builtins.machine_c_string, unit.name));
   AppendRuntimeEffectStmt(
       unit_lowerer, extent, support::BuiltinFn::kEnterNamespaceStaticInit,
       {name});
@@ -280,9 +278,7 @@ void GuardNamespaceInitialization(
   const mir::ExprId runtime =
       outer.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
   const mir::ExprId name = outer.exprs.Add(
-      mir::Expr{
-          .data = mir::StringLiteral{.value = unit.name},
-          .type = unit.types.Intern(mir::Type{mir::MachineCStringType{}})});
+      mir::MakeStringLiteral(unit.builtins.machine_c_string, unit.name));
   const mir::ExprId claimed = outer.exprs.Add(
       mir::Expr{
           .data =

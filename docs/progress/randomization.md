@@ -32,10 +32,12 @@ Done when:
       it belongs to, so a whole hierarchy subtree is determined by the seed of its root process. A
       static process is every elaborated `initial`, `always`, `always_comb`, `always_latch`, and
       `always_ff` procedure and every elaborated continuous assignment (Annex P), so the continuous
-      assignments of a unit instance take initialization seeds alongside its procedures. `$urandom`
-      returns 32 unsigned bits and `$urandom_range` bounds the result, reversing its two arguments
-      when they arrive in the other order (LRM 18.13.1 -- 18.13.2). Both are thread stable: the
-      values a process observes do not depend on the order in which processes execute.
+      assignments of a unit instance take initialization seeds alongside its procedures. A port
+      connection is a continuous assignment the instantiation creates (LRM 4.9.6), so it is seeded
+      from the instantiating instance, and whether an output is connected moves no child's draws.
+      `$urandom` returns 32 unsigned bits and `$urandom_range` bounds the result, reversing its two
+      arguments when they arrive in the other order (LRM 18.13.1 -- 18.13.2). Both are thread
+      stable: the values a process observes do not depend on the order in which processes execute.
 
 - [x] A randomization call made from a static initializer. LRM 18.14.1 requires the initialization
       RNG to serve static initializers as well as static processes, and a variable declaration

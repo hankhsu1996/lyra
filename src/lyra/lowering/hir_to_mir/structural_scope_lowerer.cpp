@@ -1167,6 +1167,81 @@ void InstallScopeRoutes(
   InstallStoredRoutes(lowerer, resolve_frame, routes.disable_targets);
 }
 
+// The scope the execution's reports name.
+auto OwningScope(const WalkFrame& frame) -> mir::ExprId {
+  mir::Block& block = *frame.current_block;
+  return block.Read(block.exprs.Add(MakeSelfRefExpr(frame)));
+}
+
+// The instance whose text creates an execution, which holds the seeds LRM
+// 18.14.1 splits a static process's generator from. It is the scope the
+// artifact's own class tree is rooted at, a fixed number of steps out from
+// wherever the execution is declared, so the call reaches it by typed
+// navigation over a distance the walk already knows.
+auto CreatingInstance(UnitLowerer& unit_lowerer, const WalkFrame& frame)
+    -> mir::ExprId {
+  return BuildEnclosingScopeReceiver(
+      frame, unit_lowerer.Unit(), frame.HopsToUnitRoot());
+}
+
+// The call of `body`, a callable of the scope `frame` stands on, whose result
+// is the execution it runs as.
+auto StartedBody(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::CallableId body)
+    -> mir::ExprId {
+  mir::Block& block = *frame.current_block;
+  const mir::ExprId body_self = BuildObjectDeref(
+      unit_lowerer.Unit(), block, block.exprs.Add(MakeSelfRefExpr(frame)));
+  return block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{
+                          .target =
+                              mir::CallableTarget{
+                                  .owner = frame.current_class_id,
+                                  .slot = body},
+                          .receiver = body_self},
+                  .arguments = {}},
+          .type = unit_lowerer.Unit().builtins.coroutine_void});
+}
+
+// Where the source writes this execution, as "file:line:col". A run prints it
+// when it has to say what was running, as when it is stopped from outside or
+// names the procedures that keep a time step from ever ending. Empty where no
+// source text states one.
+auto WrittenAtText(
+    UnitLowerer& unit_lowerer, mir::Block& block, diag::SourceSpan written_at)
+    -> mir::ExprId {
+  return block.exprs.Add(
+      mir::MakeStringLiteral(
+          unit_lowerer.Unit().builtins.machine_c_string,
+          diag::RuntimeOriginOf(written_at, unit_lowerer.SourceManager())));
+}
+
+// Registers a continuous driver, which, alone among static processes, may be
+// created by one instance's text and evaluate another's code: the drive across
+// a child's output port is created by the instantiation and reads the child's
+// port (LRM 4.9.6). It is seeded from the instance whose text creates it and
+// runs in the region set of `runs_as` (LRM 18.14.1, 24.3.2).
+void AppendDriverRegistration(
+    UnitLowerer& unit_lowerer, const WalkFrame& activate_frame,
+    mir::ExprId runs_as, mir::CallableId body, diag::SourceSpan written_at) {
+  mir::Block& block = *activate_frame.current_block;
+  block.AppendStmt(
+      mir::ExprStmt{
+          .expr = block.exprs.Add(
+              mir::MakeCallExpr(
+                  mir::Direct{
+                      .target = support::BuiltinFn::kRegisterContinuousDriver},
+                  {OwningScope(activate_frame),
+                   CreatingInstance(unit_lowerer, activate_frame), runs_as,
+                   StartedBody(unit_lowerer, activate_frame, body),
+                   WrittenAtText(unit_lowerer, block, written_at)},
+                  unit_lowerer.Unit().builtins.void_type))});
+}
+
 // Registers `body` in the scope's `activate` body through `registration`,
 // which says whether it starts with the scope or runs at its shutdown (LRM
 // 9.2). Startup and shutdown are distinct registration callees, not one tagged
@@ -1551,9 +1626,10 @@ auto BindInputPort(
       },
       source, support::StrengthLevel::kStrong, std::nullopt, data.sensitivity);
   if (!drive) return std::unexpected(std::move(drive.error()));
-  AppendProcessRegistration(
-      unit_lowerer, activate_frame, mir_class.callables.Add(*std::move(drive)),
-      support::BuiltinFn::kRegisterContinuousDriver, source.span);
+  AppendDriverRegistration(
+      unit_lowerer, activate_frame,
+      CreatingInstance(unit_lowerer, activate_frame),
+      mir_class.callables.Add(*std::move(drive)), source.span);
   return {};
 }
 
@@ -1672,14 +1748,11 @@ auto InstallPortConnections(
         lowerer, frame, resolve_frame, init_frame, assign);
     if (!method_or) return std::unexpected(std::move(method_or.error()));
     const mir::CallableId body = mir_class.callables.Add(std::move(*method_or));
-    // The drive belongs to the instance whose code it evaluates: this one for
-    // an input, which reads what this scope wrote, and the child for an output,
-    // which reads the child's port and so runs as the child's code does (LRM
-    // 24.3.2).
-    const mir::ExprId belongs_to =
-        is_input ? BuildEnclosingScopeReceiver(
-                       activate_frame, unit_lowerer.Unit(),
-                       activate_frame.HopsToUnitRoot())
+    // The connection is created by this instantiation and evaluates the
+    // code of the instance its source belongs to: this one for an input, the
+    // child for an output, which reads the child's port (LRM 4.9.6, 24.3.2).
+    const mir::ExprId runs_as =
+        is_input ? CreatingInstance(unit_lowerer, activate_frame)
                  : ObjectAs(
                        *activate_frame.current_block,
                        BuildRouteWalk(
@@ -1687,11 +1760,8 @@ auto InstallPortConnections(
                            std::array{hir::AsPathStep(pc.instance)})
                            .expr,
                        unit_lowerer.Unit().builtins.scope_ptr);
-    activate_frame.current_block->AppendStmt(
-        mir::ExprStmt{
-            .expr = BuildExecutionStartIn(
-                unit_lowerer, activate_frame, belongs_to, body,
-                support::BuiltinFn::kRegisterContinuousDriver, pc.span)});
+    AppendDriverRegistration(
+        unit_lowerer, activate_frame, runs_as, body, pc.span);
   }
   return {};
 }
@@ -2199,49 +2269,14 @@ auto LowerGenerateAsStmt(
 auto BuildExecutionStart(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::CallableId body,
     support::BuiltinFn start, diag::SourceSpan written_at) -> mir::ExprId {
-  return BuildExecutionStartIn(
-      unit_lowerer, frame,
-      BuildEnclosingScopeReceiver(
-          frame, unit_lowerer.Unit(), frame.HopsToUnitRoot()),
-      body, start, written_at);
-}
-
-auto BuildExecutionStartIn(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame,
-    mir::ExprId unit_instance, mir::CallableId body, support::BuiltinFn start,
-    diag::SourceSpan written_at) -> mir::ExprId {
   mir::Block& block = *frame.current_block;
-  const mir::ExprId body_self = BuildObjectDeref(
-      unit_lowerer.Unit(), block, block.exprs.Add(MakeSelfRefExpr(frame)));
-  const mir::ExprId body_call = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target =
-                              mir::CallableTarget{
-                                  .owner = frame.current_class_id,
-                                  .slot = body},
-                          .receiver = body_self},
-                  .arguments = {}},
-          .type = unit_lowerer.Unit().builtins.coroutine_void});
-  const mir::ExprId scope = block.Read(block.exprs.Add(MakeSelfRefExpr(frame)));
-  const mir::ExprId place = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::StringLiteral{
-                  .value = diag::RuntimeOriginOf(
-                      written_at, unit_lowerer.SourceManager())},
-          .type = unit_lowerer.Unit().types.Intern(
-              mir::Type{mir::MachineCStringType{}})});
   return block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = mir::Direct{.target = start},
-                  .arguments = {scope, unit_instance, body_call, place}},
-          .type = unit_lowerer.Unit().builtins.void_type});
+      mir::MakeCallExpr(
+          mir::Direct{.target = start},
+          {OwningScope(frame), CreatingInstance(unit_lowerer, frame),
+           StartedBody(unit_lowerer, frame, body),
+           WrittenAtText(unit_lowerer, block, written_at)},
+          unit_lowerer.Unit().builtins.void_type));
 }
 
 auto ApplyInstanceSelects(
@@ -3375,9 +3410,9 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         *this, ctor_frame, resolve_frame, init_frame, assign);
     if (!method_or) return std::unexpected(std::move(method_or.error()));
     const mir::CallableId body = mir_class.callables.Add(std::move(*method_or));
-    AppendProcessRegistration(
-        unit_lowerer, activate_frame, body,
-        support::BuiltinFn::kRegisterContinuousDriver, assign.span);
+    AppendDriverRegistration(
+        unit_lowerer, activate_frame,
+        CreatingInstance(unit_lowerer, activate_frame), body, assign.span);
   }
 
   // One sampler per history, not one per clocking event. Two histories under

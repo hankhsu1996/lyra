@@ -235,7 +235,8 @@ void lyra_rt_release_coroutine(void* runtime);
 void lyra_rt_register_always(
     void* self, void* unit_instance, void* coroutine, const char* written_at);
 void lyra_rt_register_continuous_driver(
-    void* self, void* unit_instance, void* coroutine, const char* written_at);
+    void* self, void* unit_instance, void* runs_as, void* coroutine,
+    const char* written_at);
 void lyra_rt_register_initial(
     void* self, void* unit_instance, void* coroutine, const char* written_at);
 void lyra_rt_register_triggered(

@@ -82,8 +82,7 @@ auto Name(
     -> mir::ExprId {
   return block.exprs.Add(
       mir::MakeStringLiteral(
-          unit.types.Intern(mir::Type{mir::MachineCStringType{}}),
-          std::string{text}));
+          unit.builtins.machine_c_string, std::string{text}));
 }
 
 // A structure of the library, composed from `parts` in the order it declares

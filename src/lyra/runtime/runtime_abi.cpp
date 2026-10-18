@@ -2980,9 +2980,11 @@ void lyra_rt_register_always(
 }
 
 void lyra_rt_register_continuous_driver(
-    void* self, void* unit_instance, void* coroutine, const char* written_at) {
+    void* self, void* unit_instance, void* runs_as, void* coroutine,
+    const char* written_at) {
   RegisterContinuousDriver(
       static_cast<Scope*>(self), static_cast<Scope*>(unit_instance),
+      static_cast<Scope*>(runs_as),
       std::move(*static_cast<Coroutine<void>*>(coroutine)), written_at);
 }
 

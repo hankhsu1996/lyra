@@ -371,19 +371,20 @@ class Runtime final : public RuntimeEffects {
 // `final` waits on the finals list until shutdown. The scope handle arrives as
 // a pointer because the generated call site is holding the `self` pointer from
 // its enclosing body. `unit_instance` is the module, interface, or program
-// instance the process belongs to, which holds the seeds LRM 18.14.1 starts a
-// static process from and whose class says how what it starts is run (LRM
-// 24.3.1): the instance whose code the process evaluates, which is the scope
-// itself unless the process is declared inside a generate scope, which has no
-// seeds of its own, or is the drive across another instance's output port.
-// `written_at` is where the source writes the procedure, as text that stands
-// for the whole run.
+// instance whose text creates the process, which holds the seeds LRM 18.14.1
+// starts a static process from: the scope itself unless the process is
+// declared inside a generate scope, which has no seeds of its own. A process
+// runs as the code of that instance and in the region set its class states
+// (LRM 24.3.1), except a continuous driver, which names the instance it runs
+// as: the drive across a child's output port is created by the instantiation
+// and evaluates the child's code (LRM 4.9.6, 24.3.2). `written_at` is where the
+// source writes the procedure, as text that stands for the whole run.
 void RegisterAlwaysProcess(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
     const char* written_at);
 void RegisterContinuousDriver(
-    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
-    const char* written_at);
+    Scope* owning_scope, Scope* unit_instance, Scope* runs_as,
+    Coroutine<void> coroutine, const char* written_at);
 void RegisterInitialProcess(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
     const char* written_at);
