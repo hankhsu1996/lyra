@@ -16,6 +16,7 @@
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/program_threads.hpp"
+#include "lyra/runtime/property_wait.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/sampled_value.hpp"
@@ -273,7 +274,10 @@ void RuntimeEffects::WakeParkedOn(
               }
             },
             [](SampledValue* sampled) { sampled->Reached(); },
-            [this](ProgramThreads* program) { program->RootEnded(*this); }},
+            [this](ProgramThreads* program) { program->RootEnded(*this); },
+            [&](PropertyEvaluation* evaluation) {
+              evaluation->Reached(membership);
+            }},
         membership.observer);
   });
 }

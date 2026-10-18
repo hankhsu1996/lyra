@@ -3,12 +3,16 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <optional>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/hir/timing.hpp"
 #include "lyra/lowering/hir_to_mir/assertion_automaton.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
@@ -19,7 +23,9 @@
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
+#include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/assertions.hpp"
+#include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/lowering/hir_to_mir/statement/timing.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -305,40 +311,33 @@ auto BuildOutcome(
           .type = type});
 }
 
-// The whole of one tick, as the callable an Observed submission runs. Reading
-// the design's Boolean expressions and stepping the positions belong to one
-// body because the second bounds the first: only a position some live
-// evaluation can reach this tick is read, and each is read once however many
-// evaluations reach it.
-auto LowerAdvance(
-    ProcessLowerer& action, const WalkFrame& parent,
-    const StructuralScopeLowerer& lowerer, hir::ConcurrentAssertionId id,
-    const hir::PropertySpec& spec, const AssertionAutomaton& automaton)
-    -> diag::Result<mir::CallableCode> {
+// The storage holding the attempts a tick steps, as the place a call on it acts
+// through, built in whichever block the call is made in.
+using AttemptsPlace = std::function<mir::ExprId(mir::Block&)>;
+
+// One tick of every evaluation in flight, as a block run in the Observed
+// region. Reading the design's Boolean expressions and stepping the positions
+// belong to one body because the second bounds the first: only a position some
+// live evaluation can reach this tick is read, and each is read once however
+// many evaluations reach it. The tick ends by settling every attempt it
+// answered.
+auto LowerTick(
+    ProcessLowerer& action, const WalkFrame& parent, CallableBindings& bindings,
+    const AttemptsPlace& attempts, const AssertionAutomaton& automaton)
+    -> diag::Result<mir::Block> {
+  mir::Block body;
+  const WalkFrame frame = parent.WithBlock(&body);
   mir::CompilationUnit& unit = action.Owner().Unit();
   const mir::TypeId word_type = unit.builtins.machine_word;
   const mir::TypeId index_type = unit.builtins.machine_int64;
   const mir::TypeId void_type = unit.builtins.void_type;
   const PositionSet empty(automaton.words, 0);
 
-  mir::CallableCode code = mir::CallableCode::Defined();
-  CallableBindings bindings(unit, code);
-  const mir::LocalId self_id = bindings.Declare(
-      BindingOriginId::Receiver(), parent.current_class->self_pointer_type);
-  code.params = {self_id};
-  code.result_type = void_type;
-
-  mir::Block& body = code.Body();
-  const WalkFrame frame =
-      parent.WithBlock(&body)
-          .WithBindings(&bindings)
-          .WithScopeNameBorrowedHandle(action.RootScope().NameBorrowedHandle());
   const auto call = [&](mir::Block& block, support::BuiltinFn fn,
                         std::vector<mir::ExprId> arguments,
                         mir::TypeId result) {
     return AttemptsCall(
-        block, fn, BuildEvaluationAttemptsExpr(block, frame, lowerer, id),
-        std::move(arguments), result);
+        block, fn, attempts(block), std::move(arguments), result);
   };
   const auto call_stmt = [&](mir::Block& block, support::BuiltinFn fn,
                              std::vector<mir::ExprId> arguments) {
@@ -350,31 +349,6 @@ auto LowerAdvance(
     return PositionSetOf(static_cast<std::uint32_t>(position), automaton.words);
   };
 
-  // LRM 16.12: an attempt that would begin at a tick where the disable
-  // condition already holds is disabled at its own start. One already in
-  // flight is preempted where the condition changes instead, because the
-  // interval it is tested across is not made of ticks.
-  if (spec.disable.has_value()) {
-    auto condition = action.LowerExpr(
-        action.HirBody().exprs.Get(spec.disable->condition), frame);
-    if (!condition) return std::unexpected(std::move(condition.error()));
-    const mir::ExprId reduced =
-        ReduceToCondition(unit, body, body.exprs.Add(*std::move(condition)));
-    mir::Block preempted;
-    call_stmt(
-        preempted, support::BuiltinFn::kEvaluationAttemptsDisableTick, {});
-    preempted.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
-    AppendIf(body, reduced, std::move(preempted));
-  }
-
-  // LRM 16.14.5: an attempt begins at every tick, the enabling condition of an
-  // assertion nothing has to reach being 1.
-  for (std::uint32_t word = 0; word < automaton.words; ++word) {
-    call_stmt(
-        body, support::BuiltinFn::kEvaluationAttemptsSeedWord,
-        {Word(body, word_type, word),
-         Word(body, word_type, automaton.start[word])});
-  }
   call_stmt(body, support::BuiltinFn::kEvaluationAttemptsBeginTick, {});
 
   // What this tick has to read: every position an unstepped evaluation is live
@@ -510,6 +484,91 @@ auto LowerAdvance(
   call_stmt(
       body, support::BuiltinFn::kEvaluationAttemptsSettle,
       {body.exprs.Add(BuildCurrentRuntimeCallExpr(action.Owner()))});
+  return body;
+}
+
+// `block` as a statement of `into`, in a scope of its own.
+void AppendBlock(mir::Block& into, mir::Block block) {
+  into.AppendStmt(
+      mir::BlockStmt{.scope = into.child_scopes.Add(std::move(block))});
+}
+
+// Opens an attempt on the automaton's start, as a tick of a declared assertion
+// and the reaching of an expect statement each do.
+void AppendOpenAttempt(
+    mir::Block& body, const mir::CompilationUnit& unit,
+    const AttemptsPlace& attempts, const AssertionAutomaton& automaton) {
+  const mir::TypeId word_type = unit.builtins.machine_word;
+  const mir::TypeId void_type = unit.builtins.void_type;
+  for (std::uint32_t word = 0; word < automaton.words; ++word) {
+    body.AppendStmt(
+        mir::ExprStmt{
+            .expr = AttemptsCall(
+                body, support::BuiltinFn::kEvaluationAttemptsSeedWord,
+                attempts(body),
+                {Word(body, word_type, word),
+                 Word(body, word_type, automaton.start[word])},
+                void_type)});
+  }
+  body.AppendStmt(
+      mir::ExprStmt{
+          .expr = AttemptsCall(
+              body, support::BuiltinFn::kEvaluationAttemptsOpenAttempt,
+              attempts(body), {}, void_type)});
+}
+
+// The whole of one tick of an assertion the scope declares, as the callable an
+// Observed submission runs.
+auto LowerAdvance(
+    ProcessLowerer& action, const WalkFrame& parent,
+    const StructuralScopeLowerer& lowerer, hir::ConcurrentAssertionId id,
+    const hir::PropertySpec& spec, const AssertionAutomaton& automaton)
+    -> diag::Result<mir::CallableCode> {
+  mir::CompilationUnit& unit = action.Owner().Unit();
+  const mir::TypeId void_type = unit.builtins.void_type;
+
+  mir::CallableCode code = mir::CallableCode::Defined();
+  CallableBindings bindings(unit, code);
+  const mir::LocalId self_id = bindings.Declare(
+      BindingOriginId::Receiver(), parent.current_class->self_pointer_type);
+  code.params = {self_id};
+  code.result_type = void_type;
+
+  mir::Block& body = code.Body();
+  const WalkFrame frame =
+      parent.WithBlock(&body)
+          .WithBindings(&bindings)
+          .WithScopeNameBorrowedHandle(action.RootScope().NameBorrowedHandle());
+  const AttemptsPlace attempts = [&](mir::Block& block) {
+    return BuildEvaluationAttemptsExpr(block, frame, lowerer, id);
+  };
+
+  // LRM 16.12: an attempt that would begin at a tick where the disable
+  // condition already holds is disabled at its own start. One already in
+  // flight is preempted where the condition changes instead, because the
+  // interval it is tested across is not made of ticks.
+  if (spec.disable.has_value()) {
+    auto condition = action.LowerExpr(
+        action.HirBody().exprs.Get(spec.disable->condition), frame);
+    if (!condition) return std::unexpected(std::move(condition.error()));
+    const mir::ExprId reduced =
+        ReduceToCondition(unit, body, body.exprs.Add(*std::move(condition)));
+    mir::Block preempted;
+    preempted.AppendStmt(
+        mir::ExprStmt{
+            .expr = AttemptsCall(
+                preempted, support::BuiltinFn::kEvaluationAttemptsDisableTick,
+                attempts(preempted), {}, void_type)});
+    preempted.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+    AppendIf(body, reduced, std::move(preempted));
+  }
+
+  // LRM 16.14.5: an attempt begins at every tick, the enabling condition of an
+  // assertion nothing has to reach being 1.
+  AppendOpenAttempt(body, unit, attempts, automaton);
+  auto ticked = LowerTick(action, frame, bindings, attempts, automaton);
+  if (!ticked) return std::unexpected(std::move(ticked.error()));
+  AppendBlock(body, *std::move(ticked));
   body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   return code;
 }
@@ -739,6 +798,189 @@ auto LowerConcurrentAssertion(
       .words = automaton.words,
       .pending_holds = parts.pending_holds,
       .written_at = decl.span};
+}
+
+auto LowerExpectStmt(
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    const hir::ExpectStmt& expect, diag::SourceSpan span)
+    -> diag::Result<mir::Stmt> {
+  mir::CompilationUnit& unit = process.Owner().Unit();
+  const mir::TypeId word_type = unit.builtins.machine_word;
+  const mir::TypeId void_type = unit.builtins.void_type;
+  const AssertionAutomaton automaton =
+      BuildAssertionAutomaton(process.HirBody(), expect.spec);
+
+  // The wait decides each tick of the clock where it happens, so a clock whose
+  // occurrence only the waiting process could decide has nothing to watch it.
+  if (!ChangeDecides(process.HirBody().exprs, expect.spec.clock)) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedStatementForm,
+        "an 'expect' whose clocking event calls a function or reads through a "
+        "handle is not yet supported");
+  }
+
+  // The wait watches the clock and what the disable condition reads, and
+  // holds the one attempt, so the evaluation ends with the scope the wait is a
+  // local of, however the process leaves it (LRM 16.17).
+  mir::Block scope;
+  const WalkFrame inner = frame.WithBlock(&scope);
+  auto clock_leaves = BuildEventLeaves(process, inner, expect.spec.clock);
+  if (!clock_leaves) return std::unexpected(std::move(clock_leaves.error()));
+  auto clock = BuildTriggerArray(scope, inner, process, *clock_leaves);
+  if (!clock) return std::unexpected(std::move(clock.error()));
+  std::vector<ObservedLeaf> disable_leaves;
+  if (expect.spec.disable.has_value()) {
+    disable_leaves = BuildValueChangeLeaves(
+        unit, inner, scope, expect.spec.disable->sensitivity);
+  }
+  auto disable_reads = BuildTriggerArray(scope, inner, process, disable_leaves);
+  if (!disable_reads) return std::unexpected(std::move(disable_reads.error()));
+  const mir::LocalId wait = DeclareLocal(
+      inner,
+      scope.exprs.Add(
+          mir::MakeCallExpr(
+              mir::Direct{
+                  .target = support::BuiltinFn::kWaitOnPropertyEvaluation},
+              {scope.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner())),
+               *clock, *disable_reads, Word(scope, word_type, automaton.words)},
+              unit.builtins.wait)));
+  const mir::LocalId wait_pointer = DeclareLocal(
+      inner, scope.exprs.Add(
+                 mir::MakeAddressOfExpr(
+                     scope.LocalPlace(wait, unit.builtins.wait),
+                     unit.builtins.wait_ptr)));
+
+  const mir::TypeId attempts_type =
+      unit.types.Intern(mir::Type{mir::EvaluationAttemptsType{}});
+  const mir::TypeId attempts_pointer = unit.types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = attempts_type,
+          .ownership = mir::PointerOwnership::kBorrowed}});
+  // The attempt the wait holds, which stays where it is for as long as the
+  // wait does, so it is looked up once.
+  const mir::LocalId attempts_held = DeclareLocal(
+      inner, scope.exprs.Add(
+                 mir::MakeCallExpr(
+                     mir::Direct{.target = support::BuiltinFn::kAttemptsOf},
+                     {scope.ReadLocal(wait_pointer, unit.builtins.wait_ptr)},
+                     attempts_pointer)));
+  // The attempt, through the local `pointer` holding its address.
+  const auto attempts_at = [&](mir::LocalId pointer) -> AttemptsPlace {
+    return
+        [&unit, attempts_type, attempts_pointer, pointer](mir::Block& block) {
+          return block.exprs.Add(
+              mir::MakeDerefExpr(
+                  block.DerefOperand(
+                      unit.types, block.ReadLocal(pointer, attempts_pointer)),
+                  attempts_type));
+        };
+  };
+  const auto call_on_wait = [&](mir::Block& block, support::BuiltinFn fn,
+                                mir::LocalId pointer,
+                                std::vector<mir::ExprId> rest) {
+    std::vector<mir::ExprId> arguments{
+        block.ReadLocal(pointer, unit.builtins.wait_ptr)};
+    arguments.insert(arguments.end(), rest.begin(), rest.end());
+    block.AppendStmt(
+        mir::ExprStmt{
+            .expr = block.exprs.Add(
+                mir::MakeCallExpr(
+                    mir::Direct{.target = fn}, std::move(arguments),
+                    void_type))});
+  };
+  // What the wait runs is code of this body and reads its frame -- what an
+  // automatic variable or a `ref` formal holds when the Observed region
+  // evaluates is what the property reads (LRM 16.5.1) -- so each is a closure
+  // holding the addresses it reaches the evaluation through. The wait holds
+  // both and is a local of the frame they read, so neither runs once what it
+  // reads is gone.
+  const auto snapshot_into = [&](ClosureBuilder& closure, mir::LocalId held,
+                                 mir::TypeId type) {
+    const mir::LocalId pointer = closure.Bindings().DeclareAnonymous(type);
+    closure.Body().AppendStmt(
+        mir::LocalDeclStmt{
+            .target = pointer,
+            .init = SnapshotValueIntoClosure(
+                process.Owner(), inner, closure, scope.ReadLocal(held, type))});
+    return pointer;
+  };
+  // The disable condition, tested where the closure stands: held, the
+  // evaluation is disabled and the closure goes no further (LRM 16.12).
+  const auto test_disable = [&](ClosureBuilder& closure) -> diag::Result<void> {
+    if (!expect.spec.disable.has_value()) return {};
+    const mir::LocalId pointer =
+        snapshot_into(closure, wait_pointer, unit.builtins.wait_ptr);
+    auto condition = process.LowerExpr(
+        process.HirBody().exprs.Get(expect.spec.disable->condition),
+        closure.Frame());
+    if (!condition) return std::unexpected(std::move(condition.error()));
+    const mir::ExprId reduced = ReduceToCondition(
+        unit, closure.Body(), closure.Body().exprs.Add(*std::move(condition)));
+    mir::Block disabled;
+    call_on_wait(
+        disabled, support::BuiltinFn::kDisablePropertyEvaluation, pointer, {});
+    disabled.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+    AppendIf(closure.Body(), reduced, std::move(disabled));
+    return {};
+  };
+
+  ClosureBuilder step(unit, inner);
+  if (auto tested = test_disable(step); !tested) {
+    return std::unexpected(std::move(tested.error()));
+  }
+  const mir::LocalId step_attempts =
+      snapshot_into(step, attempts_held, attempts_pointer);
+  auto ticked = LowerTick(
+      process, step.Frame(), step.Bindings(), attempts_at(step_attempts),
+      automaton);
+  if (!ticked) return std::unexpected(std::move(ticked.error()));
+  AppendBlock(step.Body(), *std::move(ticked));
+  const mir::ExprId step_closure = scope.exprs.Add(step.BuildVoid());
+
+  ClosureBuilder test(unit, inner);
+  if (auto tested = test_disable(test); !tested) {
+    return std::unexpected(std::move(tested.error()));
+  }
+  const mir::ExprId test_closure = scope.exprs.Add(test.BuildVoid());
+
+  // The first evaluation is at the next tick of the clock (LRM 16.17).
+  AppendOpenAttempt(scope, unit, attempts_at(attempts_held), automaton);
+  call_on_wait(
+      scope, support::BuiltinFn::kBindPropertyEvaluation, wait_pointer,
+      {step_closure, test_closure});
+  scope.AppendStmt(BuildParkStmt(process.Owner(), scope, wait));
+
+  const auto answer_is = [&](mir::Block& block, support::AttemptAnswer answer) {
+    return Op(
+        unit, block, unit.builtins.machine_bool, mir::BinaryOp::kEquality,
+        AttemptsCall(
+            block, support::BuiltinFn::kEvaluationAttemptsAnswer,
+            attempts_at(attempts_held)(block), {}, word_type),
+        Word(block, word_type, static_cast<std::uint64_t>(answer)));
+  };
+  auto pass = HasRealArm(process.HirBody(), expect.pass_stmt)
+                  ? LowerStmtIntoChildScope(process, inner, *expect.pass_stmt)
+                  : diag::Result<mir::Block>{mir::Block{}};
+  if (!pass) return std::unexpected(std::move(pass.error()));
+  diag::Result<mir::Block> fail = mir::Block{};
+  if (!expect.fail_stmt.has_value()) {
+    AppendToolReportStmt(
+        process.Owner(), *fail, support::BuiltinFn::kEmitError,
+        base::DiagMessage("expect failed"), span);
+  } else if (HasRealArm(process.HirBody(), expect.fail_stmt)) {
+    fail = LowerStmtIntoChildScope(process, inner, *expect.fail_stmt);
+  }
+  if (!fail) return std::unexpected(std::move(fail.error()));
+  scope.AppendStmt(
+      mir::IfStmt{
+          .condition = answer_is(scope, support::AttemptAnswer::kFails),
+          .then_scope = scope.child_scopes.Add(*std::move(fail)),
+          .else_scope = scope.child_scopes.Add(*std::move(pass))});
+
+  return mir::Stmt{
+      .label = std::move(label),
+      .data = mir::BlockStmt{
+          .scope = frame.current_block->child_scopes.Add(std::move(scope))}};
 }
 
 void AppendConcurrentAssertionInstall(

@@ -1770,6 +1770,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kObservationFires:
     case support::BuiltinFn::kWaitOn:
     case support::BuiltinFn::kWaitOnImplicitList:
+    case support::BuiltinFn::kWaitOnPropertyEvaluation:
+    case support::BuiltinFn::kAttemptsOf:
+    case support::BuiltinFn::kBindPropertyEvaluation:
+    case support::BuiltinFn::kDisablePropertyEvaluation:
     case support::BuiltinFn::kParkAt:
     case support::BuiltinFn::kWaitRecollecting:
     case support::BuiltinFn::kWaitUntil:
@@ -1883,6 +1887,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // so there is no representation for these to be named by (LRM 16.14.1).
     case support::BuiltinFn::kEvaluationAttemptsInstall:
     case support::BuiltinFn::kEvaluationAttemptsSeedWord:
+    case support::BuiltinFn::kEvaluationAttemptsOpenAttempt:
     case support::BuiltinFn::kEvaluationAttemptsBeginTick:
     case support::BuiltinFn::kEvaluationAttemptsDisableTick:
     case support::BuiltinFn::kEvaluationAttemptsLiveWord:
@@ -1892,6 +1897,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kEvaluationAttemptsStep:
     case support::BuiltinFn::kEvaluationAttemptsSeed:
     case support::BuiltinFn::kEvaluationAttemptsSettle:
+    case support::BuiltinFn::kEvaluationAttemptsAnswer:
     // A delayed continuous assignment's timer holds a closure and a place in a
     // queue, and no value of the design (LRM 10.3.3).
     case support::BuiltinFn::kTimerBind:

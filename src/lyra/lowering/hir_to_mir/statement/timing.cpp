@@ -453,18 +453,9 @@ auto BuildChangeDecidedEventWaitStmt(
   }
   mir::Block& storage =
       WaitStorageBlock(frame, block, cells, lowerer.HirExprs(), evaluated);
-  const WalkFrame storage_frame = frame.WithBlock(&storage);
-  std::vector<ObservedLeaf> leaves;
-  for (const hir::EventTrigger& trigger : ec.triggers) {
-    auto observation = BuildObservationLocal(
-        lowerer, storage_frame, storage, trigger, std::nullopt);
-    if (!observation) return std::unexpected(std::move(observation.error()));
-    for (const hir::SensitivityEntry& cell : trigger.cells) {
-      leaves.push_back(
-          ObservedLeaf{.entry = cell, .observation = *observation});
-    }
-  }
-  return BuildWaitOnStmt(storage, block, frame, lowerer, leaves);
+  auto leaves = BuildEventLeaves(lowerer, frame.WithBlock(&storage), ec);
+  if (!leaves) return std::unexpected(std::move(leaves.error()));
+  return BuildWaitOnStmt(storage, block, frame, lowerer, *leaves);
 }
 
 // A named event's wait a change decides (LRM 4.7, 15.5.2): the trigger is the
@@ -514,6 +505,36 @@ auto BuildProcessDecidedNamedEventWaitStmt(
 }
 
 }  // namespace
+
+auto ChangeDecides(
+    const base::Arena<hir::Expr, hir::ExprId>& exprs,
+    const hir::EventControl& ec) -> bool {
+  return ChangeDecides(exprs, EvaluatedBy(ec));
+}
+
+template <ExprLowerer Lowerer>
+auto BuildEventLeaves(
+    Lowerer& lowerer, const WalkFrame& frame, const hir::EventControl& ec)
+    -> diag::Result<std::vector<ObservedLeaf>> {
+  std::vector<ObservedLeaf> leaves;
+  for (const hir::EventTrigger& trigger : ec.triggers) {
+    auto observation = BuildObservationLocal(
+        lowerer, frame, *frame.current_block, trigger, std::nullopt);
+    if (!observation) return std::unexpected(std::move(observation.error()));
+    for (const hir::SensitivityEntry& cell : trigger.cells) {
+      leaves.push_back(
+          ObservedLeaf{.entry = cell, .observation = *observation});
+    }
+  }
+  return leaves;
+}
+
+template auto BuildEventLeaves(
+    ProcessLowerer&, const WalkFrame&, const hir::EventControl&)
+    -> diag::Result<std::vector<ObservedLeaf>>;
+template auto BuildEventLeaves(
+    const StructuralScopeLowerer&, const WalkFrame&, const hir::EventControl&)
+    -> diag::Result<std::vector<ObservedLeaf>>;
 
 template <ExprLowerer Lowerer>
 auto BuildEventWaitStmt(

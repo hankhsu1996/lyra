@@ -1,16 +1,21 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
+#include <string>
 #include <vector>
 
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/stmt.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/stmt.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -63,5 +68,14 @@ void AppendConcurrentAssertionInstall(
     const StructuralScopeLowerer& lowerer, const WalkFrame& activate_frame,
     hir::ConcurrentAssertionId id,
     const InstalledConcurrentAssertion& installed);
+
+// LRM 16.17: the process waits for one evaluation of the property, which its
+// wait advances in the Observed region at each tick of the clock from the next
+// one on, and goes on after that region once the evaluation succeeds or fails,
+// running the arm the answer selects.
+auto LowerExpectStmt(
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    const hir::ExpectStmt& expect, diag::SourceSpan span)
+    -> diag::Result<mir::Stmt>;
 
 }  // namespace lyra::lowering::hir_to_mir

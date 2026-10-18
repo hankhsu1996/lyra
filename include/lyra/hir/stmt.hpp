@@ -240,6 +240,19 @@ struct ConcurrentCoverStmt {
   auto operator==(const ConcurrentCoverStmt&) const -> bool = default;
 };
 
+// LRM 16.17 `expect`: a wait for one evaluation of the property, which the
+// process reaching it starts at the next tick of the clock. The process goes on
+// once that evaluation succeeds or fails, running the arm the answer selects
+// first; with no else clause a failure reaches the tool's own report. A
+// sequence standing as the property is read strongly (Annex F.3.4.3.1).
+struct ExpectStmt {
+  PropertySpec spec;
+  std::optional<StmtId> pass_stmt;
+  std::optional<StmtId> fail_stmt;
+
+  auto operator==(const ExpectStmt&) const -> bool = default;
+};
+
 // The two dispositions a concurrent assertion carries, named apart from the
 // statement stream so the assertion whose enabling condition is 1 -- which a
 // scope declares rather than a procedure running it -- is the same concept
@@ -436,10 +449,10 @@ struct ProceduralContinuousEndStmt {
 using StmtData = std::variant<
     EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, ForkStmt, IfStmt, CaseStmt,
     PatternCaseStmt, AssertStmt, CoverStmt, ConcurrentAssertStmt,
-    ConcurrentCoverStmt, ForStmt, ForeachStmt, WhileStmt, RepeatStmt,
-    DoWhileStmt, ForeverStmt, BreakStmt, ContinueStmt, ReturnStmt, TimedStmt,
-    EventTriggerStmt, WaitStmt, WaitForkStmt, DisableForkStmt, DisableStmt,
-    ProceduralContinuousAssignStmt, ProceduralContinuousEndStmt>;
+    ConcurrentCoverStmt, ExpectStmt, ForStmt, ForeachStmt, WhileStmt,
+    RepeatStmt, DoWhileStmt, ForeverStmt, BreakStmt, ContinueStmt, ReturnStmt,
+    TimedStmt, EventTriggerStmt, WaitStmt, WaitForkStmt, DisableForkStmt,
+    DisableStmt, ProceduralContinuousAssignStmt, ProceduralContinuousEndStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

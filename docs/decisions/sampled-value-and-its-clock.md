@@ -100,9 +100,8 @@ of a slot, it submits a taking of the value into the Postponed region of that sl
 takes there the Preponed value of every slot until the place changes again. A slot the place does
 not change in costs it nothing, and a write that changes nothing tells it nothing.
 
-What it is enrolled as is an observer of the place, of which an awaiter is the other kind: an
-awaiter is told so that the execution parked on it may be woken, and this is told so that it may
-take a value, waking nothing.
+What it is enrolled as is an observer of the place, as an awaiter is: an awaiter is told so that the
+execution parked on it may be woken, and this is told so that it may take a value, waking nothing.
 
 **Arming installs the default sampled value.** For a variable it is what the variable holds when
 armed; for a net it is the default of the net's type, whatever the net shows before time zero.

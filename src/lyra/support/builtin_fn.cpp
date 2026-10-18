@@ -457,6 +457,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "evaluation_attempts_seed_word",
           .declaration = Method{"SeedWord"}};
+    case BuiltinFn::kEvaluationAttemptsOpenAttempt:
+      return {
+          .name = "evaluation_attempts_open_attempt",
+          .declaration = Method{"OpenAttempt"}};
     case BuiltinFn::kEvaluationAttemptsBeginTick:
       return {
           .name = "evaluation_attempts_begin_tick",
@@ -491,6 +495,26 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "evaluation_attempts_settle",
           .declaration = Method{"Settle"}};
+    case BuiltinFn::kEvaluationAttemptsAnswer:
+      return {
+          .name = "evaluation_attempts_answer",
+          .declaration = Method{"Answer"}};
+    case BuiltinFn::kWaitOnPropertyEvaluation:
+      return {
+          .name = "wait_on_property_evaluation",
+          .declaration = RuntimeFunction("WaitOnPropertyEvaluation"),
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kAttemptsOf:
+      return {
+          .name = "attempts_of", .declaration = RuntimeFunction("AttemptsOf")};
+    case BuiltinFn::kBindPropertyEvaluation:
+      return {
+          .name = "bind_property_evaluation",
+          .declaration = RuntimeFunction("BindPropertyEvaluation")};
+    case BuiltinFn::kDisablePropertyEvaluation:
+      return {
+          .name = "disable_property_evaluation",
+          .declaration = RuntimeFunction("DisablePropertyEvaluation")};
     case BuiltinFn::kTimerBind:
       return {.name = "timer_bind", .declaration = Method{"Bind"}};
     case BuiltinFn::kTimerArm:

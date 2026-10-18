@@ -268,6 +268,9 @@ auto AppendArm(
   if (!ticks) return std::unexpected(std::move(ticks.error()));
   const mir::ExprId runtime =
       block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
+  const mir::ExprId precision_power = BuildMachineIntLiteral(
+      unit, block,
+      std::int64_t{lowerer.HirScope().time_resolution.precision_power});
   block.AppendStmt(
       mir::ExprStmt{
           .expr = block.exprs.Add(
@@ -275,7 +278,8 @@ auto AppendArm(
                   mir::Direct{
                       .target = support::BuiltinFn::kTimerArm,
                       .receiver = FieldOfSelf(unit, frame, block, timer)},
-                  {runtime, *ticks}, unit.builtins.void_type))});
+                  {runtime, *ticks, precision_power},
+                  unit.builtins.void_type))});
   return {};
 }
 
@@ -516,9 +520,6 @@ auto LowerContinuousDrive(
       return std::unexpected(std::move(stored.error()));
     }
     const mir::ExprId fire = entry.exprs.Add(propagation.BuildVoid());
-    const mir::ExprId precision_power = BuildMachineIntLiteral(
-        unit, entry,
-        std::int64_t{lowerer.HirScope().time_resolution.precision_power});
     entry.AppendStmt(
         mir::ExprStmt{
             .expr = entry.exprs.Add(
@@ -527,7 +528,7 @@ auto LowerContinuousDrive(
                         .target = support::BuiltinFn::kTimerBind,
                         .receiver =
                             FieldOfSelf(unit, entry_frame, entry, timer)},
-                    {fire, precision_power}, unit.builtins.void_type))});
+                    {fire}, unit.builtins.void_type))});
 
     // LRM 4.9.1: the evaluation at time zero is scheduled whatever it is, as
     // an assignment with no delay stores it whatever it is. What it schedules

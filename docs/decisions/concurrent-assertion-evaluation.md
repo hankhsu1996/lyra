@@ -1,7 +1,7 @@
 # What evaluates a concurrent assertion
 
-Date: 2026-09-09. Status: accepted, for concurrent assertions (LRM 16.5 through 16.14) evaluated
-against a single clocking event.
+Date: 2026-09-09. Status: accepted, for concurrent assertions (LRM 16.5 through 16.14) and the
+expect statement (LRM 16.17) evaluated against a single clocking event.
 
 ## Why this decision matters
 
@@ -230,6 +230,36 @@ semantic IR gains one member type and a few runtime entries, and the execution-m
 nothing -- the same result [sampled-value-and-its-clock](sampled-value-and-its-clock.md) D6 reached,
 for the same reason: a mechanical backend can translate a call and a member without deciding
 anything, and would have to invent an expansion for a node that states neither.
+
+### D8. An expect's one attempt is held and advanced by the wait its process stops at
+
+Added 2026-10-17. LRM 16.17 makes `expect` a wait: the process reaching it starts a single attempt
+at the next tick of the clock, blocks until that attempt succeeds or fails, and runs the statement
+after it once the Observed region in which the property completed is over. Three facts decide the
+shape. The property may read the process's automatic variables and `ref` formals, at their values as
+of the Observed region (LRM 16.5.1), so the evaluation reads that process's frame. Every occurrence
+of the clock is a tick, and each is evaluated in the Observed region of the time step it happened in
+(LRM 16.5) -- for a program's process too, which is woken only in Reactive, after that region. And
+when the process stops waiting -- answered, or stopped from outside -- "the property stops being
+evaluated", so the evaluation lives exactly as long as the wait.
+
+So the wait is what watches the clock and the disable condition while the process is parked, and an
+occurrence wakes nobody: a tick is handed to the Observed region of now, and a change to what the
+disable condition reads to the Active region after it, each through a queue node the wait holds.
+What runs there is code of the waiting body, bound to its frame, handed to the wait once the wait
+exists; the wait is a local of that frame, so ending the scope ends the wait and takes the queued
+work off its queue with it. The tick is the same body a declared assertion's tick runs over D1's
+attempt. The process is woken once, by the answer, into the region its own set runs woken work in,
+which is after that Observed region; a disabled attempt answers nothing, so its process is not woken
+at all. Nothing is registered for the end of the run, since a process still waiting then never goes
+on. This is D3's division -- waking is not evaluating -- with the wait in the synthesized process's
+place, which a scope's member cannot take: it reaches no frame, and would be shared by every call of
+an automatic task holding the statement. Waking the process at each tick to step the attempt itself
+was built first and rejected: a program's process is woken after the Observed region it should have
+been evaluated in, and a second tick in that time step comes while the process is parked for the
+first. A clocking event only the waiting process could decide (one that calls or reads through a
+handle) has nothing to watch it and is refused. A sequence standing as the property is read strongly
+(Annex F.3.4.3.1).
 
 ## Consequences
 

@@ -312,6 +312,12 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_wait_until", &lyra_rt_wait_until);
   add("lyra_rt_wait_on", &lyra_rt_wait_on);
   add("lyra_rt_wait_on_implicit_list", &lyra_rt_wait_on_implicit_list);
+  add("lyra_rt_wait_on_property_evaluation",
+      &lyra_rt_wait_on_property_evaluation);
+  add("lyra_rt_attempts_of", &lyra_rt_attempts_of);
+  add("lyra_rt_bind_property_evaluation", &lyra_rt_bind_property_evaluation);
+  add("lyra_rt_disable_property_evaluation",
+      &lyra_rt_disable_property_evaluation);
   add("lyra_rt_park_at", &lyra_rt_park_at);
   add("lyra_rt_read_report_empty", &lyra_rt_read_report_empty);
   add("lyra_rt_read_report_for_implicit_list",
@@ -651,6 +657,8 @@ void BindValueEntries(const auto& add) {
       &lyra_rt_evaluation_attempts_install);
   add("lyra_rt_evaluation_attempts_seed_word",
       &lyra_rt_evaluation_attempts_seed_word);
+  add("lyra_rt_evaluation_attempts_open_attempt",
+      &lyra_rt_evaluation_attempts_open_attempt);
   add("lyra_rt_evaluation_attempts_begin_tick",
       &lyra_rt_evaluation_attempts_begin_tick);
   add("lyra_rt_evaluation_attempts_disable_tick",
@@ -667,6 +675,8 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_evaluation_attempts_seed", &lyra_rt_evaluation_attempts_seed);
   add("lyra_rt_evaluation_attempts_settle",
       &lyra_rt_evaluation_attempts_settle);
+  add("lyra_rt_evaluation_attempts_answer",
+      &lyra_rt_evaluation_attempts_answer);
   add("lyra_rt_string_value_cell_alloc", &lyra_rt_string_value_cell_alloc);
   add("lyra_rt_string_value_cell_store", &lyra_rt_string_value_cell_store);
   add("lyra_rt_string_value_cell_load", &lyra_rt_string_value_cell_load);

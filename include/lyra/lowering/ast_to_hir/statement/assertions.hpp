@@ -3,6 +3,7 @@
 // Lowering of assertion statements:
 //   - Simple immediate assert / assume / cover (LRM 16.3)
 //   - Concurrent assert / assume / cover (LRM 16.14)
+//   - expect (LRM 16.17)
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
@@ -50,7 +51,10 @@ struct StaticConcurrentAssertion {
 // the directive -- LRM 16.14.4 exempts `restrict`, which states a constraint
 // for a formal tool to converge a proof on and carries no action block -- and
 // the policy in force does not elide the family. One that is not evaluated runs
-// nothing, so a run carrying it and a run with it deleted are the same run.
+// nothing, so a run carrying it and a run with it deleted are the same run. An
+// expect is no such statement: its process waits there for the answer (LRM
+// 16.17), so deleting it changes when everything after it runs, and it is
+// always evaluated.
 [[nodiscard]] auto EvaluatedInSimulation(
     const slang::ast::ConcurrentAssertionStatement& assertion,
     support::AssertionPolicy policy) -> bool;
@@ -67,5 +71,12 @@ auto LowerConcurrentAssertion(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::ConcurrentAssertionStatement& as, diag::SourceSpan span)
     -> diag::Result<hir::ConcurrentAssertion>;
+
+// The statement a procedure reaches: a concurrent assertion, or an expect,
+// which only a procedure can reach because it is a wait (LRM 16.17).
+auto LowerConcurrentAssertionStmt(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::ConcurrentAssertionStatement& as, diag::SourceSpan span)
+    -> diag::Result<hir::Stmt>;
 
 }  // namespace lyra::lowering::ast_to_hir

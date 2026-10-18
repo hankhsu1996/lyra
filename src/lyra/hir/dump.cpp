@@ -2558,6 +2558,16 @@ class HirDumper {
     Dedent();
   }
 
+  void DumpExpectStmtNode(
+      const ProceduralBody& p, StmtId id, const ExpectStmt& e) {
+    Line(std::format("Stmt[{}] ExpectStmt property", id.value));
+    Indent();
+    DumpPropertySpec(p, e.spec);
+    DumpActionBlock(p, "pass", e.pass_stmt);
+    DumpActionBlock(p, "fail", e.fail_stmt);
+    Dedent();
+  }
+
   void DumpCaseStmtNode(const ProceduralBody& p, StmtId id, const CaseStmt& c) {
     const std::string_view label_test = std::visit(
         Overloaded{
@@ -2766,6 +2776,7 @@ class HirDumper {
             [&](const ConcurrentCoverStmt& c) {
               DumpConcurrentCoverStmtNode(p, id, c);
             },
+            [&](const ExpectStmt& e) { DumpExpectStmtNode(p, id, e); },
             [&](const ForStmt& f) { DumpForStmtNode(p, id, f); },
             [&](const ForeachStmt& f) { DumpForeachStmtNode(p, id, f); },
             [&](const WhileStmt& w) { DumpWhileStmtNode(p, id, w); },

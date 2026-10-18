@@ -529,9 +529,11 @@ void Runtime::RunRegion(Region region) {
   }
   draining_.effects.clear();
   // A timer comes off its queue as it fires, so arming it again from what the
-  // firing wakes queues a new event rather than moving this one.
+  // firing wakes queues a new event rather than moving this one. What it does
+  // runs with no activation holding it, as a deferred effect does, so it is a
+  // landing of its own too.
   while (TimerPlace* fired = draining_.timers.PopFront()) {
-    fired->timer->Fire();
+    RunAsLanding(*this, [fired] { fired->timer->Fire(); });
   }
   while (QueuePlace* queued = draining_.activations.PopFront()) {
     Activation* activation = queued->activation;

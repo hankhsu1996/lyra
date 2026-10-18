@@ -21,7 +21,7 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/expr_builders.hpp"
-#include "lyra/lowering/ast_to_hir/sensitivity.hpp"
+#include "lyra/lowering/ast_to_hir/sampled_reads.hpp"
 #include "lyra/lowering/ast_to_hir/statement/timing.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
@@ -154,41 +154,6 @@ auto CarriesLocalVars(const slang::ast::AssertionExpr& expr) -> bool {
   return instance != nullptr && !instance->localVars.empty();
 }
 
-// LRM 16.5.1: what a Boolean expression of a sequence is evaluated over is the
-// sampled value of each variable it names, and a cell answers for one only once
-// armed. So every variable a Boolean reads is armed where the assertion is
-// read, exactly as a sampled value function arms what its operand reads.
-auto ArmSampledReads(
-    ProcessLowerer& proc, const WalkFrame& frame,
-    const slang::ast::Expression& expr, diag::SourceSpan span)
-    -> diag::Result<void> {
-  if (frame.current_structural_scope == nullptr ||
-      frame.reader_scope == nullptr) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedStatementForm,
-        "a concurrent assertion outside a design element is not yet "
-        "supported");
-  }
-  auto& unit_lowerer = proc.Owner();
-  const auto& reads = unit_lowerer.Sensitivity().AnalyzeReads(
-      expr, frame.reader_scope->asSymbol());
-  auto cells = unit_lowerer.CellsRead(reads, frame);
-  if (!cells) return std::unexpected(std::move(cells.error()));
-  // A read the translation could not name as a cell of this design leaves one
-  // that can never answer for a sampled value, so it is refused rather than
-  // read against whatever the cell currently holds.
-  if (cells->size() < reads.size()) {
-    return RefuseAssertionForm(
-        span, "a Boolean expression reading storage this scope cannot name");
-  }
-  std::vector<hir::ValueTarget>& sampled =
-      frame.current_structural_scope->sampled_cells;
-  for (hir::ValueTarget& cell : *cells) {
-    sampled.push_back(std::move(cell));
-  }
-  return {};
-}
-
 auto AddSequence(const WalkFrame& frame, hir::SequenceExpr expr)
     -> hir::SequenceExprId {
   return frame.SequenceExprs().Add(std::move(expr));
@@ -303,7 +268,10 @@ auto LowerSequenceExpr(
   switch (expr.kind) {
     case slang::ast::AssertionExprKind::Simple: {
       const auto& simple = expr.as<slang::ast::SimpleAssertionExpr>();
-      auto armed = ArmSampledReads(proc, frame, simple.expr, span);
+      // LRM 16.5.1: a Boolean is evaluated over the sampled value of each
+      // variable it names, so what it reads is armed where the assertion is
+      // read, as a sampled value function arms what its operand reads.
+      auto armed = ArmSampledReads(proc.Owner(), frame, simple.expr, span);
       if (!armed) return std::unexpected(std::move(armed.error()));
       auto cond_or = proc.LowerExpr(simple.expr, frame);
       if (!cond_or) return std::unexpected(std::move(cond_or.error()));
@@ -602,15 +570,53 @@ auto LowerPropertySpec(
       .body = AddProperty(frame, *std::move(body_or))};
 }
 
+// LRM 16.17: the process reaching an expect waits for one evaluation of its
+// property, read as a cover property reads its sequence (Annex F.3.4.3.1), and
+// a failure with no else clause is the tool's own `$error` (LRM 20.10).
+auto LowerExpectStmt(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::ConcurrentAssertionStatement& as, diag::SourceSpan span)
+    -> diag::Result<hir::Stmt> {
+  auto spec_or = LowerPropertySpec(
+      proc, frame, as.propertySpec, hir::SequenceStrength::kStrong, span);
+  if (!spec_or) return std::unexpected(std::move(spec_or.error()));
+
+  auto pass_or = LowerActionArm(proc, frame, as.ifTrue);
+  if (!pass_or) return std::unexpected(std::move(pass_or.error()));
+
+  auto fail_or = LowerActionArm(proc, frame, as.ifFalse);
+  if (!fail_or) return std::unexpected(std::move(fail_or.error()));
+
+  hir::ProceduralBody& body = *frame.current_procedural_body;
+  return hir::Stmt{
+      .label = std::nullopt,
+      .data =
+          hir::ExpectStmt{
+              .spec = *std::move(spec_or),
+              .pass_stmt = AddActionArm(body, *std::move(pass_or)),
+              .fail_stmt = AddActionArm(body, *std::move(fail_or))},
+      .span = span};
+}
+
 }  // namespace
 
 auto EvaluatedInSimulation(
     const slang::ast::ConcurrentAssertionStatement& assertion,
     support::AssertionPolicy policy) -> bool {
-  // LRM 16.14.4: `restrict` is the one directive simulation does not verify, so
-  // no policy value makes it evaluate.
-  if (assertion.assertionKind == slang::ast::AssertionKind::Restrict) {
-    return false;
+  switch (assertion.assertionKind) {
+    // LRM 16.14.4: `restrict` is the one directive simulation does not
+    // verify, so no policy value makes it evaluate.
+    case slang::ast::AssertionKind::Restrict:
+      return false;
+    // LRM 16.17: the process waits at an expect for its answer, so no policy
+    // value removes it.
+    case slang::ast::AssertionKind::Expect:
+      return true;
+    case slang::ast::AssertionKind::Assert:
+    case slang::ast::AssertionKind::Assume:
+    case slang::ast::AssertionKind::CoverProperty:
+    case slang::ast::AssertionKind::CoverSequence:
+      break;
   }
   return !support::ElidesAssertions(policy);
 }
@@ -647,7 +653,14 @@ auto StaticConcurrentAssertionOf(const slang::ast::ProceduralBlockSymbol& proc)
   if (stmt->kind != slang::ast::StatementKind::ConcurrentAssertion) {
     return {};
   }
-  found.assertion = &stmt->as<slang::ast::ConcurrentAssertionStatement>();
+  // An `always` around an expect waits at it on every pass, which is a
+  // procedure and not the equivalence LRM 16.14.5 states for assert, assume
+  // and cover.
+  const auto& assertion = stmt->as<slang::ast::ConcurrentAssertionStatement>();
+  if (assertion.assertionKind == slang::ast::AssertionKind::Expect) {
+    return {};
+  }
+  found.assertion = &assertion;
   return found;
 }
 
@@ -759,7 +772,27 @@ auto LowerConcurrentAssertion(
   }
   throw InternalError(
       "LowerConcurrentAssertion: an expect statement is a wait rather than a "
-      "concurrent assertion item (LRM 16.17)");
+      "concurrent assertion item, and is lowered as the statement it is (LRM "
+      "16.17)");
+}
+
+auto LowerConcurrentAssertionStmt(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::ConcurrentAssertionStatement& as, diag::SourceSpan span)
+    -> diag::Result<hir::Stmt> {
+  if (as.assertionKind == slang::ast::AssertionKind::Expect) {
+    return LowerExpectStmt(proc, frame, as, span);
+  }
+  auto assertion_or = LowerConcurrentAssertion(proc, frame, as, span);
+  if (!assertion_or) return std::unexpected(std::move(assertion_or.error()));
+  return std::visit(
+      [&](auto form) {
+        return hir::Stmt{
+            .label = std::nullopt,
+            .data = hir::StmtData{std::move(form)},
+            .span = span};
+      },
+      *std::move(assertion_or));
 }
 
 }  // namespace lyra::lowering::ast_to_hir
