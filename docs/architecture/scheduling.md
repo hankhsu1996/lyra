@@ -187,14 +187,16 @@ sampling of a clocking block (LRM 14.13).
 
 A thread runs in one region set for its whole life: the one the thread that started it runs in, as a
 coroutine inherits its context from the scope it is launched in and from its parent, and whatever
-code it calls, since a subroutine runs in its caller's thread (LRM 24.3.1, 24.5). A process is
-launched in the instance whose code it evaluates, and that instance's class says which set: the
-design's run in the active set and a program's in the reactive one (LRM 24.3.2) -- so the drive
-across a program's output port is the program's, and the instantiating scope never needs to know it
-is one. Every placement a thread asks for names a region of its own set -- where a wake or a delay
-resumes it, where a `#0` does, where its nonblocking updates land -- and the two sets are each
-other's dual region for region. At time zero each set starts its processes in the same turns, the
-reactive set's once the active set's have settled.
+code it calls, since a subroutine runs in its caller's thread (LRM 24.3.1, 24.5). A process runs in
+the set named by the class of the instance whose code it evaluates. The design's code runs in the
+active set and a program's in the reactive one (LRM 24.3.2). That instance is the one whose text
+creates the process, except for the drive across a child's output port. The instantiation creates
+that drive and it evaluates the child's code (LRM 4.9.6), so the instantiating scope launches it as
+the child's without needing to know whether the child is a program. Its generator is still split
+from the instantiating scope's seeds (LRM 18.14.1). Every placement a thread asks for names a region
+of its own set -- where a wake or a delay resumes it, where a `#0` does, where its nonblocking
+updates land -- and the two sets are each other's dual region for region. At time zero each set
+starts its processes in the same turns, the reactive set's once the active set's have settled.
 
 `#0` delays land in **Inactive**, not Active. A user writing `#0` is asking the engine to let other
 already-pending active work finish first, then come back at this same simulation time. Pushing

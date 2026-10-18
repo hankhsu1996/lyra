@@ -412,9 +412,7 @@ auto Runtime::NamespaceSeeds(std::string_view name) -> InitializationRng& {
 void Runtime::EnterStaticInit(const ExecutionContext& context) {
   displacing_.push_back(
       DisplacingState{
-          .state =
-              RunningState{
-                  .rng = context.SplitInitializationRng(), .import_calls = {}},
+          .state = RunningState{context.SplitInitializationRng()},
           .context = context,
           .displaced = running_});
   running_ = &displacing_.back().state;
@@ -596,18 +594,18 @@ auto RegionsOf(support::ScopeExecution execution) -> RegionSet {
   throw InternalError("RegionsOf: an instance run no way");
 }
 
-// What an execution registered in `unit_instance` runs in: the scope its
-// reports name, the seeds of the instance it belongs to, and the region set
-// that instance's class states (LRM 18.14.1, 24.3.1). It belongs to no
+// What an execution runs in: the scope its reports name, the seeds of the
+// instance whose text creates it, and the region set the class of the instance
+// whose code it evaluates states (LRM 18.14.1, 24.3.1). It belongs to no
 // program; an initial procedure of one is made a member where it registers.
 auto ContextIn(
-    Scope* owning_scope, Scope* unit_instance, const char* written_at)
-    -> ExecutionContext {
+    Scope* owning_scope, Scope* unit_instance, Scope* runs_as,
+    const char* written_at) -> ExecutionContext {
   return ExecutionContext{
       .scope = owning_scope,
       .seeds = &unit_instance->InitializationSeeds(),
       .written_at = written_at,
-      .regions = RegionsOf(unit_instance->Info().metadata.Execution())};
+      .regions = RegionsOf(runs_as->Info().metadata.Execution())};
 }
 
 auto StartingProcess(const ExecutionContext& context, Coroutine<void> coroutine)
@@ -617,11 +615,12 @@ auto StartingProcess(const ExecutionContext& context, Coroutine<void> coroutine)
 }
 
 void RegisterStartingProcess(
-    StartKind kind, Scope* owning_scope, Scope* unit_instance,
+    StartKind kind, Scope* owning_scope, Scope* unit_instance, Scope* runs_as,
     Coroutine<void> coroutine, const char* written_at) {
   Runtime& rt = AsRuntime(current_runtime());
   auto process = StartingProcess(
-      ContextIn(owning_scope, unit_instance, written_at), std::move(coroutine));
+      ContextIn(owning_scope, unit_instance, runs_as, written_at),
+      std::move(coroutine));
   rt.QueueStart(kind, process->TopActivation());
   rt.AdoptProcess(std::move(process));
 }
@@ -632,15 +631,15 @@ void RegisterAlwaysProcess(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
     const char* written_at) {
   RegisterStartingProcess(
-      StartKind::kAlwaysProcedure, owning_scope, unit_instance,
+      StartKind::kAlwaysProcedure, owning_scope, unit_instance, unit_instance,
       std::move(coroutine), written_at);
 }
 
 void RegisterContinuousDriver(
-    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
-    const char* written_at) {
+    Scope* owning_scope, Scope* unit_instance, Scope* runs_as,
+    Coroutine<void> coroutine, const char* written_at) {
   RegisterStartingProcess(
-      StartKind::kContinuousDriver, owning_scope, unit_instance,
+      StartKind::kContinuousDriver, owning_scope, unit_instance, runs_as,
       std::move(coroutine), written_at);
 }
 
@@ -653,15 +652,15 @@ void RegisterInitialProcess(
     case support::ScopeExecution::kDesign:
       RegisterStartingProcess(
           StartKind::kInitialProcedure, owning_scope, unit_instance,
-          std::move(coroutine), written_at);
+          unit_instance, std::move(coroutine), written_at);
       return;
     case support::ScopeExecution::kProgram: {
       Runtime& rt = AsRuntime(current_runtime());
       ProgramThreads& program = rt.ProgramOf(*unit_instance);
-      ExecutionContext context =
-          ContextIn(owning_scope, unit_instance, written_at);
-      context.program = &program;
-      auto process = StartingProcess(context, std::move(coroutine));
+      auto process = StartingProcess(
+          ContextIn(owning_scope, unit_instance, unit_instance, written_at)
+              .InProgram(program),
+          std::move(coroutine));
       rt.QueueStart(StartKind::kInitialProcedure, process->TopActivation());
       program.AdoptRoot(std::move(process));
       return;
@@ -687,7 +686,7 @@ void RegisterTriggeredProcess(
     const char* written_at) {
   RegisterStartingProcess(
       StartKind::kTriggeredProcedure, owning_scope, unit_instance,
-      std::move(coroutine), written_at);
+      unit_instance, std::move(coroutine), written_at);
 }
 
 void RegisterFinalProcess(
@@ -695,7 +694,8 @@ void RegisterFinalProcess(
     const char* written_at) {
   Runtime& rt = AsRuntime(current_runtime());
   auto process = StartingProcess(
-      ContextIn(owning_scope, unit_instance, written_at), std::move(coroutine));
+      ContextIn(owning_scope, unit_instance, unit_instance, written_at),
+      std::move(coroutine));
   rt.QueueFinal(process->TopActivation());
   rt.AdoptProcess(std::move(process));
 }
@@ -704,7 +704,7 @@ void RunAssertionAction(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
     const char* written_at) {
   const ExecutionContext context =
-      ContextIn(owning_scope, unit_instance, written_at);
+      ContextIn(owning_scope, unit_instance, unit_instance, written_at);
   AsRuntime(current_runtime())
       .RunAction(
           context, std::move(coroutine), context.SplitInitializationRng());

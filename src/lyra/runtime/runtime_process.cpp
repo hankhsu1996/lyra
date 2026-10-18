@@ -22,7 +22,7 @@ RuntimeProcess::RuntimeProcess(
     ExecutionContext context, Coroutine<void> coroutine, DrawRng rng)
     : context_(context),
       coroutine_(std::move(coroutine)),
-      running_(RunningState{.rng = rng, .import_calls = {}}),
+      running_(rng),
       // Before the body runs, the top frame is the active leaf (what the engine
       // schedules to start the process); a wait moves the leaf inward.
       current_leaf_(coroutine_.Token()) {

@@ -90,7 +90,7 @@ auto CarrierTypeId(
           mir::Type{
               mir::MachineFloatType{.width = mir::MachineFloatWidth::k64}});
     case support::DpiScalarAbi::kString:
-      return unit.types.Intern(mir::Type{mir::MachineCStringType{}});
+      return unit.builtins.machine_c_string;
     case support::DpiScalarAbi::kChandle:
       return mir::ErasedPointer(unit.types);
     case support::DpiScalarAbi::kVoid:
@@ -1469,9 +1469,8 @@ void PublishForeignScopeName(
 
   const mir::ExprId scope_ref = body.ReadLocal(scope, unit.builtins.scope_ptr);
   const mir::ExprId name = body.exprs.Add(
-      mir::Expr{
-          .data = mir::StringLiteral{.value = linkage.foreign_name},
-          .type = unit.types.Intern(mir::Type{mir::MachineCStringType{}})});
+      mir::MakeStringLiteral(
+          unit.builtins.machine_c_string, linkage.foreign_name));
   const mir::ExprId entry = body.exprs.Add(
       mir::Expr{
           .data =

@@ -32,6 +32,15 @@ struct ExecutionContext {
   // every other execution.
   ProgramThreads* program = nullptr;
 
+  // The context of a root thread of `program`, whose initial procedure it is,
+  // and so of every thread it starts (LRM 24.3, 24.7).
+  [[nodiscard]] auto InProgram(ProgramThreads& program) const
+      -> ExecutionContext {
+    ExecutionContext root = *this;
+    root.program = &program;
+    return root;
+  }
+
   // The context of an execution of no lineage started from this one: placed
   // where this one is, but no thread a `$exit` ends (LRM 24.7).
   [[nodiscard]] auto WithoutLineage() const -> ExecutionContext {
@@ -59,6 +68,10 @@ struct ExecutionContext {
 // state of a process: a variable declaration assignment runs before any
 // procedure starts (LRM 10.5, 26.2) and can reach both of these.
 struct RunningState {
+  // What runs starts from the generator it is handed, inside no foreign call.
+  explicit RunningState(DrawRng initial) : rng(initial) {
+  }
+
   DrawRng rng;
   ImportCallChain import_calls;
 };
