@@ -406,8 +406,8 @@ auto ReachWaitThroughPointer(
     const mir::CompilationUnit& unit, mir::LocalId wait_local) {
   return [&unit, wait_local](
              BlockRebuild& rebuild,
-             const mir::Expr& expr) -> std::optional<mir::Expr> {
-    if (mir::ReferencedLocal(expr.data) != wait_local) {
+             mir::ExprId id) -> std::optional<mir::Expr> {
+    if (mir::ReferencedLocal(rebuild.From().exprs.Get(id).data) != wait_local) {
       return std::nullopt;
     }
     return WaitThroughPointer(unit, rebuild, wait_local);
@@ -567,7 +567,8 @@ auto RewriteSplitStarts(
   const mir::TypeId part_type = PartType(unit);
   const RebuildRules rules{
       .expr = [&](BlockRebuild& rebuild,
-                  const mir::Expr& expr) -> std::optional<mir::Expr> {
+                  mir::ExprId id) -> std::optional<mir::Expr> {
+        const mir::Expr& expr = rebuild.From().exprs.Get(id);
         const mir::CallableTarget* target =
             SplitProcessStarted(expr.data, split);
         if (target == nullptr) {

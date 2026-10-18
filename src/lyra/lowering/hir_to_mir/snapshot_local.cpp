@@ -56,6 +56,13 @@ auto EvaluatedOnce(const WalkFrame& frame, mir::ExprId value) -> mir::ExprId {
 auto SnapshotValueIntoClosure(
     UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
     ClosureBuilder& closure, mir::ExprId outer_expr) -> mir::ExprId {
+  // A constant is the same value whenever the body runs, so there is nothing
+  // to freeze and the body states it itself, as a C++ lambda captures no
+  // variable usable in constant expressions ([basic.def.odr]).
+  const mir::Expr& outer = outer_frame.current_block->exprs.Get(outer_expr);
+  if (mir::IsConstant(outer.data)) {
+    return closure.Body().exprs.Add(outer);
+  }
   return closure.Body().Read(
       SnapshotPlaceIntoClosure(unit_lowerer, outer_frame, closure, outer_expr));
 }

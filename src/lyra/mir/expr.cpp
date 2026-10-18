@@ -64,6 +64,57 @@ auto IsPlace(const ExprData& data) -> bool {
       data);
 }
 
+auto IsConstant(const ExprData& data) -> bool {
+  return std::visit(
+      Overloaded{
+          [](const ReferenceExpr& e) {
+            return std::visit(
+                Overloaded{
+                    [](const LocalRef&) { return false; },
+                    [](const StaticPropertyRef&) { return false; },
+                    [](const StaticVariableRef&) { return false; },
+                    [](const ExternalUnitVariableRef&) { return false; },
+                    [](const ExternalStaticPropertyRef&) { return false; },
+                    // A class's constant is held by each of its objects, which
+                    // may each be built with its own value.
+                    [](const ClassConstantRef&) { return false; },
+                    [](const DefinitionRef&) { return true; },
+                    [](const EnumTableRef&) { return true; },
+                    [](const IntegralConstantRef&) { return true; },
+                    [](const FunctionRef&) { return true; },
+                    [](const ExternalObjectEntryRef&) { return true; }},
+                e.target);
+          },
+          [](const StringLiteral&) { return true; },
+          [](const NullLiteral&) { return true; },
+          [](const MachineBoolLiteral&) { return true; },
+          [](const MachineIntLiteral&) { return true; },
+          [](const MachineFloatLiteral&) { return true; },
+          [](const DerefExpr&) { return false; },
+          [](const FieldAccessExpr&) { return false; },
+          [](const UnaryExpr&) { return false; },
+          [](const BinaryExpr&) { return false; },
+          [](const CastExpr&) { return false; },
+          [](const DynamicCastExpr&) { return false; },
+          [](const ConditionalExpr&) { return false; },
+          [](const BlockExpr&) { return false; },
+          [](const AssignExpr&) { return false; },
+          [](const CallExpr&) { return false; },
+          [](const NewExpr&) { return false; },
+          [](const AddressOfExpr&) { return false; },
+          [](const BorrowExpr&) { return false; },
+          [](const MoveExpr&) { return false; },
+          [](const CopyExpr&) { return false; },
+          [](const DiscriminantExpr&) { return false; },
+          [](const ClosureExpr&) { return false; },
+          [](const CompositeExpr&) { return false; },
+          [](const UnionExpr&) { return false; },
+          [](const AwaitExpr&) { return false; },
+          [](const WaitExpr&) { return false; },
+          [](const VectorGetExpr&) { return false; }},
+      data);
+}
+
 auto CalleeReceiver(const Callee& callee) -> std::optional<ExprId> {
   return std::visit(
       Overloaded{

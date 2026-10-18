@@ -29,7 +29,13 @@ auto BlockRebuild::Expr(mir::ExprId old) -> mir::ExprId {
     return *carried;
   }
   const mir::Expr& expr = from_->exprs.Get(old);
-  std::optional<mir::Expr> replaced = rules_->expr(*this, expr);
+  if (const std::optional<mir::ExprId> operand =
+          rules_->stands_for(*from_, old)) {
+    const mir::ExprId id = Expr(*operand);
+    carried_exprs_.at(old.value) = id;
+    return id;
+  }
+  std::optional<mir::Expr> replaced = rules_->expr(*this, old);
   const mir::ExprId id =
       replaced.has_value()
           ? Add(*std::move(replaced))

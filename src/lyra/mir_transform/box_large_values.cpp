@@ -182,9 +182,10 @@ class BodyBoxing {
       return std::nullopt;
     }
     const RebuildRules rules{
-        .expr = [this](
-                    BlockRebuild& rebuild,
-                    const mir::Expr& expr) { return Node(rebuild, expr); },
+        .expr =
+            [this](BlockRebuild& rebuild, mir::ExprId id) {
+              return Node(rebuild, rebuild.From().exprs.Get(id));
+            },
         .stmt =
             [this](BlockRebuild& rebuild, const mir::Stmt& stmt) {
               return Statement(rebuild, stmt);

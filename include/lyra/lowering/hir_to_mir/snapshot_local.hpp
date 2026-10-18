@@ -47,7 +47,9 @@ auto SnapshotExprToLocal(
 // returning the body-side read. This is how a deferred body (a non-blocking
 // assignment, a postponed `$display`) keeps a value computed at construction
 // time: every value goes through the same path, and the closure layer only ever
-// forwards an ordinary local -- the snapshot is not a special capture form.
+// forwards an ordinary local -- the snapshot is not a special capture form. A
+// constant has no moment of evaluation to keep, so it is not captured: the
+// body states the constant itself.
 auto SnapshotValueIntoClosure(
     UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
     ClosureBuilder& closure, mir::ExprId outer_expr) -> mir::ExprId;
