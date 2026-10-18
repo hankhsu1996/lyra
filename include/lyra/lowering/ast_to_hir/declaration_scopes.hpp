@@ -10,6 +10,7 @@
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/ClassSymbols.h>
+#include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 
 namespace lyra::lowering::ast_to_hir {
@@ -17,7 +18,8 @@ namespace lyra::lowering::ast_to_hir {
 // Hands `visit` every member of `scope`, and of each scope within it that a
 // declaration outside a body may stand in: a class (LRM 8.3 admits a class
 // declaration as a class item), each live specialization of a parameterized
-// one (LRM 8.25), and each generate block this elaboration built (LRM 27). A
+// one (LRM 8.25), each generate block this elaboration built (LRM 27), and
+// each anonymous program, whose items are the enclosing scope's (LRM 24.6). A
 // specialization is visited as the class it is, in place of the generic
 // declaration, since only a specialization is a type. A member is visited
 // before anything inside it. A visitor that can fail answers with a
@@ -69,6 +71,8 @@ auto WalkDeclarationScopes(
            member.as<slang::ast::GenerateBlockArraySymbol>().entries) {
         inner.push_back(entry);
       }
+    } else if (member.kind == slang::ast::SymbolKind::AnonymousProgram) {
+      inner.push_back(&member.as<slang::ast::AnonymousProgramSymbol>());
     }
     for (const slang::ast::Scope* scope_within : inner) {
       if constexpr (kCanFail) {

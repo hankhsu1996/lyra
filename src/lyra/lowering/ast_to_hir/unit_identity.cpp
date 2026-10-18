@@ -999,6 +999,22 @@ auto SpecializationName(
   return SpecializationName(SpecializationKeyOf(cls, policy));
 }
 
+auto DeclaringNamespaceUnit(const slang::ast::Symbol& decl)
+    -> const slang::ast::Symbol* {
+  const slang::ast::Scope* scope = decl.getParentScope();
+  while (scope != nullptr &&
+         scope->asSymbol().kind == slang::ast::SymbolKind::AnonymousProgram) {
+    scope = scope->asSymbol().getParentScope();
+  }
+  if (scope == nullptr) return nullptr;
+  const slang::ast::Symbol& owner = scope->asSymbol();
+  if (owner.kind != slang::ast::SymbolKind::Package &&
+      owner.kind != slang::ast::SymbolKind::CompilationUnit) {
+    return nullptr;
+  }
+  return &owner;
+}
+
 auto DeclaringCompilationUnit(const slang::ast::Symbol& decl)
     -> const slang::ast::Symbol& {
   for (const slang::ast::Scope* scope = decl.getParentScope(); scope != nullptr;
@@ -1212,13 +1228,17 @@ auto TypeStepOf(const slang::ast::Type& type) -> support::DefPathData {
       .position = static_cast<std::uint32_t>(type.getIndex())};
 }
 
-// The step `scope` is on the path to whatever it holds, or nothing for a loop
-// generate, which is no scope a declaration stands in: its blocks are, and
-// each already answers to the loop's label (LRM 27.4).
+// The step `scope` is on the path to whatever it holds, or nothing for a scope
+// no declaration stands in: a loop generate, whose blocks each already answer
+// to the loop's label (LRM 27.4), and an anonymous program, whose items share
+// the name space of the scope around it (LRM 24.6).
 auto StepOf(const slang::ast::Symbol& scope, const SpecializationPolicy& policy)
     -> std::optional<support::DefPathData> {
   using slang::ast::SymbolKind;
-  if (scope.kind == SymbolKind::GenerateBlockArray) return std::nullopt;
+  if (scope.kind == SymbolKind::GenerateBlockArray ||
+      scope.kind == SymbolKind::AnonymousProgram) {
+    return std::nullopt;
+  }
   if (const auto* block = scope.as_if<slang::ast::GenerateBlockSymbol>()) {
     return policy.BlockStepOf(*block);
   }

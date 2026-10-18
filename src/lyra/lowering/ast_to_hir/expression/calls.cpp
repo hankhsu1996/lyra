@@ -520,26 +520,6 @@ auto DetectImportedRuntimeMethod(const slang::ast::SubroutineSymbol& method)
   throw InternalError("AST->HIR call: unknown imported runtime-library class");
 }
 
-// The unit a subroutine is declared directly in when that unit is reached by
-// name across the boundary -- a package (LRM 26.2) or the anonymous `$unit`
-// scope (LRM 3.12.1) -- or null when the subroutine belongs to this compilation
-// unit. Such a target is a receiver-less callable reached by name, not through
-// an enclosing-scope binding of this unit. The returned symbol is the declaring
-// unit, from which the caller computes its published name.
-auto DeclaringUnitOfSubroutine(const slang::ast::SubroutineSymbol& sym)
-    -> const slang::ast::Symbol* {
-  const slang::ast::Scope* scope = sym.getParentScope();
-  if (scope == nullptr) {
-    return nullptr;
-  }
-  const slang::ast::Symbol& owner = scope->asSymbol();
-  if (owner.kind != slang::ast::SymbolKind::Package &&
-      owner.kind != slang::ast::SymbolKind::CompilationUnit) {
-    return nullptr;
-  }
-  return &owner;
-}
-
 // Enables a subroutine of another instance, or of a generate block inside one
 // (LRM 25.7, 23.6), reached from `origin`, where the call's name started. The
 // route to that scope is the same walk a read of a declaration there takes,
@@ -1124,7 +1104,7 @@ auto LowerSubroutineCall(
   // actual at that boundary (LRM 13.5), and the declaring unit's signature is
   // where it is stated. The call's result type is the enclosing expression's
   // own type and is not recorded again here.
-  if (const auto* unit = DeclaringUnitOfSubroutine(*sym)) {
+  if (const auto* unit = DeclaringNamespaceUnit(*sym)) {
     std::string unit_name =
         CompilationUnitName(*unit, unit_lowerer.Specialization());
     auto interface =

@@ -20,6 +20,7 @@
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
+#include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
@@ -218,9 +219,10 @@ auto CollectPackages(const LowerCompilationFacts& facts)
 //
 // A class declared here is namespace content like any other: whoever names it
 // names it through this scope's unit (LRM 3.12.1), so a scope holding one has
-// to become a unit for that name to reach a definition.
-auto HasUnitScopeContent(const slang::ast::CompilationUnitSymbol& cu) -> bool {
-  for (const auto& member : cu.members()) {
+// to become a unit for that name to reach a definition. So is what an
+// anonymous program declares, since it opens no scope of its own (LRM 24.6).
+auto HasUnitScopeContent(const slang::ast::Scope& scope) -> bool {
+  for (const auto& member : scope.members()) {
     switch (member.kind) {
       case slang::ast::SymbolKind::Variable:
       case slang::ast::SymbolKind::Net:
@@ -229,6 +231,12 @@ auto HasUnitScopeContent(const slang::ast::CompilationUnitSymbol& cu) -> bool {
       case slang::ast::SymbolKind::ClassType:
       case slang::ast::SymbolKind::GenericClassDef:
         return true;
+      case slang::ast::SymbolKind::AnonymousProgram:
+        if (HasUnitScopeContent(
+                member.as<slang::ast::AnonymousProgramSymbol>())) {
+          return true;
+        }
+        break;
       default:
         break;
     }

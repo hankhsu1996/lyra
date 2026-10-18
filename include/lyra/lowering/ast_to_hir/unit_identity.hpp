@@ -509,6 +509,15 @@ auto DefPathOf(
     const slang::ast::Symbol& declaration, const SpecializationPolicy& policy)
     -> support::DefPath;
 
+// The package (LRM 26.2) or `$unit` scope (LRM 3.12.1) `decl` is declared in,
+// or null where it is declared in any other scope. Neither has an instance, so
+// what one declares is reached by the unit's name rather than routed to through
+// an object. An anonymous program declares its items in the package or `$unit`
+// scope around it without opening a scope of its own (LRM 24.6), so one of its
+// items is declared in that unit.
+[[nodiscard]] auto DeclaringNamespaceUnit(const slang::ast::Symbol& decl)
+    -> const slang::ast::Symbol*;
+
 // The symbol whose compilation unit owns `decl`, found by climbing its parent
 // scopes to the first that is one: a package (LRM 26), a design element's body
 // (LRM 23.2, 25), or the `$unit` file-set scope a declaration outside every
