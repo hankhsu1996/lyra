@@ -107,6 +107,10 @@ filegroup(
 )
 """,
     commit = "f63e557d638d7305b44bc1d6c58170bd2cdec3c8",
+    patch_strip = 1,
+    patches = [
+        "//third_party/rtlmeter:veer_el2_error_injection_mode.patch",
+    ],
     remote = "https://github.com/verilator/rtlmeter.git",
 )
 
