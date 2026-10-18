@@ -5,6 +5,7 @@
 #include <format>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <slang/ast/ASTVisitor.h>
@@ -13,6 +14,8 @@
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
+#include <slang/ast/symbols/ParameterSymbols.h>
+#include <slang/ast/symbols/SubroutineSymbols.h>
 
 #include "lyra/lowering/ast_to_hir/climb.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
@@ -94,23 +97,41 @@ struct LeavingNames
     visitDefault(block);
   }
 
+  // A value an instantiation hands a parameter is written in the body holding
+  // the instance and is read there (LRM 23.10), whatever scope the front end
+  // keeps it under.
+  void handle(const slang::ast::ParameterSymbol& param) {
+    if (param.isOverridden()) return;
+    visitDefault(param);
+  }
+
+  void handle(const slang::ast::NamedValueExpression& e) {
+    Note(e.symbol, {});
+    visitDefault(e);
+  }
+
   void handle(const slang::ast::HierarchicalValueExpression& e) {
-    Note(e.ref);
+    Note(e.symbol, e.ref);
     visitDefault(e);
   }
 
   void handle(const slang::ast::ArbitrarySymbolExpression& e) {
-    Note(e.hierRef);
+    Note(*e.symbol, e.hierRef);
     visitDefault(e);
   }
 
   void handle(const slang::ast::CallExpression& e) {
-    Note(e.lookupInfo.hierRef);
+    if (const auto* const* subroutine =
+            std::get_if<const slang::ast::SubroutineSymbol*>(&e.subroutine)) {
+      Note(**subroutine, e.lookupInfo.hierRef);
+    }
     visitDefault(e);
   }
 
-  void Note(const slang::ast::HierarchicalReference& ref) {
-    if (auto climb = ClimbOutOf(ref, *body)) {
+  void Note(
+      const slang::ast::Symbol& found,
+      const slang::ast::HierarchicalReference& written) {
+    if (auto climb = ClimbOutOf(found, written, *body)) {
       climbs.push_back(*std::move(climb));
     }
   }

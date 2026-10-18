@@ -415,7 +415,7 @@ auto UnitLowerer::DisableTargetOf(
   // only its publication says anything about, whatever this unit minted for
   // the scope it resolved to here; only a name staying inside the instance
   // reaches a scope this unit minted.
-  RouteOrigin origin = StartOf(frame, reference);
+  RouteOrigin origin = StartOf(frame, target, reference);
   const auto minted = std::holds_alternative<FromReader>(origin)
                           ? LookupMintedProceduralScope(target)
                           : std::nullopt;
@@ -474,8 +474,8 @@ auto UnitLowerer::ReaderInstance() const -> std::optional<ReaderClimbs> {
 }
 
 auto UnitLowerer::StartOf(
-    const WalkFrame& frame, const slang::ast::HierarchicalReference& reference)
-    -> RouteOrigin {
+    const WalkFrame& frame, const slang::ast::Symbol& found,
+    const slang::ast::HierarchicalReference& written) -> RouteOrigin {
   const std::optional<ReaderClimbs> reader = ReaderInstance();
   if (!reader.has_value()) return RouteOrigin{FromReader{}};
 
@@ -483,9 +483,9 @@ auto UnitLowerer::StartOf(
   // and a coordinate written after the port picks one where it stands for
   // several (LRM 25.3). A coordinate past those, on a loop generate inside the
   // instance, is the descent's own (LRM 27.4).
-  if (reference.isViaIfacePort()) {
+  if (written.isViaIfacePort()) {
     const auto& port =
-        reference.path.front().symbol->as<slang::ast::InterfacePortSymbol>();
+        written.path.front().symbol->as<slang::ast::InterfacePortSymbol>();
     PortReach reach = ReachOfPort(frame, port);
     // The instance the name stands in is the one bound where its selects land:
     // a port standing for one is bound to one, and the front end names the
@@ -494,12 +494,12 @@ auto UnitLowerer::StartOf(
     const slang::ast::InstanceSymbol* bound =
         reach.hop.dims.empty() && connected.size() == 1 ? connected[0]
                                                         : nullptr;
-    for (std::size_t at = 1; at < reference.path.size(); ++at) {
+    for (std::size_t at = 1; at < written.path.size(); ++at) {
       // The front end lists a loop generate by its name, with no selector,
       // before the block its select picks, so the port's own selects end
       // there.
       const auto* position =
-          std::get_if<std::int32_t>(&reference.path[at].selector);
+          std::get_if<std::int32_t>(&written.path[at].selector);
       if (position == nullptr) break;
       if (*position < 0) {
         throw InternalError(
@@ -508,7 +508,7 @@ auto UnitLowerer::StartOf(
       }
       reach.hop.step.selects.push_back(static_cast<std::uint32_t>(*position));
       if (const auto* element =
-              reference.path[at].symbol->as_if<slang::ast::InstanceSymbol>()) {
+              written.path[at].symbol->as_if<slang::ast::InstanceSymbol>()) {
         bound = element;
       }
     }
@@ -532,7 +532,8 @@ auto UnitLowerer::StartOf(
   // told apart by the class of that scope, so every instance of the unit
   // starts at a scope of that class and the walk down is the one the name
   // writes. A name that never leaves the instance starts at the reader.
-  const std::optional<ClimbAnchor> climb = ClimbOutOf(reference, *reader->body);
+  const std::optional<ClimbAnchor> climb =
+      ClimbOutOf(found, written, *reader->body);
   if (!climb.has_value()) return RouteOrigin{FromReader{}};
   return RouteOrigin{StartInEnclosing(*climb->scope)};
 }
@@ -544,13 +545,14 @@ auto UnitLowerer::StartsOfNames(
   std::vector<RouteOrigin> origins;
   bool from_reader = names.empty();
   for (const slang::ast::Expression* name : names) {
-    const auto* hierarchical =
-        name->as_if<slang::ast::HierarchicalValueExpression>();
-    if (hierarchical == nullptr) {
-      from_reader = true;
-      continue;
+    RouteOrigin origin{FromReader{}};
+    if (const auto* hierarchical =
+            name->as_if<slang::ast::HierarchicalValueExpression>()) {
+      origin = StartOf(frame, hierarchical->symbol, hierarchical->ref);
+    } else if (
+        const auto* plain = name->as_if<slang::ast::NamedValueExpression>()) {
+      origin = StartOf(frame, plain->symbol, {});
     }
-    RouteOrigin origin = StartOf(frame, hierarchical->ref);
     if (std::holds_alternative<FromReader>(origin)) {
       from_reader = true;
     } else {

@@ -421,8 +421,8 @@ auto LowerValueRef(
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
   auto type_id = unit_lowerer.InternType(type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
-  auto target =
-      unit_lowerer.ResolveValueTarget(frame, value, FromReader{}, span);
+  auto target = unit_lowerer.ResolveValueTarget(
+      frame, value, unit_lowerer.StartOf(frame, value, {}), span);
   if (!target) return std::unexpected(std::move(target.error()));
   return hir::MakeValueTargetRefExpr(*target, *type_id, span);
 }
@@ -573,7 +573,8 @@ auto LowerHierarchicalValue(
         auto type_id = unit_lowerer.InternExpressionType(hve, span);
         if (!type_id) return std::unexpected(std::move(type_id.error()));
         auto reached = unit_lowerer.ResolveValueTarget(
-            frame, target, unit_lowerer.StartOf(frame, hve.ref), span);
+            frame, target, unit_lowerer.StartOf(frame, hve.symbol, hve.ref),
+            span);
         if (!reached) return std::unexpected(std::move(reached.error()));
         return hir::MakeValueTargetRefExpr(*reached, *type_id, span);
       }
@@ -612,7 +613,8 @@ auto LowerHierarchicalValue(
       auto type_id = unit_lowerer.InternExpressionType(hve, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       auto reached = unit_lowerer.ResolveValueTarget(
-          frame, target, unit_lowerer.StartOf(frame, hve.ref), span);
+          frame, target, unit_lowerer.StartOf(frame, hve.symbol, hve.ref),
+          span);
       if (!reached) return std::unexpected(std::move(reached.error()));
       return hir::MakeValueTargetRefExpr(*reached, *type_id, span);
     }
@@ -704,7 +706,7 @@ auto LowerInterfaceInstanceValue(
   // it is.
   auto route = unit_lowerer.RouteToScopeOrRefuse(
       frame, handle_type->iface.body,
-      unit_lowerer.StartOf(frame, named.hierRef), span);
+      unit_lowerer.StartOf(frame, *named.symbol, named.hierRef), span);
   if (!route) return std::unexpected(std::move(route.error()));
   auto type_id = unit_lowerer.InternExpressionType(named, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
