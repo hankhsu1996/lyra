@@ -591,6 +591,18 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "filled_like",
           .declaration = StaticFactory{"FilledLike"},
           .operands = {kMachine, kBits}};
+    case BuiltinFn::kPositionCount:
+      return {
+          .name = "position_count",
+          .declaration = StaticFactory{"PositionCount"}};
+    case BuiltinFn::kTakePositions:
+      return {
+          .name = "take_positions",
+          .declaration = Method{"TakePositions"},
+          .over_integral_values = BuiltinFn::kIntegralTakePositions};
+    case BuiltinFn::kIntegralTakePositions:
+      return IntegralEntry(
+          IntegralOp::kTakePositions, ValueFunction("TakePositions"));
     case BuiltinFn::kClog2:
       return IntegralEntry(IntegralOp::kCeilLog2, Method{"Clog2"});
     case BuiltinFn::kLn:

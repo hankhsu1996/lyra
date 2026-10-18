@@ -20,6 +20,7 @@
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/sampled_value.hpp"
+#include "lyra/runtime/source_follower.hpp"
 #include "lyra/runtime/timer.hpp"
 #include "lyra/runtime/wait.hpp"
 #include "lyra/value/format.hpp"
@@ -274,6 +275,7 @@ void RuntimeEffects::WakeParkedOn(
               }
             },
             [](SampledValue* sampled) { sampled->Reached(); },
+            [](SourceFollower* follower) { follower->Reached(); },
             [this](ProgramThreads* program) { program->RootEnded(*this); },
             [&](PropertyEvaluation* evaluation) {
               evaluation->Reached(membership);

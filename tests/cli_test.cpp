@@ -961,6 +961,193 @@ TEST(LyraRun, ATextTheFrontEndAcceptsRunsAsItAnalyzedIt) {
       << analyzed.stdout_text;
 }
 
+// A force on part of a variable, run when the caller asks for it (LRM 10.6.2),
+// reaches a member of an unpacked structure and an element of a fixed-size
+// unpacked array, and bits within either, since a value's type
+// numbers its positions part by part: the rest of the variable goes on taking
+// its own writes -- whole, through a member, through a `ref` argument -- and
+// what drives it continuously. A port standing for what its connection drives,
+// a net one driver decides and a net its drivers resolve each go on showing
+// their source wherever no force holds a position, and show it again once
+// released. A member of a union and a part of a value of a dynamic type lie at
+// no fixed position, and are refused.
+TEST(LyraRun, AForceOnPartOfAnAggregateHoldsOnlyThatPart) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  WriteFile(
+      *tmp_or / "aggregate.sv",
+      "module Child(input logic [7:0] p, input wire [7:0] n);\n"
+      "endmodule\n"
+      "\n"
+      "module Test;\n"
+      "  typedef struct { logic we; logic [7:0] next; string name; } field_t;\n"
+      "  field_t s;\n"
+      "  int a [4];\n"
+      "  typedef struct { logic [99:0] big; logic we; } wide_t;\n"
+      "  wide_t w;\n"
+      "  int r [3:0];\n"
+      "  field_t ctrl [4];\n"
+      "  logic [7:0] d;\n"
+      "  Child c(.p(d), .n(d));\n"
+      "  wire [7:0] one;\n"
+      "  assign one = d + 8'h01;\n"
+      "  logic [7:0] e;\n"
+      "  wire [7:0] both;\n"
+      "  assign both = d;\n"
+      "  assign both = e;\n"
+      "  field_t src;\n"
+      "  field_t driven;\n"
+      "  assign driven = src;\n"
+      "  typedef struct { logic we; logic [7:0] next; } pins_t;\n"
+      "  wire pins_t snet;\n"
+      "  assign snet = '{we: src.we, next: src.next};\n"
+      "  pins_t pins;\n"
+      "  wire pins_t shown;\n"
+      "  assign shown = pins;\n"
+      "  int changes = 0;\n"
+      "  always @(driven.we) changes++;\n"
+      "\n"
+      "  task automatic poke(ref logic [7:0] n);\n"
+      "    n = 8'h77;\n"
+      "  endtask\n"
+      "\n"
+      "  initial begin\n"
+      "    s = '{we: 0, next: 8'h11, name: \"x\"};\n"
+      "    a = '{1, 2, 3, 4};\n"
+      "    w = '{big: '0, we: 0};\n"
+      "    r = '{1, 2, 3, 4};\n"
+      "    foreach (ctrl[i]) ctrl[i] = '{we: 0, next: 8'h22, name: \"y\"};\n"
+      "    d = 8'h10;\n"
+      "    e = 8'h10;\n"
+      "    src = '{we: 0, next: 8'h11, name: \"s\"};\n"
+      "    pins = '{we: 0, next: 8'h11};\n"
+      "    #1;\n"
+      "    force s.we = 1'b1;\n"
+      "    force w.big[70:60] = '1;\n"
+      "    force r[2] = 50;\n"
+      "    force a[1:2] = '{40, 42};\n"
+      "    force ctrl[1].next[3:0] = 4'hf;\n"
+      "    force c.p[3:0] = 4'ha;\n"
+      "    force c.n[7:4] = 4'hb;\n"
+      "    force one[3:0] = 4'hf;\n"
+      "    force both[0] = 1'b1;\n"
+      "    force driven.we = 1'b1;\n"
+      "    force snet.next = 8'hee;\n"
+      "    force shown.we = 1'b1;\n"
+      "    #1;\n"
+      "    s = '{we: 0, next: 8'h33, name: \"z\"};\n"
+      "    a = '{9, 9, 9, 9};\n"
+      "    w = '{big: '0, we: 1};\n"
+      "    r = '{9, 9, 9, 9};\n"
+      "    ctrl[1].next = 8'h00;\n"
+      "    poke(s.next);\n"
+      "    d = 8'h20;\n"
+      "    e = 8'h20;\n"
+      "    src = '{we: 0, next: 8'h22, name: \"t\"};\n"
+      "    pins = '{we: 0, next: 8'h22};\n"
+      "    #1;\n"
+      "    if (s.we !== 1'b1 || s.next !== 8'h77 || s.name != \"z\")\n"
+      "      $fatal(1, \"a member read %p\", s);\n"
+      "    if (a[0] !== 9 || a[1] !== 40 || a[2] !== 42 || a[3] !== 9)\n"
+      "      $fatal(1, \"a slice read %p\", a);\n"
+      "    if (w.big[70:60] !== '1 || w.big[59] !== 1'b0 || w.big[71] !== 1'b0 "
+      "||\n"
+      "        w.we !== 1'b1)\n"
+      "      $fatal(1, \"bits of a wide member read %h\", w.big);\n"
+      "    if (r[2] !== 50 || r[3] !== 9 || r[1] !== 9)\n"
+      "      $fatal(1, \"an element of a descending array read %p\", r);\n"
+      "    if (ctrl[1].next !== 8'h0f || ctrl[0].next !== 8'h22)\n"
+      "      $fatal(1, \"bits of a member of an element read %p\", ctrl);\n"
+      "    if (c.p !== 8'h2a || c.n !== 8'hb0)\n"
+      "      $fatal(1, \"a port read %h %h\", c.p, c.n);\n"
+      "    if (one !== 8'h2f || both !== 8'h21)\n"
+      "      $fatal(1, \"a net read %h %h\", one, both);\n"
+      "    if (driven.we !== 1'b1 || driven.next !== 8'h22 || driven.name != "
+      "\"t\")\n"
+      "      $fatal(1, \"a driven variable read %p\", driven);\n"
+      "    if (snet.next !== 8'hee || snet.we !== 1'b0)\n"
+      "      $fatal(1, \"a net of a structure read %p\", snet);\n"
+      "    if (shown.we !== 1'b1 || shown.next !== 8'h22)\n"
+      "      $fatal(1, \"a net showing a structure read %p\", shown);\n"
+      "    release s.we;\n"
+      "    release w.big[70:60];\n"
+      "    release r[2];\n"
+      "    release a[1:2];\n"
+      "    release ctrl[1].next[3:0];\n"
+      "    release c.p[3:0];\n"
+      "    release c.n[7:4];\n"
+      "    release one[3:0];\n"
+      "    release both[0];\n"
+      "    release driven.we;\n"
+      "    release snet.next;\n"
+      "    release shown.we;\n"
+      "    if (c.p !== 8'h2a || c.n !== 8'h20)\n"
+      "      $fatal(1, \"a release showed a port's source when it should "
+      "not: %h %h\", c.p, c.n);\n"
+      "    #1;\n"
+      "    if (s.we !== 1'b1 || a[2] !== 42 || ctrl[1].next !== 8'h0f)\n"
+      "      $fatal(1, \"a released part did not keep its value: %p %p\", s, "
+      "a);\n"
+      "    if (c.p !== 8'h20 || c.n !== 8'h20 || one !== 8'h21 || both !== "
+      "8'h20)\n"
+      "      $fatal(1, \"a release did not show the source: %h %h %h %h\", "
+      "c.p, c.n, one, both);\n"
+      "    if (driven.we !== 1'b0 || snet.next !== 8'h22 || shown.we !== 1'b0 "
+      "||\n"
+      "        changes !== 3)\n"
+      "      $fatal(1, \"a release did not reestablish: %p %p %0d\", driven, "
+      "snet, changes);\n"
+      "    if (w.big[70:60] !== '1 || r[2] !== 50)\n"
+      "      $fatal(1, \"a released wide or descending part read %h %p\", "
+      "w.big, r);\n"
+      "    a[2] = 5;\n"
+      "    #1;\n"
+      "    if (a[2] !== 5) $fatal(1, \"a write after release read %p\", a);\n"
+      "    $display(\"All checks passed\");\n"
+      "  end\n"
+      "endmodule\n");
+  for (const char* backend : {"llvm", "cpp"}) {
+    const auto forced = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format(
+            "run --backend {} --compat all --top Test aggregate.sv", backend));
+    ASSERT_EQ(forced.exit_code, 0) << backend << "\n" << forced.stderr_text;
+    EXPECT_NE(forced.stdout_text.find("All checks passed"), std::string::npos)
+        << backend << "\n"
+        << forced.stdout_text;
+  }
+
+  const auto refused = [&](std::string_view declared, std::string_view target,
+                           std::string_view message) {
+    WriteFile(
+        *tmp_or / "refused.sv", std::format(
+                                    "module Test;\n"
+                                    "  {}\n"
+                                    "  initial force {} = 0;\n"
+                                    "endmodule\n",
+                                    declared, target));
+    const auto run = RunLyraFrom(
+        lyra, *tmp_or, "run --backend llvm --compat all --top Test refused.sv");
+    EXPECT_NE(run.exit_code, 0) << target;
+    EXPECT_NE(run.stderr_text.find(message), std::string::npos)
+        << target << "\n"
+        << run.stderr_text;
+  };
+  refused(
+      "union { int i; logic [31:0] v; } u;", "u.i",
+      "error: a force on a member of an unpacked union is not yet supported");
+  constexpr std::string_view kDynamic =
+      "error: a force on part of a string, a queue, a dynamic array or an "
+      "associative array is not yet supported";
+  refused("int q[$];", "q[0]", kDynamic);
+  refused("int da[];", "da[1]", kDynamic);
+  refused("int aa[int];", "aa[3]", kDynamic);
+  refused("string s;", "s[0]", kDynamic);
+}
+
 // A force on part of a variable is forbidden (LRM 10.6.2), and run when the
 // caller asks for it, as an extension whose meaning is the rules for forcing a
 // whole variable applied to each forced bit: a procedural write leaves
@@ -1129,24 +1316,6 @@ TEST(LyraRun, AForceOnPartOfAVariableHoldsOnlyThatPart) {
   ASSERT_EQ(forced_cpp.exit_code, 0) << forced_cpp.stderr_text;
   EXPECT_NE(forced_cpp.stdout_text.find("All checks passed"), std::string::npos)
       << forced_cpp.stdout_text;
-
-  // An element of an unpacked array is a part whose neighbours a takeover
-  // would have to leave following their own writes, and it is refused.
-  WriteFile(
-      *tmp_or / "element.sv",
-      "module Test;\n"
-      "  logic [7:0] mem [4];\n"
-      "  initial force mem[1] = 8'haa;\n"
-      "endmodule\n");
-  const auto element = RunLyraFrom(
-      lyra, *tmp_or, "run --backend llvm --compat all --top Test element.sv");
-  EXPECT_NE(element.exit_code, 0) << element.stdout_text;
-  EXPECT_NE(
-      element.stderr_text.find(
-          "error: taking over an element or a member of an unpacked value is "
-          "not yet supported"),
-      std::string::npos)
-      << element.stderr_text;
 
   // A target that is no net, variable or select of one is a force the front
   // end builds nothing for even under the reading that takes bits of a

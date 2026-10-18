@@ -57,6 +57,11 @@ class AnyValue {
   [[nodiscard]] auto ResolveWiredAnd(const AnyValue& other) const -> AnyValue;
   [[nodiscard]] auto ResolveWiredOr(const AnyValue& other) const -> AnyValue;
   [[nodiscard]] auto Dominating(const AnyValue& weaker) const -> AnyValue;
+  // This value with the `count` positions from `first` taken from `from`, a
+  // value of its type (LRM 10.6.2).
+  [[nodiscard]] auto TakePositions(
+      const AnyValue& from, std::int64_t first, std::int64_t count) const
+      -> AnyValue;
   [[nodiscard]] static auto FilledLike(
       const AnyValue& prototype, const Logic& fill) -> AnyValue;
   // Two values hold the same bits only where they are of one type; a holder

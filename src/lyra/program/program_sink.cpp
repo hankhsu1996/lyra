@@ -551,6 +551,11 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_laidout_ref_get", &lyra_rt_laidout_ref_get);
   add("lyra_rt_laidout_ref_set", &lyra_rt_laidout_ref_set);
   add("lyra_rt_laidout_ref_arm_sampling", &lyra_rt_laidout_ref_arm_sampling);
+  add("lyra_rt_laidout_ref_begin_takeover",
+      &lyra_rt_laidout_ref_begin_takeover);
+  add("lyra_rt_laidout_ref_drive_takeover",
+      &lyra_rt_laidout_ref_drive_takeover);
+  add("lyra_rt_laidout_ref_end_takeover", &lyra_rt_laidout_ref_end_takeover);
   add("lyra_rt_laidout_ref_sampled_get", &lyra_rt_laidout_ref_sampled_get);
   add("lyra_rt_dynarray_ref_get", &lyra_rt_dynarray_ref_get);
   add("lyra_rt_dynarray_ref_set", &lyra_rt_dynarray_ref_set);
@@ -954,6 +959,11 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_laidout_cell_initialize", &lyra_rt_laidout_cell_initialize);
   add("lyra_rt_laidout_cell_set", &lyra_rt_laidout_cell_set);
   add("lyra_rt_laidout_cell_arm_sampling", &lyra_rt_laidout_cell_arm_sampling);
+  add("lyra_rt_laidout_cell_begin_takeover",
+      &lyra_rt_laidout_cell_begin_takeover);
+  add("lyra_rt_laidout_cell_drive_takeover",
+      &lyra_rt_laidout_cell_drive_takeover);
+  add("lyra_rt_laidout_cell_end_takeover", &lyra_rt_laidout_cell_end_takeover);
   add("lyra_rt_laidout_cell_sampled_get", &lyra_rt_laidout_cell_sampled_get);
   add("lyra_rt_laidout_value_cell_alloc", &lyra_rt_laidout_value_cell_alloc);
   add("lyra_rt_empty_default", &lyra_rt_empty_default);

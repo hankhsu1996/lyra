@@ -131,6 +131,14 @@ struct ValueWitnessTable {
   void (*filled_like)(
       const ValueType& type, const void* prototype, const void* fill,
       void* out);
+  // `into` with the `count` positions from `first` taken from `from`, which
+  // a procedural continuous assignment holding them shows there (LRM 10.6.2):
+  // an integral value's bits, an aggregate's parts' positions one part after
+  // another, and the one position of any other value, held whole. The two
+  // numbers are machine integers, passed by address as every operand is.
+  void (*take_positions)(
+      const ValueType& type, const void* into, const void* from,
+      const std::int64_t* first, const std::int64_t* count, void* out);
 
   // The order an associative array keeps its indices in (LRM 7.8.2, 7.8.4)
   // and the one `min`, `max` and `sort` read (LRM 7.12).
@@ -176,6 +184,7 @@ inline constexpr ValueWitnessTable kValueWitnessTableFor{
     .resolve_wired_or = W::ResolveWiredOr,
     .dominating = W::Dominating,
     .filled_like = W::FilledLike,
+    .take_positions = W::TakePositions,
     .order_before = W::OrderBefore,
     .is_true = W::IsTrue,
     .reduce = W::Reduce,
@@ -295,6 +304,11 @@ class ValueType {
   }
   void FilledLike(const void* prototype, const void* fill, void* out) const {
     witnesses_->filled_like(*this, prototype, fill, out);
+  }
+  void TakePositions(
+      const void* into, const void* from, std::int64_t first,
+      std::int64_t count, void* out) const {
+    witnesses_->take_positions(*this, into, from, &first, &count, out);
   }
 
   [[nodiscard]] auto OrderBefore(const void* lhs, const void* rhs) const

@@ -16,6 +16,7 @@
 #include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/observable.hpp"
+#include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/sampled_value.hpp"
@@ -188,10 +189,15 @@ class VariableRef;
 template <value::LyraValue T>
 class Var;
 
+template <class HeldAs>
+class Cell;
+
 // What only a variable something samples or takes over keeps. Almost no
 // variable is either, so this exists only once one is, behind the variable. A
-// write asks it one thing: whether a procedural continuous assignment
-// overrides the write (LRM 10.6).
+// write asks it whether a procedural continuous assignment overrides the write
+// (LRM 10.6), and one through a reference to part of the variable, which knows
+// the part's type and not the variable's, has it take the write where it
+// lands.
 class RareWriteState {
  public:
   RareWriteState();
@@ -202,6 +208,13 @@ class RareWriteState {
   virtual ~RareWriteState();
 
   [[nodiscard]] virtual auto OverridesWrites() const -> bool = 0;
+
+  // A write of part of the variable while a procedural continuous assignment
+  // overrides its writes: `write` lands it in the part where it lies, and the
+  // variable then shows each takeover over what it holds again, telling
+  // whoever waits on it what moved. A takeover may hold some of a part and not
+  // the rest (LRM 10.6.2), so the write shows wherever none holds.
+  virtual void WritePart(OwnedCall write) = 0;
 };
 
 // What every variable is whatever it holds: the waits enrolled on it, and
@@ -222,6 +235,8 @@ class VariableCell : public Observable {
   [[nodiscard]] auto OverridesWrites() const -> bool {
     return rare_ != nullptr && rare_->OverridesWrites();
   }
+  // A write of part of the variable, asked only where one overrides it.
+  void WritePart(OwnedCall write);
   // Whether a write into the variable has anyone to tell what it did: a wait
   // enrolled here (LRM 4.3). A write a procedural continuous assignment
   // overrides lands aside, and the variable tells what changed once it is
@@ -257,12 +272,12 @@ class CellRareState final : public RareWriteState {
   // Assigns what the variable holds to `out`, a value of the owned type, as its
   // sampled value takes it.
   void TakeHeldInto(Owned& out) const {
-    out = storage_->AsOwned();
+    out = cell_->Held().AsOwned();
   }
   using TakenHeld =
       TakenFrom<CellRareState, Owned, &CellRareState::TakeHeldInto>;
 
-  explicit CellRareState(const HeldAs& storage) : storage_(&storage) {
+  explicit CellRareState(Cell<HeldAs>& cell) : cell_(&cell) {
   }
   CellRareState(const CellRareState&) = delete;
   auto operator=(const CellRareState&) -> CellRareState& = delete;
@@ -274,16 +289,17 @@ class CellRareState final : public RareWriteState {
     return takeovers_ != nullptr && takeovers_->OverridesWrites();
   }
 
-  // Keeps the sampled value of `variable`, the cell over this state's holding,
-  // from now on, its default sampled value being what it holds now. Keeping one
-  // already kept changes nothing.
-  void ArmSampling(Observable& variable) {
+  void WritePart(OwnedCall write) override;
+
+  // Keeps the cell's sampled value from now on, its default sampled value
+  // being what it holds now. Keeping one already kept changes nothing.
+  void ArmSampling() {
     if (sampled_ != nullptr) {
       return;
     }
     sampled_ = std::make_unique<SampledValueOf<TakenHeld>>(
-        TakenHeld(*this), [&] -> Owned { return storage_->AsOwned(); },
-        Trigger(&variable, Observation{}, {}, 0, 0));
+        TakenHeld(*this), [&] -> Owned { return cell_->Held().AsOwned(); },
+        Trigger(cell_, Observation{}, {}, 0, 0));
   }
   [[nodiscard]] auto Sampled() const -> const SampledValueOf<TakenHeld>* {
     return sampled_.get();
@@ -300,7 +316,7 @@ class CellRareState final : public RareWriteState {
   }
 
  private:
-  const HeldAs* storage_;
+  Cell<HeldAs>* cell_;
   std::unique_ptr<SampledValueOf<TakenHeld>> sampled_;
   std::unique_ptr<runtime::Takeovers<Owned>> takeovers_;
 };
@@ -397,11 +413,11 @@ class Cell : public VariableCell {
     ApplyOverriddenWrite(written);
   }
 
-  // Starts a procedural continuous assignment at `level` over the positions
-  // `lsb` and `count` name -- some bits of the cell's value, or the whole of it
-  // where `count` is zero -- superseding whatever was driving them at that
-  // level, and answers with the generation its evaluation carries (LRM 10.6).
-  auto BeginTakeover(std::int64_t level, std::int64_t lsb, std::int64_t count)
+  // Starts a procedural continuous assignment at `level` over the `count`
+  // positions from `first` of the cell's value, as its type numbers them,
+  // superseding whatever was driving them at that level, and answers with the
+  // generation its evaluation carries (LRM 10.6).
+  auto BeginTakeover(std::int64_t level, std::int64_t first, std::int64_t count)
       -> std::int64_t;
 
   // States what the takeover at `level` has evaluated to, as a value of the
@@ -423,12 +439,15 @@ class Cell : public VariableCell {
       { held.ToOwned(bytes) } -> std::same_as<Owned>;
     };
 
-  // Ends the procedural continuous assignment at `level` over the positions
-  // `lsb` and `count` name. Where a lower takeover or a continuous driver lies
+  // Ends the procedural continuous assignment at `level` over the `count`
+  // positions from `first`. Where a lower takeover or a continuous driver lies
   // beneath, it is reestablished, and each position released shows what it
   // holds once its reevaluation runs; any other variable is left exactly as it
   // stands, which is what a released variable keeps (LRM 10.6.2).
-  void EndTakeover(std::int64_t level, std::int64_t lsb, std::int64_t count);
+  void EndTakeover(std::int64_t level, std::int64_t first, std::int64_t count);
+
+  // Whether a procedural continuous assignment holds any position of the cell.
+  [[nodiscard]] auto TakenOver() const -> bool;
 
   // Where a write a procedural continuous assignment overrides lands so that
   // it is kept: what the cell's continuous driver last produced, held beneath
@@ -449,7 +468,7 @@ class Cell : public VariableCell {
   // More than one read may name one cell, and they all want the same answer, so
   // arming an armed cell is not an error and changes nothing.
   void ArmSampling() {
-    RareState().ArmSampling(*this);
+    RareState().ArmSampling();
   }
 
   // What the cell held in the Preponed region of the current time slot -- its
@@ -484,6 +503,10 @@ class Cell : public VariableCell {
   }
 
  private:
+  // What the cell keeps only once it is sampled or taken over reads and
+  // writes the storage it keeps that for.
+  friend class CellRareState<HeldAs>;
+
   // The one path a whole value reaches the cell's storage by, whoever sent it.
   // The value arriving is compared with the one it would replace before
   // anything is written, so telling whoever waits keeps no copy of the old
@@ -523,21 +546,12 @@ class Cell : public VariableCell {
       std::int64_t level, std::int64_t generation, const Owned& evaluated)
       -> bool;
 
-  // Every position of the cell's value a takeover may hold.
-  [[nodiscard]] auto AllPositions() const -> value::BitPositions {
-    if constexpr (TakenOverByBits<Owned>) {
-      return {.lsb = 0, .width = storage_.Get().View().width};
-    } else {
-      return kHeldWhole;
-    }
-  }
-
   // What only a sampled or taken-over cell keeps, made the first time either
   // is asked for. This cell is the only thing that makes it, so it is always
   // over the cell's own storage.
   [[nodiscard]] auto RareState() -> CellRareState<HeldAs>& {
     if (Rare() == nullptr) {
-      InstallRare(std::make_unique<CellRareState<HeldAs>>(storage_));
+      InstallRare(std::make_unique<CellRareState<HeldAs>>(*this));
     }
     return static_cast<CellRareState<HeldAs>&>(*Rare());
   }
@@ -830,6 +844,12 @@ struct ErasedReference {
   // an object's, have nothing to be told.
   void DriveContinuously() const;
 
+  // Lands a write of the part this reference names, which `write` makes where
+  // the part lies, in the variable a procedural continuous assignment
+  // overrides (LRM 10.6.2), which then shows each takeover over what it holds
+  // again. Only a variable is ever overridden.
+  void WritePart(OwnedCall write) const;
+
   // The reference to a part of what this one names, at `storage`, reached by
   // the further steps `within` and which forming did `formed` to. The part has
   // the same holder, which is told at once where forming it changed the
@@ -957,13 +977,13 @@ class VariableRef {
   // member of a scope standing for what its connection drives, and the
   // assignment gives it storage of its own to name until it ends.
   [[nodiscard]] auto BeginTakeover(
-      std::int64_t level, std::int64_t lsb, std::int64_t count) const
+      std::int64_t level, std::int64_t first, std::int64_t count) const
       -> std::int64_t;
   [[nodiscard]] auto DriveTakeover(
       std::int64_t level, std::int64_t generation, const T& new_val) const
       -> bool;
   void EndTakeover(
-      std::int64_t level, std::int64_t lsb, std::int64_t count) const;
+      std::int64_t level, std::int64_t first, std::int64_t count) const;
 
   // A reference to an element or a component of what this one names (LRM
   // 13.5.2), which belongs to the same variable.
@@ -996,13 +1016,14 @@ class VariableRef {
   [[nodiscard]] auto OverriddenWriteStorage() const -> T* {
     return Whole() ? Cell().OverriddenWriteStorage() : nullptr;
   }
-  // A reference to part of a variable is formed only into a value with
-  // elements or members, which a takeover holds whole, so a write through one
-  // shows nowhere and lands in a copy nobody reads.
+  // A write through a reference to part of a variable lands in the part where
+  // it lies, which the variable then takes as any overridden write.
   void ApplyOverriddenWrite(const T& written) const {
     if (Whole()) {
       Cell().ApplyOverriddenWrite(written);
+      return;
     }
+    erased_.WritePart([&] { Storage() = written; });
   }
   [[nodiscard]] auto MutationStorage() const -> T& {
     return Storage();
@@ -1168,11 +1189,27 @@ void Cell<HeldAs>::ApplyOverriddenWrite(const Owned& written) {
   Store(*shown);
 }
 
+// The write lands where the part lies, which leaves the whole value it made;
+// the cell takes that as any overridden write, from what it held before, so
+// what its waits are told is measured against that.
+template <class HeldAs>
+void CellRareState<HeldAs>::WritePart(OwnedCall write) {
+  HeldAs& held = cell_->Held();
+  const auto before =
+      value::SmallBox<Owned>::BuiltBy([&] { return held.AsOwned(); });
+  write();
+  const auto written =
+      value::SmallBox<Owned>::BuiltBy([&] { return held.AsOwned(); });
+  held.Assign(*before);
+  cell_->ApplyOverriddenWrite(*written);
+}
+
 template <class HeldAs>
 auto Cell<HeldAs>::BeginTakeover(
-    std::int64_t level, std::int64_t lsb, std::int64_t count) -> std::int64_t {
+    std::int64_t level, std::int64_t first, std::int64_t count)
+    -> std::int64_t {
   return std::int64_t{RareState().Takeovers().Begin(
-      TakeoverLevelOf(level), PositionsNamed(lsb, count, AllPositions()))};
+      TakeoverLevelOf(level), PositionsNamed(first, count))};
 }
 
 template <class HeldAs>
@@ -1226,7 +1263,7 @@ auto Cell<HeldAs>::RecordTakeover(
 
 template <class HeldAs>
 void Cell<HeldAs>::EndTakeover(
-    std::int64_t level, std::int64_t lsb, std::int64_t count) {
+    std::int64_t level, std::int64_t first, std::int64_t count) {
   // Ending a level nothing occupies is what a `release` on an untaken variable
   // does, and the language gives it no effect (LRM 10.6.2).
   const CellRareState<HeldAs>* rare = ExistingRareState();
@@ -1235,8 +1272,7 @@ void Cell<HeldAs>::EndTakeover(
   if (takeovers == nullptr) {
     return;
   }
-  takeovers->End(
-      TakeoverLevelOf(level), PositionsNamed(lsb, count, AllPositions()));
+  takeovers->End(TakeoverLevelOf(level), PositionsNamed(first, count));
   // A variable nothing lies beneath keeps what it has, which is the value the
   // ended takeover last gave it. Anything else -- a lower takeover, or a
   // continuous driver -- is reestablished and shows once its reevaluation runs
@@ -1246,6 +1282,14 @@ void Cell<HeldAs>::EndTakeover(
   }
   RuntimeEffects& runtime = current_runtime();
   runtime.Submit(runtime.Now(), Region::kActive, [this] { Reevaluate(); });
+}
+
+template <class HeldAs>
+auto Cell<HeldAs>::TakenOver() const -> bool {
+  const CellRareState<HeldAs>* rare = ExistingRareState();
+  const Takeovers<Owned>* takeovers =
+      rare == nullptr ? nullptr : rare->ExistingTakeovers();
+  return takeovers != nullptr && takeovers->Holds();
 }
 
 template <class HeldAs>

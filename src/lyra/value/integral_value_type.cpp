@@ -172,6 +172,22 @@ struct IntegralWitnesses {
     filled.StoreTo(out);
   };
 
+  // An integral value's positions are its bits.
+  static void TakePositions(
+      const ValueType& type, const void* into, const void* from,
+      const std::int64_t* first, const std::int64_t* count, void* out) {
+    Folded(
+        type, into, from, out,
+        [&](const IntegralView& o, const ConstIntegralView& a,
+            const ConstIntegralView& b) {
+          lyra::value::TakePositions(
+              o, a, b,
+              BitPositions{
+                  .lsb = static_cast<std::uint64_t>(*first),
+                  .width = static_cast<std::uint64_t>(*count)});
+        });
+  }
+
   // LRM 7.8.4: integral keys order by their numerical value at the type's
   // signedness.
   static auto OrderBefore(

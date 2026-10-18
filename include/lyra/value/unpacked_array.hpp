@@ -21,6 +21,7 @@
 #include "lyra/value/frame_bound.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/position.hpp"
+#include "lyra/value/positions.hpp"
 #include "lyra/value/queue.hpp"
 #include "lyra/value/small_box.hpp"
 
@@ -380,6 +381,28 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>, T> {
     UnpackedArray out;
     for (std::size_t i = 0; i < N; ++i) {
       out.Items()[i] = FilledAs(prototype.RawAt(i), fill);
+    }
+    return out;
+  }
+
+  // The positions a procedural continuous assignment may hold some of (LRM
+  // 10.6.2): each element's, the one at ordinal 0 first.
+  [[nodiscard]] static auto PositionCount() -> std::int64_t {
+    return static_cast<std::int64_t>(N) * PositionCountOf<T>();
+  }
+  [[nodiscard]] auto TakePositions(
+      const UnpackedArray& from, std::int64_t first, std::int64_t count) const
+      -> UnpackedArray {
+    const std::int64_t per_element = PositionCountOf<T>();
+    UnpackedArray out = *this;
+    for (std::size_t i = 0; i < N; ++i) {
+      const auto at = static_cast<std::int64_t>(i) * per_element;
+      const std::int64_t start = std::max(first, at);
+      const std::int64_t stop = std::min(first + count, at + per_element);
+      if (start < stop) {
+        out.Items()[i] =
+            PositionsTaken(RawAt(i), from.RawAt(i), start - at, stop - start);
+      }
     }
     return out;
   }

@@ -256,6 +256,15 @@ auto ApplyIntegralOperation(const Operands& to, const IntegralView& answer)
       detail::Copy(to.At(0).unknown, answer.unknown);
       WithSlice(answer, to.At(1), to.At(2));
       return {};
+    case IntegralOp::kTakePositions:
+      TakePositions(
+          answer, to.At(0), to.At(1),
+          BitPositions{
+              .lsb = static_cast<std::uint64_t>(
+                  to.template MachineAt<std::int64_t>(2)),
+              .width = static_cast<std::uint64_t>(
+                  to.template MachineAt<std::int64_t>(3))});
+      return {};
     case IntegralOp::kConvert:
       Convert(answer, to.At(0));
       return {};

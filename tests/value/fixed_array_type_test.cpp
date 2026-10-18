@@ -90,6 +90,9 @@ struct NothingAsked {
                                         const void*, void*) { Unused(); };
   static constexpr auto FilledLike = [](const ValueType&, const void*,
                                         const void*, void*) { Unused(); };
+  static constexpr auto TakePositions =
+      [](const ValueType&, const void*, const void*, const std::int64_t*,
+         const std::int64_t*, void*) { Unused(); };
   static constexpr auto OrderBefore = [](const ValueType&, const void*,
                                          const void*) -> bool { Unused(); };
   static constexpr auto IsTrue = [](const ValueType&, const void*) -> bool {

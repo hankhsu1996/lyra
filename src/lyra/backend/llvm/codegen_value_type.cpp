@@ -248,6 +248,9 @@ auto Witnesses() {
       WitnessOf(
           "filled_like", &ValueWitnessTable::filled_like,
           OwnOperationWitness{.answers = BuiltinFn::kFilledLike}),
+      WitnessOf(
+          "take_positions", &ValueWitnessTable::take_positions,
+          OwnOperationWitness{.answers = BuiltinFn::kTakePositions}),
       WitnessOf("order_before", &ValueWitnessTable::order_before, NeverAsked{}),
       WitnessOf("is_true", &ValueWitnessTable::is_true, NeverAsked{}),
       WitnessOf("reduce", &ValueWitnessTable::reduce, NeverAsked{}),

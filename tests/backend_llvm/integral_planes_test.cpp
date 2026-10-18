@@ -659,12 +659,15 @@ TEST(IntegralPlanesTest, EveryInlineOperationAnswersAsTheLibraryStatesIt) {
     EXPECT_GT(compared_here, 0U) << operation.name << " was never compared";
     compared += compared_here;
   }
-  // The operations whose work is long at every width, which are calls.
+  // The operations whose work is long at every width, which are calls, and
+  // the positions a procedural continuous assignment shows, which only a
+  // write it overrides asks for.
   EXPECT_EQ(
       without_arm,
       (std::set<std::string_view>{
           "pow", "count_bits", "clog2", "reverse_blocks", "from_text",
-          "read_canonical_bits", "read_canonical_logic", "from_sv_logic"}));
+          "read_canonical_bits", "read_canonical_logic", "from_sv_logic",
+          "take_positions"}));
   EXPECT_GT(compared, 100000U);
 }
 

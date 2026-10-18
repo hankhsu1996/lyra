@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -10,7 +11,9 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
 #include "lyra/runtime/observable.hpp"
+#include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/runtime/source_follower.hpp"
 #include "lyra/runtime/takeover.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/var.hpp"
@@ -78,10 +81,6 @@ auto BoundMembers::Forced(const ErasedReference& member) const -> bool {
   return at != members_.end() && at->second.driver != nullptr;
 }
 
-auto BoundMembers::NextGeneration(ErasedReference& member) -> std::int64_t {
-  return ++members_[&member].generation;
-}
-
 auto BoundMembers::Following(ErasedReference& member) const -> Followers {
   Followers followers{.naming = {&member}, .forced_below = {}};
   for (std::size_t next = 0; next < followers.naming.size(); ++next) {
@@ -102,17 +101,23 @@ auto BoundMembers::Following(ErasedReference& member) const -> Followers {
 void BoundMembers::Move(
     const Followers& followers, Observable* from,
     const ErasedReference& names) {
-  // A wait reached through one of the members follows it. One reached at the
-  // same storage by any other way stays, which is what keeps a force on a sink
-  // from being an occurrence for whoever watches its source.
+  // A wait reached through one of the members follows it, and so does what
+  // follows the driver of a member below that a force of its own covers. One
+  // reached at the same storage by any other way stays, which is what keeps a
+  // force on a sink from being an occurrence for whoever watches its source.
   if (from != nullptr) {
     // Each goes on watching, of what the member names now, the part it
     // watched of what the member named.
     Observable* to = names.ReportsTo();
+    const auto follows = [&](const ErasedReference* through) {
+      return std::ranges::find(followers.naming, through) !=
+                 followers.naming.end() ||
+             std::ranges::find(followers.forced_below, through) !=
+                 followers.forced_below.end();
+    };
     for (const Observable::Enrolled& enrolled : from->EveryEnrolled()) {
       WaitMembership& membership = *enrolled.membership;
-      if (std::ranges::find(followers.naming, membership.through) ==
-          followers.naming.end()) {
+      if (!follows(membership.through)) {
         continue;
       }
       const PartPath watched =
@@ -137,20 +142,24 @@ void BoundMembers::Move(
   }
 }
 
-void BoundMembers::Force(
-    ErasedReference& member, const ErasedReference& forced,
-    std::shared_ptr<void> storage) {
-  Member& state = members_[&member];
-  state.driver = std::make_unique<ErasedReference>(member);
-  state.forced = std::move(storage);
-  Move(Following(member), member.ReportsTo(), forced);
+auto BoundMembers::ForcedStorage(const ErasedReference& member)
+    -> std::shared_ptr<void>& {
+  return members_[&member].forced;
 }
 
-auto BoundMembers::StillForcing(
-    const ErasedReference& member, std::int64_t generation) const -> bool {
-  const auto at = members_.find(&member);
-  return at != members_.end() && at->second.driver != nullptr &&
-         at->second.generation == generation;
+void BoundMembers::Force(
+    ErasedReference& member, const ErasedReference& forced,
+    const std::function<OwnedCall(const ErasedReference& driver)>& follow) {
+  Member& state = members_[&member];
+  state.driver = std::make_unique<ErasedReference>(member);
+  Move(Following(member), member.ReportsTo(), forced);
+  // What drives the member is watched through its driver, so that a force on
+  // what is bound above it, which renames that driver, moves the watch too.
+  const ErasedReference& driver = *state.driver;
+  Trigger source(driver.ReportsTo(), Observation{}, {}, 0, 0);
+  source.through = &driver;
+  source.part = driver.part;
+  state.follower = std::make_unique<SourceFollower>(source, follow(driver));
 }
 
 auto BoundMembers::DriverOf(const ErasedReference& member) const
@@ -169,10 +178,9 @@ void BoundMembers::Release(ErasedReference& member) {
     return;
   }
   Member& state = at->second;
-  ++state.generation;
+  state.follower.reset();
   Move(Following(member), member.ReportsTo(), *state.driver);
   state.driver.reset();
-  state.forced.reset();
 }
 
 auto ForcedMember(const ErasedReference& reference, std::int64_t level)

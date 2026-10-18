@@ -126,9 +126,10 @@ scope.
     strength and keeps nothing, and whose positions no connection placed in a resolution another
     name reaches. Which kind a net is, is settled per net over the elaborated design, once every
     driver has attached and every connection has joined, and never where a unit is compiled. Under a
-    procedural continuous assignment the driver's contribution is kept beneath what the net shows,
-    and is what the net shows again once released (LRM 10.6.2). Where that one driver carries the
-    whole of a variable, another net, or a port declared as a variable, of the net's own type,
+    procedural continuous assignment the driver's writes land in its contribution, which the net
+    resolves under the assignment as any net does, so the positions it does not hold show the
+    driver's value and the rest show it once released (LRM 10.6.2). Where that one driver carries
+    the whole of a variable, another net, or a port declared as a variable, of the net's own type,
     unchanged, the contribution is that object's value, so the net shows the object where it lies, a
     wait on the net is a wait on the object, and nothing runs to carry it (LRM 23.3.3, 4.8). It
     shows its own undriven value until the driver's turn at time zero, so the first value is a
