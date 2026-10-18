@@ -47,6 +47,7 @@
 #include "lyra/runtime/open_write.hpp"
 #include "lyra/runtime/plusargs.hpp"
 #include "lyra/runtime/process_control.hpp"
+#include "lyra/runtime/property_wait.hpp"
 #include "lyra/runtime/random.hpp"
 #include "lyra/runtime/reaction.hpp"
 #include "lyra/runtime/read_report.hpp"
@@ -1967,6 +1968,8 @@ using lyra::runtime::ArrayAt;
 using lyra::runtime::ArrayTypeAt;
 using lyra::runtime::AssignDesignatedArraySlice;
 using lyra::runtime::AssignDesignatedSlice;
+using lyra::runtime::AttemptsOf;
+using lyra::runtime::BindPropertyEvaluation;
 using lyra::runtime::Bit16;
 using lyra::runtime::Bit32;
 using lyra::runtime::Bit64;
@@ -1997,6 +2000,7 @@ using lyra::runtime::DesignateArrayElement;
 using lyra::runtime::DesignateElement;
 using lyra::runtime::DesignationAt;
 using lyra::runtime::DiagnosticDispatcher;
+using lyra::runtime::DisablePropertyEvaluation;
 using lyra::runtime::DriveFromNet;
 using lyra::runtime::DriveFromReference;
 using lyra::runtime::DriveFromVariable;
@@ -2122,6 +2126,7 @@ using lyra::runtime::Wait;
 using lyra::runtime::WaitFork;
 using lyra::runtime::WaitOn;
 using lyra::runtime::WaitOnImplicitList;
+using lyra::runtime::WaitOnPropertyEvaluation;
 using lyra::runtime::WaitRecollecting;
 using lyra::runtime::WaitUntil;
 using lyra::runtime::WatchedPlace;
@@ -2638,14 +2643,15 @@ auto lyra_rt_vector_propagation_delay(
   return VectorPropagationDelay(changed_to.View(), rise, fall, turn_off);
 }
 
-void lyra_rt_timer_bind(
-    void* timer, void* closure, std::int64_t precision_power) {
-  static_cast<Timer*>(timer)->Bind(TakeClosure(closure), precision_power);
+void lyra_rt_timer_bind(void* timer, void* closure) {
+  static_cast<Timer*>(timer)->Bind(TakeClosure(closure));
 }
 
-void lyra_rt_timer_arm(void* timer, void* runtime, std::uint64_t ticks) {
+void lyra_rt_timer_arm(
+    void* timer, void* runtime, std::uint64_t ticks,
+    std::int64_t precision_power) {
   static_cast<Timer*>(timer)->Arm(
-      *static_cast<RuntimeEffects*>(runtime), ticks);
+      *static_cast<RuntimeEffects*>(runtime), ticks, precision_power);
 }
 
 // What crosses is the place's one word. For a place reached by itself that is
@@ -2714,6 +2720,28 @@ auto lyra_rt_wait_on(LyraSpan triggers, void* out) -> void* {
 auto lyra_rt_wait_on_implicit_list(const void* report, void* out) -> void* {
   return Emplace(
       out, WaitOnImplicitList(static_cast<const ReadReport*>(report)));
+}
+
+auto lyra_rt_wait_on_property_evaluation(
+    void* runtime, LyraSpan clock, LyraSpan disable_reads, std::uint64_t words,
+    void* out) -> void* {
+  return Emplace(
+      out, WaitOnPropertyEvaluation(
+               *static_cast<RuntimeEffects*>(runtime), TriggerHandles(clock),
+               TriggerHandles(disable_reads), words));
+}
+
+auto lyra_rt_attempts_of(void* wait) -> void* {
+  return AttemptsOf(static_cast<Wait*>(wait));
+}
+
+void lyra_rt_bind_property_evaluation(void* wait, void* step, void* test) {
+  BindPropertyEvaluation(
+      static_cast<Wait*>(wait), TakeClosure(step), TakeClosure(test));
+}
+
+void lyra_rt_disable_property_evaluation(void* wait) {
+  DisablePropertyEvaluation(static_cast<Wait*>(wait));
 }
 
 auto lyra_rt_park_at(void* runtime, void* wait) -> bool {
@@ -3864,6 +3892,10 @@ void lyra_rt_evaluation_attempts_seed_word(
   static_cast<EvaluationAttempts*>(attempts)->SeedWord(word, bits);
 }
 
+void lyra_rt_evaluation_attempts_open_attempt(void* attempts) {
+  static_cast<EvaluationAttempts*>(attempts)->OpenAttempt();
+}
+
 void lyra_rt_evaluation_attempts_begin_tick(void* attempts) {
   static_cast<EvaluationAttempts*>(attempts)->BeginTick();
 }
@@ -3907,6 +3939,10 @@ void lyra_rt_evaluation_attempts_seed(
 void lyra_rt_evaluation_attempts_settle(void* attempts, void* effects) {
   static_cast<EvaluationAttempts*>(attempts)->Settle(
       *static_cast<RuntimeEffects*>(effects));
+}
+
+auto lyra_rt_evaluation_attempts_answer(const void* attempts) -> std::uint64_t {
+  return static_cast<const EvaluationAttempts*>(attempts)->Answer();
 }
 
 // A procedural local whose value crosses a suspension. The cell is allocated in

@@ -6,11 +6,16 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
+#include "lyra/base/arena.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/expr.hpp"
+#include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/stmt.hpp"
 
@@ -29,6 +34,21 @@ template <ExprLowerer Lowerer>
 auto BuildEventWaitStmt(
     Lowerer& lowerer, WalkFrame frame, mir::Block& block,
     const hir::EventControl& ec) -> diag::Result<mir::Stmt>;
+
+// Whether a change to what an event control watches can decide on its own that
+// it was an event, which it can where everything the control evaluates only
+// reads storage; otherwise the waiting process decides (LRM 4.5, 4.7).
+[[nodiscard]] auto ChangeDecides(
+    const base::Arena<hir::Expr, hir::ExprId>& exprs,
+    const hir::EventControl& ec) -> bool;
+
+// The leaves an event control a change decides watches, each paired with the
+// observation of the trigger it belongs to, declared in the block `frame` is
+// writing: what a wait built from them enrols on.
+template <ExprLowerer Lowerer>
+auto BuildEventLeaves(
+    Lowerer& lowerer, const WalkFrame& frame, const hir::EventControl& ec)
+    -> diag::Result<std::vector<ObservedLeaf>>;
 
 auto BuildNamedEventWaitStmt(
     ProcessLowerer& process, WalkFrame frame, mir::Block& block,

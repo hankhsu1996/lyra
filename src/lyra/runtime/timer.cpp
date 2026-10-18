@@ -21,12 +21,12 @@ Timer::Timer() {
 
 Timer::~Timer() = default;
 
-void Timer::Bind(OwnedCall fire, std::int64_t precision_power) {
+void Timer::Bind(OwnedCall fire) {
   fire_ = std::move(fire);
-  precision_power_ = static_cast<std::int8_t>(precision_power);
 }
 
-void Timer::Arm(RuntimeEffects& effects, SimDuration ticks) {
+void Timer::Arm(
+    RuntimeEffects& effects, SimDuration ticks, std::int64_t precision_power) {
   place_.Unlink();
   // Armed by the drive it propagates, so it fires in that drive's region set.
   const RegionSet regions = AsRuntime(effects).RunningContext().regions;
@@ -38,7 +38,12 @@ void Timer::Arm(RuntimeEffects& effects, SimDuration ticks) {
           [&](AtTime due) {
             effects.Schedule(due.when, regions.active, *this);
           }},
-      DueAfter(effects, ticks, precision_power_));
+      DueAfter(effects, ticks, static_cast<std::int8_t>(precision_power)));
+}
+
+void Timer::ArmNow(RuntimeEffects& effects, Region region) {
+  place_.Unlink();
+  effects.Schedule(effects.Now(), region, *this);
 }
 
 void Timer::Fire() {

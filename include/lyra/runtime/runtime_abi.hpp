@@ -483,11 +483,12 @@ auto lyra_rt_vector_propagation_delay(
     -> std::uint64_t;
 
 // A delayed continuous assignment's timer (LRM 10.3.3): what it fires, bound
-// once with its scope's precision, and its one pending event, armed `ticks`
-// steps from now in place of the one before.
-void lyra_rt_timer_bind(
-    void* timer, void* closure, std::int64_t precision_power);
-void lyra_rt_timer_arm(void* timer, void* runtime, std::uint64_t ticks);
+// once, and its one pending event, armed `ticks` steps of a scope whose
+// precision is `precision_power` from now in place of the one before.
+void lyra_rt_timer_bind(void* timer, void* closure);
+void lyra_rt_timer_arm(
+    void* timer, void* runtime, std::uint64_t ticks,
+    std::int64_t precision_power);
 
 // Builds one leaf of a wait: the place it watches, what decides whether what
 // happens there is an event -- which the leaves watching for one event share --
@@ -543,6 +544,19 @@ auto lyra_rt_wait_until(LyraSpan reports, void* out) -> void*;
 // settled (LRM 9.2.2.2.1). An empty span means "never wake up".
 auto lyra_rt_wait_on(LyraSpan triggers, void* out) -> void*;
 auto lyra_rt_wait_on_implicit_list(const void* report, void* out) -> void*;
+
+// The wait an expect statement stops at (LRM 16.17): it watches `clock` and
+// `disable_reads` and holds the one attempt the statement began over position
+// sets `words` wide, which `attempts_of` answers and every
+// `evaluation_attempts` entry below acts on. `bind_property_evaluation` gives
+// it the tick and the disable test it runs, each a closure of the waiting body,
+// and `disable_property_evaluation` is the disable condition having held.
+auto lyra_rt_wait_on_property_evaluation(
+    void* runtime, LyraSpan clock, LyraSpan disable_reads, std::uint64_t words,
+    void* out) -> void*;
+auto lyra_rt_attempts_of(void* wait) -> void*;
+void lyra_rt_bind_property_evaluation(void* wait, void* step, void* test);
+void lyra_rt_disable_property_evaluation(void* wait);
 
 // Every wait above is built in storage the caller gives, and every stop is
 // this, at one of them, answering whether the caller must give up control.
@@ -1035,19 +1049,22 @@ auto lyra_rt_managedref_sampled_history_at(
 // values of the design, which is why one entry serves every assertion.
 //
 // `install` fixes how wide a position set is, what a pending attempt is owed
-// when the run ends, and the statements an outcome selects. A tick opens with
-// `begin_tick`, or with `disable_tick` where the disable condition held;
+// when the run ends, and the statements an outcome selects. `open_attempt`
+// opens an attempt on the staged seed. A tick opens with `begin_tick`, or with
+// `disable_tick` where the disable condition held;
 // `live_word` bounds the Boolean expressions the tick has to read, and
 // `next_unstepped` walks the evaluations it still owes a step, answering -1
 // when none is left. `bits_at`, `set_word` and `step` read one evaluation's
 // position set, replace it with its successor, and record what the tick left
 // it in; `seed_word` stages the set a new evaluation starts from and `seed`
-// opens one on it. `settle` answers every attempt the sweep resolved.
+// opens one on it. `settle` answers every attempt the sweep resolved, and
+// `answer` reads what the one attempt an expect statement holds came to.
 void lyra_rt_evaluation_attempts_install(
     void* attempts, void* effects, std::uint64_t words, bool pending_holds,
     void* pass_action, void* fail_action);
 void lyra_rt_evaluation_attempts_seed_word(
     void* attempts, std::uint64_t word, std::uint64_t bits);
+void lyra_rt_evaluation_attempts_open_attempt(void* attempts);
 void lyra_rt_evaluation_attempts_begin_tick(void* attempts);
 void lyra_rt_evaluation_attempts_disable_tick(void* attempts);
 auto lyra_rt_evaluation_attempts_live_word(
@@ -1063,6 +1080,7 @@ void lyra_rt_evaluation_attempts_step(
 void lyra_rt_evaluation_attempts_seed(
     void* attempts, std::int64_t index, bool this_tick);
 void lyra_rt_evaluation_attempts_settle(void* attempts, void* effects);
+auto lyra_rt_evaluation_attempts_answer(const void* attempts) -> std::uint64_t;
 
 // A value a body holds across a suspension (LRM 9.4) -- what a call it awaits
 // completes with. The cell lives in the running activation's store, so the

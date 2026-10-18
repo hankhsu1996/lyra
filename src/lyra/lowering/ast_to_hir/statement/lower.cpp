@@ -382,19 +382,7 @@ auto LowerStatement(
       if (!EvaluatedInSimulation(assertion, proc.Owner().AssertionPolicy())) {
         return LowerEmptyStmt(span);
       }
-      auto assertion_or =
-          LowerConcurrentAssertion(proc, frame, assertion, span);
-      if (!assertion_or) {
-        return std::unexpected(std::move(assertion_or.error()));
-      }
-      return std::visit(
-          [&](auto form) {
-            return hir::Stmt{
-                .label = std::nullopt,
-                .data = hir::StmtData{std::move(form)},
-                .span = span};
-          },
-          *std::move(assertion_or));
+      return LowerConcurrentAssertionStmt(proc, frame, assertion, span);
     }
 
     case slang::ast::StatementKind::ProceduralAssign:

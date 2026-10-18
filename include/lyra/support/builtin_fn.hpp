@@ -193,20 +193,22 @@ enum class BuiltinFn : std::uint16_t {
   kSampledHistoryPush,
   kSampledHistoryAt,
   // LRM 16.14.1 concurrent assertion evaluation, all reached through the
-  // storage that holds one assertion's attempts. `Install` fixes how wide a
+  // storage that holds one property's attempts. `Install` fixes how wide a
   // position set is, what a pending attempt is owed when the run ends, and the
-  // statements an outcome selects. `BeginTick` opens the attempt this tick
-  // starts and makes every live evaluation one the tick has not stepped;
-  // `DisableTick` is the same tick with the disable condition true, which
-  // discards every attempt and starts none (LRM 16.12). `LiveWord` bounds the
-  // Boolean expressions the tick has to read, `NextUnstepped` walks the
-  // evaluations the tick still owes a step, and `BitsAt` / `SetWord` / `Step`
-  // read a position set, replace it with its successor, and record what the
-  // tick left it in. `Seed` starts an evaluation of an implication's
-  // consequent in the attempt whose antecedent matched. `Settle` answers every
-  // attempt the sweep resolved and submits its statements to Reactive.
+  // statements an outcome selects. `OpenAttempt` opens an attempt on the staged
+  // seed, and `BeginTick` makes every live evaluation one the tick has not
+  // stepped; `DisableTick` is the tick with the disable condition true, which
+  // discards every attempt (LRM 16.12). `LiveWord` bounds the Boolean
+  // expressions the tick has to read, `NextUnstepped` walks the evaluations the
+  // tick still owes a step, and `BitsAt` / `SetWord` / `Step` read a position
+  // set, replace it with its successor, and record what the tick left it in.
+  // `Seed` starts an evaluation of an implication's consequent in the attempt
+  // whose antecedent matched. `Settle` answers every attempt the sweep
+  // resolved, submitting an installed assertion's statements to Reactive, and
+  // `Answer` reads what the one attempt an expect statement holds came to.
   kEvaluationAttemptsInstall,
   kEvaluationAttemptsSeedWord,
+  kEvaluationAttemptsOpenAttempt,
   kEvaluationAttemptsBeginTick,
   kEvaluationAttemptsDisableTick,
   kEvaluationAttemptsLiveWord,
@@ -216,10 +218,20 @@ enum class BuiltinFn : std::uint16_t {
   kEvaluationAttemptsStep,
   kEvaluationAttemptsSeed,
   kEvaluationAttemptsSettle,
+  kEvaluationAttemptsAnswer,
+  // LRM 16.17 the wait an expect statement stops at, which watches the clock
+  // and the disable condition and holds the one attempt the statement began;
+  // that attempt, reached through the wait; the tick and the disable test the
+  // wait runs, which are closures of the waiting body and so are handed to it
+  // once it exists; and the disable condition having held.
+  kWaitOnPropertyEvaluation,
+  kAttemptsOf,
+  kBindPropertyEvaluation,
+  kDisablePropertyEvaluation,
   // LRM 10.3.3 the timer a delayed continuous assignment propagates through.
-  // `Bind` names, once, what firing does and the precision its delays count
-  // in; `Arm` schedules the one event pending, some steps from now, in place of
-  // the one before.
+  // `Bind` names, once, what firing does; `Arm` schedules the one event
+  // pending, some steps of the scope's precision from now, in place of the one
+  // before.
   kTimerBind,
   kTimerArm,
   // LRM 20.9 / 21.3.4.3. 2-state packed types return false; downstream

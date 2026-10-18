@@ -380,6 +380,7 @@ void ForEachExpr(const StmtData& data, const auto& reach) {
           [&](const ConcurrentCoverStmt& s) {
             ReachPropertySpec(s.spec, reach);
           },
+          [&](const ExpectStmt& s) { ReachPropertySpec(s.spec, reach); },
           [&](const ForStmt& s) {
             for (const ExprId init : s.init) {
               operand(init);
@@ -475,6 +476,10 @@ void ForEachChildStmt(const StmtData& data, const auto& enter) {
             optional_child(s.fail_stmt);
           },
           [&](const ConcurrentCoverStmt& s) { optional_child(s.pass_stmt); },
+          [&](const ExpectStmt& s) {
+            optional_child(s.pass_stmt);
+            optional_child(s.fail_stmt);
+          },
           [&](const ForStmt& s) { enter(s.body); },
           [&](const ForeachStmt& s) { enter(s.body); },
           [&](const WhileStmt& s) { enter(s.body); },
@@ -686,6 +691,9 @@ auto KindOf(const StmtData& data) -> std::string_view {
           },
           [](const ConcurrentCoverStmt&) -> std::string_view {
             return "a concurrent cover";
+          },
+          [](const ExpectStmt&) -> std::string_view {
+            return "an expect statement";
           },
           [](const ForStmt&) -> std::string_view { return "a for statement"; },
           [](const ForeachStmt&) -> std::string_view {

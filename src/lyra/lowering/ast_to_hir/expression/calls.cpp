@@ -44,6 +44,7 @@
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/expression/virtual_interface.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/sampled_reads.hpp"
 #include "lyra/lowering/ast_to_hir/statement/timing.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
@@ -91,97 +92,17 @@ auto ClassifyMethodReceiver(
       .expr = frame.Exprs().Add(*std::move(receiver_or))};
 }
 
-// Whether a variable answers for a sampled value with its current value, which
-// an automatic variable does (LRM 16.5.1) -- and so does a `ref` formal that is
-// not `ref static`, being usable only where an automatic variable is (LRM
-// 13.5.2). A property of an object has a lifetime too, but it is the object's
-// rather than a call's, and the clause does not reach it.
-auto SampledAsCurrent(const slang::ast::ValueSymbol& symbol) -> bool {
-  const auto* var = symbol.as_if<slang::ast::VariableSymbol>();
-  return var != nullptr &&
-         symbol.kind != slang::ast::SymbolKind::ClassProperty &&
-         var->lifetime == slang::ast::VariableLifetime::Automatic &&
-         !var->flags.has(slang::ast::VariableFlags::RefStatic);
-}
-
-// How the variables a sampled value function's operand reads answer for it:
-// how many are cells this scope arms, and how many answer with what they hold
-// now.
-struct SampledOperandReads {
-  std::size_t armed = 0;
-  std::size_t current = 0;
-};
-
-// Records the cells a sampled value function's operand reads, so each is armed
-// to answer for one (LRM 16.5.1). The sampled value of an expression is
-// composed from the sampled values of the variables it reads, which makes those
-// variables exactly what has to answer -- and they are the same set an event
-// control watches, taken from the same analysis. A variable that answers with
-// its current value needs nothing armed.
-//
-// The set only ever has to cover them: a cell armed that nothing samples holds
-// a value nobody reads, while one left unarmed cannot answer at all. So a
-// coarser read set is safe here in a way it is not for a wake-up.
+// Arms what a sampled value function's operand reads, so it answers for one.
 template <typename Lowerer>
 auto RecordSampledCells(
     Lowerer& lowerer, const WalkFrame& frame,
     const slang::ast::CallExpression& call, diag::SourceSpan span)
-    -> diag::Result<SampledOperandReads> {
+    -> diag::Result<SampledReads> {
   if (call.arguments().empty()) {
     throw InternalError(
         "AST->HIR sampled value: no operand to take a sampled value of");
   }
-  auto& unit_lowerer = lowerer.Owner();
-  if (frame.reader_scope == nullptr) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm,
-        "a sampled value read outside a design element's scope is not yet "
-        "supported");
-  }
-  const auto& reads = unit_lowerer.Sensitivity().AnalyzeReads(
-      *call.arguments()[0], frame.reader_scope->asSymbol());
-  std::vector<AccessedPart> armed;
-  SampledOperandReads counted;
-  for (const AccessedPart& read : reads) {
-    const auto* var = read.symbol->as_if<slang::ast::VariableSymbol>();
-    if (var != nullptr &&
-        var->flags.has(slang::ast::VariableFlags::RefStatic)) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "a sampled value of a 'ref static' argument is not yet supported");
-    }
-    if (SampledAsCurrent(*read.symbol)) {
-      ++counted.current;
-      continue;
-    }
-    armed.push_back(read);
-  }
-  counted.armed = armed.size();
-  if (armed.empty()) return counted;
-  if (frame.current_structural_scope == nullptr) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm,
-        "a sampled value read outside a design element's scope is not yet "
-        "supported");
-  }
-  auto cells = unit_lowerer.CellsRead(armed, frame);
-  if (!cells) return std::unexpected(std::move(cells.error()));
-  // Every variable the operand reads has to be armed, so a read the translation
-  // could not name as a cell of this design leaves one that can never answer.
-  // The reachable case is a property of an object (LRM 8.4), which no scope
-  // holds a cell of.
-  if (cells->size() < armed.size()) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm,
-        "a sampled value of storage this design element does not hold is "
-        "not yet supported");
-  }
-  std::vector<hir::ValueTarget>& sampled =
-      frame.current_structural_scope->sampled_cells;
-  for (hir::ValueTarget& cell : *cells) {
-    sampled.push_back(std::move(cell));
-  }
-  return counted;
+  return ArmSampledReads(lowerer.Owner(), frame, *call.arguments()[0], span);
 }
 
 // What a value change function answers of a value that is the same at every

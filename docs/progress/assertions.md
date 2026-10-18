@@ -2,13 +2,16 @@
 
 Tracks the SystemVerilog assertion family: immediate and deferred immediate assertions (LRM 16.3,
 16.4), concurrent assertions and their sequences and properties (LRM 16.5-16.13), sampled value
-functions (LRM 16.9.3), the assertion control tasks (LRM 20.11), and checkers (LRM 17).
+functions (LRM 16.9.3), the expect statement (LRM 16.17), the assertion control tasks (LRM 20.11),
+and checkers (LRM 17).
 
 Each sub-step below says what of its form is checked. Because an assertion observes the design and
 never drives it, a run with every one of them removed behaves identically, so `--assertions skip`
 elides the whole family rather than rejecting it -- statements, declarations, checkers, and the
-control tasks alike. Sampled value functions are the one member that cannot cover: outside an
-assertion they produce a value ordinary logic consumes, so there is nothing to elide them to.
+control tasks alike. Two members are not removed with it. Sampled value functions, outside an
+assertion, produce a value ordinary logic consumes, so there is nothing to elide them to; and an
+expect statement is a wait its process stops at (LRM 16.17), so removing one changes when everything
+after it runs.
 
 One reporting rule is what a design meets first: an immediate cover's results are reported as one
 line per cover statement at the end of a run, on the same channel the design's own output uses --
@@ -180,6 +183,24 @@ The IDs are stable references and do not imply execution order beyond the depend
       on, off, or killing it by scope or by name -- so they need that state to exist first.
 - [ ] AS7 -- Checkers (LRM 17): checker declarations and instances, which package assertions with
       their own variables and procedural blocks and bind into a design.
+- [x] AS8 -- The expect statement (LRM 16.17), on both backends, wherever a wait may stand: in a
+      procedure, in a loop, in a task, and in a program. The process reaching it starts one
+      evaluation of the property at the next tick of its clock and waits; every occurrence of the
+      clock is a tick, two in one time step included, and each is evaluated in the Observed region
+      of the time step it happened in, whatever region set the process runs in, over the same
+      operator set AS5 carries, with a sequence read strongly (Annex F.3.4.3.1). Once the evaluation
+      succeeds or fails the process goes on after that Observed region, in the region its own set
+      runs woken work in, and runs the arm the answer selects first; with no else clause a failure
+      is the tool's own `$error`. The property reads an automatic variable and a `ref` formal at
+      their values in that Observed region (LRM 16.5.1), so a task's `ref` formal sees what the
+      nonblocking assignments of that time step wrote, and a program thread's automatic does not yet
+      see what that step's Reactive region writes. A `disable iff` condition true at any moment of
+      the evaluation, between ticks too, disables it, which is neither a success nor a failure, so
+      the process does not go on (LRM 16.12). A process stopped while it waits takes the evaluation
+      with it, and `--assertions skip` leaves an expect in place, since its process waits there.
+      Refused by name: a clocking event whose expression calls a function or reads through a handle,
+      since the wait decides each occurrence where it happens. The front end refuses an `always`
+      whose body is an expect as a procedure that cannot advance time.
 
 ## Blocked
 

@@ -118,6 +118,15 @@ auto ReportReads(
     const base::Arena<hir::Expr, hir::ExprId>& exprs,
     std::span<const hir::ExprId> evaluated) -> mir::Block&;
 
+// One trigger per leaf, as the machine array a wait is built on, built in
+// `target_block`. A leaf watching part of its cell names the part by the
+// select the source wrote, whose indices are constants and are lowered here;
+// `lowerer` is the lowering that owns those expressions.
+template <typename Lowerer>
+auto BuildTriggerArray(
+    mir::Block& target_block, const WalkFrame& frame, Lowerer& lowerer,
+    std::span<const ObservedLeaf> leaves) -> diag::Result<mir::ExprId>;
+
 // The wait on `leaves` and the stop at it: reaching a leaf is a candidacy, and
 // the leaf's observation says whether it is an event. The wait is built in
 // `storage_block`, which already declares the leaves' observations, and the
@@ -127,6 +136,14 @@ auto BuildWaitOnStmt(
     mir::Block& storage_block, mir::Block& stop_block, const WalkFrame& frame,
     Lowerer& lowerer, std::span<const ObservedLeaf> leaves)
     -> diag::Result<mir::Stmt>;
+
+// The leaves of a wait sensitive to the variables `sensitivity` names, where a
+// change to any of them is the event: being reached is the whole condition, so
+// they share one observation saying so, declared in `block`.
+[[nodiscard]] auto BuildValueChangeLeaves(
+    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::Block& block,
+    std::span<const hir::SensitivityEntry> sensitivity)
+    -> std::vector<ObservedLeaf>;
 
 // The wait of a construct the standard makes sensitive to the variables it
 // reads, where a change to any of them is the event (LRM 9.4.2.2, 10.3, 10.6).

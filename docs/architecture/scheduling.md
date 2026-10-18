@@ -144,7 +144,9 @@ value captured per change, and the delay a value takes among rise, fall and turn
 28.16, 10.3.3) is a function of the runtime, so a net's own delay can reach the same rule from
 inside the net. Where a delay of some steps is due -- the Inactive region of its region set now for
 none, that set's Active region at its deadline otherwise -- is one answer, shared with a process
-stopped at a delay.
+stopped at a delay. The wait an expect statement stops at holds two more, which queue each tick of
+its property into the Observed region of the time step it happened in and each change its disable
+condition reads into the Active region, and which ending the wait takes back with it (LRM 16.17).
 
 ## Region structure
 

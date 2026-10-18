@@ -2,20 +2,22 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <memory>
+#include <variant>
 #include <vector>
 
 #include "lyra/runtime/owned_call.hpp"
+#include "lyra/support/evaluation_outcome.hpp"
 
 namespace lyra::runtime {
 
 class RuntimeEffects;
 
-// Every evaluation attempt of one concurrent assertion that is still in flight
-// (LRM 16.14.1). An attempt begins at every tick of the assertion's clock and
-// carries its own result, so what is held here is a list of attempts and never
-// one merged state: two attempts that reach their answers at the same tick owe
-// two actions.
+// Every evaluation attempt of one property that is still in flight (LRM
+// 16.14.1, 16.17). A concurrent assertion begins an attempt at every tick of
+// its clock and each carries its own result, so what is held here is a list of
+// attempts and never one merged state: two attempts that reach their answers at
+// the same tick owe two actions. An expect statement begins one, and its
+// process waits for that one's answer.
 //
 // Inside an attempt is a list of evaluations, and those are never pooled
 // either. A sequence's operators are existential, so two paths through one that
@@ -59,13 +61,22 @@ class EvaluationAttempts {
       RuntimeEffects& effects, std::uint64_t words, bool pending_holds,
       OwnedCall pass_action, OwnedCall fail_action);
 
-  // Stages one word of the position set the next `BeginTick` or `Seed` starts
-  // an evaluation from. A seed is a constant of the automaton, so it is written
-  // a word at a time by whoever holds it rather than described here.
+  // Fixes how wide a position set is for the one attempt of an expect
+  // statement, whose process reads the answer itself (LRM 16.17): nothing runs
+  // when it settles and nothing is owed when the run ends, since a process
+  // still waiting then never goes on.
+  void Hold(std::uint64_t words);
+
+  // Stages one word of the position set the next `OpenAttempt` or `Seed`
+  // starts an evaluation from. A seed is a constant of the automaton, so it is
+  // written a word at a time by whoever holds it rather than described here.
   void SeedWord(std::uint64_t word, std::uint64_t bits);
 
-  // A tick of the clock: this tick's own attempt opens on the staged seed, and
-  // every evaluation still live becomes one this tick has not yet stepped.
+  // Opens an attempt on the staged seed, to be stepped first at the next tick.
+  void OpenAttempt();
+
+  // A tick of the clock: every evaluation still live becomes one this tick has
+  // not yet stepped.
   void BeginTick();
 
   // A tick at which the disable condition held. Every attempt is discarded and
@@ -101,18 +112,35 @@ class EvaluationAttempts {
   // at the tick after (LRM 16.12.7).
   void Seed(std::int64_t index, bool this_tick);
 
-  // Settles every attempt the sweep answered and submits its statements to the
-  // Reactive region (LRM 16.14.1): an attempt is false as soon as any
-  // evaluation of it failed, and true once every evaluation has left, which is
-  // one match for each thing it owed and nothing owed by an antecedent that
-  // never matched.
+  // Settles every attempt the sweep answered (LRM 16.14.1): an attempt is
+  // false as soon as any evaluation of it failed, and true once every
+  // evaluation has left, which is one match for each thing it owed and nothing
+  // owed by an antecedent that never matched. An installed assertion submits
+  // the statements the answer selects to the Reactive region; a held attempt
+  // keeps its answer for its process.
   void Settle(RuntimeEffects& effects);
+
+  // What a held attempt has come to, as a `support::AttemptAnswer`.
+  [[nodiscard]] auto Answer() const -> std::uint64_t;
 
   // The run is over, so no tick will settle what is left. Each attempt gets the
   // answer its statement demanded of a pending result.
   void SettleAtEndOfRun();
 
  private:
+  // What an answered attempt does. An installed assertion starts the
+  // statements its answer selects, lent to each submission: this storage is
+  // the design's, which outlives every region queue. A held attempt keeps its
+  // answer for the process waiting on it.
+  struct Installed {
+    OwnedCall pass_action;
+    OwnedCall fail_action;
+    bool pending_holds;
+  };
+  struct Held {
+    support::AttemptAnswer answer;
+  };
+
   struct Evaluation {
     std::size_t attempt = 0;
     bool stepped = false;
@@ -124,6 +152,7 @@ class EvaluationAttempts {
   };
 
   void RequireInstalled() const;
+  void Size(std::uint64_t words);
   void OpenEvaluation(std::size_t attempt, bool stepped);
   [[nodiscard]] auto EvaluationAt(std::int64_t index) -> Evaluation&;
   [[nodiscard]] auto WordSlot(std::int64_t index, std::uint64_t word) const
@@ -135,15 +164,11 @@ class EvaluationAttempts {
   std::vector<Evaluation> evaluations_;
   std::vector<Attempt> attempts_;
   std::vector<std::uint64_t> seed_;
-  // Each is kept and handed to a region again every time an attempt settles,
-  // so every submission shares it rather than one of them owning it.
-  std::shared_ptr<OwnedCall> pass_action_;
-  std::shared_ptr<OwnedCall> fail_action_;
+  std::variant<Installed, Held> answered_;
   std::size_t width_ = 0;
   // Every evaluation before it has been stepped this tick, which is what makes
   // the sweep a forward scan rather than a search.
   std::size_t cursor_ = 0;
-  bool pending_holds_ = true;
   bool installed_ = false;
 };
 

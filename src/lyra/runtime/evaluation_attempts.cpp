@@ -2,11 +2,12 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/support/evaluation_outcome.hpp"
@@ -16,18 +17,28 @@ namespace lyra::runtime {
 void EvaluationAttempts::Install(
     RuntimeEffects& effects, std::uint64_t words, bool pending_holds,
     OwnedCall pass_action, OwnedCall fail_action) {
+  Size(words);
+  answered_ = Installed{
+      .pass_action = std::move(pass_action),
+      .fail_action = std::move(fail_action),
+      .pending_holds = pending_holds};
+  effects.RegisterConcurrentAssertion(*this);
+}
+
+void EvaluationAttempts::Hold(std::uint64_t words) {
+  Size(words);
+  answered_ = Held{.answer = support::AttemptAnswer::kPending};
+}
+
+void EvaluationAttempts::Size(std::uint64_t words) {
   if (words == 0) {
     throw InternalError(
-        "EvaluationAttempts::Install: a property with no position to be live "
-        "at matches nothing the grammar admits (LRM 16.7)");
+        "EvaluationAttempts: a property with no position to be live at "
+        "matches nothing the grammar admits (LRM 16.7)");
   }
   width_ = static_cast<std::size_t>(words);
-  pending_holds_ = pending_holds;
-  pass_action_ = std::make_shared<OwnedCall>(std::move(pass_action));
-  fail_action_ = std::make_shared<OwnedCall>(std::move(fail_action));
   seed_.assign(width_, 0);
   installed_ = true;
-  effects.RegisterConcurrentAssertion(*this);
 }
 
 void EvaluationAttempts::SeedWord(std::uint64_t word, std::uint64_t bits) {
@@ -40,13 +51,17 @@ void EvaluationAttempts::SeedWord(std::uint64_t word, std::uint64_t bits) {
   seed_[static_cast<std::size_t>(word)] = bits;
 }
 
+void EvaluationAttempts::OpenAttempt() {
+  RequireInstalled();
+  attempts_.push_back(Attempt{});
+  OpenEvaluation(attempts_.size() - 1, false);
+}
+
 void EvaluationAttempts::BeginTick() {
   RequireInstalled();
   for (Evaluation& evaluation : evaluations_) {
     evaluation.stepped = false;
   }
-  attempts_.push_back(Attempt{});
-  OpenEvaluation(attempts_.size() - 1, false);
   cursor_ = 0;
 }
 
@@ -125,20 +140,29 @@ void EvaluationAttempts::Settle(RuntimeEffects& effects) {
 
   // An attempt that neither failed nor ran out of evaluations is still pending,
   // and keeps its place; the others are answered here and leave.
+  const auto answer = [&](support::AttemptAnswer answered,
+                          OwnedCall Installed::* selects) {
+    std::visit(
+        Overloaded{
+            [&](Installed& installed) {
+              effects.Submit(
+                  effects.Now(), Region::kReactive,
+                  [action = &(installed.*selects)] { (*action)(); });
+            },
+            [&](Held& held) { held.answer = answered; }},
+        answered_);
+  };
+
   constexpr auto kAnswered = static_cast<std::size_t>(-1);
   std::vector<std::size_t> renumbered(attempts_.size(), kAnswered);
   std::vector<Attempt> kept_attempts;
   for (std::size_t attempt = 0; attempt < attempts_.size(); ++attempt) {
     if (attempts_[attempt].failed) {
-      effects.Submit(effects.Now(), Region::kReactive, [action = fail_action_] {
-        (*action)();
-      });
+      answer(support::AttemptAnswer::kFails, &Installed::fail_action);
       continue;
     }
     if (live_evaluations[attempt] == 0) {
-      effects.Submit(effects.Now(), Region::kReactive, [action = pass_action_] {
-        (*action)();
-      });
+      answer(support::AttemptAnswer::kHolds, &Installed::pass_action);
       continue;
     }
     renumbered[attempt] = kept_attempts.size();
@@ -167,11 +191,28 @@ void EvaluationAttempts::Settle(RuntimeEffects& effects) {
   cursor_ = 0;
 }
 
+auto EvaluationAttempts::Answer() const -> std::uint64_t {
+  RequireInstalled();
+  const auto* held = std::get_if<Held>(&answered_);
+  if (held == nullptr) {
+    throw InternalError(
+        "EvaluationAttempts::Answer: an installed assertion starts the "
+        "statements its answers select, and has no answer to read");
+  }
+  return static_cast<std::uint64_t>(held->answer);
+}
+
 void EvaluationAttempts::SettleAtEndOfRun() {
   RequireInstalled();
-  const std::size_t answered = pending_holds_ ? attempts_.size() : 0;
+  auto* installed = std::get_if<Installed>(&answered_);
+  if (installed == nullptr) {
+    throw InternalError(
+        "EvaluationAttempts::SettleAtEndOfRun: a held attempt is never "
+        "registered for the end of the run");
+  }
+  const std::size_t answered = installed->pending_holds ? attempts_.size() : 0;
   for (std::size_t i = 0; i < answered; ++i) {
-    (*pass_action_)();
+    installed->pass_action();
   }
   words_.clear();
   evaluations_.clear();

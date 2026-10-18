@@ -605,12 +605,6 @@ auto WaitStorageBlock(
              : frame.bindings->RootBlock();
 }
 
-namespace {
-
-// One trigger per leaf, as the machine array a wait is built on, built in
-// `target_block`. A leaf watching part of its cell names the part by the
-// select the source wrote, whose indices are constants and are lowered here;
-// `lowerer` is the lowering that owns those expressions.
 template <typename Lowerer>
 auto BuildTriggerArray(
     mir::Block& target_block, const WalkFrame& frame, Lowerer& lowerer,
@@ -632,8 +626,6 @@ auto BuildTriggerArray(
           .type = triggers_type});
 }
 
-}  // namespace
-
 template <typename Lowerer>
 auto BuildWaitOnStmt(
     mir::Block& storage_block, mir::Block& stop_block, const WalkFrame& frame,
@@ -652,6 +644,20 @@ auto BuildWaitOnStmt(
   return BuildParkStmt(lowerer.Owner(), stop_block, wait);
 }
 
+auto BuildValueChangeLeaves(
+    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::Block& block,
+    std::span<const hir::SensitivityEntry> sensitivity)
+    -> std::vector<ObservedLeaf> {
+  const mir::LocalId observation = DeclareObservation(
+      unit, frame, block, support::BuiltinFn::kObservationOnReaching, {});
+  std::vector<ObservedLeaf> leaves;
+  leaves.reserve(sensitivity.size());
+  for (const hir::SensitivityEntry& entry : sensitivity) {
+    leaves.push_back(ObservedLeaf{.entry = entry, .observation = observation});
+  }
+  return leaves;
+}
+
 template <typename Lowerer>
 auto BuildValueChangeWaitStmt(
     mir::Block& stop_block, const WalkFrame& frame, Lowerer& lowerer,
@@ -659,14 +665,8 @@ auto BuildValueChangeWaitStmt(
     -> diag::Result<mir::Stmt> {
   mir::Block& storage_block = WaitStorageBlock(
       frame, stop_block, sensitivity_list, lowerer.HirExprs(), {});
-  const mir::LocalId observation = DeclareObservation(
-      lowerer.Owner().Unit(), frame, storage_block,
-      support::BuiltinFn::kObservationOnReaching, {});
-  std::vector<ObservedLeaf> leaves;
-  leaves.reserve(sensitivity_list.size());
-  for (const hir::SensitivityEntry& entry : sensitivity_list) {
-    leaves.push_back(ObservedLeaf{.entry = entry, .observation = observation});
-  }
+  const std::vector<ObservedLeaf> leaves = BuildValueChangeLeaves(
+      lowerer.Owner().Unit(), frame, storage_block, sensitivity_list);
   return BuildWaitOnStmt(storage_block, stop_block, frame, lowerer, leaves);
 }
 
@@ -716,6 +716,12 @@ template auto ReportReads(
 template auto ReportReads(
     const StructuralScopeLowerer&, const WalkFrame&, const hir::Reads&,
     mir::LocalId) -> diag::Result<void>;
+template auto BuildTriggerArray(
+    mir::Block&, const WalkFrame&, ProcessLowerer&,
+    std::span<const ObservedLeaf>) -> diag::Result<mir::ExprId>;
+template auto BuildTriggerArray(
+    mir::Block&, const WalkFrame&, const StructuralScopeLowerer&,
+    std::span<const ObservedLeaf>) -> diag::Result<mir::ExprId>;
 template auto BuildWaitOnStmt(
     mir::Block&, mir::Block&, const WalkFrame&, ProcessLowerer&,
     std::span<const ObservedLeaf>) -> diag::Result<mir::Stmt>;

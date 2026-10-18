@@ -16,6 +16,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
+#include "lyra/lowering/hir_to_mir/concurrent_assertion.hpp"
 #include "lyra/lowering/hir_to_mir/declared_variable.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
@@ -98,6 +99,9 @@ auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
                     stmt.span, diag::DiagCode::kUnsupportedStatementForm,
                     "a concurrent cover statement is not yet supported")
                     .WithNote("pass '--assertions skip' to leave it out"));
+          },
+          [&](const hir::ExpectStmt& e) {
+            return LowerExpectStmt(*this, frame, stmt.label, e, stmt.span);
           },
           [&](const hir::ForStmt& f) {
             return LowerForStmt(*this, frame, stmt.label, f);
