@@ -48,7 +48,7 @@ auto LowerHirDynamicCastExpr(
   const auto report_invalid = [&](mir::Block& into) {
     AppendToolReportStmt(
         owner, into, support::BuiltinFn::kEmitError,
-        "$cast: the assignment is invalid, so the destination is left "
+        "the $cast assignment is invalid, so the destination is left "
         "unchanged (LRM 6.24.2)",
         span);
   };

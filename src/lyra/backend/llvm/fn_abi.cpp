@@ -572,7 +572,7 @@ auto CallArranger::EntryOf(
           [&](const OverIntegralValues&) -> Named {
             return Unsupported(
                 std::format(
-                    "llvm codegen: the {} builtin is an operation over "
+                    "the {} builtin is an operation over "
                     "integral values and the library has no entry for it by "
                     "that name",
                     support::RuntimeEntryOf(target.fn).name));
@@ -580,7 +580,7 @@ auto CallArranger::EntryOf(
           [&](const NotRealized& unrealized) -> Named {
             return Unsupported(
                 std::format(
-                    "llvm codegen: the {} builtin {} and the library has no "
+                    "the {} builtin {} and the library has no "
                     "entry of that shape",
                     support::RuntimeEntryOf(target.fn).name, unrealized.shape));
           }},
@@ -621,7 +621,7 @@ auto CallArranger::ConstructionOf(
   const auto no_construct = [&]() -> Built {
     return Unsupported(
         std::format(
-            "llvm codegen: a value of type {} has no construct on this backend",
+            "a value of type {} has no construct on the llvm backend",
             types.Get(result).KindName()));
   };
   // An entry named by the representation of the value the construction is built
@@ -643,8 +643,8 @@ auto CallArranger::ConstructionOf(
     if (!types.Get(OperandType(call.args.at(0))).Is<lir::MachineFloatType>()) {
       return Unsupported(
           std::format(
-              "llvm codegen: building a {} from a host scalar has no entry on "
-              "this backend",
+              "building a {} from a host scalar has no entry on the llvm "
+              "backend",
               types.Get(result).KindName()));
     }
     auto domain = module_->DomainOf(result);

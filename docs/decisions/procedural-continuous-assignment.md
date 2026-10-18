@@ -118,8 +118,8 @@ A takeover looks like it must shadow the target: the displaced value has to come
 takeover ends, so a read has to ask which of the two is current. Two sentences of 10.6.1 remove it.
 An `assign` overrides _all_ procedural assignments, and after a `deassign` the variable keeps its
 current value rather than reverting. A procedural write made while a takeover is in effect is
-therefore never observable, at any later time, so there is nothing to preserve and nothing for a
-read to choose between.
+therefore never observable at the positions the takeover holds, at any later time, so there is
+nothing to preserve and nothing for a read to choose between.
 
 ## The decision
 
@@ -128,24 +128,40 @@ read to choose between.
    both outranking the target's ordinary value source. Installing at an occupied level replaces what
    is there, which is what the standard requires of a second `assign` and of a second `force`.
 
+   **A takeover holds positions of its target, not the target** (added 2026-10-17). A force may name
+   bits of a vector net (LRM 10.6.2), and a caller may ask for bits of a variable, whose meaning the
+   rules for a whole variable fix bit by bit
+   ([language_conformance](../architecture/language_conformance.md)). So the state on a target is
+   one record per takeover begun -- its level, the positions it still holds, the whole being all of
+   them, and the value its evaluation last produced -- and a position shows the value of the
+   takeover holding it at the highest level that has produced one. A takeover begun takes the
+   positions it names from whatever held them at its level, so a later force of overlapping bits
+   takes those from the earlier one, and a release ends the takeovers on the positions it names
+   alone. The value belongs to the takeover rather than to its level, so a takeover that has not yet
+   evaluated shows nowhere, and a position never shows a value no source gave it (LRM 4.3).
+   Verilator's runtime force list keeps the same thing, one entry per forced range with its own
+   right-hand-side value, trimmed by each force and release (`verilated_force.h`); it overlays the
+   entries where a forced signal is read, which D2 rules out here, so the overlay is made where a
+   write lands instead.
+
 2. **What a target shows is what its storage holds, so reads are untouched and the cost sits on the
-   write path.** What a level records under D4 is the value that level computed, never a copy of
-   anything it displaced.
+   write path.** What a takeover records under D4 is the value it computed, never a copy of anything
+   it displaced.
 
    **What happens to a displaced write differs between the two targets, because the standard makes
    it differ, and getting this backwards is the easy mistake.** A procedural write to a variable
-   under a takeover is discarded outright and is never observable, at any later time -- which is
-   what lets a released variable keep the value the takeover gave it instead of reverting. A net's
-   drivers, by contrast, go on updating their contributions the whole time it is forced; only the
-   resolved value the net shows is overridden. That is forced by 10.6.2's rule that a released net
-   is immediately assigned the value its drivers determine: a driver update discarded while the
-   force was in effect would leave the net unable to answer with anything current when the force
-   ends.
+   under a takeover is discarded at the positions the takeover holds and is never observable there,
+   at any later time -- which is what lets a released variable keep the value the takeover gave it
+   instead of reverting. A net's drivers, by contrast, go on updating their contributions the whole
+   time it is forced; only the resolved value the net shows is overridden. That is forced by
+   10.6.2's rule that a released net is immediately assigned the value its drivers determine: a
+   driver update discarded while the force was in effect would leave the net unable to answer with
+   anything current when the force ends.
 
 3. **The evaluation is an execution of no lineage, started where the statement runs, and it stops
    itself.** Its body is the evaluate-then-await loop a continuous assignment already uses. Nothing
    reaches in to end it: it carries the generation it started under, and stops as soon as the target
-   says that generation is no longer the one driving its level. Two things follow. The ending
+   says its level holds no position under that generation any longer. Two things follow. The ending
    statement needs no handle on it, so `deassign` and `release` are ordinary calls on the target
    like the rest. And the language makes a takeover no process of its own -- `disable fork` does not
    end a force, and `wait fork` does not wait for one -- so the execution belongs to no lineage and
@@ -154,11 +170,18 @@ read to choose between.
    **An evaluation whose source can never change ends after driving once**, because there is nothing
    left for it to do; F3 has why the alternative is a leak rather than a resting state.
 
-4. **Each level in effect records what it last evaluated to, including while a higher level covers
-   it.** So ending a level hands the target to the value the level beneath it already holds, and the
-   standard's "reestablish that assignment and schedule a reevaluation" is delivered with nothing
-   recomputed and nobody woken. A level goes on recording while covered because its own operands go
-   on changing, and what it would show has to be current at the instant the cover is removed.
+4. **Each takeover in effect records what it last evaluated to, including while a higher level
+   covers it.** So the standard's "reestablish that assignment" needs nothing recomputed: what lies
+   beneath an ended takeover already holds its current value. A takeover goes on recording while
+   covered because its own operands go on changing, and what it would show has to be current at the
+   instant the cover is removed.
+
+   **"Schedule a reevaluation" is an event, not the instant of the release** (revised 2026-10-17).
+   The positions a release leaves to something beneath it go on showing what they showed until a
+   reevaluation scheduled in the Active region runs, where a continuous assignment's update runs,
+   and only then take what lies beneath. So the process that released reads the forced value until
+   it yields, as the standard's wording has it. A takeover begun before the reevaluation runs is in
+   effect when it does, since the reevaluation shows whatever holds each position then.
 
 5. **Removal restores nothing on a variable and re-resolves a net.** The two targets differ here
    because the standard makes them differ, and they are already distinct capability types whose
@@ -170,9 +193,11 @@ read to choose between.
    to preserve" was derived from 10.6.1, which speaks of procedural writes. So the continuous driver
    is the level beneath both: while a takeover covers the variable, what its driver writes is kept
    beneath rather than discarded, starting from what the variable held when it was first covered,
-   and the end of the last takeover shows it. Nothing is recomputed and nobody is woken, as under
-   D4. The value beneath is part of the takeover's own state, so it exists only while something
-   covers the variable and no read consults it.
+   and every position a release leaves no takeover holding shows it once the reevaluation D4
+   schedules runs. Nothing is recomputed. The value beneath is part of the takeover's own state, so
+   it exists only while something covers the variable or that reevaluation is still to run, writes
+   arriving meanwhile land in it, and no read consults it. A variable nothing lies beneath keeps
+   what it has at once, since there is nothing to reestablish.
 
    Whether a variable is driven continuously is not a fact of its declaration: the driver may be in
    another unit, behind an output or a `ref` port. Each continuous driver states it to the storage

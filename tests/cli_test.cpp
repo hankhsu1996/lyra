@@ -375,13 +375,13 @@ TEST(LyraManifest, RefusesWhatAFileCannotDeclare) {
   static constexpr std::array<Refusal, 8> kRefusals = {
       {{.name = "unknown-key.toml",
         .body = "[design]\ntops = [\"a\"]\n",
-        .expected = "unrecognized key"},
+        .expected = "is not a recognized key"},
        {.name = "roots-in-the-library.toml",
         .body = "[library]\nname = \"a\"\ntop = [\"a\"]\n",
-        .expected = "[library] top: unrecognized key"},
+        .expected = "[library] top is not a recognized key"},
        {.name = "unknown-table.toml",
         .body = "[designs]\ntop = [\"a\"]\n",
-        .expected = "unrecognized table"},
+        .expected = "is not a recognized table"},
        {.name = "invocation-key.toml",
         .body = "[compile]\nrelease = true\n",
         .expected = "pass it on the command line"},
@@ -595,20 +595,20 @@ TEST(LyraManifest, RefusesADependencyThatIsNotOneLibrary) {
   };
   static constexpr std::array<Refusal, 8> kRefusals = {
       {{.dependencies = "prim = \"../prim\"\n",
-        .expected = "expected a table saying where the library is declared"},
+        .expected = "is not a table saying where the library is declared"},
        {.dependencies = "prim = { git = \"https://example.com/prim\" }\n",
-        .expected = "[dependencies.prim] git: unrecognized key"},
+        .expected = "[dependencies.prim] git is not a recognized key"},
        {.dependencies = "prim = {}\n",
         .expected = "a dependency has to say which directory declares it"},
        {.dependencies = "prim = { path = \"../nowhere\" }\n",
-        .expected = "[dependencies] prim: there is no"},
+        .expected = "which does not exist"},
        {.dependencies = "primitives = { path = \"../prim\" }\n",
         .expected = "declares library 'prim'"},
        {.dependencies =
             "prim = { path = \"../prim\" }\nbase = { path = \"../other\" }\n",
         .expected = "the build already holds a library of that name"},
        {.dependencies = "loop = { path = \"../loop\" }\n",
-        .expected = "a library cannot depend on itself (app -> loop -> app)"},
+        .expected = "makes a library depend on itself (app -> loop -> app)"},
        {.dependencies = "older = { path = \"../older\" }\n",
         .expected = "different language versions is not yet supported"}}};
 
@@ -700,10 +700,10 @@ TEST(LyraCommandLine, ATextCanTellItIsReadByLyra) {
 // there the standard itself says what happens: the last one met is the one the
 // library holds, with a warning (LRM 33.3.1).
 //
-// What the tolerance does not reach is text the front end could give no
-// meaning. That is refused at its place in Lyra's own words, beside what the
-// front end said of it, rather than ending the compile as a defect of the
-// compiler.
+// What the tolerance does not reach is text the front end builds nothing to
+// carry out for. Tolerating a text and being able to simulate it are separate,
+// so that is refused at its place in Lyra's own words, beside what the front
+// end said of it, rather than ending the compile as a defect of the compiler.
 TEST(LyraCommandLine, TextTheFrontEndRefusesIsRefusedUnlessToleranceIsAsked) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -821,7 +821,7 @@ TEST(LyraCommandLine, TextTheFrontEndRefusesIsRefusedUnlessToleranceIsAsked) {
     const std::string place =
         std::format("{}:6:{}: ", source, meaningless.column);
     const std::size_t refusal = refused.stderr_text.find(
-        place + "error: this expression cannot be simulated");
+        place + "error: the warning above lets this expression through");
     ASSERT_NE(refusal, std::string::npos)
         << source << ": " << refused.stderr_text;
     EXPECT_NE(
@@ -951,6 +951,215 @@ TEST(LyraRun, ATextTheFrontEndAcceptsRunsAsItAnalyzedIt) {
       << analyzed.stdout_text;
   EXPECT_NE(analyzed.stdout_text.find("[0][0   ]\n"), std::string::npos)
       << analyzed.stdout_text;
+}
+
+// A force on part of a variable is forbidden (LRM 10.6.2), and run when the
+// caller asks for it, as an extension whose meaning is the rules for forcing a
+// whole variable applied to each forced bit: a procedural write leaves
+// them as they are while the force is in effect, whatever else of the variable
+// it writes, at any width and by either kind of assignment; a release keeps
+// their value until the next procedural write, unless a continuous assignment
+// drives the variable, which is then shown again; a later force of the whole
+// replaces a force of a part, as a release of a part ends only that part of a
+// force of the whole; and the bits a force has not yet evaluated show what
+// they held, so a wait on them sees no change that did not happen (LRM 4.3).
+TEST(LyraRun, AForceOnPartOfAVariableHoldsOnlyThatPart) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  WriteFile(
+      *tmp_or / "part.sv",
+      "module Test;\n"
+      "  typedef struct packed { logic [3:0] next; logic we; } ctrl_t;\n"
+      "  typedef struct packed { ctrl_t [3:0] ctrl; } hwif_t;\n"
+      "  hwif_t h;\n"
+      "  logic [3:0] sel = 4'h0;\n"
+      "  always_comb begin\n"
+      "    h = '0;\n"
+      "    h.ctrl[1].next = sel;\n"
+      "  end\n"
+      "  for (genvar slot = 0; slot < 4; slot++) begin : g\n"
+      "    initial if (slot == 2) begin\n"
+      "      #1 force h.ctrl[slot].we = 1'b1;\n"
+      "      #4 release h.ctrl[slot].we;\n"
+      "    end\n"
+      "  end\n"
+      "\n"
+      "  logic [7:0] v = 8'h00;\n"
+      "  int seen = 0;\n"
+      "  always @(v[3]) seen++;\n"
+      "\n"
+      "  logic [7:0] c = 8'h00;\n"
+      "  int c5 = 0;\n"
+      "  always @(c[5]) c5++;\n"
+      "\n"
+      "  logic [99:0] w = '0;\n"
+      "\n"
+      "  logic [7:0] source = 8'h00;\n"
+      "  logic [7:0] driven;\n"
+      "  assign driven = source;\n"
+      "\n"
+      "  initial begin\n"
+      "    #2;\n"
+      "    if (h.ctrl[2].we !== 1'b1) $fatal(1, \"forced member read %b\", "
+      "h.ctrl[2].we);\n"
+      "    sel = 4'h3;\n"
+      "    #1;\n"
+      "    if (h.ctrl[2].we !== 1'b1 || h.ctrl[1].next !== 4'h3)\n"
+      "      $fatal(1, \"a write of the rest disturbed the forced member: "
+      "%h\", h);\n"
+      "    #3;\n"
+      "    if (h.ctrl[2].we !== 1'b1)\n"
+      "      $fatal(1, \"the released member did not keep its value: %h\", "
+      "h);\n"
+      "    sel = 4'h5;\n"
+      "    #1;\n"
+      "    if (h.ctrl[2].we !== 1'b0 || h.ctrl[1].next !== 4'h5)\n"
+      "      $fatal(1, \"the next write did not land on the released member: "
+      "%h\", h);\n"
+      "\n"
+      "    force v[3] = 1'b1;\n"
+      "    #1;\n"
+      "    if (v !== 8'h08 || seen !== 1) $fatal(1, \"forced bit %h %0d\", v, "
+      "seen);\n"
+      "    v = 8'hf0;\n"
+      "    #1;\n"
+      "    if (v !== 8'hf8 || seen !== 1)\n"
+      "      $fatal(1, \"a whole write moved the forced bit: %h %0d\", v, "
+      "seen);\n"
+      "    v[0] = 1'b1;\n"
+      "    #1;\n"
+      "    if (v !== 8'hf9) $fatal(1, \"a write of another bit read %h\", v);\n"
+      "    release v[3];\n"
+      "    #1;\n"
+      "    if (v !== 8'hf9) $fatal(1, \"a released bit did not keep its value: "
+      "%h\", v);\n"
+      "    v = 8'h00;\n"
+      "    #1;\n"
+      "    if (v !== 8'h00 || seen !== 2) $fatal(1, \"write after release %h "
+      "%0d\", v, seen);\n"
+      "\n"
+      "    force v = 8'hff;\n"
+      "    release v[0];\n"
+      "    v = 8'h00;\n"
+      "    #1;\n"
+      "    if (v !== 8'hfe) $fatal(1, \"release of part of a whole force read "
+      "%h\", v);\n"
+      "    release v;\n"
+      "    v = 8'h00;\n"
+      "    force v[0] = 1'b1;\n"
+      "    force v = 8'h0e;\n"
+      "    release v;\n"
+      "    v = 8'h00;\n"
+      "    #1;\n"
+      "    if (v !== 8'h00) $fatal(1, \"a whole force did not replace a part: "
+      "%h\", v);\n"
+      "\n"
+      "    force driven[7:4] = 4'ha;\n"
+      "    source = 8'hff;\n"
+      "    #1;\n"
+      "    if (driven !== 8'haf) $fatal(1, \"a driven variable read %h\", "
+      "driven);\n"
+      "    release driven[7:4];\n"
+      "    #1;\n"
+      "    if (driven !== 8'hff) $fatal(1, \"a release did not reestablish "
+      "%h\", driven);\n"
+      "\n"
+      "    force v = 8'hff;\n"
+      "    release v[3];\n"
+      "    v = 8'h00;\n"
+      "    #1;\n"
+      "    if (v !== 8'hf7) $fatal(1, \"a release inside a forced run read "
+      "%h\", v);\n"
+      "    release v;\n"
+      "    v <= 8'h0f;\n"
+      "    force v[7] = 1'b1;\n"
+      "    #1;\n"
+      "    if (v !== 8'h8f) $fatal(1, \"a nonblocking write read %h\", v);\n"
+      "    release v;\n"
+      "\n"
+      "    c = 8'h20;\n"
+      "    #1;\n"
+      "    force {c[3], c[5]} = 2'b11;\n"
+      "    #1;\n"
+      "    if (c !== 8'h28 || c5 !== 1)\n"
+      "      $fatal(1, \"a concatenation of two bits read %h after %0d "
+      "changes\", c, c5);\n"
+      "    release {c[3], c[5]};\n"
+      "\n"
+      "    force w[70] = 1'b0;\n"
+      "    w = '1;\n"
+      "    #1;\n"
+      "    if (w !== ~(100'b1 << 70)) $fatal(1, \"a wide whole write read "
+      "%h\", w);\n"
+      "    w[3] = 1'b0;\n"
+      "    #1;\n"
+      "    if (w !== ~((100'b1 << 70) | 100'b1000))\n"
+      "      $fatal(1, \"a wide part write read %h\", w);\n"
+      "    release w[70];\n"
+      "    w = '0;\n"
+      "    #1;\n"
+      "    if (w !== '0) $fatal(1, \"a write after a wide release read %h\", "
+      "w);\n"
+      "\n"
+      "    $display(\"All checks passed\");\n"
+      "  end\n"
+      "endmodule\n");
+  const auto strict = RunLyraFrom(lyra, *tmp_or, "check --top Test part.sv");
+  EXPECT_NE(strict.exit_code, 0) << "the default reading accepted it";
+
+  const auto forced = RunLyraFrom(
+      lyra, *tmp_or, "run --backend llvm --compat all --top Test part.sv");
+  ASSERT_EQ(forced.exit_code, 0) << forced.stderr_text;
+  EXPECT_NE(forced.stdout_text.find("All checks passed"), std::string::npos)
+      << forced.stdout_text;
+
+  const auto forced_cpp = RunLyraFrom(
+      lyra, *tmp_or, "run --backend cpp --compat all --top Test part.sv");
+  ASSERT_EQ(forced_cpp.exit_code, 0) << forced_cpp.stderr_text;
+  EXPECT_NE(forced_cpp.stdout_text.find("All checks passed"), std::string::npos)
+      << forced_cpp.stdout_text;
+
+  // An element of an unpacked array is a part whose neighbours a takeover
+  // would have to leave following their own writes, and it is refused.
+  WriteFile(
+      *tmp_or / "element.sv",
+      "module Test;\n"
+      "  logic [7:0] mem [4];\n"
+      "  initial force mem[1] = 8'haa;\n"
+      "endmodule\n");
+  const auto element = RunLyraFrom(
+      lyra, *tmp_or, "run --backend llvm --compat all --top Test element.sv");
+  EXPECT_NE(element.exit_code, 0) << element.stdout_text;
+  EXPECT_NE(
+      element.stderr_text.find(
+          "error: taking over an element or a member of an unpacked value is "
+          "not yet supported"),
+      std::string::npos)
+      << element.stderr_text;
+
+  // A target that is no net, variable or select of one is a force the front
+  // end builds nothing for even under the reading that takes bits of a
+  // variable, so it is refused where it is written rather than run.
+  WriteFile(
+      *tmp_or / "stream.sv",
+      "module Test;\n"
+      "  logic [3:0] b, c;\n"
+      "  initial begin\n"
+      "    force {>>{b, c}} = 8'h5a;\n"
+      "  end\n"
+      "endmodule\n");
+  const auto stream = RunLyraFrom(
+      lyra, *tmp_or, "run --backend llvm --compat all --top Test stream.sv");
+  EXPECT_NE(stream.exit_code, 0) << stream.stdout_text;
+  EXPECT_NE(
+      stream.stderr_text.find(
+          "error: the warning above lets this statement through, but it has "
+          "no behaviour to simulate"),
+      std::string::npos)
+      << stream.stderr_text;
 }
 
 // An interface port (LRM 23.3.3.4) and a `ref` port (LRM 23.3.3.2) may not be
@@ -1140,7 +1349,9 @@ TEST(LyraRun, ADesignErrorEndsTheRunThroughItsFinalProcedures) {
   const auto run = RunChildProcess(lyra, args, 120s);
   ASSERT_EQ(run.termination, TerminationKind::kExitedNonZero)
       << run.stdout_text << run.stderr_text;
-  EXPECT_NE(run.stderr_text.find("size operand is negative"), std::string::npos)
+  EXPECT_NE(
+      run.stderr_text.find("a dynamic array's new[] is negative"),
+      std::string::npos)
       << run.stderr_text;
   // The error has no call site to name, so it names the procedure it was
   // raised under: the `initial` that called the task.
@@ -2231,7 +2442,10 @@ TEST(LyraRun, AnErrorBelowAForeignCallerStopsWhereItEnteredTheDesign) {
     const auto run = RunChildProcess(lyra, args, 120s);
     EXPECT_EQ(run.termination, TerminationKind::kExitedNonZero)
         << run.stdout_text << run.stderr_text;
-    EXPECT_EQ(CountOccurrences(run.stderr_text, "size operand is negative"), 1U)
+    EXPECT_EQ(
+        CountOccurrences(
+            run.stderr_text, "a dynamic array's new[] is negative"),
+        1U)
         << run.stderr_text;
     EXPECT_EQ(
         run.stdout_text.find("the foreign caller caught something"),
@@ -2522,7 +2736,7 @@ TEST(LyraBuild, ACommandThatIsSoonOverShowsNoStatus) {
   EXPECT_NE(refused.exit_code, 0);
   EXPECT_NE(
       refused.stderr_text.find(
-          "--progress: 'loud' is not one of auto, plain, none"),
+          "--progress 'loud' is not one of auto, plain, none"),
       std::string::npos)
       << refused.stderr_text;
 }

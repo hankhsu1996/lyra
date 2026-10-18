@@ -111,6 +111,10 @@ constexpr std::array kEntries{
         DiagCodeInfo{
             .kind = DiagKind::kError,
             .name = "top_level_port_must_be_connected"}},
+    std::pair{
+        DiagCode::kErrorInvalidFrontendSemantics,
+        DiagCodeInfo{
+            .kind = DiagKind::kError, .name = "invalid_frontend_semantics"}},
 
     std::pair{
         DiagCode::kHostInvalidCliArgs,

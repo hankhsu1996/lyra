@@ -258,7 +258,7 @@ with a case of the corpus holding it, and is applied only until the named commit
 the suite declines is taken out again, and the case is then recorded as stopping where it does.
 
 A text the standard does not settle is not corrected, since its author is not wrong either, and
-neither is a forbidden text whose defect is the standard's
+neither is a forbidden text Lyra runs as an extension when asked
 ([`language_conformance.md`](../architecture/language_conformance.md) says when that is so), nor a
 forbidden text that is its author's where the front end has an option that reads it. The front end
 refuses each unless asked, so the design is built with that option, which is how someone who cannot

@@ -572,13 +572,15 @@ class PhysicalNet {
   // Puts these positions under a procedural continuous assignment and takes
   // them back out (LRM 10.6.2). What a force overrides is the drivers of the
   // physical net, so it shows under every name reaching these positions. A
-  // level is driven with a value, of which it keeps as many positions as
+  // takeover is driven with a value, of which it keeps as many positions as
   // resolve here.
-  auto BeginTakeover(support::TakeoverLevel level) -> std::uint32_t;
+  auto BeginTakeover(support::TakeoverLevel level, value::BitPositions held)
+      -> std::uint32_t;
   auto DriveTakeover(
       support::TakeoverLevel level, std::uint32_t generation,
       const value::ConstIntegralView& forced) -> bool;
-  auto EndTakeover(support::TakeoverLevel level) -> bool;
+  auto EndTakeover(support::TakeoverLevel level, value::BitPositions released)
+      -> bool;
 
  private:
   friend class NetName;
@@ -756,12 +758,11 @@ class ResolvedNet<T> : public ConnectableNet {
   // updated underneath and are what they answer with again once released.
   //
   // What is forced is the physical net, so the value shows under every name
-  // reaching those positions. A name covering only part of one has no way to
-  // say which part it meant, which is the same gap a force naming part of a
-  // target already has.
-  auto BeginTakeover(std::int64_t level) -> std::int64_t {
-    return std::int64_t{
-        WholePhysicalNet().BeginTakeover(TakeoverLevelOf(level))};
+  // reaching those positions.
+  auto BeginTakeover(std::int64_t level, std::int64_t lsb, std::int64_t count)
+      -> std::int64_t {
+    return std::int64_t{WholePhysicalNet().BeginTakeover(
+        TakeoverLevelOf(level), PositionsNamed(lsb, count, AllPositions()))};
   }
 
   auto DriveTakeover(
@@ -778,9 +779,11 @@ class ResolvedNet<T> : public ConnectableNet {
         level, generation, value::WideViewAt(bytes, count_, T::kDomain));
   }
 
-  void EndTakeover(std::int64_t level) {
+  void EndTakeover(std::int64_t level, std::int64_t lsb, std::int64_t count) {
     PhysicalNet& physical = WholePhysicalNet();
-    if (!physical.EndTakeover(TakeoverLevelOf(level))) {
+    if (!physical.EndTakeover(
+            TakeoverLevelOf(level),
+            PositionsNamed(lsb, count, AllPositions()))) {
       return;
     }
     RuntimeEffects& runtime = current_runtime();
@@ -961,6 +964,11 @@ class ResolvedNet<T> : public ConnectableNet {
     }
     physical.Reresolve(current_runtime());
     return true;
+  }
+
+  // Every position of this net.
+  [[nodiscard]] auto AllPositions() const -> value::BitPositions {
+    return {.lsb = 0, .width = count_};
   }
 
   // The physical net this name reaches, where it reaches one covering the whole
@@ -1248,39 +1256,36 @@ class ResolvedNet<T> : public Observable {
   // Puts the net under a procedural continuous assignment and takes it back
   // out (LRM 10.6.2). A `force` overrides every driver, so what it changes is
   // what the net shows, never the contributions, which are what the net
-  // answers with again once released.
-  auto BeginTakeover(std::int64_t level) -> std::int64_t {
+  // answers with again once released. A net of this kind holds an unpacked
+  // value, of which a force names no bits (LRM 10.6.2), so what a force names
+  // of it is always the whole.
+  auto BeginTakeover(std::int64_t level, std::int64_t lsb, std::int64_t count)
+      -> std::int64_t {
     if (takeovers_ == nullptr) {
       takeovers_ = std::make_unique<Takeovers<T>>();
     }
-    return std::int64_t{takeovers_->Begin(TakeoverLevelOf(level))};
+    return std::int64_t{takeovers_->Begin(
+        TakeoverLevelOf(level), PositionsNamed(lsb, count, kHeldWhole))};
   }
 
   auto DriveTakeover(
       std::int64_t level, std::int64_t generation, const T& value) -> bool {
-    return DriveTakeoverBy(
-        level, generation, [&](std::optional<T>& held) { held = value; });
+    return RecordTakeover(level, generation, value);
   }
 
-  // The same of a value handed as its bytes, laid out by the net's type, which
-  // the level takes into the value it has once it holds one.
+  // The same of a value handed as its bytes, laid out by the net's type.
   auto DriveTakeoverBytes(
       std::int64_t level, std::int64_t generation, const void* bytes) -> bool
     requires value::LaidOutByType<T>
   {
-    return DriveTakeoverBy(level, generation, [&](std::optional<T>& held) {
-      if (held.has_value()) {
-        held->AssignBytes(bytes);
-      } else {
-        held.emplace(held_.ToOwned(bytes));
-      }
-    });
+    return RecordTakeover(level, generation, held_.ToOwned(bytes));
   }
-  void EndTakeover(std::int64_t level) {
+  void EndTakeover(std::int64_t level, std::int64_t lsb, std::int64_t count) {
     if (takeovers_ == nullptr) {
       return;
     }
-    takeovers_->End(TakeoverLevelOf(level));
+    takeovers_->End(
+        TakeoverLevelOf(level), PositionsNamed(lsb, count, kHeldWhole));
     RuntimeEffects& runtime = current_runtime();
     if (Overridden()) {
       Reresolve(runtime);
@@ -1294,12 +1299,13 @@ class ResolvedNet<T> : public Observable {
       // that driver produced meanwhile (LRM 10.6.2), where an override ever
       // gave a value at all.
       case NetDecision::kOneDriver:
-        takeovers_->TakeBeneath([&](const T& kept) {
+        if (const T* kept = takeovers_->Beneath()) {
           ShowDriverValue(
               runtime, *this, held_.Get(),
-              [&] { return held_.IsBitIdentical(kept); },
-              [&] { held_.Assign(kept); });
-        });
+              [&] { return held_.IsBitIdentical(*kept); },
+              [&] { held_.Assign(*kept); });
+        }
+        takeovers_->DropBeneath();
         return;
       // The object its driver carries is what such a net shows once nothing
       // covers it, from the driver's turn on; before that it shows what an
@@ -1322,17 +1328,17 @@ class ResolvedNet<T> : public Observable {
  private:
   friend class Driver<T>;
 
-  // Has the takeover at `level` record what it evaluated to, through `record`,
-  // and shows whatever the highest level in effect then holds.
-  template <class Record>
-  auto DriveTakeoverBy(
-      std::int64_t level, std::int64_t generation, Record record) -> bool {
+  // Has the takeover at `level` record what it evaluated to, and shows
+  // whatever the highest level in effect then holds.
+  auto RecordTakeover(
+      std::int64_t level, std::int64_t generation, const T& evaluated) -> bool {
     if (takeovers_ == nullptr) {
       return false;
     }
     const bool was_covered = Overridden();
     if (!takeovers_->Drive(
-            TakeoverLevelOf(level), TakeoverGenerationOf(generation), record)) {
+            TakeoverLevelOf(level), TakeoverGenerationOf(generation),
+            evaluated)) {
       return false;
     }
     // The first override to cover a net one driver decides finds in it what
@@ -1409,12 +1415,14 @@ class ResolvedNet<T> : public Observable {
   // contribution (LRM 6.6.4), and a takeover displaces what the net shows and
   // not what it holds (LRM 10.6.2).
   void Reresolve(RuntimeEffects& runtime) {
-    const value::SmallBox<T> resolved = Resolve();
+    value::SmallBox<T> resolved = Resolve();
     if (own_kind_ == OwnContribution::kRetained) {
       own_.value = *resolved;
     }
-    const T* forced = takeovers_ == nullptr ? nullptr : takeovers_->Highest();
-    PublishIfChanged(runtime, forced == nullptr ? *resolved : *forced);
+    if (takeovers_ != nullptr) {
+      takeovers_->Overlay(*resolved);
+    }
+    PublishIfChanged(runtime, *resolved);
   }
 
   // What decides this net, settled the first time it is asked. No connection
@@ -1451,7 +1459,7 @@ class ResolvedNet<T> : public Observable {
   // Whether a procedural continuous assignment in force covers the net (LRM
   // 10.6.2).
   [[nodiscard]] auto Overridden() const -> bool {
-    return takeovers_ != nullptr && takeovers_->Highest() != nullptr;
+    return takeovers_ != nullptr && takeovers_->Shows();
   }
 
   // Where a write of the driver `index` names lands.
@@ -1728,23 +1736,8 @@ class Driver {
   }
 
   // The `MutationSink` surface, each answer read off where this driver's
-  // writes land.
-  [[nodiscard]] auto AdmitsWrite() const -> bool {
-    return std::visit(
-        Overloaded{
-            [](const Contributing<T>&) { return true; },
-            [](const Showing<T>&) { return true; },
-            [](const KeptBeneath<T>&) { return false; }},
-        Landing());
-  }
-  [[nodiscard]] auto DisplacedStorage() const -> T* {
-    return std::visit(
-        Overloaded{
-            [](const Contributing<T>&) -> T* { return nullptr; },
-            [](const Showing<T>&) -> T* { return nullptr; },
-            [](const KeptBeneath<T>& to) -> T* { return to.kept; }},
-        Landing());
-  }
+  // writes land. A driver's write is never overridden: under an override it
+  // lands in what the net keeps beneath it, which nothing watches.
   [[nodiscard]] auto MutationStorage() const -> T&
     requires(!DynamicallySized<T>)
   {

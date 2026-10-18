@@ -36,6 +36,11 @@ enum class DiagCode : std::uint32_t {
   kUnsupportedAssignmentPatternText,
 
   kErrorTopLevelPortMustBeConnected,
+  // The front end accepted the text, a diagnostic it gives having been
+  // relaxed, and built nothing there to carry out. Which deviations are
+  // tolerated and what can be simulated are separate questions, so this is an
+  // error and never a gap the compiler has left.
+  kErrorInvalidFrontendSemantics,
 
   kHostInvalidCliArgs,
   kHostInvalidManifest,

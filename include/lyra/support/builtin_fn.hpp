@@ -431,10 +431,12 @@ enum class BuiltinFn : std::uint16_t {
   kNetJoin,
   // Putting a variable or a net, reached through its cell or a reference naming
   // it, under a procedural continuous assignment and taking it back out (LRM
-  // 10.6). Beginning one answers with the generation its evaluation
-  // carries; driving states what that evaluation produced and answers whether
-  // it is still the one in effect, which is how an evaluation superseded by a
-  // later takeover, or ended by a `deassign` or `release`, learns to stop.
+  // 10.6), over the bits a least significant one and a count name, or all of
+  // it where the count is zero. Beginning one answers with the generation its
+  // evaluation carries; driving states what that evaluation produced, as a
+  // value of what the target holds, and answers whether it still holds any
+  // bits, which is how an evaluation superseded by a later takeover, or ended
+  // by a `deassign` or `release`, learns to stop.
   kBeginTakeover,
   kDriveTakeover,
   kEndTakeover,

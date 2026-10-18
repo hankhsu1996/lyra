@@ -241,8 +241,8 @@ auto LowerFileReadCall(
     if (call.arguments.size() != 2) {
       return diag::Fail(
           diag::DiagCode::kUnsupportedSubroutineArgument,
-          "$fread: the integral form takes no start / count arguments (LRM "
-          "21.3.4.4 ignores them)");
+          "$fread into an integral variable takes no start or count "
+          "arguments (LRM 21.3.4.4 ignores them)");
     }
   } else if (!unit_lowerer.Hir().types.Get(memory->element_type).IsIntegral()) {
     return diag::Fail(

@@ -395,16 +395,16 @@ auto LowerExprImpl(
           span, diag::DiagCode::kUnsupportedExpressionForm,
           "a clocking event in an expression is not yet supported");
 
-    // The front end reports some departures from the standard as warnings and
-    // goes on, and where it could give the text no meaning it leaves this in
-    // its place. Its own diagnostic says what the text was. The placeholder
+    // The front end goes on past a diagnostic it was asked to relax, and where
+    // it built no expression to carry out it leaves this in its place. Its own
+    // diagnostic, unless silenced, says what the text was. The placeholder
     // covers no text, so the refusal names no place; the statement holding it
     // does.
     case slang::ast::ExpressionKind::Invalid:
       return diag::Fail(
-          diag::DiagCode::kUnsupportedExpressionForm,
-          "this expression cannot be simulated: the front end could give it no "
-          "meaning");
+          diag::DiagCode::kErrorInvalidFrontendSemantics,
+          "the warning above lets this expression through, but it has no "
+          "behaviour to simulate");
   }
   throw InternalError("LowerExpr: unknown slang ExpressionKind");
 }

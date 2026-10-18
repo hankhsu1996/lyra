@@ -15,7 +15,8 @@ namespace lyra::support {
 // Not a dispatch set: it is an ordered scale, and what reads it compares
 // position -- which level outranks which -- rather than naming a member. Its
 // values are contiguous from zero and the count below bounds them, so a target
-// holds one slot per level and answers with the highest occupied one.
+// keeps its takeovers by level and each of its positions shows the highest
+// level holding it.
 enum class TakeoverLevel : std::uint8_t {
   kAssign,
   kForce,

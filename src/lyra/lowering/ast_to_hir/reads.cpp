@@ -497,7 +497,7 @@ auto ReadsOfProcedure(
         span, diag::DiagCode::kUnsupportedStatementForm,
         std::format(
             "an always_comb or always_latch reading this is not yet "
-            "supported: {}",
+            "supported, because {}",
             *reads->unreportable));
   }
   auto added = AddAccesses(

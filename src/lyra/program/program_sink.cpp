@@ -1968,8 +1968,7 @@ auto CheckAgainstRuntime(const backend::llvm_backend::EmittedModule& module)
     return diag::Fail(
         diag::DiagCode::kUnsupportedExpressionForm,
         std::format(
-            "llvm codegen: the runtime library publishes no entry named {}",
-            unpublished));
+            "the runtime library publishes no entry named {}", unpublished));
   }
   // Two sides of the ABI disagreeing is this compiler's own defect, and it is
   // caught here because it is the one place both are visible. Left to run, a
@@ -2055,9 +2054,10 @@ auto ArtifactOf(const driver::ActionResult& object)
   const std::uintmax_t bytes = std::filesystem::file_size(object.path, ec);
   if (ec) {
     return diag::Fail(
-        diag::DiagCode::kHostIoError, std::format(
-                                          "failed to read the size of '{}': {}",
-                                          object.path.string(), ec.message()));
+        diag::DiagCode::kHostIoError,
+        std::format(
+            "failed to read the size of '{}' ({})", object.path.string(),
+            ec.message()));
   }
   return support::Artifact{
       .kind = support::ArtifactKind::kObject,

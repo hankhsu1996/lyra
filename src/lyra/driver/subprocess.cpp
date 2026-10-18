@@ -126,7 +126,7 @@ auto Spawn(
   ::posix_spawnattr_destroy(&attributes);
   if (!child) {
     return std::unexpected(
-        std::format("failed to spawn '{}': {}", exe, std::strerror(refused)));
+        std::format("failed to spawn '{}' ({})", exe, std::strerror(refused)));
   }
   return *child;
 }
@@ -138,13 +138,13 @@ auto SpawnCaptured(
   std::array<int, 2> err_pipe{};
   if (pipe(out_pipe.data()) != 0) {
     return std::unexpected(
-        std::format("failed to create pipe: {}", std::strerror(errno)));
+        std::format("failed to create pipe ({})", std::strerror(errno)));
   }
   if (pipe(err_pipe.data()) != 0) {
     close(out_pipe[0]);
     close(out_pipe[1]);
     return std::unexpected(
-        std::format("failed to create pipe: {}", std::strerror(errno)));
+        std::format("failed to create pipe ({})", std::strerror(errno)));
   }
 
   posix_spawn_file_actions_t actions{};
@@ -200,7 +200,7 @@ auto Reap(pid_t pid) -> std::expected<Reaped, std::string> {
   while (wait4(pid, &status, 0, &usage) < 0) {
     if (errno != EINTR) {
       return std::unexpected(
-          std::format("wait4 failed: {}", std::strerror(errno)));
+          std::format("wait4 failed ({})", std::strerror(errno)));
     }
   }
   ChildReaped(pid);
@@ -261,7 +261,7 @@ auto RunProcesses(
         continue;
       }
       return std::unexpected(
-          std::format("poll failed: {}", std::strerror(errno)));
+          std::format("poll failed ({})", std::strerror(errno)));
     }
 
     std::array<char, 4096> buffer{};

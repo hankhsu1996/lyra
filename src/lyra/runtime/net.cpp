@@ -117,8 +117,7 @@ auto NetName::OnlyOwnDriversContribute() const -> bool {
 auto NetName::Overridden() const -> bool {
   return std::ranges::any_of(reaches_, [](const NetReach& reach) {
     const PhysicalNet& physical = *reach.physical;
-    return physical.takeovers_ != nullptr &&
-           physical.takeovers_->Highest() != nullptr;
+    return physical.takeovers_ != nullptr && physical.takeovers_->Shows();
   });
 }
 
@@ -187,41 +186,39 @@ void PhysicalNet::Reresolve(RuntimeEffects& runtime) {
   if (own_kind_ == OwnContribution::kRetained) {
     own_.value = next;
   }
-  const NetPositions* forced =
-      takeovers_ == nullptr ? nullptr : takeovers_->Highest();
-  if (forced != nullptr) {
-    next = *forced;
+  if (takeovers_ != nullptr) {
+    takeovers_->Overlay(next);
   }
   for (const NetPlacement& placement : placements_) {
     placement.net->ShowPositions(runtime, placement.net_offset, next);
   }
 }
 
-auto PhysicalNet::BeginTakeover(support::TakeoverLevel level) -> std::uint32_t {
+auto PhysicalNet::BeginTakeover(
+    support::TakeoverLevel level, value::BitPositions held) -> std::uint32_t {
   if (takeovers_ == nullptr) {
     takeovers_ = std::make_unique<Takeovers<NetPositions>>();
   }
-  return takeovers_->Begin(level);
+  return takeovers_->Begin(level, held);
 }
 
 auto PhysicalNet::DriveTakeover(
     support::TakeoverLevel level, std::uint32_t generation,
     const value::ConstIntegralView& forced) -> bool {
-  return takeovers_ != nullptr &&
-         takeovers_->Drive(
-             level, generation, [&](std::optional<NetPositions>& held) {
-               if (!held.has_value()) {
-                 held.emplace(Count(), value::FourStateBit::kHighImpedance);
-               }
-               value::Extract(held->MutableView(), forced, 0);
-             });
-}
-
-auto PhysicalNet::EndTakeover(support::TakeoverLevel level) -> bool {
   if (takeovers_ == nullptr) {
     return false;
   }
-  takeovers_->End(level);
+  NetPositions evaluated(Count(), value::FourStateBit::kHighImpedance);
+  value::Extract(evaluated.MutableView(), forced, 0);
+  return takeovers_->Drive(level, generation, evaluated);
+}
+
+auto PhysicalNet::EndTakeover(
+    support::TakeoverLevel level, value::BitPositions released) -> bool {
+  if (takeovers_ == nullptr) {
+    return false;
+  }
+  takeovers_->End(level, released);
   return true;
 }
 

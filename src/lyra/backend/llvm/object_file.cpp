@@ -114,7 +114,7 @@ auto WriteObjectFile(
     return diag::Fail(
         diag::DiagCode::kHostIoError,
         std::format(
-            "failed to open '{}' for writing: {}", path, opened.message()));
+            "failed to open '{}' for writing ({})", path, opened.message()));
   }
   llvm::legacy::PassManager passes;
   if (machine->addPassesToEmitFile(
@@ -133,7 +133,7 @@ auto WriteObjectFile(
     out.clear_error();
     return diag::Fail(
         diag::DiagCode::kHostIoError,
-        std::format("failed to write '{}': {}", path, failed.message()));
+        std::format("failed to write '{}' ({})", path, failed.message()));
   }
   return {};
 }

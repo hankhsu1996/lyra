@@ -2049,7 +2049,7 @@ auto FunctionLowerer::ReferencePlace(
           [&](const mir::LocalRef& ref) -> diag::Result<lir::Place> {
             const std::optional<LocalBinding>& binding = locals_[ref.var.value];
             if (!binding.has_value()) {
-              return Unsupported("mir_to_lir: reference to an unlowered local");
+              return Unsupported("reference to an unlowered local");
             }
             return std::visit(
                 Overloaded{
@@ -2160,17 +2160,16 @@ auto FunctionLowerer::ReferencePlace(
           // A member table, a constant value and a function are values the
           // unit holds, not storage anything writes through.
           [](const mir::EnumTableRef&) -> diag::Result<lir::Place> {
-            return Unsupported(
-                "mir_to_lir: an enumeration's member table names no place");
+            return Unsupported("an enumeration's member table names no place");
           },
           [](const mir::IntegralConstantRef&) -> diag::Result<lir::Place> {
-            return Unsupported("mir_to_lir: a constant names no place");
+            return Unsupported("a constant names no place");
           },
           [](const mir::FunctionRef&) -> diag::Result<lir::Place> {
-            return Unsupported("mir_to_lir: a function names no place");
+            return Unsupported("a function names no place");
           },
           [](const mir::ExternalObjectEntryRef&) -> diag::Result<lir::Place> {
-            return Unsupported("mir_to_lir: a function names no place");
+            return Unsupported("a function names no place");
           }},
       target);
 }
@@ -2181,7 +2180,7 @@ auto FunctionLowerer::LowerPlace(
   const mir::Expr& expr = block.exprs.Get(id);
   const auto names_no_place =
       [](std::string_view form) -> diag::Result<lir::Place> {
-    return Unsupported(std::format("mir_to_lir: {} names no place", form));
+    return Unsupported(std::format("{} names no place", form));
   };
   return std::visit(
       Overloaded{
@@ -2286,7 +2285,7 @@ auto FunctionLowerer::LowerRead(const mir::Block& block, mir::ExprId place)
   const lir::TypeId type = unit_->TranslateType(block.exprs.Get(place).type);
   if (unit_->Types().Get(type).IsAddressOnly()) {
     return Unsupported(
-        "mir_to_lir: a storage cell has no value to read; it is reached "
+        "a storage cell has no value to read; it is reached "
         "through its address");
   }
   auto named = LowerPlace(block, place, Reach::kRead);
@@ -2452,8 +2451,7 @@ auto FunctionLowerer::InitializeAllocated(
   const auto* construction = std::get_if<mir::CallExpr>(&initializer.data);
   if (construction == nullptr ||
       !std::holds_alternative<mir::Construct>(construction->callee)) {
-    return Unsupported(
-        "mir_to_lir: an object is initialized only by its constructor");
+    return Unsupported("an object is initialized only by its constructor");
   }
   std::vector<lir::Operand> arguments;
   arguments.reserve(construction->arguments.size());
@@ -2840,7 +2838,7 @@ auto FunctionLowerer::LowerCoroutineAwait(
   const auto* direct = std::get_if<mir::CallExpr>(&execution.data);
   if (direct == nullptr && completion_slot.has_value()) {
     return Unsupported(
-        "mir_to_lir: an awaited execution that completes with a value must be "
+        "an awaited execution that completes with a value must be "
         "a call, so that the place to complete into can be handed to it");
   }
   auto activation =

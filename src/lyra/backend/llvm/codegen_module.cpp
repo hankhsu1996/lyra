@@ -407,8 +407,8 @@ auto CodeGenModule::EndOwnedStorage(
   if (pointed.Is<lir::ObjectType>() || pointed.Is<lir::CrossUnitClassType>()) {
     return diag::Fail(
         diag::DiagCode::kUnsupportedExpressionForm,
-        "llvm codegen: ending an object a unique pointer owns is not yet "
-        "supported");
+        "ending an object a unique pointer owns is not yet supported on the "
+        "llvm backend");
   }
   if (!types_.LayoutOf(pointee).ends_with_nothing_to_do) {
     const std::array<llvm::Value*, 1> args{storage};
@@ -911,8 +911,7 @@ auto CodeGenModule::PlaceMembers(
       return diag::Fail(
           diag::DiagCode::kUnsupportedTypeKind,
           std::format(
-              "llvm codegen: {} of type {} has no storage realization on this "
-              "backend",
+              "{} of type {} has no storage realization on the llvm backend",
               what, unit_->types.Get(type).KindName()));
     }
     const support::ObjectLayout layout = MemberLayout(type, *storage);
@@ -1697,8 +1696,7 @@ auto CodeGenModule::DomainOf(lir::TypeId type) const
     return diag::Fail(
         diag::DiagCode::kUnsupportedTypeKind,
         std::format(
-            "llvm codegen: a value of type {} has no runtime library "
-            "realization",
+            "a value of type {} has no runtime library realization",
             unit_->types.Get(type).KindName()));
   }
   return *domain;
@@ -1712,8 +1710,8 @@ auto CodeGenModule::SharedStorageOf(const lir::StaticStorage& storage)
     return diag::Fail(
         diag::DiagCode::kUnsupportedTypeKind,
         std::format(
-            "llvm codegen: a shared cell of type {} has no storage "
-            "realization on this backend",
+            "a shared cell of type {} has no storage realization on the llvm "
+            "backend",
             unit_->types.Get(storage.type).KindName()));
   }
   return *described;
@@ -1791,8 +1789,8 @@ auto CodeGenModule::DefinitionOf(lir::TypeId type)
     return diag::Fail(
         diag::DiagCode::kUnsupportedExpressionForm,
         std::format(
-            "llvm codegen: a value of type {} has no definition the runtime "
-            "builds values of",
+            "a value of type {} has no definition the runtime builds values "
+            "of",
             unit_->types.Get(type).KindName()));
   }
   return DefinitionGlobal(*symbol);

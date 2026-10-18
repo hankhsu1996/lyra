@@ -57,8 +57,8 @@ reference to its whole.**
   holds it (LRM 10.6) and whether anything waits are yes-or-no facts of any variable. So every
   variable is, whatever it holds, one type-free cell whose write rules are a null test, and a
   variable that is sampled or taken over grows a state behind it that answers through an ordinary
-  virtual call. A write the variable turns away lands in a copy the write itself keeps, since only
-  the writer knows the type of what it reaches.
+  virtual call. An overridden write lands in a copy the write itself keeps, since only the writer
+  knows the type of what it reaches.
 - **A step reports what forming the part did.** Binding a reference to an associative entry that
   does not exist creates it (LRM 7.8.7), which is a change of the variable at the bind, reported
   there. An index naming no element names storage that belongs to nothing (LRM 7.4.6).
@@ -117,8 +117,8 @@ reference to its whole.**
 - A reference is 32 bytes on both backends, where the execution backend's was one word.
 - A variable nothing samples or takes over carries one null pointer where it used to carry a sampled
   copy of its value, that copy's time stamp and a takeover pointer.
-- A write the variable turns away lands in a copy the write keeps, so a write in progress on the
-  execution backend is 288 bytes of stack where it was 160.
+- An overridden write lands in a copy the write keeps, so a write in progress on the execution
+  backend is 288 bytes of stack where it was 160.
 - Instruction counts against `main` at `a95e1e07`, `--release`: unpacked-array-write 1,310.8 M to
   1,314.2 M, compute-block 2,124.4 M to 2,136.8 M. The difference is a fixed cost per write --
   opening one asks the variable whether it admits the write and whether anything waits, and a whole

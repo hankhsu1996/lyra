@@ -1,12 +1,15 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
-#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
+#include <vector>
 
 #include "lyra/support/takeover_level.hpp"
+#include "lyra/value/integral_words.hpp"
 
 namespace lyra::runtime {
 
@@ -25,118 +28,209 @@ namespace lyra::runtime {
   return static_cast<std::uint32_t>(generation);
 }
 
-// The procedural continuous assignments in effect on one cell, each holding
-// the value it last evaluated to (LRM 10.6). What the cell shows is the
-// highest level in effect, so a value arriving from any level below that one
-// is recorded and goes no further -- which is the whole of how an `assign`
-// overrides a procedural write and a `force` overrides an `assign`.
+// The positions a takeover entry names of a value whose positions are
+// `whole`: `count` bits from `lsb`, counted from the value's least significant
+// bit, or all of them where `count` is zero, as a wait names the part it reads.
+[[nodiscard]] inline auto PositionsNamed(
+    std::int64_t lsb, std::int64_t count, value::BitPositions whole)
+    -> value::BitPositions {
+  if (count == 0) {
+    return whole;
+  }
+  return {
+      .lsb = static_cast<std::uint64_t>(lsb),
+      .width = static_cast<std::uint64_t>(count)};
+}
+
+// A value a takeover may hold some of the bits of (LRM 10.6.2): one written
+// position by position. A takeover holds any other value whole.
+template <class T>
+concept TakenOverByBits = requires(T& value, const T& other) {
+  value.MutableView();
+  other.View();
+};
+
+// The positions of a value a takeover holds whole: one.
+inline constexpr value::BitPositions kHeldWhole{.lsb = 0, .width = 1};
+
+// The positions a takeover still holds: runs of bits, none overlapping
+// another. It starts with the one run it was begun over and only ever loses
+// positions, to a later takeover at its level or to a release, which leaves
+// none, one or two pieces of each run it reaches.
 //
-// Ending a level hands the cell to the highest one still in effect. Where none
-// is left the two kinds of variable part ways, as the standard has them (LRM
-// 10.6.2). One that something drives continuously shows what its driver last
-// produced, so that value is kept beneath the levels for as long as one covers
-// the cell and the driver's writes go there. Any other keeps what it was last
-// given, and a write a takeover displaced is dropped.
+// Every member function is defined in the library: a unit taking a variable
+// over builds and copies these, and a definition written here would be
+// compiled again by each such unit.
+class HeldPositions {
+ public:
+  explicit HeldPositions(value::BitPositions run);
+  HeldPositions(const HeldPositions&);
+  HeldPositions(HeldPositions&&) noexcept;
+  auto operator=(const HeldPositions&) -> HeldPositions&;
+  auto operator=(HeldPositions&&) noexcept -> HeldPositions&;
+  ~HeldPositions();
+
+  void Remove(value::BitPositions removed);
+
+  [[nodiscard]] auto Empty() const -> bool;
+
+  [[nodiscard]] auto Runs() const -> std::span<const value::BitPositions>;
+
+ private:
+  std::vector<value::BitPositions> runs_;
+};
+
+// The procedural continuous assignments in effect on one value (LRM 10.6).
+// Each is a takeover: begun at one of two levels over some positions of the
+// value, holding those it has not lost, and holding the value its evaluation
+// last produced, once it has produced one.
 //
-// A level carries a generation beside its value. Whatever evaluates a takeover
-// carries the generation it started under, and stops as soon as the two
-// disagree -- so a second `assign` ends the first (LRM 10.6.1) and a `release`
-// ends what it released, without either having to reach the evaluation and
-// stop it directly.
+// At one level no two takeovers hold a position in common, since beginning one
+// takes its positions from whatever held them there (LRM 10.6.1), so each
+// position shows the value of the takeover holding it at the highest level
+// that has one -- which is the whole of how an `assign` overrides a procedural
+// write and a `force` overrides an `assign` -- and what was written there
+// where none does. A takeover goes on recording while a higher one covers it,
+// so ending the higher one has its value ready with nothing recomputed (LRM
+// 10.6.2).
+//
+// Where no takeover shows at any position the two kinds of variable part ways,
+// as the standard has them. One that something drives continuously shows what
+// its driver last produced, so that value is kept beneath the takeovers for as
+// long as one shows. Any other keeps what it was last given.
+//
+// Ending a takeover that something lies beneath -- a lower one, or the
+// continuous driver -- reestablishes that and schedules its reevaluation (LRM
+// 10.6.2), so the positions released go on showing what they showed until the
+// reevaluation runs. The driver's value stays kept beneath until then, so what
+// it produces meanwhile lands there, and shows at once wherever no takeover
+// holds.
+//
+// An evaluation carries the generation its takeover began under, and stops as
+// soon as no takeover at its level carries that generation -- so a second
+// `assign` ends the first and a `release` ends what it released, without
+// either having to reach the evaluation and stop it directly.
 template <class T>
 class Takeovers {
  public:
-  // Starts a takeover at `level`, superseding whatever was driving it, and
-  // answers with the generation the new evaluation carries.
-  auto Begin(support::TakeoverLevel level) -> std::uint32_t {
-    return ++GenerationOf(level);
+  // Begins a takeover at `level` over `positions`, which every other takeover
+  // at that level stops holding, and answers with its generation. A value held
+  // whole is always named whole, as its one position.
+  auto Begin(support::TakeoverLevel level, value::BitPositions positions)
+      -> std::uint32_t {
+    Remove(level, positions);
+    const std::uint32_t generation = ++GenerationOf(level);
+    // Built where it is kept, since its value may be larger than a frame keeps.
+    takeovers_.emplace_back(level, generation, HeldPositions(positions));
+    return generation;
   }
 
-  // Records what a level evaluated to, unless the evaluation offering it has
-  // been superseded. Answers whether that evaluation is still the one driving
-  // this level, which is what tells it to stop.
-  //
-  // A level records even while a higher one covers it, so the value it would
-  // show is current the moment that higher level ends -- which is what lets a
-  // release reestablish the assignment underneath it with nothing recomputed.
+  // Records what the takeover of `generation` evaluated to. Answers whether it
+  // still holds any position, which is what tells its evaluation to stop.
   auto Drive(
       support::TakeoverLevel level, std::uint32_t generation, const T& value)
       -> bool {
-    return Drive(
-        level, generation, [&](std::optional<T>& held) { held = value; });
-  }
-
-  // The same where the value arrives in a form of the caller's own: `record`
-  // is handed what the level holds, which is nothing until the first value
-  // after the level began, and leaves the value there.
-  template <std::invocable<std::optional<T>&> Record>
-  auto Drive(
-      support::TakeoverLevel level, std::uint32_t generation, Record record)
-      -> bool {
-    if (GenerationOf(level) != generation) {
+    const auto found = std::ranges::find_if(takeovers_, [&](const Takeover& t) {
+      return t.level == level && t.generation == generation;
+    });
+    if (found == takeovers_.end()) {
       return false;
     }
-    record(Slot(level));
+    found->value = value;
     return true;
   }
 
-  // Ends the takeover at `level`, and stops whatever was evaluating it.
-  void End(support::TakeoverLevel level) {
-    Slot(level).reset();
-    ++GenerationOf(level);
+  // Ends whatever holds `positions` at `level`.
+  void End(support::TakeoverLevel level, value::BitPositions positions) {
+    Remove(level, positions);
   }
 
-  // Starts keeping what drives the cell continuously beneath the levels, from
-  // `shown`, the value the driver gave it last. Asked as the first level comes
-  // to cover the cell.
+  // Whether any takeover shows at any position: one whose evaluation has
+  // produced a value. Between its beginning and its first evaluation a
+  // takeover holds positions and shows nothing there.
+  [[nodiscard]] auto Shows() const -> bool {
+    return std::ranges::any_of(
+        takeovers_, [](const Takeover& t) { return t.value.has_value(); });
+  }
+
+  // Makes every position of `written` a takeover shows at show what it holds
+  // there, the higher level over the lower. It is rewritten where it lies,
+  // since a value may be larger than a frame keeps.
+  void Overlay(T& written) const {
+    for (std::size_t level = 0; level < support::kTakeoverLevelCount; ++level) {
+      for (const Takeover& t : takeovers_) {
+        if (static_cast<std::size_t>(t.level) != level ||
+            !t.value.has_value()) {
+          continue;
+        }
+        for (const value::BitPositions run : t.held.Runs()) {
+          OverlayRun(written, *t.value, run);
+        }
+      }
+    }
+  }
+
+  // Starts keeping what drives the value continuously beneath the takeovers,
+  // from `shown`, the value the driver gave it last. Asked as a takeover comes
+  // to show where nothing is kept beneath yet.
   void KeepBeneath(const T& shown) {
     beneath_ = shown;
   }
 
-  // What a write the levels turned away lands in, where the cell is driven
-  // continuously, and nothing where it is not.
+  // What a write lands in where the value is driven continuously, so that the
+  // positions no takeover shows at show it and the rest show it once released;
+  // none where it is not.
   [[nodiscard]] auto Beneath() -> T* {
     return beneath_.has_value() ? &*beneath_ : nullptr;
   }
 
-  // Gives up what was kept beneath, once no level covers the cell: `take` is
-  // handed it where it lies, and it is forgotten after.
-  template <std::invocable<const T&> Take>
-  void TakeBeneath(Take take) {
-    if (beneath_.has_value()) {
-      take(*beneath_);
-      beneath_.reset();
-    }
+  // Forgets what was kept beneath, once no takeover shows and what a release
+  // reestablished has been reevaluated.
+  void DropBeneath() {
+    beneath_.reset();
   }
 
-  // The value the cell should be showing, or nothing where no level is in
-  // effect and the cell's own storage is what shows. The levels are an ordered
-  // scale, so what shows is the first one found descending them.
-  [[nodiscard]] auto Highest() const -> const T* {
-    for (std::size_t above = slots_.size(); above > 0; --above) {
-      if (slots_[above - 1].has_value()) {
-        return &*slots_[above - 1];
-      }
-    }
-    return nullptr;
+  // Whether a write is overridden: a takeover shows, or something is kept
+  // beneath, which outlasts the last takeover until the reevaluation its
+  // release scheduled has shown it.
+  [[nodiscard]] auto OverridesWrites() const -> bool {
+    return beneath_.has_value() || Shows();
   }
 
  private:
-  [[nodiscard]] static auto IndexOf(support::TakeoverLevel level)
-      -> std::size_t {
-    return static_cast<std::size_t>(level);
-  }
-
-  [[nodiscard]] auto Slot(support::TakeoverLevel level) -> std::optional<T>& {
-    return slots_[IndexOf(level)];
-  }
+  struct Takeover {
+    support::TakeoverLevel level{};
+    std::uint32_t generation = 0;
+    HeldPositions held;
+    std::optional<T> value;
+  };
 
   [[nodiscard]] auto GenerationOf(support::TakeoverLevel level)
       -> std::uint32_t& {
-    return generations_[IndexOf(level)];
+    return generations_[static_cast<std::size_t>(level)];
   }
 
-  std::array<std::optional<T>, support::kTakeoverLevelCount> slots_;
+  // Every takeover at `level` stops holding `positions`, and one left holding
+  // none ends.
+  void Remove(support::TakeoverLevel level, value::BitPositions positions) {
+    for (Takeover& t : takeovers_) {
+      if (t.level == level) {
+        t.held.Remove(positions);
+      }
+    }
+    std::erase_if(takeovers_, [](const Takeover& t) { return t.held.Empty(); });
+  }
+
+  // `written` showing what `held` holds at `run`.
+  static void OverlayRun(T& written, const T& held, value::BitPositions run) {
+    if constexpr (TakenOverByBits<T>) {
+      value::InsertWithin(written.MutableView(), held.View(), 0, run);
+    } else {
+      written = held;
+    }
+  }
+
+  std::vector<Takeover> takeovers_;
   std::array<std::uint32_t, support::kTakeoverLevelCount> generations_{};
   std::optional<T> beneath_;
 };

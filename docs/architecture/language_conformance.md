@@ -46,20 +46,21 @@ Consequences:
    leaves a choice to the tool, the front end is not wrong whichever way it went, so nothing can be
    corrected upstream, and the policy makes the choice itself (see _Given a meaning, but a tool may
    refuse it_ below). No other default is overridden, in either direction.
-2. **One class of forbidden text the front end refuses is run when a caller asks for it.** Its
-   boundary is stated in advance and drawn by the standard rather than by any tool's answer. The
-   standard's own rules fix what the text means, and it allows no other way to say it (see
-   _Forbidden, but the defect is the standard's_ below). It stays an error by default.
+2. **One class of forbidden text the front end refuses is run when a caller asks for it, as a
+   compatibility extension.** Its boundary is stated in advance and drawn by the standard rather
+   than by any tool's answer: the text is in common use, the meaning Lyra gives it is stated here
+   and built from the standard's rules for the nearest text it allows, and no allowed text says the
+   same (see _Forbidden, run as an extension when asked_ below). It stays an error by default.
 3. **Lowering does not judge again whether the source is legal.** It carries out what the front end
    analyzed and never inspects the form the source wrote it in. A reader sees one of four outcomes,
    and lowering says which.
 
-   | Situation                                                     | Reported as                                                        |
-   | ------------------------------------------------------------- | ------------------------------------------------------------------ |
-   | The front end refuses the source                              | The front end's diagnostic. Lowering does not run.                 |
-   | The front end accepts it with no meaning (a tolerant reading) | A refusal where it was written, saying the front end gave it none. |
-   | The front end accepts it and Lyra does not yet carry it out   | A gap, naming the construct.                                       |
-   | The representation breaks the hand-off contract               | A compiler error, never a statement about the source.              |
+   | Situation                                                                     | Reported as                                                                    |
+   | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+   | The front end refuses the source                                              | The front end's diagnostic. Lowering does not run.                             |
+   | The front end accepts it and builds nothing to carry out (a tolerant reading) | A refusal where it was written, saying the text has no behaviour to carry out. |
+   | The front end accepts it and Lyra does not yet carry it out                   | A gap, naming the construct.                                                   |
+   | The representation breaks the hand-off contract                               | A compiler error, never a statement about the source.                          |
 
 4. **An accepted text with no defined meaning gets the simplest behaviour, stated where it is
    carried out.** Where the standard gives a text no meaning and the front end's contract does not
@@ -88,7 +89,7 @@ defect it is. The steps are in this order because each one has overturned a ruli
 4. **Check the reduction writes what the design writes.** A reduction that reaches a name through an
    instance, where the design reaches it through an interface port, rules on another construct.
 5. **Rule**: the design is wrong, the front end is wrong, Lyra is wrong, the standard does not
-   settle it, or the standard is wrong.
+   settle it, or the text is forbidden and run as an extension when asked.
 
 The ruling is argued from the standard's text and from nothing else. What an open-source tool does
 with the reduction may be noted beside it, as a reason the text went unnoticed or as a second reader
@@ -99,14 +100,17 @@ A design that is wrong is its author's to correct, and whoever builds it without
 it asks for the reading it relies on by name (consequence 6). A front end that is wrong is reported
 upstream. Neither is answered by changing what Lyra accepts.
 
-A forbidden text is not always its author's mistake. Where all three of these hold, the defect is
-the standard's, the author is not reported to, and the text is run when a caller asks for it:
+A forbidden text is not always worth refusing outright. Where all three of these hold, the author is
+not reported to, and the text is run when a caller asks for it, as an extension of the standard
+whose meaning is Lyra's:
 
 1. **The text is in common use.** Shown from open sources: an open tool that takes it, the front end
    listing it among the texts it relaxes for other tools.
-2. **The standard already fixes its meaning.** The rules the standard gives for the texts it does
-   allow, applied to this one, leave no choice for a tool to make. The test is whether running it
-   needs an answer nobody wrote down: if it does, the text has no meaning to run.
+2. **The meaning Lyra gives it is built from the standard's rules for the nearest text it allows,
+   and stated in the ruling.** The standard gives a forbidden text no meaning, so tools that take it
+   may answer differently, and the ruling says which answer Lyra gives and from which rules. Where
+   no allowed text is near enough to lend its rules without an answer nobody wrote down, the text
+   has no meaning to run.
 3. **No text the standard allows says the same without rewriting the design.** Where an allowed form
    says it, the author is told of that form, as with any forbidden text.
 
@@ -217,11 +221,12 @@ obvious meaning to give it. It is an error all the same, because an allowed text
 nothing rewritten: `mubi_t'(j)`. A design that cannot be edited is built with
 `--relax-enum-conversions`, which reads every such assignment as that cast.
 
-### Forbidden, but the defect is the standard's
+### Forbidden, run as an extension when asked
 
-Refused by default and run when the caller asks for it by name. The author is not reported to.
+Refused by default and run when the caller asks for it by name, with the meaning stated here. The
+author is not reported to.
 
-#### A `force` on a member of a variable of a packed structure type
+#### A `force` on bits of a variable, a member of a packed structure among them
 
 ```systemverilog
 typedef struct packed { logic [8:0] next; logic we; } field_t;
@@ -240,15 +245,19 @@ structure is "a mechanism for subdividing a vector into subfields", so a member 
 one vector variable. Forbidden.
 
 All three conditions hold. The front end keeps the refusal as a warning raised to an error, in the
-set it relaxes because "some tools violate the standard", and an open simulator takes the text. The
-standard's rules for forcing a whole variable already say what it means: a procedural assignment
-does not change what is forced while the force is in effect, and after the release the variable
-keeps that value until the next procedural assignment, unless a continuous assignment or an `assign`
-drives it, which is then reestablished; applied to the forced bits, nothing is left to choose. The
-open simulator answers otherwise after the release of a part, taking the value `always_comb` last
-wrote, while it keeps the forced value of a whole variable as 10.6.2 says, so its answer for a part
-is its own. And no allowed text says the same: forcing the whole variable restates every member the
-design drives, and forcing a net adds one to the design for the testbench's sake.
+set it relaxes because "some tools violate the standard", and an open simulator takes the text. No
+allowed text says the same: forcing the whole variable restates every member the design drives, and
+forcing a net adds one to the design for the testbench's sake.
+
+The meaning Lyra gives it is the standard's rules for forcing a whole variable, applied to each
+forced bit on its own. A procedural assignment does not change a forced bit while the force is in
+effect, and changes the bits nobody forced as it would without one. After the release a bit keeps
+the forced value until the next procedural assignment, unless a continuous assignment or an `assign`
+drives the variable, which is then reestablished there and reevaluated. This is a choice, not a
+reading the standard forces: the open simulator, which keeps the forced value of a whole variable as
+10.6.2 says, takes the value `always_comb` last wrote after the release of a part. The meaning
+reaches bits of one vector value; an element or a member of an unpacked variable is not covered (see
+_A `force` on a member of an element of a variable_ below).
 
 `-Wno-error=bad-procedural-force` asks for it, and so does `--compat all`.
 

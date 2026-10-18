@@ -121,7 +121,7 @@ void ErasedReference::DriveContinuously() const {
 }
 
 void ErasedReference::AdmitStep() const {
-  if (!Admits()) {
+  if (OverridesWrites()) {
     throw SimulationError(
         "lending part of a variable a procedural continuous assignment holds "
         "is not yet supported");

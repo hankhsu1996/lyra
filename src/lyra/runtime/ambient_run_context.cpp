@@ -33,9 +33,9 @@ AmbientRunContext::~AmbientRunContext() {
 auto AmbientRunContext::Current() -> AmbientRunContext& {
   if (CurrentSlot() == nullptr) {
     throw SimulationError(
-        "DPI export reached with no simulation running: an exported subroutine "
-        "is callable only from a foreign call the simulation made (LRM "
-        "35.5.3)");
+        "a DPI export was reached with no simulation running, and an exported "
+        "subroutine is callable only from a foreign call the simulation made "
+        "(LRM 35.5.3)");
   }
   return *CurrentSlot();
 }
@@ -49,9 +49,9 @@ auto CurrentExportScope() -> Scope* {
     // requires svSetScope first -- the foreign side's contract to meet, not an
     // invariant this compiler established.
     throw SimulationError(
-        "DPI export reached without a scope context: the calling import must "
-        "be a context import declared in an instantiated scope, or set the "
-        "scope with svSetScope (LRM 35.5.3)");
+        "a DPI export was reached without a scope context, so the calling "
+        "import must be a context import declared in an instantiated scope, "
+        "or set the scope with svSetScope (LRM 35.5.3)");
   }
   return scope;
 }
@@ -66,7 +66,7 @@ auto FindExportEntry(Scope* scope, const char* subroutine) -> ErasedEntry {
   throw SimulationError(
       std::format(
           "DPI export '{}' was entered under scope '{}', which declares no "
-          "such export: an export is callable directly only from an import of "
+          "such export; an export is callable directly only from an import of "
           "its own scope, and svSetScope must name a scope that declares it "
           "(LRM 35.5.3)",
           subroutine, entered == nullptr ? "<unregistered>" : entered));

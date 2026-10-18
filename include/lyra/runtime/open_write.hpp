@@ -124,7 +124,7 @@ class OpenWrite {
  private:
   // Room for the largest bracket any wrapper opens: the wrapper, a reference
   // to its storage, what the write has learned, and a copy of the storage for
-  // a write the wrapper turns away to land in.
+  // an overridden write to land in.
   static constexpr std::size_t kBracketCapacity = 256;
   // Room for what a write keeps of the largest part it lands on, beside where
   // the part lies.

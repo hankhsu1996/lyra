@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/statement/procedural_continuous.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -15,6 +16,7 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/deferred_effect.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
@@ -22,6 +24,8 @@
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/integral_constant.hpp"
+#include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/takeover_level.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -34,23 +38,25 @@ auto LevelOperand(
   return BuildMachineIntLiteral(unit, block, static_cast<std::int64_t>(level));
 }
 
-// The capability a takeover acts on, for one place of its target. LRM 10.6.1
-// admits only a whole variable and 10.6.2 adds a constant part-select of a net,
-// so a descent here means the source named part of something -- which this
-// does not carry yet.
-auto TakeoverPlace(const AccessPath& place, diag::SourceSpan span)
-    -> diag::Result<mir::ExprId> {
-  if (!place.descent.empty()) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedStatementForm,
-        "taking over part of a target is not yet supported (LRM 10.6.2)");
-  }
+// One place of a takeover's target as the takeover acts on it: what holds the
+// place, and which of the positions of what it holds the place is, as a pair of
+// machine integers: the least significant bit and how many, a count of zero
+// standing for the whole of it (LRM 10.6.2).
+struct TakenPart {
+  mir::ExprId holder;
+  mir::ExprId lsb;
+  mir::ExprId count;
+};
+
+// What holds one place of a takeover's target: a variable, a net, or a
+// reference naming one.
+auto TakeoverHolder(const AccessPath& place) -> mir::ExprId {
   return std::visit(
       Overloaded{
-          [](mir::ExprId owner) -> diag::Result<mir::ExprId> { return owner; },
+          [](mir::ExprId owner) -> mir::ExprId { return owner; },
           // A member of a dynamic type is no variable a takeover may name,
           // which the front end refuses before anything is lowered.
-          [](const ObjectProperty&) -> diag::Result<mir::ExprId> {
+          [](const ObjectProperty&) -> mir::ExprId {
             throw InternalError(
                 "procedural continuous assignment: the target is a class "
                 "property, which the front end refuses -- please report this "
@@ -59,25 +65,82 @@ auto TakeoverPlace(const AccessPath& place, diag::SourceSpan span)
       place.owner);
 }
 
-// Every place a takeover's target names, in the order the source wrote them: a
-// variable or a net, or each member of a concatenation of them (LRM 10.6.1,
-// 10.6.2).
-auto TakeoverPlaces(
+// The part one place of a takeover's target names. LRM 10.6.1 admits only a
+// whole variable and 10.6.2 adds a constant part-select of a net, and a caller
+// may ask for bits of a variable as well, run with the rules 10.6.2 gives a
+// whole variable applied to each bit, so a descent here is a run of steps into
+// bits of a packed value.
+auto TakeoverPart(
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& place,
+    diag::SourceSpan span) -> diag::Result<TakenPart> {
+  const auto into_bits = [](const DescentStep& step) {
+    return std::holds_alternative<StepToBits>(step.to);
+  };
+  if (!std::ranges::all_of(place.descent, into_bits)) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedStatementForm,
+        "taking over an element or a member of an unpacked value is not yet "
+        "supported (LRM 10.6.2)");
+  }
+  const mir::ExprId holder = TakeoverHolder(place);
+  if (place.descent.empty()) {
+    return TakenPart{
+        .holder = holder,
+        .lsb = BuildMachineIntLiteral(unit, block, 0),
+        .count = BuildMachineIntLiteral(unit, block, 0)};
+  }
+  if (unit.types.Get(block.exprs.Get(holder).type).Is<mir::ResolvedType>()) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedStatementForm,
+        "a force on part of a net is not yet supported (LRM 10.6.2)");
+  }
+  const PathPositions bits = BitsWithinOwner(unit, block, place);
+  return TakenPart{
+      .holder = holder,
+      .lsb = BuildToInt64Call(unit, block, bits.first),
+      .count = BuildMachineIntLiteral(
+          unit, block, static_cast<std::int64_t>(bits.width))};
+}
+
+// Every part a takeover's target names, in the order the source wrote them: a
+// variable or a net, bits of one, or each member of a concatenation of them
+// (LRM 10.6.1, 10.6.2).
+auto TakeoverParts(
     ProcessLowerer& process, const WalkFrame& frame, const hir::Expr& target)
-    -> diag::Result<std::vector<mir::ExprId>> {
+    -> diag::Result<std::vector<TakenPart>> {
   auto lvalue = LowerLvalue(process, target, frame);
   if (!lvalue) return std::unexpected(std::move(lvalue.error()));
   std::vector<AccessPath> named;
   ForEachPlace(
       *lvalue, [&](const AccessPath& place) { named.push_back(place); });
-  std::vector<mir::ExprId> places;
-  places.reserve(named.size());
+  mir::CompilationUnit& unit = process.Owner().Unit();
+  std::vector<TakenPart> parts;
+  parts.reserve(named.size());
   for (const AccessPath& place : named) {
-    auto owner = TakeoverPlace(place, target.span);
-    if (!owner) return std::unexpected(std::move(owner.error()));
-    places.push_back(*owner);
+    auto part = TakeoverPart(unit, *frame.current_block, place, target.span);
+    if (!part) return std::unexpected(std::move(part.error()));
+    parts.push_back(*part);
   }
-  return places;
+  return parts;
+}
+
+// What an evaluation hands the takeover of `share`'s place: a value of the
+// type its holder holds, of which the takeover reads the positions it holds.
+// Where the place is bits of that value they are put at their positions in a
+// value of it, whose other positions nothing reads.
+auto DrivenValue(
+    mir::CompilationUnit& unit, mir::Block& block, const Share& share)
+    -> mir::ExprId {
+  if (share.place.descent.empty()) {
+    return share.value;
+  }
+  const mir::TypeId held = OwnerValueType(unit, block, share.place.owner);
+  const PathPositions bits = BitsWithinOwner(unit, block, share.place);
+  return block.exprs.Add(MakeBuiltinCall(
+      unit, block, support::BuiltinFn::kWithSlice, std::nullopt,
+      {BuildIntegralLiteral(unit, block, held, mir::IntegralConstant{}),
+       bits.first, share.value},
+      held));
 }
 
 }  // namespace
@@ -97,17 +160,17 @@ auto LowerProceduralContinuousAssignStmt(
 
   // The takeover of each place is in effect from here, before anything
   // evaluates: a `release` reaching the place in the same time step must find
-  // it taken over, and the generation this answers with is what says which
-  // evaluation owns the level there.
-  auto outer_places = TakeoverPlaces(process, outer, hir_target);
-  if (!outer_places) return std::unexpected(std::move(outer_places.error()));
+  // it taken over, and the generation this answers with names the takeover
+  // that evaluation drives.
+  auto outer_parts = TakeoverParts(process, outer, hir_target);
+  if (!outer_parts) return std::unexpected(std::move(outer_parts.error()));
   std::vector<mir::LocalId> generations;
-  generations.reserve(outer_places->size());
-  for (const mir::ExprId place : *outer_places) {
+  generations.reserve(outer_parts->size());
+  for (const TakenPart& part : *outer_parts) {
     const mir::ExprId begin = wrapper.exprs.Add(
         mir::MakeBeginTakeoverCallExpr(
-            place, LevelOperand(unit, wrapper, pca.level),
-            builtins.machine_int64));
+            part.holder, LevelOperand(unit, wrapper, pca.level), part.lsb,
+            part.count, builtins.machine_int64));
     generations.push_back(DeclareLocal(
         closure.Frame(),
         SnapshotValueIntoClosure(unit_lowerer, outer, closure, begin)));
@@ -116,8 +179,8 @@ auto LowerProceduralContinuousAssignStmt(
   // One evaluation: the source read once and each place driven its share. The
   // target is named again inside it rather than carried in: it is reached from
   // the receiver, and the receiver is an ordinary binding the same capture
-  // recursion brings across. What it answers is whether any place still says
-  // this evaluation owns the level there, every place having been driven.
+  // recursion brings across. What it answers is whether the takeover of any
+  // place still holds a position, every place having been driven.
   BlockBuilder pass(closure.Frame());
   mir::Block& driving = pass.Body();
   auto source_or =
@@ -133,15 +196,14 @@ auto LowerProceduralContinuousAssignStmt(
   owned.reserve(shares->size());
   for (std::size_t i = 0; i < shares->size(); ++i) {
     const Share& share = (*shares)[i];
-    auto place = TakeoverPlace(share.place, hir_target.span);
-    if (!place) return std::unexpected(std::move(place.error()));
     owned.push_back(pass.DeclareLocal(
         builtins.machine_bool,
         driving.exprs.Add(
             mir::MakeDriveTakeoverCallExpr(
-                *place, LevelOperand(unit, driving, pca.level),
+                TakeoverHolder(share.place),
+                LevelOperand(unit, driving, pca.level),
                 driving.ReadLocal(generations[i], builtins.machine_int64),
-                share.value, builtins.machine_bool))));
+                DrivenValue(unit, driving, share), builtins.machine_bool))));
   }
   const auto read_owned = [&](mir::LocalId local) {
     return driving.ReadLocal(local, builtins.machine_bool);
@@ -178,8 +240,8 @@ auto LowerProceduralContinuousAssignStmt(
     const mir::BlockId wait_scope =
         body.child_scopes.Add(std::move(wait_block));
     // Evaluating and driving is the loop's own condition, so the source is
-    // re-read on every pass and the takeover stops the moment no place says
-    // this evaluation owns the level any longer.
+    // re-read on every pass and the evaluation stops the moment no place's
+    // takeover holds a position any longer.
     body.AppendStmt(
         mir::ForStmt{
             .init = {}, .condition = drive, .step = {}, .scope = wait_scope});
@@ -200,21 +262,21 @@ auto LowerProceduralContinuousEndStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::ProceduralContinuousEndStmt& pce) -> diag::Result<mir::Stmt> {
   const hir::ProceduralBody& hir_proc = process.HirBody();
-  const mir::CompilationUnit& unit = process.Owner().Unit();
+  mir::CompilationUnit& unit = process.Owner().Unit();
 
-  // One end per place the target names, so the statement is a block of them.
+  // One end per part the target names, so the statement is a block of them.
   BlockBuilder steps(frame);
   mir::Block& block = steps.Body();
-  auto places =
-      TakeoverPlaces(process, steps.Frame(), hir_proc.exprs.Get(pce.target));
-  if (!places) return std::unexpected(std::move(places.error()));
-  for (const mir::ExprId place : *places) {
+  auto parts =
+      TakeoverParts(process, steps.Frame(), hir_proc.exprs.Get(pce.target));
+  if (!parts) return std::unexpected(std::move(parts.error()));
+  for (const TakenPart& part : *parts) {
     block.AppendStmt(
         mir::ExprStmt{
             .expr = block.exprs.Add(
                 mir::MakeEndTakeoverCallExpr(
-                    place, LevelOperand(unit, block, pce.level),
-                    unit.builtins.void_type))});
+                    part.holder, LevelOperand(unit, block, pce.level), part.lsb,
+                    part.count, unit.builtins.void_type))});
   }
   mir::Stmt stmt = steps.BuildStatement();
   stmt.label = std::move(label);

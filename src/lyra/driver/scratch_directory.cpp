@@ -62,7 +62,7 @@ auto ScratchDirectory::Create()
   const std::filesystem::path parent = std::filesystem::temp_directory_path(ec);
   if (ec) {
     return std::unexpected(
-        std::format("there is no temporary directory: {}", ec.message()));
+        std::format("there is no temporary directory ({})", ec.message()));
   }
   RemoveAbandoned(parent);
 
@@ -74,7 +74,7 @@ auto ScratchDirectory::Create()
     std::string name = (parent / std::format("{}XXXXXX", kNamePrefix)).string();
     if (::mkdtemp(name.data()) == nullptr) {
       return std::unexpected(
-          std::format("mkdtemp('{}') failed: {}", name, std::strerror(errno)));
+          std::format("mkdtemp('{}') failed ({})", name, std::strerror(errno)));
     }
     DIR* const held = TryHold(name);
     if (held == nullptr) {

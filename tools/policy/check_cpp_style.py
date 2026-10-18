@@ -72,6 +72,22 @@ Rules:
         distinction.
         Scope: every .cpp/.hpp under src/, include/.
 
+  S009  A message to the user is one sentence: no colon followed by a space
+        inside the text of a diagnostic (`diag::Fail`, `diag::Make`) or of a
+        `SimulationError`. The line it is printed on already opens with
+        `file:line:col: error:`, so a "label: explanation" message stacks a
+        third colon on two, and the reader has to parse the shape before
+        reaching the content. Join the parts as one sentence, give a system
+        error's text in parentheses, and put a second sentence after a
+        semicolon. The literals read are those written at a call of
+        `diag::Fail` or `diag::Make`, of a file's own wrapper named `Fail`,
+        `Make`, `IoError` or `Unsupported`, of `SimulationError`, and of
+        `std::unexpected`, whose text becomes a diagnostic where the error is
+        reported; text assembled elsewhere and passed in is not seen. An
+        internal error is not covered; it is read by whoever fixes the
+        compiler.
+        Scope: every .cpp/.hpp under src/, include/.
+
 Usage:
   python3 tools/policy/check_cpp_style.py
 """
@@ -352,6 +368,58 @@ def check_s008(repo_root: Path) -> list[str]:
     return errors
 
 
+# S009: a call that builds a message the user reads, and the string literals
+# among its arguments. Adjacent literals are one string in C++, so a run of
+# them is joined before it is read.
+MESSAGE_CALL_PATTERN = re.compile(
+    r"(?:\b(?:Fail|Make|SimulationError|IoError|Unsupported)|std::unexpected)"
+    r"\s*\(")
+LITERAL_RUN_PATTERN = re.compile(r'(?:"(?:[^"\\]|\\.)*"\s*)+')
+LITERAL_PATTERN = re.compile(r'"((?:[^"\\]|\\.)*)"')
+MESSAGE_COLON_PATTERN = re.compile(r":\s")
+
+
+def message_arguments(text: str, start: int) -> str:
+    """The argument text of the call whose open parenthesis ends at `start`."""
+    depth = 1
+    i = start
+    while i < len(text) and depth:
+        c = text[i]
+        if c == '"':
+            i += 1
+            while i < len(text) and text[i] != '"':
+                i += 2 if text[i] == "\\" else 1
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+        i += 1
+    return text[start:i - 1]
+
+
+def colon_messages(text: str):
+    """Each (offset, message) whose literal text holds a colon and a space."""
+    for call in MESSAGE_CALL_PATTERN.finditer(text):
+        arguments = message_arguments(text, call.end())
+        for run in LITERAL_RUN_PATTERN.finditer(arguments):
+            message = "".join(LITERAL_PATTERN.findall(run.group(0)))
+            if MESSAGE_COLON_PATTERN.search(message):
+                yield call.start(), message
+
+
+def check_s009(repo_root: Path) -> list[str]:
+    errors = []
+    for path, rel in iter_cpp_files(repo_root, roots=("src", "include")):
+        text = path.read_text()
+        for offset, message in colon_messages(text):
+            lineno = text.count("\n", 0, offset) + 1
+            errors.append(
+                f"  {rel}:{lineno}: S009 message '{message}' holds a colon; "
+                f"write it as one sentence"
+            )
+    return errors
+
+
 def run_self_tests() -> bool:
     def expect(cond, msg):
         if not cond:
@@ -476,6 +544,35 @@ def run_self_tests() -> bool:
     ok &= expect(
         not ID_FROM_SIZE_PATTERN.search("base::ComponentIndex{v.size() - 1}"),
         "S008 spares a structural position from a count")
+
+    def colons(text):
+        return [m for _, m in colon_messages(text)]
+
+    ok &= expect(
+        colons('diag::Fail(span, code, "label: what went wrong");'),
+        "S009 one literal")
+    ok &= expect(
+        colons('diag::Fail(\n  code,\n  std::format(\n    "cannot write "\n'
+               '    "\'{}\': {}", a, b));'),
+        "S009 a colon across joined literals inside a format")
+    ok &= expect(
+        colons('throw SimulationError("x: y" + std::string{why});'),
+        "S009 a runtime error")
+    ok &= expect(
+        not colons('diag::Fail(code, "cannot write \'{}\' ({})", a, b);'),
+        "S009 spares one sentence")
+    ok &= expect(
+        not colons('diag::Fail(code, "a::b names no entry");'),
+        "S009 spares a scope operator")
+    ok &= expect(
+        not colons('throw InternalError("Lower: unknown kind");'),
+        "S009 spares an internal error")
+    ok &= expect(
+        colons('return IoError(std::format("failed to write \'{}\': {}", p, e));'),
+        "S009 a file's own wrapper")
+    ok &= expect(
+        colons('return std::unexpected(std::format("-j: \'{}\' is not a count", j));'),
+        "S009 an error text returned for a diagnostic")
     return ok
 
 
@@ -489,6 +586,7 @@ CHECKS = [
     ("S006 [[maybe_unused]] suppression", check_s006),
     ("S007 project-documentation references in comments", check_s007),
     ("S008 pool identity rebuilt from a loop counter", check_s008),
+    ("S009 a user-facing message holding a colon", check_s009),
 ]
 
 

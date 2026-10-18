@@ -3018,19 +3018,9 @@ enough to warrant its own focused review.
       comes out the same however it was reached is reused, and nothing is shared by comparing
       lowered forms.
 
-- [ ] R220 -- On the execution backend, what a continuous assignment writes to part of a forced
-      variable through a reference to the whole of it is kept nowhere, so the release does not show
-      it. Reproduced with a 100-bit variable connected to a child's `ref` port, the child driving it
-      with one continuous assignment to its low byte and one to the rest: the variable is forced,
-      the low byte's source changes, and the release shows the low byte the driver held before the
-      force, where LRM 10.6.2 reestablishes the assignment and so shows what it holds now. The same
-      two assignments made in the module declaring the variable show the new byte, a 16-bit variable
-      driven the same way through the port does, the 100-bit one driven whole through the port does,
-      and the C++ backend does in every one of these. A variable of an unpacked structure or a
-      fixed-size array type cannot be asked the question there: a force naming one ends the build as
-      a failure of the compiler's own. Target: a write a takeover turns away is kept beneath it
-      wherever the write names a part of the variable, however the variable was reached. Not
-      blocked.
+- [x] R220 -- What a continuous assignment writes to part of a forced variable through a reference
+      to the whole of it is kept beneath the force, however the variable was reached, so the release
+      shows it (LRM 10.6.2), on both backends.
 - [x] R234 -- A read through a member a tag guards is one access with its check: the whole of what
       it selects below the member is read and kept among the steps that check the tag, so a sibling
       operand retagging the union can no longer have the read land on a member the union no longer

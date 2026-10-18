@@ -748,14 +748,20 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kNetJoin:
       return {.name = "net_join", .declaration = Method{"Join"}};
     case BuiltinFn::kBeginTakeover:
-      return {.name = "begin_takeover", .declaration = Method{"BeginTakeover"}};
+      return {
+          .name = "begin_takeover",
+          .declaration = Method{"BeginTakeover"},
+          .operands = {kMachine, kMachine, kMachine, kMachine}};
     case BuiltinFn::kDriveTakeover:
       return {
           .name = "drive_takeover",
           .declaration = Method{"DriveTakeover"},
           .operands = {kMachine, kMachine, kMachine, kHeld}};
     case BuiltinFn::kEndTakeover:
-      return {.name = "end_takeover", .declaration = Method{"EndTakeover"}};
+      return {
+          .name = "end_takeover",
+          .declaration = Method{"EndTakeover"},
+          .operands = {kMachine, kMachine, kMachine, kMachine}};
     case BuiltinFn::kCurrentRuntime:
       return {
           .name = "current_runtime",

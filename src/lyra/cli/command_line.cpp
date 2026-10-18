@@ -681,8 +681,7 @@ auto StatusLookOf(CommandKind cmd, const CliOptions& opts, bool use_color)
   if (!asked) {
     return std::unexpected(
         std::format(
-            "--progress: '{}' is not one of auto, plain, none",
-            *opts.progress));
+            "--progress '{}' is not one of auto, plain, none", *opts.progress));
   }
   return status::Look{
       .display = DisplayOf(cmd, *asked),
@@ -705,7 +704,7 @@ auto ResolveCompileWidth(std::optional<std::int32_t> jobs)
     return 1;
   }
   if (*jobs < 0) {
-    return std::unexpected(std::format("-j: '{}' is not a count", *jobs));
+    return std::unexpected(std::format("-j '{}' is not a count", *jobs));
   }
   if (*jobs > 0) {
     return static_cast<std::size_t>(*jobs);
@@ -758,8 +757,8 @@ auto AddIncludeDirectories(
       return diag::Fail(
           diag::DiagCode::kHostInvalidManifest,
           std::format(
-              "{}: include directory '{}': {}", manifest.path.string(), dir,
-              ec.message()));
+              "include directory '{}' named in {} cannot be used ({})", dir,
+              manifest.path.string(), ec.message()));
     }
   }
   return {};
@@ -835,8 +834,8 @@ auto AddLibrary(
         return diag::Fail(
             diag::DiagCode::kHostInvalidManifest,
             std::format(
-                "{}: include directory '{}': not a directory",
-                manifest.path.string(), dir));
+                "include directory '{}' named in {} is not a directory", dir,
+                manifest.path.string()));
       }
     }
   }
@@ -974,8 +973,7 @@ auto ResolveCliOptions(
     if (!policy) {
       return std::unexpected(
           std::format(
-              "--assertions: '{}' is not one of check, skip",
-              *opts.assertions));
+              "--assertions '{}' is not one of check, skip", *opts.assertions));
     }
     out.assertions = *policy;
   }
@@ -984,8 +982,7 @@ auto ResolveCliOptions(
     auto backend = ParseBackend(*opts.backend);
     if (!backend) {
       return std::unexpected(
-          std::format(
-              "--backend: '{}' is not one of cpp, llvm", *opts.backend));
+          std::format("--backend '{}' is not one of cpp, llvm", *opts.backend));
     }
     out.backend = *backend;
   }
