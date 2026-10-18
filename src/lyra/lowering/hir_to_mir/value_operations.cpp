@@ -273,15 +273,6 @@ auto OwnOperationTarget(
   return std::nullopt;
 }
 
-// Whether two values are the same bits, as a machine boolean.
-auto BuildBitIdentity(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId lhs,
-    mir::ExprId rhs) -> mir::ExprId {
-  return BuildValueOperation(
-      unit, block, support::BuiltinFn::kBitIdentical, lhs, {rhs},
-      unit.builtins.machine_bool);
-}
-
 // Whether a value holds an unknown bit, as a machine boolean.
 auto BuildHasUnknown(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value)
@@ -1805,6 +1796,14 @@ auto OperationsHadByUnion(
 }
 
 }  // namespace
+
+auto BuildBitIdentity(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId lhs,
+    mir::ExprId rhs) -> mir::ExprId {
+  return BuildValueOperation(
+      unit, block, support::BuiltinFn::kBitIdentical, lhs, {rhs},
+      unit.builtins.machine_bool);
+}
 
 auto StructMethodsOf(
     UnitLowerer& lowerer, const hir::UnpackedStructType& source,

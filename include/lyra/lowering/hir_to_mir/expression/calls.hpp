@@ -24,12 +24,6 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// The type of the index an array method hands its callable beside each element
-// of `array` (LRM 7.12.4): the key an associative array holds the element
-// under, and the ordinal position for every other array.
-[[nodiscard]] auto ArrayMethodIndexType(
-    const mir::CompilationUnit& unit, mir::TypeId array) -> mir::TypeId;
-
 // A call of the method `method` the language defines on a built-in type, on
 // `receiver` where the method acts on a value, with `operands` in the order a
 // source call writes them, all already in `block`. What its entry takes that

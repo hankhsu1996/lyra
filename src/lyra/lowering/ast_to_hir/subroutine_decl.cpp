@@ -308,7 +308,12 @@ auto LowerSubroutineDeclImpl(
   ConsumedBodyExpressions consumed_body_exprs;
   if (base_call_ast != nullptr) consumed_body_exprs.insert(base_call_ast);
   ProcessLowerer lowerer(unit_lowerer, sym, std::move(consumed_body_exprs));
-  lowerer.AnalyzeLifetimeExtended(sym.getBody());
+  std::vector<const slang::ast::VariableSymbol*> declared_ahead(
+      sym.getArguments().begin(), sym.getArguments().end());
+  if (sym.returnValVar != nullptr) {
+    declared_ahead.push_back(sym.returnValVar);
+  }
+  lowerer.AnalyzeLifetimeExtended(declared_ahead, sym.getBody());
 
   // A subroutine's root scope is named by the source (LRM 23.9), so a
   // hierarchical path reaches into it and the formals, the implicit result

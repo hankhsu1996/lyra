@@ -16,6 +16,7 @@
 #include <vector>
 
 #include <llvm/ADT/ArrayRef.h>
+#include <llvm/IR/Attributes.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constant.h>
 #include <llvm/IR/Constants.h>
@@ -31,6 +32,7 @@
 #include "lyra/backend/llvm/codegen_function.hpp"
 #include "lyra/backend/llvm/constant_record.hpp"
 #include "lyra/backend/llvm/fn_abi.hpp"
+#include "lyra/backend/llvm/machine_signature.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
@@ -43,6 +45,7 @@
 #include "lyra/profiling/time_trace.hpp"
 #include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/object_layout.hpp"
+#include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/runtime_class.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
@@ -62,12 +65,21 @@ CodeGenModule::CodeGenModule(const lir::CompilationUnit& unit)
       // unit are two artifacts.
       module_(std::make_unique<llvm::Module>(unit.body_name, *context_)),
       unit_(&unit),
-      types_(*context_, unit),
+      types_(*this),
       value_types_(*this, types_, unit),
       functions_(unit.functions.size()) {
 }
 
 auto CodeGenModule::Run() -> diag::Result<EmittedModule> {
+  // A body gives a closure it builds storage of the closure's size, so a
+  // capture this backend cannot hold is refused before any body asks.
+  for (const lir::ClosureId id : unit_->closures.Ids()) {
+    auto placed = PlacedMembersOf(
+        unit_->types.Intern(lir::Type{lir::ClosureType{.closure_id = id}}));
+    if (!placed) {
+      return std::unexpected(std::move(placed.error()));
+    }
+  }
   // Every function is declared before any body is generated, because a body may
   // call one whose own body is generated later, including itself.
   for (const lir::FunctionId id : unit_->functions.Ids()) {
@@ -203,11 +215,7 @@ auto CodeGenModule::DeclareCallable(lir::FunctionId id) -> llvm::Function* {
   llvm::Function* declared = llvm::Function::Create(
       FunctionTypeOf(params, fn.result_type), LinkageOf(fn.linkage), fn.name,
       module_.get());
-  // A body the runtime calls back through a type's table answers a
-  // predicate as a C++ `bool`, which is read as a whole byte.
-  if (unit_->types.Get(fn.result_type).Is<lir::MachineBoolType>()) {
-    declared->addRetAttr(llvm::Attribute::ZExt);
-  }
+  MarkBoolsAsCpp(declared);
   return declared;
 }
 
@@ -248,7 +256,9 @@ auto CodeGenModule::CreateRuntimeFunction(
             "as a bug",
             name));
   }
-  return module_->getOrInsertFunction(name, type);
+  llvm::FunctionCallee entry = module_->getOrInsertFunction(name, type);
+  MarkBoolsAsCpp(llvm::cast<llvm::Function>(entry.getCallee()));
+  return entry;
 }
 
 auto CodeGenModule::RuntimeFunction(std::string_view symbol, const FnAbi& abi)
@@ -404,6 +414,18 @@ auto CodeGenModule::EndOwnedStorage(
   // pointer owns is ended by its class, which is not carried out here.
   const lir::TypeId pointee = *unit_->types.Get(owner).Pointee();
   const lir::Type& pointed = unit_->types.Get(pointee);
+  // A closure of no known type is ended, and its storage given back, through
+  // the definition it opens with.
+  if (pointed.Is<lir::ErasedCallableType>()) {
+    builder.CreateCall(
+        RuntimeFunction(
+            RuntimeSymbol(RuntimeOp::kClosureBoxEnd),
+            CallArranger::Arrange(
+                {CallArranger::Direct(types_.Ptr())},
+                ReturnDirect{.type = types_.Void()})),
+        {storage});
+    return {};
+  }
   if (pointed.Is<lir::ObjectType>() || pointed.Is<lir::CrossUnitClassType>()) {
     return diag::Fail(
         diag::DiagCode::kUnsupportedExpressionForm,
@@ -484,6 +506,28 @@ auto CodeGenModule::EmitLifecycle(
         return {};
       case LifecycleStep::kDestroy:
         return {};
+    }
+    throw InternalError("llvm codegen: unknown lifecycle step");
+  }
+  // A closure is ended by the body its declaration states for ending its
+  // captures, and never moves or is copied: a coroutine body reads the captures
+  // where they lie.
+  if (const auto* closure = ty.As<lir::ClosureType>()) {
+    switch (step) {
+      case LifecycleStep::kDestroy:
+        builder.CreateCall(
+            ValueFunction(
+                lir::DestructorSymbol(
+                    lir::DefinitionSymbol(*unit_, closure->closure_id),
+                    lir::Destructor::kCompleteObject)),
+            args);
+        return {};
+      case LifecycleStep::kCopy:
+      case LifecycleStep::kMove:
+      case LifecycleStep::kAssign:
+        throw InternalError(
+            "llvm codegen: a closure is moved or copied -- please report this "
+            "as a bug");
     }
     throw InternalError("llvm codegen: unknown lifecycle step");
   }
@@ -981,15 +1025,27 @@ auto CodeGenModule::LayOutCaptures(lir::ClosureId id)
   for (const lir::Member& capture : closure.captures) {
     types.push_back(capture.type);
   }
+  const support::Layout part = runtime::ClosurePart();
   return PlaceMembers(
       types, MemberSlotRole::kSnapshot,
       PlacedMembers{
           .types = {},
           .storage = {},
           .offsets = {},
-          .end = runtime::ClosureCapturesAt(),
-          .layout = {.size = 0, .align = 1}},
+          .end = part.size,
+          .layout = part},
       "a capture");
+}
+
+auto CodeGenModule::ClosureLayout(lir::TypeId closure) const
+    -> support::Layout {
+  const auto found = placed_members_.find(closure);
+  if (found == placed_members_.end()) {
+    throw InternalError(
+        "llvm codegen: a closure is sized before its captures are laid out -- "
+        "please report this as a bug");
+  }
+  return found->second.layout;
 }
 
 auto CodeGenModule::PlacedMembersOf(lir::TypeId type)
@@ -1032,14 +1088,31 @@ auto CodeGenModule::PlacedMembersOf(lir::TypeId type)
 auto CodeGenModule::CompleteObjectSize(lir::TypeId type)
     -> diag::Result<std::uint64_t> {
   // A value no declaration lays out takes what its type lays it out in.
-  if (!unit_->types.Get(type).Declaration().has_value()) {
+  const std::optional<lir::TypeDeclaration> declaration =
+      unit_->types.Get(type).Declaration();
+  if (!declaration.has_value()) {
     return types_.LayoutOf(type).layout.size;
   }
-  auto whole = CompleteObjectLayoutOf(DeclarationOf(type));
-  if (!whole) {
-    return std::unexpected(std::move(whole.error()));
-  }
-  return whole->layout.size;
+  const auto object = [&]() -> diag::Result<std::uint64_t> {
+    auto whole = CompleteObjectLayoutOf(DeclarationOf(type));
+    if (!whole) {
+      return std::unexpected(std::move(whole.error()));
+    }
+    return whole->layout.size;
+  };
+  return std::visit(
+      Overloaded{
+          [&](const lir::ObjectType&) { return object(); },
+          [&](const lir::CrossUnitClassType&) { return object(); },
+          // A closure is as large as its captures are laid out.
+          [&](const lir::ClosureType&) -> diag::Result<std::uint64_t> {
+            auto placed = PlacedMembersOf(type);
+            if (!placed) {
+              return std::unexpected(std::move(placed.error()));
+            }
+            return (*placed)->layout.size;
+          }},
+      *declaration);
 }
 
 auto CodeGenModule::HoldsItsBytesInline(
@@ -1624,10 +1697,11 @@ auto CodeGenModule::EmitTable(
 
 auto CodeGenModule::EmitClosureDefinition(lir::ClosureId id)
     -> diag::Result<void> {
-  using runtime::ClosureDefinition;
+  using runtime::ClosureCommonEntries;
   const lir::Closure& closure = unit_->closures.Get(id);
   const std::string symbol = lir::DefinitionSymbol(*unit_, id);
-  auto captures = LayOutCaptures(id);
+  auto captures = PlacedMembersOf(
+      unit_->types.Intern(lir::Type{lir::ClosureType{.closure_id = id}}));
   if (!captures) {
     return std::unexpected(std::move(captures.error()));
   }
@@ -1635,55 +1709,48 @@ auto CodeGenModule::EmitClosureDefinition(lir::ClosureId id)
       lir::DestructorSymbol(symbol, lir::Destructor::kCompleteObject));
   {
     llvm::IRBuilder<> ending(llvm::BasicBlock::Create(*context_, "", end));
-    if (auto ended = EndMembers(ending, end->getArg(0), *captures); !ended) {
+    if (auto ended = EndMembers(ending, end->getArg(0), **captures); !ended) {
       return ended;
     }
     ending.CreateRetVoid();
   }
 
-  // Which protocol a body answers to follows from what it results in and what
-  // it is handed: a coroutine yields the handle its caller drives, a body
-  // resulting in nothing runs to completion, and one resulting in a value
-  // states the type that value comes back in. Taking an entry and its position
-  // beyond the receiver is what separates the two that answer a value.
+  // A body taking its closure over is started where it is made rather than
+  // called, so its definition is the common entries alone. Any other is called
+  // through the definition at the one signature it has; every call is a code
+  // address wherever it lies, so the definition at one signature lays out
+  // every other.
   const lir::Function& invoke = unit_->functions.Get(closure.invoke);
-  const lir::Type& result = unit_->types.Get(invoke.result_type);
-  std::size_t entry = offsetof(ClosureDefinition, run);
-  llvm::Constant* type = llvm::ConstantPointerNull::get(types_.Ptr());
-  if (result.Is<lir::CoroutineType>()) {
-    entry = offsetof(ClosureDefinition, start);
-  } else if (!result.Is<lir::VoidType>()) {
-    entry = invoke.params.size() > 1
-                ? offsetof(ClosureDefinition, run_per_element)
-                : offsetof(ClosureDefinition, run_value);
-    auto answered = value_types_.GetAddrOfValueType(invoke.result_type);
-    if (!answered) {
-      return std::unexpected(std::move(answered.error()));
+  const auto takes_closure_over = [&] {
+    const auto* receiver =
+        unit_->types.Get(invoke.values.Get(invoke.params.front()).type)
+            .As<lir::PointerType>();
+    if (receiver == nullptr) {
+      return false;
     }
-    type = *answered;
+    switch (receiver->ownership) {
+      case lir::PointerOwnership::kUnique:
+        return true;
+      case lir::PointerOwnership::kShared:
+      case lir::PointerOwnership::kBorrowed:
+        return false;
+    }
+    throw InternalError("llvm codegen: unknown PointerOwnership");
+  }();
+  using CalledDefinition = runtime::ClosureDefinition<support::EffectSignature>;
+  const std::size_t size = takes_closure_over ? sizeof(ClosureCommonEntries)
+                                              : sizeof(CalledDefinition);
+  ConstantRecord out(*context_, size);
+  out.Place(offsetof(ClosureCommonEntries, end), end);
+  if (!takes_closure_over) {
+    out.Place(offsetof(CalledDefinition, call), UnitFunction(closure.invoke));
   }
-  ConstantRecord out(*context_, sizeof(ClosureDefinition));
-  // Each body entry the protocol does not use stays null.
-  for (const std::size_t at :
-       {offsetof(ClosureDefinition, run), offsetof(ClosureDefinition, start),
-        offsetof(ClosureDefinition, run_per_element),
-        offsetof(ClosureDefinition, run_value)}) {
-    out.Place(
-        at, at == entry
-                ? llvm::cast<llvm::Constant>(UnitFunction(closure.invoke))
-                : llvm::ConstantPointerNull::get(types_.Ptr()));
-  }
-  out.Place(offsetof(ClosureDefinition, result_type), type);
-  out.Place(
-      offsetof(ClosureDefinition, size),
-      Int(captures->layout.size, sizeof(ClosureDefinition::size)));
-  out.Place(offsetof(ClosureDefinition, end_captures), end);
-  // The definition and what ends the captures are named wherever the invoke
+  // The definition and what ends the closure are named wherever the invoke
   // is, and nowhere else.
   end->setLinkage(LinkageOf(invoke.linkage));
   DefineConstant(
       symbol, std::move(out).Build(), LinkageOf(invoke.linkage),
-      llvm::Align(alignof(ClosureDefinition)));
+      llvm::Align(alignof(CalledDefinition)));
   return {};
 }
 

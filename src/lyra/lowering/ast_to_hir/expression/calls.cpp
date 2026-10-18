@@ -393,15 +393,14 @@ auto LowerSampledHistoryExpr(
 // position an object was written in; an entry that acts on none -- a factory
 // answering with the value it builds -- takes every operand as an argument.
 auto BuiltinCall(
-    support::BuiltinFn method, std::vector<std::optional<hir::ExprId>> operands,
-    std::optional<hir::WithClause> with_clause) -> hir::CallExpr {
+    support::BuiltinFn method, std::vector<std::optional<hir::ExprId>> operands)
+    -> hir::CallExpr {
   const support::RuntimeEntry entry = support::RuntimeEntryOf(method);
   if (std::holds_alternative<support::StaticFactory>(entry.declaration)) {
     return hir::CallExpr{
         .callee =
             hir::BuiltinMethodRef{.method = method, .receiver = std::nullopt},
-        .arguments = std::move(operands),
-        .with_clause = std::move(with_clause)};
+        .arguments = std::move(operands)};
   }
   if (operands.empty() || !operands.front().has_value()) {
     throw InternalError(
@@ -411,8 +410,7 @@ auto BuiltinCall(
   const hir::ExprId receiver = *operands.front();
   return hir::CallExpr{
       .callee = hir::BuiltinMethodRef{.method = method, .receiver = receiver},
-      .arguments = {operands.begin() + 1, operands.end()},
-      .with_clause = std::move(with_clause)};
+      .arguments = {operands.begin() + 1, operands.end()}};
 }
 
 // A method of an imported runtime-library class (LRM 9.7 `process`) is
@@ -586,7 +584,7 @@ auto LowerSystemCall(
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .type = *type_id,
-          .data = BuiltinCall(*kind, std::move(arg_ids), std::nullopt),
+          .data = BuiltinCall(*kind, std::move(arg_ids)),
           .span = span,
       };
     }
@@ -602,8 +600,7 @@ auto LowerSystemCall(
     if (!type_id) return std::unexpected(std::move(type_id.error()));
     return hir::Expr{
         .type = *type_id,
-        .data = BuiltinCall(
-            support::BuiltinFn::kTriggered, std::move(arg_ids), std::nullopt),
+        .data = BuiltinCall(support::BuiltinFn::kTriggered, std::move(arg_ids)),
         .span = span,
     };
   }
@@ -621,7 +618,7 @@ auto LowerSystemCall(
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .type = *type_id,
-          .data = BuiltinCall(*kind, std::move(arg_ids), std::nullopt),
+          .data = BuiltinCall(*kind, std::move(arg_ids)),
           .span = span,
       };
     }
@@ -641,7 +638,7 @@ auto LowerSystemCall(
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .type = *type_id,
-          .data = BuiltinCall(*kind, std::move(arg_ids), std::nullopt),
+          .data = BuiltinCall(*kind, std::move(arg_ids)),
           .span = span,
       };
     }
@@ -654,10 +651,10 @@ auto LowerSystemCall(
   // 7.12.3 / 7.12.5 reduction / locator / map; the ordering family is
   // rejected on it by slang). A receiver whose own clause names a method --
   // the queue's LRM 7.10.2 set, the associative array's LRM 7.9 set --
-  // resolved it above, so only the 7.12 names reach this dispatch. The
-  // no-`with` form takes only the receiver; the `with` form (LRM 7.12.4)
-  // binds an iterator and a body expression carried as the optional
-  // `WithClause`, which HIR -> MIR turns into a closure argument.
+  // resolved it above, so only the 7.12 names reach this dispatch. A method
+  // that evaluates an expression at each entry binds an iterator and that
+  // expression where the source writes a `with` clause (LRM 7.12, Syntax 7-5),
+  // and the call's callee carries it.
   const auto receives_array_method = [&] {
     if (!receiver_type.has_value()) return false;
     const hir::Type& ty = unit_lowerer.Unit().types.Get(*receiver_type);
@@ -666,6 +663,16 @@ auto LowerSystemCall(
   };
   if (receives_array_method()) {
     if (auto kind = LowerArrayMethodName(name); kind.has_value()) {
+      auto type_id = unit_lowerer.InternExpressionType(call, span);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return hir::Expr{
+          .type = *type_id,
+          .data = BuiltinCall(*kind, std::move(arg_ids)),
+          .span = span,
+      };
+    }
+    if (auto iterator_method = LowerArrayIteratorMethodName(name);
+        iterator_method.has_value()) {
       auto type_id = unit_lowerer.InternExpressionType(call, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       std::optional<hir::WithClause> with_clause;
@@ -695,7 +702,12 @@ auto LowerSystemCall(
       return hir::Expr{
           .type = *type_id,
           .data =
-              BuiltinCall(*kind, std::move(arg_ids), std::move(with_clause)),
+              hir::CallExpr{
+                  .callee =
+                      hir::ArrayIteratorMethodRef{
+                          .method = *iterator_method,
+                          .with_clause = std::move(with_clause)},
+                  .arguments = std::move(arg_ids)},
           .span = span,
       };
     }
@@ -711,8 +723,7 @@ auto LowerSystemCall(
     if (!type_id) return std::unexpected(std::move(type_id.error()));
     return hir::Expr{
         .type = *type_id,
-        .data = BuiltinCall(
-            support::BuiltinFn::kClog2, std::move(arg_ids), std::nullopt),
+        .data = BuiltinCall(support::BuiltinFn::kClog2, std::move(arg_ids)),
         .span = span,
     };
   }
@@ -732,7 +743,7 @@ auto LowerSystemCall(
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .type = *type_id,
-          .data = BuiltinCall(*real_fn, std::move(arg_ids), std::nullopt),
+          .data = BuiltinCall(*real_fn, std::move(arg_ids)),
           .span = span,
       };
     }

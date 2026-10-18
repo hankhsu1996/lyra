@@ -1,114 +1,265 @@
 #pragma once
 
-#include <cstdint>
+#include <concepts>
 #include <memory>
 
-#include "lyra/value/any_value.hpp"
-#include "lyra/value/integral_words.hpp"
-#include "lyra/value/value_type.hpp"
+#include "lyra/base/function_ref.hpp"
+#include "lyra/support/callable_bounds.hpp"
 
 namespace lyra::runtime {
 
-// The immutable definition of one closure: the body a call runs, and how the
-// storage its captures live in is laid out. Held once and shared by every value
-// built from it, the way a class's definition is shared by its values, and like
-// one emitted by the unit declaring it as a constant laid out as C lays a
-// structure out.
+// What every closure's definition begins with: the body ending the closure,
+// the one thing any holder may ask of a closure whatever its signature, as
+// every rustc vtable begins with the entries any `dyn` type has before the
+// methods of its trait.
 //
-// The body is entered on the closure value its captures live in, under the one
-// call protocol its signature states, so exactly one of the entries below is
-// set: an ordinary body runs to completion and answers nothing, a coroutine
-// body yields the handle whoever entered it drives from there, a per-element
-// body is run once for each entry of a container it was handed and results in a
-// value, and a value body takes nothing and results in a value each time it is
-// run. Whoever runs a closure asks for the protocol it runs it under.
-//
-// A body that answers a value builds it in storage its caller gives, and states
-// the type it comes back in, because a handle carries no type: it is a fact
-// only whoever compiled the body holds.
-//
-// The captures lie in the value itself, after what this library keeps there,
+// The captures lie in the closure value, after what this library keeps there,
 // where the code building the closure placed them and fills them. So of the
-// value this states only how large it is in all and the body ending what that
-// code filled, as a class's definition states the size of its objects and its
-// destructor.
-struct ClosureDefinition {
-  void (*run)(void* self) = nullptr;
-  void* (*start)(void* self) = nullptr;
-  void* (*run_per_element)(
-      void* self, const void* item, const void* index, void* out) = nullptr;
-  void* (*run_value)(void* self, void* out) = nullptr;
-  const value::ValueType* result_type = nullptr;
-  std::uint64_t size = 0;
-  void (*end_captures)(void* self) = nullptr;
+// value this states only the body ending it, as a class's definition states
+// its destructor; where the value lies and how large it is are the building
+// code's to say.
+struct ClosureCommonEntries {
+  void (*end)(void* self) = nullptr;
 };
 
-class ClosureValue;
+// The immutable definition of one closure: how it is ended, then the body a
+// call runs, entered on the closure value its captures live in at the one
+// signature it has, as the call method of a rustc `dyn FnMut(A) -> R` vtable
+// is. Held once and shared by every value built from it, the way a class's
+// definition is shared by its values, and emitted by the unit declaring it as
+// a constant laid out as C lays a structure out. Every signature takes and
+// answers machine values only, so nothing here knows a type of the program.
+//
+// A body started where it is made -- a fork's branch, a task enabled with
+// arguments to copy back, an update waiting for its event -- has no call and
+// is never held as a closure of no known type, so its definition is the
+// common entries alone.
+template <typename Signature>
+struct ClosureDefinition;
 
-// Ends a closure value and gives back the storage it and its captures share.
-struct EndClosure {
-  void operator()(ClosureValue* closure) const noexcept;
+template <typename R, typename... Params>
+struct ClosureDefinition<R(Params...)> {
+  ClosureCommonEntries common;
+  R (*call)(void* self, Params... params) = nullptr;
 };
 
-// A closure value as whoever holds it carries it: the one owner of the closure,
-// which stays where it was made while the owner is handed on.
-using OwnedClosure = std::unique_ptr<ClosureValue, EndClosure>;
-
-// A callable the runtime runs on the program's behalf -- a non-blocking
-// assignment, a postponed print, a deferred assertion's action, the branch a
-// `fork` spawns, the `with` expression an array method evaluates per entry, the
-// expression an event control is watching for a change in the value of. It
-// holds its captures in itself, so a captured value is a copy taken where the
-// closure was built and released with the closure, never a handle into the
-// body that built it, which may be gone by the time this one runs. What fills
-// them is the code building the closure, which laid them out.
+// The part of every closure this library keeps, at its start: the definition
+// it is ended and called through. Whatever the library is handed to run or ask
+// later, it holds as this part, without knowing the closure's type; the
+// captures lie after it, laid out by the code that built it. This is the shape
+// of a C++ object holding its class's table address, rather than the address
+// pair a Rust `Box<dyn>` is, so a box of a closure is one address wherever it
+// is held, as a box of anything else is.
 //
 // The value never moves: a coroutine body's frame reads the captures through
 // the value it was entered on for as long as it runs, and whatever keeps the
-// closure is handed its owner instead.
+// closure is handed the box it was made in instead. Code that lays a closure
+// out itself makes this part by storing the definition's address at the
+// closure's start, as a constructor stores a class's table address.
 class ClosureValue {
  public:
-  // A value of the size the definition states, with nothing captured yet.
-  [[nodiscard]] static auto Make(const ClosureDefinition* definition)
-      -> OwnedClosure;
-
   ClosureValue(const ClosureValue&) = delete;
   auto operator=(const ClosureValue&) -> ClosureValue& = delete;
   ClosureValue(ClosureValue&&) = delete;
   auto operator=(ClosureValue&&) -> ClosureValue& = delete;
-  ~ClosureValue();
 
-  // Runs an ordinary body to completion.
-  void Invoke();
+  // Ends the closure where it lies, captures included.
+  void End();
 
-  // Builds a coroutine body's frame over these captures and answers its handle,
-  // having run no statement of it; the caller drives it from there.
-  [[nodiscard]] auto Start() -> void*;
+  [[nodiscard]] auto Definition() const -> const ClosureCommonEntries* {
+    return definition_;
+  }
 
-  // Runs a per-element body on one entry, handed the element and its index
-  // where each lies (LRM 7.12.4), and answers the value it settled on.
-  [[nodiscard]] auto RunPerElement(const void* item, const void* index)
-      -> value::AnyValue;
+ protected:
+  // The part of a closure of a known type this library keeps, made by that
+  // closure's own construction.
+  explicit ClosureValue(const ClosureCommonEntries* definition);
 
-  // Runs a body that takes nothing and answers what it settled on.
-  [[nodiscard]] auto RunValue() -> value::AnyValue;
+  template <typename Signature>
+  explicit ClosureValue(const ClosureDefinition<Signature>* definition);
 
-  // Runs a body an event control reads one scalar of. What an edge is a
-  // transition of is the watched expression's least significant bit (LRM
-  // 9.4.2), which the body answers as a `logic`; whether an `iff` qualifier
-  // holds (LRM 12.4) the body answers as a `bit`. Each type is the language's
-  // own, so nothing here is told what the body answers.
-  [[nodiscard]] auto RunWatchedBit() -> value::FourStateBit;
-  [[nodiscard]] auto RunTruth() -> bool;
+  ~ClosureValue() = default;
 
  private:
-  explicit ClosureValue(const ClosureDefinition* definition);
-
-  // Runs a body that takes nothing into `out`, which is sized for the type it
-  // answers.
-  void RunValueInto(void* out);
-
-  const ClosureDefinition* definition_;
+  const ClosureCommonEntries* definition_;
 };
+
+// Ends a closure of no known type held through a box, and gives back the
+// storage it was made in: its end comes from the definition it opens with, as
+// a Rust `Box<dyn>` is dropped through its vtable.
+struct EndClosure {
+  void operator()(ClosureValue* closure) const noexcept;
+};
+
+namespace detail {
+
+// The definition `closure` was made from, which the holder knows to be at
+// `Signature` because that is the signature it was handed the closure at. The
+// common entries are the definition's first member, so the two share an
+// address.
+template <typename Signature>
+auto DefinitionAt(const ClosureValue& closure)
+    -> const ClosureDefinition<Signature>& {
+  const void* definition = closure.Definition();
+  return *static_cast<const ClosureDefinition<Signature>*>(definition);
+}
+
+}  // namespace detail
+
+// A closure kept past the body that built it, called at `Signature`, as a Rust
+// `Box<dyn FnMut(A) -> R>` is: the box that body made it in, which stays where
+// it was made while the box is handed on.
+template <typename Signature>
+class OwnedClosure;
+
+template <typename R, typename... Params>
+class OwnedClosure<R(Params...)> {
+ public:
+  // Takes over the box `closure` was made in, whose definition is at this
+  // signature.
+  explicit OwnedClosure(ClosureValue* closure);
+  ~OwnedClosure();
+  OwnedClosure(const OwnedClosure&) = delete;
+  auto operator=(const OwnedClosure&) -> OwnedClosure& = delete;
+  OwnedClosure(OwnedClosure&&) noexcept;
+  auto operator=(OwnedClosure&&) noexcept -> OwnedClosure&;
+
+  auto operator()(Params... params) -> R {
+    return detail::DefinitionAt<R(Params...)>(*box_).call(
+        box_.get(), params...);
+  }
+
+ private:
+  std::unique_ptr<ClosureValue, EndClosure> box_;
+};
+
+template <typename Signature>
+ClosureValue::ClosureValue(const ClosureDefinition<Signature>* definition)
+    : ClosureValue(&definition->common) {
+}
+
+template <typename R, typename... Params>
+OwnedClosure<R(Params...)>::OwnedClosure(ClosureValue* closure)
+    : box_(closure) {
+}
+
+template <typename R, typename... Params>
+OwnedClosure<R(Params...)>::~OwnedClosure() = default;
+
+template <typename R, typename... Params>
+OwnedClosure<R(Params...)>::OwnedClosure(OwnedClosure&&) noexcept = default;
+
+template <typename R, typename... Params>
+auto OwnedClosure<R(Params...)>::operator=(OwnedClosure&&) noexcept
+    -> OwnedClosure& = default;
+
+// The signatures the library calls a closure at are fixed by its own entries,
+// so what a closure needs of this library at each is compiled once, here,
+// rather than in every unit that builds a closure.
+extern template ClosureValue::ClosureValue(
+    const ClosureDefinition<support::EffectSignature>* definition);
+extern template ClosureValue::ClosureValue(
+    const ClosureDefinition<support::ConditionSignature>* definition);
+extern template ClosureValue::ClosureValue(
+    const ClosureDefinition<support::WatchSignature>* definition);
+extern template ClosureValue::ClosureValue(
+    const ClosureDefinition<support::OrderSignature>* definition);
+extern template class OwnedClosure<support::EffectSignature>;
+extern template class OwnedClosure<support::ConditionSignature>;
+extern template class OwnedClosure<support::WatchSignature>;
+
+// The closure the library was handed a borrow of, of no known type, read as
+// one called at `Signature`, as a Rust `&dyn Fn` is: where the closure lies,
+// and the call of its definition.
+template <typename Signature>
+[[nodiscard]] auto Borrow(ClosureValue& closure)
+    -> base::FunctionRef<Signature> {
+  return {&closure, detail::DefinitionAt<Signature>(closure).call};
+}
+
+namespace detail {
+
+// The signature a closure's call operator is entered at.
+template <typename Member>
+struct CallOperator;
+
+template <typename Closure, typename R, typename... Params>
+struct CallOperator<R (Closure::*)(Params...)> {
+  using Signature = R(Params...);
+};
+
+template <typename Closure, typename R, typename... Params>
+struct CallOperator<R (Closure::*)(Params...) const> {
+  using Signature = R(Params...);
+};
+
+// The closure `self` is the library's part of.
+template <typename Closure>
+auto ClosureAt(void* self) -> Closure* {
+  return static_cast<Closure*>(static_cast<ClosureValue*>(self));
+}
+
+template <typename Closure>
+void EndAt(void* self) {
+  std::destroy_at(ClosureAt<Closure>(self));
+}
+
+template <typename Closure, typename Signature>
+struct CallAt;
+
+template <typename Closure, typename R, typename... Params>
+struct CallAt<Closure, R(Params...)> {
+  static auto Call(void* self, Params... params) -> R {
+    return (*ClosureAt<Closure>(self))(params...);
+  }
+};
+
+}  // namespace detail
+
+// The signature the closure type `Closure` is called at: its call operator's,
+// whether that operator only reads the closure or also writes it.
+template <typename Closure>
+using SignatureOf =
+    typename detail::CallOperator<decltype(&Closure::operator())>::Signature;
+
+// A closure of a known type made one of no known type called at `Signature`,
+// as Rust's unsizing coercion makes a `Box<dyn FnMut>` of a `Box<T>` and a
+// `&dyn FnMut` of a `&T`: the closure stays where it was made, and is called,
+// and for a box ended, from then on through its definition. A box is taken
+// over; a borrow is called through the call its type has, which is known here.
+template <typename Signature, std::derived_from<ClosureValue> Closure>
+[[nodiscard]] auto Unsize(std::unique_ptr<Closure> box)
+    -> OwnedClosure<Signature> {
+  static_assert(
+      std::same_as<Signature, SignatureOf<Closure>>,
+      "a closure is held at the signature its body has");
+  return OwnedClosure<Signature>(box.release());
+}
+
+template <typename Signature, std::derived_from<ClosureValue> Closure>
+[[nodiscard]] auto Unsize(Closure& closure) -> base::FunctionRef<Signature> {
+  static_assert(
+      std::same_as<Signature, SignatureOf<Closure>>,
+      "a closure is held at the signature its body has");
+  return {
+      static_cast<ClosureValue*>(&closure),
+      &detail::CallAt<Closure, Signature>::Call};
+}
+
+// The definition of the closure type `Closure`: the body ending it, and the
+// call its call operator is entered through, at that operator's signature. A
+// closure with no call operator is entered where it is started, and its
+// definition is the common entries alone.
+template <std::derived_from<ClosureValue> Closure>
+consteval auto DefinitionOf() {
+  constexpr ClosureCommonEntries kCommon{.end = &detail::EndAt<Closure>};
+  if constexpr (requires { &Closure::operator(); }) {
+    using Signature = SignatureOf<Closure>;
+    return ClosureDefinition<Signature>{
+        .common = kCommon, .call = &detail::CallAt<Closure, Signature>::Call};
+  } else {
+    return kCommon;
+  }
+}
 
 }  // namespace lyra::runtime

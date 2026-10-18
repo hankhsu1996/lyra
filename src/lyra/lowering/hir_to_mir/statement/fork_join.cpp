@@ -22,6 +22,7 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/callable_bounds.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -95,7 +96,7 @@ auto LowerForkStmt(
     const auto* vd =
         std::get_if<hir::VarDeclStmt>(&hir_proc.stmts.Get(local_hir_id).data);
     if (vd != nullptr) {
-      branch_policy.snapshot_set.insert(BindingOriginId::Procedural(vd->var));
+      branch_policy.snapshot_set.insert(ProceduralOrigin{.var = vd->var});
     }
   }
 
@@ -121,14 +122,16 @@ auto LowerForkStmt(
     // returns inside it become `co_return`. The branch policy snapshots the
     // fork's own block-item declarations and aliases deeper enclosing
     // variables (LRM 6.21).
-    ClosureBuilder closure(process.Owner().Unit(), fork_frame, branch_policy);
+    ClosureBuilder closure(
+        process.Owner().Unit(), fork_frame, support::ClosureKind::kFnOnce,
+        branch_policy);
     auto lowered =
         process.LowerStmt(branch, closure.Frame().WithBodyCanWait(true));
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
     closure.Body().AppendStmt(*std::move(lowered));
-    branches.push_back(fork_block.exprs.Add(closure.BuildCoroutine()));
+    branches.push_back(fork_block.exprs.Add(closure.BuildCallOnce()));
   }
 
   const mir::TypeId branches_type = mir::MachineArrayOf(

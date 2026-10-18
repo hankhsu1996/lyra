@@ -1,17 +1,15 @@
 #pragma once
 
-#include <algorithm>
-#include <array>
 #include <cstddef>
 #include <cstdint>
-#include <initializer_list>
 #include <optional>
 #include <span>
 #include <string_view>
 #include <variant>
 
-#include "lyra/base/internal_error.hpp"
+#include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/integral_operation.hpp"
+#include "lyra/support/per_operand.hpp"
 
 namespace lyra::support {
 
@@ -102,30 +100,13 @@ enum class BuiltinFn : std::uint16_t {
   // spelling is resolved where the source is read.
   kDelete,
   kDeleteIndex,
-  // LRM 7.12 ordering. `Sort` / `Rsort` take a `with`-clause closure as
-  // the second argument.
+  // LRM 7.12.2 ordering. A sort is handed the order its entries' keys stand
+  // in, as a borrowed callable answering whether the entry at one position
+  // comes before the one at another, and puts the entries in that order,
+  // equal ones keeping theirs: a descending sort is the same entry handed the
+  // reversed comparison, as Rust sorts descending by `sort_by`.
   kReverse,
   kSort,
-  kRsort,
-  // LRM 7.12.3 reductions. All take a `with`-clause closure.
-  kSum,
-  kProduct,
-  kAnd,
-  kOr,
-  kXor,
-  // LRM 7.12.1 search.
-  kFind,
-  kFindIndex,
-  kFindFirst,
-  kFindFirstIndex,
-  kFindLast,
-  kFindLastIndex,
-  kMin,
-  kMax,
-  kUnique,
-  kUniqueIndex,
-  // LRM 7.12.5.
-  kMap,
   // LRM 7.10 queue insertion / removal.
   kInsert,
   kPopFront,
@@ -673,15 +654,15 @@ enum class BuiltinFn : std::uint16_t {
   // What decides whether reaching a wait is an event for it (LRM 9.4.2), built
   // where the wait begins and held for as long as it lasts. Two halves, each
   // present exactly where the source put one: an event control watches an
-  // expression's value at a stated edge, and a named event's trigger is the
-  // event itself so it watches nothing; either may carry an `iff` qualifier
-  // (LRM 9.4.2.3, 15.5). Four entries because the four combinations are what
-  // the language distinguishes and an absent half has no value to stand in for
-  // it, so which one a wait carries is settled where the source is read rather
-  // than by counting arguments.
+  // expression through the watch the compiler builds for it, and a named
+  // event's trigger is the event itself so it watches nothing; either may carry
+  // an `iff` qualifier (LRM 9.4.2.3, 15.5). Four entries because the four
+  // combinations are what the language distinguishes and an absent half has no
+  // value to stand in for it, so which one a wait carries is settled where the
+  // source is read rather than by counting arguments.
   kObservationOnReaching,
-  kObservationOfValue,
-  kObservationOfValueQualified,
+  kObservationOfWatch,
+  kObservationOfWatchQualified,
   kObservationQualified,
   // Building an observation evaluates nothing. Asking whether a candidacy was
   // an event evaluates it, by the waiting process for a wait that process
@@ -1306,33 +1287,23 @@ enum class OperandReading : std::uint8_t {
 // it is, so an entry that states none takes no integral value and nothing that
 // crosses with a type. An entry that is an operation over integral values
 // states none: that operation's own declaration says what it takes.
-class OperandReadings {
+class OperandReadings : public PerOperand<OperandReading, 6> {
  public:
-  constexpr OperandReadings() = default;
-  constexpr OperandReadings(std::initializer_list<OperandReading> readings)
-      : count_(readings.size()) {
-    if (readings.size() > kMost) {
-      throw InternalError(
-          "a runtime entry states more operand readings than an entry holds "
-          "-- please report this as a bug");
-    }
-    std::ranges::copy(readings, readings_.begin());
-  }
-
-  [[nodiscard]] constexpr auto All() const -> std::span<const OperandReading> {
-    return std::span<const OperandReading>(readings_).first(count_);
-  }
+  using PerOperand::PerOperand;
 
   // How operand `index` is read, whether or not it is one of those stated.
   [[nodiscard]] constexpr auto At(std::size_t index) const -> OperandReading {
-    return index < count_ ? readings_.at(index) : OperandReading::kMachine;
+    const std::span<const OperandReading> stated = All();
+    return index < stated.size() ? stated[index] : OperandReading::kMachine;
   }
-
- private:
-  static constexpr std::size_t kMost = 6;
-  std::array<OperandReading, kMost> readings_{};
-  std::size_t count_ = 0;
 };
+
+// What an entry asks of each closure or started body it is handed, how long
+// it keeps each and how it enters each, in the order of the operands holding
+// them -- an operand gathering several, the branches a fork starts, is one --
+// as a Rust callee states its bounds on each callable parameter. An entry
+// handed none states none.
+using CallableOperands = PerOperand<CallableBounds, 2>;
 
 // What an entry is told of the type it answers at, beyond the storage its
 // answer is laid out in.
@@ -1347,11 +1318,11 @@ enum class AnswerTold : std::uint8_t {
   // the type the call answers at to say.
   kBuiltArray,
   // The type of the value it answers, which nothing it is handed states: what
-  // it answers where it finds nothing to answer with -- a reduction (LRM
-  // 7.12.3) over no entries, the index an unallocated dimension reports (LRM
-  // 20.7) -- is that type's default (LRM Table 6-7), what a stream of bits is
-  // read as (LRM 6.24.3) is a value of it, and a tuple it lays its answers out
-  // in states nothing of it in its bytes.
+  // it answers where it finds nothing to answer with -- the index an
+  // unallocated dimension reports (LRM 20.7) -- is that type's default (LRM
+  // Table 6-7), what a stream of bits is read as (LRM 6.24.3) is a value of
+  // it, and a tuple it lays its answers out in states nothing of it in its
+  // bytes.
   kAnswerType,
   // The element type of the element it answers with where no array is in hand
   // to state one: what a read of a position naming no element yields, and
@@ -1430,10 +1401,6 @@ struct RuntimeEntry {
   // How the entry names the part it reaches, absent for an entry that reaches
   // none.
   std::optional<PartSelection> selects = std::nullopt;
-  // Whether the LRM 7.12 method takes a `with`-clause closure as its second
-  // argument. The other LRM 7.5 / 7.10 array entries (`size`, `delete`,
-  // `reverse`) take none.
-  bool takes_closure = false;
   // Whether the entry answers with an index by writing it into the variable
   // the source named (LRM 7.9.4 -- 7.9.7), so the call lowers to a block
   // expression: binding the answer and writing it back are steps rather than
@@ -1453,6 +1420,10 @@ struct RuntimeEntry {
   // one kind. A call below the source's own layer names that entry where its
   // first operand is integral, and this one everywhere else.
   std::optional<BuiltinFn> over_integral_values = std::nullopt;
+  // What the entry asks of each closure and started body it is handed, how
+  // long it keeps each, which bounds how long it can run and so what it may
+  // refer to, and the signature it calls each closure at.
+  CallableOperands callables = {};
 };
 
 // The one declaration of `id`. Total over the entry set, so an entry added

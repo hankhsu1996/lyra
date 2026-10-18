@@ -32,13 +32,28 @@ using namespace std::chrono_literals;
 // comparison, a net of each kind resolving two drivers, a write into a
 // member of an element, a merge under an unknown condition, a task's variable
 // and what it completes with, a variable kept across a wait and captured by
-// what it forks, a value named on the command line, a memory loaded from a
-// file as text and as bytes, a change waited on, a value forced and released,
-// and its sampled value -- each checked against what it must hold. A list of
-// arguments longer than a frame keeps is checked beside them.
+// what it forks, an update deferred with and without a delay, one whose
+// captures are each small and together large, a parameter left to its
+// default, overridden, and of a structure type, a value named on the command
+// line, a memory loaded from a file as text and as bytes, a change waited on,
+// a value forced and released, and its sampled value -- each checked against
+// what it must hold. A list of arguments longer than a frame keeps is checked
+// beside them.
 constexpr int kManyArguments = 200;
 
 constexpr std::string_view kValuesPastTheStack = R"(
+typedef struct packed { logic [4194303:0] w; } packed_wide_t;
+
+module Holder #(
+    parameter logic [4194303:0] P = {4194304{1'b1}},
+    parameter logic [4194303:0] Q = '0,
+    parameter packed_wide_t S = '{w: '1}
+) (output logic p, q, s);
+  assign p = P[4194303];
+  assign q = Q[100];
+  assign s = S.w[7];
+endmodule
+
 module Test;
   typedef logic [4194303:0] wide_t;
   typedef int arr_t [262144];
@@ -74,7 +89,10 @@ module Test;
   typedef logic [7:0] mem_t [524288];
   typedef union { wide_t w; mem_t x; } u_t;
 
-  wide_t a, b, nb;
+  wide_t a, b, nb, late, later;
+  logic [4095:0] mid, mid_later;
+  logic hp, hq, hs;
+  Holder #(.Q({4194304{1'b1}})) h(.p(hp), .q(hq), .s(hs));
   mem_t ma;
   u_t u, v;
   wire wide_t wn;
@@ -110,6 +128,14 @@ module Test;
     if (un.w !== 5) $fatal(1, "the union net");
     v = u;
     if (v != u || v.w !== 5) $fatal(1, "the union's copy and comparison");
+    if (hp !== 1'b1 || hq !== 1'b1 || hs !== 1'b1) $fatal(1, "the parameters");
+    late <= wn;
+    later <= #1 wn;
+    mid = '1;
+    mid_later <= #1 mid;
+    #2;
+    if (late !== 5 || later !== 5) $fatal(1, "the deferred updates");
+    if (mid_later !== '1) $fatal(1, "the update whose captures together are large");
   end
 
   initial begin

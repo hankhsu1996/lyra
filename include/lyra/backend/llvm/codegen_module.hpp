@@ -239,10 +239,16 @@ class CodeGenModule {
       -> llvm::GlobalVariable*;
 
   // How a value of the declaration `type` names is laid out -- a class of this
-  // unit or of another, or the part the runtime library builds where a class
-  // extends one of its classes. Laid out once per
-  // declaration: its own members after the whole of what it extends.
+  // unit or of another, the part the runtime library builds where a class
+  // extends one of its classes, or a closure, its captures after the library's
+  // part. Laid out once per declaration: its own members after the whole of
+  // what it extends.
   auto PlacedMembersOf(lir::TypeId type) -> diag::Result<const PlacedMembers*>;
+  // How large a value of the closure type `closure` is, from its captures as
+  // they are laid out; every closure's are laid out before any body is
+  // generated.
+  [[nodiscard]] auto ClosureLayout(lir::TypeId closure) const
+      -> support::Layout;
 
   // The size of a complete object of `type` -- the whole layout of the
   // declaration it names, or what any other value is laid out in -- which is
@@ -431,8 +437,7 @@ class CodeGenModule {
       -> llvm::Constant*;
   // How a value of `declared` is laid out.
   auto LayOut(const Declared& declared) -> diag::Result<PlacedMembers>;
-  // How the storage a closure's captures live in is laid out. A closure extends
-  // nothing, so its first capture starts where that storage does.
+  // How a closure's captures are laid out, after the library's part of it.
   auto LayOutCaptures(lir::ClosureId id) -> diag::Result<PlacedMembers>;
   // Emits the constructor prologue of `declared`, which its constructor runs
   // once its base is built: the value's table address, then its own members,

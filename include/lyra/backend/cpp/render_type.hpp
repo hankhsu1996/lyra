@@ -151,6 +151,36 @@ struct CppRecordBase {
 
 void WriteOne(TargetText& out, const CppRecordBase& base);
 
+// The part of every closure the runtime library keeps, which a closure's type
+// extends: the definition it is called and ended through.
+[[nodiscard]] auto CppClosureBase() -> std::string_view;
+
+// What builds that definition, a constant each closure's type states, from the
+// closure's type, `DefinitionOf<C>()`: the library reads the signature of the
+// closure's body off the type, and the constant's type follows from it.
+[[nodiscard]] auto CppClosureDefinitionOf() -> std::string_view;
+
+// The signature a closure of no known type is called at, `R(Ts...)`, as a
+// borrow or a box of one names it.
+class CppCallSignature {
+ public:
+  CppCallSignature(const mir::CompilationUnit& unit, mir::TypeId erased)
+      : unit_(&unit), erased_(erased) {
+  }
+  [[nodiscard]] auto Unit() const -> const mir::CompilationUnit& {
+    return *unit_;
+  }
+  [[nodiscard]] auto Erased() const -> mir::TypeId {
+    return erased_;
+  }
+
+ private:
+  const mir::CompilationUnit* unit_;
+  mir::TypeId erased_;
+};
+
+void WriteOne(TargetText& out, const CppCallSignature& signature);
+
 // A name written into a file needs the file declaring it read first, and how
 // the name is used says whether a declaration is enough or the definition is
 // needed. A class's name says so as it is written, as a struct's does, so a
@@ -262,8 +292,14 @@ void WriteArrowAccess(
 // pick from, because every object reference is one C++ type whatever class it
 // is seen as and `(T)r` would only copy it; the same object seen as another
 // class is `ViewAs<From, To>(r)`, over the classes the two reference types
-// name. A pair this target realizes neither way is refused as unsupported
-// rather than written as a cast the host compiler would reject.
+// name. A borrow or a box of a closure made one of a closure of no known type
+// is a call of the library's too, since only the library knows how one of no
+// known type is called and ended: `lyra::runtime::Unsize<R(Ts...)>(x)` at the
+// signature the destination states, C++ choosing the borrow's form or the
+// box's from `x`, as rustc's one unsizing coercion covers both. It allocates
+// and runs nothing. A pair this target realizes in none of these ways is
+// refused as unsupported rather than written as a cast the host compiler would
+// reject.
 //
 // This is the only place that spells a conversion; a cast writes punctuation
 // around its answer.
@@ -276,7 +312,12 @@ struct ConvertedThroughView {
   mir::TypeId to;
 };
 
-using Conversion = std::variant<ConvertedByCastNotation, ConvertedThroughView>;
+struct ConvertedByUnsize {
+  mir::TypeId erased;
+};
+
+using Conversion = std::variant<
+    ConvertedByCastNotation, ConvertedThroughView, ConvertedByUnsize>;
 
 [[nodiscard]] auto ConversionAsCpp(
     const mir::CompilationUnit& unit, mir::TypeId from, mir::TypeId to)
@@ -302,6 +343,13 @@ void WriteConversion(
             Write(
                 out, "lyra::runtime::ViewAs<", CppType(unit, v.from), ", ",
                 CppType(unit, v.to), ">(");
+            write_value(Precedence::kAssignment);
+            out += ")";
+          },
+          [&](const ConvertedByUnsize& u) {
+            Write(
+                out, "lyra::runtime::Unsize<", CppCallSignature(unit, u.erased),
+                ">(");
             write_value(Precedence::kAssignment);
             out += ")";
           }},

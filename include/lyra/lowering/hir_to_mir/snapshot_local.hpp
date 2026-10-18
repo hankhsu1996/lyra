@@ -6,6 +6,7 @@
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -31,6 +32,12 @@ auto SnapshotExprToLocal(
 // out as `init`.
 [[nodiscard]] auto DeclareLocal(const WalkFrame& frame, mir::ExprId init)
     -> mir::LocalId;
+
+// `local = value`, appended to `block` as a statement; `value` is already of
+// the local's type.
+void AssignLocal(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId local,
+    mir::ExprId value);
 
 // `value` as a node that may stand at several places. A node that computes is
 // evaluated at every place that reaches it, so one is evaluated here, once, as
@@ -60,5 +67,13 @@ auto SnapshotValueIntoClosure(
 auto SnapshotPlaceIntoClosure(
     UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
     ClosureBuilder& closure, mir::ExprId outer_expr) -> mir::ExprId;
+
+// The same snapshot, answering the body-side binding itself, for a body that
+// names it at several places -- state the closure keeps from one call to the
+// next, which it reads and then writes, or a reference it reaches through
+// more than once.
+auto SnapshotBindingIntoClosure(
+    UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
+    ClosureBuilder& closure, mir::ExprId outer_expr) -> BodyBindingRef;
 
 }  // namespace lyra::lowering::hir_to_mir

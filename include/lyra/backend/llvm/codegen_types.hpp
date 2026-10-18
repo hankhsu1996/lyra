@@ -11,6 +11,7 @@
 #include <llvm/IR/Type.h>
 
 #include "lyra/lir/type_id.hpp"
+#include "lyra/support/layout.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/layout.hpp"
@@ -22,6 +23,7 @@ struct IntegralType;
 
 namespace lyra::backend::llvm_backend {
 
+class CodeGenModule;
 struct FnAbi;
 
 // Where each component of a product -- a tuple, or a structure a declaration
@@ -72,7 +74,11 @@ using FieldsShape =
 // it names lives in storage rather than in a register.
 class CodeGenTypes {
  public:
-  CodeGenTypes(llvm::LLVMContext& ctx, const lir::CompilationUnit& unit);
+  // Made for one module and reading its context and unit from it, as clang's
+  // `CodeGenTypes` is made from its `CodeGenModule`: how large a closure is
+  // follows from how its captures are placed, which the module computes for
+  // every declaration, placing every closure's before any body asks.
+  explicit CodeGenTypes(CodeGenModule& module);
 
   auto Map(lir::TypeId id) -> llvm::Type*;
 
@@ -153,6 +159,7 @@ class CodeGenTypes {
   llvm::PointerType* ptr_ty_;
   llvm::StructType* span_ty_;
   llvm::StructType* bits_part_ty_;
+  CodeGenModule* module_;
   std::unordered_map<lir::TypeId, llvm::Type*> cache_;
   std::unordered_map<lir::TypeId, ProductLayout> products_;
   std::unordered_map<lir::TypeId, ArrayLayout> arrays_;

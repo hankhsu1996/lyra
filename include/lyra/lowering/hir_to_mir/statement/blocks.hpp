@@ -34,12 +34,13 @@ auto BuildCancellableRegion(
     const StaticStorageHome& target) -> mir::TryStmt;
 
 // LRM 6.21: an automatic variable a detached fork branch borrows can outlive
-// the scope that declares it, so each such variable among `declared` is lifted
-// into a cell of its own, held by a shared pointer made in the frame's block,
-// and the pointer is recorded so the variable's declaration and its references
-// reach the cell through it. A branch keeps each cell it names alive by holding
-// a by-value copy of its pointer. `declared` is every variable the scope being
-// entered declares; which of them are lifted is the variables' own statement.
+// the scope that declares it, so each such variable among `declared` is
+// promoted into a cell of its own, held by a shared pointer made in the frame's
+// block, and the pointer is recorded so the variable's declaration and its
+// references reach the cell through it. A branch keeps each cell it names alive
+// by holding a by-value copy of its pointer. `declared` is every variable the
+// scope being entered declares; which of them are promoted is the variables'
+// own statement.
 void OpenActivationScope(
     ProcessLowerer& process, const WalkFrame& frame,
     std::span<const hir::ProceduralVarId> declared);

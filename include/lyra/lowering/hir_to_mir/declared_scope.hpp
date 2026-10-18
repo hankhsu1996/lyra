@@ -18,7 +18,7 @@ namespace lyra::lowering::hir_to_mir {
 // body, a `begin ... end`, a `fork ... join` (LRM 23.9). Two things about a
 // scope outlive the activation that opened it: the name a construct inside it
 // reports for itself (LRM 21.2.1.5), and what a `disable` naming it invalidates
-// (LRM 9.6.2). A static-lifetime local declared in it also outlives every
+// (LRM 9.6.2). A static-lifetime variable declared in it also outlives every
 // activation (LRM 6.21) -- but that is storage of the declaration like any
 // other, placed by the rule that places every static cell.
 //

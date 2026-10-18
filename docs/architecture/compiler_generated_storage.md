@@ -28,6 +28,9 @@ Neither is a nominal SystemVerilog object (`object_model.md`).
   is entered and initialized where its declaration is reached.
 - The three **capture forms** -- snapshot, live-place alias, retained cell -- and the rule that the
   form is carried by the captured field's type, not by a separate capture-mode axis.
+- The closure's **kind** -- what its invoke does to it -- and the **erased callable** a closure
+  becomes when it is handed to the runtime, with the cast that makes one.
+- The **ownership** of a closure value: its one owner, and what ending it does.
 - The separate relations over a captured field: its **capture key** (which binding), its **field
   id** (identity within the declaration, what the invoke body reads), its **field order** (a
   deterministic declaration / emission listing), and the **initializer evaluation order** at the
@@ -42,8 +45,8 @@ Neither is a nominal SystemVerilog object (`object_model.md`).
 - The nominal object model -- methods, inheritance, dispatch, lifecycle, managed handles
   (`object_model.md`). The object shares the field vocabulary with a closure and nothing with a
   lifted local.
-- The value-type system and the observable cell a variable is (`mir.md`), and which variables are
-  cells (`a-variable-a-body-declares-reports-its-writes` in `decisions/`).
+- The value-type system and the observable cell a variable is (`mir.md`). Every variable a body that
+  can wait declares is such a cell.
 - The runtime execution instance (`activation.md`).
 - Which capture form a SystemVerilog construct requires. That is HIR-to-MIR capture / lifetime
   policy.
@@ -63,10 +66,14 @@ Stated positively: each fixes one rule, and what is allowed or forbidden follows
    `ObservableType` a local of a waiting body has, read, written, waited on and lent through the
    same operations; only where the cell lives differs.
 
-3. **A closure's invoke reads captures through a read-only receiver.** The receiver is a
-   `Borrowed<ClosureType>` (the invoke body's `locals[0]`); a captured read is field access over it.
-   A write to captured state is a write through a captured `VariableRefType` or through a captured
-   `Shared<cell>`, never a write to the capture slot itself.
+3. **A closure's invoke reaches its captures through its receiver, and the receiver's type is the
+   closure's kind.** The receiver is the invoke body's `locals[0]`, and a captured read is field
+   access over it. It is one of three, as rustc's closure kinds are: a read-only borrow of the
+   closure (`Fn`), which only reads its captures; a mutable borrow (`FnMut`), which also writes
+   them, carrying state of its own from one call to the next; or the closure's box (`FnOnce`), which
+   the body takes over and ends when it ends -- a body started as a coroutine, which outlives the
+   call. A write to a variable the closure did not make is a write through a captured
+   `VariableRefType` or a captured `Shared<cell>`, never a write to the capture slot.
 
 4. **Value-versus-reference for a lifted local is the wrapper, not a bespoke type.** The cell is
    reached through a `Shared<>` handle; the reference semantics are the ordinary MIR wrapper, and
@@ -99,10 +106,32 @@ Stated positively: each fixes one rule, and what is allowed or forbidden follows
    lifted local is never reached through the managed handle and a class handle is never reached
    through the shared one.
 
-A later addition, when a real consumer requires it: an **`ErasedCallableType<Sig>`** for a
-heterogeneous collection of closures of one signature. It is introduced with its explicit erasure
-operation and its complete contract (invoke, ownership / destruction, copy / move), never through
-implicit erasure of a concrete `ClosureType`.
+10. **A closure handed to the runtime is held as an erased callable of its kind and its signature,
+    and the entry taking it states what it asks of it, how long it keeps it, and the signature it
+    calls it at.** The runtime is compiled before the program and cannot name a `ClosureType`, so
+    what it takes is an `ErasedCallableType`: the closure's kind of invariant 3, then the parameters
+    and the result, all machine types -- as a rustc `dyn FnMut(A) -> R` names its trait in its type.
+    It is reached only through a box, which owns the closure, or a borrow, which does not. A box or
+    a borrow of a concrete closure becomes one by a cast to the box or borrow of the erased type of
+    the same kind and signature. The cast moves nothing, allocates nothing and checks nothing: the
+    closure stays where it was made, and what changes is only what its holder knows of its type.
+    Until that cast a box of a concrete closure is an ordinary box, ended directly as any box of a
+    known type is. What can be done to an erased callable is to call it, and, through its box, to
+    end it. Which kind the holder asks for -- calling it many times through a shared view, many
+    times as its only holder, or once -- with the signature it calls it at, and how long it keeps it
+    (`scheduling.md`), are the bounds a Rust callee states on its callable parameter
+    (`F: FnMut(bool) -> bool + 'static`), so the runtime entry's own declaration states them, once,
+    and the unit's verification holds what is handed to it to them, reading the kind and the
+    signature off the erased type handed. A body the entry starts rather than calls has no
+    signature, and the declaration says it is started instead.
+
+11. **A closure value has exactly one owner at every moment, and every way out of that owner ends it
+    exactly once.** The owner is the frame that made it, the box it was made in, or whatever took
+    that box over -- a region queue, a wait, a timer, a started body. Ending a closure ends its
+    captures; ending the box it was made in does that and then frees the storage. Either happens
+    because its owner ends, by whatever path: having run, having been dropped unrun, a stopped
+    execution, the end of the run. A closure is never ended because it ran, and never shared between
+    owners.
 
 ## Boundary to Adjacent Layers
 
@@ -110,7 +139,8 @@ implicit erasure of a concrete `ClosureType`.
   closure is a `ClosureType`; a retained field is a `Shared<cell>`; an alias field is a
   `VariableRefType`.
 - **`callable.md`** owns the callable concept and the receiver rule. This doc owns the closure's
-  captured fields; the closure body's receiver is the `ClosureType` value itself.
+  captured fields; the closure body's receiver is a borrow of the `ClosureType` value or its box, by
+  its kind (invariant 3).
 - **`binding_and_capture.md`** owns origin identity and capture forwarding. This doc states that the
   captured state is a `ClosureDecl` whose fields are keyed by those origins.
 - **`object_model.md`** owns the nominal object. This doc states that the object shares only the
@@ -127,8 +157,17 @@ Each follows from an invariant above.
   `is_closure` flag. (Invariant 1.)
 - A lifted local with a read, a write, a reference or a wait of its own beside the cell's.
   (Invariant 2.)
-- A closure capture written as a write to the capture slot rather than through a captured
-  `VariableRefType` / `Shared<cell>`. (Invariant 3.)
+- A write to a variable the closure did not make, written as a write to a capture slot rather than
+  through a captured `VariableRefType` / `Shared<cell>`. (Invariant 3.)
+- A closure's kind stated anywhere but its invoke's receiver type, or what the runtime asks of a
+  closure stated anywhere but the entry taking it -- each site handing one over then answers for the
+  entry, and the runtime calls a body that writes its captures through a path that only lends them,
+  or calls twice a body that takes its box, wherever one site answered wrongly. (Invariants 3, 10.)
+- An erasure that is not a cast of a box or a borrow: one that copies the closure, wraps it in a new
+  allocation, or hands ownership over as part of converting it. Each is an operation, and the
+  program's MIR would not say it happened. (Invariant 10.)
+- A closure held by two owners -- the runtime sharing one box between holders -- or ended because it
+  ran rather than because its owner ended. (Invariant 11.)
 - A reference-aggregate type category minted for lifted locals; reference is the wrapper. (Invariant
   4.)
 - A closure-specific capture id space, a capture-read node distinct from field access, or a
@@ -146,27 +185,31 @@ Each follows from an invariant above.
 ## Notes / Examples
 
 A fork branch that reads a lifetime-extended local and the enclosing object, in single-line lowered
-form. `x` outlives the frame, so its cell is held through a shared handle; the branch is a closure
-capturing that handle and the object pointer.
+form. `x` outlives the frame, so its cell is held through a shared handle. The object lives while
+referenced, so the method holds a share of it from where it begins (LRM 8.29); the branch is a
+closure capturing that handle and a copy of the share, and it reaches the object through the share
+rather than through a pointer of its own.
 
 ```text
-SV (inside a method M):
+SV (inside a method of class M):
   int x = 5;               // lifetime-extended: its cell is held via Shared<>
   fork  #1 out <= x;  join_none
 
+entry     : self_share = share_of(*self)                     // the method's hold on its object
 entry     : x_cell = Shared<Var<int>>()                      // made empty with its block
 decl      : initialize(*x_cell, 5)
-closure   : ClosureType C_k { self: M*, x_cell: Shared<Var<int>> } + invoke
+closure   : ClosureType C_k { self_share: Managed<M>, x_cell: Shared<Var<int>> } + invoke
+invoke    : self = &*field_of(closure_receiver, self_share)  // the object, through the share
 invoke    : load(*field_of(closure_receiver, x_cell))        // read x through its handle
 ```
 
 The current C++ backend realizes the hold as a `shared_ptr` to the cell, made by `make_shared`; and
-the closure as a struct holding its captures whose call operator is the invoke, reading each capture
-through the closure the way the invoke's receiver does -- or, where the invoke is a coroutine,
-started through a static function taking the closure by value, because the captures have to live in
-the coroutine's frame past its first suspension. The execution backend holds the cell in a counted
-hold the runtime makes, empty, for the domain the cell holds. That is each backend's realization,
-not the MIR definition.
+the closure as a struct extending the runtime's closure part, holding its captures, whose call
+operator is the invoke, reading each capture through the closure the way the invoke's receiver does
+-- or, where the invoke is a coroutine, started through a static function taking the closure's box
+over, because the captures have to live as long as the execution. The execution backend holds the
+cell in a counted hold the runtime makes, empty, for the domain the cell holds. That is each
+backend's realization, not the MIR definition.
 
 The three capture forms differ only by field type:
 
@@ -176,5 +219,26 @@ live-place alias : field type = VariableRef<logic>   // an observable-cell alias
 retained cell    : field type = Shared<Var<int>>     // retain a lifted local; reach it through this
 ```
 
-A closure submitted to a heterogeneous region queue is erased at the submit site once that consumer
-exists: `concrete ClosureType C_k --[ explicit erase ]--> ErasedCallableType< () -> void >`.
+A closure submitted to a region queue is made in a box and erased where it is submitted, and a
+sort's order is erased as a borrow for the call:
+
+```text
+deferred effect : Box<C_k>  --[ cast ]--> Box<dyn () -> void>        // the region owns it, asks FnOnce
+watch           : Box<C_w>  --[ cast ]--> Box<dyn (bool) -> bool>    // the wait owns it, asks FnMut
+sort order      : &C_s      --[ cast ]--> &dyn (i64, i64) -> bool    // lent for the call, asks Fn
+```
+
+The erased type names no kind; what each holder asks is stated by the entry it is handed to.
+
+In the current implementation both backends realize the erased callable the same way: the closure's
+storage starts with a pointer to a constant table its unit emits, the entry ending the closure and
+then the one call its body is, at its signature, followed by the captures -- the shape of a rustc
+vtable, which leads with the drop and carries the methods after it, and of a `dyn FnMut(A) -> R`
+one, whose one method is the call. A body that is started rather than called has the ending entry
+alone. No entry is chosen: the table's type is its signature, so a holder calls the one call at the
+signature it was handed the closure at. The runtime reaches every closure through that table, so
+neither backend's own callable wrapper crosses into it. Both realize the two casts the same way too:
+the box cast hands the same storage on as a box ended through the table, as rustc's unsizing
+coercion makes a `Box<dyn Fn>` of a `Box<T>`; and the borrow cast is made through the closure's
+table, giving the library's one generic borrowed callable of that signature, a pointer to the
+closure beside the entry to call.

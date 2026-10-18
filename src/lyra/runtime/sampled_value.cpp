@@ -23,7 +23,7 @@ void SampledValue::Reached() {
     return;
   }
   submitted_for_ = now;
-  runtime.SubmitPostponed([this] { Take(); });
+  runtime.Submit(runtime.Now(), Region::kPostponed, [this] { Take(); });
 }
 
 }  // namespace lyra::runtime

@@ -127,14 +127,14 @@ auto UnitsReadBy(const mir::Block& body, std::string_view own_unit)
 // design root runs at time zero: `install_frame` receives each cell's declared
 // representation and default, and `value_frame` each LRM 10.5 value
 // initializer. What this covers is the namespace's own -- its variables (LRM
-// 26.2) and the static-lifetime locals its subroutines declare, which are the
-// same one-program-global-cell storage; the cells the unit's classes own join
-// the same two bodies from the class lowering. The design root installs every
-// unit before initializing any, so a value initializer always reaches installed
-// storage. Neither this unit's cells nor another's sit on an instance, so an
-// initializer here lowers with no enclosing scope and no receiver: a sibling
-// cell is reached by its position in this arena, and another unit's by the
-// identifier that unit published (`unit::name`).
+// 26.2) and the static-lifetime variables its subroutines declare, which are
+// the same one-program-global-cell storage; the cells the unit's classes own
+// join the same two bodies from the class lowering. The design root installs
+// every unit before initializing any, so a value initializer always reaches
+// installed storage. Neither this unit's cells nor another's sit on an
+// instance, so an initializer here lowers with no enclosing scope and no
+// receiver: a sibling cell is reached by its position in this arena, and
+// another unit's by the identifier that unit published (`unit::name`).
 auto PopulateNamespaceOwnStorage(
     UnitLowerer& unit_lowerer, const hir::StructuralScope& scope,
     const base::Translation<hir::StructuralSubroutineId, StaticVarBindings>&
@@ -215,10 +215,10 @@ auto PopulateNamespaceOwnStorage(
     }
   }
 
-  // A static-lifetime local of a package subroutine is one program-global cell
-  // like the package's own variables (LRM 6.21, 26.2), so it comes up in these
-  // same two bodies -- once before any process starts, rather than on each
-  // entry to the subroutine that declares it.
+  // A static-lifetime variable of a package subroutine is one program-global
+  // cell like the package's own variables (LRM 6.21, 26.2), so it comes up in
+  // these same two bodies -- once before any process starts, rather than on
+  // each entry to the subroutine that declares it.
   for (const hir::StructuralSubroutineId id :
        scope.structural_subroutines.Ids()) {
     const hir::SubroutineDecl& src = scope.structural_subroutines.Get(id);
@@ -373,10 +373,7 @@ auto PublishObjectEntry(
         mir::Type{mir::ObjectType{.of = mir::IntraUnitClassRef{cls}}});
   };
   const auto owning_pointer = [&](mir::ClassId cls) {
-    return unit.types.Intern(
-        mir::Type{mir::PointerType{
-            .pointee = object_of(cls),
-            .ownership = mir::PointerOwnership::kUnique}});
+    return mir::BoxOf(unit.types, object_of(cls));
   };
   // What it makes is the class that realizes the object; what it answers with
   // is what the unit published of it, that being all a referrer has.
@@ -678,14 +675,12 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
   }
 
   PublishAssignmentPatternTexts();
-  PublishTypeOperations();
 
   // Every class this unit holds is a type of one of its structural scopes'
   // instance (LRM 23.9, 6.22), which settles that class's shape and lowers its
   // bodies -- so a class body stands where the scope stands and reaches what it
-  // reaches. A
-  // class identity is minted on first reference, which a scope's own shape may
-  // be, so nothing is minted ahead of the walk.
+  // reaches. A class identity is minted on first reference, which a scope's own
+  // shape may be, so nothing is minted ahead of the walk.
   return {};
 }
 
@@ -715,8 +710,12 @@ void UnitLowerer::PublishAssignmentPatternTexts() {
 }
 
 void UnitLowerer::PublishTypeOperations() {
-  // A body built here interns types, and a type interned that way states its
-  // operations too, so the pool's size is read again at every step.
+  // Run once every body of the unit is lowered, since a body may name an array
+  // no declaration does -- the keys a sort gathers -- and a call names an
+  // operation by its type rather than by what is stated here. A body built
+  // here interns types, and a type interned that way states its operations
+  // too, so the pool is walked by position and its size read again at every
+  // step.
   for (std::uint32_t i = 0; i < unit_.types.size(); ++i) {
     const mir::TypeId type{.value = i};
     if (!mir::OperationsAreStatedPerUnit(unit_.types.Get(type))) {
@@ -809,6 +808,7 @@ auto UnitLowerer::PopulateModuleRoot(
       .object_entry = PublishObjectEntry(
           unit_, *top_r, root->PublishedClassId(), root->ConstructionValues(),
           root->ConstructionTable())};
+  PublishTypeOperations();
   return {};
 }
 
@@ -821,9 +821,10 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   // variables, functions, and tasks (LRM 26.2). Each function and task lowers
   // to a receiver-less callable, and each variable to unit-level static
   // storage, so a package produces no root class and never enters the
-  // structural-scope body machinery. A body's own static-lifetime locals take
-  // the same unit-level storage its variables do, being one program-global cell
-  // each. The frame has no owner class, so the produced body carries no `self`
+  // structural-scope body machinery. A body's own static-lifetime variables
+  // take the same unit-level storage its variables do, being one program-global
+  // cell each. The frame has no owner class, so the produced body carries no
+  // `self`
   // -- and with no object to hang one under, none of its scopes owns a name
   // node.
   const hir::StructuralScope& scope = hir_->root_scope;
@@ -839,8 +840,7 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   for (const hir::SubroutineDecl& src : scope.structural_subroutines) {
     subroutine_statics.Append(BindBodyStatics(
         *this, scope.procedural_scopes,
-        UnitStorage{.variables = &unit_.static_variables}, src.body,
-        SignatureBoundVars(src)));
+        UnitStorage{.variables = &unit_.static_variables}, src.body));
   }
 
   // The callable each package subroutine lowered to, so an export below names
@@ -952,6 +952,7 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
 
   PublishNamespaceStorageBringUp(
       *this, unit_, std::move(install_code), std::move(value_code));
+  PublishTypeOperations();
 
   return std::move(unit_);
 }

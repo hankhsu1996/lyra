@@ -5,6 +5,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <iterator>
+#include <map>
 #include <optional>
 #include <set>
 #include <span>
@@ -21,6 +23,8 @@
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/closure.hpp"
+#include "lyra/mir/closure_decl.hpp"
+#include "lyra/mir/closure_signature.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/expr.hpp"
@@ -28,6 +32,7 @@
 #include "lyra/mir/external_class.hpp"
 #include "lyra/mir/frame_size.hpp"
 #include "lyra/mir/integral_constant_folding.hpp"
+#include "lyra/mir/object_lifetime.hpp"
 #include "lyra/mir/operand_use.hpp"
 #include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -36,6 +41,7 @@
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/integral_operation.hpp"
 #include "lyra/support/value_operation.hpp"
@@ -463,7 +469,29 @@ void VerifyPlacesAreRead(
 // out from its type that it has to be opened. A field is a member of an object
 // alone; a call may also be entered on a value of the library's, such as a
 // handle or a reference, whose own member function it names, so only a pointer
-// is refused there.
+// is refused there, unless the body takes it over: a closure's body started as
+// a coroutine takes the box the closure was made in, and is handed that.
+auto TakesItsReceiverOver(
+    const CompilationUnit& unit, const CallExpr& call, TypeId handed) -> bool {
+  const auto* direct = std::get_if<Direct>(&call.callee);
+  if (direct == nullptr) {
+    return false;
+  }
+  const auto* closure = std::get_if<ClosureTarget>(&direct->target);
+  if (closure == nullptr) {
+    return false;
+  }
+  const ClosureDecl& decl = unit.GetClosure(closure->closure);
+  switch (ClosureKindOf(unit.types, decl)) {
+    case support::ClosureKind::kFn:
+    case support::ClosureKind::kFnMut:
+      return false;
+    case support::ClosureKind::kFnOnce:
+      return handed == decl.invoke.locals.Get(*decl.invoke.receiver).type;
+  }
+  throw InternalError("mir verify: unknown ClosureKind");
+}
+
 void VerifyMemberReceivers(
     const CompilationUnit& unit, const Block& block, const auto& describe) {
   const auto refuse = [&](ExprId id) {
@@ -487,7 +515,8 @@ void VerifyMemberReceivers(
     if (const auto* call = std::get_if<CallExpr>(&data)) {
       const std::optional<ExprId> receiver = CalleeReceiver(call->callee);
       if (receiver.has_value() &&
-          unit.types.Get(block.exprs.Get(*receiver).type).Is<PointerType>()) {
+          unit.types.Get(block.exprs.Get(*receiver).type).Is<PointerType>() &&
+          !TakesItsReceiverOver(unit, *call, block.exprs.Get(*receiver).type)) {
         refuse(id);
       }
     }
@@ -497,10 +526,22 @@ void VerifyMemberReceivers(
   }
 }
 
+// Whether `type` refers to storage without keeping it alive.
+auto RefersWithoutOwning(const TypePool& types, TypeId type) -> bool {
+  const Type& t = types.Get(type);
+  if (const auto* pointer = t.As<PointerType>()) {
+    return pointer->ownership == PointerOwnership::kBorrowed;
+  }
+  return t.Is<VariableRefType>() || t.Is<ReferenceWrapperType>() ||
+         t.Is<ReferenceType>() || t.Is<BitsReferenceType>();
+}
+
 // A reference is bound once, as it is created, and never re-seated; a
 // reference held as a member is bound after its object is built, and again,
 // only by the operations that bind one. So no store names a reference of
-// either kind, and a binding names only a reference held as a member.
+// either kind, and a binding names only a reference held as a member. A local
+// referring to storage it does not own is bound by its declaration alone, so
+// what it refers to is what its initializer reached.
 void VerifyReferenceBindings(
     const CompilationUnit& unit, const Block& block, const auto& describe) {
   const auto refuse = [&](ExprId id, std::string_view what) {
@@ -513,9 +554,16 @@ void VerifyReferenceBindings(
   for (const ExprId id : block.exprs.Ids()) {
     const ExprData& data = block.exprs.Get(id).data;
     if (const auto* assign = std::get_if<AssignExpr>(&data)) {
-      if (unit.types.Get(block.exprs.Get(assign->target).type)
-              .IsVariableRef()) {
+      const TypeId target = block.exprs.Get(assign->target).type;
+      if (unit.types.Get(target).IsVariableRef()) {
         refuse(id, "stores into a reference, which only a binding names");
+      }
+      if (ReferencedLocal(block.exprs.Get(assign->target).data).has_value() &&
+          RefersWithoutOwning(unit.types, target)) {
+        refuse(
+            id,
+            "re-seats a local referring to storage it does not own, which "
+            "only its declaration binds");
       }
     }
     const auto* call = std::get_if<CallExpr>(&data);
@@ -1174,27 +1222,112 @@ void VerifyAllocations(
   }
 }
 
+// What `holder` holds, where it is a box, a pointer or a reference.
+auto Held(const TypePool& types, TypeId holder) -> std::optional<TypeId> {
+  const Type& type = types.Get(holder);
+  if (const auto* pointer = type.As<PointerType>()) {
+    return pointer->pointee;
+  }
+  if (const auto* reference = type.As<ReferenceType>()) {
+    return reference->referent;
+  }
+  return std::nullopt;
+}
+
+[[noreturn]] void RefuseErasure(
+    ExprId id, std::string_view what, const auto& describe) {
+  throw InternalError(
+      std::format(
+          "mir verify: {} makes a closure one of no known type {} (expression "
+          "{} of its block) -- please report this as a bug",
+          describe(), what, id.value));
+}
+
+// A closure is made one of no known type only from the box it was made in or a
+// borrow of it, held the same way, and only at the kind and the signature its
+// body has, since whoever calls it through the erased box or borrow calls it
+// so and nothing checks it there.
+void VerifyErasures(
+    const CompilationUnit& unit, const Block& block, const auto& describe) {
+  for (const ExprId id : block.exprs.Ids()) {
+    const Expr& expr = block.exprs.Get(id);
+    const auto* cast = std::get_if<CastExpr>(&expr.data);
+    if (cast == nullptr) {
+      continue;
+    }
+    const std::optional<TypeId> to = Held(unit.types, expr.type);
+    if (!to.has_value() || !unit.types.Get(*to).Is<ErasedCallableType>()) {
+      continue;
+    }
+    const std::optional<ClosureErasure> erasure = ClosureErasureOf(
+        unit.types, block.exprs.Get(cast->operand).type, expr.type);
+    if (!erasure.has_value()) {
+      RefuseErasure(
+          id, "from anything but its own box or a borrow of it", describe);
+    }
+    if (erasure->erased !=
+        ErasedTypeOf(unit.types, unit.GetClosure(erasure->closure))) {
+      RefuseErasure(
+          id, "at a kind or a signature its body does not have", describe);
+    }
+  }
+  for (const BlockId id : block.child_scopes.Ids()) {
+    VerifyErasures(unit, block.child_scopes.Get(id), describe);
+  }
+}
+
 // A value too large for a frame is made only in the storage a new-expression
 // allocates for it, or, where a body answers its caller, in the storage the
-// caller takes its answer in; it is otherwise only read where it lies.
+// caller takes its answer in; it is otherwise only read where it lies. A
+// conditional made in storage makes the arm it chooses there, and a block
+// expression its value, as clang and rustc evaluate both into the destination
+// of what yields them. `made_by_enclosing` are the nodes of `block` the block
+// enclosing it makes in storage this way. The address of code takes such a
+// value in a box, as the body it addresses does.
 void VerifyLargeValuesLieInStorage(
     const CompilationUnit& unit, const Block& block, bool answers_caller,
-    const auto& describe) {
-  std::vector<bool> made_in_storage(block.exprs.size(), false);
+    std::span<const ExprId> made_by_enclosing, const auto& describe) {
+  std::vector<ExprId> made(made_by_enclosing.begin(), made_by_enclosing.end());
   for (const Expr& expr : block.exprs) {
     if (const auto* allocation = std::get_if<NewExpr>(&expr.data)) {
-      made_in_storage.at(allocation->initializer.value) = true;
+      made.push_back(allocation->initializer);
     }
   }
   if (answers_caller) {
     for (const Stmt& stmt : block.stmts) {
       if (const auto* returned = std::get_if<ReturnStmt>(&stmt.data);
           returned != nullptr && returned->value.has_value()) {
-        made_in_storage.at(returned->value->value) = true;
+        made.push_back(*returned->value);
       }
     }
   }
+  std::vector<bool> made_in_storage(block.exprs.size(), false);
+  std::vector<std::vector<ExprId>> made_in_child(block.child_scopes.size());
+  while (!made.empty()) {
+    const ExprId id = made.back();
+    made.pop_back();
+    if (made_in_storage.at(id.value)) {
+      continue;
+    }
+    made_in_storage.at(id.value) = true;
+    if (const auto* chosen =
+            std::get_if<ConditionalExpr>(&block.exprs.Get(id).data)) {
+      made.push_back(chosen->then_value);
+      made.push_back(chosen->else_value);
+    } else if (
+        const auto* yielded =
+            std::get_if<BlockExpr>(&block.exprs.Get(id).data)) {
+      made_in_child.at(yielded->scope.value).push_back(yielded->value);
+    }
+  }
   for (const ExprId id : block.exprs.Ids()) {
+    if (TakesAValueTooLargeForAFrame(unit, block.exprs.Get(id).type)) {
+      throw InternalError(
+          std::format(
+              "mir verify: {} states {} as code taking a value too large for a "
+              "frame other than in a box -- please report this as a bug",
+              describe(), Describe(block.exprs.Get(id).data)));
+    }
     if (made_in_storage.at(id.value) ||
         !IsTooLargeForAFrame(unit, block.exprs.Get(id).type) ||
         ValueLiesInStorage(unit, block, id)) {
@@ -1208,7 +1341,8 @@ void VerifyLargeValuesLieInStorage(
   }
   for (const BlockId id : block.child_scopes.Ids()) {
     VerifyLargeValuesLieInStorage(
-        unit, block.child_scopes.Get(id), answers_caller, describe);
+        unit, block.child_scopes.Get(id), answers_caller,
+        made_in_child.at(id.value), describe);
   }
 }
 
@@ -1229,7 +1363,7 @@ void VerifyFramesHoldNoLargeValue(
   if (code.body.has_value()) {
     VerifyLargeValuesLieInStorage(
         unit, *code.body, !unit.types.Get(code.result_type).Is<CoroutineType>(),
-        describe);
+        {}, describe);
   }
 }
 
@@ -1256,6 +1390,7 @@ void VerifyCode(
   VerifyEntryDeclarations(unit, *code.body, describe);
   VerifyConstantsAreFolded(unit, *code.body, describe);
   VerifyAllocations(unit, *code.body, describe);
+  VerifyErasures(unit, *code.body, describe);
   if (!Suspends(unit, *code.body, describe) ||
       unit.types.Get(code.result_type).Is<CoroutineType>()) {
     return;
@@ -1267,27 +1402,610 @@ void VerifyCode(
           describe()));
 }
 
-void VerifyClass(const CompilationUnit& unit, const Class& cls) {
-  const auto owner = [&] {
-    return cls.path.has_value()
-               ? std::format(
-                     "class '{}' in unit '{}'", support::DisplayOf(*cls.path),
-                     unit.name)
-               : std::format("a scope of unit '{}'", unit.name);
-  };
-  if (cls.constructor.has_value()) {
-    VerifyCode(unit, cls.constructor->code, [&] {
-      return std::format("the constructor of {}", owner());
+// Calls `visit` with every body of the unit and what names it.
+template <typename Visit>
+void ForEachBody(const CompilationUnit& unit, const Visit& visit) {
+  for (const CallableId id : unit.callables.Ids()) {
+    visit(unit.callables.Get(id).code, [&] {
+      return std::format(
+          "{} of unit '{}'",
+          BodyLabel(NameOf(unit.named_callables, id), id.value), unit.name);
     });
   }
-  for (const CallableId id : cls.callables.Ids()) {
-    VerifyCode(unit, cls.callables.Get(id).code, [&] {
+  for (const TypeOperation& stated : unit.type_operations) {
+    visit(stated.code, [&] {
       return std::format(
-          "{} of {}", BodyLabel(NameOf(cls.named_callables, id), id.value),
-          owner());
+          "operation \"{}\" of type {} in unit '{}'",
+          support::ValueOperationName(stated.answers), stated.type.value,
+          unit.name);
     });
+  }
+  for (const ForeignScopeEntry& entry : unit.foreign_scope_entries) {
+    visit(entry.definition, [&] {
+      return std::format("the foreign entry '{}'", entry.linkage.foreign_name);
+    });
+  }
+  for (const ClosureId id : unit.closures.Ids()) {
+    visit(unit.GetClosure(id).invoke, [&] {
+      return std::format("closure {} of unit '{}'", id.value, unit.name);
+    });
+  }
+  for (const RecordId id : unit.records.Ids()) {
+    const RecordDecl& declaration = unit.GetRecord(id);
+    for (const RecordMethod& method : unit.GetRecordMethods(id)) {
+      visit(method.code, [&] {
+        return std::format(
+            "method '{}' of record '{}' in unit '{}'",
+            support::ValueOperationName(method.answers),
+            support::DisplayOf(declaration.path), unit.name);
+      });
+    }
+  }
+  for (const ClassId id : unit.classes.Ids()) {
+    const Class& cls = unit.GetClass(id);
+    const auto owner = [&] {
+      return cls.path.has_value()
+                 ? std::format(
+                       "class '{}' in unit '{}'", support::DisplayOf(*cls.path),
+                       unit.name)
+                 : std::format("a scope of unit '{}'", unit.name);
+    };
+    if (cls.constructor.has_value()) {
+      visit(cls.constructor->code, [&] {
+        return std::format("the constructor of {}", owner());
+      });
+    }
+    for (const CallableId callable : cls.callables.Ids()) {
+      visit(cls.callables.Get(callable).code, [&] {
+        return std::format(
+            "{} of {}",
+            BodyLabel(NameOf(cls.named_callables, callable), callable.value),
+            owner());
+      });
+    }
   }
 }
+
+// Whether a value of `type` hands closures or started bodies over: a box or a
+// borrow of a closure of no known type, a started body, or a run of them.
+auto HandsCallablesOver(const TypePool& types, TypeId type) -> bool {
+  const Type& t = types.Get(type);
+  if (const auto* run = t.As<MachineArrayType>()) {
+    return HandsCallablesOver(types, run->element);
+  }
+  if (t.Is<CoroutineType>()) {
+    return true;
+  }
+  const std::optional<TypeId> held = Held(types, type);
+  return held.has_value() && types.Get(*held).Is<ErasedCallableType>();
+}
+
+// Whether a value of `type` crosses to the library as `kind`.
+auto CrossesAs(
+    const CompilationUnit& unit, TypeId type, support::MachineKind kind)
+    -> bool {
+  const Type& t = unit.types.Get(type);
+  const auto integer = [&](MachineIntWidth width) {
+    const auto* machine = t.As<MachineIntType>();
+    return machine != nullptr && machine->width == width;
+  };
+  const auto floating = [&](MachineFloatWidth width) {
+    const auto* machine = t.As<MachineFloatType>();
+    return machine != nullptr && machine->width == width;
+  };
+  switch (kind) {
+    case support::MachineKind::kVoid:
+      return type == unit.builtins.void_type;
+    case support::MachineKind::kAddress:
+      return t.Is<PointerType>();
+    case support::MachineKind::kTruth:
+      return t.Is<MachineBoolType>();
+    case support::MachineKind::kInt8:
+      return integer(MachineIntWidth::k8);
+    case support::MachineKind::kInt32:
+      return integer(MachineIntWidth::k32);
+    case support::MachineKind::kInt64:
+      return integer(MachineIntWidth::k64);
+    case support::MachineKind::kFloat:
+      return floating(MachineFloatWidth::k32);
+    case support::MachineKind::kDouble:
+      return floating(MachineFloatWidth::k64);
+    // A closure is called with machine values one at a time, so no structure
+    // crosses whole.
+    case support::MachineKind::kAggregate:
+      return false;
+  }
+  throw InternalError("mir verify: unknown MachineKind");
+}
+
+// Whether a closure of no known type `erased` is called at `signature`: it
+// takes what the entry hands it and answers what the entry takes back.
+auto IsCalledAt(
+    const CompilationUnit& unit, const ErasedCallableType& erased,
+    const support::MachineSignature& signature) -> bool {
+  const auto crosses = [&](TypeId type, support::MachineKind kind) {
+    return CrossesAs(unit, type, kind);
+  };
+  return std::ranges::equal(erased.params, signature.Takes(), crosses) &&
+         CrossesAs(unit, erased.result, signature.Returns());
+}
+
+// Whether a value of `type`, which hands closures or started bodies over,
+// hands over what `trait` says the entry taking it asks for: a box or a borrow
+// of a closure of no known type whose kind serves the kind the entry asks, at
+// the signature it calls it at, or a started body, alone or in a run of them.
+auto HandsOverAs(
+    const CompilationUnit& unit, TypeId type,
+    const support::CallableTrait& trait) -> bool {
+  const Type& t = unit.types.Get(type);
+  if (const auto* run = t.As<MachineArrayType>()) {
+    return HandsOverAs(unit, run->element, trait);
+  }
+  return std::visit(
+      Overloaded{
+          [&](const support::StartedBody&) { return t.Is<CoroutineType>(); },
+          [&](const support::CalledClosure& called) {
+            const std::optional<TypeId> held = Held(unit.types, type);
+            const auto* erased =
+                held.has_value()
+                    ? unit.types.Get(*held).As<ErasedCallableType>()
+                    : nullptr;
+            return erased != nullptr &&
+                   support::Extends(erased->kind, called.asks) &&
+                   IsCalledAt(unit, *erased, called.signature);
+          }},
+      trait);
+}
+
+// How long the storage a closure's reference reaches lives, against the frame
+// that made the closure: for the whole run, as long as an object, or as long
+// as that frame -- reached from one of its locals, where it is.
+struct LivesForTheWholeRun {};
+struct LivesWithTheObject {};
+struct LivesWithTheFrame {
+  std::optional<LocalId> local;
+};
+using Reached =
+    std::variant<LivesForTheWholeRun, LivesWithTheObject, LivesWithTheFrame>;
+
+// A runtime entry states, for each operand handing it closures, what it asks
+// of them and how long it keeps them, so what is handed to it has a type that
+// serves what it asks, at the signature it calls it at, since nothing below
+// this checks that signature where the closure is called. A closure it keeps
+// past the frame that handed it over can run once that frame has ended, so
+// every reference the closure holds without owning what it refers to reaches
+// storage that lives for the whole run; an object it reaches it holds a share
+// of, and reaches through that share. Followed through every closure a
+// reference was captured through, since a capture of a capture lives only as
+// long as the first one's referent.
+class HandedClosures {
+ public:
+  explicit HandedClosures(const CompilationUnit& unit) : unit_(&unit) {
+    ForEachBody(unit, [&](const CallableCode& code, const auto&) {
+      if (code.body.has_value()) {
+        IndexSites(code, *code.body);
+      }
+    });
+  }
+
+  void Check(const CallableCode& code, const auto& describe) {
+    if (code.body.has_value()) {
+      CheckHandOns(code, *code.body, describe);
+    }
+  }
+
+ private:
+  struct Site {
+    const CallableCode* body;
+    const Block* block;
+    const ClosureExpr* closure;
+  };
+
+  void IndexSites(const CallableCode& code, const Block& block) {
+    for (const Expr& expr : block.exprs) {
+      const auto* made = std::get_if<ClosureExpr>(&expr.data);
+      if (made != nullptr &&
+          !sites_
+               .emplace(
+                   made->closure,
+                   Site{.body = &code, .block = &block, .closure = made})
+               .second) {
+        throw InternalError(
+            std::format(
+                "mir verify: closure {} of unit '{}' is made at two sites -- "
+                "please report this as a bug",
+                made->closure.value, unit_->name));
+      }
+    }
+    for (const Stmt& stmt : block.stmts) {
+      if (const auto* declared = std::get_if<LocalDeclStmt>(&stmt.data)) {
+        inits_.insert_or_assign(
+            std::pair{&code, declared->target},
+            std::pair{&block, declared->init});
+      }
+    }
+    for (const BlockId id : block.child_scopes.Ids()) {
+      IndexSites(code, block.child_scopes.Get(id));
+    }
+  }
+
+  void CheckHandOns(
+      const CallableCode& code, const Block& block, const auto& describe) {
+    for (const Expr& expr : block.exprs) {
+      const auto* call = std::get_if<CallExpr>(&expr.data);
+      if (call == nullptr) {
+        continue;
+      }
+      const std::optional<support::BuiltinFn> builtin = DirectBuiltinFn(*call);
+      if (!builtin.has_value()) {
+        continue;
+      }
+      const std::span<const support::CallableBounds> declared =
+          support::RuntimeEntryOf(*builtin).callables.All();
+      std::size_t next = 0;
+      for (const ExprId argument : call->arguments) {
+        if (!HandsCallablesOver(unit_->types, block.exprs.Get(argument).type)) {
+          continue;
+        }
+        if (next == declared.size()) {
+          RefuseEntry(*builtin, "more operands handing it closures", describe);
+        }
+        const support::CallableBounds bounds = declared[next];
+        ++next;
+        if (!HandsOverAs(
+                *unit_, block.exprs.Get(argument).type, bounds.trait)) {
+          RefuseTrait(*builtin, describe);
+        }
+        if (support::OutlivesTheCaller(bounds.kept)) {
+          for (const ClosureId handed : Handed(code, block, argument)) {
+            CheckDetached(handed, describe);
+          }
+        }
+      }
+      if (next != declared.size()) {
+        RefuseEntry(*builtin, "fewer operands handing it closures", describe);
+      }
+    }
+    for (const BlockId id : block.child_scopes.Ids()) {
+      CheckHandOns(code, block.child_scopes.Get(id), describe);
+    }
+  }
+
+  // The closures `id` hands over: made there, boxed, borrowed, cast, gathered,
+  // or started as a body that takes its box over. A body started that is no
+  // closure's hands none.
+  auto Handed(const CallableCode& code, const Block& block, ExprId id)
+      -> std::vector<ClosureId> {
+    const ExprData& data = block.exprs.Get(id).data;
+    if (const auto* made = std::get_if<ClosureExpr>(&data)) {
+      return {made->closure};
+    }
+    if (const auto* boxed = std::get_if<NewExpr>(&data)) {
+      return Handed(code, block, boxed->initializer);
+    }
+    if (const auto* borrowed = std::get_if<BorrowExpr>(&data)) {
+      return Handed(code, block, borrowed->operand);
+    }
+    if (const auto* cast = std::get_if<CastExpr>(&data)) {
+      return Handed(code, block, cast->operand);
+    }
+    if (const auto* moved = std::get_if<MoveExpr>(&data)) {
+      return Handed(code, block, moved->operand);
+    }
+    if (const auto* gathered = std::get_if<CompositeExpr>(&data)) {
+      std::vector<ClosureId> all;
+      for (const ExprId part : gathered->parts) {
+        std::ranges::copy(Handed(code, block, part), std::back_inserter(all));
+      }
+      return all;
+    }
+    if (const auto* call = std::get_if<CallExpr>(&data)) {
+      const auto* direct = std::get_if<Direct>(&call->callee);
+      if (direct != nullptr &&
+          std::holds_alternative<ClosureTarget>(direct->target) &&
+          direct->receiver.has_value()) {
+        return Handed(code, block, *direct->receiver);
+      }
+      return {};
+    }
+    if (const std::optional<LocalId> local = ReferencedLocal(data)) {
+      const auto init = inits_.find(std::pair{&code, *local});
+      if (init != inits_.end()) {
+        return Handed(code, *init->second.first, init->second.second);
+      }
+    }
+    throw InternalError(
+        std::format(
+            "mir verify: a closure handed to the runtime in unit '{}' is "
+            "reached by a step the verifier does not follow (expression {}) "
+            "-- please report this as a bug",
+            unit_->name, id.value));
+  }
+
+  void CheckDetached(ClosureId id, const auto& describe) {
+    const ClosureDecl& closure = unit_->GetClosure(id);
+    const Site& site = SiteOf(id);
+    for (const FieldInit& init : site.closure->field_inits) {
+      const TypeId type = closure.fields.Get(init.target).type;
+      if (!RefersWithoutOwning(unit_->types, type)) {
+        continue;
+      }
+      std::visit(
+          Overloaded{
+              [](const LivesForTheWholeRun&) {},
+              [&](const LivesWithTheObject&) {
+                Refuse(
+                    id,
+                    "is kept past its maker's end yet refers into an object "
+                    "it holds no share of",
+                    describe);
+              },
+              [&](const LivesWithTheFrame& reached) {
+                Refuse(
+                    id,
+                    std::format(
+                        "is kept past its maker's end yet captures in field {} "
+                        "a reference to storage of the frame that made it{}",
+                        init.target.value,
+                        reached.local.has_value()
+                            ? std::format(" (local {})", reached.local->value)
+                            : std::string()),
+                    describe);
+              }},
+          ReachOf(*site.body, *site.block, init.value));
+    }
+  }
+
+  [[noreturn]] void Refuse(
+      ClosureId id, std::string_view what, const auto& describe) const {
+    throw InternalError(
+        std::format(
+            "mir verify: {} hands closure {} to the runtime, and the closure "
+            "{} -- please report this as a bug",
+            describe(), id.value, what));
+  }
+
+  [[noreturn]] static void RefuseEntry(
+      support::BuiltinFn entry, std::string_view what, const auto& describe) {
+    throw InternalError(
+        std::format(
+            "mir verify: {} calls '{}' with {} than it states -- please report "
+            "this as a bug",
+            describe(), support::RuntimeEntryOf(entry).name, what));
+  }
+
+  [[noreturn]] static void RefuseTrait(
+      support::BuiltinFn entry, const auto& describe) {
+    throw InternalError(
+        std::format(
+            "mir verify: {} hands '{}' a closure or a started body it neither "
+            "calls at the kind and the signature it states nor starts -- "
+            "please report this as a bug",
+            describe(), support::RuntimeEntryOf(entry).name));
+  }
+
+  [[noreturn]] void RefuseUnfollowed(ExprId id) const {
+    throw InternalError(
+        std::format(
+            "mir verify: a reference a closure of unit '{}' captures is "
+            "reached by a step the verifier does not follow (expression {}) "
+            "-- please report this as a bug",
+            unit_->name, id.value));
+  }
+
+  [[nodiscard]] auto SiteOf(ClosureId id) const -> const Site& {
+    const auto it = sites_.find(id);
+    if (it == sites_.end()) {
+      throw InternalError(
+          std::format(
+              "mir verify: closure {} of unit '{}' is made nowhere -- please "
+              "report this as a bug",
+              id.value, unit_->name));
+    }
+    return it->second;
+  }
+
+  // How long the object `pointee` lives, where it is one.
+  [[nodiscard]] auto ReachOfObject(TypeId pointee) const
+      -> std::optional<Reached> {
+    const std::optional<ObjectLifetime> lifetime =
+        ObjectLifetimeOf(*unit_, pointee);
+    if (!lifetime.has_value()) {
+      return std::nullopt;
+    }
+    switch (*lifetime) {
+      case ObjectLifetime::kTheRun:
+        return LivesForTheWholeRun{};
+      case ObjectLifetime::kWhileReferenced:
+        return LivesWithTheObject{};
+    }
+    throw InternalError("mir verify: unknown ObjectLifetime");
+  }
+
+  // Where the storage `id` refers to lies, followed back through the steps
+  // that reach it to the binding it starts from.
+  auto ReachOf(const CallableCode& code, const Block& block, ExprId id)
+      -> Reached {
+    // A pointer to an object reaches storage that lives as long as the object
+    // does, wherever the pointer came from.
+    const auto* pointer =
+        unit_->types.Get(block.exprs.Get(id).type).As<PointerType>();
+    if (pointer != nullptr &&
+        pointer->ownership == PointerOwnership::kBorrowed) {
+      if (const std::optional<Reached> lives =
+              ReachOfObject(pointer->pointee)) {
+        return *lives;
+      }
+    }
+    const auto from = [&](ExprId operand) {
+      return ReachOf(code, block, operand);
+    };
+    return std::visit(
+        Overloaded{
+            [&](const ReferenceExpr& named) {
+              return ReachOfName(code, named.target);
+            },
+            [&](const FieldAccessExpr& access) {
+              if (const auto* captured =
+                      std::get_if<ClosureFieldTarget>(&access.field)) {
+                return ReachOfCapture(captured->owner, captured->slot);
+              }
+              return from(access.receiver);
+            },
+            [&](const DerefExpr& deref) { return from(deref.pointer); },
+            [&](const CopyExpr& copied) { return from(copied.place); },
+            [&](const MoveExpr& moved) { return from(moved.operand); },
+            [&](const BorrowExpr& borrowed) { return from(borrowed.operand); },
+            [&](const AddressOfExpr& address) { return from(address.operand); },
+            [&](const CastExpr& cast) { return from(cast.operand); },
+            [&](const CallExpr& call) {
+              return ReachOfAnswer(code, block, id, call);
+            },
+            [&](const StringLiteral&) -> Reached { RefuseUnfollowed(id); },
+            [&](const NullLiteral&) -> Reached { RefuseUnfollowed(id); },
+            [&](const MachineBoolLiteral&) -> Reached { RefuseUnfollowed(id); },
+            [&](const MachineIntLiteral&) -> Reached { RefuseUnfollowed(id); },
+            [&](const MachineFloatLiteral&) -> Reached {
+              RefuseUnfollowed(id);
+            },
+            [&](const UnaryExpr&) -> Reached { RefuseUnfollowed(id); },
+            [&](const BinaryExpr&) -> Reached { RefuseUnfollowed(id); },
+            [&](const DynamicCastExpr&) -> Reached { RefuseUnfollowed(id); },
+            [&](const ConditionalExpr&) -> Reached { RefuseUnfollowed(id); },
+            [&](const BlockExpr&) -> Reached { RefuseUnfollowed(id); },
+            [&](const AssignExpr&) -> Reached { RefuseUnfollowed(id); },
+            [&](const NewExpr&) -> Reached { RefuseUnfollowed(id); },
+            [&](const DiscriminantExpr&) -> Reached { RefuseUnfollowed(id); },
+            [&](const ClosureExpr&) -> Reached { RefuseUnfollowed(id); },
+            [&](const CompositeExpr&) -> Reached { RefuseUnfollowed(id); },
+            [&](const UnionExpr&) -> Reached { RefuseUnfollowed(id); },
+            [&](const AwaitExpr&) -> Reached { RefuseUnfollowed(id); },
+            [&](const WaitExpr&) -> Reached { RefuseUnfollowed(id); },
+            [&](const VectorGetExpr&) -> Reached { RefuseUnfollowed(id); }},
+        block.exprs.Get(id).data);
+  }
+
+  // What a name reaches: a local is followed to what it was bound to, and
+  // every other name reaches storage, a constant or code that exists for the
+  // whole run.
+  auto ReachOfName(const CallableCode& code, const ReferenceTarget& target)
+      -> Reached {
+    return std::visit(
+        Overloaded{
+            [&](const LocalRef& local) {
+              return ReachOfLocal(code, local.var);
+            },
+            [](const DefinitionRef&) -> Reached {
+              return LivesForTheWholeRun{};
+            },
+            [](const EnumTableRef&) -> Reached {
+              return LivesForTheWholeRun{};
+            },
+            [](const IntegralConstantRef&) -> Reached {
+              return LivesForTheWholeRun{};
+            },
+            [](const StaticPropertyRef&) -> Reached {
+              return LivesForTheWholeRun{};
+            },
+            [](const StaticVariableRef&) -> Reached {
+              return LivesForTheWholeRun{};
+            },
+            [](const ExternalUnitVariableRef&) -> Reached {
+              return LivesForTheWholeRun{};
+            },
+            [](const ExternalStaticPropertyRef&) -> Reached {
+              return LivesForTheWholeRun{};
+            },
+            [](const ClassConstantRef&) -> Reached {
+              return LivesForTheWholeRun{};
+            },
+            [](const FunctionRef&) -> Reached { return LivesForTheWholeRun{}; },
+            [](const ExternalObjectEntryRef&) -> Reached {
+              return LivesForTheWholeRun{};
+            }},
+        target);
+  }
+
+  // What a call's answer reaches, which the library entry it calls states: a
+  // reference into the object it acts on, or to what the wrapper it is taken on
+  // holds, reaches what that first operand reaches, and a construction of a
+  // reference what it is built over. Nothing else answers a reference a
+  // closure may capture -- a value the call builds is no storage, and a body
+  // the source wrote answers none.
+  auto ReachOfAnswer(
+      const CallableCode& code, const Block& block, ExprId id,
+      const CallExpr& call) -> Reached {
+    const auto first = [&]() -> Reached {
+      const std::optional<ExprId> operand = FirstOperand(call);
+      if (!operand.has_value()) {
+        RefuseUnfollowed(id);
+      }
+      return ReachOf(code, block, *operand);
+    };
+    return std::visit(
+        Overloaded{
+            [&](const Direct& direct) -> Reached {
+              const auto* entry =
+                  std::get_if<support::BuiltinFn>(&direct.target);
+              if (entry == nullptr) {
+                RefuseUnfollowed(id);
+              }
+              switch (support::RuntimeEntryOf(*entry).answer) {
+                case support::EntryAnswer::kReadOnlyReferenceIntoTheReceiver:
+                case support::EntryAnswer::kMutableReferenceIntoTheReceiver:
+                case support::EntryAnswer::kReferenceToContents:
+                case support::EntryAnswer::kReferenceToSampledContents:
+                  return first();
+                case support::EntryAnswer::kNewValue:
+                case support::EntryAnswer::kExecution:
+                  RefuseUnfollowed(id);
+              }
+              throw InternalError("mir verify: unknown EntryAnswer");
+            },
+            [&](const Construct&) { return first(); },
+            [&](const Indirect&) -> Reached { RefuseUnfollowed(id); },
+            [&](const Virtual&) -> Reached { RefuseUnfollowed(id); }},
+        call.callee);
+  }
+
+  // A local of `code`: a reference the body keeps reaches what its
+  // declaration bound it to, and anything else is storage of the frame.
+  auto ReachOfLocal(const CallableCode& code, LocalId local) -> Reached {
+    const auto init = inits_.find(std::pair{&code, local});
+    if (init != inits_.end() &&
+        RefersWithoutOwning(unit_->types, code.locals.Get(local).type)) {
+      return ReachOf(code, *init->second.first, init->second.second);
+    }
+    return LivesWithTheFrame{.local = local};
+  }
+
+  // A capture of the closure a body runs in: what it reaches is what its
+  // initializer reached where that closure was made, and a capture holding a
+  // value of its own lives only as long as that closure.
+  auto ReachOfCapture(ClosureId owner, FieldId slot) -> Reached {
+    const ClosureDecl& closure = unit_->GetClosure(owner);
+    if (!RefersWithoutOwning(unit_->types, closure.fields.Get(slot).type)) {
+      return LivesWithTheFrame{};
+    }
+    const Site& site = SiteOf(owner);
+    for (const FieldInit& init : site.closure->field_inits) {
+      if (init.target == slot) {
+        return ReachOf(*site.body, *site.block, init.value);
+      }
+    }
+    throw InternalError(
+        std::format(
+            "mir verify: closure {} of unit '{}' is made without a capture "
+            "its body reads -- please report this as a bug",
+            owner.value, unit_->name));
+  }
+
+  const CompilationUnit* unit_;
+  std::map<ClosureId, Site> sites_;
+  std::map<
+      std::pair<const CallableCode*, LocalId>, std::pair<const Block*, ExprId>>
+      inits_;
+};
 
 // A class of this unit has one identity here, its id, however the name
 // reaching it was written -- through another instance of this unit, or a
@@ -1360,12 +2078,6 @@ void VerifyTypeOperations(const CompilationUnit& unit) {
         stated.code.result_type != stated.type) {
       refuse(stated.type, "a type's default answers a value of another type");
     }
-    VerifyCode(unit, stated.code, [&] {
-      return std::format(
-          "operation \"{}\" of type {} in unit '{}'",
-          support::ValueOperationName(stated.answers), stated.type.value,
-          unit.name);
-    });
   }
   for (const TypeId element : elements) {
     if (!answered.contains({element, default_value})) {
@@ -1390,38 +2102,16 @@ auto EvaluatesNothing(const Block& block, ExprId id) -> bool {
 
 void Verify(const CompilationUnit& unit) {
   VerifyOwnClassesNamedAsOwn(unit);
-  for (const CallableId id : unit.callables.Ids()) {
-    VerifyCode(unit, unit.callables.Get(id).code, [&] {
-      return std::format(
-          "{} of unit '{}'",
-          BodyLabel(NameOf(unit.named_callables, id), id.value), unit.name);
-    });
-  }
   VerifyTypeOperations(unit);
-  for (const ForeignScopeEntry& entry : unit.foreign_scope_entries) {
-    VerifyCode(unit, entry.definition, [&] {
-      return std::format("the foreign entry '{}'", entry.linkage.foreign_name);
-    });
-  }
-  for (const ClosureId id : unit.closures.Ids()) {
-    VerifyCode(unit, unit.GetClosure(id).invoke, [&] {
-      return std::format("closure {} of unit '{}'", id.value, unit.name);
-    });
-  }
-  for (const RecordId id : unit.records.Ids()) {
-    const RecordDecl& declaration = unit.GetRecord(id);
-    for (const RecordMethod& method : unit.GetRecordMethods(id)) {
-      VerifyCode(unit, method.code, [&] {
-        return std::format(
-            "method '{}' of record '{}' in unit '{}'",
-            support::ValueOperationName(method.answers),
-            support::DisplayOf(declaration.path), unit.name);
-      });
-    }
-  }
-  for (const ClassId id : unit.classes.Ids()) {
-    VerifyClass(unit, unit.GetClass(id));
-  }
+  ForEachBody(unit, [&](const CallableCode& code, const auto& describe) {
+    VerifyCode(unit, code, describe);
+  });
+  // Every body is checked on its own first, since a closure handed over in one
+  // is followed into the bodies that made what it captured.
+  HandedClosures handed(unit);
+  ForEachBody(unit, [&](const CallableCode& code, const auto& describe) {
+    handed.Check(code, describe);
+  });
 }
 
 }  // namespace lyra::mir

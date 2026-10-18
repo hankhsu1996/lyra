@@ -4,6 +4,7 @@
 #include <format>
 #include <optional>
 #include <span>
+#include <string>
 #include <variant>
 #include <vector>
 
@@ -163,9 +164,15 @@ void RequireInitializes(
           [](const Transient&) {},
           [&](const Place& place) {
             if (!makes_value || !HoldsNothingYet(fn, allocated, place)) {
+              const auto* base = std::get_if<Use>(&place.base);
               throw InternalError(
-                  "lir verify: a value is put into storage where nothing is "
-                  "made, or where the storage already holds one");
+                  std::format(
+                      "lir verify: a value is put into storage where nothing "
+                      "is made, or where the storage already holds one (into "
+                      "{}{})",
+                      base != nullptr ? std::format("%{}", base->value.value)
+                                      : std::string("storage no value names"),
+                      place.chain.empty() ? "" : " through a projection"));
             }
             if (unit.types.Get(PlaceType(unit, fn, place)).IsAddressOnly()) {
               throw InternalError(

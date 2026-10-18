@@ -110,10 +110,15 @@ the awaiter consumes, not of the scheduler.
    body holds for what that wait watches, which names the activation only while the activation is
    parked on it; the process's record of a disable target for its being inside. Stopping an
    activation from outside takes it off its queue and off the wait it is parked on, which keeps the
-   wait itself, because starting it again waits for that same thing (invariant 7). _Consequence: an
-   activation can be cancelled and torn down with no dangling token left in any queue or wait -- its
-   frame's waits and its queue place end with it -- and leaving a list is a detach, so neither end
-   ever searches the other, and neither can hold a belief the other has abandoned._
+   wait itself, because starting it again waits for that same thing (invariant 7). What a wait keeps
+   in order to answer it -- the closure an event control asks whether its expression moved --
+   belongs to the wait and ends with it, since it may refer to anything the frame holds; a foreign
+   task's body, which runs on a stack of its own, is never outlived by the frame either, because an
+   execution inside a foreign call is torn down only once that call has returned (invariant 8).
+   _Consequence: an activation can be cancelled and torn down with no dangling token left in any
+   queue or wait -- its frame's waits and its queue place end with it, and so does every closure
+   that could call back into the frame -- and leaving a list is a detach, so neither end ever
+   searches the other, and neither can hold a belief the other has abandoned._
 
 5. **A typed await consumes the typed terminal outcome.** Awaiting an activation yields its outcome:
    `Succeeded(T)` produces `T`, and a departure carries on past the awaiting frame, which is not the

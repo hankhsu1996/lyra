@@ -36,7 +36,9 @@ then frees it. Wherever it is handed on -- into a slot, to a caller, to a callee
 type -- its end goes with it, as Rust moves a value that is not `Copy`, and a callee owns a
 parameter of such a type. A new-expression lowers in clang's order: allocate storage nobody owns
 yet, evaluate the initializer into it with a way out giving the storage back and ending nothing, and
-only then make the owner from the storage.
+only then make the owner from the storage. A class object is referred to while it is initialized,
+since its constructor may hand `this` on (LRM 8.11): the part every object starts with holds its
+creator's reference from the moment it is built, and the handle is made from that reference.
 
 ## Rejected
 

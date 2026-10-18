@@ -105,12 +105,10 @@ auto CodeGenFunction::Run() -> diag::Result<void> {
             CallArranger::ReturnOfValue(module_->Types(), fn_->result_type)));
   }
   if (IsCoroutine()) {
-    // The ramp places the arguments in the frame and stops before the body's
-    // first statement. An execution's stretches all belong to whoever drives
-    // it -- including the first -- so none of them may run where the frame
-    // happened to be built. No scope of the body has opened yet, so an
-    // execution ended here owes nothing.
-    EmitCoroutineSuspend(blocks_.front(), coro_cleanup_, false);
+    // The ramp only places the arguments in the frame. Where the body stops
+    // before its first statement, and what ending it there owes, is the body's
+    // own to state.
+    builder_.CreateBr(blocks_.front());
   }
 
   for (std::uint32_t i = 0; i < fn_->blocks.size(); ++i) {

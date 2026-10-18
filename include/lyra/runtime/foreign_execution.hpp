@@ -2,11 +2,13 @@
 
 #include <memory>
 
+#include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
+#include "lyra/support/callable_bounds.hpp"
 
 namespace lyra::runtime {
 
@@ -123,7 +125,8 @@ auto EnterForeignTask(
 // the call actually suspended, since one that returns without consuming time is
 // over before this returns. What continues the import frame afterwards is the
 // vehicle rather than a wait, because the call is on a stack of its own.
-auto RunForeignTaskOnFiber(RuntimeEffects& effects, OwnedCall foreign_call)
-    -> bool;
+auto RunForeignTaskOnFiber(
+    RuntimeEffects& effects,
+    OwnedClosure<support::EffectSignature> foreign_call) -> bool;
 
 }  // namespace lyra::runtime

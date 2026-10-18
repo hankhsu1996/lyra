@@ -179,6 +179,17 @@ struct CallableTarget {
   auto operator==(const CallableTarget&) const -> bool = default;
 };
 
+// The body of a closure this unit declares, as clang calls a lambda's
+// `operator()`. The call's receiver is what that body is entered on, which its
+// receiver parameter states: the closure itself where the body borrows it, and
+// the closure's box where the body takes it over -- a body started as a
+// coroutine, which outlives the call and ends the box when it ends.
+struct ClosureTarget {
+  ClosureId closure;
+
+  auto operator==(const ClosureTarget&) const -> bool = default;
+};
+
 // Identity of a symbol in the DPI-C name space (LRM 35.4): the program-global
 // linkage names imported and exported subroutines resolve to, a name space of
 // its own that no compilation-unit scope contains. It is therefore neither a
@@ -327,9 +338,9 @@ using CallPart = std::variant<base::ComponentIndex, ClassFieldTarget>;
 
 // The target of a `Direct` call -- the symbol identity. Each alternative is one
 // identity space, told apart by the table that resolves the name: a class of
-// this unit (`CallableTarget`), this unit's own namespace
-// (`UnitCallableTarget`), the closed set of runtime library entries
-// (`BuiltinFn`), another compilation unit's namespace
+// this unit (`CallableTarget`), a closure of this unit (`ClosureTarget`), this
+// unit's own namespace (`UnitCallableTarget`), the closed set of runtime
+// library entries (`BuiltinFn`), another compilation unit's namespace
 // (`ExternalUnitCallableTarget`) or one of its classes
 // (`ExternalUnitClassMethodTarget`), a declared struct's or union's methods
 // (`RecordMethodTarget`), the operations this unit states for a type with no
@@ -341,7 +352,7 @@ using CallPart = std::variant<base::ComponentIndex, ClassFieldTarget>;
 // whether the call dispatches on an object -- that is the callee's receiver --
 // and none is recovered from the receiver's runtime type.
 using DirectTarget = std::variant<
-    CallableTarget, UnitCallableTarget, support::BuiltinFn,
+    CallableTarget, ClosureTarget, UnitCallableTarget, support::BuiltinFn,
     ExternalUnitCallableTarget, ExternalUnitClassMethodTarget,
     RecordMethodTarget, TypeOperationTarget, ExternalBringUpTarget,
     ForeignSymbolTarget>;

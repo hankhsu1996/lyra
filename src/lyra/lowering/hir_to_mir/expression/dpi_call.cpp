@@ -41,6 +41,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/dpi_abi.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -865,9 +866,9 @@ auto LowerForeignImportSequenced(
 // protocol as a native task enable (LRM 35.8), uniform whether or not the
 // foreign side consumes time. The boundary always crosses inside the closure,
 // even where every actual crosses by value, because the await needs a coroutine
-// to drive rather than a value to read. The closure is returned directly, not
-// called: building a coroutine closure is starting it, which is what its type
-// says, and the statement lowering awaits it.
+// to drive rather than a value to read. Calling the closure starts it: the
+// call hands the body the box the closure is made in, and answers the
+// coroutine the statement lowering awaits.
 //
 // A foreign task may consume simulation time, which it does by calling back an
 // exported task that suspends. The foreign call therefore runs on a fiber whose
@@ -883,7 +884,7 @@ auto LowerForeignImportTask(
     -> diag::Result<mir::Expr> {
   auto& unit_lowerer = lowerer.Owner();
   auto& unit = unit_lowerer.Unit();
-  ClosureBuilder outer(unit, frame);
+  ClosureBuilder outer(unit, frame, support::ClosureKind::kFnOnce);
 
   // What hands control to the foreign side here is the await, not the call
   // inside the fiber: the scope has to be current before the native stack is
@@ -895,13 +896,14 @@ auto LowerForeignImportTask(
   const WalkFrame await_frame =
       import.is_context ? outer.Frame().WithBlock(&extent_body) : outer.Frame();
 
-  ClosureBuilder fiber_body(unit, await_frame);
+  ClosureBuilder fiber_body(unit, await_frame, support::ClosureKind::kFn);
   auto ret_temp =
       PopulateForeignImportBoundary(lowerer, fiber_body.Frame(), c, import);
   if (!ret_temp) return std::unexpected(std::move(ret_temp.error()));
 
   mir::Block& body = *await_frame.current_block;
-  const mir::ExprId fiber_id = body.exprs.Add(fiber_body.BuildVoid());
+  const mir::ExprId fiber_id =
+      BuildKeptClosure(unit, body, fiber_body.BuildVoid());
   const mir::ExprId runtime_id =
       body.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
   // A foreign task may consume simulation time (LRM 35.5.1.1), so its call is
@@ -922,7 +924,7 @@ auto LowerForeignImportTask(
     CloseDpiScopeExtent(
         unit_lowerer, outer.Frame(), std::move(extent_body), declaring_scope);
   }
-  return outer.BuildCoroutine();
+  return outer.BuildCallOnce();
 }
 
 // The MIR type one foreign formal is declared with, the ABI carrier realized as
@@ -1220,7 +1222,7 @@ auto SynthesizeForeignExportEntry(
     const mir::TypeId self_type =
         context_frame.current_class->self_pointer_type;
     const mir::LocalId self_local =
-        bindings.Declare(BindingOriginId::Receiver(), self_type);
+        bindings.Declare(ReceiverOrigin{}, self_type);
     const mir::ExprId narrowed = body.exprs.Add(
         mir::Expr{
             .data =

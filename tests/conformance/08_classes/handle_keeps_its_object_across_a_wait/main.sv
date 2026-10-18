@@ -9,9 +9,26 @@
 // variable, for a subroutine's formal, for a local of a subroutine the enclosing
 // scope declared automatic, and for a local of a class method -- which is
 // automatic whatever encloses it (LRM 8.6), so this is the ordinary case rather
-// than a declared exception.
+// than a declared exception. A method running on an object references it as
+// well, through `this` (LRM 8.11), so the object stays while the method runs
+// even where the method itself lets go of the last handle naming it.
 class Cell;
   int value;
+endclass
+
+class Node;
+  static Node held;
+  int member;
+
+  function new(int start);
+    member = start;
+  endfunction
+
+  function int drop_then_read();
+    held = null;
+    held = new(9000);
+    return member;
+  endfunction
 endclass
 
 class Worker;
@@ -39,6 +56,7 @@ module Top;
   bit in_automatic_task_same;
   int in_method;
   bit in_method_same;
+  int after_last_handle;
 
   Cell passed;
 
@@ -87,6 +105,11 @@ module Top;
   initial hold_a_local();
 
   initial begin
+    Node::held = new(7);
+    after_last_handle = Node::held.drop_then_read();
+  end
+
+  initial begin
     Worker worker = new();
     worker.run();
     in_method = worker.seen;
@@ -114,6 +137,8 @@ module Top;
     if (in_method_same !== 1'b1)
       $fatal(1, "a method's own handle compared to its alias as %b, expected 1",
              in_method_same);
+    if (after_last_handle !== 7)
+      $fatal(1, "after_last_handle was %0d, expected 7", after_last_handle);
     $display("All checks passed");
   end
 endmodule

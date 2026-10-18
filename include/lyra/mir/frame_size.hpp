@@ -10,4 +10,10 @@ namespace lyra::mir {
 // program allocates, and no body keeps one of its own.
 auto IsTooLargeForAFrame(const CompilationUnit& unit, TypeId type) -> bool;
 
+// Whether `type` is the address of code taking a value too large for a frame by
+// value, which every signature states as a box instead, as every body taking
+// one does.
+auto TakesAValueTooLargeForAFrame(const CompilationUnit& unit, TypeId type)
+    -> bool;
+
 }  // namespace lyra::mir

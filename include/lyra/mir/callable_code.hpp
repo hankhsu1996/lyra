@@ -31,8 +31,9 @@ namespace lyra::mir {
 // restates it.
 //
 // A closure's invoke body has no `params[0]` receiver in its signature; instead
-// its `locals[0]` is the closure receiver, a read-only borrow of the closure,
-// and a captured binding is read as a field access over it. A directly invoked
+// its `locals[0]` is the closure receiver, a borrow of the closure or the box
+// it was made in as the closure's kind says, and a captured binding is read as
+// a field access over it. A directly invoked
 // callable receives every parameter from the caller; a closure binds its
 // captured fields at construction and supplies the per-invocation `params` at
 // each call. A backend reads each binding's name and type from `locals`.

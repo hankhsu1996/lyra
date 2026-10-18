@@ -28,6 +28,7 @@
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
@@ -196,10 +197,7 @@ auto MakeUniqueObjectPointer(UnitLowerer& unit_lowerer, mir::ClassId class_id)
     -> mir::TypeId {
   const mir::TypeId object_type = unit_lowerer.Unit().types.Intern(
       mir::Type{mir::ObjectType{.of = mir::IntraUnitClassRef{class_id}}});
-  return unit_lowerer.Unit().types.Intern(
-      mir::Type{mir::PointerType{
-          .pointee = object_type,
-          .ownership = mir::PointerOwnership::kUnique}});
+  return mir::BoxOf(unit_lowerer.Unit().types, object_type);
 }
 
 // The pointer type a handle to an object built as `alternative` has. The object
@@ -307,7 +305,7 @@ auto BuildHierarchySegment(
 auto ReadConstructionTable(
     const mir::CompilationUnit& unit, const WalkFrame& frame) -> mir::Expr {
   const BodyBindingRef table =
-      frame.bindings->EnsureCarrier(BindingOriginId::ConstructionTable());
+      frame.bindings->EnsureCarrier(ConstructionTableOrigin{});
   mir::Block& block = *frame.current_block;
   const mir::TypeId type = mir::ConstructionTablePointer(unit.types);
   mir::Expr place = frame.bindings->MakeBindingPlace(table, block);
@@ -372,9 +370,7 @@ auto ObjectEntryTypes(
         mir::Type{mir::ObjectType{
             .of = mir::CrossUnitClassRef{
                 .unit_name = made, .class_path = entry.published_class}}});
-    const mir::TypeId owning = unit.types.Intern(
-        mir::Type{mir::PointerType{
-            .pointee = object, .ownership = mir::PointerOwnership::kUnique}});
+    const mir::TypeId owning = mir::BoxOf(unit.types, object);
     types.emplace(made, ObjectEntryType(unit_lowerer, entry.handed, owning));
   }
   return types;
@@ -2438,8 +2434,8 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
       hir_scope.instance_members.size());
   std::vector<std::optional<mir::ClassFieldTarget>> interface_port_fields(
       hir_scope.interface_ports.size());
-  // The cells of the published static-lifetime locals, taken over by the walk
-  // binding each body's locals, keyed by that body.
+  // The cells of the published static-lifetime variables, taken over by the
+  // walk binding each body's variables, keyed by that body.
   std::vector<std::vector<PlacedStatic>> placed_process_statics(
       hir_scope.processes.size());
   std::vector<std::vector<PlacedStatic>> placed_subroutine_statics(
@@ -2736,7 +2732,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
                     .owner = class_id_,
                     .shape = &shape,
                     .placed = placed_subroutine_statics[sub_id.value]},
-                s.body, SignatureBoundVars(s))});
+                s.body)});
   }
   shape.callable_signatures = {
       hir_scope.structural_subroutines.size(), std::move(signatures)};
@@ -2752,7 +2748,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
             .owner = class_id_,
             .shape = &shape,
             .placed = placed_process_statics[id.value]},
-        hir_scope.processes.Get(id).body, {}));
+        hir_scope.processes.Get(id).body));
   }
   process_static_bindings_ = {
       hir_scope.processes.size(), std::move(process_statics)};
@@ -2764,7 +2760,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     assertion_statics.push_back(BindBodyStatics(
         unit_lowerer, hir_scope.procedural_scopes,
         InstanceStorage{.owner = class_id_, .shape = &shape},
-        hir_scope.concurrent_assertions.Get(id).action, {}));
+        hir_scope.concurrent_assertions.Get(id).action));
   }
   assertion_static_bindings_ = {
       hir_scope.concurrent_assertions.size(), std::move(assertion_statics)};
@@ -2844,7 +2840,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   const mir::TypeId self_ptr_type = mir_class.self_pointer_type;
   ScopeChainNode outer_scope_link{};
   const auto seed_self = [&](CallableBindings& bindings) -> mir::LocalId {
-    return bindings.Declare(BindingOriginId::Receiver(), self_ptr_type);
+    return bindings.Declare(ReceiverOrigin{}, self_ptr_type);
   };
 
   // Each lifecycle phase is a callable like any other: `self` is the receiver
@@ -2867,7 +2863,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   // the prefix and nothing this scope alone is handed. The table is what the
   // constructor reads how each of its instantiations is made from.
   const mir::LocalId construction_table = ctor_bindings.Declare(
-      BindingOriginId::ConstructionTable(),
+      ConstructionTableOrigin{},
       mir::ConstructionTablePointer(unit_lowerer.Unit().types));
   struct SuppliedLocal {
     ConstructionValue value;
@@ -3209,7 +3205,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     mir::CallableCode node_ctor_code = mir::CallableCode::Defined();
     CallableBindings node_ctor_bindings(unit_lowerer.Unit(), node_ctor_code);
     node_ctor_code.params.push_back(node_ctor_bindings.Declare(
-        BindingOriginId::Receiver(), node_shape.self_pointer_type));
+        ReceiverOrigin{}, node_shape.self_pointer_type));
     std::vector<mir::LocalId> node_ctor_prefix_local_ids;
     node_ctor_prefix_local_ids.reserve(node_shape.ctor_prefix_params.size());
     for (const mir::ParamId param : node_shape.ctor_prefix_params.Ids()) {
@@ -3225,8 +3221,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     const auto empty_phase = [&](support::LibraryVirtual phase) {
       mir::CallableCode code = mir::CallableCode::Defined();
       CallableBindings bindings(unit_lowerer.Unit(), code);
-      code.params = {bindings.Declare(
-          BindingOriginId::Receiver(), node_shape.self_pointer_type)};
+      code.params = {
+          bindings.Declare(ReceiverOrigin{}, node_shape.self_pointer_type)};
       code.result_type = void_type;
       node_class.callables.Add(
           mir::CallableDecl{

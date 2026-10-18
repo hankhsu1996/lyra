@@ -435,7 +435,7 @@ class StructuralScopeLowerer {
     return class_id_;
   }
 
-  // The field one of this scope's static-lifetime body locals was given. A
+  // The field one of this scope's static-lifetime body variables was given. A
   // reference names the declaration rather than the procedural scopes around
   // it, and the storage is a field of this scope's object, so a referrer
   // standing on this object is already standing on the cell.
@@ -456,7 +456,7 @@ class StructuralScopeLowerer {
     }
     throw InternalError(
         "StructuralScopeLowerer::ProceduralStaticField: the var was given no "
-        "persistent storage, so it is not a static-lifetime local of that "
+        "persistent storage, so it is not a static-lifetime variable of that "
         "body");
   }
 

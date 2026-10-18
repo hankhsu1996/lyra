@@ -18,6 +18,7 @@
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/timing.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/support/callable_bounds.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -106,7 +107,7 @@ auto LowerSampledHistorySampler(
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(unit, code);
   const mir::LocalId self_id =
-      bindings.Declare(BindingOriginId::Receiver(), self_ptr_type);
+      bindings.Declare(ReceiverOrigin{}, self_ptr_type);
 
   mir::Block body_block;
   const WalkFrame body_frame =
@@ -134,7 +135,7 @@ auto LowerSampledHistorySampler(
   // Recording is held to the Postponed region of this same time step, so the
   // tick a reader in this step sees is never this one -- which is what makes
   // "strictly prior" hold by construction rather than by anyone's ordering.
-  ClosureBuilder closure(unit, body_frame);
+  ClosureBuilder closure(unit, body_frame, support::ClosureKind::kFn);
   const mir::ExprId captured =
       SnapshotValueIntoClosure(lowerer.Owner(), body_frame, closure, settled);
   closure.Body().AppendStmt(
@@ -145,7 +146,8 @@ auto LowerSampledHistorySampler(
                       closure.Body(), closure.Frame(), lowerer, id),
                   captured, void_type))});
 
-  const mir::ExprId closure_id = body_block.exprs.Add(closure.BuildVoid());
+  const mir::ExprId closure_id =
+      BuildKeptClosure(unit, body_block, closure.BuildVoid());
   const mir::ExprId runtime_id =
       body_block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
   body_block.AppendStmt(

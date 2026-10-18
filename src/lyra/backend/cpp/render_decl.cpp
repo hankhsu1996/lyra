@@ -23,6 +23,7 @@
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/closure_id.hpp"
+#include "lyra/mir/closure_signature.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/local.hpp"
@@ -31,6 +32,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/value_build.hpp"
+#include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/def_path.hpp"
 
 namespace lyra::backend::cpp {
@@ -628,33 +630,70 @@ auto RenderUnitClosures(
     const mir::ClosureDecl& decl = unit.GetClosure(id);
     const mir::CallableCode& code = decl.invoke;
     const MintedName name = CppClosureName(id);
-    const bool started =
-        unit.types.Get(code.result_type).Is<mir::CoroutineType>();
-    if (started && !code.params.empty()) {
+    if (!code.receiver.has_value()) {
       throw InternalError(
-          "RenderUnitClosures: a closure started as it is built is called "
-          "with nothing, yet its body takes per-invocation parameters -- "
-          "please report this as a bug");
+          "RenderUnitClosures: a closure's body reads its captures through the "
+          "closure, yet states no receiver -- please report this as a bug");
     }
+    const support::ClosureKind kind = mir::ClosureKindOf(unit.types, decl);
     // What follows the function's name or qualifier, the same in the
-    // declaration and the definition.
+    // declaration and the definition. A body borrows its closure to read, as
+    // Rust's `Fn` takes `&self`, or to write, as `FnMut` takes `&mut self`;
+    // one taking it over is handed the box it was made in, as `FnOnce` takes
+    // `self`.
     const auto write_function = [&](TargetText& out) {
-      if (started) {
-        Write(
-            out, CppClosureStartName(), "(", name, " ", CppStartedClosureName(),
-            ") -> ", CppType(unit, code.result_type));
-        return;
+      switch (kind) {
+        case support::ClosureKind::kFn:
+          out += "operator()(";
+          WriteParameters(unit, code, code.params, out);
+          Write(out, ") const -> ", CppType(unit, code.result_type));
+          return;
+        case support::ClosureKind::kFnMut:
+          out += "operator()(";
+          WriteParameters(unit, code, code.params, out);
+          Write(out, ") -> ", CppType(unit, code.result_type));
+          return;
+        case support::ClosureKind::kFnOnce:
+          Write(
+              out, CppClosureCallOnceName(), "(",
+              CppType(unit, code.locals.Get(*code.receiver).type), " ",
+              CppLocalName(code.named_locals, *code.receiver), ") -> ",
+              CppType(unit, code.result_type));
+          return;
       }
-      out += "operator()(";
-      WriteParameters(unit, code, code.params, out);
-      Write(out, ") const -> ", CppType(unit, code.result_type));
+      throw InternalError("RenderUnitClosures: unknown ClosureKind");
+    };
+    const auto static_prefix = [&]() -> std::string_view {
+      switch (kind) {
+        case support::ClosureKind::kFn:
+        case support::ClosureKind::kFnMut:
+          return "";
+        case support::ClosureKind::kFnOnce:
+          return "static ";
+      }
+      throw InternalError("RenderUnitClosures: unknown ClosureKind");
+    };
+    // The constructor takes each capture in the closure's member order.
+    const auto write_constructor_params = [&](TargetText& out) {
+      WriteSeparated(out, decl.field_order, ", ", [&](mir::FieldId field) {
+        Write(
+            out, CppType(unit, decl.fields.Get(field).type), " ",
+            CppClosureCaptureName(field));
+      });
     };
 
     {
       TargetText& out = text.declarations;
       const TargetText::Section declared(out);
-      Write(out, "struct ", name, " {\n");
+      // The library holds a closure of no known type by the part it keeps,
+      // which leads the value: the definition it calls and ends the closure
+      // through, then the captures.
+      Write(out, "struct ", name, " final : ", CppClosureBase(), " {\n");
       out.Indent();
+      out.OpenLine();
+      Write(out, "explicit ", name, "(");
+      write_constructor_params(out);
+      out += ");\n";
       for (const mir::FieldId field : decl.field_order) {
         WriteDeclaration(
             out, VariableDeclaration{
@@ -664,7 +703,7 @@ auto RenderUnitClosures(
                      .name = CppClosureCaptureName(field)});
       }
       out.OpenLine();
-      out += started ? "static auto " : "auto ";
+      Write(out, static_prefix(), "auto ");
       write_function(out);
       out += ";\n";
       out.Outdent();
@@ -673,19 +712,33 @@ auto RenderUnitClosures(
 
     TargetText& out = text.definitions;
     const TargetText::Section defined(out);
+    // How the runtime library calls the closure and ends it, which the
+    // library reads off the closure's type.
+    const MintedName definition = CppClosureDefinitionName(id);
+    Write(
+        out, "inline constexpr auto ", definition, " = ",
+        CppClosureDefinitionOf(), "<", name, ">();\n");
+
+    Write(out, name, "::", name, "(");
+    write_constructor_params(out);
+    Write(out, ") : ", CppClosureBase(), "(&", definition, ")");
+    for (const mir::FieldId field : decl.field_order) {
+      const MintedName capture = CppClosureCaptureName(field);
+      Write(out, ", ", capture, "(std::move(", capture, "))");
+    }
+    out += " {}\n";
+
     Write(out, "auto ", name, "::");
     write_function(out);
     out += " ";
-    if (!code.receiver.has_value()) {
-      throw InternalError(
-          "RenderUnitClosures: a closure's body reads its captures through the "
-          "closure, yet states no receiver -- please report this as a bug");
-    }
     WriteBody(out, [&] {
-      if (started) {
-        WriteReceiverBinding(unit, code, out, "&", CppStartedClosureName());
-      } else {
-        WriteReceiverBinding(unit, code, out, "this");
+      switch (kind) {
+        case support::ClosureKind::kFn:
+        case support::ClosureKind::kFnMut:
+          WriteReceiverBinding(unit, code, out, "this");
+          break;
+        case support::ClosureKind::kFnOnce:
+          break;
       }
       RenderBlockStatements(ScopeView::ForCode(unit, code, report), out);
     });

@@ -194,7 +194,7 @@ void BindPatternIdentifiers(
           [&](const hir::VariablePattern& variable) {
             const mir::TypeId type = owner.TranslateType(pattern.subject_type);
             const mir::LocalId local = matched.bindings->DeclareNamed(
-                BindingOriginId::Pattern(pattern_id), variable.name, type);
+                PatternOrigin{.pattern = pattern_id}, variable.name, type);
 
             mir::Block& declared = *declared_in.current_block;
             declared.AppendStmt(

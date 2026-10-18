@@ -11,7 +11,6 @@
 #include "lyra/support/layout.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/integral_words.hpp"
-#include "lyra/value/reduction.hpp"
 
 namespace lyra::value {
 
@@ -140,14 +139,8 @@ struct ValueWitnessTable {
       const ValueType& type, const void* into, const void* from,
       const std::int64_t* first, const std::int64_t* count, void* out);
 
-  // The order an associative array keeps its indices in (LRM 7.8.2, 7.8.4)
-  // and the one `min`, `max` and `sort` read (LRM 7.12).
+  // The order an associative array keeps its indices in (LRM 7.8.2, 7.8.4).
   bool (*order_before)(const ValueType& type, const void* lhs, const void* rhs);
-  // Whether a value holds as a condition (LRM 12.4).
-  bool (*is_true)(const ValueType& type, const void* value);
-  void (*reduce)(
-      const ValueType& type, Reduction reduction, const void* lhs,
-      const void* rhs, void* out);
 
   // What a value of the type answers about its parts, where they are ordered
   // by position, and nothing for a type whose parts are not.
@@ -186,8 +179,6 @@ inline constexpr ValueWitnessTable kValueWitnessTableFor{
     .filled_like = W::FilledLike,
     .take_positions = W::TakePositions,
     .order_before = W::OrderBefore,
-    .is_true = W::IsTrue,
-    .reduce = W::Reduce,
     .parts = W::kParts};
 
 // Which of the records the library reads a type through this one opens, where
@@ -314,13 +305,6 @@ class ValueType {
   [[nodiscard]] auto OrderBefore(const void* lhs, const void* rhs) const
       -> bool {
     return witnesses_->order_before(*this, lhs, rhs);
-  }
-  [[nodiscard]] auto IsTrue(const void* value) const -> bool {
-    return witnesses_->is_true(*this, value);
-  }
-  void Reduce(
-      Reduction reduction, const void* lhs, const void* rhs, void* out) const {
-    witnesses_->reduce(*this, reduction, lhs, rhs, out);
   }
 
   // The parts of the value lying at `value`, for a type whose parts are

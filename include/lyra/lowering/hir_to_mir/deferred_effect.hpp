@@ -14,6 +14,7 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/support/callable_bounds.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -33,11 +34,11 @@ auto AppendArrivalAtDueRegion(
     ProcessLowerer& process, WalkFrame outer_frame, ClosureBuilder& carrier,
     const hir::DelayOrEventControl& control) -> diag::Result<void>;
 
-// Takes the carrier on as an execution of no lineage. LRM 9.4.5 makes no
-// process of an update event, so nothing that names processes may find it (LRM
-// 9.6.1, 9.6.3).
+// Takes `started`, the coroutine a carrier's body answers once called, on as
+// an execution of no lineage. LRM 9.4.5 makes no process of an update event,
+// so nothing that names processes may find it (LRM 9.6.1, 9.6.3).
 auto RunCarrierDetached(
-    ProcessLowerer& process, WalkFrame frame, mir::Expr carrier) -> mir::Expr;
+    ProcessLowerer& process, WalkFrame frame, mir::Expr started) -> mir::Expr;
 
 // The two halves a deferred effect is written as, which the standard's own
 // division settles: `capture` reads everything the effect needs into the
@@ -63,28 +64,29 @@ auto BuildDeferredEffect(
     ProcessLowerer& process, WalkFrame frame,
     const std::optional<hir::DelayOrEventControl>& control, Capture capture,
     Apply apply) -> diag::Result<mir::Expr> {
-  ClosureBuilder closure(process.Owner().Unit(), frame);
-  auto captured = capture(closure);
-  if (!captured) return std::unexpected(std::move(captured.error()));
-
   // An event control is the one form whose slot is not knowable here, so it is
-  // the one that needs an execution of its own to find it; every other form
-  // hands the region a closure and is done.
+  // the one that needs an execution of its own to find it, which takes the
+  // closure over; every other form hands the region a closure and is done.
   const auto* delay =
       control.has_value() ? std::get_if<hir::DelayControl>(&*control) : nullptr;
-  const bool finds_its_own_slot = control.has_value() && delay == nullptr;
-  if (finds_its_own_slot) {
-    auto arrival = AppendArrivalAtDueRegion(process, frame, closure, *control);
+  if (control.has_value() && delay == nullptr) {
+    ClosureBuilder carrier(
+        process.Owner().Unit(), frame, support::ClosureKind::kFnOnce);
+    auto captured = capture(carrier);
+    if (!captured) return std::unexpected(std::move(captured.error()));
+    auto arrival = AppendArrivalAtDueRegion(process, frame, carrier, *control);
     if (!arrival) return std::unexpected(std::move(arrival.error()));
+    // The steps the update runs are the closure's own, so they append to its
+    // body: a name the enclosing body declared is not one this body can reach.
+    apply(carrier.Body(), *captured);
+    return RunCarrierDetached(process, frame, carrier.BuildCallOnce());
   }
 
-  // The steps the update runs are the closure's own, so they append to its
-  // body: a name the enclosing body declared is not one this body can reach.
+  ClosureBuilder closure(
+      process.Owner().Unit(), frame, support::ClosureKind::kFn);
+  auto captured = capture(closure);
+  if (!captured) return std::unexpected(std::move(captured.error()));
   apply(closure.Body(), *captured);
-
-  if (finds_its_own_slot) {
-    return RunCarrierDetached(process, frame, closure.BuildCoroutine());
-  }
   return SubmitToDueRegion(
       process, frame,
       delay != nullptr ? std::optional<hir::DelayControl>{*delay}

@@ -12,9 +12,10 @@ class Observable;
 
 // The root every object the runtime holds is derived from. Whoever holds an
 // object holds it as this class, without knowing which class it is of, so the
-// destructor is virtual. A body running on an object reaches it through a
-// borrowed pointer, which serves every member access; LRM 8.11 `this` asks for
-// a reference instead, which this part recovers from the share it holds.
+// destructor is virtual. A body running on an object reaches its members
+// through a borrowed pointer; a reference to it -- LRM 8.11 `this`, and the
+// share a method of a managed class holds while it runs (LRM 8.4) -- this part
+// recovers from the weak reference it keeps to the object.
 //
 // Recovering a reference from an object is what a shared-owner realization
 // needs; where reachability retains an object a body already holds its receiver
@@ -47,8 +48,21 @@ class GcObject : public std::enable_shared_from_this<GcObject> {
   // A write to one of this object's properties is over.
   void PublishChange();
 
+  // The reference the code building this object holds, taken over by the
+  // `new` that built it once its constructor has run. The object holds it
+  // from the moment this part is made, before any constructor of the program
+  // runs, so the constructor runs on an object already referred to and may
+  // hand `this` on (LRM 8.11), as an object starts with one reference that its
+  // creator owns (Swift's `swift_allocObject`, CPython's `tp_new`); here the
+  // object holds it, since a C++ new-expression gives no frame a handle before
+  // the constructor runs. An object no `new` builds -- an instance of the
+  // design hierarchy, which its parent owns -- keeps it to the end, where it
+  // ends nothing.
+  [[nodiscard]] auto TakeCreatorsShare() -> std::shared_ptr<GcObject>;
+
  private:
   std::unique_ptr<Observable> event_source_;
+  std::shared_ptr<GcObject> creators_share_;
 };
 
 // A reference to an object whose typed owner is already in hand. The share
@@ -76,10 +90,11 @@ auto RefToObject(std::shared_ptr<T> owned) -> value::ObjectRef {
   }
 }
 
-// A reference to an object a `new` built as `T`, which from here owns it.
-template <typename T>
+// The reference to an object a `new` built as `T`, handed over from the code
+// that built it.
+template <std::derived_from<GcObject> T>
 auto AdoptObject(T* object) -> value::ObjectRef {
-  return RefToObject(std::shared_ptr<T>(object));
+  return RefToObject(std::shared_ptr<T>(object->TakeCreatorsShare(), object));
 }
 
 // The same object seen as `To`, where the program point holding it saw it as

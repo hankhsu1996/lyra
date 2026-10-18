@@ -11,13 +11,15 @@
 // one descendant awaiting another included (LRM 9.7) -- and what goes with it
 // is only the descendants: a descendant inside the same named block as the
 // process that disabled it leaves that block, and the process stays inside, so
-// a later `disable` of the block still reaches it (LRM 9.6.2).
+// a later `disable` of the block still reaches it (LRM 9.6.2). A branch the
+// parent disables before blocking never starts (LRM 9.3.2, 9.6.3).
 module Top;
   int child_ran, grandchild_ran, sibling_ran, outer_child_ran;
   int resume_time, after_disable;
   int reached_after_empty_disable, after_task_time;
   int awaiting_resumed;
   int spawner_left_region;
+  int never_started_ran;
   process awaited;
 
   task automatic take_first();
@@ -83,6 +85,14 @@ module Top;
 
   initial #2 disable stay_in_region.region;
 
+  initial begin
+    automatic int carried = 5;
+    fork
+      never_started_ran = carried;
+    join_none
+    disable fork;
+  end
+
   final begin
     if (reached_after_empty_disable !== 1)
       $fatal(1, "reached_after_empty_disable was %0d, expected 1",
@@ -105,6 +115,8 @@ module Top;
       $fatal(1, "a descendant awaiting another resumed after both were disabled");
     if (spawner_left_region !== 1)
       $fatal(1, "a process left a block its disabled descendant was inside");
+    if (never_started_ran !== 0)
+      $fatal(1, "a branch disabled before it started ran");
     $display("All checks passed");
   end
 endmodule

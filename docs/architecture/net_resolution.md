@@ -291,5 +291,4 @@ the standard settles what that means by merging the nets on both sides into one 
 23.3.3.7). Merged, a pull inside the child and a strong driver in the parent meet at the strengths
 they were driven at and the strong one decides, which is the property the phrase names; a driver in
 either module reaches both names; and a chain of such connections is one resolution across every net
-in it, with no step in the chain resolving anything of its own. The derivation and what it rejects
-are in `decisions/joined-nets-are-one-resolution.md`.
+in it, with no step in the chain resolving anything of its own.

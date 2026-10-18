@@ -369,12 +369,9 @@ struct ControlEffectTarget {
 
 // The protocol by which a body entered as a coroutine is run and answers.
 //
-// The two entries make an execution the engine drives out of a body's own
-// frame. They differ in what becomes of the environment the body reads, which
-// is decided by how long that environment outlives the execution: a receiver
-// outlives every execution reaching its members, so entering borrows it; the
-// captures of a callable value outlive nothing on their own, so entering owns
-// them from there.
+// `kEnter` makes an execution the engine drives out of a body's own frame,
+// which holds everything the body reads: a receiver it borrows, or the box of a
+// closure it took over and ends when it ends.
 //
 // `kAwait` hands one such execution the thread its awaiter is carrying and
 // answers whether the awaiter must park at all, since an execution that
@@ -392,12 +389,7 @@ struct ControlEffectTarget {
 // the call sits does so with an ordinary call, and every operation here exists
 // only where the runtime runs the body on the program's behalf.
 struct CoroutineTarget {
-  enum class Op : std::uint8_t {
-    kEnterBorrowedEnvironment,
-    kEnterOwnedEnvironment,
-    kAwait,
-    kRelease
-  };
+  enum class Op : std::uint8_t { kEnter, kAwait, kRelease };
   Op op;
 };
 

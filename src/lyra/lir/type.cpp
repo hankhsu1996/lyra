@@ -190,6 +190,12 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           },
           [&](const RuntimeClassType& t) { Combine(seed, t.which); },
           [&](const ClosureType& t) { Combine(seed, t.closure_id.value); },
+          [&](const ErasedCallableType& t) {
+            for (const TypeId param : t.params) {
+              Combine(seed, param);
+            }
+            Combine(seed, t.result);
+          },
           [](const RuntimeEffectsType&) {},
           [](const FilesType&) {},
           [](const DiagnosticType&) {},
@@ -254,6 +260,7 @@ auto Type::KindName() const -> std::string_view {
           [](const CrossUnitClassType&) { return "cross-unit class"; },
           [](const RuntimeClassType&) { return "runtime class"; },
           [](const ClosureType&) { return "closure"; },
+          [](const ErasedCallableType&) { return "erased callable"; },
           [](const RecordType&) { return "record"; },
           [](const RuntimeEffectsType&) { return "runtime services"; },
           [](const FilesType&) { return "file table"; },
@@ -317,6 +324,7 @@ auto Type::Declaration() const -> std::optional<TypeDeclaration> {
           [&](const MachineFloatType&) { return names_none(); },
           [&](const MachineArrayType&) { return names_none(); },
           [&](const MachineFunctionType&) { return names_none(); },
+          [&](const ErasedCallableType&) { return names_none(); },
 
           // A class the runtime library defines: a symbol is its whole
           // identity, so no declaration of this unit stands behind it.
@@ -412,6 +420,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const CrossUnitClassType&) -> Element { return std::nullopt; },
           [](const RuntimeClassType&) -> Element { return std::nullopt; },
           [](const ClosureType&) -> Element { return std::nullopt; },
+          [](const ErasedCallableType&) -> Element { return std::nullopt; },
 
           // A handle to a runtime facility, and an inert payload the library
           // owns the shape of.
@@ -542,9 +551,7 @@ auto Type::HeldAs() const -> std::optional<Holding> {
             return ValueDomain::kManagedRef;
           },
 
-          // The storage a closure's captures live in is built for the call that
-          // hands it on.
-          [](const ClosureType&) -> Held { return LibraryObject::kClosure; },
+          [](const ClosureType&) -> Held { return ClosureStorage{}; },
           // A shared pointer is a hold on storage that outlives the scope
           // asking for it, and letting the hold go is what ends it; a unique
           // one owns what it points at, and its end ends that and gives the
@@ -625,6 +632,8 @@ auto Type::HeldAs() const -> std::optional<Holding> {
           [](const MachineFloatType&) -> Held { return std::nullopt; },
           [](const MachineArrayType&) -> Held { return std::nullopt; },
           [](const MachineFunctionType&) -> Held { return std::nullopt; },
+          // Only ever behind a box or a borrow, never held as itself.
+          [](const ErasedCallableType&) -> Held { return std::nullopt; },
           // The absence of a type is not a value of one.
           [](const VoidType&) -> Held { return std::nullopt; },
           // An object, the several ways of naming one, and storage an owner

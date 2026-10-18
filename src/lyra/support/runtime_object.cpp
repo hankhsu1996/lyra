@@ -11,8 +11,6 @@ namespace lyra::support {
 
 auto LibraryObjectName(LibraryObject object) -> std::string_view {
   switch (object) {
-    case LibraryObject::kClosure:
-      return "closure";
     case LibraryObject::kPrintItem:
       return "print_item";
     case LibraryObject::kFormatSpec:

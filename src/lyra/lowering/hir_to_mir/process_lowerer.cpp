@@ -3,7 +3,6 @@
 #include <expected>
 #include <functional>
 #include <optional>
-#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -12,13 +11,15 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/failure_context.hpp"
+#include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/concurrent_assertion.hpp"
-#include "lyra/lowering/hir_to_mir/declared_variable.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -179,7 +180,7 @@ auto LowerStraightLineProcess(ProcessLowerer& process)
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(process.Owner().Unit(), code);
   const mir::LocalId self_id = bindings.Declare(
-      BindingOriginId::Receiver(), parent.current_class->self_pointer_type);
+      ReceiverOrigin{}, parent.current_class->self_pointer_type);
   code.params = {self_id};
   const WalkFrame body_frame =
       parent.WithBlock(&code.Body())
@@ -210,7 +211,7 @@ auto LowerForeverProcess(ProcessLowerer& process, Ahead ahead)
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(process.Owner().Unit(), code);
   const mir::LocalId self_id = bindings.Declare(
-      BindingOriginId::Receiver(), parent.current_class->self_pointer_type);
+      ReceiverOrigin{}, parent.current_class->self_pointer_type);
   code.params = {self_id};
   const WalkFrame entry_frame =
       parent.WithBlock(&code.Body())
@@ -264,46 +265,70 @@ auto LowerImplicitListProcess(ProcessLowerer& process, const hir::Reads& reads)
       });
 }
 
-// A variable that starts at its type's default value (LRM Table 6-7 for a
-// scalar, Table 7-1 for an aggregate): a formal that brings no value in, or the
-// implicit result variable, both of which a body may read before writing.
-auto DeclareDefaulted(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::Block& body,
-    BindingOriginId origin, const std::optional<std::string>& name,
-    hir::TypeId type) -> DeclaredVariable {
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
-  const DeclaredVariable variable = DeclareVariable(
-      unit, *frame.bindings, body, origin, name,
-      unit_lowerer.TranslateType(type), frame.body_can_wait);
-  body.AppendStmt(InitializeVariable(
-      unit, body, variable,
-      body.exprs.Add(BuildDefaultValueFromHir(unit_lowerer, body, type))));
-  return variable;
+// The value a formal that brings no value in, or the implicit result variable,
+// starts at on each entry: its type's default (LRM Table 6-7 for a scalar,
+// Table 7-1 for an aggregate), since a body may read either before writing it.
+auto DefaultInitialValue(
+    ProcessLowerer& process, const WalkFrame& frame,
+    const hir::ProceduralVarDecl& decl) -> InitialValue {
+  return [&process, &frame, &decl]() -> diag::Result<mir::ExprId> {
+    mir::Block& body = *frame.current_block;
+    return body.exprs.Add(
+        BuildDefaultValueFromHir(process.Owner(), body, decl.type));
+  };
 }
 
 // A formal that brings a value in: the parameter the call hands it through,
-// and the variable, which starts at that value. Where the body cannot wait the
-// variable is the parameter itself.
-auto DeclareParameter(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::Block& body,
-    BindingOriginId origin, const std::optional<std::string>& name,
-    mir::TypeId value_type) -> std::pair<mir::LocalId, DeclaredVariable> {
-  if (!frame.body_can_wait) {
-    const mir::LocalId parameter =
-        frame.bindings->DeclareProcedural(origin, name, value_type);
-    return {
-        parameter, DeclaredVariable{.local = parameter, .type = value_type}};
-  }
+// which the variable starts at. Where the body cannot wait the variable is the
+// parameter itself. A static subroutine's is the one variable every call shares
+// (LRM 13.3.2), and the call assigns it the value it hands in.
+auto DeclareParameterVar(
+    ProcessLowerer& process, const WalkFrame& frame, hir::ProceduralVarId var,
+    const hir::ProceduralVarDecl& decl) -> diag::Result<mir::LocalId> {
+  UnitLowerer& unit_lowerer = process.Owner();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  const mir::LocalId parameter = frame.bindings->Declare(
-      BindingOriginId::Synthesized(unit_lowerer.NextSynthesizedSite(), 0),
-      value_type);
-  const DeclaredVariable variable = DeclareVariable(
-      unit, *frame.bindings, body, origin, name, value_type,
-      frame.body_can_wait);
-  body.AppendStmt(InitializeVariable(
-      unit, body, variable, body.ReadLocal(parameter, value_type)));
-  return {parameter, variable};
+  mir::Block& body = *frame.current_block;
+  const mir::TypeId value_type = unit_lowerer.TranslateType(decl.type);
+  const bool is_static = decl.lifetime == hir::VariableLifetime::kStatic;
+  if (!is_static && !frame.body_can_wait && !decl.lifetime_extended) {
+    const mir::LocalId parameter = frame.bindings->DeclareProcedural(
+        ProceduralOrigin{.var = var}, decl.name, value_type);
+    process.MapProceduralVar(var, AutomaticVarBinding{.type = value_type});
+    return parameter;
+  }
+  const mir::LocalId parameter = frame.bindings->DeclareAnonymous(value_type);
+  if (is_static) {
+    const AccessPath variable{
+        .owner = body.exprs.Add(LowerProceduralVarRefExpr(process, frame, var)),
+        .descent = {}};
+    body.AppendStmt(
+        mir::ExprStmt{
+            .expr = body.exprs.Add(BuildStoreExpr(
+                unit, body, variable, body.ReadLocal(parameter, value_type)))});
+    return parameter;
+  }
+  auto started = LowerVarStart(
+      process, frame, var, decl.name, [&]() -> diag::Result<mir::ExprId> {
+        return body.ReadLocal(parameter, value_type);
+      });
+  if (!started) return std::unexpected(std::move(started.error()));
+  body.AppendStmt(*std::move(started));
+  return parameter;
+}
+
+// The variables a subroutine's scope declares before its first statement: its
+// formals and, for a non-void function, its result (LRM 13.4.1).
+auto DeclaredAhead(const hir::SubroutineDecl& decl)
+    -> std::vector<hir::ProceduralVarId> {
+  std::vector<hir::ProceduralVarId> declared;
+  declared.reserve(decl.params.size() + 1);
+  for (const auto& param : decl.params) {
+    declared.push_back(param.var);
+  }
+  if (decl.result_var.has_value()) {
+    declared.push_back(*decl.result_var);
+  }
+  return declared;
 }
 
 // Whether a subroutine's body can wait, which a task's can and a function's
@@ -363,31 +388,38 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
       parent.current_class == nullptr
           ? BoundImplicitParameters{.params = {}, .frame = entry_frame}
           : BindImplicitParameters(
-                entry_frame, owner_->GetClassShape(parent.current_class_id),
+                *owner_, entry_frame,
+                owner_->GetClassShape(parent.current_class_id),
                 src.is_static ? CallableForm::kTypeAssociated
                               : CallableForm::kInstanceMember);
   const WalkFrame& body_frame = bound.frame;
   std::vector<mir::LocalId> params = std::move(bound.params);
   const mir::CompilationUnit& unit = owner_->Unit();
 
+  // A formal or the result a detached branch names lives in a cell the body's
+  // entry makes, kept alive by every branch naming it (LRM 6.21); it starts
+  // where the others do, and the completion reads it from that cell.
+  OpenActivationScope(*this, body_frame, DeclaredAhead(src));
+
   // Formals normalize into the signature's data flow (LRM 13.5). Every formal
   // is a binding in the callable, identified by its HIR id; one that is no
-  // parameter is a default-initialized body local instead, whose final value
+  // parameter is a default-initialized body variable instead, whose final value
   // rides the completion payload -- copied out at completion rather than
   // aliased live. An `inout` is both a parameter and a payload component.
   for (const auto& param : src.params) {
     const auto& hir_var = src.body.procedural_vars.Get(param.var);
-    const mir::TypeId value_type = owner_->TranslateType(hir_var.type);
     const hir::ParamDirection dir = param.direction;
     const std::optional<mir::TypeId> param_type =
         ParamTypeOf(*owner_, hir_var.type, dir);
 
-    const BindingOriginId origin = BindingOriginId::Procedural(param.var);
+    const BindingOriginId origin = ProceduralOrigin{.var = param.var};
     if (!param_type.has_value()) {
-      const DeclaredVariable variable = DeclareDefaulted(
-          *owner_, body_frame, code.Body(), origin, hir_var.name, hir_var.type);
-      MapProceduralVar(param.var, AutomaticVarBinding{.type = variable.type});
-      output_locals_.push_back(variable);
+      auto started = LowerVarStart(
+          *this, body_frame, param.var, hir_var.name,
+          DefaultInitialValue(*this, body_frame, hir_var));
+      if (!started) return std::unexpected(std::move(started.error()));
+      code.Body().AppendStmt(*std::move(started));
+      output_vars_.push_back(param.var);
       continue;
     }
 
@@ -401,29 +433,28 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
       continue;
     }
 
-    const auto [parameter, variable] = DeclareParameter(
-        *owner_, body_frame, code.Body(), origin, hir_var.name, value_type);
-    MapProceduralVar(param.var, AutomaticVarBinding{.type = variable.type});
-    params.push_back(parameter);
+    auto parameter = DeclareParameterVar(*this, body_frame, param.var, hir_var);
+    if (!parameter) return std::unexpected(std::move(parameter.error()));
+    params.push_back(*parameter);
     if (dir == hir::ParamDirection::kInOut) {
-      output_locals_.push_back(variable);
+      output_vars_.push_back(param.var);
     }
   }
 
   // LRM 13.4.1 implicit result variable. A non-void function's same-name var is
-  // a default-initialized body local (declared without its source name, which
-  // is the function's own and has to keep resolving to the function for a
-  // self-recursive call): the leading completion-payload component, the value
+  // a default-initialized body variable (declared without its source name,
+  // which is the function's own and has to keep resolving to the function for
+  // a self-recursive call): the leading completion-payload component, the value
   // a fall-through or value-less `return` carries. void functions and tasks
   // have none.
   if (src.result_var.has_value()) {
-    const DeclaredVariable variable = DeclareDefaulted(
-        *owner_, body_frame, code.Body(),
-        BindingOriginId::Procedural(*src.result_var), std::nullopt,
-        src.result_type);
-    MapProceduralVar(
-        *src.result_var, AutomaticVarBinding{.type = variable.type});
-    result_var_ = variable;
+    auto started = LowerVarStart(
+        *this, body_frame, *src.result_var, std::nullopt,
+        DefaultInitialValue(
+            *this, body_frame, src.body.procedural_vars.Get(*src.result_var)));
+    if (!started) return std::unexpected(std::move(started.error()));
+    code.Body().AppendStmt(*std::move(started));
+    result_var_ = src.result_var;
   }
 
   // A definition produces the completion its declaration fixes, so it reads
@@ -473,7 +504,7 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   // completion a body falling off its end carries (LRM 13.3). The completion is
   // a real body statement, not a backend-appended epilogue.
   code.Body().AppendStmt(
-      mir::ReturnStmt{.value = BuildReturnPayload(code.Body(), std::nullopt)});
+      mir::ReturnStmt{.value = BuildReturnPayload(body_frame, std::nullopt)});
 
   code.params = std::move(params);
   code.result_type = result_type;
@@ -483,19 +514,17 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
 auto ProcessLowerer::RegisterConstructorFormals(
     const hir::SubroutineDecl& ctor, const WalkFrame& frame,
     std::vector<mir::LocalId>& params) -> diag::Result<void> {
+  OpenActivationScope(*this, frame, DeclaredAhead(ctor));
   for (const auto& param : ctor.params) {
     if (param.direction != hir::ParamDirection::kInput) {
       throw InternalError(
           "ProcessLowerer::RegisterConstructorFormals: a non-input "
           "constructor formal reached MIR lowering; AST-to-HIR rejects these");
     }
-    const auto& hir_var = ctor.body.procedural_vars.Get(param.var);
-    const mir::TypeId value_type = owner_->TranslateType(hir_var.type);
-    const auto [parameter, variable] = DeclareParameter(
-        *owner_, frame, *frame.current_block,
-        BindingOriginId::Procedural(param.var), hir_var.name, value_type);
-    MapProceduralVar(param.var, AutomaticVarBinding{.type = variable.type});
-    params.push_back(parameter);
+    auto parameter = DeclareParameterVar(
+        *this, frame, param.var, ctor.body.procedural_vars.Get(param.var));
+    if (!parameter) return std::unexpected(std::move(parameter.error()));
+    params.push_back(*parameter);
   }
   return {};
 }
@@ -559,7 +588,9 @@ auto ProcessLowerer::BuildReportPrologue(
   // and outputs start at.
   mir::Block stands_in;
   stands_in.AppendStmt(
-      mir::ReturnStmt{.value = BuildReturnPayload(stands_in, std::nullopt)});
+      mir::ReturnStmt{
+          .value =
+              BuildReturnPayload(frame.WithBlock(&stands_in), std::nullopt)});
   const mir::ExprId runs_the_body = BuildReportCall(
       unit, asked, report, support::BuiltinFn::kReadReportRunsTheBody, {},
       unit.builtins.machine_int64);
@@ -589,8 +620,9 @@ auto ProcessLowerer::BuildReportPrologue(
 }
 
 auto ProcessLowerer::BuildReturnPayload(
-    mir::Block& block, std::optional<mir::ExprId> explicit_value)
+    const WalkFrame& frame, std::optional<mir::ExprId> explicit_value)
     -> std::optional<mir::ExprId> {
+  mir::Block& block = *frame.current_block;
   const mir::Type& result_ty = owner_->Unit().types.Get(result_type_);
   const mir::TypeId payload_type =
       result_ty.Is<mir::CoroutineType>()
@@ -600,13 +632,20 @@ auto ProcessLowerer::BuildReturnPayload(
 
   mir::CompilationUnit& unit = owner_->Unit();
   std::vector<mir::ExprId> components;
+  const auto read = [&](hir::ProceduralVarId var) {
+    return PathValue(
+        unit, block,
+        AccessPath{
+            .owner =
+                block.exprs.Add(LowerProceduralVarRefExpr(*this, frame, var)),
+            .descent = {}});
+  };
   if (result_var_.has_value()) {
     components.push_back(
-        explicit_value.has_value() ? *explicit_value
-                                   : ReadVariable(unit, block, *result_var_));
+        explicit_value.has_value() ? *explicit_value : read(*result_var_));
   }
-  for (const DeclaredVariable& output : output_locals_) {
-    components.push_back(ReadVariable(unit, block, output));
+  for (const hir::ProceduralVarId output : output_vars_) {
+    components.push_back(read(output));
   }
   return block.exprs.Add(
       mir::Expr{

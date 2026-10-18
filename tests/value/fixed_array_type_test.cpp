@@ -23,7 +23,6 @@
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/library_value_types.hpp"
 #include "lyra/value/queue_type.hpp"
-#include "lyra/value/reduction.hpp"
 #include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/value_type.hpp"
@@ -95,11 +94,6 @@ struct NothingAsked {
          const std::int64_t*, void*) { Unused(); };
   static constexpr auto OrderBefore = [](const ValueType&, const void*,
                                          const void*) -> bool { Unused(); };
-  static constexpr auto IsTrue = [](const ValueType&, const void*) -> bool {
-    Unused();
-  };
-  static constexpr auto Reduce = [](const ValueType&, Reduction, const void*,
-                                    const void*, void*) { Unused(); };
   static constexpr const PartsWitnessTable* kParts = nullptr;
 };
 

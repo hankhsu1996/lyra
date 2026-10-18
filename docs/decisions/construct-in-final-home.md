@@ -1,7 +1,7 @@
 # Construct in the final home, never build and move
 
-Date: 2026-09-11 Status: accepted; realized 2026-09-25 with D2, D4 and D5 revised (see the last
-section)
+Date: 2026-09-11 Status: accepted; realized 2026-09-25 with D2, D4 and D5 revised; D2 restored and
+D5 reread for a sort's order 2026-10-17 (see the last two sections)
 
 ## Context
 
@@ -125,7 +125,8 @@ that built it, and never moves. It keeps the arena.
 
 The realization gives every closure the same home -- an allocation of its own, the closure first and
 its capture slots after it, which never moves -- and what the building body holds, and hands to
-whatever keeps the closure, is the closure's one owner. Three decisions above change with that.
+whatever keeps the closure, is that allocation's owning hold, the only one. Three decisions above
+change with that.
 
 - **D2, and invariant 3.** The construction entry makes the allocation rather than filling one the
   caller supplies. What invariant 3 guarded against was the runtime choosing a home per destination
@@ -136,11 +137,11 @@ whatever keeps the closure, is the closure's one owner. Three decisions above ch
 - **D4.** A coroutine body's frame is built where the execution is entered, at once, rather than
   deferred to the execution's first resume. The deferral existed only to survive the move. Without
   it, an execution holds the same two things whichever way it was entered: a frame built and not yet
-  begun, and whatever that frame reads that nothing else keeps alive -- the closure's owner for a
-  spawned branch, nothing for a body reading a receiver -- ended after the frame. That is also where
-  the field puts it: a C++ coroutine's parameter copies end after its promise, and a Rust
-  `async move` future owns what it captured. The owner stays with the execution rather than
-  travelling into the frame, because a body takes its receiver as a borrow whatever it is.
+  begun, and whatever that frame reads that nothing else keeps alive -- the hold on the closure's
+  allocation for a spawned branch, nothing for a body reading a receiver -- ended after the frame.
+  That is also where the field puts it: a C++ coroutine's parameter copies end after its promise,
+  and a Rust `async move` future owns what it captured. The owner stays with the execution rather
+  than travelling into the frame, because a body takes its receiver as a borrow whatever it is.
 - **D5.** The `with` clause's closure lives in an allocation of its own like every other, borrowed
   for the call and ended after it, rather than in the frame. One home serves every consumer with no
   branch on which consumer it is, and the arena this entry kept for it had no other user.
@@ -149,6 +150,31 @@ A fourth keeper is added to the three named above: an event control's observatio
 closure each time a change asks whether the watched expression moved (LRM 9.4.2), holds the owner
 the same way. Measured on the RISC-V core before this: 1.17 M closures built at about 800
 instructions each, 707 M of it building capture storage.
+
+## Revised again, 2026-10-17: MIR states the home
+
+The 2026-09-25 home -- an allocation of its own for every closure -- was the execution backend's
+choice, made for every consumer alike, and MIR said nothing of it. Once a value too large for a
+frame is held through a box MIR states
+([a-value-too-large-for-a-frame-is-held-through-a-box](a-value-too-large-for-a-frame-is-held-through-a-box.md)),
+a closure whose captures make it large was boxed by MIR around a value the backend had already put
+in an allocation, and the backend could not say how large the boxed value was. So the home is MIR's
+to state, and D2 and invariant 3 hold as first written: the storage a closure is made in is the
+caller's.
+
+- A closure kept past the statement building it -- by a region, a timer, an observation, an
+  assertion's action or a foreign fiber -- is made by a new-expression, and the keeper takes the
+  box. That is still one allocation per nonblocking assignment.
+- A closure a sort borrows for its order lies where its value is, in the frame, as D5 said of a
+  borrowed body; it costs no allocation. A `with` clause is no closure at all but a loop at its call
+  ([an-array-method-is-a-loop-at-its-call](an-array-method-is-a-loop-at-its-call.md)).
+- A closure started as a coroutine is made by a new-expression and called through its box, which the
+  started body takes over as its receiver, so the box ends when the body does. D4's revision kept
+  the hold beside the frame because a body then took its receiver as a borrow; a body that takes its
+  closure over has nothing left beside it to keep.
+- The code building the closure builds it in the storage it is given, storing its definition's
+  address first as a constructor stores a class's table address; no library entry makes it. Nothing
+  moves a closure once made, which invariant 1 requires.
 
 ## Cross-references
 

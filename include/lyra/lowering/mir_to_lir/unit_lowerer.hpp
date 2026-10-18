@@ -130,6 +130,9 @@ class UnitLowerer {
   // virtual has no implementation here, so neither is a function of this unit.
   [[nodiscard]] auto MethodFunction(
       mir::ClassId owner, mir::CallableId callable) const -> lir::FunctionId;
+  // The LIR function a closure's body lowers to.
+  [[nodiscard]] auto ClosureFunction(mir::ClosureId closure) const
+      -> lir::FunctionId;
 
   // The symbol a constant of a class of this unit is linked under.
   [[nodiscard]] auto ClassConstantSymbolOf(
@@ -182,12 +185,9 @@ class UnitLowerer {
   // library class either root is.
   [[nodiscard]] auto BaseType(const mir::ClassRef& base) -> lir::TypeId;
 
-  // The declaration a closure's captures are members of, and the function its
-  // invoke lowers to.
+  // The declaration a closure's captures are members of.
   [[nodiscard]] auto ClosureDeclaration(mir::ClosureId closure) const
       -> lir::ClosureId;
-  [[nodiscard]] auto ClosureFunction(mir::ClosureId closure) const
-      -> lir::FunctionId;
 
   // The declaration a struct or a union of this unit is, which its members and
   // its methods are listed on.

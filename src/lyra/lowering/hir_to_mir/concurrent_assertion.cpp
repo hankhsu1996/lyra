@@ -29,6 +29,7 @@
 #include "lyra/lowering/hir_to_mir/statement/timing.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/evaluation_outcome.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -217,7 +218,7 @@ auto LowerActionArm(
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(unit, code);
   const mir::LocalId self_id = bindings.Declare(
-      BindingOriginId::Receiver(), parent.current_class->self_pointer_type);
+      ReceiverOrigin{}, parent.current_class->self_pointer_type);
   code.params = {self_id};
   code.result_type = unit.builtins.coroutine_void;
 
@@ -530,7 +531,7 @@ auto LowerAdvance(
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(unit, code);
   const mir::LocalId self_id = bindings.Declare(
-      BindingOriginId::Receiver(), parent.current_class->self_pointer_type);
+      ReceiverOrigin{}, parent.current_class->self_pointer_type);
   code.params = {self_id};
   code.result_type = void_type;
 
@@ -588,7 +589,7 @@ auto LowerDisableWatcher(
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(unit, code);
   const mir::LocalId self_id = bindings.Declare(
-      BindingOriginId::Receiver(), ctor_frame.current_class->self_pointer_type);
+      ReceiverOrigin{}, ctor_frame.current_class->self_pointer_type);
 
   mir::Block body_block;
   const WalkFrame body_frame =
@@ -647,7 +648,7 @@ auto LowerProcess(
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(unit, code);
   const mir::LocalId self_id =
-      bindings.Declare(BindingOriginId::Receiver(), self_ptr_type);
+      bindings.Declare(ReceiverOrigin{}, self_ptr_type);
 
   mir::Block body_block;
   const WalkFrame body_frame =
@@ -660,7 +661,7 @@ auto LowerProcess(
   if (!wait) return std::unexpected(std::move(wait.error()));
   body_block.AppendStmt(*std::move(wait));
 
-  ClosureBuilder closure(unit, body_frame);
+  ClosureBuilder closure(unit, body_frame, support::ClosureKind::kFn);
   closure.Body().AppendStmt(
       mir::ExprStmt{
           .expr = closure.Body().exprs.Add(
@@ -680,7 +681,8 @@ auto LowerProcess(
                           .arguments = {}},
                   .type = void_type})});
 
-  const mir::ExprId closure_id = body_block.exprs.Add(closure.BuildVoid());
+  const mir::ExprId closure_id =
+      BuildKeptClosure(unit, body_block, closure.BuildVoid());
   const mir::ExprId runtime_id =
       body_block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
   body_block.AppendStmt(
@@ -924,7 +926,7 @@ auto LowerExpectStmt(
     return {};
   };
 
-  ClosureBuilder step(unit, inner);
+  ClosureBuilder step(unit, inner, support::ClosureKind::kFn);
   if (auto tested = test_disable(step); !tested) {
     return std::unexpected(std::move(tested.error()));
   }
@@ -935,13 +937,15 @@ auto LowerExpectStmt(
       automaton);
   if (!ticked) return std::unexpected(std::move(ticked.error()));
   AppendBlock(step.Body(), *std::move(ticked));
-  const mir::ExprId step_closure = scope.exprs.Add(step.BuildVoid());
+  const mir::ExprId step_closure =
+      BuildKeptClosure(unit, scope, step.BuildVoid());
 
-  ClosureBuilder test(unit, inner);
+  ClosureBuilder test(unit, inner, support::ClosureKind::kFn);
   if (auto tested = test_disable(test); !tested) {
     return std::unexpected(std::move(tested.error()));
   }
-  const mir::ExprId test_closure = scope.exprs.Add(test.BuildVoid());
+  const mir::ExprId test_closure =
+      BuildKeptClosure(unit, scope, test.BuildVoid());
 
   // The first evaluation is at the next tick of the clock (LRM 16.17).
   AppendOpenAttempt(scope, unit, attempts_at(attempts_held), automaton);
@@ -995,14 +999,14 @@ void AppendConcurrentAssertionInstall(
   // and starts it once per attempt an outcome selects rather than being handed
   // a closure per attempt.
   const auto arm = [&](mir::CallableId target) {
-    ClosureBuilder closure(unit, activate_frame);
+    ClosureBuilder closure(unit, activate_frame, support::ClosureKind::kFn);
     closure.Body().AppendStmt(
         mir::ExprStmt{
             .expr = BuildExecutionStart(
                 lowerer.Owner(), closure.Frame(), target,
                 support::BuiltinFn::kRunAssertionAction,
                 installed.written_at)});
-    return block.exprs.Add(closure.BuildVoid());
+    return BuildKeptClosure(unit, block, closure.BuildVoid());
   };
 
   block.AppendStmt(

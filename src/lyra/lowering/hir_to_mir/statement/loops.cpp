@@ -2,11 +2,13 @@
 
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
@@ -15,15 +17,19 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type_id.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -242,25 +248,59 @@ auto SampledCount(
   return block.ReadLocal(count_var, int_type);
 }
 
+// The index loop over `position`, an `int` local the loop's own header
+// declares and starts at `first`.
+auto BuildDeclaredIndexLoopStmt(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId position,
+    mir::ExprId first, mir::BinaryOp goes_on_while, mir::ExprId bound,
+    mir::BinaryOp advance, mir::BlockId body_scope,
+    std::optional<mir::LoopLabelId> break_label) -> mir::Stmt {
+  const mir::TypeId int_type = unit.builtins.int_type;
+  const auto read = [&] { return block.ReadLocal(position, int_type); };
+  const auto write = [&](mir::ExprId value) {
+    return block.exprs.Add(
+        mir::MakeAssignExpr(
+            unit.builtins, block.LocalPlace(position, int_type), value));
+  };
+  return BuildIndexLoopStmt(
+      unit, block,
+      mir::ForInit{mir::ForInitDecl{.induction_var = position, .init = first}},
+      read, write, goes_on_while, bound, advance, body_scope, break_label);
+}
+
 }  // namespace
 
 auto BuildCountingLoopStmt(
     const mir::CompilationUnit& unit, WalkFrame frame, mir::Block& block,
     mir::ExprId count, mir::LocalId position, mir::BlockId body_scope,
     std::optional<mir::LoopLabelId> break_label) -> mir::Stmt {
-  const mir::TypeId int_type = unit.builtins.int_type;
   const mir::ExprId bound = SampledCount(unit, frame, block, count);
-  const auto place = [&] { return block.LocalPlace(position, int_type); };
-  const auto read = [&] { return block.ReadLocal(position, int_type); };
-  const auto write = [&](mir::ExprId value) {
-    return block.exprs.Add(mir::MakeAssignExpr(unit.builtins, place(), value));
-  };
-  return BuildIndexLoopStmt(
-      unit, block,
-      mir::ForInit{mir::ForInitDecl{
-          .induction_var = position, .init = BuildIntLiteral(unit, block, 0)}},
-      read, write, mir::BinaryOp::kLessThan, bound, mir::BinaryOp::kAdd,
-      body_scope, break_label);
+  return BuildDeclaredIndexLoopStmt(
+      unit, block, position, BuildIntLiteral(unit, block, 0),
+      mir::BinaryOp::kLessThan, bound, mir::BinaryOp::kAdd, body_scope,
+      break_label);
+}
+
+auto BuildPositionWalkStmt(
+    const mir::CompilationUnit& unit, WalkFrame frame, mir::Block& block,
+    mir::ExprId count, mir::LocalId position, WalkOrder order,
+    mir::BlockId body_scope) -> mir::Stmt {
+  switch (order) {
+    case WalkOrder::kFromFirst:
+      return BuildCountingLoopStmt(
+          unit, frame, block, count, position, body_scope);
+    case WalkOrder::kFromLast: {
+      const mir::ExprId last = block.exprs.Add(MakeBinary(
+          unit, block, mir::BinaryOp::kSub,
+          SampledCount(unit, frame, block, count),
+          BuildIntLiteral(unit, block, 1), unit.builtins.int_type));
+      return BuildDeclaredIndexLoopStmt(
+          unit, block, position, last, mir::BinaryOp::kGreaterEqual,
+          BuildIntLiteral(unit, block, 0), mir::BinaryOp::kSub, body_scope,
+          std::nullopt);
+    }
+  }
+  throw InternalError("BuildPositionWalkStmt: unknown WalkOrder");
 }
 
 auto BuildCountingLoopStmt(
@@ -293,6 +333,69 @@ auto BuildRepeatLoopStmt(
   const mir::LocalId position =
       frame.bindings->DeclareAnonymous(unit.builtins.int_type);
   return BuildCountingLoopStmt(unit, frame, block, count, position, body_scope);
+}
+
+namespace {
+
+// The pair of traversal methods a loop over an associative array's keys calls:
+// the one that finds where it starts, and the one that moves it on.
+struct KeyTraversal {
+  support::BuiltinFn start;
+  support::BuiltinFn advance;
+};
+
+auto KeyTraversalOf(WalkOrder order) -> KeyTraversal {
+  switch (order) {
+    case WalkOrder::kFromFirst:
+      return {
+          .start = support::BuiltinFn::kAssocFirst,
+          .advance = support::BuiltinFn::kAssocNext};
+    case WalkOrder::kFromLast:
+      return {
+          .start = support::BuiltinFn::kAssocLast,
+          .advance = support::BuiltinFn::kAssocPrev};
+  }
+  throw InternalError("KeyTraversalOf: unknown WalkOrder");
+}
+
+}  // namespace
+
+auto BuildKeyLoopStmt(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    const std::function<mir::ExprId(const WalkFrame&)>& array,
+    const std::function<AccessPath(const WalkFrame&)>& key,
+    mir::TypeId key_type, WalkOrder order, mir::BlockId body_scope,
+    std::optional<mir::LoopLabelId> break_label) -> mir::Stmt {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  mir::Block& block = *frame.current_block;
+  const mir::TypeId int_type = unit.builtins.int_type;
+  const mir::LocalId more = frame.bindings->DeclareAnonymous(int_type);
+
+  const auto traversal = [&](support::BuiltinFn method) {
+    BlockBuilder steps(frame);
+    const mir::ExprId held = array(steps.Frame());
+    return block.exprs.Add(BuildAssociativeTraversal(
+        unit_lowerer, steps, method, held, key(steps.Frame()), key_type,
+        int_type));
+  };
+  const KeyTraversal methods = KeyTraversalOf(order);
+  const mir::ExprId first = traversal(methods.start);
+  const mir::ExprId next = traversal(methods.advance);
+  const mir::ExprId advance = block.exprs.Add(
+      mir::MakeAssignExpr(
+          unit.builtins, block.LocalPlace(more, int_type), next));
+
+  std::vector<mir::ForInit> init;
+  init.emplace_back(mir::ForInitDecl{.induction_var = more, .init = first});
+  return mir::Stmt{
+      .label = std::nullopt,
+      .data = mir::ForStmt{
+          .init = std::move(init),
+          .condition =
+              ReduceToCondition(unit, block, block.ReadLocal(more, int_type)),
+          .step = {advance},
+          .scope = body_scope,
+          .break_label = break_label}};
 }
 
 auto LowerRepeatStmt(

@@ -11,6 +11,7 @@
 
 #include <llvm/IR/LLVMContext.h>
 
+#include "lyra/backend/llvm/codegen_module.hpp"
 #include "lyra/backend/llvm/fn_abi.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/internal_error.hpp"
@@ -24,15 +25,17 @@
 
 namespace lyra::backend::llvm_backend {
 
-CodeGenTypes::CodeGenTypes(
-    llvm::LLVMContext& ctx, const lir::CompilationUnit& unit)
-    : ctx_(&ctx),
-      unit_(&unit),
-      ptr_ty_(llvm::PointerType::getUnqual(ctx)),
+CodeGenTypes::CodeGenTypes(CodeGenModule& module)
+    : ctx_(&module.Context()),
+      unit_(&module.Unit()),
+      ptr_ty_(llvm::PointerType::getUnqual(*ctx_)),
       span_ty_(
-          llvm::StructType::get(ctx, {ptr_ty_, llvm::Type::getInt64Ty(ctx)})),
+          llvm::StructType::get(
+              *ctx_, {ptr_ty_, llvm::Type::getInt64Ty(*ctx_)})),
       bits_part_ty_(
-          llvm::StructType::get(ctx, {ptr_ty_, llvm::Type::getInt64Ty(ctx)})) {
+          llvm::StructType::get(
+              *ctx_, {ptr_ty_, llvm::Type::getInt64Ty(*ctx_)})),
+      module_(&module) {
 }
 
 auto CodeGenTypes::Void() const -> llvm::Type* {
@@ -113,6 +116,7 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
           [&](const lir::CrossUnitClassType& t) { return address(t); },
           [&](const lir::RuntimeClassType& t) { return address(t); },
           [&](const lir::ClosureType& t) { return address(t); },
+          [&](const lir::ErasedCallableType& t) { return address(t); },
           [&](const lir::ObservableType& t) { return address(t); },
           [&](const lir::ResolvedType& t) { return address(t); },
           [&](const lir::SampledHistoryType& t) { return address(t); },
@@ -293,6 +297,13 @@ auto CodeGenTypes::LayoutOf(lir::TypeId type) -> support::ObjectLayout {
           [](const lir::OwnedStorageAddress&) -> support::ObjectLayout {
             return {
                 .layout = {.size = sizeof(void*), .align = alignof(void*)},
+                .ends_with_nothing_to_do = false};
+          },
+          // A closure is as large as its captures are placed, which is the
+          // module's to say, and ending one ends what the library keeps in it.
+          [&](const lir::ClosureStorage&) -> support::ObjectLayout {
+            return {
+                .layout = module_->ClosureLayout(type),
                 .ends_with_nothing_to_do = false};
           },
           [&](support::ValueDomain domain) -> support::ObjectLayout {

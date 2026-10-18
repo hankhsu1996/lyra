@@ -34,6 +34,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/support/callable_bounds.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -331,6 +332,9 @@ auto PlanSubroutineCall(
           },
           [](const hir::BuiltinMethodRef&) -> Planned { return std::nullopt; },
           [](const hir::EnumMethodRef&) -> Planned { return std::nullopt; },
+          [](const hir::ArrayIteratorMethodRef&) -> Planned {
+            return std::nullopt;
+          },
           [](const hir::PastValueRef&) -> Planned { return std::nullopt; },
           [](const hir::ValueChangeRef&) -> Planned { return std::nullopt; },
           [](const hir::ForeignImportRef&) -> Planned { return std::nullopt; }},
@@ -637,10 +641,10 @@ auto LowerWritingBackCall(
   // callable value because its caller drives it, which is what separates it
   // from the sequencing below.
   if (plan.kind == hir::SubroutineKind::kTask) {
-    ClosureBuilder closure(unit, frame);
+    ClosureBuilder closure(unit, frame, support::ClosureKind::kFnOnce);
     auto bound = EmitWritingBackSteps(lowerer, closure.Frame(), call, plan);
     if (!bound) return std::unexpected(std::move(bound.error()));
-    return closure.BuildCoroutine();
+    return closure.BuildCallOnce();
   }
 
   // A function's completion is bound and written back here and now, so the
@@ -774,6 +778,10 @@ auto HandleCalledThrough(const hir::SubroutineRef& callee)
           [](const hir::EnumMethodRef&) -> std::optional<hir::ExprId> {
             throw InternalError(
                 "HandleCalledThrough: a report calls an enumeration method");
+          },
+          [](const hir::ArrayIteratorMethodRef&) -> std::optional<hir::ExprId> {
+            throw InternalError(
+                "HandleCalledThrough: a report calls an array iterator method");
           },
           [](const hir::PastValueRef&) -> std::optional<hir::ExprId> {
             throw InternalError(

@@ -15,6 +15,7 @@
 #include "lyra/mir/record_id.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/runtime_class.hpp"
 #include "lyra/value/integral_fwd.hpp"
 
@@ -476,6 +477,25 @@ struct ClosureType {
   auto operator==(const ClosureType&) const -> bool = default;
 };
 
+// A closure whose type is not known where it is called: the generic-language
+// `dyn` callable of a signature, `dyn FnMut(A, B) -> R`. What a library
+// compiled before the program holds a closure as, behind a box it owns or a
+// borrow, and calls without knowing its captures. Its parameters and its
+// result are machine types, since the library knows no other. Its kind is the
+// trait the erased closure is known to serve, as the principal trait of a
+// rustc `dyn` type is part of that type: what the closure's body does to the
+// closure, so a holder asking a kind reads whether it is served off the type.
+// How long the holder keeps the closure is the holder's to state, as a Rust
+// callee states it on its parameter. A closure is made one by a cast of the
+// box or the borrow it is held through.
+struct ErasedCallableType {
+  support::ClosureKind kind;
+  std::vector<TypeId> params;
+  TypeId result;
+
+  auto operator==(const ErasedCallableType&) const -> bool = default;
+};
+
 // The write capability a reference or borrow grants its holder (the
 // generic-language `&T` vs `&mut T`, a method's `const` vs non-const receiver).
 // Mutability lives on references and borrows, never as a qualifier on an
@@ -751,7 +771,7 @@ class Type {
       VectorType, TupleType, EmptyType, ObservableType, ResolvedType,
       DriverType, OpenWriteType, DesignationType, BitsReferenceType,
       ObjectWriteType, SampledHistoryType, EvaluationAttemptsType,
-      LoopBlocksType, RecordType, ClosureType>;
+      LoopBlocksType, RecordType, ClosureType, ErasedCallableType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

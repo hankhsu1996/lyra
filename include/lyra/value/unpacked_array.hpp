@@ -114,13 +114,11 @@ class ElementRun {
 // written against and is read there. Whole-array movement is ordinal-wise and
 // range-agnostic.
 template <typename T, std::size_t N>
-class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>, T> {
+class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
   static_assert(N >= 1, "a fixed-size unpacked array has at least one element");
 
  public:
   using ElementType = T;
-  template <typename U>
-  using Rebound = UnpackedArray<U, N>;
 
   UnpackedArray() = default;
 
@@ -474,7 +472,7 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>, T> {
   }
 
  private:
-  friend class OrdinalArrayMethods<UnpackedArray<T, N>, T>;
+  friend class OrdinalArrayMethods<UnpackedArray<T, N>>;
 
   [[nodiscard]] auto Items() const -> const T* {
     return items_.data();

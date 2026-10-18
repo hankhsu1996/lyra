@@ -41,11 +41,11 @@ the detail lives in the entry itself.
   description of a type: a holder reads a layout, a wide value is held as words at a width told when
   its holder is installed, how a routine reads each operand is declared with the routine, a
   comparison answers a scalar, and a net's positions are words and a count. States what is not yet
-  so: a container, a union and a closure's answer still act on what they hold through one constant
-  per type. Runtime bitcode inlined per module, a MIR function per operation and type, a call per
-  operation, sign extension in storage, LLVM's wide-integer legalization, any record of an integral
-  type handed to the library, every value held in place at any width, a larger or predicted stack,
-  and word functions marked to be inlined always are rejected.
+  so: a container and a union still act on what they hold through one constant per type. Runtime
+  bitcode inlined per module, a MIR function per operation and type, a call per operation, sign
+  extension in storage, LLVM's wide-integer legalization, any record of an integral type handed to
+  the library, every value held in place at any width, a larger or predicted stack, and word
+  functions marked to be inlined always are rejected.
 - [a-port-shares-its-sources-storage](a-port-shares-its-sources-storage.md) -- a variable port
   connected to a whole variable of an equivalent type is a reference to the source's storage, so a
   write to one element costs the element through any hierarchy; every other connection moves only
@@ -152,10 +152,11 @@ the detail lives in the entry itself.
   slot below MIR, and a lent argument the callee empties are rejected.
 - [a-value-too-large-for-a-frame-is-held-through-a-box](a-value-too-large-for-a-frame-is-held-through-a-box.md)
   -- every type is laid out flat at every size, and a local, a parameter taken by value, a made
-  value, a block's value and a capture of a type too large for a frame are held through a uniquely
-  owning pointer a MIR-to-MIR rewrite writes, sized by one query over MIR types; a large value is
-  made in its box and no body answers one. Each backend deciding from a shared constant, the render
-  choosing per position, and a body answering a box are rejected.
+  value and a capture of a type too large for a frame are held through a uniquely owning pointer a
+  MIR-to-MIR rewrite writes, sized by one query over MIR types; a large value is made in its box, a
+  conditional's arm and a block's value are made where its value is, no body answers a box, and a
+  closure kept past its statement is made in a box its keeper takes. Each backend deciding from a
+  shared constant, the render choosing per position, and a body answering a box are rejected.
 - [an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md)
   -- what a position of an array holds before it is written (LRM 7.4.5, Table 7-1) is a fact of the
   element type, for a fixed-size array, a dynamic array, a queue and an associative array alike. A
@@ -220,9 +221,12 @@ the detail lives in the entry itself.
   value that is its own parts is a primitive, a container built from one is a call, and what names a
   call is the type's own answer.
 - [array-method-dispatch](array-method-dispatch.md) -- LRM 7.12 array-method runtime semantics;
-  per-family dispatch superseded by [builtin-call-identity](builtin-call-identity.md).
-- [array-manipulation-entry-stream](array-manipulation-entry-stream.md) -- LRM 7.12 locator /
-  reduction / `map` operate over an ordered `(index, element)` stream; ordering stays in-place.
+  superseded, its dispatch by [builtin-call-identity](builtin-call-identity.md) and its sort by
+  [an-array-method-is-a-loop-at-its-call](an-array-method-is-a-loop-at-its-call.md).
+- [an-array-method-is-a-loop-at-its-call](an-array-method-is-a-loop-at-its-call.md) -- an LRM 7.12
+  method that asks something of each entry is a loop compiled where the call is, whose index is the
+  entry's own; a sort hands the library an order of positions carrying its direction rather than a
+  key, so `sort` and `rsort` are one entry.
 - [format-dispatch](format-dispatch.md) -- value formatting dispatches through `Formatter<T>` and
   `FormatArg`.
 - [rendering-a-value-by-its-type](rendering-a-value-by-its-type.md) -- how a value reads under LRM
@@ -363,7 +367,7 @@ the detail lives in the entry itself.
   the frontend's.
 - [context-free-call-lowering](context-free-call-lowering.md) -- one expression dispatcher template
   per boundary; the call family becomes a template once the `with`-clause element / index are
-  co-equal closure parameters.
+  co-equal loop variables.
 
 ### References and construction
 
@@ -490,12 +494,13 @@ the detail lives in the entry itself.
   step places each member by its own storage and lays a lineage through another unit's class out
   from its promise.
 - [construct-in-final-home](construct-in-final-home.md) -- a long-lived runtime object whose
-  execution state binds to its own address is constructed where it will live and never moved. As
-  realized, every closure lives in an allocation of its own with its captures inline, and whatever
-  keeps it -- a region, a spawned execution, an event control's observation -- takes its owner,
-  while an array method borrows it. A nonblocking assignment costs one allocation instead of N + 3.
-  Build-then-move, an entry per destination, a permanent capture indirection, and relocatable slots
-  are rejected; read its last section for the three decisions the realization revised.
+  execution state binds to its own address is constructed where it will live and never moved. MIR
+  states that home: a closure kept past its statement -- by a region, a timer, an event control's
+  observation -- is made in a box the keeper takes, one a sort borrows lies in the frame, and one
+  started as a coroutine is made in a box its execution takes over, each with its captures inline. A
+  nonblocking assignment costs one allocation instead of N + 3. Build-then-move, an entry per
+  destination, a permanent capture indirection, and relocatable slots are rejected; read its last
+  two sections for how the home came to be MIR's.
 - [referenceable-objects-have-stable-addresses](referenceable-objects-have-stable-addresses.md) -- a
   class object a reference can point into neither moves nor is reclaimed while that reference lives,
   so a property reference is an ordinary interior pointer. Non-moving stops being a mere realization
@@ -944,8 +949,9 @@ the detail lives in the entry itself.
   declaration publishes a definition (its body and its capture storage schema) and a closure value
   is an instance of it, so a capture is member storage, a capture read is a member place, and
   building the value is where a captured value is copied out of the stretch that made it. The invoke
-  takes its receiver uniformly; a code-address-plus-product environment and an erased callable type
-  are rejected. How the value is built is superseded by
+  takes its receiver uniformly; a code-address-plus-product environment is rejected, and the erased
+  callable it first kept out of the IR is what a closure handed to the runtime is cast to. How the
+  value is built is superseded by
   [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), where the
   building code fills captures it laid out, and a body the definition names ends them.
 

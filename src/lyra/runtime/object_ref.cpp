@@ -1,20 +1,55 @@
 #include "lyra/runtime/object_ref.hpp"
 
 #include <memory>
+#include <utility>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/part_path.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 
 namespace lyra::runtime {
 
-GcObject::GcObject() = default;
+namespace {
+
+// Ends an object once its last reference goes, where it was handed over to
+// the code that asked for it. One whose constructor left by an exception was
+// never handed over: unwinding the construction has already ended it and given
+// its storage back, which a reference taken while it was being built cannot
+// change, so its end does nothing.
+struct EndObject {
+  bool handed_over = false;
+
+  void operator()(GcObject* object) const noexcept {
+    if (handed_over) {
+      delete object;
+    }
+  }
+};
+
+}  // namespace
+
+GcObject::GcObject() : creators_share_(this, EndObject{}) {
+}
+
 GcObject::~GcObject() = default;
 
-// A copy is a different object, so it starts with no event source of its own:
-// what waits on the one it was copied from waits on that one.
+// A copy is a different object, so it starts with no event source of its own
+// -- what waits on the one it was copied from waits on that one -- and with
+// its own creator's reference.
 GcObject::GcObject(const GcObject& other)
-    : std::enable_shared_from_this<GcObject>(other) {
+    : std::enable_shared_from_this<GcObject>(other),
+      creators_share_(this, EndObject{}) {
+}
+
+auto GcObject::TakeCreatorsShare() -> std::shared_ptr<GcObject> {
+  if (creators_share_ == nullptr) {
+    throw InternalError(
+        "GcObject: an object is handed to the code that built it twice -- "
+        "please report this as a bug");
+  }
+  std::get_deleter<EndObject>(creators_share_)->handed_over = true;
+  return std::move(creators_share_);
 }
 
 auto GcObject::operator=(const GcObject& other) -> GcObject& {

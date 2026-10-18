@@ -5,12 +5,10 @@
 #include <functional>
 #include <memory>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <typeinfo>
-#include <utility>
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
@@ -219,8 +217,6 @@ auto LayoutOf(ValueDomain domain) -> ObjectLayout {
 
 auto LayoutOf(support::LibraryObject object) -> ObjectLayout {
   switch (object) {
-    case support::LibraryObject::kClosure:
-      return Of<OwnedClosure>();
     case support::LibraryObject::kPrintItem:
       return Of<value::PrintItem>();
     case support::LibraryObject::kFormatSpec:
@@ -434,8 +430,8 @@ auto LayoutOf(support::RuntimeClass klass) -> ObjectLayout {
   throw InternalError("object layout: unknown runtime class");
 }
 
-auto ClosureCapturesAt() -> std::uint64_t {
-  return sizeof(ClosureValue);
+auto ClosurePart() -> support::Layout {
+  return {.size = sizeof(ClosureValue), .align = alignof(ClosureValue)};
 }
 
 // The Itanium ABI names a class's type information `_ZTI` followed by the

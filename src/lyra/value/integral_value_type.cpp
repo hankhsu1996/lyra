@@ -8,7 +8,6 @@
 
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
-#include "lyra/value/reduction.hpp"
 #include "lyra/value/value_type.hpp"
 
 namespace lyra::value {
@@ -194,48 +193,6 @@ struct IntegralWitnesses {
       const ValueType& type, const void* lhs, const void* rhs) -> bool {
     return Less(Load(type, lhs).View(), Load(type, rhs).View()) ==
            FourStateBit::kOne;
-  }
-
-  static auto IsTrue(const ValueType& type, const void* value) -> bool {
-    return Truth(Load(type, value).View()) == Truthiness::kKnownNonzero;
-  }
-
-  static void Reduce(
-      const ValueType& type, Reduction reduction, const void* lhs,
-      const void* rhs, void* out) {
-    switch (reduction) {
-      case Reduction::kSum:
-        Folded(
-            type, lhs, rhs, out,
-            [](const IntegralView& o, const ConstIntegralView& a,
-               const ConstIntegralView& b) { Add(o, a, b); });
-        return;
-      case Reduction::kProduct:
-        Folded(
-            type, lhs, rhs, out,
-            [](const IntegralView& o, const ConstIntegralView& a,
-               const ConstIntegralView& b) { Multiply(o, a, b); });
-        return;
-      case Reduction::kAnd:
-        Folded(
-            type, lhs, rhs, out,
-            [](const IntegralView& o, const ConstIntegralView& a,
-               const ConstIntegralView& b) { BitwiseAnd(o, a, b); });
-        return;
-      case Reduction::kOr:
-        Folded(
-            type, lhs, rhs, out,
-            [](const IntegralView& o, const ConstIntegralView& a,
-               const ConstIntegralView& b) { BitwiseOr(o, a, b); });
-        return;
-      case Reduction::kXor:
-        Folded(
-            type, lhs, rhs, out,
-            [](const IntegralView& o, const ConstIntegralView& a,
-               const ConstIntegralView& b) { BitwiseXor(o, a, b); });
-        return;
-    }
-    std::unreachable();
   }
 
   // A packed value's bits are no storage of their own (LRM 7.4.1), so an

@@ -4,17 +4,19 @@ Date: 2026-10-11 Status: accepted. Supersedes decisions 2, 5 and 6 of
 [runtime-shape-and-default-value](runtime-shape-and-default-value.md) for every array kind, the
 element default among a container's construction arguments in
 [value-construction-forms](value-construction-forms.md) D1 and D2, the result default a locator and
-`map` were handed under [array-manipulation-entry-stream](array-manipulation-entry-stream.md), and
-the element default a queue concatenation carried under [queue-operators](queue-operators.md)
-decisions 3 and 4. Takes over from
-[a-fixed-array-is-laid-out-by-its-type](a-fixed-array-is-laid-out-by-its-type.md) the statement of
-an element type's default once per unit, widened from a fixed-size array to every array kind. D6
-carries the same test to the other facts of a type a call was handed, and with it supersedes D2 of
-[a-value-states-its-own-bits](a-value-states-its-own-bits.md) (a conversion out of a stream of bits
-takes a prototype), a queue's bound as an operand of its construction in
+`map` were handed under
+[an-array-method-is-a-loop-at-its-call](an-array-method-is-a-loop-at-its-call.md), and the element
+default a queue concatenation carried under [queue-operators](queue-operators.md) decisions 3 and 4.
+Takes over from [a-fixed-array-is-laid-out-by-its-type](a-fixed-array-is-laid-out-by-its-type.md)
+the statement of an element type's default once per unit, widened from a fixed-size array to every
+array kind. D6 carries the same test to the other facts of a type a call was handed, and with it
+supersedes D2 of [a-value-states-its-own-bits](a-value-states-its-own-bits.md) (a conversion out of
+a stream of bits takes a prototype), a queue's bound as an operand of its construction in
 [value-construction-forms](value-construction-forms.md) and among a queue concatenation's arguments
 in [queue-operators](queue-operators.md) decision 3, and the empty reduction's element-shaped zero
-in [array-method-dispatch](array-method-dispatch.md).
+in [array-method-dispatch](array-method-dispatch.md). D6's reduction clause superseded 2026-10-17 by
+D3 of [an-array-method-is-a-loop-at-its-call](an-array-method-is-a-loop-at-its-call.md): a reduction
+is a loop at its call whose result starts at its answer type's default.
 
 ## Context
 
@@ -91,10 +93,9 @@ array its empty value, for a fixed-size array its elements' in turn. The unit st
 other type, and its verification holds it to exactly that set.
 
 **D3. No call carries it.** A construction, `new[n]` and `new[n](src)`, a conversion from one array
-kind to another, a concatenation, `map` and every locator state what can differ between two
-evaluations -- the elements, a run-time count, the source, the closure -- and never what an element
-of the answer starts as. Each operation therefore has one operand list whatever kind of array it
-answers.
+kind to another and a concatenation state what can differ between two evaluations -- the elements, a
+run-time count, the source -- and never what an element of the answer starts as. Each operation
+therefore has one operand list whatever kind of array it answers.
 
 **D4. The prebuilt library is handed the element's type, and the default with it.** On the execution
 backend a unit writes one constant per element type: the type, and the address of the function D2
@@ -205,9 +206,9 @@ default, since each comes out the same at every evaluation:
   entries and the check of a call against its entry carry no case for the kind of array answered.
   The one place that tells the kinds apart is the one that decides which type an entry building an
   array is told (D4), and it decides from the type answered.
-- A reduction, `$low` and `$high` over an associative dimension, and a conversion out of a stream of
-  bits build no value of their answer's type where they are called, and a queue's construction and
-  every conversion into a queue take no bound. A unit states one more constant per queue type.
+- `$low` and `$high` over an associative dimension, and a conversion out of a stream of bits, build
+  no value of their answer's type where they are called, and a queue's construction and every
+  conversion into a queue take no bound. A unit states one more constant per queue type.
 - No speed or memory figure was taken.
 
 ## Cross-references
@@ -218,8 +219,8 @@ default, since each comes out the same at every evaluation:
   was handed and kept, which this supersedes.
 - [value-construction-forms](value-construction-forms.md) -- a container built from an element list
   is a call; this says what that call no longer takes.
-- [array-manipulation-entry-stream](array-manipulation-entry-stream.md) -- the algorithms' input;
-  what a locator and `map` are told of their answer is this record's.
+- [an-array-method-is-a-loop-at-its-call](an-array-method-is-a-loop-at-its-call.md) -- the loop an
+  array method is; its answer starts at this record's default.
 - [a-value-is-its-machine-data](a-value-is-its-machine-data.md) -- a value's shape is its type's,
   which is what removes the premise of the operand.
 - [a-value-states-its-own-bits](a-value-states-its-own-bits.md) -- reading a value out of a stream

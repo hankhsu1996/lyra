@@ -1,6 +1,5 @@
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 
-#include <algorithm>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -69,25 +68,11 @@ auto DeclareStaticCell(const StaticStorageOwner& owner, mir::TypeId cell_type)
       owner);
 }
 
-auto SignatureBoundVars(const hir::SubroutineDecl& decl)
-    -> std::vector<hir::ProceduralVarId> {
-  std::vector<hir::ProceduralVarId> bound;
-  bound.reserve(decl.params.size() + 1);
-  for (const hir::SubroutineParam& param : decl.params) {
-    bound.push_back(param.var);
-  }
-  if (decl.result_var.has_value()) {
-    bound.push_back(*decl.result_var);
-  }
-  return bound;
-}
-
 auto BindBodyStatics(
     const UnitLowerer& unit_lowerer,
     const base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>&
         scopes,
-    const StaticStorageOwner& owner, const hir::ProceduralBody& body,
-    std::span<const hir::ProceduralVarId> signature_bound)
+    const StaticStorageOwner& owner, const hir::ProceduralBody& body)
     -> StaticVarBindings {
   StaticVarBindings bindings;
   // Descends the body's lexical scope tree, since a declaration states its
@@ -98,7 +83,6 @@ auto BindBodyStatics(
     for (const hir::ProceduralVarId var_id : scope.declarations) {
       const hir::ProceduralVarDecl& var = body.procedural_vars.Get(var_id);
       if (var.lifetime != hir::VariableLifetime::kStatic) continue;
-      if (std::ranges::contains(signature_bound, var_id)) continue;
       const mir::TypeId cell_type = CellTypeFor(
           unit_lowerer, owner, unit_lowerer.TranslateType(var.type));
       bindings.push_back(
@@ -119,7 +103,8 @@ auto InstanceFieldOf(const StaticVarBinding& binding) -> mir::ClassFieldTarget {
   const auto* home = std::get_if<InstanceFieldHome>(&binding.home);
   if (home == nullptr) {
     throw InternalError(
-        "InstanceFieldOf: a static-lifetime local of a body outside the design "
+        "InstanceFieldOf: a static-lifetime variable of a body outside the "
+        "design "
         "hierarchy was asked for its field, but no object holds one -- please "
         "report this as a bug");
   }

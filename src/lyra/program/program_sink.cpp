@@ -5,10 +5,10 @@
 #include <format>
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -19,6 +19,7 @@
 #include <llvm/Passes/OptimizationLevel.h>
 
 #include "lyra/backend/llvm/emit.hpp"
+#include "lyra/backend/llvm/machine_signature.hpp"
 #include "lyra/backend/llvm/object_file.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/internal_error.hpp"
@@ -33,148 +34,12 @@
 #include "lyra/runtime/runtime_abi.hpp"
 #include "lyra/stable_hash/fingerprint.hpp"
 #include "lyra/status/status.hpp"
+#include "lyra/support/machine_signature.hpp"
 #include "lyra/support/statistics.hpp"
 
 namespace lyra::program {
 
 namespace {
-
-// What one value crossing the runtime ABI is, coarsely enough that two sides
-// disagreeing is a defect rather than a spelling difference.
-//
-// Every runtime value crosses as an untyped handle, so the compiler sees the
-// C++ function that defines an entry and the call the generated module makes as
-// two unrelated declarations and can compare neither against the other. The
-// shape below is what makes them comparable: it is read off the C++ function --
-// the one place an entry's shape is stated -- and off the module's own
-// declaration, and the two must agree.
-enum class AbiKind : std::uint8_t {
-  kVoid,
-  kPointer,
-  kBool,
-  kInt8,
-  kInt32,
-  kInt64,
-  kFloat,
-  kDouble,
-  kAggregate,
-  kOther,
-};
-
-template <typename>
-inline constexpr bool kAbiKindUnmapped = false;
-
-// The ABI vocabulary is closed, so a C++ type outside it fails to compile here
-// rather than being classified by whichever arm its shape resembles. Where both
-// spellings of a width cross, they reach one kind: signedness is not part of
-// what crosses, since how the bits are read is the operation's own business at
-// either end.
-template <typename T>
-constexpr auto AbiKindOfCpp() -> AbiKind {
-  if constexpr (std::is_void_v<T>) {
-    return AbiKind::kVoid;
-  } else if constexpr (std::is_pointer_v<T>) {
-    return AbiKind::kPointer;
-  } else if constexpr (std::is_same_v<T, bool>) {
-    return AbiKind::kBool;
-  } else if constexpr (
-      std::is_same_v<T, std::int64_t> || std::is_same_v<T, std::uint64_t>) {
-    return AbiKind::kInt64;
-  } else if constexpr (
-      std::is_same_v<T, std::int32_t> || std::is_same_v<T, std::uint32_t>) {
-    return AbiKind::kInt32;
-  } else if constexpr (
-      std::is_same_v<T, std::int8_t> || std::is_same_v<T, std::uint8_t>) {
-    return AbiKind::kInt8;
-  } else if constexpr (std::is_same_v<T, float>) {
-    return AbiKind::kFloat;
-  } else if constexpr (std::is_same_v<T, double>) {
-    return AbiKind::kDouble;
-  } else if constexpr (std::is_class_v<T>) {
-    return AbiKind::kAggregate;
-  } else {
-    static_assert(kAbiKindUnmapped<T>, "runtime ABI: unmapped C++ type");
-  }
-}
-
-// One entry's shape, as its own definition states it.
-struct AbiSignature {
-  AbiKind result = AbiKind::kVoid;
-  std::vector<AbiKind> operands;
-};
-
-template <typename F>
-struct AbiSignatureOf;
-
-template <typename R, typename... A>
-struct AbiSignatureOf<R(A...)> {
-  static auto Get() -> AbiSignature {
-    return AbiSignature{
-        .result = AbiKindOfCpp<R>(), .operands = {AbiKindOfCpp<A>()...}};
-  }
-};
-
-// Whether an entry can raise is no part of how it is called, so an entry that
-// cannot is called the same way.
-template <typename R, typename... A>
-struct AbiSignatureOf<R(A...) noexcept> : AbiSignatureOf<R(A...)> {};
-
-auto AbiKindOfLlvm(llvm::Type* type) -> AbiKind {
-  if (type->isVoidTy()) {
-    return AbiKind::kVoid;
-  }
-  if (type->isPointerTy()) {
-    return AbiKind::kPointer;
-  }
-  if (type->isIntegerTy(1)) {
-    return AbiKind::kBool;
-  }
-  if (type->isIntegerTy(8)) {
-    return AbiKind::kInt8;
-  }
-  if (type->isIntegerTy(32)) {
-    return AbiKind::kInt32;
-  }
-  if (type->isIntegerTy(64)) {
-    return AbiKind::kInt64;
-  }
-  if (type->isFloatTy()) {
-    return AbiKind::kFloat;
-  }
-  if (type->isDoubleTy()) {
-    return AbiKind::kDouble;
-  }
-  if (type->isStructTy()) {
-    return AbiKind::kAggregate;
-  }
-  return AbiKind::kOther;
-}
-
-auto AbiKindName(AbiKind kind) -> std::string_view {
-  switch (kind) {
-    case AbiKind::kVoid:
-      return "void";
-    case AbiKind::kPointer:
-      return "pointer";
-    case AbiKind::kBool:
-      return "bool";
-    case AbiKind::kInt8:
-      return "int8";
-    case AbiKind::kInt32:
-      return "int32";
-    case AbiKind::kInt64:
-      return "int64";
-    case AbiKind::kFloat:
-      return "float";
-    case AbiKind::kDouble:
-      return "double";
-    case AbiKind::kAggregate:
-      return "aggregate";
-    case AbiKind::kOther:
-      return "an unclassified machine type";
-  }
-  throw InternalError("runtime abi: unknown value kind");
-}
 
 // What the engine publishes: the services a design runs against -- the host it
 // runs in, its files and its output, its processes and their scheduling, the
@@ -214,10 +79,7 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_emit_error", &lyra_rt_emit_error);
   add("lyra_rt_emit_fatal", &lyra_rt_emit_fatal);
   add("lyra_rt_record_coverage", &lyra_rt_record_coverage);
-  add("lyra_rt_enter_coroutine_borrowed_environment",
-      &lyra_rt_enter_coroutine_borrowed_environment);
-  add("lyra_rt_enter_coroutine_owned_environment",
-      &lyra_rt_enter_coroutine_owned_environment);
+  add("lyra_rt_enter_coroutine", &lyra_rt_enter_coroutine);
   add("lyra_rt_enter_reaction_running_first",
       &lyra_rt_enter_reaction_running_first);
   add("lyra_rt_enter_reaction_stopping_first",
@@ -257,7 +119,7 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_disable_fork", &lyra_rt_disable_fork);
   add("lyra_rt_cancellation_for", &lyra_rt_cancellation_for);
   add("lyra_rt_is_cancelled", &lyra_rt_is_cancelled);
-  add("lyra_rt_closure_make", &lyra_rt_closure_make);
+  add("lyra_rt_closure_box_end", &lyra_rt_closure_box_end);
   add("lyra_rt_object_adopt", &lyra_rt_object_adopt);
   add("lyra_rt_string_shared_cell_make", &lyra_rt_string_shared_cell_make);
   add("lyra_rt_real_shared_cell_make", &lyra_rt_real_shared_cell_make);
@@ -303,9 +165,9 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_timer_arm", &lyra_rt_timer_arm);
   add("lyra_rt_make_trigger", &lyra_rt_make_trigger);
   add("lyra_rt_observation_on_reaching", &lyra_rt_observation_on_reaching);
-  add("lyra_rt_observation_of_value", &lyra_rt_observation_of_value);
-  add("lyra_rt_observation_of_value_qualified",
-      &lyra_rt_observation_of_value_qualified);
+  add("lyra_rt_observation_of_watch", &lyra_rt_observation_of_watch);
+  add("lyra_rt_observation_of_watch_qualified",
+      &lyra_rt_observation_of_watch_qualified);
   add("lyra_rt_observation_qualified", &lyra_rt_observation_qualified);
   add("lyra_rt_observation_fires", &lyra_rt_observation_fires);
   add("lyra_rt_wait_recollecting", &lyra_rt_wait_recollecting);
@@ -752,7 +614,6 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_queue_destroy", &lyra_rt_queue_destroy);
   add("lyra_rt_assocarray_destroy", &lyra_rt_assocarray_destroy);
   add("lyra_rt_managedref_destroy", &lyra_rt_managedref_destroy);
-  add("lyra_rt_closure_destroy", &lyra_rt_closure_destroy);
   add("lyra_rt_hierarchy_segment_destroy", &lyra_rt_hierarchy_segment_destroy);
   add("lyra_rt_trigger_destroy", &lyra_rt_trigger_destroy);
   add("lyra_rt_observation_destroy", &lyra_rt_observation_destroy);
@@ -809,7 +670,6 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_queue_move", &lyra_rt_queue_move);
   add("lyra_rt_assocarray_move", &lyra_rt_assocarray_move);
   add("lyra_rt_managedref_move", &lyra_rt_managedref_move);
-  add("lyra_rt_closure_move", &lyra_rt_closure_move);
   add("lyra_rt_shared_pointer_move", &lyra_rt_shared_pointer_move);
   add("lyra_rt_print_item_move", &lyra_rt_print_item_move);
   add("lyra_rt_format_spec_move", &lyra_rt_format_spec_move);
@@ -1079,78 +939,9 @@ void BindValueEntries(const auto& add) {
       &lyra_rt_assocarray_value_cell_store);
   add("lyra_rt_assocarray_value_cell_load",
       &lyra_rt_assocarray_value_cell_load);
-  add("lyra_rt_laidout_sum", &lyra_rt_laidout_sum);
-  add("lyra_rt_laidout_product", &lyra_rt_laidout_product);
-  add("lyra_rt_laidout_and", &lyra_rt_laidout_and);
-  add("lyra_rt_laidout_or", &lyra_rt_laidout_or);
-  add("lyra_rt_laidout_xor", &lyra_rt_laidout_xor);
-  add("lyra_rt_laidout_find", &lyra_rt_laidout_find);
-  add("lyra_rt_laidout_find_index", &lyra_rt_laidout_find_index);
-  add("lyra_rt_laidout_find_first", &lyra_rt_laidout_find_first);
-  add("lyra_rt_laidout_find_first_index", &lyra_rt_laidout_find_first_index);
-  add("lyra_rt_laidout_find_last", &lyra_rt_laidout_find_last);
-  add("lyra_rt_laidout_find_last_index", &lyra_rt_laidout_find_last_index);
-  add("lyra_rt_laidout_min", &lyra_rt_laidout_min);
-  add("lyra_rt_laidout_max", &lyra_rt_laidout_max);
-  add("lyra_rt_laidout_unique", &lyra_rt_laidout_unique);
-  add("lyra_rt_laidout_unique_index", &lyra_rt_laidout_unique_index);
-  add("lyra_rt_laidout_map", &lyra_rt_laidout_map);
-  add("lyra_rt_dynarray_sum", &lyra_rt_dynarray_sum);
-  add("lyra_rt_dynarray_product", &lyra_rt_dynarray_product);
-  add("lyra_rt_dynarray_and", &lyra_rt_dynarray_and);
-  add("lyra_rt_dynarray_or", &lyra_rt_dynarray_or);
-  add("lyra_rt_dynarray_xor", &lyra_rt_dynarray_xor);
-  add("lyra_rt_dynarray_find", &lyra_rt_dynarray_find);
-  add("lyra_rt_dynarray_find_index", &lyra_rt_dynarray_find_index);
-  add("lyra_rt_dynarray_find_first", &lyra_rt_dynarray_find_first);
-  add("lyra_rt_dynarray_find_first_index", &lyra_rt_dynarray_find_first_index);
-  add("lyra_rt_dynarray_find_last", &lyra_rt_dynarray_find_last);
-  add("lyra_rt_dynarray_find_last_index", &lyra_rt_dynarray_find_last_index);
-  add("lyra_rt_dynarray_min", &lyra_rt_dynarray_min);
-  add("lyra_rt_dynarray_max", &lyra_rt_dynarray_max);
-  add("lyra_rt_dynarray_unique", &lyra_rt_dynarray_unique);
-  add("lyra_rt_dynarray_unique_index", &lyra_rt_dynarray_unique_index);
-  add("lyra_rt_dynarray_map", &lyra_rt_dynarray_map);
-  add("lyra_rt_queue_sum", &lyra_rt_queue_sum);
-  add("lyra_rt_queue_product", &lyra_rt_queue_product);
-  add("lyra_rt_queue_and", &lyra_rt_queue_and);
-  add("lyra_rt_queue_or", &lyra_rt_queue_or);
-  add("lyra_rt_queue_xor", &lyra_rt_queue_xor);
-  add("lyra_rt_queue_find", &lyra_rt_queue_find);
-  add("lyra_rt_queue_find_index", &lyra_rt_queue_find_index);
-  add("lyra_rt_queue_find_first", &lyra_rt_queue_find_first);
-  add("lyra_rt_queue_find_first_index", &lyra_rt_queue_find_first_index);
-  add("lyra_rt_queue_find_last", &lyra_rt_queue_find_last);
-  add("lyra_rt_queue_find_last_index", &lyra_rt_queue_find_last_index);
-  add("lyra_rt_queue_min", &lyra_rt_queue_min);
-  add("lyra_rt_queue_max", &lyra_rt_queue_max);
-  add("lyra_rt_queue_unique", &lyra_rt_queue_unique);
-  add("lyra_rt_queue_unique_index", &lyra_rt_queue_unique_index);
-  add("lyra_rt_queue_map", &lyra_rt_queue_map);
-  add("lyra_rt_assocarray_sum", &lyra_rt_assocarray_sum);
-  add("lyra_rt_assocarray_product", &lyra_rt_assocarray_product);
-  add("lyra_rt_assocarray_and", &lyra_rt_assocarray_and);
-  add("lyra_rt_assocarray_or", &lyra_rt_assocarray_or);
-  add("lyra_rt_assocarray_xor", &lyra_rt_assocarray_xor);
-  add("lyra_rt_assocarray_find", &lyra_rt_assocarray_find);
-  add("lyra_rt_assocarray_find_index", &lyra_rt_assocarray_find_index);
-  add("lyra_rt_assocarray_find_first", &lyra_rt_assocarray_find_first);
-  add("lyra_rt_assocarray_find_first_index",
-      &lyra_rt_assocarray_find_first_index);
-  add("lyra_rt_assocarray_find_last", &lyra_rt_assocarray_find_last);
-  add("lyra_rt_assocarray_find_last_index",
-      &lyra_rt_assocarray_find_last_index);
-  add("lyra_rt_assocarray_min", &lyra_rt_assocarray_min);
-  add("lyra_rt_assocarray_max", &lyra_rt_assocarray_max);
-  add("lyra_rt_assocarray_unique", &lyra_rt_assocarray_unique);
-  add("lyra_rt_assocarray_unique_index", &lyra_rt_assocarray_unique_index);
-  add("lyra_rt_assocarray_map", &lyra_rt_assocarray_map);
   add("lyra_rt_laidout_sort", &lyra_rt_laidout_sort);
-  add("lyra_rt_laidout_rsort", &lyra_rt_laidout_rsort);
   add("lyra_rt_dynarray_sort", &lyra_rt_dynarray_sort);
-  add("lyra_rt_dynarray_rsort", &lyra_rt_dynarray_rsort);
   add("lyra_rt_queue_sort", &lyra_rt_queue_sort);
-  add("lyra_rt_queue_rsort", &lyra_rt_queue_rsort);
   add("lyra_rt_laidout_reverse", &lyra_rt_laidout_reverse);
   add("lyra_rt_dynarray_reverse", &lyra_rt_dynarray_reverse);
   add("lyra_rt_queue_reverse", &lyra_rt_queue_reverse);
@@ -1874,12 +1665,12 @@ void BindIntegralLayoutEntries(const auto& add) {
 // into this compiler from the same sources the shipped library is built from,
 // so no shape here can differ from the one a program links. Which entries are
 // listed, and under what name, is written out by hand.
-auto PublishedEntries() -> const std::map<std::string, AbiSignature>& {
-  static const std::map<std::string, AbiSignature> published = [] {
-    std::map<std::string, AbiSignature> listed;
+auto PublishedEntries()
+    -> const std::map<std::string, support::MachineSignature>& {
+  static const std::map<std::string, support::MachineSignature> published = [] {
+    std::map<std::string, support::MachineSignature> listed;
     auto add = [&](std::string_view name, auto* fn) {
-      listed.emplace(
-          name, AbiSignatureOf<std::remove_pointer_t<decltype(fn)>>::Get());
+      listed.emplace(name, support::MachineSignatureOf<decltype(fn)>::Get());
     };
     BindEngineEntries(add);
     BindValueEntries(add);
@@ -1899,7 +1690,8 @@ auto PublishedEntries() -> const std::map<std::string, AbiSignature>& {
 // so the runtime entry family is the only one answerable here.
 auto UnpublishedEntries(
     const llvm::Module& module,
-    const std::map<std::string, AbiSignature>& published) -> std::string {
+    const std::map<std::string, support::MachineSignature>& published)
+    -> std::string {
   std::string unpublished;
   for (const llvm::Function& fn : module.functions()) {
     if (!fn.isDeclaration()) {
@@ -1928,16 +1720,20 @@ auto UnpublishedEntries(
 // register the other side used for something else.
 auto MismatchedEntries(
     const llvm::Module& module,
-    const std::map<std::string, AbiSignature>& published) -> std::string {
+    const std::map<std::string, support::MachineSignature>& published)
+    -> std::string {
   std::string mismatched;
   const auto report = [&](std::string_view name, std::string_view what,
-                          AbiKind called, AbiKind defined) {
+                          std::optional<support::MachineKind> called,
+                          support::MachineKind defined) {
     if (!mismatched.empty()) {
       mismatched += "; ";
     }
     mismatched += std::format(
         "{} is called with {} {} where its definition has {}", name, what,
-        AbiKindName(called), AbiKindName(defined));
+        called.has_value() ? support::MachineKindName(*called)
+                           : "an unclassified machine type",
+        support::MachineKindName(defined));
   };
   for (const llvm::Function& fn : module.functions()) {
     if (!fn.isDeclaration()) {
@@ -1948,27 +1744,28 @@ auto MismatchedEntries(
     if (entry == published.end()) {
       continue;
     }
-    const AbiSignature& defined = entry->second;
+    const support::MachineSignature& defined = entry->second;
     const llvm::FunctionType& called = *fn.getFunctionType();
-    const AbiKind result = AbiKindOfLlvm(called.getReturnType());
-    if (result != defined.result) {
-      report(name, "a result of", result, defined.result);
+    const std::optional<support::MachineKind> result =
+        backend::llvm_backend::MachineKindOf(called.getReturnType());
+    if (result != defined.Returns()) {
+      report(name, "a result of", result, defined.Returns());
     }
-    if (called.getNumParams() != defined.operands.size()) {
+    const std::span<const support::MachineKind> takes = defined.Takes();
+    if (called.getNumParams() != takes.size()) {
       if (!mismatched.empty()) {
         mismatched += "; ";
       }
       mismatched += std::format(
           "{} is called with {} operands where its definition takes {}", name,
-          called.getNumParams(), defined.operands.size());
+          called.getNumParams(), takes.size());
       continue;
     }
     for (unsigned i = 0; i < called.getNumParams(); ++i) {
-      const AbiKind operand = AbiKindOfLlvm(called.getParamType(i));
-      if (operand != defined.operands[i]) {
-        report(
-            name, std::format("operand {} of", i), operand,
-            defined.operands[i]);
+      const std::optional<support::MachineKind> operand =
+          backend::llvm_backend::MachineKindOf(called.getParamType(i));
+      if (operand != takes[i]) {
+        report(name, std::format("operand {} of", i), operand, takes[i]);
       }
     }
   }

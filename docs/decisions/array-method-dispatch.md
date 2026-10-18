@@ -4,7 +4,9 @@ Date: 2026-06-04 Status: dispatch portion superseded by
 [builtin-call-identity](builtin-call-identity.md); the empty-array reduction superseded 2026-10-11
 by D6 of
 [an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md);
-the sort below remains in force
+the sort superseded 2026-10-17 by D2 of
+[an-array-method-is-a-loop-at-its-call](an-array-method-is-a-loop-at-its-call.md), which merges
+positions by an order the program compiles, for the same reason given below
 
 ## Context
 

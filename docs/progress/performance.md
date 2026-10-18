@@ -125,10 +125,10 @@ operation is a call into a separately compiled runtime, and the optimizer cannot
       at every stop.
 
 - [x] A closure the execution backend builds -- the expression an event control watches, the effect
-      a nonblocking assignment defers -- is made once, with its captures in its own allocation, and
-      whatever keeps it takes its owner rather than a moved copy; a capture is read at a fixed
-      distance from the closure instead of through a runtime call. A wait reads its leaves where the
-      waiting body built them instead of copying them into a list first.
+      a nonblocking assignment defers -- is made once, with its captures in it, in the box whatever
+      keeps it takes rather than as a moved copy; a capture is read at a fixed distance from the
+      closure instead of through a runtime call. A wait reads its leaves where the waiting body
+      built them instead of copying them into a list first.
 
 - [x] Converting a packed value between widths or between the two- and four-state domains no longer
       walks it one bit at a time. It was the single largest cost in both profiled programs, and the

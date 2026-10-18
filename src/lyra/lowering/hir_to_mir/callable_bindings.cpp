@@ -1,6 +1,7 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 
 #include <algorithm>
+#include <optional>
 #include <string>
 #include <utility>
 #include <variant>
@@ -10,35 +11,33 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure_decl.hpp"
+#include "lyra/mir/closure_signature.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/field.hpp"
+#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/support/callable_bounds.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 CallableBindings::CallableBindings(
     const mir::CompilationUnit& unit, mir::ClosureDecl& decl,
-    mir::ClosureId closure_id, CallableBindings& parent,
-    mir::Block& capture_site, CapturePolicy policy)
+    mir::ClosureId closure_id, support::ClosureKind kind,
+    CallableBindings& parent, mir::Block& capture_site, CapturePolicy policy)
     : unit_(&unit),
       code_(&decl.invoke),
       closure_decl_(&decl),
       closure_id_(closure_id),
       parent_(&parent),
       capture_site_(&capture_site),
-      policy_(std::move(policy)) {
-  // The closure receiver is the invoke body's `locals[0]`: a read-only borrow
-  // of the closure. A captured read is a field access over it, resolved through
-  // the closure id so the pointee names this closure's field set.
-  const mir::TypeId closure_value =
-      unit.types.Intern(mir::Type{mir::ClosureType{.closure_id = closure_id}});
-  self_ptr_type_ = unit.types.Intern(
-      mir::Type{mir::PointerType{
-          .pointee = closure_value,
-          .ownership = mir::PointerOwnership::kBorrowed,
-          .mutability = mir::Mutability::kReadOnly}});
+      policy_(std::move(policy)),
+      self_ptr_type_(mir::ClosureReceiverType(unit.types, closure_id, kind)) {
+  // The closure receiver is the invoke body's `locals[0]`. A captured read is a
+  // field access over it, resolved through the closure id so the pointee names
+  // this closure's field set.
   self_local_ = code_->AddLocal(self_ptr_type_);
   code_->receiver = self_local_;
 }
@@ -64,7 +63,7 @@ auto CallableBindings::Declare(BindingOriginId origin, mir::TypeId type)
   available_.insert_or_assign(origin, BodyBindingRef{.ref = id});
   // The object a body is entered on is its receiver by what it is, so the body
   // says which binding that is where the binding is made.
-  if (origin == BindingOriginId::Receiver()) {
+  if (std::holds_alternative<ReceiverOrigin>(origin)) {
     code_->receiver = id;
   }
   return id;
@@ -86,6 +85,11 @@ auto CallableBindings::EnsureCarrier(BindingOriginId origin) -> BodyBindingRef {
     throw InternalError(
         "CallableBindings::EnsureCarrier: origin has no carrier in the root "
         "body");
+  }
+
+  if (std::holds_alternative<ReceiverOrigin>(origin) &&
+      parent_->Provides(ReceiverShareOrigin{})) {
+    return ReceiverThroughShare();
   }
 
   // Forward one boundary: materialize the origin in the parent, read it at the
@@ -118,6 +122,38 @@ auto CallableBindings::EnsureCarrier(BindingOriginId origin) -> BodyBindingRef {
   captures_.Define(field, CaptureEntry{.origin = origin, .source = source});
   const BodyBindingRef result{.ref = field};
   available_.insert_or_assign(origin, result);
+  return result;
+}
+
+auto CallableBindings::Provides(BindingOriginId origin) const -> bool {
+  return available_.contains(origin) ||
+         (parent_ != nullptr && parent_->Provides(origin));
+}
+
+auto CallableBindings::ReceiverThroughShare() -> BodyBindingRef {
+  const BodyBindingRef share = EnsureCarrier(ReceiverShareOrigin{});
+  const mir::TypeId object =
+      mir::ObjectReachedThrough(unit_->types, TypeOf(share));
+  const mir::TypeId pointer = unit_->types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = object,
+          .ownership = mir::PointerOwnership::kBorrowed,
+          .mutability = mir::Mutability::kMutable}});
+  mir::Block& entry = code_->Body();
+  const mir::ExprId handle = entry.exprs.Add(MakeBindingPlace(share, entry));
+  const mir::ExprId object_place = entry.Deref(unit_->types, handle, object);
+  const mir::ExprId address =
+      entry.exprs.Add(mir::MakeAddressOfExpr(object_place, pointer));
+  const mir::LocalId self = code_->AddLocal(pointer);
+  // Ahead of every statement already lowered, any of which may be the first to
+  // reach the object.
+  const mir::StmtId declared = entry.stmts.Add(
+      mir::Stmt{
+          .label = std::nullopt,
+          .data = mir::LocalDeclStmt{.target = self, .init = address}});
+  entry.root_stmts.insert(entry.root_stmts.begin(), declared);
+  const BodyBindingRef result{.ref = self};
+  available_.insert_or_assign(ReceiverOrigin{}, result);
   return result;
 }
 

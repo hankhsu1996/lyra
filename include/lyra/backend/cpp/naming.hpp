@@ -792,17 +792,19 @@ inline void WriteOne(TargetText& out, const RecordQualifiedName& ref) {
   return MintedCppName("capture", slot.value);
 }
 
-// The function a closure whose body completes as a coroutine is started
-// through, `sv_start`. It takes the closure by value, so the captures live in
-// the coroutine's own frame for as long as the execution does.
-[[nodiscard]] inline auto CppClosureStartName() -> MintedWord {
-  return MintedWord{.word = "start"};
+// The function a closure whose body takes the closure over is called through,
+// `sv_call_once`, as Rust's `FnOnce::call_once` takes `self`: it is handed the
+// box the closure was made in, so the captures live for as long as the call
+// does, a started execution included.
+[[nodiscard]] inline auto CppClosureCallOnceName() -> MintedWord {
+  return MintedWord{.word = "call_once"};
 }
 
-// The closure that function is handed, `sv_closure`. The body's own locals
-// carry source names, so it gets a name no source name can produce.
-[[nodiscard]] inline auto CppStartedClosureName() -> MintedWord {
-  return MintedWord{.word = "closure"};
+// The constant naming how a closure is run and ended,
+// `sv_closure_definition_<n>`, which the runtime reaches the closure through.
+[[nodiscard]] inline auto CppClosureDefinitionName(mir::ClosureId id)
+    -> MintedName {
+  return MintedCppName("closure_definition", id.value);
 }
 
 // The name of an enumeration's member table, `sv_enum_<n>`: a position in the

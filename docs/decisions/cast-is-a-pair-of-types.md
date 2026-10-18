@@ -60,9 +60,15 @@ MIR is reached the ambiguity is gone, which puts MIR in LLVM's position and not 
    needs to know reads the pair, which is type dispatch and belongs with every other question a
    target answers about a type.
 
-2. **A conversion that reshapes a value is a call, not a cast.** Integral resize, real to and from
-   integral, packed to and from string: each is a library entry and is unchanged by this entry. What
-   reaches a cast moves no simulation value between representations.
+2. **A cast reads a value as another type and does nothing else.** A conversion that reshapes a
+   value -- integral resize, real to and from integral, packed to and from string -- is a library
+   entry, and is unchanged by this entry. A conversion that allocates, hands owned storage over, or
+   runs a check that can fail is not a cast either: a checked class downcast is the dynamic cast
+   node, and a box handed on is a move. What reaches a cast moves no simulation value between
+   representations and has no effect of its own, so a backend whose spelling of a cast performs one
+   -- an erasure spelled as a wrapper that copies the closure into a new allocation -- has done
+   something MIR did not say. Revised 2026-10-17: the rule had said only the first sentence, and a
+   closure's erasure had grown an allocation under it.
 
 3. **A backend refuses a pair it does not realize.** This is what answers the hazard the Forbidden
    Shape named. A backend states a no-op only where the two representations are provably the same --

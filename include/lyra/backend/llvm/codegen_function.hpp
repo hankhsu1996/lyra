@@ -445,10 +445,10 @@ class CodeGenFunction {
   // cell's own address for every domain.
   auto ValueCellContents(support::ValueDomain domain, llvm::Value* cell)
       -> llvm::Value*;
-  // Building a closure: the runtime makes the value, sized as its definition
-  // states, and each operand is taken into the capture it initializes. A
-  // closure's captures are laid out on this side, so it is this side that
-  // fills them.
+  // Building a closure in `out`: its start is the address of its definition,
+  // the library's part of every closure, and each operand is taken into the
+  // capture it initializes. A closure's captures are laid out on this side, so
+  // it is this side that fills them.
   auto LowerClosure(
       const lir::ClosureInstr& built, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<llvm::Value*>;

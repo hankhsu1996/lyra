@@ -161,8 +161,12 @@ identity is the suspect, not the analysis.
    appear as CFG edges, not as lowering conventions implied by node order. A suspension names both
    ways control can leave it -- the driver resumes the body, or ends it where it stands -- so what
    the second owes is in the graph rather than assumed; and a body left by a departure says so with
-   a terminator of its own, as a returning one does. _Machine-execution consequence: the scheduler's
-   boundary is visible to the optimizer as edges, not as a side convention only the lowering knows._
+   a terminator of its own, as a returning one does. A coroutine body's entry is such a suspension,
+   before its first statement, so whoever drives the body runs every stretch of it, the first
+   included, and ending it there ends what it was handed and nothing else -- the initial suspend a
+   C++ coroutine's promise states, here stated in the graph rather than left to each backend.
+   _Machine-execution consequence: the scheduler's boundary is visible to the optimizer as edges,
+   not as a side convention only the lowering knows._
 7. LIR carries no source-language semantics. Every node is a generic machine-execution operation; no
    SV-specific shape -- an out-of-bounds guard, an index-validity predicate, an NBA region, an event
    control -- survives, because each was lowered to generic control flow or a runtime call at
@@ -287,10 +291,10 @@ never truly needed is a target-side derivation, not a property LIR must establis
 storage topology, it does not minimize it.
 
 A closure lowers to a value of its declaration, built from its captures by an instruction of its
-own; its one body is entered with that value as `self`. `self` is the first argument, supplied like
-any other; LIR has no implicit receiver. A direct call to a statically known callable passes its
-receiver and arguments to a named function. LIR knows only "call target" and "arguments"; which
-values a closure captures was decided in MIR.
+own; its one body is entered with a borrow of that value, or its box, as `self`, by its kind. `self`
+is the first argument, supplied like any other; LIR has no implicit receiver. A direct call to a
+statically known callable passes its receiver and arguments to a named function. LIR knows only
+"call target" and "arguments"; which values a closure captures was decided in MIR.
 
 A place is the logical path -- `self.counter`, `*p`, `(*p).flag` -- the way Rust's MIR names a field
 projection rather than `base + N`. The same place is valid on every target; only the derivation

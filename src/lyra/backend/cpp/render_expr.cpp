@@ -379,27 +379,15 @@ void RenderBlockExpr(
 }
 
 // A closure value is its type built from its captures in the type's member
-// order, `sv_closure_<n>{init, ...}`. One whose body completes as a coroutine
-// is started as it is built, because what the site holds is the execution:
-// `sv_closure_<n>::sv_start(sv_closure_<n>{init, ...})`.
+// order, `sv_closure_<n>{init, ...}`.
 void RenderClosureExpr(
     const ScopeView& view, const mir::ClosureExpr& construct, TargetText& out) {
   const mir::ClosureDecl& decl = view.Unit().GetClosure(construct.closure);
-  const MintedName name = CppClosureName(construct.closure);
-  const auto write_value = [&] {
-    Write(out, name, "{");
-    WriteSeparated(out, decl.field_order, ", ", [&](mir::FieldId field) {
-      Write(view, out, FieldInitValue(construct.field_inits, field));
-    });
-    out += "}";
-  };
-  if (view.Unit().types.Get(decl.invoke.result_type).Is<mir::CoroutineType>()) {
-    Write(out, name, "::", CppClosureStartName(), "(");
-    write_value();
-    out += ")";
-    return;
-  }
-  write_value();
+  Write(out, CppClosureName(construct.closure), "{");
+  WriteSeparated(out, decl.field_order, ", ", [&](mir::FieldId field) {
+    Write(view, out, FieldInitValue(construct.field_inits, field));
+  });
+  out += "}";
 }
 
 // `T{parts}`. The type is always written: a bare `{parts}` as an argument or

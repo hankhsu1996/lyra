@@ -1,10 +1,11 @@
 #pragma once
 
 // Lowering of loop statements (LRM 12.7): `for`, `while`, `do ... while`,
-// `repeat`, and `forever`, and the counting loops other lowerings are built
-// from.
+// `repeat`, and `forever`, and the loops other lowerings are built from: ones
+// that count, and one over an associative array's keys.
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 
@@ -12,11 +13,14 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/block_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -40,6 +44,33 @@ auto BuildCountingLoopStmt(
 auto BuildCountingLoopStmt(
     mir::CompilationUnit& unit, WalkFrame frame, mir::Block& block,
     mir::ExprId count, const AccessPath& position, mir::BlockId body_scope,
+    std::optional<mir::LoopLabelId> break_label) -> mir::Stmt;
+
+// Which end of a container a loop over its entries starts from.
+enum class WalkOrder : std::uint8_t { kFromFirst, kFromLast };
+
+// The loop over the positions below `count`, from 0 up or from the last down
+// to 0 as `order` says -- a search for the last entry that satisfies something
+// walks from the last, so it stops at the first one it meets.
+auto BuildPositionWalkStmt(
+    const mir::CompilationUnit& unit, WalkFrame frame, mir::Block& block,
+    mir::ExprId count, mir::LocalId position, WalkOrder order,
+    mir::BlockId body_scope) -> mir::Stmt;
+
+// The loop over an associative array's keys (LRM 7.9.4 -- 7.9.7): a `for`
+// whose counter holds what `first` and then `next` answer -- `last` and then
+// `prev` for a loop from the last key -- each leaving the key it visited where
+// `key` names. An array holding no entry answers 0 to the first of the pair,
+// so the body never runs, and a `continue` lands on the step, which is what
+// advances the key (LRM 12.8). Each traversal is a sequence of steps of its
+// own, and `array` and `key` are asked for in the frame of each, since a node
+// belongs to the block it is added to. `break_label` is as a counting loop's
+// is.
+auto BuildKeyLoopStmt(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    const std::function<mir::ExprId(const WalkFrame&)>& array,
+    const std::function<AccessPath(const WalkFrame&)>& key,
+    mir::TypeId key_type, WalkOrder order, mir::BlockId body_scope,
     std::optional<mir::LoopLabelId> break_label) -> mir::Stmt;
 
 // A loop over a declared range (LRM 7.4): the variable `index` reaches takes

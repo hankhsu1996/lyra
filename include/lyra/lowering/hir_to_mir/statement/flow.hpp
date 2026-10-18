@@ -1,9 +1,10 @@
 #pragma once
 
 // Lowering of variable-declaration and flow-control statements: variable
-// declarations (LRM 6.21 / 13.3.1 static-lifetime body locals), `return`
+// declarations (LRM 6.21 / 13.3.1 static-lifetime body variables), `return`
 // (LRM 13.4.1), `break` / `continue` (LRM 12.7).
 
+#include <functional>
 #include <optional>
 #include <string>
 
@@ -12,18 +13,33 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
-// The point of declaration of the variable `var` of the body (LRM 6.21): its
-// storage comes into being in the frame's block, of whichever kind its
-// lifetime and the branches that borrow it call for, starting at its
-// declaration assignment or at its type's default value, and it is bound so
-// every later reference reaches that storage. The variable is declared the
-// same way whether a statement of the source declares it or a construct does
-// in its own header (LRM 12.7.3). The statement that brings the storage up is
-// returned unlabelled, for the caller to place.
+// The value a variable starts at, built in the frame's block once the variable
+// is bound, so an initializer naming the variable itself reaches it.
+using InitialValue = std::function<diag::Result<mir::ExprId>()>;
+
+// What reaching the point of declaration of the variable `var` of the body does
+// (LRM 6.21). An automatic one comes into being in the frame's block -- a
+// frame slot, or the cell it is promoted to where a detached branch names it
+// -- is bound so every later reference reaches that storage, and starts at
+// `initial`. A static one was bound and brought up before the body, so reaching
+// it does nothing. `name` is the identifier the binding answers to. The
+// statement that brings the storage up is returned unlabelled, for the caller
+// to place.
+auto LowerVarStart(
+    ProcessLowerer& process, WalkFrame frame, hir::ProceduralVarId var,
+    const std::optional<std::string>& name, const InitialValue& initial)
+    -> diag::Result<mir::Stmt>;
+
+// The point of declaration of `var` as the source wrote it: it answers to its
+// own identifier and starts at its declaration assignment, or at its type's
+// default value where there is none. The variable is declared the same way
+// whether a statement of the source declares it or a construct does in its own
+// header (LRM 12.7.3).
 auto LowerVarDeclaration(
     ProcessLowerer& process, WalkFrame frame, hir::ProceduralVarId var)
     -> diag::Result<mir::Stmt>;

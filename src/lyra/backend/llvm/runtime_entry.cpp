@@ -50,8 +50,8 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "sequence_make";
     case RuntimeOp::kSequenceElement:
       return "sequence_element";
-    case RuntimeOp::kClosureMake:
-      return "closure_make";
+    case RuntimeOp::kClosureBoxEnd:
+      return "closure_box_end";
     case RuntimeOp::kObjectAdopt:
       return "object_adopt";
     case RuntimeOp::kSharedCellMake:
@@ -685,11 +685,13 @@ auto HeldObjectOf(const lir::Type& type)
           },
           [](support::ValueDomain domain) -> Object { return domain; },
           [](support::LibraryObject object) -> Object { return object; },
-          // The address of storage a pointer owns is the pointer itself, an
-          // object of no entry's.
+          // The address of storage a pointer owns is the pointer itself, and a
+          // closure is ended by the body its declaration states for it, so
+          // neither is an object of an entry's.
           [](const lir::OwnedStorageAddress&) -> Object {
             return std::nullopt;
-          }},
+          },
+          [](const lir::ClosureStorage&) -> Object { return std::nullopt; }},
       *held);
 }
 
@@ -1035,6 +1037,7 @@ auto MemberStorageKindOf(
           [&](const lir::CrossUnitClassType& t) { return none(t); },
           [&](const lir::RuntimeClassType& t) { return none(t); },
           [&](const lir::ClosureType& t) { return none(t); },
+          [&](const lir::ErasedCallableType& t) { return none(t); },
           [&](const lir::RuntimeEffectsType& t) { return none(t); },
           [&](const lir::FilesType& t) { return none(t); },
           [&](const lir::DiagnosticType& t) { return none(t); },
@@ -1181,7 +1184,7 @@ auto OperandReadingsOf(RuntimeOp op) -> support::OperandReadings {
     case RuntimeOp::kRunProgram:
     case RuntimeOp::kSequenceMake:
     case RuntimeOp::kSequenceElement:
-    case RuntimeOp::kClosureMake:
+    case RuntimeOp::kClosureBoxEnd:
     case RuntimeOp::kObjectAdopt:
     case RuntimeOp::kSharedCellMake:
     case RuntimeOp::kSharedPointerDeref:
@@ -1240,7 +1243,7 @@ auto AnswerToldOf(RuntimeOp op) -> support::AnswerTold {
     case RuntimeOp::kRunProgram:
     case RuntimeOp::kSequenceMake:
     case RuntimeOp::kSequenceElement:
-    case RuntimeOp::kClosureMake:
+    case RuntimeOp::kClosureBoxEnd:
     case RuntimeOp::kObjectAdopt:
     case RuntimeOp::kSharedCellMake:
     case RuntimeOp::kSharedPointerDeref:
@@ -1345,7 +1348,7 @@ auto RealizationsOf(RuntimeOp op) -> std::span<const RealizedFor> {
     case RuntimeOp::kRunProgram:
     case RuntimeOp::kSequenceMake:
     case RuntimeOp::kSequenceElement:
-    case RuntimeOp::kClosureMake:
+    case RuntimeOp::kClosureBoxEnd:
     case RuntimeOp::kObjectAdopt:
     case RuntimeOp::kSharedPointerDeref:
     case RuntimeOp::kHandleView:
@@ -1477,7 +1480,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
 
     case support::BuiltinFn::kReverse:
     case support::BuiltinFn::kSort:
-    case support::BuiltinFn::kRsort:
       return NamedByValue{.realized = kForSequences};
     // An element of a fixed-size unpacked array lies where arithmetic on the
     // array's address says, so no entry is asked for one, to read it or to
@@ -1487,22 +1489,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
       return NamedByValue{.realized = kForDynamicArraysAndQueues};
 
     case support::BuiltinFn::kSize:
-    case support::BuiltinFn::kSum:
-    case support::BuiltinFn::kProduct:
-    case support::BuiltinFn::kAnd:
-    case support::BuiltinFn::kOr:
-    case support::BuiltinFn::kXor:
-    case support::BuiltinFn::kFind:
-    case support::BuiltinFn::kFindIndex:
-    case support::BuiltinFn::kFindFirst:
-    case support::BuiltinFn::kFindFirstIndex:
-    case support::BuiltinFn::kFindLast:
-    case support::BuiltinFn::kFindLastIndex:
-    case support::BuiltinFn::kMin:
-    case support::BuiltinFn::kMax:
-    case support::BuiltinFn::kUnique:
-    case support::BuiltinFn::kUniqueIndex:
-    case support::BuiltinFn::kMap:
       return NamedByValue{.realized = kForContainers};
 
     case support::BuiltinFn::kInsert:
@@ -1773,8 +1759,8 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kScalarPropagationDelay:
     case support::BuiltinFn::kVectorPropagationDelay:
     case support::BuiltinFn::kObservationOnReaching:
-    case support::BuiltinFn::kObservationOfValue:
-    case support::BuiltinFn::kObservationOfValueQualified:
+    case support::BuiltinFn::kObservationOfWatch:
+    case support::BuiltinFn::kObservationOfWatchQualified:
     case support::BuiltinFn::kObservationQualified:
     case support::BuiltinFn::kObservationFires:
     case support::BuiltinFn::kWaitOn:

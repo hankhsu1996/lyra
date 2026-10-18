@@ -5,9 +5,9 @@
 A callable is MIR's one shape for "a body with a signature, run when invoked." There is a single
 callable concept; the apparent variety of SystemVerilog forms -- function, task, process,
 constructor, and the compiler-synthesized closures (a fork-join branch, a non-blocking assignment, a
-postponed `$strobe`, a with-clause iterator, a deferred assertion action) -- are all this one
-concept, distinguished only by their signature, how they bind their environment, and how a
-referencing site uses them. None is a distinct kind of callable.
+postponed `$strobe`, an event control's watch, the order a sort is handed, a deferred assertion
+action) -- are all this one concept, distinguished only by their signature, how they bind their
+environment, and how a referencing site uses them. None is a distinct kind of callable.
 
 The concept has two structural levels:
 
@@ -34,8 +34,8 @@ closure is code plus a captured environment, and "async" is the result type (`as
 ## Does Not Own
 
 - How a referencing site invokes or registers a callable -- a direct call, a fork spawn, a region
-  submit, a per-element iteration, a constructor-time lifecycle registration. That is the
-  referencing site's concern; `scheduling.md` owns spawn and submission.
+  submit, a sort handed an order, a constructor-time lifecycle registration. That is the referencing
+  site's concern; `scheduling.md` owns spawn and submission.
 - The suspension protocol of a coroutine body (`scheduling.md`).
 - Object and class layout, dispatch tables, and inheritance. How a call resolves its target --
   directly or by dynamic dispatch -- is a property of the call site and the object's type layout,
@@ -55,7 +55,9 @@ closure is code plus a captured environment, and "async" is the result type (`as
 2. **`self` is an instance method's first parameter.** Every instance-method body reaches its
    enclosing object's members through `self`, the code's first ordinary parameter, read as
    `locals[0]` by every member access. A callable value binds `self` into its environment; a direct
-   call supplies it per invocation. Whether a bound `self` is realized as a passed parameter or a
+   call supplies it per invocation. Where the object lives while referenced, what a callable value
+   binds is the share of it the enclosing body holds, and its `self` is reached through that share
+   (`binding_and_capture.md`). Whether a bound `self` is realized as a passed parameter or a
    captured field is a backend realization driven by lifetime, not a MIR distinction. A
    type-associated (static) function has no receiver and no `self`. _Consequence: there is no
    privileged `self` capture slot and no per-form receiver mechanism; `self` is uniform across
@@ -105,14 +107,14 @@ closure is code plus a captured environment, and "async" is the result type (`as
 
 - HIR-to-MIR synthesizes callable code and callable values, fixing each signature, each result type
   (the call protocol), and each bound field's type (snapshot versus alias). The compiler-synthesized
-  closures are the lowering's encoding of a deferred, concurrent, or per-element body; no
+  closures are the lowering's encoding of a deferred, concurrent, watching, or ordering body; no
   SystemVerilog source construct is itself a closure.
 - `binding_and_capture.md` owns how the environment is populated: which logical binding each field
   captures, how a binding crosses each callable boundary (per-body materialization and recursive
   forwarding), and the carrier-versus-view choice the field's snapshot-or-alias type records. This
   doc owns the environment as structure; that doc owns what fills it.
 - The referencing site decides use: a direct call, a fork that spawns each branch value, a region
-  submit, a per-element iteration, or a constructor-time lifecycle registration (a process is an
+  submit, a sort handed an order, or a constructor-time lifecycle registration (a process is an
   instance-bound callable value registered during construction; a finalization hook is a distinct
   registration from a startup one). The callable does not know which.
 - A backend realizes a callable from its signature, its environment, and its body by a fixed
@@ -162,7 +164,10 @@ has the normalized contract `t : (self, int a, int c_in) -> Coroutine<Outputs{ b
 The call site supplies `a` and the snapshot of `c`, and after completion writes each output-pack
 component to the caller's actual place. Copy-out happens after completion because the values ride
 the result; an `output` formal has no copy-in (it is a fresh body local); only a `ref` parameter is
-a live alias.
+a live alias. The formal is the body's variable, of the lifetime the subroutine gives it: a static
+task's is one variable every call shares (LRM 13.3.2), which the body assigns its argument to as it
+begins and the call reads its output from, so the data flow above is the same and only where the
+variable lives differs.
 
 Closures across languages share the same core and differ only at the edges. C++ lambdas capture per
 variable: `[x]` owns a copy of `x`, `[&x]` owns a reference to `x`; both are owned fields, and the
@@ -175,22 +180,19 @@ default and an alias (a reference-typed field) is the explicit case used when a 
 mutable storage with its environment.
 
 A closure value is an anonymous concrete callable value (`compiler_generated_storage.md`): a
-per-closure-site `ClosureType` of named capture fields plus one invoke body, copied by value -- the
-MIR equivalent of a C++ lambda closure object. A backend realizes it as a type whose members are the
-captures and whose one body reads each of them through the closure it runs against -- the C++
-backend as a named struct with a call operator, the members derived solely from the closure's
-fields, never from what the body happens to name. A reference-typed field renders as an owned
-reference value, not a hidden C++ reference: a `[&name]` reference dangles once the value outlives
-the captured variable's frame -- which a fork-branch coroutine and a deferred-effect closure
-routinely do -- and the reference wrapper routes a write through the cell's update-event path, which
-a bare `T&` would bypass. A coroutine closure passes the captured fields as frame-copied parameters
-rather than captures, so they are copied into the coroutine frame before the spawned branch can
-outlive the construction site.
+per-closure-site `ClosureType` of named capture fields plus one invoke body, made where its value
+lies and never moved -- the MIR equivalent of a C++ lambda closure object. A backend realizes it as
+a type whose members are the captures and whose one body reads each of them through the closure it
+runs against -- the C++ backend as a named struct with a call operator, the members derived solely
+from the closure's fields, never from what the body happens to name. A reference-typed field renders
+as an owned reference value, not a hidden C++ reference: a `[&name]` reference dangles once the
+value outlives the captured variable's frame -- which a fork-branch coroutine and a deferred-effect
+closure routinely do -- and the reference wrapper routes a write through the cell's update-event
+path, which a bare `T&` would bypass.
 
-The runtime shapes a backend hands closures to -- a C++ coroutine object for a fork branch, a
-`std::function` for a deferred effect -- are that backend's realization, not part of the closure
-model. The model states only that a closure is a callable value with captures and an invoke; an
-async start copies that record into execution-owned storage before the started work can outlive the
-construction site. A backend is free to realize this differently (a named closure struct, a
-coroutine promise) as long as it derives the closure's shape from the record and preserves that
-copy-before-escape.
+What the runtime is handed is not a backend's choice. The runtime is compiled before the program, so
+a closure reaches it as an erased callable of its signature, through a box or a borrow, by a cast
+MIR states (`compiler_generated_storage.md` invariant 10); a backend's own callable wrapper never
+crosses that boundary. Inside the program a backend is free to realize a closure as it likes -- a
+named struct, a coroutine frame -- as long as it derives the shape from the declaration and a
+started body owns the box it was handed before it can outlive the construction site.

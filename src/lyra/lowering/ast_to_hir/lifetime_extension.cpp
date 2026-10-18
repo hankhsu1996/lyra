@@ -1,6 +1,7 @@
 #include "lyra/lowering/ast_to_hir/lifetime_extension.hpp"
 
 #include <cstddef>
+#include <span>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -32,10 +33,14 @@ struct LifetimeExtendedCollector
   std::vector<std::size_t> detached_boundaries;
   std::unordered_set<const slang::ast::VariableSymbol*> result;
 
-  void handle(const slang::ast::VariableDeclStatement& s) {
-    if (s.symbol.lifetime == slang::ast::VariableLifetime::Automatic) {
-      declared_index.emplace(&s.symbol, declared_count++);
+  void Declare(const slang::ast::VariableSymbol& var) {
+    if (var.lifetime == slang::ast::VariableLifetime::Automatic) {
+      declared_index.emplace(&var, declared_count++);
     }
+  }
+
+  void handle(const slang::ast::VariableDeclStatement& s) {
+    Declare(s.symbol);
     // A declaration's initializer is one of the expressions the body evaluates,
     // and it hangs off the declared symbol rather than under the statement, so
     // the walk reaches it only by descending through the symbol. LRM 9.3.2
@@ -51,7 +56,7 @@ struct LifetimeExtendedCollector
   void handle(const slang::ast::ForeachLoopStatement& s) {
     for (const auto& dim : s.loopDims) {
       if (dim.loopVar != nullptr) {
-        declared_index.emplace(dim.loopVar, declared_count++);
+        Declare(*dim.loopVar);
       }
     }
     visitDefault(s);
@@ -86,9 +91,14 @@ struct LifetimeExtendedCollector
 
 }  // namespace
 
-auto CollectLifetimeExtendedVars(const slang::ast::Statement& body)
+auto CollectLifetimeExtendedVars(
+    std::span<const slang::ast::VariableSymbol* const> declared_ahead,
+    const slang::ast::Statement& body)
     -> std::unordered_set<const slang::ast::VariableSymbol*> {
   LifetimeExtendedCollector collector;
+  for (const slang::ast::VariableSymbol* var : declared_ahead) {
+    collector.Declare(*var);
+  }
   body.visit(collector);
   return std::move(collector.result);
 }

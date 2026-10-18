@@ -10,9 +10,9 @@ namespace lyra::mir {
 
 // A closure declaration: the anonymous concrete callable value a closure site
 // constructs. `fields` are the captured bindings; `invoke` is the one body,
-// reached over the closure as its receiver (its `locals[0]`, a read-only
-// borrow). Callability is the unconditional presence of `invoke` -- a closure
-// is always callable, so there is no flag.
+// reached over the closure as its receiver (its `locals[0]`, a borrow of the
+// closure or its box, by its kind). Callability is the unconditional presence
+// of `invoke` -- a closure is always callable, so there is no flag.
 //
 // A closure shares the field substrate (`FieldDecl` / `FieldId`) with the
 // object (`mir::Class`), since a capture is reached by the field id its

@@ -247,6 +247,16 @@ struct ClosureType {
   auto operator==(const ClosureType&) const -> bool = default;
 };
 
+// A closure whose type is not known where it is called, as the library holds
+// one: always behind a box or a borrow, called through the definition its
+// value opens with. Its signature is machine types alone.
+struct ErasedCallableType {
+  std::vector<TypeId> params;
+  TypeId result;
+
+  auto operator==(const ErasedCallableType&) const -> bool = default;
+};
+
 struct RuntimeEffectsType {
   auto operator==(const RuntimeEffectsType&) const -> bool = default;
 };
@@ -410,14 +420,17 @@ using TypeDeclaration =
 // What a value is held as: an integral value as the bits its type declares,
 // whose layout this layer does not state; any other value of the design as an
 // object of its value domain, which is never a domain of an integral layout
-// here; what the library builds for its own use as that object; and a pointer
+// here; what the library builds for its own use as that object; a pointer
 // owning what it points at as the address of that storage, which its end gives
-// back, as Rust's `Box` is held.
+// back, as Rust's `Box` is held; and a closure as the storage its declaration
+// lays out, which the body its declaration states for it ends, as a C++
+// lambda's object is held.
 struct IntegralBits {};
 struct OwnedStorageAddress {};
+struct ClosureStorage {};
 using Holding = std::variant<
     IntegralBits, support::ValueDomain, support::LibraryObject,
-    OwnedStorageAddress>;
+    OwnedStorageAddress, ClosureStorage>;
 
 // A type one LIR compilation unit names, and the vocabulary for asking what it
 // is. The alternatives are a closed set, consumed by visiting them: a visitor
@@ -436,11 +449,11 @@ class Type {
       MachineBoolType, MachineIntType, MachineFloatType, MachineArrayType,
       MachineFunctionType, EventType, RealType, ShortRealType, ChandleType,
       VoidType, EmptyType, ObjectType, CrossUnitClassType, RuntimeClassType,
-      ClosureType, RuntimeEffectsType, FilesType, DiagnosticType,
-      RuntimeLibraryType, CoroutineType, VariableRefType, PointerType,
-      ManagedRefType, VectorType, TupleType, RecordType, ResolvedType,
-      DriverType, ObservableType, SampledHistoryType, EvaluationAttemptsType,
-      LoopBlocksType, OpenWriteType, DesignationType>;
+      ClosureType, ErasedCallableType, RuntimeEffectsType, FilesType,
+      DiagnosticType, RuntimeLibraryType, CoroutineType, VariableRefType,
+      PointerType, ManagedRefType, VectorType, TupleType, RecordType,
+      ResolvedType, DriverType, ObservableType, SampledHistoryType,
+      EvaluationAttemptsType, LoopBlocksType, OpenWriteType, DesignationType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

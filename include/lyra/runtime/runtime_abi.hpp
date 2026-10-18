@@ -196,16 +196,10 @@ void lyra_rt_record_coverage(void* runtime, const void* site, bool succeeded);
 // the scheduler's coroutine, and every stretch of it -- the first included --
 // runs under that driver.
 //
-// The two differ only in how long the environment the body reads outlives it,
-// never in what construct it came from. A receiver is borrowed: it outlives
-// every execution reading it, so the frame already carries everything and
-// nothing else crosses. A closure is taken, supplying both the entry and the
-// captures, because the body runs after the one that built them has returned
-// (LRM 9.3.2).
-auto lyra_rt_enter_coroutine_borrowed_environment(
-    void* frame, void* out) noexcept -> void*;
-auto lyra_rt_enter_coroutine_owned_environment(
-    void* closure, void* out) noexcept -> void*;
+// The frame holds everything the body reads: a receiver it borrows, which
+// outlives every execution reading it, or the box of a closure it took over,
+// which it ends when it ends (LRM 9.3.2).
+auto lyra_rt_enter_coroutine(void* frame, void* out) noexcept -> void*;
 
 // Makes an execution the engine can schedule out of a process body that stops
 // only at the wait at the head of its loop, stated as its setup and its pass,
@@ -318,16 +312,10 @@ auto lyra_rt_process_await(const void* self, void* runtime, void* out) -> void*;
 void lyra_rt_process_suspend(const void* self, void* runtime);
 void lyra_rt_process_resume(const void* self, void* runtime);
 
-// Builds a callable the runtime runs later: `definition` is an opaque
-// cross-artifact reference naming both the body and how the storage its
-// captures live in is laid out. The closure is made once and never moves; what
-// the caller's storage receives is its owner, which is what something
-// outliving the caller's statement takes from there: a region a deferred
-// effect is submitted to, the coroutine a spawned branch is entered as, or an
-// observation of the value it answers. An array method running a per-element
-// body borrows it for the call. It answers the closure itself, whose captures
-// the code building it fills where it laid them out in it.
-auto lyra_rt_closure_make(const void* definition, void* out) -> void*;
+// Ends a closure held through a box of a closure of no known type, and gives
+// the storage back: what ending such a box is, since only the definition the
+// closure opens with knows what it holds.
+void lyra_rt_closure_box_end(void* closure);
 
 // The handle the program's `new` answers (LRM 8.3), owning `object`: a whole
 // value of a class extending the part every object starts with, allocated and
@@ -505,15 +493,16 @@ auto lyra_rt_make_trigger(
 
 // What decides whether reaching a wait is an event for it (LRM 9.4.2). Two
 // halves, and one entry per combination of them, so the call states which form
-// it is building. A watched half is a closure answering what the event
-// expression is worth now together with the edge specifier written on it, the
-// specifier crossing as a machine integer like every runtime scalar. A
-// qualifying half is an `iff` condition, answering as a one-bit value already
-// reduced to LRM 12.4 truth (LRM 9.4.2.3). Watching nothing is what an implicit
-// sensitivity carries (LRM 9.2.2.2.1) and what an unqualified named-event wait
-// carries, the trigger there being the event itself (LRM 15.5.1). Like a
-// trigger these are transient, and the waits built from them hold them for as
-// long as they last.
+// it is building. A watched half is the expression's watch, a closure the
+// compiler builds for it which arms itself on what the expression is worth and
+// answers whether it moved the way the control asks for, comparing as the
+// expression's type does. A qualifying half is an `iff` condition, answering
+// whether it holds by LRM 12.4 truth (LRM 9.4.2.3). Each is handed over as a
+// closure of no known type, which the observation takes. Watching nothing is
+// what an implicit sensitivity carries (LRM 9.2.2.2.1) and what an unqualified
+// named-event wait carries, the trigger there being the event itself
+// (LRM 15.5.1). Like a trigger these are transient, and the waits built from
+// them hold them for as long as they last.
 //
 // Building one evaluates nothing. The wait holding it arms it with what the
 // expression is worth where the wait begins, and the waiting process asks it
@@ -521,10 +510,9 @@ auto lyra_rt_make_trigger(
 // every computed answer crosses as, since a host `bool` here would say the
 // call parks its caller.
 auto lyra_rt_observation_on_reaching(void* out) -> void*;
-auto lyra_rt_observation_of_value(
-    void* expression, std::int64_t edge, void* out) -> void*;
-auto lyra_rt_observation_of_value_qualified(
-    void* expression, std::int64_t edge, void* condition, void* out) -> void*;
+auto lyra_rt_observation_of_watch(void* watch, void* out) -> void*;
+auto lyra_rt_observation_of_watch_qualified(
+    void* watch, void* condition, void* out) -> void*;
 auto lyra_rt_observation_qualified(void* condition, void* out) -> void*;
 auto lyra_rt_observation_fires(const void* observation) -> std::int64_t;
 
@@ -1684,220 +1672,17 @@ void lyra_rt_assocarray_value_cell_store(
     void* cell, const void* value) noexcept;
 auto lyra_rt_assocarray_value_cell_load(void* cell) noexcept -> void*;
 
-// LRM 7.12 array manipulation. The body a `with` clause states is a closure run
-// over each of the receiver's entries, handed the element and that entry's
-// index and taking back what it settled on. A reduction answers one value of
-// the type it is told, `answer_type`, which varies with the clause rather than
-// with the receiver, and answers that type's default for a receiver with no
-// entries. A locator answers a queue and is told that queue's type; a
-// projection answers an array of the receiver's kind and is told the type of
-// what it builds where that type states more than its elements -- a queue's, a
-// fixed-size unpacked array's -- and otherwise the element type the clause
-// chose. The ordering family reorders the receiver and produces no element it
-// did not already hold, so it is told nothing more, and `reverse` projects
-// nothing, so it runs no body. The clause defines ordering on the ordinally
-// indexed containers alone. An entry for a fixed-size unpacked array receiver
-// is told its type after its operands.
-auto lyra_rt_laidout_sum(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void*;
-auto lyra_rt_laidout_product(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void*;
-auto lyra_rt_laidout_and(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void*;
-auto lyra_rt_laidout_or(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void*;
-auto lyra_rt_laidout_xor(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void*;
-auto lyra_rt_laidout_find(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void*;
-auto lyra_rt_laidout_find_index(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void*;
-auto lyra_rt_laidout_find_first(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void*;
-auto lyra_rt_laidout_find_first_index(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void*;
-auto lyra_rt_laidout_find_last(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void*;
-auto lyra_rt_laidout_find_last_index(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void*;
-auto lyra_rt_laidout_min(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void*;
-auto lyra_rt_laidout_max(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void*;
-auto lyra_rt_laidout_unique(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void*;
-auto lyra_rt_laidout_unique_index(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void*;
-auto lyra_rt_laidout_map(
-    const void* receiver, void* body, const void* receiver_type,
-    const void* answer_type, void* out) -> void*;
-auto lyra_rt_dynarray_sum(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_dynarray_product(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_dynarray_and(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_dynarray_or(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_dynarray_xor(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_dynarray_find(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_dynarray_find_index(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_dynarray_find_first(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_dynarray_find_first_index(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_dynarray_find_last(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_dynarray_find_last_index(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_dynarray_min(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_dynarray_max(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_dynarray_unique(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_dynarray_unique_index(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_dynarray_map(
-    const void* receiver, void* body, const void* answer_element_type,
-    void* out) -> void*;
-auto lyra_rt_queue_sum(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_queue_product(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_queue_and(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_queue_or(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_queue_xor(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_queue_find(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_queue_find_index(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_queue_find_first(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_queue_find_first_index(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_queue_find_last(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_queue_find_last_index(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_queue_min(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_queue_max(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_queue_unique(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_queue_unique_index(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_queue_map(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_assocarray_sum(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_assocarray_product(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_assocarray_and(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_assocarray_or(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_assocarray_xor(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_assocarray_find(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_assocarray_find_index(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_assocarray_find_first(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_assocarray_find_first_index(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_assocarray_find_last(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_assocarray_find_last_index(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_assocarray_min(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_assocarray_max(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_assocarray_unique(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_assocarray_unique_index(
-    const void* receiver, void* body, const void* answer_type, void* out)
-    -> void*;
-auto lyra_rt_assocarray_map(
-    const void* receiver, void* body, const void* answer_element_type,
-    void* out) -> void*;
+// LRM 7.12.2 ordering, which reorders the array where it lies. A sort is
+// handed the order its elements go in, a closure the program made answering
+// whether the element at one position comes before the one at another, which
+// it borrows for the call; a descending sort is handed the reversed order.
+// The clause defines ordering on the ordinally indexed containers alone. An
+// entry for a fixed-size unpacked array receiver is told its type after its
+// operands.
 void lyra_rt_laidout_sort(
-    void* receiver, void* body, const void* receiver_type);
-void lyra_rt_laidout_rsort(
-    void* receiver, void* body, const void* receiver_type);
-void lyra_rt_dynarray_sort(void* receiver, void* body);
-void lyra_rt_dynarray_rsort(void* receiver, void* body);
-void lyra_rt_queue_sort(void* receiver, void* body);
-void lyra_rt_queue_rsort(void* receiver, void* body);
+    void* receiver, void* order, const void* receiver_type);
+void lyra_rt_dynarray_sort(void* receiver, void* order);
+void lyra_rt_queue_sort(void* receiver, void* order);
 void lyra_rt_laidout_reverse(void* receiver, const void* receiver_type);
 void lyra_rt_dynarray_reverse(void* receiver);
 void lyra_rt_queue_reverse(void* receiver);
@@ -2347,7 +2132,6 @@ void lyra_rt_dynarray_destroy(void* object);
 void lyra_rt_queue_destroy(void* object);
 void lyra_rt_assocarray_destroy(void* object);
 void lyra_rt_managedref_destroy(void* object);
-void lyra_rt_closure_destroy(void* object);
 void lyra_rt_hierarchy_segment_destroy(void* object);
 void lyra_rt_trigger_destroy(void* object);
 void lyra_rt_observation_destroy(void* object);
@@ -2390,7 +2174,6 @@ auto lyra_rt_dynarray_move(void* value, void* out) -> void*;
 auto lyra_rt_queue_move(void* value, void* out) -> void*;
 auto lyra_rt_assocarray_move(void* value, void* out) -> void*;
 auto lyra_rt_managedref_move(void* value, void* out) -> void*;
-auto lyra_rt_closure_move(void* value, void* out) -> void*;
 auto lyra_rt_shared_pointer_move(void* value, void* out) -> void*;
 auto lyra_rt_print_item_move(void* value, void* out) -> void*;
 auto lyra_rt_format_spec_move(void* value, void* out) -> void*;

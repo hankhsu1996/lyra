@@ -65,10 +65,14 @@ The model in detail:
 
 - **Which locals are lifted is decided per lexical scope; each lifted local is held on its own.** A
   begin-end block of automatics, or a task body, whose locals a detached branch borrows has those
-  locals lifted, each into a cell of its own. Every reference to a lifted local -- in the declaring
-  scope and in any branch -- resolves through that local's one binding to its one cell, so a parent
-  write and a branch read can never target different backing. The cell is the variable's own (every
-  variable a waiting body declares is a cell,
+  locals lifted, each into a cell of its own. A subroutine's formal arguments are locals of its body
+  like any it declares, so one a detached branch names is lifted the same way; lifting it changes
+  only where it lives, so an `output` or `inout` argument is still copied back to the caller when
+  the subroutine returns, and a write the branch makes afterwards reaches the cell and not the
+  caller. Every reference to a lifted local -- in the declaring scope and in any branch -- resolves
+  through that local's one binding to its one cell, so a parent write and a branch read can never
+  target different backing. The cell is the variable's own (every variable a waiting body declares
+  is a cell,
   [a-variable-a-body-declares-reports-its-writes](a-variable-a-body-declares-reports-its-writes.md)),
   and a cell is storage that cannot be copied or moved, so it is held where it is made rather than
   gathered into a value.
@@ -167,10 +171,11 @@ consumer.
   can outlive its owner scope, so this promotion trigger is complete, not partial. The other
   deferred and concurrent forms do not reach the case: a traced (`$strobe` / `$monitor`) context has
   the frontend reject an automatic operand, a non-blocking assignment snapshots its right-hand value
-  rather than aliasing a cell, and a suspended coroutine retains its own frame. The trigger extends
-  per-construct only when a new form that both aliases an automatic and outlives its scope is
-  lowered -- a coroutine-based process handle, a DPI callback, a class-held process -- and is
-  introduced with that construct, not ahead of one.
+  rather than aliasing a cell, and a closure held while its execution waits ends with the wait.
+  Revised 2026-10-17: that the trigger stays complete is no longer argued construct by construct.
+  `architecture/scheduling.md` states which references a detached closure may hold, and the MIR
+  verifier refuses one that holds any other, so a new form that aliases an automatic and outlives
+  its scope fails there rather than reading freed storage.
 - **What the handle is, where no scope exit emits anything.** The obligations below are written for
   a target whose own language ends a local at its scope, which is what makes the handle's copy and
   release invisible there. A target that hands values across an opaque boundary has no such

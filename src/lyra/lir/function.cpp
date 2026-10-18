@@ -65,10 +65,8 @@ auto StorageOpName(StorageInstr::Op op) -> std::string_view {
 
 auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view {
   switch (op) {
-    case CoroutineTarget::Op::kEnterBorrowedEnvironment:
-      return "enter_coroutine_borrowed_environment";
-    case CoroutineTarget::Op::kEnterOwnedEnvironment:
-      return "enter_coroutine_owned_environment";
+    case CoroutineTarget::Op::kEnter:
+      return "enter_coroutine";
     case CoroutineTarget::Op::kAwait:
       return "await_coroutine";
     case CoroutineTarget::Op::kRelease:
@@ -129,8 +127,7 @@ auto CallEndingOf(const CallTarget& target) -> support::CallEnding {
           // raises again whatever that code raised.
           [](const CoroutineTarget& coroutine) {
             switch (coroutine.op) {
-              case CoroutineTarget::Op::kEnterBorrowedEnvironment:
-              case CoroutineTarget::Op::kEnterOwnedEnvironment:
+              case CoroutineTarget::Op::kEnter:
                 return CallEnding::kReturns;
               case CoroutineTarget::Op::kAwait:
               case CoroutineTarget::Op::kRelease:

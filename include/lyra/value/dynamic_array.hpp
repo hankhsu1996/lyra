@@ -23,11 +23,9 @@ namespace lyra::value {
 // What an invalid-index read returns and a new element starts as is the element
 // type's default (LRM Table 7-1), which `T`'s own default construction builds.
 template <typename T>
-class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>, T> {
+class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>> {
  public:
   using ElementType = T;
-  template <typename U>
-  using Rebound = DynamicArray<U>;
 
   DynamicArray() = default;
 
@@ -198,7 +196,7 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>, T> {
   }
 
  private:
-  friend class OrdinalArrayMethods<DynamicArray<T>, T>;
+  friend class OrdinalArrayMethods<DynamicArray<T>>;
 
   // A run-time element count (LRM 7.5.1), which a negative one has none of.
   [[nodiscard]] static auto CountOf(std::int64_t count) -> std::size_t {

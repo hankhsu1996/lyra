@@ -399,6 +399,9 @@ auto BuildDefaultValueExpr(
           [&](const mir::ClosureType&) -> mir::Expr {
             return holds_no_declared_value("a closure");
           },
+          [&](const mir::ErasedCallableType&) -> mir::Expr {
+            return holds_no_declared_value("a closure of no known type");
+          },
           [&](const mir::VariableRefType&) -> mir::Expr {
             return holds_no_declared_value("a reference to a cell");
           },

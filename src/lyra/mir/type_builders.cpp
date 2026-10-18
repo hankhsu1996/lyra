@@ -92,6 +92,12 @@ auto ErasedPointer(const TypePool& types) -> TypeId {
           .ownership = PointerOwnership::kBorrowed}});
 }
 
+auto BoxOf(const TypePool& types, TypeId value) -> TypeId {
+  return types.Intern(
+      Type{PointerType{
+          .pointee = value, .ownership = PointerOwnership::kUnique}});
+}
+
 auto AllocatedType(const TypePool& types, TypeId owner)
     -> std::optional<TypeId> {
   const Type& type = types.Get(owner);
@@ -208,6 +214,7 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           [&](const EvaluationAttemptsType&) { return bare(); },
           [&](const LoopBlocksType&) { return bare(); },
           [&](const ClosureType&) { return bare(); },
+          [&](const ErasedCallableType&) { return bare(); },
       });
 }
 

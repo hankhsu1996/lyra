@@ -2,12 +2,14 @@
 
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/base/symbol_table.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/mir/closure_id.hpp"
@@ -15,6 +17,7 @@
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/support/callable_bounds.hpp"
 
 namespace lyra::mir {
 class CompilationUnit;
@@ -60,30 +63,37 @@ struct BodyBindingRef {
 };
 
 // The per-body capture policy: how this body views each origin it captures. The
-// receiver, the declaring instance and the construction table are stable
-// design-wide handles (snapshot); a synthesized activation handle is owned
-// (refcount copy); an origin in the construction-scope set -- a `fork` branch's
-// own block-item declarations -- is snapshotted; any other enclosing origin
-// aliases the live cell. A non-fork closure leaves the set empty, so every
-// forwarded source binding aliases.
+// receiver, the declaring instance and the construction table are pointers
+// copied into the closure (snapshot), but a receiver that lives while
+// referenced is reached through a share of it, which is owning, as a
+// synthesized activation handle is; an origin in the construction-scope
+// set -- a `fork` branch's own block-item declarations -- is snapshotted; any
+// other enclosing origin aliases the live cell. A non-fork closure leaves the
+// set empty, so every forwarded source binding aliases.
 struct CapturePolicy {
   std::set<BindingOriginId> snapshot_set;
 
-  [[nodiscard]] auto ViewFor(BindingOriginId origin) const -> CaptureView {
-    switch (origin.kind) {
-      case BindingOriginId::Kind::kReceiver:
-      case BindingOriginId::Kind::kDeclaringInstance:
-      case BindingOriginId::Kind::kConstructionTable:
-        return CaptureView::kSnapshot;
-      case BindingOriginId::Kind::kSynthesized:
-        return CaptureView::kOwning;
-      case BindingOriginId::Kind::kSourceProcedural:
-      case BindingOriginId::Kind::kIterator:
-      case BindingOriginId::Kind::kPattern:
-        return snapshot_set.contains(origin) ? CaptureView::kSnapshot
-                                             : CaptureView::kAlias;
-    }
-    throw InternalError("CapturePolicy::ViewFor: unknown binding origin kind");
+  [[nodiscard]] auto ViewFor(const BindingOriginId& origin) const
+      -> CaptureView {
+    const auto as_the_set_says = [&] {
+      return snapshot_set.contains(origin) ? CaptureView::kSnapshot
+                                           : CaptureView::kAlias;
+    };
+    return std::visit(
+        Overloaded{
+            [](const ReceiverOrigin&) { return CaptureView::kSnapshot; },
+            [](const DeclaringInstanceOrigin&) {
+              return CaptureView::kSnapshot;
+            },
+            [](const ConstructionTableOrigin&) {
+              return CaptureView::kSnapshot;
+            },
+            [](const ReceiverShareOrigin&) { return CaptureView::kOwning; },
+            [](const SynthesizedOrigin&) { return CaptureView::kOwning; },
+            [&](const ProceduralOrigin&) { return as_the_set_says(); },
+            [&](const IteratorOrigin&) { return as_the_set_says(); },
+            [&](const PatternOrigin&) { return as_the_set_says(); }},
+        origin);
   }
 };
 
@@ -108,13 +118,13 @@ class CallableBindings {
   // A closure body: bindings it does not declare are captured from `parent`,
   // their sources read into `capture_site` (a block of the parent) and their
   // fields added to the closure declaration `decl`, with the snapshot-vs-alias
-  // view chosen by `policy`. The closure receiver -- a read-only borrow of the
-  // closure, typed from `closure_id` -- is materialized here as the body's
+  // view chosen by `policy`. The closure receiver -- the closure as `kind`
+  // enters it, typed from `closure_id` -- is materialized here as the body's
   // `locals[0]`; a captured read is a field access over it.
   CallableBindings(
       const mir::CompilationUnit& unit, mir::ClosureDecl& decl,
-      mir::ClosureId closure_id, CallableBindings& parent,
-      mir::Block& capture_site, CapturePolicy policy);
+      mir::ClosureId closure_id, support::ClosureKind kind,
+      CallableBindings& parent, mir::Block& capture_site, CapturePolicy policy);
 
   CallableBindings(const CallableBindings&) = delete;
   auto operator=(const CallableBindings&) -> CallableBindings& = delete;
@@ -174,6 +184,15 @@ class CallableBindings {
     BindingOriginId origin;
     mir::ExprId source{};
   };
+
+  // Whether `origin` has a carrier here or in a body enclosing this one.
+  [[nodiscard]] auto Provides(BindingOriginId origin) const -> bool;
+
+  // The object this closure's body runs on, where the closure holds a share of
+  // it: the closure captures the share alone, and its body takes the object's
+  // address from it once, where the body begins, so the one field that keeps
+  // the object alive is also the one every member access goes through.
+  auto ReceiverThroughShare() -> BodyBindingRef;
 
   const mir::CompilationUnit* unit_;
   mir::CallableCode* code_;

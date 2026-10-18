@@ -204,7 +204,12 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
                     }},
                 t.declaration);
           },
-          [&](const ClosureType& t) { HashField(seed, t.closure_id.value); }});
+          [&](const ClosureType& t) { HashField(seed, t.closure_id.value); },
+          [&](const ErasedCallableType& t) {
+            HashEnum(seed, t.kind);
+            HashIds(seed, t.params);
+            HashId(seed, t.result);
+          }});
   return seed;
 }
 
@@ -337,7 +342,8 @@ auto Type::IsAddressOnly() const -> bool {
           [](const BitsReferenceType&) { return false; },
           [](const ObjectWriteType&) { return false; },
           [](const RecordType&) { return false; },
-          [](const ClosureType&) { return false; }});
+          [](const ClosureType&) { return false; },
+          [](const ErasedCallableType&) { return false; }});
 }
 
 auto Type::OwnsPointee() const -> bool {
@@ -429,10 +435,14 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           [](const DriverType&) { return false; },
           [](const CoroutineType&) { return false; },
 
-          // An object and a closure are reached by their address for the same
-          // reason.
+          // An object is reached by its address, and so is a closure whose
+          // type is not known.
           [](const ObjectType&) { return false; },
+          [](const ErasedCallableType&) { return false; },
           [](const RuntimeClassType&) { return false; },
+          // A closure never moves once made: it is made where the local
+          // holding it lies, and so is never a variable whose storage is
+          // filled by handing it a value made elsewhere.
           [](const ClosureType&) { return false; },
 
           // Storage, and the facilities the runtime holds for the whole run.
@@ -539,6 +549,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const ObjectType&) -> Element { return std::nullopt; },
           [](const RuntimeClassType&) -> Element { return std::nullopt; },
           [](const ClosureType&) -> Element { return std::nullopt; },
+          [](const ErasedCallableType&) -> Element { return std::nullopt; },
 
           // A handle to a runtime facility, and an inert payload the library
           // owns the shape of.

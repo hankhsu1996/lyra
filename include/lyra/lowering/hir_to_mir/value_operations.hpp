@@ -101,6 +101,13 @@ class UnitLowerer;
     support::ValueOperator comparison, mir::ExprId lhs, mir::ExprId rhs,
     mir::TypeId result) -> mir::ExprId;
 
+// Whether two values of one type are the same bits, unknown bits included, as
+// a machine boolean: the type's own comparison, whether it asks if a value
+// changed or if two keys are one value.
+[[nodiscard]] auto BuildBitIdentity(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId lhs,
+    mir::ExprId rhs) -> mir::ExprId;
+
 // LRM 11.4.5 `===`, a known bit.
 [[nodiscard]] auto BuildCaseEquality(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId lhs,

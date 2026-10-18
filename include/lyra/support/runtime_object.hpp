@@ -13,10 +13,9 @@ namespace lyra::support {
 // what an entry builds for one use -- what a print is assembled from, what a
 // wait registers, a write in progress into storage a wrapper stands for, a part
 // designated within one -- and what the generated side holds for a while --
-// the owner of a closure, an execution, a counted hold on a value, a reference
-// to storage somebody else owns.
+// an execution, a counted hold on a value, a reference to storage somebody
+// else owns.
 enum class LibraryObject : std::uint8_t {
-  kClosure,
   kPrintItem,
   kFormatSpec,
   kFormatArg,

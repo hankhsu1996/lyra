@@ -2,6 +2,7 @@
 
 #include <expected>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 
@@ -28,8 +29,9 @@
 namespace lyra::lowering::ast_to_hir {
 
 void ProcessLowerer::AnalyzeLifetimeExtended(
+    std::span<const slang::ast::VariableSymbol* const> declared_ahead,
     const slang::ast::Statement& body) {
-  lifetime_extended_ = CollectLifetimeExtendedVars(body);
+  lifetime_extended_ = CollectLifetimeExtendedVars(declared_ahead, body);
 }
 
 ProcessLowerer::ProcessLowerer(
@@ -53,7 +55,7 @@ auto ProcessLowerer::Run(
   const WalkFrame frame =
       parent_frame.WithProceduralBody(&body).WithOpenScope(&root);
 
-  AnalyzeLifetimeExtended(proc.getBody());
+  AnalyzeLifetimeExtended({}, proc.getBody());
   auto root_stmt_or = LowerStmt(proc.getBody(), frame);
   if (!root_stmt_or) return std::unexpected(std::move(root_stmt_or.error()));
   const hir::StmtId root_stmt = body.stmts.Add(*std::move(root_stmt_or));
@@ -134,7 +136,7 @@ auto ProcessLowerer::RunConcurrentAssertion(
   const WalkFrame frame =
       labelled.has_value() ? root_frame.WithOpenScope(&*labelled) : root_frame;
 
-  AnalyzeLifetimeExtended(proc.getBody());
+  AnalyzeLifetimeExtended({}, proc.getBody());
   const auto span = frontend::PointSpanOf(proc.location);
   auto assertion_or = LowerConcurrentAssertion(*this, frame, as, span);
   if (!assertion_or) return std::unexpected(std::move(assertion_or.error()));

@@ -4,19 +4,14 @@
 #include <cstdint>
 #include <optional>
 #include <span>
-#include <type_traits>
 #include <utility>
-#include <vector>
 
-#include "lyra/value/array_manipulation.hpp"
 #include "lyra/value/basic_associative_array.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/element_policy.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/index_order.hpp"
 #include "lyra/value/integral.hpp"
-#include "lyra/value/queue.hpp"
-#include "lyra/value/reduction.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/tuple.hpp"
 
@@ -182,114 +177,6 @@ class AssociativeArray {
     return Visited(std::move(probe), std::move(visited));
   }
 
-  // LRM 7.12.3 reduction over the entry stream. LRM 7.12.3 permits reduction on
-  // any integral-valued unpacked array, the associative array included; the
-  // ordering family (LRM 7.12.2) is excluded and rejected upstream by slang.
-  // The closure receives each value and its key; an empty array answers the
-  // default of the closure's result type.
-  template <typename F>
-  [[nodiscard]] auto Sum(F key) const {
-    return Folded(key, Reduction::kSum);
-  }
-  template <typename F>
-  [[nodiscard]] auto Product(F key) const {
-    return Folded(key, Reduction::kProduct);
-  }
-  template <typename F>
-  [[nodiscard]] auto And(F key) const {
-    return Folded(key, Reduction::kAnd);
-  }
-  template <typename F>
-  [[nodiscard]] auto Or(F key) const {
-    return Folded(key, Reduction::kOr);
-  }
-  template <typename F>
-  [[nodiscard]] auto Xor(F key) const {
-    return Folded(key, Reduction::kXor);
-  }
-
-  // LRM 7.12.1 locator family. Value locators return a queue of values; index
-  // locators return a queue of the KEY, since an associative receiver's index
-  // is its key (LRM 7.12.1), not an ordinal int.
-  template <typename F>
-  [[nodiscard]] auto Find(F pred) const -> Queue<V> {
-    const Snapshot entries = Entries();
-    return Values(
-        entries,
-        detail::MatchingPositions(entries.size(), KeyOf(entries, pred)));
-  }
-  template <typename F>
-  [[nodiscard]] auto FindIndex(F pred) const -> Queue<K> {
-    const Snapshot entries = Entries();
-    return Keys(
-        entries,
-        detail::MatchingPositions(entries.size(), KeyOf(entries, pred)));
-  }
-  template <typename F>
-  [[nodiscard]] auto FindFirst(F pred) const -> Queue<V> {
-    const Snapshot entries = Entries();
-    return Values(
-        entries, detail::FirstMatching(entries.size(), KeyOf(entries, pred)));
-  }
-  template <typename F>
-  [[nodiscard]] auto FindFirstIndex(F pred) const -> Queue<K> {
-    const Snapshot entries = Entries();
-    return Keys(
-        entries, detail::FirstMatching(entries.size(), KeyOf(entries, pred)));
-  }
-  template <typename F>
-  [[nodiscard]] auto FindLast(F pred) const -> Queue<V> {
-    const Snapshot entries = Entries();
-    return Values(
-        entries, detail::LastMatching(entries.size(), KeyOf(entries, pred)));
-  }
-  template <typename F>
-  [[nodiscard]] auto FindLastIndex(F pred) const -> Queue<K> {
-    const Snapshot entries = Entries();
-    return Keys(
-        entries, detail::LastMatching(entries.size(), KeyOf(entries, pred)));
-  }
-  template <typename F>
-  [[nodiscard]] auto Min(F key) const -> Queue<V> {
-    const Snapshot entries = Entries();
-    return Values(
-        entries, detail::LeastPosition(entries.size(), KeyOf(entries, key)));
-  }
-  template <typename F>
-  [[nodiscard]] auto Max(F key) const -> Queue<V> {
-    const Snapshot entries = Entries();
-    return Values(
-        entries, detail::GreatestPosition(entries.size(), KeyOf(entries, key)));
-  }
-  template <typename F>
-  [[nodiscard]] auto Unique(F key) const -> Queue<V> {
-    const Snapshot entries = Entries();
-    return Values(
-        entries, detail::UniquePositions(entries.size(), KeyOf(entries, key)));
-  }
-  template <typename F>
-  [[nodiscard]] auto UniqueIndex(F key) const -> Queue<K> {
-    const Snapshot entries = Entries();
-    return Keys(
-        entries, detail::UniquePositions(entries.size(), KeyOf(entries, key)));
-  }
-
-  // LRM 7.12.5 projection into a same-key associative array: each value maps
-  // through the closure and keeps its key, so the result is keyed identically
-  // with the `with`-expression's element type. Mapping writes no `default:`
-  // clause of its own, so an absent key of the result reads that type's
-  // default.
-  template <typename F>
-  [[nodiscard]] auto Map(F closure) const {
-    using U = std::decay_t<decltype(closure(
-        std::declval<const V&>(), std::declval<const K&>()))>;
-    std::vector<Tuple<K, U>> pairs;
-    for (const auto& [k, value] : Entries()) {
-      pairs.emplace_back(*k, closure(*value, *k));
-    }
-    return AssociativeArray<K, U>(std::span<const Tuple<K, U>>{pairs});
-  }
-
   [[nodiscard]] auto operator==(const AssociativeArray& other) const ->
       typename StaticElem<V>::Equality {
     return StaticElem<V>::Equality::Filled(core_.Equal(other.core_));
@@ -332,56 +219,6 @@ class AssociativeArray {
       return Tuple<Int, K>{Int::FromInt(0), std::move(probe)};
     }
     return Tuple<Int, K>{Int::FromInt(1), *std::move(visited)};
-  }
-
-  // The entries an LRM 7.12 method walks, in LRM 7.8 key order, so a method's
-  // positions name them. The key is the entry's index, so an index locator
-  // yields keys and `item.index` reads the key.
-  using Snapshot = std::vector<std::pair<const K*, const V*>>;
-  [[nodiscard]] auto Entries() const -> Snapshot {
-    Snapshot entries;
-    entries.reserve(core_.Count());
-    for (const auto& [key, slot] : core_.Entries()) {
-      entries.emplace_back(&key, static_cast<const V*>(slot));
-    }
-    return entries;
-  }
-
-  // What `closure` answers for the entry at a position: its value and key.
-  template <typename F>
-  [[nodiscard]] static auto KeyOf(const Snapshot& entries, F& closure) {
-    return [&entries, &closure](std::size_t i) {
-      return closure(*entries[i].second, *entries[i].first);
-    };
-  }
-
-  template <typename F>
-  [[nodiscard]] auto Folded(F& key, Reduction reduction) const {
-    using R = std::remove_cvref_t<std::invoke_result_t<F&, const V&, const K&>>;
-    const Snapshot entries = Entries();
-    return detail::Folded(
-        entries.size(), KeyOf(entries, key), reduction, detail::DefaultOf<R>());
-  }
-
-  [[nodiscard]] static auto Values(
-      const Snapshot& entries, const std::vector<std::size_t>& positions)
-      -> Queue<V> {
-    std::vector<V> found;
-    found.reserve(positions.size());
-    for (const std::size_t i : positions) {
-      found.push_back(*entries[i].second);
-    }
-    return Queue<V>(std::span<const V>{found});
-  }
-  [[nodiscard]] static auto Keys(
-      const Snapshot& entries, const std::vector<std::size_t>& positions)
-      -> Queue<K> {
-    std::vector<K> found;
-    found.reserve(positions.size());
-    for (const std::size_t i : positions) {
-      found.push_back(*entries[i].first);
-    }
-    return Queue<K>(std::span<const K>{found});
   }
 
   BasicAssociativeArray<StaticKey<K>, StaticElem<V>> core_;

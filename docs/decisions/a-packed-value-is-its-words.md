@@ -10,9 +10,9 @@ realization of a packed value in [jit-value-realization](jit-value-realization.m
 it. Such a value is stated as data only where the source wrote that much data.
 
 D6 to D8 bind what holds a packed value and what the library is told of one, and the code does not
-yet meet them everywhere. The largest exception is what holds an element: a queue, a dynamic array,
-an associative array and a closure's answer are still told the type of what they hold as one
-constant per type and act on it through that constant, which D7 does not allow.
+yet meet them everywhere. The largest exception is what holds an element: a queue, a dynamic array
+and an associative array are still told the type of what they hold as one constant per type and act
+on it through that constant, which D7 does not allow.
 
 ## Context
 

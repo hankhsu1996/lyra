@@ -186,7 +186,9 @@ void ReachPropertySpec(const PropertySpec& spec, const auto& reach) {
   reach.ThroughProperty(spec.body);
 }
 
-// The object a call is made on, where the callee holds an expression for it.
+// The expressions a callee holds: the object a call is made on, where the
+// callee names it by an expression, and the expression an array method
+// evaluates at each entry (LRM 7.12).
 void ReachCallee(const SubroutineRef& callee, const auto& reach) {
   std::visit(
       Overloaded{
@@ -206,8 +208,14 @@ void ReachCallee(const SubroutineRef& callee, const auto& reach) {
               reach(*ref.receiver, Slot::kOperand);
             }
           },
-          [](const EnumMethodRef&) {}, [](const PastValueRef&) {},
-          [](const ValueChangeRef&) {}, [](const ForeignImportRef&) {},
+          [](const EnumMethodRef&) {},
+          [&](const ArrayIteratorMethodRef& ref) {
+            if (ref.with_clause.has_value()) {
+              reach(ref.with_clause->expr, Slot::kOperand);
+            }
+          },
+          [](const PastValueRef&) {}, [](const ValueChangeRef&) {},
+          [](const ForeignImportRef&) {},
           [](const ExternalUnitSubroutineRef&) {},
           [&](const ExternalUnitMethodRef& ref) {
             std::visit(
@@ -276,9 +284,6 @@ void ForEachOperand(const ExprData& data, const auto& reach) {
             ReachCallee(e.callee, reach);
             for (const std::optional<ExprId>& argument : e.arguments) {
               optional_operand(argument);
-            }
-            if (e.with_clause.has_value()) {
-              operand(e.with_clause->expr);
             }
           },
           [&](const ConversionExpr& e) { operand(e.operand); },
@@ -569,6 +574,9 @@ auto DescribeCall(const SubroutineRef& callee) -> std::string {
           },
           [](const EnumMethodRef&) -> std::string {
             return "an enum method call";
+          },
+          [](const ArrayIteratorMethodRef&) -> std::string {
+            return "an array iterator method call";
           },
           [](const PastValueRef&) -> std::string {
             return "a past value read";

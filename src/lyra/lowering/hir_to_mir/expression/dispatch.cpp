@@ -421,8 +421,8 @@ auto ArgumentEvaluatedEarlier(
   mir::Block& at = *statement.current_block;
   const mir::ExprId held =
       at.AsValue(lowerer.Owner().Unit().types, at.exprs.Add(*std::move(value)));
-  const BindingOriginId origin =
-      BindingOriginId::Synthesized(lowerer.Owner().NextSynthesizedSite(), 0);
+  const BindingOriginId origin = SynthesizedOrigin{
+      .owner_site = lowerer.Owner().NextSynthesizedSite(), .ordinal = 0};
   const mir::LocalId local =
       statement.bindings->Declare(origin, at.exprs.Get(held).type);
   at.AppendStmt(mir::LocalDeclStmt{.target = local, .init = held});

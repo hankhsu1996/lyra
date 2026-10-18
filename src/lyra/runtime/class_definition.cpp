@@ -22,7 +22,7 @@ auto RequireDefinition(const ObjectDefinition* definition)
 }  // namespace
 
 auto AdoptObject(void* object) -> value::ObjectRef {
-  return RefToObject(std::shared_ptr<GcObject>(static_cast<GcObject*>(object)));
+  return RefToObject(static_cast<GcObject*>(object)->TakeCreatorsShare());
 }
 
 auto RequireScopeClass(const ObjectDefinition* definition)

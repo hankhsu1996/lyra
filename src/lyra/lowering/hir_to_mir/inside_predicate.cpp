@@ -9,10 +9,11 @@
 
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/closure_builder.hpp"
-#include "lyra/lowering/hir_to_mir/expression/calls.hpp"
+#include "lyra/lowering/hir_to_mir/entry_walk.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -23,6 +24,7 @@
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -54,37 +56,47 @@ auto BuildMatch(
 
 // Whether `left` matches any single value `value` holds, both already in the
 // frame's block. An unpacked array holds the single values its elements hold
-// (LRM 11.4.13), and how many elements it has is known only while the program
-// runs, so the answer over them is the array's own OR reduction (LRM 7.12.3)
-// of this same question asked of each element: one bit, unknown where no
-// element matched and some comparison was unknown, and 0 for an array holding
-// nothing.
+// (LRM 11.4.13), so the answer over them is the OR of this same question asked
+// of each element in turn: one bit, unknown where no element matched and some
+// comparison was unknown, and 0 for an array holding nothing.
 auto BuildMatchAnywhereIn(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId left,
-    mir::ExprId value) -> mir::ExprId {
-  const mir::CompilationUnit& unit = unit_lowerer.Unit();
+    mir::ExprId value) -> diag::Result<mir::ExprId> {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& block = *frame.current_block;
   const mir::TypeId held = block.exprs.Get(value).type;
-  const std::optional<mir::TypeId> element =
-      unit.types.Get(held).ContainerElementType();
-  if (!element.has_value()) {
+  if (!unit.types.Get(held).ContainerElementType().has_value()) {
     return BuildMatch(unit, block, left, value);
   }
 
-  // The reduction hands each element and its index (LRM 7.12.4) to the
-  // question, which reads the left operand as it was when the set was reached.
-  ClosureBuilder each(unit_lowerer.Unit(), frame);
-  const mir::LocalId item = each.AddParamAnonymous(*element);
-  each.AddParamAnonymous(ArrayMethodIndexType(unit, held));
-  const mir::ExprId left_in_each =
-      SnapshotValueIntoClosure(unit_lowerer, frame, each, left);
-  const mir::ExprId matched = BuildMatchAnywhereIn(
-      unit_lowerer, each.Frame(), left_in_each,
-      each.Body().ReadLocal(item, *element));
-  const mir::TypeId answer = each.Body().exprs.Get(matched).type;
-  const mir::ExprId question = block.exprs.Add(each.Build(matched));
-  return block.exprs.Add(BuildBuiltinMethodCall(
-      unit_lowerer, block, support::BuiltinFn::kOr, value, {question}, answer));
+  const mir::TypeId left_type = block.exprs.Get(left).type;
+  const mir::LocalId compared = DeclareLocal(frame, left);
+  const WalkedArray array = WalkedArrayOf(unit_lowerer, frame, value);
+  const mir::TypeId bit =
+      mir::PackedVectorOf(unit.types, 1, mir::IntegralStateKind::kFourState);
+  BlockBuilder steps(frame);
+  mir::Block& body = steps.Body();
+  const mir::LocalId any = DeclareLocal(
+      steps.Frame(),
+      ConvertToType(unit, body, BuildBit1Literal(unit, body, false), bit));
+  auto walked = BuildEntryLoopStmt(
+      unit_lowerer, steps.Frame(), array, WalkOrder::kFromFirst, std::nullopt,
+      [&](const WalkFrame& at,
+          const VisitedEntry& entry) -> diag::Result<void> {
+        mir::Block& b = *at.current_block;
+        auto matched = BuildMatchAnywhereIn(
+            unit_lowerer, at, b.ReadLocal(compared, left_type), entry.element);
+        if (!matched) return std::unexpected(std::move(matched.error()));
+        AssignLocal(
+            unit, b, any,
+            b.exprs.Add(BuildMirBinaryExpr(
+                unit, b, hir::BinaryOp::kBitwiseOr, b.ReadLocal(any, bit),
+                ConvertToType(unit, b, *matched, bit), bit)));
+        return {};
+      });
+  if (!walked) return std::unexpected(std::move(walked.error()));
+  body.AppendStmt(*std::move(walked));
+  return block.exprs.Add(steps.Build(body.ReadLocal(any, bit)));
 }
 
 }  // namespace
@@ -107,9 +119,9 @@ auto BuildSetMemberTest(
   if (range == nullptr) {
     auto value = lower(member);
     if (!value) return std::unexpected(std::move(value.error()));
-    return ConvertToType(
-        unit, block, BuildMatchAnywhereIn(lowerer.Owner(), frame, left, *value),
-        result_type);
+    auto matched = BuildMatchAnywhereIn(lowerer.Owner(), frame, left, *value);
+    if (!matched) return std::unexpected(std::move(matched.error()));
+    return ConvertToType(unit, block, *matched, result_type);
   }
 
   // A range holds what lies between its bounds, each included, and a bound the

@@ -50,8 +50,7 @@ Which leaves the question that decides how much of this a value costs: **does th
 representation own anything?** A flat sequence of bits owns nothing and ends by the scope's storage
 going away, with nothing emitted. A run-time-sized container owns storage and must be ended. So the
 automatic regime's real work is confined to the values of the second kind, and a representation that
-gives the first kind something to own is paying that work for nothing
-(`../decisions/jit-value-realization.md` states the current realization and what it defers).
+gives the first kind something to own is paying that work for nothing.
 
 ## A regime is a property of the state, never of the code around it
 
@@ -190,10 +189,13 @@ lifetime never depends on the heap's.
    managed locals are reachable to the collector at an allocation-pressure safepoint, not only a
    suspended activation's._
 
-5. **A safepoint-capable instance method roots its receiver.** A managed object's instance method
-   that can reach a safepoint holds a managed root to its receiver in its activation; the borrowed
-   receiver used in the body derives from that root. _Consequence: the object a method runs on
-   cannot be reclaimed beneath it._
+5. **A body running on a managed object roots it.** Every body that takes a managed object as its
+   receiver -- an instance method, a constructor -- holds a managed reference to that object in its
+   activation from where the body begins (LRM 8.29); the borrowed receiver used in the body derives
+   from that root, `this` (LRM 8.11) is a copy of it, and a closure the body builds that reaches the
+   object carries a copy of it rather than the borrowed receiver (`binding_and_capture.md` invariant
+   9). _Consequence: the object a method runs on cannot be reclaimed beneath it, nor beneath a
+   branch it forked, even once its caller has let go of every handle._
 
 6. **The execution-to-activation-frame edge is Lyra-visible and traceable.** The collector reaches
    an activation frame through Lyra-owned runtime state -- the process or scheduling record -- never
@@ -230,7 +232,8 @@ lifetime never depends on the heap's.
   carries no basic blocks and no resume-state field -- the state machine is the backend's
   control-flow concern.
 - **`callable.md`.** A suspendable or allocating callable's cross-safepoint state is its activation
-  frame; the receiver-rooting invariant refines the receiver rule for managed instance methods.
+  frame; the receiver-rooting invariant refines the receiver rule for bodies run on a managed
+  object.
 - **`runtime_model.md` / `scheduling.md`.** The scheduler stores traceable work items, never opaque
   payloads that hide managed references; safepoints are scheduler boundaries together with
   allocation-pressure points.
@@ -264,8 +267,8 @@ lifetime never depends on the heap's.
 - Reaching an activation frame only through opaque backend execution state. (Invariant 6.)
 - A simulation-lifetime arena that never reclaims, as the lifetime model. (Invariant 1.)
 - Pure reference counting as the lifetime model. (Invariant 1.)
-- A suspendable or allocating managed instance method relying on a borrowed receiver to keep its
-  object alive. (Invariant 5.)
+- A method, a constructor, or a closure either one builds, relying on a borrowed receiver to keep
+  its object alive. (Invariant 5.)
 - Conservative scanning of native stack or heap to discover roots. (Invariant 3.)
 - An allocation that can reclaim its own not-yet-stored result. (Invariant 8.)
 - `gc<T>` modeled as a borrowed raw pointer with no traced edge. (Invariant 2.)
@@ -304,13 +307,12 @@ record, then the frame, then `h`.
 
 The collector is precise, stop-the-world and single-threaded mark-sweep, and those three are a
 realization choice. **Non-moving is not**: a reference to a class property is a pointer into a
-managed object, so relocating one invalidates a reference the program still holds
-(`../decisions/referenceable-objects-have-stable-addresses.md`). A relocating collector is
-admissible only with a mechanism that leaves that pointer correct -- pinning an object while a
-reference into it is outstanding -- and never by changing what a reference is. Non-moving also keeps
-borrowed receivers, virtual-interface handles, and foreign pointers stable; the accepted cost is
-free-list allocation and fragmentation over long runs. Generational and incremental strategies
-change none of this.
+managed object, so relocating one invalidates a reference the program still holds. A relocating
+collector is admissible only with a mechanism that leaves that pointer correct -- pinning an object
+while a reference into it is outstanding -- and never by changing what a reference is. Non-moving
+also keeps borrowed receivers, virtual-interface handles, and foreign pointers stable; the accepted
+cost is free-list allocation and fragmentation over long runs. Generational and incremental
+strategies change none of this.
 
 The same reference makes reclamation, not only relocation, the object's business: an object with an
 outstanding interior reference goes on existing for that reference's bounded life, the way LRM

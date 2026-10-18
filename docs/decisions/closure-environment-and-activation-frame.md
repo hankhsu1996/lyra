@@ -1,9 +1,10 @@
 # A closure is its own category; a lifted local is a cell
 
-Date: 2026-06-29 (revised 2026-07-07, 2026-09-29, 2026-09-30). Status: accepted and locked. This is
-the final form; it supersedes four earlier revisions (a value `TupleType`; then one unified
-`StructType` with an optional invoke; then a scope struct with a field list of its own beside the
-struct the source declares; then a struct the lowering declares, gathering a scope's lifted locals).
+Date: 2026-06-29 (revised 2026-07-07, 2026-09-29, 2026-09-30; D4 2026-10-17). Status: accepted and
+locked. This is the final form; it supersedes four earlier revisions (a value `TupleType`; then one
+unified `StructType` with an optional invoke; then a scope struct with a field list of its own
+beside the struct the source declares; then a struct the lowering declares, gathering a scope's
+lifted locals).
 
 ## Why this decision matters
 
@@ -93,10 +94,12 @@ D2. A closure is an anonymous concrete callable value: ClosureType{ClosureId}. C
 D3. A closure and a lifted local share only CallableCode. No universal Record<Storage, Behavior>
     type; no StructType with an is_closure / is_frame discriminator; no record of lifted locals.
 
-D4. A closure's invoke reads captures through its receiver, a read-only borrow
-    Borrowed<ClosureType> (the invoke body's locals[0]). A write to captured state is a write through
-    a captured Ref<T> or through a captured Shared<cell> field, never a write to the capture slot
-    itself.
+D4. A closure's invoke reads captures through its receiver (the invoke body's locals[0]), whose
+    type is the closure's kind: a read-only borrow Borrowed<ClosureType>, a mutable borrow for a
+    closure that keeps state between calls, or the closure's box for a body that takes it over. A
+    write to a variable the closure did not make is a write through a captured Ref<T> or a captured
+    Shared<cell> field, never a write to the capture slot. Revised 2026-10-17: every receiver was a
+    read-only borrow until an event control's watch kept state of its own between calls.
 
 D5. A callable value has two type levels: the concrete ClosureType (its exact captures) and an erased
     ErasedCallableType<Sig> reached through an explicit erasure, for a heterogeneous collection of
@@ -187,7 +190,7 @@ is never rewritten when the layout is canonicalized.
 - `../architecture/mir.md` -- `TupleType`, `RecordType`, `ClosureType`, and `mir::Class` as distinct
   categories.
 - `../architecture/callable.md` -- the callable concept and the receiver rule; a closure body's
-  receiver is the `ClosureType` value itself.
+  receiver is a borrow of the `ClosureType` value, or its box, by its kind.
 - `../architecture/binding_and_capture.md` -- origin identity and capture forwarding; only the
   materialized capture representation is a `ClosureDecl` field.
 - `../architecture/object_model.md` -- invariant 1 (no second object IR).

@@ -11,6 +11,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/delay.hpp"
 #include "lyra/runtime/observable.hpp"
@@ -160,13 +161,14 @@ void RuntimeEffects::Submit(SimTime when, Region region, OwnedCall effect) {
   AsRuntime(*this).SlotAt(when)[region].effects.push_back(std::move(effect));
 }
 
-void RuntimeEffects::SubmitNba(OwnedCall closure) {
+void RuntimeEffects::SubmitNba(OwnedClosure<support::EffectSignature> closure) {
   Submit(Now(), RunningNbaRegion(*this), std::move(closure));
 }
 
 void RuntimeEffects::SubmitNbaAfter(
     const value::ConstIntegralView& duration, std::int64_t unit_power,
-    std::int64_t precision_power, OwnedCall closure) {
+    std::int64_t precision_power,
+    OwnedClosure<support::EffectSignature> closure) {
   const auto unit = static_cast<std::int8_t>(unit_power);
   const auto precision = static_cast<std::int8_t>(precision_power);
   Submit(
@@ -176,7 +178,8 @@ void RuntimeEffects::SubmitNbaAfter(
 
 void RuntimeEffects::SubmitNbaAfterReal(
     const value::Real& duration, std::int64_t unit_power,
-    std::int64_t precision_power, OwnedCall closure) {
+    std::int64_t precision_power,
+    OwnedClosure<support::EffectSignature> closure) {
   const auto unit = static_cast<std::int8_t>(unit_power);
   const auto precision = static_cast<std::int8_t>(precision_power);
   Submit(
@@ -185,7 +188,8 @@ void RuntimeEffects::SubmitNbaAfterReal(
       RunningNbaRegion(*this), std::move(closure));
 }
 
-void RuntimeEffects::SubmitPostponed(OwnedCall closure) {
+void RuntimeEffects::SubmitPostponed(
+    OwnedClosure<support::EffectSignature> closure) {
   Submit(Now(), Region::kPostponed, std::move(closure));
 }
 
@@ -193,11 +197,13 @@ void RuntimeEffects::RegisterConcurrentAssertion(EvaluationAttempts& attempts) {
   AsRuntime(*this).concurrent_assertions_.push_back(&attempts);
 }
 
-void RuntimeEffects::SubmitObserved(OwnedCall effect) {
+void RuntimeEffects::SubmitObserved(
+    OwnedClosure<support::EffectSignature> effect) {
   Submit(Now(), Region::kObserved, std::move(effect));
 }
 
-void RuntimeEffects::SubmitViolationReport(OwnedCall report) {
+void RuntimeEffects::SubmitViolationReport(
+    OwnedClosure<support::EffectSignature> report) {
   RuntimeProcess* process = AsRuntime(*this).current_process_;
   if (process == nullptr) {
     // A check that fires before any procedure runs -- a static variable's

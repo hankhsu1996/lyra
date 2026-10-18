@@ -226,24 +226,30 @@ auto LowerArrayMethodName(std::string_view name)
   if (name == "size") return support::BuiltinFn::kSize;
   if (name == "delete") return support::BuiltinFn::kDelete;
   if (name == "reverse") return support::BuiltinFn::kReverse;
-  if (name == "sort") return support::BuiltinFn::kSort;
-  if (name == "rsort") return support::BuiltinFn::kRsort;
-  if (name == "sum") return support::BuiltinFn::kSum;
-  if (name == "product") return support::BuiltinFn::kProduct;
-  if (name == "and") return support::BuiltinFn::kAnd;
-  if (name == "or") return support::BuiltinFn::kOr;
-  if (name == "xor") return support::BuiltinFn::kXor;
-  if (name == "find") return support::BuiltinFn::kFind;
-  if (name == "find_index") return support::BuiltinFn::kFindIndex;
-  if (name == "find_first") return support::BuiltinFn::kFindFirst;
-  if (name == "find_first_index") return support::BuiltinFn::kFindFirstIndex;
-  if (name == "find_last") return support::BuiltinFn::kFindLast;
-  if (name == "find_last_index") return support::BuiltinFn::kFindLastIndex;
-  if (name == "min") return support::BuiltinFn::kMin;
-  if (name == "max") return support::BuiltinFn::kMax;
-  if (name == "unique") return support::BuiltinFn::kUnique;
-  if (name == "unique_index") return support::BuiltinFn::kUniqueIndex;
-  if (name == "map") return support::BuiltinFn::kMap;
+  return std::nullopt;
+}
+
+auto LowerArrayIteratorMethodName(std::string_view name)
+    -> std::optional<hir::ArrayIteratorMethod> {
+  using hir::ArrayIteratorMethod;
+  if (name == "sort") return ArrayIteratorMethod::kSort;
+  if (name == "rsort") return ArrayIteratorMethod::kRsort;
+  if (name == "sum") return ArrayIteratorMethod::kSum;
+  if (name == "product") return ArrayIteratorMethod::kProduct;
+  if (name == "and") return ArrayIteratorMethod::kAnd;
+  if (name == "or") return ArrayIteratorMethod::kOr;
+  if (name == "xor") return ArrayIteratorMethod::kXor;
+  if (name == "find") return ArrayIteratorMethod::kFind;
+  if (name == "find_index") return ArrayIteratorMethod::kFindIndex;
+  if (name == "find_first") return ArrayIteratorMethod::kFindFirst;
+  if (name == "find_first_index") return ArrayIteratorMethod::kFindFirstIndex;
+  if (name == "find_last") return ArrayIteratorMethod::kFindLast;
+  if (name == "find_last_index") return ArrayIteratorMethod::kFindLastIndex;
+  if (name == "min") return ArrayIteratorMethod::kMin;
+  if (name == "max") return ArrayIteratorMethod::kMax;
+  if (name == "unique") return ArrayIteratorMethod::kUnique;
+  if (name == "unique_index") return ArrayIteratorMethod::kUniqueIndex;
+  if (name == "map") return ArrayIteratorMethod::kMap;
   return std::nullopt;
 }
 

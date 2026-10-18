@@ -56,10 +56,13 @@ shape:
   bound value at construction. `self` is an ordinary environment field, bound like any other
   captured variable, not a privileged slot (see `unified-callable-model.md`). This holds for every
   closure form, the fork branch included. No invoker of a closure value -- the NBA /
-  postponed-`$strobe` / deferred-check region runner, the fork scheduler, the with-clause iterator
-  -- can be relied on to know which receiver belongs in the body, because a closure value can
-  outlive the enclosing-scope frame that knows. The enclosing scope snapshots its own `self` into
-  the closure's environment at construction; the body reads the bound value.
+  postponed-`$strobe` / deferred-check region runner, the fork scheduler, a sort handed an order --
+  can be relied on to know which receiver belongs in the body, because a closure value can outlive
+  the enclosing-scope frame that knows. The enclosing scope snapshots its own `self` into the
+  closure's environment at construction; the body reads the bound value. Where the object lives
+  while referenced, what the scope snapshots is the share of the object it holds, and the body's
+  `self` is derived from that share where the body begins, so a closure that outlives its method
+  keeps the object alive (`../architecture/binding_and_capture.md` invariant 9).
 
 This partition is not a stylistic choice -- it follows from "who knows the receiver?". A method-form
 callable has a caller-who-knows; a closure does not. Forcing both forms onto one supply mechanism
@@ -81,9 +84,8 @@ The C++ backend renders each form in its natural idiom:
   binds a `VariableRef<T>` rather than a snapshot. Its call operator is the invoke, which reads each
   capture through the closure it runs against, the way the MIR invoke reads it through its receiver,
   so the captured `self` is reached as `closure->self->X`, never through an implicit `this`. A
-  coroutine closure (a fork branch) is started through a static function taking the closure by
-  value, so the captures are copied into the coroutine's frame -- a backend realization of the same
-  captures, since a closure borrowed by a coroutine would dangle.
+  coroutine closure (a fork branch) is made in a box and started through a static function taking
+  the box over, so the execution owns its captures.
 
 Every callable body lowers to a static function over the explicit receiver `self`. The callables an
 engine or the C++ language reaches through an instance entry -- the C++ constructor (instance
