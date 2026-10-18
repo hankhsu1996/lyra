@@ -94,10 +94,11 @@ auto DistributeStreamed(
     const std::optional<StreamShape> shape =
         FixedStreamShapeOf(unit, elem.type);
     if (!shape.has_value()) {
+      // LRM 11.4.14.3.
       return diag::Fail(
           elem.span, diag::DiagCode::kUnsupportedExpressionForm,
           "filling a value of this type from a stream of bits is not yet "
-          "supported (LRM 11.4.14.3)");
+          "supported");
     }
     widths.push_back(shape->width);
     members_width += shape->width;
@@ -183,10 +184,11 @@ auto DistributeUnpacked(
     const std::optional<DescentStep> step =
         PatternMemberStep(unit, block, lvalue.type, i);
     if (!step.has_value()) {
+      // LRM 10.9.
       return diag::Fail(
           lvalue.span, diag::DiagCode::kUnsupportedExpressionForm,
           "an assignment pattern of this type is not yet supported as the "
-          "target of a write (LRM 10.9)");
+          "target of a write");
     }
     const mir::ExprId member =
         block.exprs.Add(StepRead(unit, block, *step, held));

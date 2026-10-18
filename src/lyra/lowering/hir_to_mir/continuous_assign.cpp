@@ -9,7 +9,6 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -317,9 +316,9 @@ auto LowerContinuousAssign(
         !lowerer.Owner().Hir().types.Get(hir_lhs.type).IsIntegral()) {
       return diag::Fail(
           src.span, diag::DiagCode::kUnsupportedContinuousAssignForm,
-          "rise, fall and turn-off delays on a target that holds no integral "
-          "value are not supported (LRM 10.3.3 chooses among them only for a "
-          "scalar or a vector net)");
+          "rise, fall and turn-off delays on a target holding no integral "
+          "value are not yet supported, since the standard chooses among them "
+          "only for a scalar or a vector net");
     }
     delay = DriveDelay{
         .delay = *src.delay,

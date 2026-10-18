@@ -72,6 +72,16 @@ cc_test(
 )
 
 cc_test(
+    name = "base_diag_message_test",
+    srcs = ["base/diag_message_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:base",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "base_segmented_vector_test",
     srcs = ["base/segmented_vector_test.cpp"],
     copts = LYRA_COPTS,

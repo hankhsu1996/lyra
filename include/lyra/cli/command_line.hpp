@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <expected>
 #include <filesystem>
 #include <optional>
 #include <span>
@@ -121,11 +120,9 @@ void PrintHelp(slang::driver::Driver& driver);
 // Lyra the same way, and one help text covers both.
 void RegisterCliOptions(slang::CommandLine& cmd, CliOptions& opts);
 
-// One pass over Lyra's side of the command line: the command words first --
-// they are positional -- then the options, through the parser both halves
-// share. `words` is consumed: the command words are removed from it.
-auto ParseCommandWords(slang::driver::Driver& driver, std::vector<char*>& words)
-    -> std::expected<CommandKind, std::string>;
+// Reads the command words, which are positional and so come first, and removes
+// them from `words`, leaving the options for the parser both halves share.
+auto TakeCommandWords(std::vector<char*>& words) -> diag::Result<CommandKind>;
 
 // Defines the macro naming Lyra for every text this invocation reads, in every
 // library of the build. It goes ahead of what the command line defines: the
@@ -139,9 +136,10 @@ void PredefineToolIdentity(slang::driver::Driver& driver);
 // to a build on the backend that compiles no C++ -- because what is refused has
 // to be a function of the command alone for a caller to predict it.
 // `has_simulation_args` says whether anything followed a standalone `--`.
+// Answers one refusal for each such option.
 auto RefuseOptionsNotTaken(
     const CliOptions& opts, CommandKind cmd, bool has_simulation_args)
-    -> std::expected<void, std::string>;
+    -> std::vector<diag::Diagnostic>;
 
 // Answered from what the parser recorded, so a command line that fails to
 // resolve can still report why in the colour the caller asked for.
@@ -153,7 +151,7 @@ auto UseColor(const CliOptions& opts) -> bool;
 // spoken for. `--progress` overrides it in either direction, and a value it
 // does not have is the error.
 auto StatusLookOf(CommandKind cmd, const CliOptions& opts, bool use_color)
-    -> std::expected<status::Look, std::string>;
+    -> diag::Result<status::Look>;
 
 // Nothing was searched for, because the command line named its own sources.
 // This is not the absence of a search: there is nowhere to report having
@@ -166,9 +164,10 @@ using DesignDeclaration =
 // A declaration named outright is read whatever else was said. Otherwise one is
 // searched for, and only when the command line named no source of its own --
 // which is what makes an invocation independent of every file outside the
-// inputs it names.
+// inputs it names. A declaration read is held by the driver's source manager,
+// so a refusal of it is shown at its place in the file.
 auto ResolveDesignDeclaration(
-    const CliOptions& opts, const slang::driver::Driver& driver)
+    const CliOptions& opts, slang::driver::Driver& driver)
     -> diag::Result<DesignDeclaration>;
 
 // Adds the declared material to what the command line already named, and makes
@@ -196,7 +195,6 @@ auto ApplyDeclarations(
 // the precedence rule: material accumulates, selection replaces.
 auto ResolveCliOptions(
     const CliOptions& opts, const Declarations* declared, CommandKind cmd,
-    std::span<const std::string> simulation_args)
-    -> std::expected<ParsedArgs, std::string>;
+    std::span<const std::string> simulation_args) -> diag::Result<ParsedArgs>;
 
 }  // namespace lyra::cli

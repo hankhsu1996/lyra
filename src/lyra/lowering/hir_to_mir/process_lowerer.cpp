@@ -85,16 +85,19 @@ auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
             return LowerCoverStmt(*this, frame, stmt.label, c, stmt.span);
           },
           [&](const hir::ConcurrentAssertStmt&) -> diag::Result<mir::Stmt> {
-            return diag::Fail(
-                stmt.span, diag::DiagCode::kUnsupportedStatementForm,
-                "a concurrent assertion embedded in a procedure is not yet "
-                "lowered; pass --assertions skip to elide it");
+            return std::unexpected(
+                diag::Make(
+                    stmt.span, diag::DiagCode::kUnsupportedStatementForm,
+                    "a concurrent assertion embedded in a procedure is not yet "
+                    "supported")
+                    .WithNote("pass '--assertions skip' to leave it out"));
           },
           [&](const hir::ConcurrentCoverStmt&) -> diag::Result<mir::Stmt> {
-            return diag::Fail(
-                stmt.span, diag::DiagCode::kUnsupportedStatementForm,
-                "a concurrent cover statement is not yet lowered; pass "
-                "--assertions skip to elide it");
+            return std::unexpected(
+                diag::Make(
+                    stmt.span, diag::DiagCode::kUnsupportedStatementForm,
+                    "a concurrent cover statement is not yet supported")
+                    .WithNote("pass '--assertions skip' to leave it out"));
           },
           [&](const hir::ForStmt& f) {
             return LowerForStmt(*this, frame, stmt.label, f);

@@ -9,6 +9,8 @@
 #include <string_view>
 #include <vector>
 
+#include "lyra/base/diag_message.hpp"
+
 namespace lyra::support {
 
 // The numbers a run records about itself when asked, for whoever compares two
@@ -91,6 +93,6 @@ struct ChildUsage {
 void RecordChild(std::string command, ChildUsage usage);
 
 auto WriteStatistics(const std::filesystem::path& path)
-    -> std::expected<void, std::string>;
+    -> std::expected<void, base::DiagMessage>;
 
 }  // namespace lyra::support

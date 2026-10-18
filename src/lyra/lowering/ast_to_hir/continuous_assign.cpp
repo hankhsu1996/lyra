@@ -120,7 +120,7 @@ auto StructuralScopeLowerer::LowerContinuousAssign(
     // compiler-invariant violation.
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedContinuousAssignForm,
-        "this continuous-assignment form is not yet supported");
+        "this form of continuous assignment is not yet supported");
   }
   const auto& assign = assignment_expr.as<slang::ast::AssignmentExpression>();
 
@@ -135,8 +135,8 @@ auto StructuralScopeLowerer::LowerContinuousAssign(
     return diag::Fail(
         frontend::SpanOf(assign.right().sourceRange),
         diag::DiagCode::kUnsupportedContinuousAssignForm,
-        "sizing a dynamic array with new[] in a continuous assignment is not "
-        "yet supported");
+        "sizing a dynamic array with 'new[]' in a continuous assignment is "
+        "not yet supported");
   }
 
   auto rhs_or = LowerExpr(assign.right(), frame);

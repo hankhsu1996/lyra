@@ -3,7 +3,6 @@
 #include <array>
 #include <expected>
 #include <optional>
-#include <string>
 #include <utility>
 #include <variant>
 
@@ -239,11 +238,9 @@ auto LowerValueChangeCall(
             if (!bit_type.has_value()) {
               return diag::Fail(
                   span, diag::DiagCode::kUnsupportedExpressionForm,
-                  std::string{"'"} +
-                      std::string{
-                          support::ValueChangeReadingName(ref.reading)} +
-                      "' reports on the least significant bit, which a value "
-                      "of this type does not have");
+                  "'{}' reports on the least significant bit, which a value "
+                  "of this type does not have",
+                  support::ValueChangeReadingName(ref.reading));
             }
             const mir::ExprId target = BuildIntegralLiteral(
                 unit, block, *bit_type,

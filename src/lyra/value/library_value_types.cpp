@@ -69,8 +69,7 @@ concept WritesBitStream =
 [[noreturn]] void StreamNotYetSupported() {
   throw SimulationError(
       "reading this value as a stream of bits, or building one from it, is "
-      "not yet supported on this backend; please open an issue asking for "
-      "support");
+      "not yet supported with '--backend llvm'");
 }
 
 // The parts of a value of `T`, each answered with what `T` itself does.

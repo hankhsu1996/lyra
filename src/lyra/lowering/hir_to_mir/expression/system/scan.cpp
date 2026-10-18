@@ -4,7 +4,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <format>
 #include <span>
 #include <utility>
 #include <vector>
@@ -139,11 +138,9 @@ auto ValidateTargetType(
   if (target.IsIntegral()) return {};
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedSubroutineArgument,
-      std::format(
-          "a {} output argument other than an integral or string variable is "
-          "not yet supported",
-          source_kind == support::ScanSourceKind::kFile ? "$fscanf"
-                                                        : "$sscanf"));
+      "a '{}' output argument other than an integral or string variable is "
+      "not yet supported",
+      source_kind == support::ScanSourceKind::kFile ? "$fscanf" : "$sscanf");
 }
 
 }  // namespace

@@ -314,8 +314,8 @@ auto OpenArrayElementType(
     if (layer.Is<mir::DynamicArrayType>() || layer.Is<mir::QueueType>()) {
       return diag::Fail(
           diag::DiagCode::kUnsupportedDpi,
-          "an actual whose size is fixed while the program runs is not yet "
-          "carried across the DPI-C boundary as an open array");
+          "a dynamic array or a queue passed to an open array formal of a "
+          "DPI-C import is not yet supported");
     }
     const auto* fixed = layer.As<mir::UnpackedArrayType>();
     if (fixed == nullptr) {

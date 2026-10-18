@@ -7,7 +7,6 @@
 #include <exception>
 #include <expected>
 #include <filesystem>
-#include <format>
 #include <functional>
 #include <iostream>
 #include <optional>
@@ -28,6 +27,7 @@
 #include <slang/text/Json.h>
 
 #include "lyra/backend/llvm/emit.hpp"
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/cli/command_line.hpp"
@@ -99,8 +99,9 @@ auto ResolveCompiler(const CommandContext& ctx)
   ctx.sink->Report(
       diag::Make(
           diag::DiagCode::kHostIoError,
-          "no C++ compiler found, since neither clang++ nor c++ is on PATH; "
-          "name one with --cxx"));
+          "no C++ compiler is found, since neither 'clang++' nor 'c++' is on "
+          "PATH")
+          .WithNote("name one with '--cxx'"));
   return std::nullopt;
 }
 
@@ -541,10 +542,10 @@ auto DefaultProgramPath(const CommandContext& ctx)
   ctx.sink->Report(
       diag::Make(
           diag::DiagCode::kHostInvalidCliArgs,
-          std::format(
-              "this design has {} tops and no name, so the program has none "
-              "to take; name it with -o",
-              tops.size())));
+          "this design has {} tops and no library name, so the program has "
+          "no name to take",
+          tops.size())
+          .WithNote("name the program with '-o'"));
   return std::nullopt;
 }
 
@@ -650,7 +651,7 @@ auto ResolveRequest(const Invocation& invocation) -> std::optional<Request> {
       *invocation.options, declared, invocation.command,
       invocation.simulation_args);
   if (!parsed) {
-    report(diag::Make(diag::DiagCode::kHostInvalidCliArgs, parsed.error()));
+    report(parsed.error());
     return std::nullopt;
   }
 
@@ -658,23 +659,20 @@ auto ResolveRequest(const Invocation& invocation) -> std::optional<Request> {
     auto diagnostic =
         diag::Make(diag::DiagCode::kHostNoInputFiles, "no input files");
     if (absent) {
-      diagnostic =
-          std::move(diagnostic)
-              .WithNote(
-                  std::format(
-                      "searched for lyra.toml from {} up to {}",
-                      absent->started.string(), absent->stopped.string()));
+      diagnostic = std::move(diagnostic)
+                       .WithNote(
+                           "searched for 'lyra.toml' from '{}' up to '{}'",
+                           absent->started.string(), absent->stopped.string());
     }
     // A declaration was in effect and still named nothing, which reads as no
     // declaration at all unless the message says which one applied -- and the
     // one that applied may be several directories above the caller.
     if (declared != nullptr) {
-      diagnostic = std::move(diagnostic)
-                       .WithNote(
-                           std::format(
-                               "library '{}' at {} declares no source files",
-                               declared->root.library.name,
-                               declared->root.path.string()));
+      diagnostic =
+          std::move(diagnostic)
+              .WithNote(
+                  "library '{}' at '{}' declares no source files",
+                  declared->root.library.name, declared->root.path.string());
     }
     report(std::move(diagnostic));
     return std::nullopt;
@@ -831,8 +829,8 @@ auto RunEmitCommand(const Invocation& invocation) -> int {
   std::filesystem::create_directories(dir, ec);
   if (ec) {
     (*invocation.report)(diag::Make(
-        diag::DiagCode::kHostIoError,
-        std::format("cannot write '{}' ({})", dir.string(), ec.message())));
+        diag::DiagCode::kHostIoError, "cannot write '{}' ({})", dir.string(),
+        ec.message()));
     return 1;
   }
   return RunOnRequest(
@@ -847,7 +845,7 @@ auto RunCacheClear(const Invocation& invocation) -> int {
       *invocation.options, nullptr, invocation.command,
       invocation.simulation_args);
   if (!parsed) {
-    report(diag::Make(diag::DiagCode::kHostInvalidCliArgs, parsed.error()));
+    report(parsed.error());
     return 1;
   }
   if (!parsed->store) {
@@ -855,7 +853,8 @@ auto RunCacheClear(const Invocation& invocation) -> int {
         diag::Make(
             diag::DiagCode::kHostIoError,
             "no cache directory is known, since neither XDG_CACHE_HOME nor "
-            "HOME names an absolute path; name one with --cache-dir"));
+            "HOME names an absolute path")
+            .WithNote("name one with '--cache-dir'"));
     return 1;
   }
   const std::size_t cleared = driver::ClearStore(*parsed->store);
@@ -895,10 +894,11 @@ auto RunCommand(const Invocation& invocation) -> int {
 
 auto StartSelfReport(const CliOptions& options) -> diag::Result<SelfReport> {
   if (options.time_trace_granularity.has_value() && !options.time_trace) {
-    return diag::Fail(
-        diag::DiagCode::kHostInvalidCliArgs,
-        "--time-trace-granularity has no time trace to apply to; name one "
-        "with --time-trace");
+    return std::unexpected(
+        diag::Make(
+            diag::DiagCode::kHostInvalidCliArgs,
+            "'--time-trace-granularity' has no time trace to apply to")
+            .WithNote("name one with '--time-trace'"));
   }
   SelfReport report;
   if (options.time_trace) {
@@ -909,8 +909,8 @@ auto StartSelfReport(const CliOptions& options) -> diag::Result<SelfReport> {
     if (granularity < 0) {
       return diag::Fail(
           diag::DiagCode::kHostInvalidCliArgs,
-          std::format(
-              "--time-trace-granularity '{}' is not a duration", granularity));
+          "'{}' given to '--time-trace-granularity' is not a duration",
+          granularity);
     }
     auto claimed = driver::ClaimedFile::Claim(*options.time_trace);
     if (!claimed) {
@@ -931,8 +931,8 @@ auto StartSelfReport(const CliOptions& options) -> diag::Result<SelfReport> {
 }
 
 auto WriteSelfReport(SelfReport& report) -> diag::Result<void> {
-  using Write =
-      auto (*)(const std::filesystem::path&)->std::expected<void, std::string>;
+  using Write = auto (*)(const std::filesystem::path&)
+                    ->std::expected<void, base::DiagMessage>;
   const auto write = [](std::optional<driver::ClaimedFile>& file,
                         Write how) -> diag::Result<void> {
     if (!file) {

@@ -2,7 +2,6 @@
 
 #include <cerrno>
 #include <filesystem>
-#include <format>
 #include <fstream>
 #include <string_view>
 #include <system_error>
@@ -19,8 +18,8 @@ namespace {
 auto CannotWrite(const std::filesystem::path& destination, std::string_view why)
     -> diag::Diagnostic {
   return diag::Make(
-      diag::DiagCode::kHostIoError,
-      std::format("cannot write '{}' ({})", destination.string(), why));
+      diag::DiagCode::kHostIoError, "cannot write '{}' ({})",
+      destination.string(), why);
 }
 
 }  // namespace
@@ -29,8 +28,10 @@ auto ClaimedFile::Claim(const std::filesystem::path& destination)
     -> diag::Result<ClaimedFile> {
   std::error_code ec;
   if (std::filesystem::is_directory(destination, ec)) {
-    return std::unexpected(CannotWrite(
-        destination, "it is a directory, and what goes there is one file"));
+    return diag::Fail(
+        diag::DiagCode::kHostIoError,
+        "cannot write '{}', which is a directory and not a file",
+        destination.string());
   }
   if (destination.has_parent_path()) {
     std::filesystem::create_directories(destination.parent_path(), ec);

@@ -195,12 +195,14 @@ ways.
 
 - **The front end refuses the program.** Lowering does not run, and the reader sees the front end's
   diagnostic.
-- **The front end accepts it, under a tolerant reading, and builds nothing to carry out.** The
-  refusal is made where the text was written, after the front end's own warning unless that was
-  silenced, and says the text has no behaviour to carry out. It is an error and never a gap. Which
-  deviations a reading tolerates and whether a program can be simulated are separate contracts: a
-  tolerance promises that the text is accepted, never that it runs, and nothing the compiler does
-  not understand is ever skipped to let the rest run.
+- **The front end accepts it and builds nothing to carry out.** That happens under a tolerant
+  reading, after the front end's own warning unless that was silenced, and also where nothing was
+  relaxed: a warning the front end gives by default can stand in for the text, and so can nothing at
+  all. The refusal is made where the text was written and says only that the text has no behaviour
+  to carry out, since it cannot know why. It is an error and never a gap. Which deviations a reading
+  tolerates and whether a program can be simulated are separate contracts: a tolerance promises that
+  the text is accepted, never that it runs, and nothing the compiler does not understand is ever
+  skipped to let the rest run.
 - **The front end accepts the program and this compiler does not carry it.** That is a gap, it is
   stated as one, and the message names the construct rather than telling the reader their correct
   code is wrong.

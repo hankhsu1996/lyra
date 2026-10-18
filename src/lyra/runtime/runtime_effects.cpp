@@ -320,11 +320,14 @@ void ReportRaisedError(
   try {
     std::rethrow_exception(raised);
   } catch (const SimulationError& error) {
-    rt.ReportDesignError(error.what());
+    rt.ReportDesignError(base::DiagMessage("{}", error.what()));
   } catch (const InternalError& error) {
     rt.ReportToolFailure(std::format("internal error: {}", error.what()));
   } catch (const std::exception& error) {
-    rt.ReportToolFailure(std::format("unexpected error: {}", error.what()));
+    rt.ReportToolFailure(
+        std::format(
+            "internal error: an exception nothing handles ({})\n{}",
+            error.what(), BugReportRequest()));
   }
 }
 
@@ -412,7 +415,7 @@ auto RuntimeEffects::UnseededRandomSeed() -> std::int32_t& {
   return AsRuntime(*this).unseeded_random_seed_;
 }
 
-void RuntimeEffects::ReportDesignFailure(std::string_view message) {
+void RuntimeEffects::ReportDesignFailure(const base::DiagMessage& message) {
   AsRuntime(*this).ReportDesignError(message);
 }
 

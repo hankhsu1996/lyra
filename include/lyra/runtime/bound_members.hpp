@@ -140,9 +140,10 @@ void BindAlias(VariableRef<T>& alias, const VariableRef<T>& bound) {
 // rest of it would have to go on following its source.
 inline void RequireWholeMember(std::int64_t count) {
   if (count != 0) {
+    // LRM 10.6.2.
     throw SimulationError(
         "a force on part of a port that stands for what its connection drives "
-        "is not yet supported (LRM 10.6.2)");
+        "is not yet supported");
   }
 }
 

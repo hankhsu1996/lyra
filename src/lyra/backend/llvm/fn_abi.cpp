@@ -10,6 +10,7 @@
 
 #include "lyra/backend/llvm/codegen_module.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -25,9 +26,12 @@ namespace lyra::backend::llvm_backend {
 
 namespace {
 
-auto Unsupported(std::string message) -> std::unexpected<diag::Diagnostic> {
+template <typename... Args>
+auto Unsupported(base::DiagFormatFor<Args...> format, Args&&... args)
+    -> std::unexpected<diag::Diagnostic> {
   return diag::Fail(
-      diag::DiagCode::kUnsupportedExpressionForm, std::move(message));
+      diag::DiagCode::kUnsupportedExpressionForm, format,
+      std::forward<Args>(args)...);
 }
 
 // The type a call states it is made at, which an entry told something of its
@@ -571,18 +575,15 @@ auto CallArranger::EntryOf(
           },
           [&](const OverIntegralValues&) -> Named {
             return Unsupported(
-                std::format(
-                    "the {} builtin is an operation over "
-                    "integral values and the library has no entry for it by "
-                    "that name",
-                    support::RuntimeEntryOf(target.fn).name));
+                "the operation '{}' over integral values is not yet supported "
+                "with '--backend llvm'",
+                support::RuntimeEntryOf(target.fn).name);
           },
           [&](const NotRealized& unrealized) -> Named {
             return Unsupported(
-                std::format(
-                    "the {} builtin {} and the library has no "
-                    "entry of that shape",
-                    support::RuntimeEntryOf(target.fn).name, unrealized.shape));
+                "the operation '{}', which {}, is not yet supported with "
+                "'--backend llvm'",
+                support::RuntimeEntryOf(target.fn).name, unrealized.shape);
           }},
       EntryNamingOf(target.fn));
 }
@@ -620,9 +621,9 @@ auto CallArranger::ConstructionOf(
   };
   const auto no_construct = [&]() -> Built {
     return Unsupported(
-        std::format(
-            "a value of type {} has no construct on the llvm backend",
-            types.Get(result).KindName()));
+        "building a value of type '{}' is not yet supported with "
+        "'--backend llvm'",
+        types.Get(result).KindName());
   };
   // An entry named by the representation of the value the construction is built
   // over, which is the call's first operand. An integral value has one entry
@@ -642,10 +643,9 @@ auto CallArranger::ConstructionOf(
   const auto real_from_host = [&]() -> Built {
     if (!types.Get(OperandType(call.args.at(0))).Is<lir::MachineFloatType>()) {
       return Unsupported(
-          std::format(
-              "building a {} from a host scalar has no entry on the llvm "
-              "backend",
-              types.Get(result).KindName()));
+          "building a value of type '{}' from a host scalar is not yet "
+          "supported with '--backend llvm'",
+          types.Get(result).KindName());
     }
     auto domain = module_->DomainOf(result);
     if (!domain) {

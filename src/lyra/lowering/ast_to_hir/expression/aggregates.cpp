@@ -68,10 +68,11 @@ auto LowerConcatExpr(
       !result_ty.Is<hir::QueueType>() &&
       !result_ty.Is<hir::UnpackedArrayType>() &&
       !result_ty.Is<hir::DynamicArrayType>()) {
+    // LRM 11.4.12, 10.10.
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "concatenation result type is not string, packed, or an unpacked array "
-        "(LRM 11.4.12 / 10.10)");
+        "a concatenation whose result is not a string, a packed value, or an "
+        "unpacked array is not yet supported");
   }
   std::vector<hir::ExprId> operand_ids;
   operand_ids.reserve(cc.operands().size());
@@ -111,7 +112,7 @@ auto LowerStreamingConcatExpr(
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "a streaming operator over a dynamically sized value is not yet "
-        "supported (LRM 11.4.14.4)");
+        "supported");
   }
   // A stream of no bits has no type to be given, and no program reaches one:
   // the front end refuses both routes to one, a zero replication inside a
@@ -127,10 +128,11 @@ auto LowerStreamingConcatExpr(
     const slang::ast::Expression& operand = StreamedExpression(stream);
     const diag::SourceSpan operand_span = frontend::SpanOf(operand.sourceRange);
     if (operand.type->getCanonicalType().isClass()) {
+      // LRM 11.4.14.1.
       return diag::Fail(
           operand_span, diag::DiagCode::kUnsupportedExpressionForm,
-          "streaming the object a class handle refers to is not yet supported "
-          "(LRM 11.4.14.1)");
+          "streaming the object a class handle refers to is not yet "
+          "supported");
     }
     auto operand_or = lowerer.LowerExpr(operand, frame);
     if (!operand_or) return std::unexpected(std::move(operand_or.error()));
@@ -170,10 +172,11 @@ auto LowerReplicationExpr(
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   const hir::Type& result_ty = unit_lowerer.Unit().types.Get(*type_id);
   if (!result_ty.IsIntegral() && !result_ty.Is<hir::StringType>()) {
+    // LRM 11.4.12.1.
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "replication result type is neither string nor packed "
-        "(LRM 11.4.12.1)");
+        "a replication whose result is neither a string nor a packed value is "
+        "not yet supported");
   }
   auto count_or = lowerer.LowerExpr(rp.count(), frame);
   if (!count_or) return std::unexpected(std::move(count_or.error()));

@@ -1,6 +1,5 @@
 #include "lyra/runtime/ambient_run_context.hpp"
 
-#include <format>
 #include <string_view>
 
 #include "lyra/base/simulation_error.hpp"
@@ -32,10 +31,11 @@ AmbientRunContext::~AmbientRunContext() {
 
 auto AmbientRunContext::Current() -> AmbientRunContext& {
   if (CurrentSlot() == nullptr) {
+    // LRM 35.5.3.
     throw SimulationError(
         "a DPI export was reached with no simulation running, and an exported "
-        "subroutine is callable only from a foreign call the simulation made "
-        "(LRM 35.5.3)");
+        "subroutine is callable only from a foreign call the simulation "
+        "made");
   }
   return *CurrentSlot();
 }
@@ -49,9 +49,9 @@ auto CurrentExportScope() -> Scope* {
     // requires svSetScope first -- the foreign side's contract to meet, not an
     // invariant this compiler established.
     throw SimulationError(
-        "a DPI export was reached without a scope context, so the calling "
-        "import must be a context import declared in an instantiated scope, "
-        "or set the scope with svSetScope (LRM 35.5.3)");
+        "a DPI export was reached without a scope; an export is callable only "
+        "from a context import declared in an instantiated scope, or after "
+        "'svSetScope' names one");
   }
   return scope;
 }
@@ -63,13 +63,12 @@ auto FindExportEntry(Scope* scope, const char* subroutine) -> ErasedEntry {
   }
   const char* entered =
       AmbientRunContext::Current().ScopeRegistry().NameOf(scope);
+  // LRM 35.5.3.
   throw SimulationError(
-      std::format(
-          "DPI export '{}' was entered under scope '{}', which declares no "
-          "such export; an export is callable directly only from an import of "
-          "its own scope, and svSetScope must name a scope that declares it "
-          "(LRM 35.5.3)",
-          subroutine, entered == nullptr ? "<unregistered>" : entered));
+      "DPI export '{}' was entered under scope '{}', which declares no such "
+      "export; an export is callable directly only from an import of its own "
+      "scope, and 'svSetScope' must name a scope that declares it",
+      subroutine, entered == nullptr ? "<unregistered>" : entered);
 }
 
 }  // namespace lyra::runtime

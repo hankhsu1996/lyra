@@ -6,6 +6,7 @@
 #include <string_view>
 #include <type_traits>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/support/statistics.hpp"
 
 namespace lyra::profiling {
@@ -24,7 +25,7 @@ auto TimeTraceStarted() -> bool;
 // Writes what every thread recorded. Called once, after every thread that
 // recorded anything has finished.
 auto TimeTraceWrite(const std::filesystem::path& path)
-    -> std::expected<void, std::string>;
+    -> std::expected<void, base::DiagMessage>;
 
 // One piece of work, for as long as the scope lives. What the work is applied
 // to -- a unit, a scope, a function -- is named by `detail`, which is called

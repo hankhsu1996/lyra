@@ -152,7 +152,8 @@ failure instead. So a red local run names one case and not the list, and
 C++23, Google style, clang-tidy warning-free. `CamelCase` classes and functions, `lower_case_`
 members, `kCamelCase` enums. Use IEEE 1800 LRM terminology for SystemVerilog concepts, and prefer
 the modern idiom -- `std::format`, `std::span` / `std::string_view`, `std::array`, `std::optional` /
-`std::expected`, structured bindings. Comments follow `docs/code-comments.md`.
+`std::expected`, structured bindings. Comments follow `docs/code-comments.md`, and a text a user
+reads follows `docs/messages.md`.
 
 - **A semantic id, index, or offset is a strong wrapper type**, never a raw integer outside a C ABI
   boundary -- including as a return value a caller then uses as an id.

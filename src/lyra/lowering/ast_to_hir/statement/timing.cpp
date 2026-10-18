@@ -81,8 +81,7 @@ auto LowerSignalEventTrigger(
       !expr_type.IsValueChangeObservable()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedEventTriggerForm,
-        "a change of this operand is not yet watched, so an event control on "
-        "it is not yet supported");
+        "an event control on a value of this type is not yet supported");
   }
 
   const auto edge_kind = LowerEventEdge(sig.edge);
@@ -140,7 +139,7 @@ auto LowerNamedEventControl(
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedEventTriggerForm,
         "waiting on an event reached this way is not yet supported; an event "
-        "declared in a structural scope is (LRM 15.5)");
+        "declared directly in a design element is");
   }
   auto condition = LowerEventCondition(proc, frame, sig);
   if (!condition) return std::unexpected(std::move(condition.error()));
@@ -252,7 +251,7 @@ auto LowerTimingControl(
     default:
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedTimingControlKind,
-          "this timing control kind is not yet supported");
+          "this kind of timing control is not yet supported");
   }
 }
 
@@ -332,8 +331,8 @@ auto LowerDelayOrEventControl(
     default:
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedTimingControlKind,
-          "this timing control kind is not yet supported where a delay or "
-          "event control may stand");
+          "this kind of timing control is not yet supported where a delay or "
+          "an event control may stand");
   }
 }
 
@@ -474,7 +473,7 @@ auto LowerEventTriggerStmt(
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedStatementForm,
         "triggering an event reached this way is not yet supported; an event "
-        "declared in a structural scope is (LRM 15.5)");
+        "declared directly in a design element is");
   }
   auto timing_or = LowerTriggerTiming(proc, frame, et, span);
   if (!timing_or) return std::unexpected(std::move(timing_or.error()));

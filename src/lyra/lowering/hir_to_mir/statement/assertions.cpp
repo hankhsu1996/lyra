@@ -3,11 +3,11 @@
 #include <expected>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/source_manager.hpp"
@@ -28,12 +28,12 @@ namespace {
 // The noun a default failure report names. LRM 16.3 gives an assumption the
 // same checking an assertion gets, so all the directive decides is which of
 // the two the reader is told about.
-auto FailureText(hir::AssertionDirective directive) -> std::string_view {
+auto FailureText(hir::AssertionDirective directive) -> base::DiagMessage {
   switch (directive) {
     case hir::AssertionDirective::kAssert:
-      return "assertion failed";
+      return base::DiagMessage("assertion failed");
     case hir::AssertionDirective::kAssume:
-      return "assumption failed";
+      return base::DiagMessage("assumption failed");
   }
   throw InternalError("FailureText: unknown assertion directive");
 }
@@ -209,7 +209,7 @@ void AppendDefaultReport(
     hir::AssertionDirective directive, diag::SourceSpan span) {
   AppendToolReportStmt(
       process.Owner(), block, support::BuiltinFn::kEmitError,
-      std::string(FailureText(directive)), span);
+      FailureText(directive), span);
 }
 
 auto HasRealArm(const hir::ProceduralBody& body, std::optional<hir::StmtId> arm)

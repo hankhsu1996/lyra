@@ -547,16 +547,6 @@ auto HasTruthValue(const mir::Type& type) -> bool {
          type.Is<mir::ManagedRefType>() || type.Is<mir::ChandleType>();
 }
 
-// A refusal naming what it refuses in the target's own spelling of the types
-// involved, which is the vocabulary this backend has for them.
-template <typename... Pieces>
-auto Refusal(diag::DiagCode code, const Pieces&... pieces)
-    -> std::unexpected<diag::Diagnostic> {
-  TargetText message;
-  Write(message, pieces...);
-  return diag::Fail(code, std::move(message).Take());
-}
-
 }  // namespace
 
 auto ConversionAsCpp(
@@ -574,10 +564,13 @@ auto ConversionAsCpp(
       (destination.Is<mir::MachineBoolType>() && HasTruthValue(source))) {
     return ConvertedByCastNotation{.to = to};
   }
-  return Refusal(
+  // The types are named in the target's own spelling, which is the vocabulary
+  // this backend has for them.
+  return diag::Fail(
       diag::DiagCode::kUnsupportedConversionForm,
-      "the C++ backend has no conversion from `", CppType(unit, from), "` to `",
-      CppType(unit, to), "`");
+      "a conversion from '{}' to '{}' is not yet supported with "
+      "'--backend cpp'",
+      TextOf(CppType(unit, from)), TextOf(CppType(unit, to)));
 }
 
 auto NullSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type)
@@ -589,10 +582,10 @@ auto NullSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type)
   if (t.Is<mir::PointerType>() || t.Is<mir::MachineFunctionType>()) {
     return NullAsNullAddress{};
   }
-  return Refusal(
+  return diag::Fail(
       diag::DiagCode::kUnsupportedExpressionForm,
-      "the C++ backend has no value of `", CppType(unit, type),
-      "` that names nothing");
+      "a null value of type '{}' is not yet supported with '--backend cpp'",
+      TextOf(CppType(unit, type)));
 }
 
 void WriteNull(

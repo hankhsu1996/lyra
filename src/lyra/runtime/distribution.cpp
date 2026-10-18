@@ -4,7 +4,6 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
-#include <format>
 #include <limits>
 #include <string_view>
 
@@ -181,9 +180,7 @@ auto DrawnWith(DistInt value, DistInt seed) -> DistributionDraw {
 void RequirePositive(
     DistInt shape, std::string_view subroutine, std::string_view argument) {
   if (shape <= 0) {
-    throw SimulationError(
-        std::format(
-            "{} requires a positive {} (LRM 20.14.2)", subroutine, argument));
+    throw SimulationError("'{}' requires a positive {}", subroutine, argument);
   }
 }
 

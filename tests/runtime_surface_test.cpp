@@ -215,7 +215,7 @@ TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
   const std::vector<std::string> emit_args = {
       "emit", "cpp", "--top", "Test", "-o", project.string(), design.string()};
   auto emit_or = lyra::driver::RunProcessCaptured(lyra_exe, emit_args);
-  ASSERT_TRUE(emit_or) << emit_or.error();
+  ASSERT_TRUE(emit_or) << emit_or.error().Text();
   ASSERT_EQ(emit_or->exit_code, 0) << emit_or->stderr_text;
 
   std::vector<lyra::driver::ProcessRequest> compiles;
@@ -240,7 +240,7 @@ TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
   }
   ASSERT_FALSE(objects.empty()) << "the design emitted no translation unit";
   auto compiled_or = lyra::driver::RunProcessesCaptured(compiles, 4);
-  ASSERT_TRUE(compiled_or) << compiled_or.error();
+  ASSERT_TRUE(compiled_or) << compiled_or.error().Text();
   for (const auto& compiled : *compiled_or) {
     ASSERT_EQ(compiled.exit_code, 0) << "an emitted unit did not compile:\n"
                                      << compiled.stderr_text;
@@ -255,8 +255,8 @@ TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
     auto mangled_or = lyra::driver::RunProcessCaptured(*nm_or, mangled_args);
     auto demangled_or =
         lyra::driver::RunProcessCaptured(*nm_or, demangled_args);
-    ASSERT_TRUE(mangled_or) << mangled_or.error();
-    ASSERT_TRUE(demangled_or) << demangled_or.error();
+    ASSERT_TRUE(mangled_or) << mangled_or.error().Text();
+    ASSERT_TRUE(demangled_or) << demangled_or.error().Text();
     const std::vector<std::string> mangled =
         SymbolNames(mangled_or->stdout_text);
     const std::vector<std::string> demangled =

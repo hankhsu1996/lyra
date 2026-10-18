@@ -24,6 +24,7 @@
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/types/Type.h>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -325,7 +326,7 @@ auto UnitLowerer::ResolveRouteTarget(
   const auto unsupported = [&] {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        std::format("reaching `{}` this way is not yet supported", value.name));
+        "reaching '{}' this way is not yet supported", value.name);
   };
 
   return std::visit(
@@ -755,9 +756,10 @@ auto UnitLowerer::PlaceThroughPort(
 auto UnitLowerer::ReachOwnScope(
     const WalkFrame& frame, const slang::ast::Scope& target,
     diag::SourceSpan span) -> diag::Result<InUnitReach> {
-  const auto refuse = [&](std::string message) {
+  const auto refuse = [&](base::DiagFormat<> message) {
     return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm, std::move(message));
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        base::DiagMessage(message));
   };
   // An ancestor of the reader is the whole reach, and the descent is empty.
   if (const auto hops = frame.HopsTo(LookupScopeFrame(target))) {
@@ -788,8 +790,8 @@ auto UnitLowerer::ReachOwnScope(
     if (owned == nullptr ||
         std::holds_alternative<hir::InstanceMemberId>(*owned)) {
       return refuse(
-          "a subroutine reached through a scope this module does not lay out "
-          "is not yet supported");
+          "a subroutine reached through a scope outside this module is not "
+          "yet supported");
     }
     reach.descent.push_back(
         hir::OwnedChildStep{.names = *owned, .selects = step.selects});
@@ -1163,9 +1165,8 @@ auto UnitLowerer::ResolveValueTarget(
   if (!route->has_value()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        std::format(
-            "reaching the storage `{}` names from here is not yet supported",
-            value.name));
+        "reaching the storage '{}' names from here is not yet supported",
+        value.name);
   }
   return hir::ValueTarget{*std::move(*route)};
 }
@@ -1222,8 +1223,8 @@ auto UnitLowerer::DeclaringInstanceFrom(
     if (on == nullptr) {
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedClassFeature,
-          "reaching the instance a class another instance declares belongs "
-          "to is not yet supported from here");
+          "reaching, from here, the instance that holds a class another "
+          "instance declares is not yet supported");
     }
     const hir::TypeId object_type = ScopeClassTypeOf(on->scope_class);
     return hir::DeclaringInstanceReach{
@@ -1273,10 +1274,9 @@ auto UnitLowerer::ResolveStaticPropertyTarget(
     const auto refuse = [&] {
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedExpressionForm,
-          std::format(
-              "reaching the static property `{}` of a class another instance "
-              "declares is not yet supported from here",
-              prop.name));
+          "reaching the static property '{}' of a class another instance "
+          "declares is not yet supported from here",
+          prop.name);
     };
     auto route = RouteToClassScope(frame, owner_class);
     const auto* on = route.has_value()
@@ -1333,9 +1333,10 @@ auto UnitLowerer::ObservedThroughModport(
     const slang::ast::ModportPortSymbol& offered, const WalkFrame& frame,
     RouteOrigin origin) -> diag::Result<std::vector<hir::SensitivityEntry>> {
   const auto span = frontend::PointSpanOf(offered.location);
-  const auto refuse = [&](std::string message) {
+  const auto refuse = [&](base::DiagFormat<> message) {
     return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm, std::move(message));
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        base::DiagMessage(message));
   };
   const slang::ast::Scope* view = offered.getParentScope();
   if (view == nullptr) {
@@ -1353,8 +1354,8 @@ auto UnitLowerer::ObservedThroughModport(
                        : nullptr;
   if (on == nullptr) {
     return refuse(
-        "waiting on a name a view offers, reached by a path of this shape, is "
-        "not yet supported");
+        "waiting on a name a modport offers, reached by a path of this "
+        "shape, is not yet supported");
   }
   const ScopeRoute& route = *reached;
   const hir::ExternalScopeClassId scope_class = on->scope_class;

@@ -6,7 +6,10 @@
 #include <variant>
 #include <vector>
 
+#include <slang/text/SourceManager.h>
+
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/source_span.hpp"
 #include "lyra/support/assertion_policy.hpp"
 
 namespace lyra::cli {
@@ -40,11 +43,13 @@ struct DeclaredLibrary {
   std::vector<std::string> export_incdir;
 };
 
-// Another library whose cells this one's cells may name: what it is called and
-// the file declaring it.
+// Another library whose cells this one's cells may name: what it is called,
+// the file declaring it, and where the depending file names it, which is where
+// whatever stops the build reaching it is shown.
 struct DeclaredDependency {
   std::string name;
   std::filesystem::path manifest;
+  diag::SourceSpan declared_at;
 };
 
 // What is run where the library is developed: the cells elaboration starts at,
@@ -109,7 +114,11 @@ struct Declarations {
 // on asks for and one build cannot give each library separately is refused
 // rather than read under the root's answer: a language version or a time scale
 // other than the root's.
-auto LoadDeclarations(const std::filesystem::path& path)
+//
+// Each file is read through `sources`, the source manager every diagnostic is
+// shown against, so a refusal is shown at its place in the file.
+auto LoadDeclarations(
+    const std::filesystem::path& path, slang::SourceManager& sources)
     -> diag::Result<Declarations>;
 
 }  // namespace lyra::cli

@@ -304,10 +304,9 @@ auto LowerUnpackedUnion(
               PartOnlyATaggedUnionMayHold(field->getType())) {
         return diag::Fail(
             decl_span, diag::DiagCode::kUnsupportedTypeKind,
-            std::format(
-                "an untagged union member holding a '{}' is not supported; "
-                "only a tagged union may hold one (LRM 7.3)",
-                part->toString()));
+            "an untagged union member cannot hold a '{}'; only a tagged "
+            "union may hold one",
+            part->toString());
       }
     }
   }
@@ -500,8 +499,9 @@ auto TranslateType(
             aa.indexType->isCHandle() || aa.indexType->isClass())) {
         return diag::Fail(
             decl_span, diag::DiagCode::kUnsupportedAssociativeArrayType,
-            "associative arrays are only supported with a string, class, "
-            "integral, chandle, or wildcard index type");
+            "an associative array with an index of this type is not yet "
+            "supported; a string, class, integral, 'chandle' or wildcard "
+            "index is");
       }
       auto key_id_or = unit_lowerer.InternType(*aa.indexType, decl_span);
       if (!key_id_or) {
@@ -535,7 +535,7 @@ auto TranslateType(
     default:
       return diag::Fail(
           decl_span, diag::DiagCode::kUnsupportedTypeKind,
-          "unsupported type kind");
+          "the type '{}' is not yet supported", canonical.toString());
   }
 }
 
@@ -710,7 +710,7 @@ auto BuildInterfaceForwardingMethod(
         return diag::Fail(
             span, diag::DiagCode::kUnsupportedClassFeature,
             "an interface method satisfied by an inherited implementation with "
-            "an output / inout / ref argument is not yet supported");
+            "an 'output', 'inout' or 'ref' argument is not yet supported");
     }
     const hir::ProceduralVarId var = body.procedural_vars.Declare();
     body.procedural_vars.Define(
@@ -1289,10 +1289,9 @@ auto UnitLowerer::MakeExternalDispatchSlot(
   }
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedExpressionForm,
-      std::format(
-          "'{}' is introduced by no class this unit can read through '{}::{}', "
-          "so there is nothing to name the behavior by",
-          method_name, cls.unit_name, support::DisplayOf(cls.class_path)));
+      "no class reachable through '{}::{}' declares '{}', so there is no "
+      "method to call",
+      cls.unit_name, support::DisplayOf(cls.class_path), method_name);
 }
 
 auto UnitLowerer::IntroducerOf(
@@ -1839,8 +1838,8 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
       if (formal->direction != slang::ast::ArgumentDirection::In) {
         return diag::Fail(
             span, diag::DiagCode::kUnsupportedClassFeature,
-            "a constructor with an output / inout / ref argument is not yet "
-            "supported");
+            "a constructor with an 'output', 'inout' or 'ref' argument is not "
+            "yet supported");
       }
     }
     auto ctor_or = LowerConstructorDecl(
@@ -1904,11 +1903,14 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
                  !owes_defaults) {
         return std::unexpected(std::move(owes_defaults.error()));
       } else if (*owes_defaults) {
-        return diag::Fail(
-            span, diag::DiagCode::kUnsupportedClassFeature,
-            "a base constructor formal left to its default value is not yet "
-            "supported; state the argument in super.new or on the extends "
-            "specifier");
+        return std::unexpected(
+            diag::Make(
+                span, diag::DiagCode::kUnsupportedClassFeature,
+                "a base class constructor argument left to its default value "
+                "is not yet supported")
+                .WithNote(
+                    "state the argument in 'super.new' or on the 'extends' "
+                    "clause"));
       } else {
         base_arguments.emplace();
       }

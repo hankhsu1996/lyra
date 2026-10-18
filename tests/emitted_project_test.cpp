@@ -83,7 +83,7 @@ TEST(LyraEmittedProject, ProducesPortableBuildableProject) {
   // build.sh it ships.
   const auto program = out_dir / "program";
   auto sh_or = lyra::driver::FindOnPath("sh");
-  ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
+  ASSERT_TRUE(sh_or.has_value()) << sh_or.error().Text();
   const std::vector<std::string> rebuild = {
       "-c", "cd '" + out_dir.string() + "' && sh build.sh"};
   const auto built = RunChildProcess(*sh_or, rebuild, 120s);
@@ -131,7 +131,7 @@ TEST(LyraEmittedProject, RebuildsAfterSwitchingOptimization) {
   const auto program = out_dir / "program";
 
   auto sh_or = lyra::driver::FindOnPath("sh");
-  ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
+  ASSERT_TRUE(sh_or.has_value()) << sh_or.error().Text();
   const std::vector<std::string> rebuild = {
       "-c", "cd '" + out_dir.string() + "' && sh build.sh"};
 
@@ -175,7 +175,7 @@ TEST(LyraEmittedProject, BuildsEvenWhenThePrecompiledHeaderIsRefused) {
   const auto emitted = RunChildProcess(lyra, emit, 120s);
   ASSERT_EQ(emitted.exit_code, 0) << emitted.stderr_text;
   auto sh_or = lyra::driver::FindOnPath("sh");
-  ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
+  ASSERT_TRUE(sh_or.has_value()) << sh_or.error().Text();
   const std::vector<std::string> recipe = {
       "-c", "cd '" + out_dir.string() + "' && sh build.sh"};
   const auto first = RunChildProcess(*sh_or, recipe, 120s);
@@ -282,7 +282,7 @@ TEST(LyraEmittedProject, TakesTheWidthItIsGiven) {
   const auto emitted = RunChildProcess(lyra, emit, 120s);
   ASSERT_EQ(emitted.exit_code, 0) << emitted.stderr_text;
   auto sh_or = lyra::driver::FindOnPath("sh");
-  ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
+  ASSERT_TRUE(sh_or.has_value()) << sh_or.error().Text();
   // Zero asks the recipe for one compile per processor, which is the spelling
   // a caller uses to say the machine is its own.
   for (const std::string_view width : {"1", "0"}) {
@@ -318,7 +318,7 @@ TEST(LyraEmittedProject, BuildsTwiceIntoOneDirectory) {
   const auto program = out_dir / "program";
 
   auto sh_or = lyra::driver::FindOnPath("sh");
-  ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
+  ASSERT_TRUE(sh_or.has_value()) << sh_or.error().Text();
   const std::vector<std::string> emit = {
       "emit", "cpp", "--top", "Test", "-o", out_dir.string(), src.string()};
   const std::vector<std::string> recipe = {
@@ -365,7 +365,7 @@ TEST(LyraEmittedProject, PortableProjectBuildsItsDpiSources) {
   std::filesystem::remove(foreign);
 
   auto sh_or = lyra::driver::FindOnPath("sh");
-  ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
+  ASSERT_TRUE(sh_or.has_value()) << sh_or.error().Text();
   const std::vector<std::string> build = {
       "-c", "cd '" + out_dir.string() + "' && sh build.sh"};
   const auto built = RunChildProcess(*sh_or, build, 120s);

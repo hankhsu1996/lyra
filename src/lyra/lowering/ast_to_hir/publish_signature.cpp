@@ -33,6 +33,7 @@
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -218,8 +219,8 @@ auto PublishPath(
       if (!index.has_value()) {
         return diag::Fail(
             span, diag::DiagCode::kUnsupportedStructuralMember,
-            "a port naming an element of an internal name at a coordinate "
-            "the front end did not fix is not yet supported");
+            "a port naming an element of an internal name at an index that "
+            "is not constant is not yet supported");
       }
       path.emplace_back(
           hir::PublishedElementSelector{
@@ -236,8 +237,8 @@ auto PublishPath(
     if (!range.has_value()) {
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedStructuralMember,
-          "a port naming a window of an internal name at bounds the front "
-          "end did not fix is not yet supported");
+          "a port naming a part of an internal name between bounds that are "
+          "not constant is not yet supported");
     }
     path.emplace_back(
         hir::PublishedSliceSelector{
@@ -725,10 +726,10 @@ auto UnitLowerer::PublishScopeClass(
   const auto interface_port = [&](const slang::ast::InterfacePortSymbol& port)
       -> diag::Result<hir::PublishedMember> {
     const auto span = frontend::PointSpanOf(port.location);
-    const auto refuse = [&](std::string message) {
+    const auto refuse = [&](base::DiagFormat<> message) {
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedStructuralMember,
-          std::move(message));
+          base::DiagMessage(message));
     };
     const auto declared = port.getDeclaredRange();
     if (!declared.has_value()) {
@@ -856,10 +857,9 @@ auto UnitLowerer::PublishScopeClass(
     if (!id.has_value()) {
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedStructuralMember,
-          std::format(
-              "a view naming '{}', which its interface does not declare where "
-              "the view is, is not yet supported",
-              declared.name));
+          "a modport naming '{}', which its interface does not declare where "
+          "the modport is, is not yet supported",
+          declared.name);
     }
     return *id;
   };
@@ -889,8 +889,8 @@ auto UnitLowerer::PublishScopeClass(
       if (!peeled.has_value()) {
         return diag::Fail(
             span, diag::DiagCode::kUnsupportedStructuralMember,
-            "a view naming this part of one of its interface's declarations "
-            "is not yet supported");
+            "a modport naming this part of one of its interface's "
+            "declarations is not yet supported");
       }
       auto id = viewed_member(*peeled->base, span);
       if (!id) return std::unexpected(std::move(id.error()));

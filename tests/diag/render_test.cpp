@@ -133,7 +133,7 @@ TEST(DiagRender, AnInternalErrorSaysSoOnce) {
       "domain\n"
       "internal error at 3..9: internal error: an invariant broke\n"
       "2 errors generated.\n"
-      "This is a bug in Lyra. Please report at: "
+      "note: this is a bug in Lyra; report it at "
       "https://github.com/hankhsu1996/lyra/issues\n");
 }
 
@@ -142,7 +142,7 @@ TEST(DiagRender, SinkSummaryAggregatesCounts) {
   sink.Report(
       lyra::diag::Make(
           DiagCode::kUnsupportedStatementForm,
-          "feature A is not supported yet"));
+          "feature A is not yet supported"));
   sink.Report(lyra::diag::Make(DiagCode::kHostIoError, "cannot read 'foo.sv'"));
   sink.Report(lyra::diag::Make(DiagCode::kWarningPedantic, "pedantic"));
 

@@ -1895,7 +1895,7 @@ auto UnpublishedEntries(
     if (!unpublished.empty()) {
       unpublished += ", ";
     }
-    unpublished += name;
+    unpublished += std::format("'{}'", name);
   }
   return unpublished;
 }
@@ -1967,8 +1967,9 @@ auto CheckAgainstRuntime(const backend::llvm_backend::EmittedModule& module)
   if (!unpublished.empty()) {
     return diag::Fail(
         diag::DiagCode::kUnsupportedExpressionForm,
-        std::format(
-            "the runtime library publishes no entry named {}", unpublished));
+        "an operation the design needs is not yet supported with "
+        "'--backend llvm'; the runtime library has no entry {}",
+        unpublished);
   }
   // Two sides of the ABI disagreeing is this compiler's own defect, and it is
   // caught here because it is the one place both are visible. Left to run, a
@@ -2054,10 +2055,8 @@ auto ArtifactOf(const driver::ActionResult& object)
   const std::uintmax_t bytes = std::filesystem::file_size(object.path, ec);
   if (ec) {
     return diag::Fail(
-        diag::DiagCode::kHostIoError,
-        std::format(
-            "failed to read the size of '{}' ({})", object.path.string(),
-            ec.message()));
+        diag::DiagCode::kHostIoError, "cannot read the size of '{}' ({})",
+        object.path.string(), ec.message());
   }
   return support::Artifact{
       .kind = support::ArtifactKind::kObject,

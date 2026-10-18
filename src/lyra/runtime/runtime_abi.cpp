@@ -1130,7 +1130,7 @@ void StoreLiteralEntries(
 auto NewCount(std::int64_t count) -> std::size_t {
   if (count < 0) {
     throw SimulationError(
-        "the size given to a dynamic array's new[] is negative (LRM 7.5.1)");
+        "the size given to a dynamic array's new[] is negative");
   }
   return static_cast<std::size_t>(count);
 }
@@ -4856,10 +4856,9 @@ auto lyra_rt_laidout_conform_size(
   const lyra::value::FixedArrayType& target = ArrayTypeAt(answer_type);
   if (source.Count() != target.Count()) {
     throw lyra::SimulationError(
-        std::format(
-            "unpacked array concatenation yields {} elements but the "
-            "fixed-size target has {} (LRM 10.10)",
-            source.Count(), target.Count()));
+        "an unpacked array concatenation yields {} elements, while the "
+        "fixed-size target has {}",
+        source.Count(), target.Count());
   }
   return Emplace(
       out, ArrayFromElements(target, lyra::runtime::ElementHandles(source)));

@@ -6,6 +6,7 @@
 #include <string_view>
 #include <utility>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
@@ -210,7 +211,7 @@ class RuntimeEffects {
   // (LRM 20.10). It is the composition a `$fatal` makes, minus the departure --
   // for a condition found where nothing may leave by unwinding, which is any
   // frame reached from foreign code.
-  void ReportDesignFailure(std::string_view message);
+  void ReportDesignFailure(const base::DiagMessage& message);
 
   [[nodiscard]] auto Now() const -> SimTime;
   [[nodiscard]] auto GlobalPrecisionPower() const -> std::int8_t;

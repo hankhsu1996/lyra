@@ -4,7 +4,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
-#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -266,8 +265,8 @@ auto ReadReport::RunsTheBody() const -> std::int64_t {
 void RefuseReport(std::string_view why) {
   throw SimulationError(
       "waiting on an expression that calls this function is not yet "
-      "supported, because " +
-      std::string{why});
+      "supported, because {}",
+      why);
 }
 
 }  // namespace lyra::runtime

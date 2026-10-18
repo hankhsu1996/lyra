@@ -850,9 +850,8 @@ auto UnitLowerer::DeclaringScopeHopsFrom(
   if (!hops.has_value()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedClassFeature,
-        "a class declared in a scope this body does not stand inside keeps "
-        "what it holds for itself on an instance this body cannot reach; that "
-        "is not yet supported");
+        "a class whose static members belong to an instance not reachable "
+        "from here is not yet supported");
   }
   return *hops;
 }

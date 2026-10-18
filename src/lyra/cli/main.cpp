@@ -5,6 +5,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include <fmt/core.h>
 #include <llvm/Support/ErrorHandling.h>
@@ -15,7 +16,6 @@
 #include "lyra/base/stack_thread.hpp"
 #include "lyra/cli/command_line.hpp"
 #include "lyra/cli/commands.hpp"
-#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/failure_context.hpp"
 #include "lyra/diag/render.hpp"
@@ -27,7 +27,7 @@
 namespace {
 
 constexpr std::string_view kOutOfMemory =
-    "error: the compiler ran out of memory.\n";
+    "error: the compiler ran out of memory\n";
 
 // The code generator's own allocator answers a refused request here rather
 // than through `operator new`, and its code cannot be unwound through.
@@ -52,7 +52,12 @@ auto RunLyra(int argc, char** argv) -> int {
     return 0;
   }
 
-  auto command = lyra::cli::ParseCommandWords(driver, argv_split.lyra);
+  auto command = lyra::cli::TakeCommandWords(argv_split.lyra);
+  // The parser prints its own account of what is wrong with the options.
+  const bool options_parsed =
+      command.has_value() &&
+      driver.parseCommandLine(
+          static_cast<int>(argv_split.lyra.size()), argv_split.lyra.data());
 
   const bool use_color = lyra::cli::UseColor(cli_options);
   const lyra::frontend::SlangSourceManager sources(driver.sourceManager);
@@ -60,24 +65,22 @@ auto RunLyra(int argc, char** argv) -> int {
       lyra::diag::RenderOptions{.use_color = use_color}, sources};
 
   if (!command) {
-    // An empty message means the parser already printed its own account of
-    // what was wrong with the command line.
-    if (!command.error().empty()) {
-      report(
-          lyra::diag::Make(
-              lyra::diag::DiagCode::kHostInvalidCliArgs, command.error()));
-    }
+    report(command.error());
+    return 1;
+  }
+  if (!options_parsed) {
     return 1;
   }
   driver.setTerminalColorsEnabled(use_color);
   lyra::cli::PredefineToolIdentity(driver);
 
-  if (auto taken = lyra::cli::RefuseOptionsNotTaken(
+  const std::vector<lyra::diag::Diagnostic> refused =
+      lyra::cli::RefuseOptionsNotTaken(
           cli_options, *command, !argv_split.child.empty());
-      !taken) {
-    report(
-        lyra::diag::Make(
-            lyra::diag::DiagCode::kHostInvalidCliArgs, taken.error()));
+  for (const lyra::diag::Diagnostic& refusal : refused) {
+    report(refusal);
+  }
+  if (!refused.empty()) {
     return 1;
   }
 
@@ -88,9 +91,7 @@ auto RunLyra(int argc, char** argv) -> int {
   }
   const auto look = lyra::cli::StatusLookOf(*command, cli_options, use_color);
   if (!look) {
-    report(
-        lyra::diag::Make(
-            lyra::diag::DiagCode::kHostInvalidCliArgs, look.error()));
+    report(look.error());
     return 1;
   }
   const lyra::status::Shown shown(*look);

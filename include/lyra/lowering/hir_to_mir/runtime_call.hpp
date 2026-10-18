@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -116,7 +117,7 @@ void AppendRuntimeEffectStmt(
 // is the severity and the words and nothing else.
 void AppendToolReportStmt(
     const UnitLowerer& unit_lowerer, mir::Block& block,
-    support::BuiltinFn severity, std::string text, diag::SourceSpan span);
+    support::BuiltinFn severity, base::DiagMessage text, diag::SourceSpan span);
 
 // Builds the format-text expression `value::Format(items,
 // runtime.TimeFormat())`: a value-layer free call over the print-item array

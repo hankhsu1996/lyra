@@ -79,6 +79,12 @@ failure of the compiler's own opens with `internal error:` after the first word.
 themselves are unchanged where the compiler counts, decides an exit status and records what a path
 refuses.
 
+The same holds while a design runs: a report the tool makes of its own opens with one of the three
+words, placed where the running procedure is written, with the instance and the time in a note after
+it. Only the line a design's own severity task prints keeps the severity that task names (LRM
+20.10), since that line is the design's. The form of the text after the word is
+`docs/messages.md`'s.
+
 ### D4. The one reader inside lowering asks
 
 A program is told where a statement came from as a file name, a line and a column. That text is the

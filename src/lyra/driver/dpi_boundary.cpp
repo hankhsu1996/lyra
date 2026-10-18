@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <filesystem>
-#include <format>
+#include <optional>
 #include <span>
 #include <string>
 #include <system_error>
@@ -31,15 +31,14 @@ auto ValidateDpiLinkInputs(std::span<const std::string> sources)
     if (!is_c && !is_cpp) {
       return diag::Fail(
           diag::DiagCode::kHostInvalidCliArgs,
-          std::format(
-              "DPI-C link input '{}' is neither a .c nor a .cpp source",
-              source));
+          "DPI-C link input '{}' is neither a '.c' nor a '.cpp' source",
+          source);
     }
     std::error_code ec;
     if (!std::filesystem::is_regular_file(path, ec)) {
       return diag::Fail(
           diag::DiagCode::kHostInvalidCliArgs,
-          std::format("DPI-C link input '{}' is not a readable file", source));
+          "DPI-C link input '{}' is not a readable file", source);
     }
     // Every path that consumes these inputs names what it derives from them by
     // file name -- a copy of the source, an object -- so two inputs sharing one
@@ -50,12 +49,12 @@ auto ValidateDpiLinkInputs(std::span<const std::string> sources)
       return seen.source.filename() == path.filename();
     };
     if (std::ranges::any_of(inputs, same_name)) {
-      return diag::Fail(
-          diag::DiagCode::kHostInvalidCliArgs,
-          std::format(
-              "two DPI-C link inputs are both named '{}'; their file names "
-              "must differ",
-              path.filename().string()));
+      return std::unexpected(
+          diag::Make(
+              diag::DiagCode::kHostInvalidCliArgs,
+              "two DPI-C link inputs are both named '{}'",
+              path.filename().string())
+              .WithNote("give each DPI-C link input a file name of its own"));
     }
     inputs.push_back(DpiLinkInput{.source = path, .compile_as_c = is_c});
   }
@@ -97,10 +96,8 @@ auto CompileDpiObjects(
   std::filesystem::create_directories(work_dir, created);
   if (created) {
     return diag::Fail(
-        diag::DiagCode::kHostIoError,
-        std::format(
-            "failed to create '{}' ({})", work_dir.string(),
-            created.message()));
+        diag::DiagCode::kHostIoError, "cannot create '{}' ({})",
+        work_dir.string(), created.message());
   }
   std::vector<ProcessRequest> requests;
   std::vector<std::string> names;
@@ -128,20 +125,27 @@ auto CompileDpiObjects(
     return diag::Fail(
         diag::DiagCode::kHostIoError, std::move(compiled.error()));
   }
-  std::string failures;
+  // Every input that failed is reported, the first as the error and each
+  // later one as notes of it.
+  std::optional<diag::Diagnostic> failures;
   for (std::size_t i = 0; i < inputs.size(); ++i) {
-    if ((*compiled)[i].exit_code == 0) {
+    const ProcessResult& result = (*compiled)[i];
+    if (result.exit_code == 0) {
       continue;
     }
-    if (!failures.empty()) {
-      failures += "\n";
+    const std::string source = inputs[i].source.string();
+    if (!failures) {
+      failures = diag::Make(
+          diag::DiagCode::kHostBuildFailed,
+          "compiling the DPI-C link input '{}' failed", source);
+    } else {
+      failures = std::move(*failures).WithNote(
+          "compiling the DPI-C link input '{}' failed", source);
     }
-    failures += std::format(
-        "compiling the DPI-C link input '{}' failed:\n{}",
-        inputs[i].source.string(), (*compiled)[i].stderr_text);
+    failures = std::move(*failures).WithNote("{}", result.stderr_text);
   }
-  if (!failures.empty()) {
-    return diag::Fail(diag::DiagCode::kHostBuildFailed, std::move(failures));
+  if (failures) {
+    return std::unexpected(*std::move(failures));
   }
   return objects;
 }

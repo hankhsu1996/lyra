@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <format>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -11,6 +10,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
@@ -705,10 +705,11 @@ void AppendTagChecks(
         hir::CaseKeyword::kCase);
     const mir::ExprId text = block.exprs.Add(
         mir::MakeStringLiteral(
-            unit.builtins.string, std::format(
-                                      "{} a tagged union member inconsistent "
-                                      "with the current tag (LRM 11.9)",
-                                      AccessText(access))));
+            unit.builtins.string,
+            base::DiagMessage(
+                "{} a tagged union member inconsistent with the current tag",
+                AccessText(access))
+                .TakeText()));
     block.AppendStmt(
         mir::ExprStmt{
             .expr = block.exprs.Add(

@@ -11,7 +11,6 @@
 #include <cstring>
 #include <expected>
 #include <filesystem>
-#include <format>
 #include <functional>
 #include <optional>
 #include <poll.h>
@@ -27,6 +26,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/driver/signals.hpp"
 #include "lyra/status/status.hpp"
 #include "lyra/support/statistics.hpp"
@@ -108,7 +108,7 @@ struct StreamOwner {
 auto Spawn(
     const std::string& exe, std::vector<std::string>& argv,
     const posix_spawn_file_actions_t* actions)
-    -> std::expected<pid_t, std::string> {
+    -> std::expected<pid_t, base::DiagMessage> {
   auto argv_ptrs = ToCharPointers(argv);
   sigset_t none_held;
   ::sigemptyset(&none_held);
@@ -126,25 +126,26 @@ auto Spawn(
   ::posix_spawnattr_destroy(&attributes);
   if (!child) {
     return std::unexpected(
-        std::format("failed to spawn '{}' ({})", exe, std::strerror(refused)));
+        base::DiagMessage(
+            "cannot start '{}' ({})", exe, std::strerror(refused)));
   }
   return *child;
 }
 
 auto SpawnCaptured(
     const std::filesystem::path& exe, std::span<const std::string> args,
-    std::size_t index) -> std::expected<Running, std::string> {
+    std::size_t index) -> std::expected<Running, base::DiagMessage> {
   std::array<int, 2> out_pipe{};
   std::array<int, 2> err_pipe{};
   if (pipe(out_pipe.data()) != 0) {
     return std::unexpected(
-        std::format("failed to create pipe ({})", std::strerror(errno)));
+        base::DiagMessage("cannot create a pipe ({})", std::strerror(errno)));
   }
   if (pipe(err_pipe.data()) != 0) {
     close(out_pipe[0]);
     close(out_pipe[1]);
     return std::unexpected(
-        std::format("failed to create pipe ({})", std::strerror(errno)));
+        base::DiagMessage("cannot create a pipe ({})", std::strerror(errno)));
   }
 
   posix_spawn_file_actions_t actions{};
@@ -194,13 +195,15 @@ auto Microseconds(const struct timeval& time) -> std::uint64_t {
 // that ended it, as a shell reports one. Its peak memory is not read: the
 // system starts a spawned child's figure at its parent's high-water mark, so
 // under a compiler holding a design it says how large the compiler was.
-auto Reap(pid_t pid) -> std::expected<Reaped, std::string> {
+auto Reap(pid_t pid) -> std::expected<Reaped, base::DiagMessage> {
   int status = 0;
   struct rusage usage{};
   while (wait4(pid, &status, 0, &usage) < 0) {
     if (errno != EINTR) {
       return std::unexpected(
-          std::format("wait4 failed ({})", std::strerror(errno)));
+          base::DiagMessage(
+              "cannot wait for a child process to end ({})",
+              std::strerror(errno)));
     }
   }
   ChildReaped(pid);
@@ -216,10 +219,10 @@ auto RunProcesses(
     std::span<const ProcessRequest> requests, std::size_t max_concurrent,
     const std::function<void(std::size_t)>& started,
     const std::function<void(std::size_t)>& ended)
-    -> std::expected<std::vector<ProcessResult>, std::string> {
+    -> std::expected<std::vector<ProcessResult>, base::DiagMessage> {
   std::vector<ProcessResult> results(requests.size());
   std::vector<Running> running;
-  std::optional<std::string> spawn_failure;
+  std::optional<base::DiagMessage> spawn_failure;
   std::size_t next = 0;
 
   while (next < requests.size() || !running.empty()) {
@@ -261,7 +264,9 @@ auto RunProcesses(
         continue;
       }
       return std::unexpected(
-          std::format("poll failed ({})", std::strerror(errno)));
+          base::DiagMessage(
+              "cannot wait for a child process's output ({})",
+              std::strerror(errno)));
     }
 
     std::array<char, 4096> buffer{};
@@ -325,7 +330,7 @@ auto RunProcesses(
 }  // namespace
 
 auto FindOnPath(std::string_view name)
-    -> std::expected<std::filesystem::path, std::string> {
+    -> std::expected<std::filesystem::path, base::DiagMessage> {
   const std::filesystem::path candidate(name);
   if (candidate.is_absolute() || candidate.has_parent_path()) {
     auto absolute = std::filesystem::absolute(candidate);
@@ -333,11 +338,13 @@ auto FindOnPath(std::string_view name)
       return absolute;
     }
     return std::unexpected(
-        std::format("'{}' is not an executable file", absolute.string()));
+        base::DiagMessage("'{}' is not an executable file", absolute.string()));
   }
   const char* path_env = std::getenv("PATH");
   if (path_env == nullptr) {
-    return std::unexpected("PATH is unset");
+    return std::unexpected(
+        base::DiagMessage(
+            "PATH is not set, so '{}' cannot be found", candidate.string()));
   }
   std::string_view path(path_env);
   while (!path.empty()) {
@@ -355,12 +362,12 @@ auto FindOnPath(std::string_view name)
     path.remove_prefix(sep + 1);
   }
   return std::unexpected(
-      std::format("'{}' not found on PATH", candidate.string()));
+      base::DiagMessage("'{}' is not on PATH", candidate.string()));
 }
 
 auto RunProcessCaptured(
     const std::filesystem::path& exe, std::span<const std::string> args)
-    -> std::expected<ProcessResult, std::string> {
+    -> std::expected<ProcessResult, base::DiagMessage> {
   const std::array<ProcessRequest, 1> one = {
       ProcessRequest{.exe = exe, .args = {args.begin(), args.end()}}};
   auto results = RunProcessesCaptured(one, 1);
@@ -372,7 +379,7 @@ auto RunProcessCaptured(
 
 auto RunProcessesCaptured(
     std::span<const ProcessRequest> requests, std::size_t max_concurrent)
-    -> std::expected<std::vector<ProcessResult>, std::string> {
+    -> std::expected<std::vector<ProcessResult>, base::DiagMessage> {
   const auto unsaid = [](std::size_t) {};
   return RunProcesses(requests, max_concurrent, unsaid, unsaid);
 }
@@ -380,7 +387,7 @@ auto RunProcessesCaptured(
 auto RunProcessesCaptured(
     std::span<const ProcessRequest> requests, std::size_t max_concurrent,
     std::span<const std::string> names)
-    -> std::expected<std::vector<ProcessResult>, std::string> {
+    -> std::expected<std::vector<ProcessResult>, base::DiagMessage> {
   status::Pieces(requests.size());
   std::vector<std::optional<status::Piece>> pieces(requests.size());
   return RunProcesses(
@@ -391,7 +398,7 @@ auto RunProcessesCaptured(
 
 auto RunProcessStreaming(
     const std::filesystem::path& exe, std::span<const std::string> args)
-    -> std::expected<int, std::string> {
+    -> std::expected<int, base::DiagMessage> {
   const std::string exe_str = exe.string();
   auto argv = BuildArgv(exe_str, args);
   const auto pid = Spawn(exe_str, argv, nullptr);

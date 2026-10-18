@@ -4,6 +4,7 @@
 #include <optional>
 #include <utility>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
@@ -48,8 +49,9 @@ auto LowerHirDynamicCastExpr(
   const auto report_invalid = [&](mir::Block& into) {
     AppendToolReportStmt(
         owner, into, support::BuiltinFn::kEmitError,
-        "the $cast assignment is invalid, so the destination is left "
-        "unchanged (LRM 6.24.2)",
+        base::DiagMessage(
+            "the '$cast' assignment is invalid, so the destination is left "
+            "unchanged"),
         span);
   };
 

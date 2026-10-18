@@ -24,6 +24,7 @@
 #include "lyra/backend/llvm/integral_planes.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/component_index.hpp"
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -41,9 +42,12 @@ namespace lyra::backend::llvm_backend {
 
 namespace {
 
-auto Unsupported(std::string message) -> std::unexpected<diag::Diagnostic> {
+template <typename... Args>
+auto Unsupported(base::DiagFormatFor<Args...> format, Args&&... args)
+    -> std::unexpected<diag::Diagnostic> {
   return diag::Fail(
-      diag::DiagCode::kUnsupportedExpressionForm, std::move(message));
+      diag::DiagCode::kUnsupportedExpressionForm, format,
+      std::forward<Args>(args)...);
 }
 
 // The declaration a member step names as the one that gave the member.
@@ -1029,8 +1033,8 @@ auto CodeGenFunction::LowerCast(
       module_->Unit().types.Get(operand_type).MachineIntegerSignedness();
   if (!signedness) {
     return Unsupported(
-        "the llvm backend has no conversion between the two types of this "
-        "cast");
+        "a cast between these two types is not yet supported with "
+        "'--backend llvm'");
   }
   return builder_.CreateIntCast(
       *operand, target, *signedness == lir::Signedness::kSigned);
@@ -2017,9 +2021,8 @@ auto CodeGenFunction::LowerIntConst(const lir::IntConst& constant)
       module_->Unit().types.Get(constant.type).As<lir::MachineIntType>();
   if (machine == nullptr) {
     return Unsupported(
-        std::format(
-            "a constant of type {} has no native form on the llvm backend",
-            module_->Unit().types.Get(constant.type).KindName()));
+        "a constant of type '{}' is not yet supported with '--backend llvm'",
+        module_->Unit().types.Get(constant.type).KindName());
   }
   return llvm::ConstantInt::get(
       llvm::cast<llvm::IntegerType>(module_->Types().Map(constant.type)),
@@ -2043,10 +2046,9 @@ auto CodeGenFunction::LowerRealConst(const lir::RealConst& constant)
       module_->Unit().types.Get(constant.type).As<lir::MachineFloatType>();
   if (machine == nullptr) {
     return Unsupported(
-        std::format(
-            "a real constant of type {} has no native form on the llvm "
-            "backend",
-            module_->Unit().types.Get(constant.type).KindName()));
+        "a real constant of type '{}' is not yet supported with "
+        "'--backend llvm'",
+        module_->Unit().types.Get(constant.type).KindName());
   }
   return llvm::ConstantFP::get(
       module_->Types().Map(constant.type), constant.value);

@@ -21,8 +21,9 @@ namespace {
 constexpr std::size_t kCompileStackSize = std::size_t{64} << 20;
 
 constexpr std::string_view kOutOfStack =
-    "error: the compiler ran out of stack. An expression in the design is "
-    "longer, or nested more deeply, than lyra supports yet.\n";
+    "error: the compiler ran out of stack\n"
+    "note: an expression in the design is longer, or nested more deeply, than "
+    "Lyra can compile yet\n";
 
 // How much stack a thread that compiles is given: the amount compiling takes,
 // or what whoever started the process allows any stack where that is less.

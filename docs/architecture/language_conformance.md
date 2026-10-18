@@ -55,12 +55,12 @@ Consequences:
    analyzed and never inspects the form the source wrote it in. A reader sees one of four outcomes,
    and lowering says which.
 
-   | Situation                                                                     | Reported as                                                                    |
-   | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-   | The front end refuses the source                                              | The front end's diagnostic. Lowering does not run.                             |
-   | The front end accepts it and builds nothing to carry out (a tolerant reading) | A refusal where it was written, saying the text has no behaviour to carry out. |
-   | The front end accepts it and Lyra does not yet carry it out                   | A gap, naming the construct.                                                   |
-   | The representation breaks the hand-off contract                               | A compiler error, never a statement about the source.                          |
+   | Situation                                                                                         | Reported as                                                                    |
+   | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+   | The front end refuses the source                                                                  | The front end's diagnostic. Lowering does not run.                             |
+   | The front end accepts it and builds nothing to carry out (a tolerant reading, or nothing relaxed) | A refusal where it was written, saying the text has no behaviour to carry out. |
+   | The front end accepts it and Lyra does not yet carry it out                                       | A gap, naming the construct.                                                   |
+   | The representation breaks the hand-off contract                                                   | A compiler error, never a statement about the source.                          |
 
 4. **An accepted text with no defined meaning gets the simplest behaviour, stated where it is
    carried out.** Where the standard gives a text no meaning and the front end's contract does not

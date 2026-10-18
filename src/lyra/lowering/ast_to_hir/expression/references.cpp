@@ -20,6 +20,7 @@
 #include <slang/ast/types/AllTypes.h>
 #include <slang/numeric/ConstantValue.h>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
@@ -233,25 +234,32 @@ namespace {
 
 // The refusal for a declaration a value reference may denote and that nothing
 // here lowers. Every kind the classification sends here is a construct, so
-// every one names itself and cites the clause that defines it -- a reader who
-// meets one can search for the construct and ask for it, which a shared
-// sentence gives nobody. The set is closed by the classification above; a kind
-// arriving from outside it has been misclassified there.
-auto UnsupportedReferentMessage(Referent referent) -> std::string_view {
+// every one names itself -- a reader who meets one can search for the
+// construct and ask for it, which a shared sentence gives nobody. The set is
+// closed by the classification above; a kind arriving from outside it has been
+// misclassified there.
+auto UnsupportedReferentMessage(Referent referent) -> base::DiagMessage {
   switch (referent) {
+    // LRM 6.20.5.
     case Referent::kSpecparam:
-      return "a specparam is not yet supported (LRM 6.20.4)";
+      return base::DiagMessage("a 'specparam' is not yet supported");
+    // LRM 29.
     case Referent::kPrimitivePort:
-      return "a port of a user-defined primitive is not yet supported (LRM 29)";
+      return base::DiagMessage(
+          "a port of a user-defined primitive is not yet supported");
+    // LRM 14.3.
     case Referent::kClockingSignal:
-      return "a signal of a clocking block is not yet supported (LRM 14.3)";
+      return base::DiagMessage(
+          "a signal of a clocking block is not yet supported");
+    // LRM 16.10.
     case Referent::kAssertionLocal:
-      return "a local variable of an assertion is not yet supported (LRM "
-             "16.10)";
+      return base::DiagMessage(
+          "a local variable of an assertion is not yet supported");
+    // LRM 7.2.
     case Referent::kStructureMember:
-      return "a structure or union member named on its own, rather than "
-             "through "
-             "the value that holds it, is not yet supported (LRM 7.2)";
+      return base::DiagMessage(
+          "a structure or union member named on its own, rather than through "
+          "the value that holds it, is not yet supported");
     case Referent::kPatternBinding:
     case Referent::kParameterConstant:
     case Referent::kEnumConstant:
@@ -274,7 +282,7 @@ auto FailOnUnsupportedReferent(Referent referent, diag::SourceSpan span)
     -> std::unexpected<diag::Diagnostic> {
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedNonVariableNamedReference,
-      std::string{UnsupportedReferentMessage(referent)});
+      UnsupportedReferentMessage(referent));
 }
 
 namespace {
@@ -405,10 +413,11 @@ auto MakeCurrentInstanceHandleExpr(
 // no receiver for the handle to refer to.
 auto FailOnCurrentInstanceHandle(diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
+  // LRM 8.11.
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedExpressionForm,
-      "`this` names the object a method was invoked on, which this context "
-      "has none of (LRM 8.11)");
+      "'this' names the object a method was called on, and there is none "
+      "here");
 }
 
 // Lowers a reference to a value that has a cell -- a variable or a net --
@@ -447,10 +456,11 @@ auto LowerCurrentInstanceMember(
   if (member.kind == slang::ast::SymbolKind::Parameter) {
     return MakeParameterConstantExpr(unit_lowerer, frame, member, type, span);
   }
+  // LRM 8.11.
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedExpressionForm,
-      "`this` qualifies a property, a value parameter, or a method of the "
-      "current instance (LRM 8.11), and this member is none of them");
+      "'this' qualifies a property, a value parameter, or a method of the "
+      "current object, and this member is none of them");
 }
 
 auto LowerNamedValueProc(
@@ -670,8 +680,8 @@ auto LowerNamedValueStructural(
       }
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
-          "an instance class property is reachable only through a receiver, "
-          "which a structural expression has none of");
+          "a non-static class property is reached only through an object, "
+          "and an expression outside procedural code has none");
     }
     case Referent::kThisHandle:
       return FailOnCurrentInstanceHandle(span);

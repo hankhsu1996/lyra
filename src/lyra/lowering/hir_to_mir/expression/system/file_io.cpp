@@ -4,7 +4,6 @@
 #include <array>
 #include <cstddef>
 #include <expected>
-#include <format>
 #include <optional>
 #include <span>
 #include <string>
@@ -143,10 +142,9 @@ auto RequireStringDestination(
   if (unit.types.Get(destination).Is<mir::StringType>()) return {};
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedSubroutineArgument,
-      std::format(
-          "{} into an integral destination is not yet supported, where the "
-          "destination's width is what bounds the read (LRM 21.3.4.2)",
-          std::string{name}));
+      "'{}' into an integral destination, whose width bounds the read, is not "
+      "yet supported",
+      name);
 }
 
 // How many a read reached, as the `integer` the call is: the entry answers it
@@ -239,16 +237,19 @@ auto LowerFileReadCall(
     // integral variable"; refusing rather than dropping them surfaces the
     // mistake instead of running a call the source did not write.
     if (call.arguments.size() != 2) {
-      return diag::Fail(
-          diag::DiagCode::kUnsupportedSubroutineArgument,
-          "$fread into an integral variable takes no start or count "
-          "arguments (LRM 21.3.4.4 ignores them)");
+      return std::unexpected(
+          diag::Make(
+              diag::DiagCode::kUnsupportedSubroutineArgument,
+              "a start or a count argument on '$fread' into an integral "
+              "variable is not yet supported")
+              .WithNote("leave them out, since the standard ignores them"));
     }
   } else if (!unit_lowerer.Hir().types.Get(memory->element_type).IsIntegral()) {
+    // LRM 21.3.4.4.
     return diag::Fail(
         diag::DiagCode::kUnsupportedSubroutineArgument,
-        "$fread into a memory is supported for a one-dimensional unpacked "
-        "array of integral words (LRM 21.3.4.4)");
+        "'$fread' into a memory whose words are not integral is not yet "
+        "supported");
   }
 
   BlockBuilder steps(frame);

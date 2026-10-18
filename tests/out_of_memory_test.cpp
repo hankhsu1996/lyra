@@ -79,7 +79,8 @@ module Test;
 endmodule
 )";
 
-constexpr std::string_view kSaidInWords = "lyra: out of memory";
+constexpr std::string_view kSaidInWords =
+    "error: the simulation ran out of memory";
 
 TEST(OutOfMemory, IsSaidInWordsWhereverTheRequestWasMade) {
   const auto lyra = ResolveLyra();

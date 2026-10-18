@@ -223,7 +223,7 @@ auto CheckTargetOutlivesUpdate(
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedAssignmentTarget,
         "a nonblocking assignment names storage that does not outlive the "
-        "statement that reached it (LRM 10.4.2)");
+        "statement that reached it");
   }
   return {};
 }

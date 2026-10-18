@@ -98,8 +98,9 @@ auto ProcessAwait(const value::ObjectRef& self, RuntimeEffects& runtime)
   // The check is here at the call, symmetric with `suspend`, so the wait itself
   // is pure readiness.
   if (self.View<RuntimeProcess>() == &runtime.CurrentProcess()) {
+    // LRM 9.7.
     throw SimulationError(
-        "process::await on the calling process is not allowed (LRM 9.7)");
+        "'process::await' on the calling process is not allowed");
   }
   return MakeWait<ProcessTerminationAwaiter>(self);
 }
@@ -109,8 +110,9 @@ void ProcessSuspend(const value::ObjectRef& self, RuntimeEffects& runtime) {
   // here schedules.
   RuntimeProcess& target = ProcessNodeOf(self);
   if (&target == &runtime.CurrentProcess()) {
+    // LRM 9.7.
     throw SimulationError(
-        "process::suspend on the calling process is not allowed (LRM 9.7)");
+        "'process::suspend' on the calling process is not allowed");
   }
   target.Suspend();
 }

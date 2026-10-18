@@ -177,7 +177,7 @@ own at the default severity (LRM 20.2). Let the run end by exhausting its work -
 bounded number of times rather than forever -- or name the level that reports nothing.
 
 ```systemverilog
-// @reports: priority violation
+// @reports: 'priority' violation
 //
 // A priority-if that reaches no condition and has no else issues a violation
 // report (LRM 12.4.2).

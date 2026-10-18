@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <format>
 #include <optional>
 #include <ranges>
 #include <span>
@@ -13,6 +12,7 @@
 #include <vector>
 
 #include "lyra/base/component_index.hpp"
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -56,9 +56,12 @@ auto MayDepart(support::CallEnding ending) -> bool {
   throw InternalError("mir_to_lir: unknown call ending");
 }
 
-auto Unsupported(std::string message) -> std::unexpected<diag::Diagnostic> {
+template <typename... Args>
+auto Unsupported(base::DiagFormatFor<Args...> format, Args&&... args)
+    -> std::unexpected<diag::Diagnostic> {
   return diag::Fail(
-      diag::DiagCode::kUnsupportedExpressionForm, std::move(message));
+      diag::DiagCode::kUnsupportedExpressionForm, format,
+      std::forward<Args>(args)...);
 }
 
 // Which build assembles a composite value follows from the storage its type
@@ -2049,7 +2052,9 @@ auto FunctionLowerer::ReferencePlace(
           [&](const mir::LocalRef& ref) -> diag::Result<lir::Place> {
             const std::optional<LocalBinding>& binding = locals_[ref.var.value];
             if (!binding.has_value()) {
-              return Unsupported("reference to an unlowered local");
+              return Unsupported(
+                  "a reference to a local variable that has no storage at "
+                  "this point");
             }
             return std::visit(
                 Overloaded{
@@ -2180,7 +2185,7 @@ auto FunctionLowerer::LowerPlace(
   const mir::Expr& expr = block.exprs.Get(id);
   const auto names_no_place =
       [](std::string_view form) -> diag::Result<lir::Place> {
-    return Unsupported(std::format("{} names no place", form));
+    return Unsupported("{} names no place", form);
   };
   return std::visit(
       Overloaded{
@@ -2258,7 +2263,9 @@ auto FunctionLowerer::LowerPlace(
           [&](const mir::CopyExpr&) {
             return names_no_place("a value read out of a place");
           },
-          [&](const mir::ClosureExpr&) { return names_no_place("a closure"); },
+          [&](const mir::ClosureExpr&) {
+            return names_no_place("an anonymous function");
+          },
           [&](const mir::CompositeExpr&) {
             return names_no_place("a value composed of its parts");
           },

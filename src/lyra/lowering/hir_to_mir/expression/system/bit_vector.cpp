@@ -80,7 +80,7 @@ auto AdmittedByControlArguments(
     if (literal == nullptr) {
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedSubroutineArgument,
-          "$countbits with a control bit the running simulation computes is "
+          "'$countbits' with a control bit the running simulation computes is "
           "not yet supported");
     }
     admitted =
