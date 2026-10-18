@@ -7,10 +7,10 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/record_id.hpp"
 #include "lyra/mir/type.hpp"
@@ -194,7 +194,7 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
               members.push_back(
                   mir::EnumMember{
                       .name = m.name,
-                      .value = CanonicalIntegralConstant(
+                      .value = mir::CanonicalIntegralConstant(
                           *base, LowerHirIntegralConstant(m.value))});
             }
             return mir::Type{mir::EnumType{
@@ -217,9 +217,7 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
           [&](const hir::UnpackedArrayType& src) -> mir::Type {
             return mir::Type{mir::UnpackedArrayType{
                 .element_type = TranslateType(src.element_type),
-                .dim =
-                    mir::UnpackedRange{
-                        .left = src.dim.left, .right = src.dim.right},
+                .count = src.dim.ElementCount(),
             }};
           },
           [&](const hir::DynamicArrayType& src) -> mir::Type {

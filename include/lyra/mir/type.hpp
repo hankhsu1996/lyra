@@ -79,58 +79,18 @@ struct EnumType {
 void HashIntegral(std::size_t& seed, const IntegralType& integral);
 void HashEnumeration(std::size_t& seed, const EnumType& enumeration);
 
-// One declared unpacked dimension, `[left:right]`. Element order runs
-// left-to-right (LRM 7.6), so the leftmost element (index `left`) is storage
-// ordinal 0, where a packed dimension's bits count from the right
-// (least-significant) end.
-struct UnpackedRange {
-  std::int64_t left;
-  std::int64_t right;
-
-  [[nodiscard]] auto ElementCount() const -> std::uint64_t {
-    // A declared range spans `|left - right| + 1` elements and is never empty.
-    // The synthetic zero-based empty list `[0:-1]` is the one exception -- it
-    // stands in for a zero-length compiler-internal array that a real SV range
-    // cannot express. No real declared range is `[0:-1]`.
-    if (left == 0 && right == -1) {
-      return 0;
-    }
-    return static_cast<std::uint64_t>(
-               left < right ? right - left : left - right) +
-           1U;
-  }
-  [[nodiscard]] auto IsAscending() const -> bool {
-    return left <= right;
-  }
-
-  // The storage ordinal a source index resolves to: the element the dimension
-  // names first is ordinal zero however the range was declared.
-  [[nodiscard]] auto LinearOffset(std::int64_t index) const -> std::uint64_t {
-    return static_cast<std::uint64_t>(
-        left <= right ? index - left : left - index);
-  }
-
-  // The declared range of a compiler-internal zero-based array of `count`
-  // elements, `[0 : count - 1]`. An empty list is `[0:-1]`.
-  [[nodiscard]] static auto ZeroBased(std::uint64_t count) -> UnpackedRange {
-    return UnpackedRange{
-        .left = 0, .right = static_cast<std::int64_t>(count) - 1};
-  }
-
-  auto operator==(const UnpackedRange&) const -> bool = default;
-};
-
-// An unpacked array is an element type plus its declared range. The range is
-// the array's coordinate system: a source index names an element through it.
-// The range lives on the type, not the runtime value: the backend value is
-// ordinal-only payload, so what needs the declared bounds -- how many elements
-// there are, the coordinates a foreign caller is told -- reads them here.
+// A fixed-size unpacked array: an element type and how many elements it
+// holds, numbered from the left (LRM 7.6), as LLVM's array type is an element
+// type and a count. How the source declared the range is a coordinate system a
+// select resolves where it is lowered, and no part of the value: two arrays of
+// equivalent element types and one count are one type, whatever ranges they
+// were declared with (LRM 6.22.2).
 struct UnpackedArrayType {
   TypeId element_type;
-  UnpackedRange dim;
+  std::uint64_t count;
 
   [[nodiscard]] auto Size() const -> std::uint64_t {
-    return dim.ElementCount();
+    return count;
   }
 
   auto operator==(const UnpackedArrayType&) const -> bool = default;

@@ -11,12 +11,12 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/expression/enum_method.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -64,7 +64,7 @@ auto LowerHirDynamicCastExpr(
     if (c.on_invalid == hir::InvalidAssignmentHandling::kReported) {
       report_invalid(body);
     }
-    return steps.Build(BuildIntLiteral(unit, body, 0));
+    return steps.Build(mir::BuildIntLiteral(unit, body, 0));
   }
   const hir::RunTimeCheck check =
       std::get<hir::AssignmentAllowed>(c.validity).check;
@@ -89,16 +89,18 @@ auto LowerHirDynamicCastExpr(
     switch (check) {
       case hir::RunTimeCheck::kNone:
         bind_value(ConvertToType(unit, body, source, destination_type));
-        return BuildIntLiteral(unit, body, 1);
+        return mir::BuildIntLiteral(unit, body, 1);
       case hir::RunTimeCheck::kValueIsAMemberOfTheEnumeration:
         bind_value(ConvertToType(unit, body, source, destination_type));
         return body.exprs.Add(BuildEnumMembershipCallExpr(
             owner, body, read_value(body), declared));
       case hir::RunTimeCheck::kObjectIsOfTheDestinationClass:
         bind_value(body.exprs.Add(
-            mir::Expr{
-                .data = mir::DynamicCastExpr{.operand = source},
-                .type = destination_type}));
+            mir::MakeCallExpr(
+                mir::Direct{
+                    .target = support::BuiltinFn::kDynamicCast,
+                    .type_argument = destination_type},
+                {source}, destination_type)));
         return read_value(body);
     }
     throw InternalError("LowerHirDynamicCastExpr: unknown run-time check");
@@ -113,8 +115,8 @@ auto LowerHirDynamicCastExpr(
                   .data =
                       mir::ConditionalExpr{
                           .condition = ReduceToCondition(unit, body, answer),
-                          .then_value = BuildIntLiteral(unit, body, 1),
-                          .else_value = BuildIntLiteral(unit, body, 0)},
+                          .then_value = mir::BuildIntLiteral(unit, body, 1),
+                          .else_value = mir::BuildIntLiteral(unit, body, 0)},
                   .type = result_type})});
   const auto read_answer = [&] {
     return body.ReadLocal(answer_var, result_type);

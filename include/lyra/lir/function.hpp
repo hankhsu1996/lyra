@@ -658,8 +658,9 @@ struct UnaryInstr {
 // already carried -- the operand's own is what the value comes from, the
 // result's is what it goes to -- so nothing beside them says which cast this
 // is, and a target that emits different machine code for different pairs reads
-// the pair. A pair it does not realize is refused; only two types sharing a
-// machine representation convert by emitting nothing.
+// the pair. MIR's verification admits only pairs every target writes in its own
+// conversion syntax; two types sharing a machine representation convert by
+// emitting nothing.
 struct CastInstr {
   Operand operand;
 };

@@ -7,11 +7,11 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -35,7 +35,7 @@ auto Arithmetic(
     mir::CompilationUnit& unit, mir::Block& block, mir::BinaryOp op,
     mir::ExprId lhs, mir::ExprId rhs) -> mir::ExprId {
   const mir::TypeId type = PositionType(unit);
-  return block.exprs.Add(MakeBinary(unit, block, op, lhs, rhs, type));
+  return block.exprs.Add(mir::MakeBinary(unit, block, op, lhs, rhs, type));
 }
 
 }  // namespace
@@ -47,9 +47,10 @@ auto BuildOrdinalPosition(
   if (block.exprs.Get(ordinal).type == type) {
     return ordinal;
   }
-  return block.exprs.Add(MakeBuiltinCall(
-      unit, block, support::BuiltinFn::kToPosition, std::nullopt, {ordinal},
-      type));
+  return block.exprs.Add(
+      mir::MakeBuiltinCall(
+          unit, block, support::BuiltinFn::kToPosition, std::nullopt, {ordinal},
+          type));
 }
 
 auto BuildPositionSum(
@@ -127,7 +128,7 @@ auto PositionMapOf(const UnitLowerer& unit_lowerer, hir::TypeId receiver)
 auto BuildConstantPosition(
     mir::CompilationUnit& unit, mir::Block& block, std::int64_t position)
     -> mir::ExprId {
-  return BuildIntegralLiteral(
+  return mir::BuildIntegralLiteral(
       unit, block, PositionType(unit),
       mir::IntegralConstant{
           .value_words = {static_cast<std::uint64_t>(position)},
@@ -147,11 +148,12 @@ auto LeastSignificantBitType(
 auto BuildLeastSignificantBit(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value,
     mir::TypeId bit_type) -> mir::ExprId {
-  const mir::ExprId lsb = BuildIntegralLiteral(
+  const mir::ExprId lsb = mir::BuildIntegralLiteral(
       unit, block, PositionType(unit),
       mir::IntegralConstant{.value_words = {0}, .state_words = {0}});
-  return block.exprs.Add(MakeBuiltinCall(
-      unit, block, support::BuiltinFn::kSlice, value, {lsb}, bit_type));
+  return block.exprs.Add(
+      mir::MakeBuiltinCall(
+          unit, block, support::BuiltinFn::kSlice, value, {lsb}, bit_type));
 }
 
 auto WrapIndexAsPosition(

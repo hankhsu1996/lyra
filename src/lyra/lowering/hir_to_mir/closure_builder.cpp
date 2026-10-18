@@ -14,6 +14,7 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -38,6 +39,18 @@ auto ErasedOf(const mir::CompilationUnit& unit, mir::TypeId closure_type)
       unit.types,
       unit.GetClosure(
           unit.types.Get(closure_type).Get<mir::ClosureType>().closure_id));
+}
+
+// `held`, a box or a borrow of a closure, made one of the closure of no known
+// type `erased`, holding it as `type` does.
+auto Unsized(
+    mir::Block& block, mir::ExprId held, mir::TypeId erased, mir::TypeId type)
+    -> mir::ExprId {
+  return block.exprs.Add(
+      mir::MakeCallExpr(
+          mir::Direct{
+              .target = support::BuiltinFn::kUnsize, .type_argument = erased},
+          {held}, type));
 }
 
 }  // namespace
@@ -109,10 +122,7 @@ auto BuildKeptClosure(
     -> mir::ExprId {
   const mir::TypeId erased = ErasedOf(unit, closure.type);
   const mir::ExprId box = BuildClosureBox(unit, block, std::move(closure));
-  return block.exprs.Add(
-      mir::Expr{
-          .data = mir::CastExpr{.operand = box},
-          .type = mir::BoxOf(unit.types, erased)});
+  return Unsized(block, box, erased, mir::BoxOf(unit.types, erased));
 }
 
 auto BuildBorrowedClosure(
@@ -126,13 +136,12 @@ auto BuildBorrowedClosure(
               mir::Type{mir::ReferenceType{
                   .referent = closure_type,
                   .mutability = mir::Mutability::kReadOnly}})});
-  return block.exprs.Add(
-      mir::Expr{
-          .data = mir::CastExpr{.operand = borrowed},
-          .type = unit.types.Intern(
-              mir::Type{mir::ReferenceType{
-                  .referent = ErasedOf(unit, closure_type),
-                  .mutability = mir::Mutability::kReadOnly}})});
+  const mir::TypeId erased = ErasedOf(unit, closure_type);
+  return Unsized(
+      block, borrowed, erased,
+      unit.types.Intern(
+          mir::Type{mir::ReferenceType{
+              .referent = erased, .mutability = mir::Mutability::kReadOnly}}));
 }
 
 }  // namespace lyra::lowering::hir_to_mir

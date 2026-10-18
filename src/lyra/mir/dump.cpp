@@ -124,6 +124,11 @@ auto FormatCallPart(const CallPart& part) -> std::string {
 
 class MirDumper {
  public:
+  auto DumpType(const CompilationUnit& unit, TypeId type) -> std::string {
+    unit_ = &unit;
+    return std::format("{} {}", type.value, FormatType(unit.types.Get(type)));
+  }
+
   auto Dump(const CompilationUnit& unit) -> std::string {
     unit_ = &unit;
     // Named, because a dump of a design carries several units and every id
@@ -376,8 +381,8 @@ class MirDumper {
             },
             [](const UnpackedArrayType& u) -> std::string {
               return std::format(
-                  "UnpackedArray(elem=Type[{}], dim=[{}:{}])",
-                  u.element_type.value, u.dim.left, u.dim.right);
+                  "UnpackedArray(elem=Type[{}], count={})",
+                  u.element_type.value, u.count);
             },
             [](const DynamicArrayType& d) -> std::string {
               return std::format(
@@ -871,10 +876,6 @@ class MirDumper {
             },
             [](const CastExpr& c) -> std::string {
               return std::format("CastExpr operand=Expr[{}]", c.operand.value);
-            },
-            [](const DynamicCastExpr& c) -> std::string {
-              return std::format(
-                  "DynamicCastExpr operand=Expr[{}]", c.operand.value);
             },
             [](const AddressOfExpr& a) -> std::string {
               return std::format(
@@ -1606,6 +1607,11 @@ class MirDumper {
 auto DumpMir(const CompilationUnit& unit) -> std::string {
   MirDumper dumper;
   return dumper.Dump(unit);
+}
+
+auto DumpType(const CompilationUnit& unit, TypeId type) -> std::string {
+  MirDumper dumper;
+  return dumper.DumpType(unit, type);
 }
 
 }  // namespace lyra::mir

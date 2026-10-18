@@ -712,6 +712,7 @@ cc_test(
         "//:compiler",
         "//:diag",
         "//:driver",
+        "//:mir_transform",
         "@bazel_tools//tools/cpp/runfiles",
         "@fmt",
         "@googletest//:gtest",

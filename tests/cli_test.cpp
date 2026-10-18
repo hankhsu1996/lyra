@@ -2129,6 +2129,116 @@ TEST(LyraCommandLine, RefusesAnOptionTheCommandDoesNotActOn) {
       << both.stderr_text;
 }
 
+// A build may skip an optional rewrite of MIR and check the unit after each
+// one, and a program comes out the same with every optional rewrite skipped,
+// since none changes what it does. A rewrite the program needs, a name no
+// rewrite has, and a name with no sign are each refused.
+TEST(LyraCommandLine, NamesWhichOptionalRewritesOfMirRun) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  // A whole select written by a nonblocking assignment and a process stopping
+  // only at its loop head, which the two optional rewrites each change.
+  const auto src = *tmp_or / "test.sv";
+  std::ofstream(src) << "module Test;\n"
+                     << "  logic clk = 0;\n"
+                     << "  logic [7:0] d = 8'h5a;\n"
+                     << "  logic [7:0] q;\n"
+                     << "  always @(posedge clk) q[7:0] <= d[7:0];\n"
+                     << "  initial begin\n"
+                     << "    #1 clk = 1;\n"
+                     << "    #1 $display(\"q=%h\", q);\n"
+                     << "  end\n"
+                     << "endmodule\n";
+  const std::string store = "--cache-dir=" + (*tmp_or / "store").string();
+
+  struct Refusal {
+    std::string value;
+    std::string expected;
+  };
+  const std::vector<Refusal> refusals = {
+      {.value = "-BoxLargeValues",
+       .expected = "'BoxLargeValues' given to '--mir-enable-passes' names no "
+                   "rewrite a build may skip"},
+      {.value = "-Nothing",
+       .expected = "'Nothing' given to '--mir-enable-passes' names no "
+                   "rewrite a build may skip"},
+      {.value = "InstSimplify",
+       .expected = "'InstSimplify' given to '--mir-enable-passes' does not "
+                   "start with '+' or '-'"}};
+  for (const Refusal& refusal : refusals) {
+    const auto refused = RunChildProcess(
+        lyra,
+        std::vector<std::string>{
+            "dump", "mir", "--mir-enable-passes=" + refusal.value,
+            src.string()},
+        60s);
+    EXPECT_NE(refused.exit_code, 0) << refusal.expected << ": accepted";
+    EXPECT_NE(refused.stderr_text.find(refusal.expected), std::string::npos)
+        << refused.stderr_text;
+  }
+  const auto not_lowered = RunChildProcess(
+      lyra,
+      std::vector<std::string>{
+          "dump", "hir", "--mir-verify-each", src.string()},
+      60s);
+  EXPECT_NE(
+      not_lowered.stderr_text.find(
+          "'--mir-verify-each' means nothing to 'dump hir'"),
+      std::string::npos)
+      << not_lowered.stderr_text;
+
+  for (const std::string& backend : {"cpp", "llvm"}) {
+    const auto every = RunChildProcess(
+        lyra,
+        std::vector<std::string>{
+            "run", "--backend", backend, store, "--mir-verify-each",
+            src.string()},
+        120s);
+    EXPECT_EQ(every.exit_code, 0) << every.stderr_text;
+    EXPECT_NE(every.stdout_text.find("q=5a"), std::string::npos)
+        << every.stdout_text;
+    const auto skipped = RunChildProcess(
+        lyra,
+        std::vector<std::string>{
+            "run", "--backend", backend, store, "--mir-verify-each",
+            "--mir-enable-passes=-InstSimplify,-SplitReactions", src.string()},
+        120s);
+    EXPECT_EQ(skipped.exit_code, 0) << skipped.stderr_text;
+    EXPECT_EQ(skipped.stdout_text, every.stdout_text);
+  }
+
+  // Each rewrite that runs is a span of the run's time trace, so which ran is
+  // read off the trace.
+  const auto spans_of = [&](const std::string& passes) {
+    const auto trace = *tmp_or / "trace.json";
+    const auto traced = RunChildProcess(
+        lyra,
+        std::vector<std::string>{
+            "dump", "mir", "--mir-enable-passes=" + passes,
+            "--time-trace=" + trace.string(), "--time-trace-granularity=0",
+            src.string()},
+        60s);
+    EXPECT_EQ(traced.exit_code, 0) << traced.stderr_text;
+    std::set<std::string> names;
+    for (const auto& event : ReadJson(trace)["traceEvents"]) {
+      if (event.contains("name")) {
+        names.insert(event["name"].get<std::string>());
+      }
+    }
+    return names;
+  };
+  const std::set<std::string> skipped = spans_of("-InstSimplify");
+  EXPECT_FALSE(skipped.contains("InstSimplify"));
+  EXPECT_TRUE(skipped.contains("BoxLargeValues"));
+  EXPECT_TRUE(skipped.contains("SplitReactions"));
+  const std::set<std::string> asked_back =
+      spans_of("-InstSimplify,+InstSimplify");
+  EXPECT_TRUE(asked_back.contains("InstSimplify"));
+}
+
 // A command line that names no command Lyra has is refused by what it named,
 // and the commands it could have named follow as a note rather than inside the
 // error.

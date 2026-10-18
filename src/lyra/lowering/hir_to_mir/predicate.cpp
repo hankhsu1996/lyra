@@ -17,7 +17,6 @@
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/pattern.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
@@ -26,6 +25,7 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -54,10 +54,11 @@ auto BuildCombinedArms(
       type.IsIntegral() || type.Is<mir::UnpackedArrayType>() ||
       type.Is<mir::DynamicArrayType>() || type.Is<mir::QueueType>();
   if (combines_by_part) {
-    return block.exprs.Add(MakeBuiltinCall(
-        unit, block, support::BuiltinFn::kMergeConditional,
-        block.ReadLocal(one, result_type),
-        {block.ReadLocal(other, result_type)}, result_type));
+    return block.exprs.Add(
+        mir::MakeBuiltinCall(
+            unit, block, support::BuiltinFn::kMergeConditional,
+            block.ReadLocal(one, result_type),
+            {block.ReadLocal(other, result_type)}, result_type));
   }
   const std::array compared{result_type, result_type};
   const mir::ExprId equal = block.exprs.Add(BuildMirBinaryExpr(
@@ -253,7 +254,7 @@ auto BuildDecidedSearch(
             answer](const WalkFrame& at) -> diag::Result<mir::ExprId> {
       mir::Block& block = *at.current_block;
       return ConvertToType(
-          unit, block, BuildBit1Literal(unit, block, answer), type);
+          unit, block, mir::BuildBit1Literal(unit, block, answer), type);
     };
   };
   const auto is_false = [&unit](const Predicate& term) {
@@ -385,9 +386,10 @@ auto BuildLogicalNot(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value)
     -> mir::ExprId {
   const mir::TypeId type = block.exprs.Get(value).type;
-  return block.exprs.Add(MakeUnary(
-      unit, block, mir::UnaryOp::kLogicalNot, value,
-      OneBitAnswerType(unit, {&type, 1})));
+  return block.exprs.Add(
+      mir::MakeUnary(
+          unit, block, mir::UnaryOp::kLogicalNot, value,
+          OneBitAnswerType(unit, {&type, 1})));
 }
 
 auto BuildTruth(
@@ -404,9 +406,10 @@ auto BuildTruth(
   if (type.Integral().bit_width == 1 && !CarriesUnknowns(unit, type_id)) {
     return value;
   }
-  return block.exprs.Add(MakeBuiltinCall(
-      unit, block, support::BuiltinFn::kReductionOr, value, {},
-      OneBitAnswerType(unit, {&type_id, 1})));
+  return block.exprs.Add(
+      mir::MakeBuiltinCall(
+          unit, block, support::BuiltinFn::kReductionOr, value, {},
+          OneBitAnswerType(unit, {&type_id, 1})));
 }
 
 template <ExprLowerer Lowerer>

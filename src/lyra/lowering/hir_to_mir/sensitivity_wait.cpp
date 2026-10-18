@@ -19,7 +19,6 @@
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/endpoint.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/object_change.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -32,6 +31,7 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
@@ -243,8 +243,8 @@ auto WholePlace(const mir::CompilationUnit& unit, mir::Block& block)
     -> LeafPart {
   return LeafPart{
       .steps = StepArray(unit, block, {}),
-      .first = BuildMachineIntLiteral(unit, block, 0),
-      .width = BuildMachineIntLiteral(unit, block, 0)};
+      .first = mir::BuildMachineIntLiteral(unit, block, 0),
+      .width = mir::BuildMachineIntLiteral(unit, block, 0)};
 }
 
 template <typename Lowerer>
@@ -252,7 +252,7 @@ auto LeafPartOf(
     mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
     Lowerer& lowerer, const hir::WatchedPart& part) -> diag::Result<LeafPart> {
   const auto int_literal = [&](std::uint64_t value) {
-    return BuildMachineIntLiteral(
+    return mir::BuildMachineIntLiteral(
         unit, block, static_cast<std::int64_t>(value));
   };
   return std::visit(

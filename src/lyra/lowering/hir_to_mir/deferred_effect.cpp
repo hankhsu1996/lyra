@@ -13,7 +13,6 @@
 #include "lyra/hir/timing.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
@@ -23,6 +22,7 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -71,9 +71,9 @@ auto BuildNbaSubmitAfterCall(
     // from them only in host precision, so the entry takes the wider.
     duration_id = ConvertToType(unit, block, duration_id, unit.builtins.real);
   }
-  const mir::ExprId unit_power_id = BuildMachineIntLiteral(
+  const mir::ExprId unit_power_id = mir::BuildMachineIntLiteral(
       unit, block, static_cast<std::int64_t>(process.Resolution().unit_power));
-  const mir::ExprId precision_power_id = BuildMachineIntLiteral(
+  const mir::ExprId precision_power_id = mir::BuildMachineIntLiteral(
       unit, block,
       static_cast<std::int64_t>(process.Resolution().precision_power));
   return mir::Expr{

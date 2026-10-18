@@ -16,10 +16,10 @@
 #include "lyra/hir/real_bits.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/real_literal.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -92,9 +92,10 @@ auto MaterializeConstant(
   return std::visit(
       Overloaded{
           [&](const hir::IntegralConstant& c) -> mir::Expr {
-            return block.exprs.Get(BuildIntegralLiteral(
-                unit_lowerer.Unit(), block, mir_type,
-                LowerHirIntegralConstant(c)));
+            return block.exprs.Get(
+                mir::BuildIntegralLiteral(
+                    unit_lowerer.Unit(), block, mir_type,
+                    LowerHirIntegralConstant(c)));
           },
           [&](hir::RealBits real) -> mir::Expr {
             return block.exprs.Get(BuildRealLiteral(
@@ -175,15 +176,17 @@ auto BuildDefaultValueExpr(
   return ty.Visit(
       Overloaded{
           [&](const mir::IntegralType& integral) -> mir::Expr {
-            return block.exprs.Get(BuildIntegralLiteral(
-                unit, block, type, DefaultIntegralConstant(integral)));
+            return block.exprs.Get(
+                mir::BuildIntegralLiteral(
+                    unit, block, type, DefaultIntegralConstant(integral)));
           },
           // An enumeration defaults as the vector it is: LRM Table 6-7 reads
           // the default off the state domain, which the base carries and the
           // names do not affect.
           [&](const mir::EnumType& e) -> mir::Expr {
-            return block.exprs.Get(BuildIntegralLiteral(
-                unit, block, type, DefaultIntegralConstant(e.base)));
+            return block.exprs.Get(
+                mir::BuildIntegralLiteral(
+                    unit, block, type, DefaultIntegralConstant(e.base)));
           },
           [&](const mir::StringType&) -> mir::Expr {
             // The literal is machine text; the empty string value is what the
@@ -511,7 +514,7 @@ auto BuildArrayConstructionCall(
   const mir::ExprId list_id =
       BuildElementList(unit, block, array_type, std::move(elements));
   return BuildContainerFromElements(
-      unit, array_type, list_id, BuildMachineIntLiteral(unit, block, 1));
+      unit, array_type, list_id, mir::BuildMachineIntLiteral(unit, block, 1));
 }
 
 auto BuildArrayRepeatCall(

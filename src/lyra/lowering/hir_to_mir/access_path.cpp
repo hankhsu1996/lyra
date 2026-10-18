@@ -15,13 +15,13 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/object_change.hpp"
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
@@ -240,7 +240,7 @@ auto StepTakenFor(
             return ElementRunStepTaken(
                 use, step,
                 {run.start,
-                 BuildMachineIntLiteral(
+                 mir::BuildMachineIntLiteral(
                      unit, block, static_cast<std::int64_t>(run.count))});
           },
           [&](const StepToElement& element) {
@@ -371,7 +371,7 @@ auto StepExpr(
                 unit, block, std::move(reference), receiver, type);
           },
           [&](StepCall call) {
-            return MakeBuiltinCall(
+            return mir::MakeBuiltinCall(
                 unit, block, call.entry, receiver, call.part,
                 call.type_argument, std::move(call.arguments), type);
           }},
@@ -462,7 +462,6 @@ auto NamedAgain(const mir::Block& from, mir::Block& to, mir::ExprId id)
           [&](const mir::UnaryExpr&) { return computes(); },
           [&](const mir::BinaryExpr&) { return computes(); },
           [&](const mir::CastExpr&) { return computes(); },
-          [&](const mir::DynamicCastExpr&) { return computes(); },
           [&](const mir::ConditionalExpr&) { return computes(); },
           [&](const mir::BlockExpr&) { return computes(); },
           [&](const mir::AssignExpr&) { return computes(); },
@@ -742,7 +741,7 @@ auto BuildTagMatches(
                 .part_type = tag_type};
             const mir::ExprId carried =
                 block.exprs.Add(StepRead(unit, block, to_tag, into));
-            const mir::ExprId named = BuildIntLiteral(
+            const mir::ExprId named = mir::BuildIntLiteral(
                 unit, block, static_cast<std::int64_t>(bits.member.value));
             return ReduceToCondition(
                 unit, block,
@@ -755,11 +754,13 @@ auto BuildTagMatches(
           [&](const HeldTag& held) {
             const mir::ExprId held_now = block.exprs.Add(
                 mir::MakeDiscriminantExpr(into, unit.builtins.machine_int64));
-            return block.exprs.Add(MakeBinary(
-                unit, block, mir::BinaryOp::kEquality, held_now,
-                BuildMachineIntLiteral(
-                    unit, block, static_cast<std::int64_t>(held.member.value)),
-                unit.builtins.machine_bool));
+            return block.exprs.Add(
+                mir::MakeBinary(
+                    unit, block, mir::BinaryOp::kEquality, held_now,
+                    mir::BuildMachineIntLiteral(
+                        unit, block,
+                        static_cast<std::int64_t>(held.member.value)),
+                    unit.builtins.machine_bool));
           }},
       tag);
 }
@@ -936,7 +937,6 @@ auto SettledPlace(
           [&](const mir::UnaryExpr&) { return computed(); },
           [&](const mir::BinaryExpr&) { return computed(); },
           [&](const mir::CastExpr&) { return computed(); },
-          [&](const mir::DynamicCastExpr&) { return computed(); },
           [&](const mir::ConditionalExpr&) { return computed(); },
           [&](const mir::BlockExpr&) { return computed(); },
           [&](const mir::AssignExpr&) { return computed(); },
@@ -1088,15 +1088,17 @@ auto PartNamedBy(
             },
             [&](const StepToComponent& component)
                 -> std::optional<mir::ExprId> {
-              return BuildMachineIntLiteral(
+              return mir::BuildMachineIntLiteral(
                   unit, block, component.position.value);
             },
             [&](const StepToUnionMember& member) -> std::optional<mir::ExprId> {
-              return BuildMachineIntLiteral(unit, block, member.position.value);
+              return mir::BuildMachineIntLiteral(
+                  unit, block, member.position.value);
             },
             [&](const StepToTaggedMember& member)
                 -> std::optional<mir::ExprId> {
-              return BuildMachineIntLiteral(unit, block, member.position.value);
+              return mir::BuildMachineIntLiteral(
+                  unit, block, member.position.value);
             },
             [](const StepToBits&) -> std::optional<mir::ExprId> {
               return std::nullopt;
@@ -1182,11 +1184,12 @@ auto PutCharacterExpr(
     const mir::ExprId held = block.AsValue(
         unit.types,
         PlaceForRead(unit, block, DescendInto(string, path.descent[at])));
-    put = block.exprs.Add(MakeBuiltinCall(
-        unit, block, support::BuiltinFn::kWithSlice, std::nullopt,
-        {held, bits->start, value}, block.exprs.Get(held).type));
+    put = block.exprs.Add(
+        mir::MakeBuiltinCall(
+            unit, block, support::BuiltinFn::kWithSlice, std::nullopt,
+            {held, bits->start, value}, block.exprs.Get(held).type));
   }
-  return MakeBuiltinCall(
+  return mir::MakeBuiltinCall(
       unit, block, support::BuiltinFn::kPutc,
       ReachedForWrite(unit, block, string, WriteEnd::kLanded),
       {character.position, put}, unit.builtins.void_type);
@@ -1203,11 +1206,11 @@ auto AssignSliceExpr(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path,
     mir::ExprId value) -> mir::Expr {
   const auto& run = std::get<StepToElementRun>(path.descent.back().to);
-  return MakeBuiltinCall(
+  return mir::MakeBuiltinCall(
       unit, block, support::BuiltinFn::kAssignElementSlice,
       WriteOperandOf(unit, block, path, path.descent.size() - 1),
       {run.start,
-       BuildMachineIntLiteral(
+       mir::BuildMachineIntLiteral(
            unit, block, static_cast<std::int64_t>(run.count)),
        value},
       unit.builtins.void_type);
@@ -1237,11 +1240,12 @@ auto StoreBitsExpr(
   mir::ExprId reference = WriteOperandOf(unit, block, path, at);
   for (std::size_t i = at; i < path.descent.size(); ++i) {
     const DescentStep& step = path.descent[i];
-    reference = block.exprs.Add(MakeBuiltinCall(
-        unit, block, support::BuiltinFn::kSliceMut, reference, std::nullopt,
-        step.part_type, {std::get<StepToBits>(step.to).start},
-        unit.types.Intern(
-            mir::Type{mir::BitsReferenceType{.bits = step.part_type}})));
+    reference = block.exprs.Add(
+        mir::MakeBuiltinCall(
+            unit, block, support::BuiltinFn::kSliceMut, reference, std::nullopt,
+            step.part_type, {std::get<StepToBits>(step.to).start},
+            unit.types.Intern(
+                mir::Type{mir::BitsReferenceType{.bits = step.part_type}})));
   }
   return mir::Expr{
       .data =
@@ -1265,7 +1269,7 @@ auto BuildStoreExpr(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path,
     mir::ExprId rhs_id) -> mir::Expr {
   // A store carries the right-hand side to the destination's declared
-  // representation (LRM 10.6.1).
+  // representation (LRM 10.7, 10.8).
   rhs_id = ConvertToType(unit, block, rhs_id, PathValueType(unit, block, path));
   AppendTagChecks(unit, block, path, CheckedAccess::kWrite);
   // Replacing the whole of what a capability wrapper holds acts on the wrapper

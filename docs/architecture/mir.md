@@ -328,11 +328,15 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
   HIR-to-MIR has the SV knowledge; MIR does not.
 - Rewritten into MIR before anything reads it below. Between HIR-to-MIR and every consumer, a unit
   passes through rewrites, each of which keeps what the program does and says what it changes in
-  MIR's own vocabulary; the unit is verified once, as it leaves them, since that is the form every
-  consumer reads. A consumer cannot tell a node a rewrite built from one the lowering built, so a
-  cost the program's meaning does not decide -- how a process that stops only at the head of its
-  loop is compiled -- is taken out once for both backends, and HIR-to-MIR still states the meaning
-  one way.
+  MIR's own vocabulary. Each says whether a correct program needs it: a required one brings the unit
+  into a form its consumers need, and an optional one leaves the same program at another cost, so a
+  build may skip it. What a unit may hold narrows at a required rewrite, so the form it is in is
+  named and the verification asks of a unit what that form requires; it is verified once, as it
+  leaves the rewrites, since that is the form every consumer reads, and after each where a build
+  asks. A rewrite builds a node through the same builders as the lowering, folding included. A
+  consumer cannot tell a node a rewrite built from one the lowering built, so a cost the program's
+  meaning does not decide -- how a process that stops only at the head of its loop is compiled -- is
+  taken out once for both backends, and HIR-to-MIR still states the meaning one way.
 - `binding_and_capture.md` owns the lexical reference contract MIR's value references obey: a
   reference names a binding materialized in its own callable body, and a binding crosses a closure
   boundary only as a captured environment field. MIR carries no navigation distance to a
@@ -439,15 +443,16 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
   it names both already: the operand's type is what the value comes from, `Expr::type` is what it
   goes to. A kind is derived from that pair -- SV's overloaded conversion syntax is resolved at
   HIR-to-MIR, so what reaches here is one concrete pair -- and a classification stored beside the
-  thing it is derived from is a second copy that can disagree with it. What the pair does not excuse
-  is a backend passing a value through for a pair it cannot realize: a no-op is stated only where
-  the two representations are provably the same, and every other unhandled pair is refused. A cast
-  does nothing but read the value as the other type: a conversion that reshapes a _value_ (integral
-  resize, real <-> integral, packed <-> string) is a library call, and one that allocates, hands
-  owned storage over, or runs a check that can fail is a node of its own -- a class handle's checked
-  downcast is the dynamic cast, a box handed on is a move. A backend whose spelling of a cast does
-  any of those has performed an operation MIR did not state. (A node states a fact once; a backend
-  refuses what it cannot do rather than doing nothing.)
+  thing it is derived from is a second copy that can disagree with it. Which pairs a cast joins is
+  this layer's to state, and the verification holds every cast to them. They are the pairs every
+  target writes in its own conversion syntax, so a backend translates each and refuses none. A cast
+  does nothing but read the value as the other type. A conversion that reshapes a _value_ (integral
+  resize, real <-> integral, packed <-> string) is a library call, and so is one only a layout
+  answers -- a handle seen as another class's, the checked one `$cast` asks for included, and a
+  closure made one of no known type. One that allocates or hands owned storage over is a node of its
+  own, as a box handed on is a move. A backend whose spelling of a cast does any of those has
+  performed an operation MIR did not state. (A node states a fact once, and a backend has nothing to
+  decide about it.)
 - A backend that recovers a semantic fact MIR does not state by inferring it from a node's body
   contents or any side signal, instead of reading it from an explicit node or reference. A node's
   own structural context is not a side signal: the type of an operand it was handed, and the node

@@ -43,7 +43,6 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/net_declaration.hpp"
 #include "lyra/lowering/hir_to_mir/predicate.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -62,6 +61,7 @@
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -327,7 +327,8 @@ auto ReadInstantiation(
               mir::CallExpr{
                   .callee = mir::Direct{.target = read},
                   .arguments =
-                      {table, BuildMachineIntLiteral(unit, block, at.value)}},
+                      {table,
+                       mir::BuildMachineIntLiteral(unit, block, at.value)}},
           .type = type});
 }
 
@@ -503,7 +504,7 @@ auto LowerConstructorArguments(
           .data =
               mir::CompositeExpr{
                   .parts =
-                      {BuildBit1Literal(
+                      {mir::BuildBit1Literal(
                            unit_lowerer.Unit(), block, was_assigned),
                        value}},
           .type = passed};
@@ -553,7 +554,7 @@ auto BuildAlternative(
             .data =
                 mir::BinaryExpr{
                     .op = mir::BinaryOp::kAdd,
-                    .lhs = BuildIntLiteral(
+                    .lhs = mir::BuildIntLiteral(
                         unit, block, member.array_dims[d].LowestIndex()),
                     .rhs = block.ReadLocal(coords[d], unit.builtins.int_type)},
             .type = unit.builtins.int_type}));
@@ -606,10 +607,12 @@ auto ChooseByPosition(
     auto built = build(run.alternative);
     if (!built) return std::unexpected(std::move(built.error()));
     const mir::ExprId at = position();
-    const mir::ExprId before_end = block.exprs.Add(MakeBinary(
-        unit, block, mir::BinaryOp::kLessThan, at,
-        BuildIntLiteral(unit, block, static_cast<std::int64_t>(run.end)),
-        unit.builtins.bit1));
+    const mir::ExprId before_end = block.exprs.Add(
+        mir::MakeBinary(
+            unit, block, mir::BinaryOp::kLessThan, at,
+            mir::BuildIntLiteral(
+                unit, block, static_cast<std::int64_t>(run.end)),
+            unit.builtins.bit1));
     chosen = block.exprs.Add(
         mir::Expr{
             .data =
@@ -634,18 +637,21 @@ auto BuildElement(
       lowerer.HirScope().instance_members.Get(id);
   mir::Block& block = *frame.current_block;
   const auto position = [&] {
-    mir::ExprId at = BuildIntLiteral(unit, block, 0);
+    mir::ExprId at = mir::BuildIntLiteral(unit, block, 0);
     for (std::size_t d = 0; d < coords.size(); ++d) {
-      const mir::ExprId scaled = block.exprs.Add(MakeBinary(
-          unit, block, mir::BinaryOp::kMul, at,
-          BuildIntLiteral(
-              unit, block,
-              static_cast<std::int64_t>(member.array_dims[d].ElementCount())),
-          unit.builtins.int_type));
-      at = block.exprs.Add(MakeBinary(
-          unit, block, mir::BinaryOp::kAdd, scaled,
-          block.ReadLocal(coords[d], unit.builtins.int_type),
-          unit.builtins.int_type));
+      const mir::ExprId scaled = block.exprs.Add(
+          mir::MakeBinary(
+              unit, block, mir::BinaryOp::kMul, at,
+              mir::BuildIntLiteral(
+                  unit, block,
+                  static_cast<std::int64_t>(
+                      member.array_dims[d].ElementCount())),
+              unit.builtins.int_type));
+      at = block.exprs.Add(
+          mir::MakeBinary(
+              unit, block, mir::BinaryOp::kAdd, scaled,
+              block.ReadLocal(coords[d], unit.builtins.int_type),
+              unit.builtins.int_type));
     }
     return at;
   };
@@ -708,8 +714,8 @@ auto BuildInstanceMemberValue(
       body.child_scopes.Add(std::move(element_block));
   body.AppendStmt(BuildCountingLoopStmt(
       unit, steps.Frame(), body,
-      BuildIntLiteral(unit, body, static_cast<std::int64_t>(count)), position,
-      element_scope));
+      mir::BuildIntLiteral(unit, body, static_cast<std::int64_t>(count)),
+      position, element_scope));
 
   return block.exprs.Add(steps.Build(body.LocalPlace(sequence, sequence_type)));
 }
@@ -1476,7 +1482,7 @@ auto BuildNetJoinStmt(
                       unit, block, *coupling.here, coupling.here_offset),
                   PositionWithinNet(
                       unit, block, *coupling.there, coupling.there_offset),
-                  BuildMachineIntLiteral(unit, block, coupling.width),
+                  mir::BuildMachineIntLiteral(unit, block, coupling.width),
                   unit.builtins.void_type))}};
 }
 
@@ -2015,10 +2021,11 @@ auto LowerRepeatedGenerate(
     std::vector<mir::ExprId> at_one_of_them;
     at_one_of_them.reserve(built.indices.size());
     for (const std::int64_t value : built.indices) {
-      at_one_of_them.push_back(step.exprs.Add(MakeBinary(
-          unit, step, mir::BinaryOp::kEquality, index,
-          BuildMachineIntLiteral(unit, step, value),
-          unit.builtins.machine_bool)));
+      at_one_of_them.push_back(step.exprs.Add(
+          mir::MakeBinary(
+              unit, step, mir::BinaryOp::kEquality, index,
+              mir::BuildMachineIntLiteral(unit, step, value),
+              unit.builtins.machine_bool)));
     }
     const mir::ExprId test = AnyHolds(unit, step, at_one_of_them);
     step.AppendStmt(
@@ -2307,7 +2314,8 @@ auto ReachLoopBlock(
                       mir::Direct{
                           .target = support::BuiltinFn::kLoopBlocksAt,
                           .receiver = blocks},
-                  .arguments = {BuildMachineIntLiteral(unit, block, index)}},
+                  .arguments = {mir::BuildMachineIntLiteral(
+                      unit, block, index)}},
           .type = unit.builtins.scope_ptr});
 }
 

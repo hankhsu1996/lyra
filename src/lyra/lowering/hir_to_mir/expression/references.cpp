@@ -13,7 +13,6 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/endpoint.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/real_literal.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -24,6 +23,7 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
@@ -38,8 +38,9 @@ auto LowerHirIntegerLiteral(
     const UnitLowerer& unit_lowerer, const WalkFrame& frame,
     const hir::IntegerLiteral& i, mir::TypeId type) -> mir::Expr {
   mir::Block& block = *frame.current_block;
-  return block.exprs.Get(BuildIntegralLiteral(
-      unit_lowerer.Unit(), block, type, LowerHirIntegralConstant(i.value)));
+  return block.exprs.Get(
+      mir::BuildIntegralLiteral(
+          unit_lowerer.Unit(), block, type, LowerHirIntegralConstant(i.value)));
 }
 
 // LRM 5.9: a string literal's bytes as the integer constant they denote, the
@@ -67,9 +68,10 @@ auto LowerHirStringLiteral(
   const auto& ty = unit_lowerer.Unit().types.Get(type);
   auto& block = *frame.current_block;
   if (ty.IsIntegral()) {
-    return block.exprs.Get(BuildIntegralLiteral(
-        unit_lowerer.Unit(), block, type,
-        StringBytesToConstant(s.value, ty.Integral())));
+    return block.exprs.Get(
+        mir::BuildIntegralLiteral(
+            unit_lowerer.Unit(), block, type,
+            StringBytesToConstant(s.value, ty.Integral())));
   }
   const mir::ExprId lit = block.exprs.Add(
       mir::Expr{.data = mir::StringLiteral{.value = s.value}, .type = type});
@@ -120,8 +122,8 @@ auto LowerHirQueueLastIndex(
                   .arguments = {}},
           .type = type});
   return BuildMirBinaryExpr(
-      unit, block, hir::BinaryOp::kSub, size, BuildIntLiteral(unit, block, 1),
-      type);
+      unit, block, hir::BinaryOp::kSub, size,
+      mir::BuildIntLiteral(unit, block, 1), type);
 }
 
 auto LowerHirRealLiteral(

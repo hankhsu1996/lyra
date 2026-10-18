@@ -3,15 +3,17 @@
 #include <algorithm>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
 
 #include "lyra/mir/callable_code.hpp"
-#include "lyra/mir/class.hpp"
+#include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/operand_use.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -148,14 +150,12 @@ class Simplifier {
     if (const mir::CallExpr* set = CallOf(expr, support::BuiltinFn::kSet)) {
       const mir::CallExpr* bits = CallOf(
           block.exprs.Get(ReceiverOf(*set)), support::BuiltinFn::kSliceMut);
-      // What is written is held at the select's type, so the whole is
-      // written where that is the destination's own type; a signed vector's
-      // whole select is unsigned (LRM 11.8.1), and its bits are written.
       return bits != nullptr &&
              IsFirstPosition(*unit_, block, bits->arguments[0]) &&
-             TypeArgumentOf(*bits) ==
+             BitsSpanTheWhole(
+                 *unit_, TypeArgumentOf(*bits),
                  WrittenValueType(
-                     *unit_, block.exprs.Get(ReceiverOf(*bits)).type);
+                     *unit_, block.exprs.Get(ReceiverOf(*bits)).type));
     }
     if (const mir::CallExpr* run =
             CallOf(expr, support::BuiltinFn::kAssignElementSlice)) {
@@ -241,32 +241,22 @@ class Simplifier {
     return ReceiverOf(*read);
   }
 
-  // `value` brought to `type`, which holds the same bits: a select is
-  // unsigned whatever the value it is taken from is (LRM 11.8.1).
-  static auto Conversion(mir::ExprId value, mir::TypeId type) -> mir::Expr {
-    return mir::Expr{
-        .data =
-            mir::CallExpr{
-                .callee = mir::BuiltinCalleeAnswering(
-                    support::BuiltinFn::kIntegralConvert, std::nullopt, type),
-                .arguments = {value}},
-        .type = type};
-  }
-
   // The whole of what `whole` names, at the select's type: read where it lies
-  // in a place, and converted where the select's type is another.
-  static auto Read(BlockRebuild& rebuild, mir::ExprId whole, mir::TypeId type)
+  // in a place, and converted where the select's type is another, since a
+  // select is unsigned whatever the value it is taken from is (LRM 11.8.1).
+  [[nodiscard]] auto Read(
+      BlockRebuild& rebuild, mir::ExprId whole, mir::TypeId type) const
       -> mir::Expr {
     const mir::Expr& taken_on = rebuild.From().exprs.Get(whole);
     const mir::ExprId reached = rebuild.Expr(whole);
-    if (!mir::IsPlace(taken_on.data)) {
-      return Conversion(reached, type);
-    }
-    if (taken_on.type == type) {
+    if (mir::IsPlace(taken_on.data) && taken_on.type == type) {
       return mir::MakeCopyExpr(reached, type);
     }
-    return Conversion(
-        rebuild.Add(mir::MakeCopyExpr(reached, taken_on.type)), type);
+    const mir::ExprId value =
+        mir::IsPlace(taken_on.data)
+            ? rebuild.Add(mir::MakeCopyExpr(reached, taken_on.type))
+            : reached;
+    return mir::MakeIntegralConversion(*unit_, rebuild.To(), value, type);
   }
 
   // The write of `value` into the whole of what `destination` reaches: the
@@ -279,7 +269,13 @@ class Simplifier {
     const mir::Block& from = rebuild.From();
     const mir::TypeId destination_type = from.exprs.Get(destination).type;
     const mir::TypeId landed = WrittenValueType(*unit_, destination_type);
-    const mir::ExprId written = rebuild.Expr(value);
+    // What is written is held at the select's type, which a signed whole
+    // differs from in its signedness alone.
+    mir::ExprId written = rebuild.Expr(value);
+    if (from.exprs.Get(value).type != landed) {
+      written = rebuild.Add(
+          mir::MakeIntegralConversion(*unit_, rebuild.To(), written, landed));
+    }
     const auto set_on = [&](mir::ExprId receiver) {
       return mir::Expr{
           .data =
@@ -312,99 +308,42 @@ class Simplifier {
   const mir::CompilationUnit* unit_;
 };
 
-// `code` with every select of the whole rewritten, and `outside_args` -- nodes
-// of its body no statement reaches, which a constructor enters its base's
-// with -- named again in the body that replaces it. Code with nothing to
-// rewrite is handed back as it is.
-auto SimplifiedCode(
-    const mir::CompilationUnit& unit, const Simplifier& simplifier,
-    mir::CallableCode code, std::vector<mir::ExprId>& outside_args)
-    -> mir::CallableCode {
-  if (!code.body.has_value() || !simplifier.FiresIn(*code.body)) {
-    return code;
-  }
-  // Which nodes of each block of this body are taken as the storage itself,
-  // worked out once for a block the rewrite reaches.
-  std::unordered_map<const mir::Block*, std::vector<bool>> taken_as_storage;
-  const auto taken_at = [&](const mir::Block& block, mir::ExprId id) {
-    auto [found, inserted] = taken_as_storage.try_emplace(&block);
-    if (inserted) {
-      found->second = TakenAsStorage(unit, block);
-    }
-    return found->second.at(id.value);
-  };
-  const RebuildRules rules{
-      .stands_for =
-          [&](const mir::Block& block, mir::ExprId id) {
-            return simplifier.StandsFor(block, id, taken_at(block, id));
-          },
-      .expr =
-          [&](BlockRebuild& rebuild, mir::ExprId id) {
-            return simplifier.Node(rebuild, id, taken_at(rebuild.From(), id));
-          }};
-  BlockRebuild rebuild(*code.body, rules);
-  std::vector<mir::StmtId> stmts = rebuild.Stmts(code.body->root_stmts);
-  for (mir::ExprId& argument : outside_args) {
-    argument = rebuild.Expr(argument);
-  }
-  code.body = std::move(rebuild).Finish(std::move(stmts));
-  return code;
-}
-
-auto SimplifiedCode(
-    const mir::CompilationUnit& unit, const Simplifier& simplifier,
-    mir::CallableCode code) -> mir::CallableCode {
-  std::vector<mir::ExprId> no_outside_args;
-  return SimplifiedCode(unit, simplifier, std::move(code), no_outside_args);
-}
-
 }  // namespace
 
 auto InstSimplify(mir::CompilationUnit unit) -> mir::CompilationUnit {
-  const Simplifier simplifier(unit);
-  unit.classes = std::move(unit.classes)
-                     .TransformValues([&](mir::ClassId, mir::Class cls) {
-                       if (cls.constructor.has_value()) {
-                         cls.constructor->code = SimplifiedCode(
-                             unit, simplifier, std::move(cls.constructor->code),
-                             cls.constructor->base_args);
-                       }
-                       cls.callables =
-                           std::move(cls.callables)
-                               .TransformValues([&](mir::CallableId,
-                                                    mir::CallableDecl decl) {
-                                 decl.code = SimplifiedCode(
-                                     unit, simplifier, std::move(decl.code));
-                                 return decl;
-                               });
-                       return cls;
-                     });
-  unit.callables =
-      std::move(unit.callables)
-          .TransformValues([&](mir::CallableId, mir::CallableDecl decl) {
-            decl.code = SimplifiedCode(unit, simplifier, std::move(decl.code));
-            return decl;
-          });
-  unit.record_methods =
-      std::move(unit.record_methods)
-          .TransformValues([&](mir::RecordId, mir::RecordMethods methods) {
-            for (mir::RecordMethod& method : methods) {
-              method.code =
-                  SimplifiedCode(unit, simplifier, std::move(method.code));
-            }
-            return methods;
-          });
-  for (mir::TypeOperation& stated : unit.type_operations) {
-    stated.code = SimplifiedCode(unit, simplifier, std::move(stated.code));
-  }
-  unit.closures =
-      std::move(unit.closures)
-          .TransformValues([&](mir::ClosureId, mir::ClosureDecl closure) {
-            closure.invoke =
-                SimplifiedCode(unit, simplifier, std::move(closure.invoke));
-            return closure;
-          });
-  return unit;
+  return mir::RewriteEachCode(
+      std::move(unit),
+      [](const mir::CompilationUnit& unit, const mir::CodeSource&,
+         const mir::CallableCode& code,
+         std::span<const mir::ExprId> outside_roots)
+          -> std::optional<mir::SourcedCode> {
+        const Simplifier simplifier(unit);
+        if (!code.body.has_value() || !simplifier.FiresIn(*code.body)) {
+          return std::nullopt;
+        }
+        // Which nodes of each block of this body are taken as the storage
+        // itself, worked out once for a block the rewrite reaches.
+        std::unordered_map<const mir::Block*, std::vector<bool>>
+            taken_as_storage;
+        const auto taken_at = [&](const mir::Block& block, mir::ExprId id) {
+          auto [found, inserted] = taken_as_storage.try_emplace(&block);
+          if (inserted) {
+            found->second = TakenAsStorage(unit, block);
+          }
+          return found->second.at(id.value);
+        };
+        const RebuildRules rules{
+            .stands_for =
+                [&](const mir::Block& block, mir::ExprId id) {
+                  return simplifier.StandsFor(block, id, taken_at(block, id));
+                },
+            .expr =
+                [&](BlockRebuild& rebuild, mir::ExprId id) {
+                  return simplifier.Node(
+                      rebuild, id, taken_at(rebuild.From(), id));
+                }};
+        return RebuildCode(code, outside_roots, rules);
+      });
 }
 
 }  // namespace lyra::mir_transform

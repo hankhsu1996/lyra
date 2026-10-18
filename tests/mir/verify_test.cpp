@@ -1,5 +1,7 @@
 #include "lyra/mir/verify.hpp"
 
+#include <array>
+#include <cstdint>
 #include <gtest/gtest.h>
 #include <string>
 #include <string_view>
@@ -11,6 +13,7 @@
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/callable_id.hpp"
+#include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -26,6 +29,12 @@
 
 namespace lyra::mir {
 namespace {
+
+// Checks `unit` as every backend reads it, which is the phase holding it to
+// the most.
+void Verify(const CompilationUnit& unit) {
+  mir::Verify(unit, Phase::kForBackends, "under test");
+}
 
 // A body of the unit's namespace named `f`, returning `result`, whose one
 // statement is a nested block waiting on something -- nested, because a
@@ -204,8 +213,7 @@ TEST(MirVerifyTest, AComputationOneRunReachesTwiceIsRefused) {
 // a run can both take, so one node may stand at both; under the same arm, or
 // with one of them the condition, a run takes both.
 TEST(MirVerifyTest, AComputationUnderDifferentArmsIsNotReachedTwice) {
-  const auto conditional = [](const CompilationUnit& u, Block& body,
-                              ExprId condition, ExprId then_value,
+  const auto conditional = [](Block& body, ExprId condition, ExprId then_value,
                               ExprId else_value) {
     return body.exprs.Add(
         Expr{
@@ -214,7 +222,7 @@ TEST(MirVerifyTest, AComputationUnderDifferentArmsIsNotReachedTwice) {
                     .condition = condition,
                     .then_value = then_value,
                     .else_value = else_value},
-            .type = u.builtins.int_type});
+            .type = body.exprs.Get(then_value).type});
   };
   const auto flag = [](const CompilationUnit& u, Block& body) {
     return body.exprs.Add(
@@ -227,9 +235,9 @@ TEST(MirVerifyTest, AComputationUnderDifferentArmsIsNotReachedTwice) {
       Verify(UnitWithBody([&](const CompilationUnit& u, Block& body) {
         const ExprId call = AddCall(u, body);
         const ExprId inner =
-            conditional(u, body, flag(u, body), call, AddCall(u, body));
+            conditional(body, flag(u, body), call, AddCall(u, body));
         body.AppendStmt(
-            ExprStmt{.expr = conditional(u, body, flag(u, body), call, inner)});
+            ExprStmt{.expr = conditional(body, flag(u, body), call, inner)});
       })));
 
   EXPECT_THROW(
@@ -239,7 +247,11 @@ TEST(MirVerifyTest, AComputationUnderDifferentArmsIsNotReachedTwice) {
         body.AppendStmt(
             ExprStmt{
                 .expr = conditional(
-                    u, body, flag(u, body), sum, AddCall(u, body))});
+                    body, flag(u, body), sum,
+                    body.exprs.Add(
+                        Expr{
+                            .data = NullLiteral{},
+                            .type = body.exprs.Get(sum).type}))});
       })),
       InternalError);
 
@@ -255,8 +267,12 @@ TEST(MirVerifyTest, AComputationUnderDifferentArmsIsNotReachedTwice) {
                 .type = u.builtins.int_type});
         body.AppendStmt(
             ExprStmt{
-                .expr =
-                    conditional(u, body, test, as_value, AddCall(u, body))});
+                .expr = conditional(
+                    body, test, as_value,
+                    body.exprs.Add(
+                        Expr{
+                            .data = NullLiteral{},
+                            .type = u.builtins.int_type}))});
       })),
       InternalError);
 }
@@ -483,6 +499,15 @@ TEST(MirVerifyTest, AMemberFunctionIsEnteredOnTheObjectAPointerReaches) {
           dereferenced
               ? body.exprs.Add(MakeDerefExpr(pointer, u.builtins.int_type))
               : pointer;
+      // The member function called, of a class of the unit, entered on its
+      // object alone.
+      Class cls;
+      cls.callables.Add(
+          CallableDecl{
+              .code = CallableCode{},
+              .foreign = std::nullopt,
+              .virtual_dispatch = std::nullopt});
+      u.DefineClass(u.DeclareClass(), std::move(cls));
       body.AppendStmt(
           ExprStmt{
               .expr = body.exprs.Add(
@@ -529,8 +554,12 @@ TEST(MirVerifyTest, OnlyABindingOfAMemberMakesAReferenceNameOtherStorage) {
       const ExprId target = body.exprs.Add(MakeDerefExpr(
           body.exprs.Add(Expr{.data = NullLiteral{}, .type = to_target}),
           target_type));
-      const ExprId bound =
-          body.exprs.Add(Expr{.data = NullLiteral{}, .type = reference_type});
+      // A store hands its target a value of the target's own type, and a
+      // binding hands it the reference it binds.
+      const ExprId bound = body.exprs.Add(
+          Expr{
+              .data = NullLiteral{},
+              .type = through_store ? target_type : reference_type});
       const ExprId operation =
           through_store
               ? body.exprs.Add(MakeAssignExpr(u.builtins, target, bound))
@@ -959,8 +988,7 @@ TEST(MirVerifyTest, OwnedStorageIsAllocatedOnlyByANewExpression) {
 auto TooLargeForAFrame(CompilationUnit& unit) -> TypeId {
   return unit.types.Intern(
       Type{UnpackedArrayType{
-          .element_type = unit.builtins.int_type,
-          .dim = UnpackedRange{.left = 0, .right = 4095}}});
+          .element_type = unit.builtins.int_type, .count = 4096}});
 }
 
 // A value too large for a frame is made only in storage a new-expression
@@ -985,11 +1013,16 @@ TEST(MirVerifyTest, AValueTooLargeForAFrameLiesInAllocatedStorage) {
 
   EXPECT_NO_THROW(Verify(made(true)));
   ExpectRefused(made(false), "too large for a frame outside the storage");
-  ExpectRefused(
+  const CompilationUnit held_in_a_local =
       UnitWithCode([](CompilationUnit& u, CallableCode& code) {
         code.locals.Add(LocalDecl{.type = TooLargeForAFrame(u)});
-      }),
-      "declares a local too large for a frame");
+      });
+  ExpectRefused(held_in_a_local, "declares a local too large for a frame");
+
+  // As built, a unit states every value plainly and none is held through a
+  // box yet: only the phase the backends read holds it to frames.
+  EXPECT_NO_THROW(mir::Verify(made(false), Phase::kBuilt, "under test"));
+  EXPECT_NO_THROW(mir::Verify(held_in_a_local, Phase::kBuilt, "under test"));
 }
 
 // An assignment writes the storage its target names, so a target that
@@ -1024,6 +1057,104 @@ TEST(MirVerifyTest, AnAssignmentLandsOnAPlace) {
   ExpectRefused(assigning(false), "which names no place");
 }
 
+// A value handed to something of a type it states is of that type: a local's
+// initializer, what a body answers, what an assignment writes, and what a whole
+// write through a wrapper writes.
+TEST(MirVerifyTest, AValueHandedMeetsTheTypeItIsHandedTo) {
+  enum class HandedTo : std::uint8_t {
+    kLocal,
+    kResult,
+    kAssignment,
+    kWrapper,
+  };
+  const auto handing = [](HandedTo to, bool of_its_type) {
+    return UnitWithCode([=](CompilationUnit& u, CallableCode& code) {
+      const TypeId held = u.builtins.int_type;
+      code.result_type = held;
+      Block& body = code.Body();
+      const ExprId value = body.exprs.Add(
+          Expr{
+              .data = NullLiteral{},
+              .type = of_its_type ? held : u.builtins.integer});
+      const auto written = [&](TypeId local_type) {
+        const LocalId local = code.locals.Add(LocalDecl{.type = local_type});
+        return body.exprs.Add(MakeLocalRefExpr(local, local_type));
+      };
+      switch (to) {
+        case HandedTo::kLocal:
+          body.AppendStmt(
+              LocalDeclStmt{
+                  .target = code.locals.Add(LocalDecl{.type = held}),
+                  .init = value});
+          return;
+        case HandedTo::kResult:
+          body.AppendStmt(ReturnStmt{.value = value});
+          return;
+        case HandedTo::kAssignment:
+          body.AppendStmt(
+              ExprStmt{
+                  .expr = body.exprs.Add(
+                      MakeAssignExpr(u.builtins, written(held), value))});
+          return;
+        case HandedTo::kWrapper:
+          body.AppendStmt(
+              ExprStmt{
+                  .expr = body.exprs.Add(MakeCallExpr(
+                      Direct{
+                          .target = support::BuiltinFn::kSet,
+                          .receiver = written(u.types.Intern(
+                              Type{ObservableType{.value = held}}))},
+                      {value}, u.builtins.void_type))});
+          return;
+      }
+    });
+  };
+
+  for (const auto& [to, refusal] : std::array{
+           std::pair{HandedTo::kLocal, "hands a local's initializer"},
+           std::pair{HandedTo::kResult, "hands what it answers"},
+           std::pair{HandedTo::kAssignment, "hands an assignment's target"},
+           std::pair{HandedTo::kWrapper, "hands a whole write's storage"}}) {
+    EXPECT_NO_THROW(Verify(handing(to, true)));
+    ExpectRefused(handing(to, false), refusal);
+  }
+}
+
+// A cast joins only types every target converts between in its own syntax: an
+// integral value at a type laying it out alike, a value read as the machine
+// boolean a condition tests, and a machine integer at another. A value moved
+// between representations is a call.
+TEST(MirVerifyTest, ACastReadsAValueAsATypeEveryTargetConvertsItTo) {
+  const auto casting = [](auto from, auto to) {
+    return UnitWithCode([=](CompilationUnit& u, CallableCode& code) {
+      Block& body = code.Body();
+      const ExprId value =
+          body.exprs.Add(Expr{.data = NullLiteral{}, .type = from(u)});
+      const ExprId cast = body.exprs.Add(
+          Expr{.data = CastExpr{.operand = value}, .type = to(u)});
+      body.AppendStmt(
+          LocalDeclStmt{
+              .target = code.locals.Add(LocalDecl{.type = to(u)}),
+              .init = cast});
+    });
+  };
+  const auto int_type = [](CompilationUnit& u) { return u.builtins.int_type; };
+  const auto integer = [](CompilationUnit& u) { return u.builtins.integer; };
+  const auto string = [](CompilationUnit& u) { return u.builtins.string; };
+  const auto machine_bool = [](CompilationUnit& u) {
+    return u.builtins.machine_bool;
+  };
+  const auto machine_int64 = [](CompilationUnit& u) {
+    return u.builtins.machine_int64;
+  };
+
+  EXPECT_NO_THROW(Verify(casting(int_type, machine_bool)));
+  EXPECT_NO_THROW(Verify(casting(machine_int64, machine_bool)));
+  ExpectRefused(casting(int_type, integer), "which a cast does not join");
+  ExpectRefused(casting(int_type, string), "which a cast does not join");
+  ExpectRefused(casting(int_type, machine_int64), "which a cast does not join");
+}
+
 // A unit states operations only for a type it states them for per unit, and a
 // default for each type an array of it holds, each once, and a call names one
 // only where the unit states it.
@@ -1032,8 +1163,7 @@ TEST(MirVerifyTest, AUnitStatesEachTypeOperationOnceAndCallsOnlyThose) {
     return UnitWithBody([stated](CompilationUnit& u, Block& body) {
       const TypeId array = u.types.Intern(
           Type{UnpackedArrayType{
-              .element_type = u.builtins.int_type,
-              .dim = UnpackedRange{.left = 0, .right = 3}}});
+              .element_type = u.builtins.int_type, .count = 4}});
       if (stated) {
         u.type_operations.push_back(DefaultOf(array));
       }

@@ -117,7 +117,7 @@ auto BuildCompletionLayout(
 // sole statement of which formals are parameters, so a definition and the
 // prototype it implements cannot declare different parameter lists.
 auto ParamTypeOf(
-    UnitLowerer& unit_lowerer, hir::TypeId value_type,
+    const mir::CompilationUnit& unit, mir::TypeId value_type,
     hir::ParamDirection direction) -> std::optional<mir::TypeId>;
 
 // The parameter a subroutine takes after its formals: where a call of a

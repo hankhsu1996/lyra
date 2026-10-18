@@ -110,8 +110,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [&](const EnumType& t) { HashEnumeration(seed, t); },
           [&](const UnpackedArrayType& t) {
             HashId(seed, t.element_type);
-            HashField(seed, t.dim.left);
-            HashField(seed, t.dim.right);
+            HashField(seed, t.count);
           },
           [&](const DynamicArrayType& t) { HashId(seed, t.element_type); },
           [&](const QueueType& t) {

@@ -3,12 +3,12 @@
 #include <cstdint>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -21,7 +21,7 @@ auto LowerTimeSystemSubroutineCall(
   auto& body = *frame.current_block;
   const mir::ExprId runtime_id =
       body.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
-  const mir::ExprId unit_power_id = BuildMachineIntLiteral(
+  const mir::ExprId unit_power_id = mir::BuildMachineIntLiteral(
       lowerer.Owner().Unit(), body,
       static_cast<std::int64_t>(lowerer.Resolution().unit_power));
   const auto call = [&](support::BuiltinFn entry, mir::TypeId result) {

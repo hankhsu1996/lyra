@@ -70,7 +70,10 @@ fail while running is not folded, since whether it fails is a question for a run
 
 **P4. What a deferred write freezes is where the part is, never how many parts it takes.** A count
 is a number its type fixes, so it travels beside a descent step's coordinates rather than among
-them, and nothing snapshots it.
+them, and nothing snapshots it. A position that is a constant of the unit has no moment of
+evaluation either, so the deferred body states it again rather than freezing it, as a C++ lambda
+captures no variable usable in constant expressions ([basic.def.odr]); whether a node is a constant
+is the kind of the node, never a match on what it spells.
 
 ## What established systems do
 
@@ -134,9 +137,10 @@ comes from a type.
   several indices, or a position the program computes, needs the flag threaded through every step,
   where the four-state value carries unknown through ordinary arithmetic.
 
-- **Restate a literal operand in a deferred write's body instead of freezing it.** It made the one
-  failure the change met go away by matching operands for literals, the shape S1's own history
-  rejects; P4 removes the need.
+- **Restate an operand that looks like a literal in a deferred write's body instead of freezing
+  it.** It made the one failure the change met go away by matching operands for literals, the shape
+  S1's own history rejects. What P4 restates is decided by the node's kind instead, so a constant
+  reached any other way is restated too and nothing is matched.
 
 ## Consequences
 

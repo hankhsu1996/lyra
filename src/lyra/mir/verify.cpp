@@ -25,8 +25,10 @@
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/closure_signature.hpp"
+#include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/declared_class.hpp"
+#include "lyra/mir/dump.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/external_class.hpp"
@@ -49,14 +51,6 @@
 namespace lyra::mir {
 
 namespace {
-
-// A body the source named goes by that name, and one it did not by where it
-// sits, so a violation names what was being lowered wherever it can.
-auto BodyLabel(std::optional<std::string_view> name, std::uint32_t position)
-    -> std::string {
-  return name.has_value() ? std::format("'{}'", *name)
-                          : std::format("body {}", position);
-}
 
 // Whether anything in `block` suspends, checking on the way that each
 // suspension waits on what its kind waits on: an await on an execution, a wait
@@ -155,7 +149,6 @@ auto ComputesNothingItself(const ExprData& data) -> bool {
           [](const UnaryExpr&) { return false; },
           [](const BinaryExpr&) { return false; },
           [](const CastExpr&) { return false; },
-          [](const DynamicCastExpr&) { return false; },
           [](const ConditionalExpr&) { return false; },
           [](const BlockExpr&) { return false; },
           [](const AssignExpr&) { return false; },
@@ -193,9 +186,6 @@ auto Describe(const ExprData& data) -> std::string {
           [](const UnaryExpr&) -> std::string { return "a unary operation"; },
           [](const BinaryExpr&) -> std::string { return "a binary operation"; },
           [](const CastExpr&) -> std::string { return "a cast"; },
-          [](const DynamicCastExpr&) -> std::string {
-            return "a dynamic cast";
-          },
           [](const ConditionalExpr&) -> std::string { return "a conditional"; },
           [](const BlockExpr&) -> std::string { return "a block expression"; },
           [](const AssignExpr&) -> std::string { return "an assignment"; },
@@ -1046,6 +1036,186 @@ void VerifyWritesLandInWritableStorage(
   }
 }
 
+// Whether a cast may read a value of `from` as a value of `to`: each pair is
+// one every target writes in its own conversion syntax -- C++'s cast notation,
+// an LLVM cast instruction -- with the value unchanged or read as the machine
+// boolean a condition tests (LRM 12.4). An integral value is read at a type
+// laying it out alike, an enumeration's and its base's; a machine integer at
+// another width; a pointer at another pointee, as a code address is at another
+// signature; and a reference at the same referent made read-only, as clang
+// states a qualification conversion (LRM 13.5.2). A value moved between
+// representations, and a handle seen as another class's, is a call.
+auto CastReadsAsAnother(const TypePool& types, TypeId from, TypeId to) -> bool {
+  const Type& source = types.Get(from);
+  const Type& destination = types.Get(to);
+  const auto is_machine_integer = [](const Type& type) {
+    return type.Is<MachineIntType>() || type.Is<MachineBoolType>();
+  };
+  if (source.IsIntegral() && destination.IsIntegral()) {
+    return source.Integral() == destination.Integral();
+  }
+  if (destination.Is<MachineBoolType>()) {
+    return is_machine_integer(source) || source.IsIntegral() ||
+           source.IsRealFamily() || source.Is<ManagedRefType>() ||
+           source.Is<ChandleType>();
+  }
+  if (is_machine_integer(source) && is_machine_integer(destination)) {
+    return true;
+  }
+  if ((source.Is<PointerType>() && destination.Is<PointerType>()) ||
+      (source.Is<MachineFunctionType>() &&
+       destination.Is<MachineFunctionType>())) {
+    return true;
+  }
+  const auto* from_ref = source.As<VariableRefType>();
+  const auto* to_ref = destination.As<VariableRefType>();
+  return from_ref != nullptr && to_ref != nullptr &&
+         from_ref->pointee == to_ref->pointee &&
+         to_ref->mutability == Mutability::kReadOnly;
+}
+
+// Every value handed to something of a type it states is a value of that
+// type, as an assignment-like context converts its value to its target's type
+// (LRM 10.8): what an assignment writes and its target, what a whole write
+// through a wrapper or a reference to bits writes and what the wrapper holds
+// or the bits reach, a local's initializer, what a body answers, an arm of a
+// choice, the value a block ends with, what a capture is built from, and an
+// argument of a callable this unit declares. A value only alike in
+// representation is converted where it is built, so one handed over as it is
+// is a value the program never stated.
+void VerifyValuesMeetTheirTypes(
+    const CompilationUnit& unit, const CallableCode& code, const Block& block,
+    const auto& describe) {
+  const auto refuse = [&](std::string_view what, TypeId expected,
+                          TypeId handed) {
+    throw InternalError(
+        std::format(
+            "mir verify: {} hands {} a value of type {} where it states type "
+            "{} -- please report this as a bug",
+            describe(), what, DumpType(unit, handed),
+            DumpType(unit, expected)));
+  };
+  const auto type_of = [&](const Block& in, ExprId id) {
+    return in.exprs.Get(id).type;
+  };
+  const Type& result = unit.types.Get(code.result_type);
+  const auto* coroutine = result.As<CoroutineType>();
+  const TypeId answered =
+      coroutine != nullptr ? coroutine->payload : code.result_type;
+  for (const Stmt& stmt : block.stmts) {
+    if (const auto* decl = std::get_if<LocalDeclStmt>(&stmt.data)) {
+      const TypeId declared = code.locals.Get(decl->target).type;
+      if (type_of(block, decl->init) != declared) {
+        refuse("a local's initializer", declared, type_of(block, decl->init));
+      }
+    }
+    if (const auto* returned = std::get_if<ReturnStmt>(&stmt.data);
+        returned != nullptr && returned->value.has_value() &&
+        type_of(block, *returned->value) != answered) {
+      refuse("what it answers", answered, type_of(block, *returned->value));
+    }
+  }
+  for (const ExprId id : block.exprs.Ids()) {
+    const Expr& expr = block.exprs.Get(id);
+    const auto* call = std::get_if<CallExpr>(&expr.data);
+    if (const auto* write = std::get_if<AssignExpr>(&expr.data);
+        write != nullptr &&
+        type_of(block, write->target) != type_of(block, write->value)) {
+      refuse(
+          "an assignment's target", type_of(block, write->target),
+          type_of(block, write->value));
+    }
+    if (call != nullptr && DirectBuiltinFn(*call) == support::BuiltinFn::kSet) {
+      const Type& through =
+          unit.types.Get(type_of(block, *CalleeReceiver(call->callee)));
+      const auto* bits = through.As<BitsReferenceType>();
+      const TypeId held =
+          bits != nullptr ? bits->bits : through.WrappedValueType();
+      if (type_of(block, call->arguments.at(0)) != held) {
+        refuse(
+            "a whole write's storage", held,
+            type_of(block, call->arguments.at(0)));
+      }
+    }
+    if (const auto* cast = std::get_if<CastExpr>(&expr.data);
+        cast != nullptr &&
+        !CastReadsAsAnother(
+            unit.types, type_of(block, cast->operand), expr.type)) {
+      throw InternalError(
+          std::format(
+              "mir verify: {} casts a value of type {} to type {}, which a "
+              "cast "
+              "does not join -- please report this as a bug",
+              describe(), DumpType(unit, type_of(block, cast->operand)),
+              DumpType(unit, expr.type)));
+    }
+    if (const auto* choice = std::get_if<ConditionalExpr>(&expr.data)) {
+      for (const ExprId arm : {choice->then_value, choice->else_value}) {
+        if (type_of(block, arm) != expr.type) {
+          refuse("an arm of a choice", expr.type, type_of(block, arm));
+        }
+      }
+    }
+    if (const auto* steps = std::get_if<BlockExpr>(&expr.data)) {
+      const Block& inner = block.child_scopes.Get(steps->scope);
+      if (type_of(inner, steps->value) != expr.type) {
+        refuse(
+            "the value a block ends with", expr.type,
+            type_of(inner, steps->value));
+      }
+    }
+    if (const auto* closure = std::get_if<ClosureExpr>(&expr.data)) {
+      const ClosureDecl& decl = unit.GetClosure(closure->closure);
+      for (const FieldInit& init : closure->field_inits) {
+        const TypeId field = decl.fields.Get(init.target).type;
+        if (type_of(block, init.value) != field) {
+          refuse("a capture", field, type_of(block, init.value));
+        }
+      }
+    }
+    const auto* direct =
+        call != nullptr ? std::get_if<Direct>(&call->callee) : nullptr;
+    if (direct == nullptr) {
+      continue;
+    }
+    const CallableCode* callee = nullptr;
+    if (const auto* method = std::get_if<CallableTarget>(&direct->target)) {
+      callee = &unit.GetClass(method->owner).callables.Get(method->slot).code;
+    } else if (
+        const auto* free = std::get_if<UnitCallableTarget>(&direct->target)) {
+      callee = &unit.callables.Get(free->slot).code;
+    }
+    if (callee == nullptr) {
+      continue;
+    }
+    std::vector<TypeId> parameters;
+    for (const LocalId param : callee->params) {
+      if (param != callee->receiver) {
+        parameters.push_back(callee->locals.Get(param).type);
+      }
+    }
+    if (parameters.size() != call->arguments.size()) {
+      throw InternalError(
+          std::format(
+              "mir verify: {} calls a callable with {} arguments where it "
+              "takes "
+              "{} -- please report this as a bug",
+              describe(), call->arguments.size(), parameters.size()));
+    }
+    for (std::size_t i = 0; i < parameters.size(); ++i) {
+      if (type_of(block, call->arguments[i]) != parameters[i]) {
+        refuse(
+            "an argument of a callable", parameters[i],
+            type_of(block, call->arguments[i]));
+      }
+    }
+  }
+  for (const BlockId id : block.child_scopes.Ids()) {
+    VerifyValuesMeetTheirTypes(
+        unit, code, block.child_scopes.Get(id), describe);
+  }
+}
+
 // Storage with no address of its own -- a member of a union, and what lies
 // under one -- is never what a reference the program holds ends on (LRM
 // 13.5.2), so nothing takes its address. Storage another member of an
@@ -1169,15 +1339,15 @@ void VerifyConstantsAreFolded(
             [](const StringLiteral&) {}, [](const NullLiteral&) {},
             [](const MachineBoolLiteral&) {}, [](const MachineIntLiteral&) {},
             [](const MachineFloatLiteral&) {}, [](const ReferenceExpr&) {},
-            [](const DynamicCastExpr&) {}, [](const ConditionalExpr&) {},
-            [](const BlockExpr&) {}, [](const AssignExpr&) {},
-            [](const NewExpr&) {}, [](const DerefExpr&) {},
-            [](const AddressOfExpr&) {}, [](const BorrowExpr&) {},
-            [](const MoveExpr&) {}, [](const CopyExpr&) {},
-            [](const DiscriminantExpr&) {}, [](const FieldAccessExpr&) {},
-            [](const ClosureExpr&) {}, [](const CompositeExpr&) {},
-            [](const UnionExpr&) {}, [](const AwaitExpr&) {},
-            [](const WaitExpr&) {}, [](const VectorGetExpr&) {}},
+            [](const ConditionalExpr&) {}, [](const BlockExpr&) {},
+            [](const AssignExpr&) {}, [](const NewExpr&) {},
+            [](const DerefExpr&) {}, [](const AddressOfExpr&) {},
+            [](const BorrowExpr&) {}, [](const MoveExpr&) {},
+            [](const CopyExpr&) {}, [](const DiscriminantExpr&) {},
+            [](const FieldAccessExpr&) {}, [](const ClosureExpr&) {},
+            [](const CompositeExpr&) {}, [](const UnionExpr&) {},
+            [](const AwaitExpr&) {}, [](const WaitExpr&) {},
+            [](const VectorGetExpr&) {}},
         expr.data);
   }
   for (const BlockId id : block.child_scopes.Ids()) {
@@ -1244,26 +1414,30 @@ auto Held(const TypePool& types, TypeId holder) -> std::optional<TypeId> {
 }
 
 // A closure is made one of no known type only from the box it was made in or a
-// borrow of it, held the same way, and only at the kind and the signature its
-// body has, since whoever calls it through the erased box or borrow calls it
-// so and nothing checks it there.
+// borrow of it, held the same way, as the closure of no known type the call is
+// at, and only at the kind and the signature its body has, since whoever calls
+// it through the erased box or borrow calls it so and nothing checks it there.
 void VerifyErasures(
     const CompilationUnit& unit, const Block& block, const auto& describe) {
   for (const ExprId id : block.exprs.Ids()) {
     const Expr& expr = block.exprs.Get(id);
-    const auto* cast = std::get_if<CastExpr>(&expr.data);
-    if (cast == nullptr) {
+    const auto* call = std::get_if<CallExpr>(&expr.data);
+    if (call == nullptr ||
+        DirectBuiltinFn(*call) != support::BuiltinFn::kUnsize) {
       continue;
     }
-    const std::optional<TypeId> to = Held(unit.types, expr.type);
-    if (!to.has_value() || !unit.types.Get(*to).Is<ErasedCallableType>()) {
-      continue;
+    if (call->arguments.size() != 1) {
+      RefuseErasure(id, "from other than one box or borrow", describe);
     }
     const std::optional<ClosureErasure> erasure = ClosureErasureOf(
-        unit.types, block.exprs.Get(cast->operand).type, expr.type);
+        unit.types, block.exprs.Get(call->arguments.front()).type, expr.type);
     if (!erasure.has_value()) {
       RefuseErasure(
           id, "from anything but its own box or a borrow of it", describe);
+    }
+    if (std::get<Direct>(call->callee).type_argument != erasure->erased) {
+      RefuseErasure(
+          id, "at a type other than the one its answer holds", describe);
     }
     if (erasure->erased !=
         ErasedTypeOf(unit.types, unit.GetClosure(erasure->closure))) {
@@ -1371,15 +1545,22 @@ void VerifyFramesHoldNoLargeValue(
 // report: the check runs over every body of every unit, and composing a name
 // for each one costs more than the check itself.
 void VerifyCode(
-    const CompilationUnit& unit, const CallableCode& code,
-    const auto& describe) {
-  VerifyFramesHoldNoLargeValue(unit, code, describe);
+    const CompilationUnit& unit, Phase phase, const CallableCode& code,
+    std::span<const ExprId> outside_roots, const auto& describe) {
+  switch (phase) {
+    case Phase::kBuilt:
+      break;
+    case Phase::kForBackends:
+      VerifyFramesHoldNoLargeValue(unit, code, describe);
+      break;
+  }
   if (!code.body.has_value()) {
     return;
   }
-  VerifyNoRunEvaluatesTwice(*code.body, {}, describe);
-  VerifyPlacesAreRead(unit, *code.body, {}, describe);
+  VerifyNoRunEvaluatesTwice(*code.body, outside_roots, describe);
+  VerifyPlacesAreRead(unit, *code.body, outside_roots, describe);
   VerifyWritesLandInWritableStorage(unit, *code.body, describe);
+  VerifyValuesMeetTheirTypes(unit, code, *code.body, describe);
   VerifyStorageWithoutAnAddress(unit, *code.body, describe);
   VerifyMemberReceivers(unit, *code.body, describe);
   VerifyReferenceBindings(unit, *code.body, describe);
@@ -1400,70 +1581,6 @@ void VerifyCode(
           "mir verify: {} suspends, but its result type is not a coroutine, "
           "so nothing could resume it",
           describe()));
-}
-
-// Calls `visit` with every body of the unit and what names it.
-template <typename Visit>
-void ForEachBody(const CompilationUnit& unit, const Visit& visit) {
-  for (const CallableId id : unit.callables.Ids()) {
-    visit(unit.callables.Get(id).code, [&] {
-      return std::format(
-          "{} of unit '{}'",
-          BodyLabel(NameOf(unit.named_callables, id), id.value), unit.name);
-    });
-  }
-  for (const TypeOperation& stated : unit.type_operations) {
-    visit(stated.code, [&] {
-      return std::format(
-          "operation \"{}\" of type {} in unit '{}'",
-          support::ValueOperationName(stated.answers), stated.type.value,
-          unit.name);
-    });
-  }
-  for (const ForeignScopeEntry& entry : unit.foreign_scope_entries) {
-    visit(entry.definition, [&] {
-      return std::format("the foreign entry '{}'", entry.linkage.foreign_name);
-    });
-  }
-  for (const ClosureId id : unit.closures.Ids()) {
-    visit(unit.GetClosure(id).invoke, [&] {
-      return std::format("closure {} of unit '{}'", id.value, unit.name);
-    });
-  }
-  for (const RecordId id : unit.records.Ids()) {
-    const RecordDecl& declaration = unit.GetRecord(id);
-    for (const RecordMethod& method : unit.GetRecordMethods(id)) {
-      visit(method.code, [&] {
-        return std::format(
-            "method '{}' of record '{}' in unit '{}'",
-            support::ValueOperationName(method.answers),
-            support::DisplayOf(declaration.path), unit.name);
-      });
-    }
-  }
-  for (const ClassId id : unit.classes.Ids()) {
-    const Class& cls = unit.GetClass(id);
-    const auto owner = [&] {
-      return cls.path.has_value()
-                 ? std::format(
-                       "class '{}' in unit '{}'", support::DisplayOf(*cls.path),
-                       unit.name)
-                 : std::format("a scope of unit '{}'", unit.name);
-    };
-    if (cls.constructor.has_value()) {
-      visit(cls.constructor->code, [&] {
-        return std::format("the constructor of {}", owner());
-      });
-    }
-    for (const CallableId callable : cls.callables.Ids()) {
-      visit(cls.callables.Get(callable).code, [&] {
-        return std::format(
-            "{} of {}",
-            BodyLabel(NameOf(cls.named_callables, callable), callable.value),
-            owner());
-      });
-    }
-  }
 }
 
 // Whether a value of `type` hands closures or started bodies over: a box or a
@@ -1581,11 +1698,13 @@ using Reached =
 class HandedClosures {
  public:
   explicit HandedClosures(const CompilationUnit& unit) : unit_(&unit) {
-    ForEachBody(unit, [&](const CallableCode& code, const auto&) {
-      if (code.body.has_value()) {
-        IndexSites(code, *code.body);
-      }
-    });
+    ForEachCode(
+        unit, [&](const CodeSource&, const CallableCode& code,
+                  std::span<const ExprId>) {
+          if (code.body.has_value()) {
+            IndexSites(code, *code.body);
+          }
+        });
   }
 
   void Check(const CallableCode& code, const auto& describe) {
@@ -1671,9 +1790,9 @@ class HandedClosures {
     }
   }
 
-  // The closures `id` hands over: made there, boxed, borrowed, cast, gathered,
-  // or started as a body that takes its box over. A body started that is no
-  // closure's hands none.
+  // The closures `id` hands over: made there, boxed, borrowed, made one of no
+  // known type, gathered, or started as a body that takes its box over. A body
+  // started that is no closure's hands none.
   auto Handed(const CallableCode& code, const Block& block, ExprId id)
       -> std::vector<ClosureId> {
     const ExprData& data = block.exprs.Get(id).data;
@@ -1686,8 +1805,11 @@ class HandedClosures {
     if (const auto* borrowed = std::get_if<BorrowExpr>(&data)) {
       return Handed(code, block, borrowed->operand);
     }
-    if (const auto* cast = std::get_if<CastExpr>(&data)) {
-      return Handed(code, block, cast->operand);
+    // A closure made one of no known type is the closure it was.
+    if (const auto* call = std::get_if<CallExpr>(&data);
+        call != nullptr &&
+        DirectBuiltinFn(*call) == support::BuiltinFn::kUnsize) {
+      return Handed(code, block, call->arguments.front());
     }
     if (const auto* moved = std::get_if<MoveExpr>(&data)) {
       return Handed(code, block, moved->operand);
@@ -1870,7 +1992,6 @@ class HandedClosures {
             },
             [&](const UnaryExpr&) -> Reached { RefuseUnfollowed(id); },
             [&](const BinaryExpr&) -> Reached { RefuseUnfollowed(id); },
-            [&](const DynamicCastExpr&) -> Reached { RefuseUnfollowed(id); },
             [&](const ConditionalExpr&) -> Reached { RefuseUnfollowed(id); },
             [&](const BlockExpr&) -> Reached { RefuseUnfollowed(id); },
             [&](const AssignExpr&) -> Reached { RefuseUnfollowed(id); },
@@ -1928,8 +2049,9 @@ class HandedClosures {
 
   // What a call's answer reaches, which the library entry it calls states: a
   // reference into the object it acts on, or to what the wrapper it is taken on
-  // holds, reaches what that first operand reaches, and a construction of a
-  // reference what it is built over. Nothing else answers a reference a
+  // holds, reaches what that first operand reaches, as a closure made one of
+  // no known type does, and a construction of a reference what it is built
+  // over. Nothing else answers a reference a
   // closure may capture -- a value the call builds is no storage, and a body
   // the source wrote answers none.
   auto ReachOfAnswer(
@@ -1949,6 +2071,10 @@ class HandedClosures {
                   std::get_if<support::BuiltinFn>(&direct.target);
               if (entry == nullptr) {
                 RefuseUnfollowed(id);
+              }
+              // A closure made one of no known type lies where it was made.
+              if (*entry == support::BuiltinFn::kUnsize) {
+                return first();
               }
               switch (support::RuntimeEntryOf(*entry).answer) {
                 case support::EntryAnswer::kReadOnlyReferenceIntoTheReceiver:
@@ -2012,14 +2138,15 @@ class HandedClosures {
 // signature naming this unit. Naming it as another unit's class would give one
 // class two identities in one unit, which both backends would then have to
 // agree are one.
-void VerifyOwnClassesNamedAsOwn(const CompilationUnit& unit) {
+void VerifyOwnClassesNamedAsOwn(
+    const CompilationUnit& unit, std::string_view when) {
   const auto refuse = [&](const support::DefPath& class_path,
                           std::string_view where) {
     throw InternalError(
         std::format(
-            "mir verify: unit '{}' names its own class '{}' as another unit's, "
-            "in {} -- please report this as a bug",
-            unit.name, support::DisplayOf(class_path), where));
+            "mir verify: unit '{}', {}, names its own class '{}' as another "
+            "unit's, in {} -- please report this as a bug",
+            unit.name, when, support::DisplayOf(class_path), where));
   };
   for (const Type& type : unit.types) {
     const auto* object = type.As<ObjectType>();
@@ -2047,13 +2174,13 @@ void VerifyOwnClassesNamedAsOwn(const CompilationUnit& unit) {
 // it by the element type alone (LRM 7.4.5); a type whose operations are stated
 // per unit has its other operations stated, and no other type has any. A pair
 // stated twice leaves which body answers to chance.
-void VerifyTypeOperations(const CompilationUnit& unit) {
+void VerifyTypeOperations(const CompilationUnit& unit, std::string_view when) {
   const auto refuse = [&](TypeId type, std::string_view defect) {
     throw InternalError(
         std::format(
-            "mir verify: in unit '{}', {} (type {}) -- please report this as a "
-            "bug",
-            unit.name, defect, type.value));
+            "mir verify: in unit '{}', {}, {} (type {}) -- please report this "
+            "as a bug",
+            unit.name, when, defect, DumpType(unit, type)));
   };
   const support::ValueOperation default_value =
       support::BuiltinFn::kDeclaredDefault;
@@ -2100,18 +2227,26 @@ auto EvaluatesNothing(const Block& block, ExprId id) -> bool {
   return nothing;
 }
 
-void Verify(const CompilationUnit& unit) {
-  VerifyOwnClassesNamedAsOwn(unit);
-  VerifyTypeOperations(unit);
-  ForEachBody(unit, [&](const CallableCode& code, const auto& describe) {
-    VerifyCode(unit, code, describe);
-  });
+void Verify(const CompilationUnit& unit, Phase phase, std::string_view when) {
+  VerifyOwnClassesNamedAsOwn(unit, when);
+  VerifyTypeOperations(unit, when);
+  const auto describer = [&](const CodeSource& at) {
+    return [&unit, &at, when] {
+      return std::format("{}, {}", Describe(unit, at), when);
+    };
+  };
+  ForEachCode(
+      unit, [&](const CodeSource& at, const CallableCode& code,
+                std::span<const ExprId> outside_roots) {
+        VerifyCode(unit, phase, code, outside_roots, describer(at));
+      });
   // Every body is checked on its own first, since a closure handed over in one
   // is followed into the bodies that made what it captured.
   HandedClosures handed(unit);
-  ForEachBody(unit, [&](const CallableCode& code, const auto& describe) {
-    handed.Check(code, describe);
-  });
+  ForEachCode(
+      unit,
+      [&](const CodeSource& at, const CallableCode& code,
+          std::span<const ExprId>) { handed.Check(code, describer(at)); });
 }
 
 }  // namespace lyra::mir

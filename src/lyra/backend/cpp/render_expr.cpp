@@ -192,19 +192,15 @@ void RenderConditionalExpr(
       Operand{.expr = c.else_value, .at_least = Precedence::kAssignment});
 }
 
+// C++ cast notation converts among every pair a cast joins by itself, so
+// naming the destination is the whole of it: `(T)x`. It is a prefix form: in
+// `(T)x->m` the `->` applies to `x`, so a position like that gets `((T)x)->m`.
 void RenderCastExpr(
     const ScopeView& view, const mir::Expr& expr, mir::ExprId operand,
     Precedence at_least, TargetText& out) {
-  auto conversion =
-      ConversionAsCpp(view.Unit(), view.Expr(operand).type, expr.type);
-  if (!conversion) {
-    view.Refuse(std::move(conversion.error()));
-    return;
-  }
-  WriteConversion(
-      out, view.Unit(), *conversion, at_least, [&](Precedence needed) {
-        Write(view, out, Operand{.expr = operand, .at_least = needed});
-      });
+  const Enclosure enclosure(out, Precedence::kPrefix, at_least);
+  Write(out, "(", CppType(view.Unit(), expr.type), ")");
+  Write(view, out, Operand{.expr = operand, .at_least = Precedence::kPostfix});
 }
 
 // A field as the class declaring it names it, `C::x`. Its name is built from
@@ -567,12 +563,6 @@ void RenderExpr(
             RenderBinaryExpr(view, b, at_least, out);
           },
           [&](const mir::CastExpr& c) {
-            RenderCastExpr(view, expr, c.operand, at_least, out);
-          },
-          // C++'s conversion of a pointer to a class toward another class is
-          // the checked one wherever it has to be, so a handle is converted
-          // the same way whether the types settle it or the object does.
-          [&](const mir::DynamicCastExpr& c) {
             RenderCastExpr(view, expr, c.operand, at_least, out);
           },
           [&](const mir::ConditionalExpr& c) {

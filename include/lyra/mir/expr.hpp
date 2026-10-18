@@ -1,5 +1,6 @@
 #pragma once
 
+#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -80,26 +81,18 @@ struct UnaryExpr {
 // has to tell them apart reads the two types, which is type dispatch and
 // belongs where a target answers every other question about a type.
 //
-// What reaches here moves no simulation value between representations. A
-// destination whose representation differs is a reshape, which is a library
-// call that lands at that type on its own; and reading an SV value out as a
-// machine scalar is a call for the same reason. So the pairs that arrive are
-// the ones a target can state outright: a value read as the machine boolean a
-// condition tests (LRM 12.4), a machine integer at another width, a
-// reference-like value at another pointee, a code address at the signature its
-// definition was generated with, and an enumeration read as the vector it
-// shares a representation with.
+// What reaches here moves no simulation value between representations, so
+// every target writes it in its own conversion syntax. A destination whose
+// representation differs is a reshape, which is a library call that lands at
+// that type on its own; reading an SV value out as a machine scalar is a call
+// for the same reason; and so is a handle seen as another class's, which only
+// the object's layout answers. So the pairs that arrive are a value read as the
+// machine boolean a condition tests (LRM 12.4), a machine integer at another, a
+// pointer at another pointee and a code address at the signature its
+// definition was generated with, an integral value at a type laying it out
+// alike -- an enumeration and its base -- and a reference at the same referent
+// read-only; the verification refuses every other.
 struct CastExpr {
-  ExprId operand;
-};
-
-// A handle read as a handle of another class, answering a handle referring to
-// no object where the object it refers to is not one a variable of that class
-// may hold (LRM 8.16, 8.26.5): what `$cast` asks of a class handle. Which
-// classes may hold an object is open across compilation units, so the object
-// answers, and the conversion is the question -- the answer is whether it
-// refers to anything. A conversion the declared types settle is a cast above.
-struct DynamicCastExpr {
   ExprId operand;
 };
 
@@ -176,7 +169,8 @@ struct CallableTarget {
   ClassId owner;
   CallableId slot;
 
-  auto operator==(const CallableTarget&) const -> bool = default;
+  auto operator<=>(const CallableTarget&) const
+      -> std::strong_ordering = default;
 };
 
 // The body of a closure this unit declares, as clang calls a lambda's
@@ -214,7 +208,8 @@ struct ForeignSymbolTarget {
 struct UnitCallableTarget {
   CallableId slot;
 
-  auto operator==(const UnitCallableTarget&) const -> bool = default;
+  auto operator<=>(const UnitCallableTarget&) const
+      -> std::strong_ordering = default;
 };
 
 // Identity of a receiver-less callable *another* unit's namespace owns -- a
@@ -743,8 +738,8 @@ struct ReferenceExpr {
 using ExprData = std::variant<
     StringLiteral, NullLiteral, MachineBoolLiteral, MachineIntLiteral,
     MachineFloatLiteral, ReferenceExpr, UnaryExpr, BinaryExpr, CastExpr,
-    DynamicCastExpr, ConditionalExpr, BlockExpr, AssignExpr, CallExpr, NewExpr,
-    DerefExpr, AddressOfExpr, BorrowExpr, MoveExpr, CopyExpr, DiscriminantExpr,
+    ConditionalExpr, BlockExpr, AssignExpr, CallExpr, NewExpr, DerefExpr,
+    AddressOfExpr, BorrowExpr, MoveExpr, CopyExpr, DiscriminantExpr,
     FieldAccessExpr, ClosureExpr, CompositeExpr, UnionExpr, AwaitExpr, WaitExpr,
     VectorGetExpr>;
 

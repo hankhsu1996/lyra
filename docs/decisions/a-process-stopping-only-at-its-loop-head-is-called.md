@@ -1,7 +1,9 @@
 # A process stopping only at the head of its loop is called, not resumed
 
-Date: 2026-10-12. Status: accepted. Adds a stage between HIR-to-MIR and every consumer of MIR.
-Agrees with `a-wait-is-storage-of-its-activation.md` and its rejection of two kinds of process.
+Date: 2026-10-12. Status: accepted; the stage revised 2026-10-18 by
+`a-rewrite-of-mir-says-whether-a-program-needs-it.md`. Adds a stage between HIR-to-MIR and every
+consumer of MIR. Agrees with `a-wait-is-storage-of-its-activation.md` and its rejection of two kinds
+of process.
 
 ## Context
 
@@ -25,12 +27,13 @@ process body that stops only at the head of its loop into two plain bodies the r
 coroutine runs.**
 
 - **The stage.** Each rewrite keeps what the program does and states its result in MIR's own
-  vocabulary. The unit is verified once, as it leaves the stage rather than also as it leaves
-  HIR-to-MIR, since what leaves the stage is what every consumer reads. A consumer cannot tell what
-  a rewrite built from what the lowering built. Every build runs it, so no answer depends on an
-  optimization setting. Arenas are never edited, so a rewrite builds the body that replaces one: it
-  walks the old body from its statements, adds each node it reaches to the new body's pools, which
-  name it, and states its own nodes the same way.
+  vocabulary. The unit is verified as it leaves the stage, since what leaves the stage is what every
+  consumer reads, and after each rewrite where a build asks. A consumer cannot tell what a rewrite
+  built from what the lowering built. This rewrite is optional -- skipping it leaves the same
+  program, dearer to compile -- so no answer depends on whether it runs, and every build runs it
+  unless a developer skips it by name. Arenas are never edited, so a rewrite builds the body that
+  replaces one: it walks the old body from its statements, adds each node it reaches to the new
+  body's pools, which name it, and states its own nodes the same way.
 - **What fits.** A coroutine method entered on its object alone whose statements before the loop
   never stop, whose loop runs until left, whose loop body stops once -- at its first statement or
   its last -- on a wait the statements before the loop declared, never leaves the loop, and names

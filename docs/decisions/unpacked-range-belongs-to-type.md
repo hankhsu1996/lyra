@@ -9,7 +9,11 @@
 Accepted; the select operand is superseded by
 [a-select-names-a-position](a-select-names-a-position.md), which reads the range where the select is
 lowered and hands the access an ordinal. That the range belongs to the type and the payload is
-ordinal-only stands.
+ordinal-only stands. The type that carries it is the source's static type, which HIR holds: since
+every select below HIR names an ordinal, MIR's array type is an element type and a count, and two
+arrays declared over different ranges are one MIR type
+([a-rewrite-of-mir-says-whether-a-program-needs-it](a-rewrite-of-mir-says-whether-a-program-needs-it.md)
+D7).
 
 ## Scope
 

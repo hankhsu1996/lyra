@@ -8,9 +8,9 @@
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"  // IWYU pragma: keep
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
@@ -63,7 +63,7 @@ auto LowerRealConversionCall(
                       mir::Direct{.target = b.method, .receiver = *subject},
                   .arguments = {}},
           .type = unit_lowerer.Unit().builtins.machine_int64});
-  return MakeBuiltinCall(
+  return mir::MakeBuiltinCall(
       unit_lowerer.Unit(), block, support::BuiltinFn::kIntegralFromInt,
       std::nullopt, {read_out}, result_type);
 }

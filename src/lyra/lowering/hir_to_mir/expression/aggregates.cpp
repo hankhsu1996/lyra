@@ -17,7 +17,6 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/packed_concat.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -25,6 +24,7 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -66,7 +66,7 @@ auto BuildsFromAnElementList(const mir::Type& ty) -> bool {
 auto BuildBitsReplication(
     const mir::CompilationUnit& unit, const mir::Block& block, mir::ExprId run,
     mir::TypeId result_type) -> mir::Expr {
-  return MakeBuiltinCall(
+  return mir::MakeBuiltinCall(
       unit, block, support::BuiltinFn::kReplicateBits, run, {}, result_type);
 }
 

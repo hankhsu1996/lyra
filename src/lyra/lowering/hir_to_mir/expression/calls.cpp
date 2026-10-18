@@ -43,7 +43,6 @@
 #include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/time.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/timescale.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/sampled_history.hpp"
@@ -53,6 +52,7 @@
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/storage_part.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/system_subroutine.hpp"
@@ -438,7 +438,7 @@ auto BuildBuiltinMethodCall(
   // `await`, and nothing could be stopped at.
   const mir::TypeId answered =
       entry.answers_a_wait ? unit_lowerer.Unit().builtins.wait : result_type;
-  return MakeBuiltinCall(
+  return mir::MakeBuiltinCall(
       unit_lowerer.Unit(), block, method, receiver, std::move(arguments),
       answered);
 }

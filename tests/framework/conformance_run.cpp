@@ -137,6 +137,10 @@ auto BuildArgv(const ConformancePath& path, const ConformanceCase& test_case)
   // failed for. Both want the diagnostic as it was written rather than wrapped
   // in the escape sequences that colour it for a terminal.
   argv.emplace_back("--no-color");
+  // Each case's MIR is checked as the lowering states it and after every
+  // rewrite, so a defect is reported against whichever made it rather than
+  // only as the unit leaves the last.
+  argv.emplace_back("--mir-verify-each");
   if (const char* scratch = std::getenv("TEST_TMPDIR");
       scratch != nullptr && *scratch != '\0') {
     // Keeping what a run builds beside the shard's other scratch lets one

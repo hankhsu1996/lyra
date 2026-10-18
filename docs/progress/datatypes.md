@@ -229,6 +229,13 @@ case holds it is one nothing watches.
       reference held across a `push_front` must still name the element it named before, though every
       position has moved. Nothing implements any of this, and no case holds it.
 
+- [ ] An array whose elements are bounded queues, assigned from an array of the same kind whose
+      queues have another bound, stops the build with an internal error. The two element types are
+      equivalent (LRM 6.22.2 compares the element types and not the bound), so the assignment is
+      legal, and each element is assigned as a queue is, keeping only what the destination's bound
+      admits (LRM 7.10.5). That is a conversion of every element, which no lowering states yet; a
+      bounded queue assigned another queue directly is carried out. No case holds it.
+
 ## Chandle
 
 LRM 6.14: `chandle` stores a pointer passed through the DPI. It always initializes to `null`, and

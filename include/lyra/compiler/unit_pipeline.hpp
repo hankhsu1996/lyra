@@ -5,6 +5,7 @@
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir_transform/pass.hpp"
 
 namespace lyra::compiler {
 
@@ -12,9 +13,11 @@ namespace lyra::compiler {
 // frontend, never another unit's lowered artifacts, so units may be lowered in
 // any order and in parallel. Whether the unit's instances exist as objects
 // selects the lowering: a unit that roots one composes a top class, one that
-// names only declarations composes a namespace of callables.
+// names only declarations composes a namespace of callables. The model is
+// rewritten as `passes` asks before anything reads it.
 auto LowerUnitToSemantic(
-    const hir::CompilationUnit& unit, const diag::SourceManager& source_manager)
+    const hir::CompilationUnit& unit, const diag::SourceManager& source_manager,
+    const mir_transform::PassOptions& passes)
     -> diag::Result<mir::CompilationUnit>;
 
 // Tells a run that records itself what `unit` holds as a semantic model. A

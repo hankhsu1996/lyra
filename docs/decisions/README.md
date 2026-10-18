@@ -1306,6 +1306,14 @@ the detail lives in the entry itself.
   coroutine calls, so HIR and MIR as lowered keep one process shape and both backends compile no
   coroutine for it. Splitting in one backend, two process kinds upstream, kept locals, one entry
   answering three ways, and predicting a node's position are rejected.
+- [a-rewrite-of-mir-says-whether-a-program-needs-it](a-rewrite-of-mir-says-whether-a-program-needs-it.md)
+  -- the stage's rewrites are one ordered list, each required or optional, and every optional one
+  runs in every build unless a build skips it by name; a unit's form is named, the verification asks
+  what that form requires, and a build may have the unit checked after each rewrite; which code a
+  unit holds is stated once beside the unit, a rewrite builds through MIR's own builders, and a
+  value handed to something of a type it states is of that type. Each rewrite walking the unit
+  itself, optional rewrites only in an optimized build, and checking every rewrite in every build
+  are rejected.
 - [activation-disposition](activation-disposition.md) -- an activation has one authoritative
   disposition (Executing / Runnable / Blocked / Suspended(saved) / Terminal); a wait is a retainable
   pending capability distinct from where the activation is parked, supplied uniformly by each

@@ -766,9 +766,6 @@ auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
           [&](const mir::BinaryExpr&) {
             return not_data("a binary operation");
           },
-          [&](const mir::DynamicCastExpr&) {
-            return not_data("a checked conversion");
-          },
           [&](const mir::ConditionalExpr&) {
             return not_data("a conditional");
           },

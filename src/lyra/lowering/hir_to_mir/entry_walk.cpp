@@ -6,14 +6,15 @@
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/loops.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
@@ -32,23 +33,24 @@ auto IndexLocal(
                             : frame.bindings->DeclareAnonymous(type);
 }
 
-// The index of the entry at `position` in an array of `array_type`: the one
-// its declaration gives it for a fixed-size array, which numbers its entries
-// from its left bound (LRM 7.4.5, 7.12.4), and the position itself for one
-// sized while the program runs, which numbers them from 0 (LRM 7.5, 7.10).
+// The index of the entry at `position` in an array numbered by `declared`:
+// the one its declaration gives it for a fixed-size array, which numbers its
+// entries from its left bound (LRM 7.4.5, 7.12.4), and the position itself for
+// one sized while the program runs, which numbers them from 0 (LRM 7.5, 7.10).
 auto IndexAtPosition(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId array_type,
-    mir::ExprId position) -> mir::ExprId {
-  const auto* fixed = unit.types.Get(array_type).As<mir::UnpackedArrayType>();
-  if (fixed == nullptr) {
+    const mir::CompilationUnit& unit, mir::Block& block,
+    const std::optional<hir::UnpackedRange>& declared, mir::ExprId position)
+    -> mir::ExprId {
+  if (!declared.has_value()) {
     return position;
   }
-  const mir::UnpackedRange dim = fixed->dim;
-  return block.exprs.Add(MakeBinary(
-      unit, block,
-      dim.IsAscending() ? mir::BinaryOp::kAdd : mir::BinaryOp::kSub,
-      BuildIntLiteral(unit, block, dim.left), position,
-      unit.builtins.int_type));
+  return block.exprs.Add(
+      mir::MakeBinary(
+          unit, block,
+          declared->left <= declared->right ? mir::BinaryOp::kAdd
+                                            : mir::BinaryOp::kSub,
+          mir::BuildIntLiteral(unit, block, declared->left), position,
+          unit.builtins.int_type));
 }
 
 // The loop over an array that numbers its elements: a count of positions, run
@@ -71,7 +73,7 @@ auto BuildPositionLoopStmt(
       mir::LocalDeclStmt{
           .target = index,
           .init = IndexAtPosition(
-              unit, body, array.type, body.ReadLocal(position, int_type))});
+              unit, body, array.declared, body.ReadLocal(position, int_type))});
   const EntryPlace place{
       .index = index, .index_type = int_type, .position = position};
   auto ran = visit(
@@ -157,19 +159,30 @@ auto StepToVisited(
       .part_type = part_type};
 }
 
+auto DeclaredRangeOf(const UnitLowerer& unit_lowerer, hir::TypeId type)
+    -> std::optional<hir::UnpackedRange> {
+  const auto* fixed =
+      unit_lowerer.Hir().types.Get(type).As<hir::UnpackedArrayType>();
+  if (fixed == nullptr) {
+    return std::nullopt;
+  }
+  return fixed->dim;
+}
+
 auto WalkedArrayAt(
-    const UnitLowerer& unit_lowerer, const WalkFrame& frame, AccessPath path)
-    -> WalkedArray {
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame, AccessPath path,
+    std::optional<hir::UnpackedRange> declared) -> WalkedArray {
   const mir::TypeId type =
       PathValueType(unit_lowerer.Unit(), *frame.current_block, path);
   return WalkedArray{
       .path = SettledForRead(unit_lowerer, frame, std::move(path)),
-      .type = type};
+      .type = type,
+      .declared = declared};
 }
 
 auto WalkedArrayOf(
-    const UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId object)
-    -> WalkedArray {
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId object,
+    std::optional<hir::UnpackedRange> declared) -> WalkedArray {
   mir::Block& block = *frame.current_block;
   const mir::ExprId lying =
       mir::ReadIfOverlaid(unit_lowerer.Unit(), block, object);
@@ -179,7 +192,7 @@ auto WalkedArrayOf(
           ? lying
           : block.LocalPlace(DeclareLocal(frame, lying), type);
   return WalkedArrayAt(
-      unit_lowerer, frame, AccessPath{.owner = owner, .descent = {}});
+      unit_lowerer, frame, AccessPath{.owner = owner, .descent = {}}, declared);
 }
 
 auto EntryCount(
@@ -188,7 +201,7 @@ auto EntryCount(
   const auto* fixed = unit.types.Get(array.type).As<mir::UnpackedArrayType>();
   if (fixed != nullptr) {
     const auto size = static_cast<std::int64_t>(fixed->Size());
-    return BuildIntLiteral(unit, block, size);
+    return mir::BuildIntLiteral(unit, block, size);
   }
   return block.exprs.Add(
       mir::Expr{

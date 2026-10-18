@@ -38,10 +38,11 @@ enum class ReceiverPlacement : std::uint8_t {
 enum class NameReachedThrough : std::uint8_t { kAValue, kAType };
 
 // What a callee states beside its target, as one template argument where C++
-// resolves types: the type the callee is called at, or the part it names -- a
-// component by its position, `Component<2>`, a property by a pointer to it,
+// resolves types: the type the callee is called at, or the signature of a
+// closure of no known type it names, or the part it names -- a component by
+// its position, `Component<2>`, a property by a pointer to it,
 // `ReferProperty<&C::x>`.
-using TemplateArgument = std::variant<CppType, mir::CallPart>;
+using TemplateArgument = std::variant<CppType, CppCallSignature, mir::CallPart>;
 
 // The template arguments a callee states, in the order the library declares
 // its template parameters: the type, then the part.
@@ -56,6 +57,19 @@ auto TemplateArgumentsOf(
     arguments.emplace_back(*part);
   }
   return arguments;
+}
+
+// The two classes an entry seeing an object as another class is told: the one
+// the handle it is handed refers through, then the one the type it is called
+// at refers through, as `ViewAs<From, To>(r)` names both.
+auto ClassesSeen(
+    const mir::CompilationUnit& unit, mir::TypeId handed, mir::TypeId called_at)
+    -> std::vector<TemplateArgument> {
+  const auto class_of = [&](mir::TypeId handle) {
+    return CppType(
+        unit, unit.types.Get(handle).Get<mir::ManagedRefType>().pointee);
+  };
+  return {class_of(handed), class_of(called_at)};
 }
 
 // A runtime function name, followed by the template arguments its callee
@@ -83,6 +97,9 @@ void WriteOne(TargetText& out, const OperationName& name) {
     std::visit(
         Overloaded{
             [&](const CppType& type) { Write(out, type); },
+            [&](const CppCallSignature& signature) {
+              WriteOne(out, signature);
+            },
             [&](const mir::CallPart& part) {
               std::visit(
                   Overloaded{
@@ -187,14 +204,28 @@ auto FactoryType(
 // Nothing about the call itself is read to decide which.
 void WriteEntryCallee(
     const ScopeView& view, const support::RuntimeEntry& entry,
-    const mir::Direct& direct, mir::TypeId result_type, CallWriter& callee) {
+    const mir::Direct& direct, std::span<const mir::ExprId> arguments,
+    mir::TypeId result_type, CallWriter& callee) {
   const mir::CompilationUnit& unit = view.Unit();
   std::visit(
       Overloaded{
           // `lyra::value::Slice<lyra::value::BitVector<4>>(v, at)`.
           [&](const support::FreeFunction& f) {
-            const auto stated =
-                TemplateArgumentsOf(unit, direct.type_argument, direct.part);
+            const std::vector<TemplateArgument> stated = [&] {
+              switch (entry.type_argument_named) {
+                case support::TypeArgumentNamed::kTheType:
+                  return TemplateArgumentsOf(
+                      unit, direct.type_argument, direct.part);
+                case support::TypeArgumentNamed::kTheClassesSeen:
+                  return ClassesSeen(
+                      unit, view.Expr(arguments.front()).type,
+                      FactoryType(entry, direct, result_type));
+                case support::TypeArgumentNamed::kTheCallSignature:
+                  return std::vector<TemplateArgument>{CppCallSignature(
+                      unit, FactoryType(entry, direct, result_type))};
+              }
+              throw InternalError("Direct call: unknown TypeArgumentNamed");
+            }();
             callee.Named(
                 ReceiverPlacement::kIntoArgumentList, f.scope, "::",
                 OperationName{
@@ -258,7 +289,8 @@ auto OperationTakesATypeArgument(support::ValueOperation operation) -> bool {
 // The name of a callee fixed at compile time. Each kind of function is looked
 // up in its own table, and that kind also decides where a receiver goes.
 void WriteDirectCallee(
-    const ScopeView& view, const mir::Direct& direct, mir::TypeId result_type,
+    const ScopeView& view, const mir::Direct& direct,
+    std::span<const mir::ExprId> arguments, mir::TypeId result_type,
     CallWriter& callee) {
   std::visit(
       Overloaded{
@@ -303,7 +335,8 @@ void WriteDirectCallee(
           },
           [&](const support::BuiltinFn& id) {
             WriteEntryCallee(
-                view, support::RuntimeEntryOf(id), direct, result_type, callee);
+                view, support::RuntimeEntryOf(id), direct, arguments,
+                result_type, callee);
           },
           // A function of another unit (LRM 26.3): `::Pkg::f`.
           [&](const mir::ExternalUnitCallableTarget& t) {
@@ -380,7 +413,7 @@ void WriteCallee(
   std::visit(
       Overloaded{
           [&](const mir::Direct& d) {
-            WriteDirectCallee(view, d, result_type, callee);
+            WriteDirectCallee(view, d, call.arguments, result_type, callee);
           },
           [&](const mir::Indirect& i) { callee.Computed(i.code); },
           [&](const mir::Virtual& v) {
@@ -427,8 +460,8 @@ void RenderStructuralCall(
     TargetText& out) {
   CallWriter text(view, std::nullopt, out);
   WriteEntryCallee(
-      view, support::RuntimeEntryOf(fn), mir::Direct{.target = fn}, result_type,
-      text);
+      view, support::RuntimeEntryOf(fn), mir::Direct{.target = fn}, {},
+      result_type, text);
   text.Arguments({});
 }
 

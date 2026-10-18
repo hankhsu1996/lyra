@@ -970,8 +970,8 @@ auto CodeGenFunction::LowerMachineUnary(const lir::UnaryInstr& unary)
 // boolean is what the value's own domain answers about it; and between two
 // machine integers the value resizes, repeating the sign bit only when the
 // *source* is signed, the destination's signedness saying how the result is
-// later read rather than what the added high bits hold. A pair outside those is
-// one this target does not carry, and is refused rather than passed through.
+// later read rather than what the added high bits hold. MIR's verification
+// admits no other pair.
 auto CodeGenFunction::LowerCast(
     const lir::CastInstr& cast, lir::TypeId result_type)
     -> diag::Result<llvm::Value*> {
@@ -1032,9 +1032,9 @@ auto CodeGenFunction::LowerCast(
   const std::optional<lir::Signedness> signedness =
       module_->Unit().types.Get(operand_type).MachineIntegerSignedness();
   if (!signedness) {
-    return Unsupported(
-        "a cast between these two types is not yet supported with "
-        "'--backend llvm'");
+    throw InternalError(
+        "llvm codegen: a cast between types no cast joins -- please report "
+        "this as a bug");
   }
   return builder_.CreateIntCast(
       *operand, target, *signedness == lir::Signedness::kSigned);

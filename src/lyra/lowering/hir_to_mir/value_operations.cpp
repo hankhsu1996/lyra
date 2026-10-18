@@ -25,13 +25,13 @@
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/bit_vector.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/predicate.hpp"
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/storage_part.hpp"
@@ -297,8 +297,9 @@ auto BuildFilled(
   const mir::TypeId copies = mir::PackedVectorOf(
       unit.types, t.Integral().bit_width,
       unit.types.Get(block.exprs.Get(fill).type).Integral().state_kind);
-  const mir::ExprId filled = block.exprs.Add(MakeBuiltinCall(
-      unit, block, support::BuiltinFn::kReplicateBits, fill, {}, copies));
+  const mir::ExprId filled = block.exprs.Add(
+      mir::MakeBuiltinCall(
+          unit, block, support::BuiltinFn::kReplicateBits, fill, {}, copies));
   return ConvertToType(unit, block, filled, type);
 }
 
@@ -316,7 +317,7 @@ auto MachineTruth(
     const mir::CompilationUnit& unit, mir::Block& block, mir::BinaryOp op,
     mir::ExprId lhs, mir::ExprId rhs) -> mir::ExprId {
   return block.exprs.Add(
-      MakeBinary(unit, block, op, lhs, rhs, unit.builtins.machine_bool));
+      mir::MakeBinary(unit, block, op, lhs, rhs, unit.builtins.machine_bool));
 }
 
 // `then_value` where `condition` holds and `else_value` where it does not,
@@ -489,7 +490,7 @@ class OperationBodies {
   // A known 1 or 0 of the one-bit type `type`.
   auto KnownBit(mir::Block& block, mir::TypeId type, bool holds)
       -> mir::ExprId {
-    return BuildIntegralLiteral(
+    return mir::BuildIntegralLiteral(
         Unit(), block, type,
         mir::IntegralConstant{
             .value_words = {holds ? 1U : 0U}, .state_words = {}});
@@ -504,9 +505,10 @@ class OperationBodies {
           const mir::ExprId holds_unknown =
               Own(block, support::BuiltinFn::kHasUnknown, Whole(block, p[0]),
                   {}, Unit().builtins.machine_bool);
-          return block.exprs.Add(MakeBuiltinCall(
-              Unit(), block, support::BuiltinFn::kFromBool, std::nullopt,
-              {holds_unknown}, bit));
+          return block.exprs.Add(
+              mir::MakeBuiltinCall(
+                  Unit(), block, support::BuiltinFn::kFromBool, std::nullopt,
+                  {holds_unknown}, bit));
         });
   }
 
@@ -581,7 +583,7 @@ class OperationBodies {
     block.AppendStmt(
         mir::LocalDeclStmt{
             .target = end,
-            .init = BuildMachineIntBinary(
+            .init = mir::BuildMachineIntBinary(
                 Unit(), block, mir::BinaryOp::kAdd,
                 block.ReadLocal(held_first, number),
                 block.AsValue(Unit().types, Referent(block, count, number)))});
@@ -605,18 +607,19 @@ class OperationBodies {
       return block.ReadLocal(local, number);
     };
     const mir::LocalId lo = held(at);
-    const mir::LocalId hi = held(BuildMachineIntBinary(
-        Unit(), block, mir::BinaryOp::kAdd, read(lo),
-        BuildMachineIntLiteral(
-            Unit(), block,
-            static_cast<std::int64_t>(PositionCountOf(Unit(), part)))));
+    const mir::LocalId hi = held(
+        mir::BuildMachineIntBinary(
+            Unit(), block, mir::BinaryOp::kAdd, read(lo),
+            mir::BuildMachineIntLiteral(
+                Unit(), block,
+                static_cast<std::int64_t>(PositionCountOf(Unit(), part)))));
     const std::array reaches{
         MachineTruth(
             Unit(), block, mir::BinaryOp::kLessThan, read(run.first), read(hi)),
         MachineTruth(
             Unit(), block, mir::BinaryOp::kGreaterThan, read(run.end),
             read(lo))};
-    const mir::ExprId start = BuildMachineIntBinary(
+    const mir::ExprId start = mir::BuildMachineIntBinary(
         Unit(), block, mir::BinaryOp::kSub,
         Chosen(
             block,
@@ -625,7 +628,7 @@ class OperationBodies {
                 read(lo)),
             read(run.first), read(lo), number),
         read(lo));
-    const mir::ExprId stop = BuildMachineIntBinary(
+    const mir::ExprId stop = mir::BuildMachineIntBinary(
         Unit(), block, mir::BinaryOp::kSub,
         Chosen(
             block,
@@ -635,8 +638,9 @@ class OperationBodies {
             read(run.end), read(hi), number),
         read(lo));
     const mir::LocalId first_taken = held(start);
-    const mir::LocalId count = held(BuildMachineIntBinary(
-        Unit(), block, mir::BinaryOp::kSub, stop, read(first_taken)));
+    const mir::LocalId count = held(
+        mir::BuildMachineIntBinary(
+            Unit(), block, mir::BinaryOp::kSub, stop, read(first_taken)));
     return Chosen(
         block, AllHold(Unit(), block, reaches),
         PositionsTaken(
@@ -785,11 +789,12 @@ auto StructBodies::BitWidth() -> mir::CallableCode {
   return Body(
       support::BuiltinFn::kBitstreamWidth, {WholeType()}, count,
       [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
-        mir::ExprId answer = BuildIntLiteral(Unit(), block, 0);
+        mir::ExprId answer = mir::BuildIntLiteral(Unit(), block, 0);
         for (std::size_t i = 0; i < Members().size(); ++i) {
-          answer = block.exprs.Add(MakeBinary(
-              Unit(), block, mir::BinaryOp::kAdd, answer,
-              BuildBitWidth(Unit(), block, Member(block, p[0], i)), count));
+          answer = block.exprs.Add(
+              mir::MakeBinary(
+                  Unit(), block, mir::BinaryOp::kAdd, answer,
+                  BuildBitWidth(Unit(), block, Member(block, p[0], i)), count));
         }
         return answer;
       });
@@ -803,14 +808,15 @@ auto StructBodies::CountBits() -> mir::CallableCode {
   return Body(
       support::BuiltinFn::kCountBits, {WholeType(), control}, count,
       [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
-        mir::ExprId answer = BuildIntLiteral(Unit(), block, 0);
+        mir::ExprId answer = mir::BuildIntLiteral(Unit(), block, 0);
         for (std::size_t i = 0; i < Members().size(); ++i) {
-          answer = block.exprs.Add(MakeBinary(
-              Unit(), block, mir::BinaryOp::kAdd, answer,
-              BuildBitCount(
-                  Unit(), block, Member(block, p[0], i),
-                  Referent(block, p[1], control)),
-              count));
+          answer = block.exprs.Add(
+              mir::MakeBinary(
+                  Unit(), block, mir::BinaryOp::kAdd, answer,
+                  BuildBitCount(
+                      Unit(), block, Member(block, p[0], i),
+                      Referent(block, p[1], control)),
+                  count));
         }
         return answer;
       });
@@ -843,11 +849,12 @@ auto StructBodies::ToBitstream() -> mir::CallableCode {
         for (std::size_t i = 1; i < streams.size(); ++i) {
           const StreamShape built =
               *FixedStreamShapeOfParts(Unit(), Members().first(i + 1));
-          answer = block.exprs.Add(MakeBuiltinCall(
-              Unit(), block, support::BuiltinFn::kConcatBits, answer,
-              {streams[i]},
-              mir::PackedVectorOf(
-                  Unit().types, built.width, built.state_kind)));
+          answer = block.exprs.Add(
+              mir::MakeBuiltinCall(
+                  Unit(), block, support::BuiltinFn::kConcatBits, answer,
+                  {streams[i]},
+                  mir::PackedVectorOf(
+                      Unit().types, built.width, built.state_kind)));
         }
         return answer;
       });
@@ -932,7 +939,7 @@ auto StructBodies::PositionCount() -> mir::CallableCode {
   return Body(
       support::BuiltinFn::kPositionCount, {}, Unit().builtins.machine_int64,
       [&](mir::Block& block, const std::vector<mir::LocalId>&) {
-        return BuildMachineIntLiteral(
+        return mir::BuildMachineIntLiteral(
             Unit(), block,
             static_cast<std::int64_t>(PositionCountOf(Unit(), WholeType())));
       });
@@ -952,7 +959,7 @@ auto StructBodies::TakePositions() -> mir::CallableCode {
           members.push_back(PartTaken(
               code, block, Members()[i], Member(block, p[0], i),
               Member(block, p[1], i),
-              BuildMachineIntLiteral(
+              mir::BuildMachineIntLiteral(
                   Unit(), block, static_cast<std::int64_t>(at)),
               run));
           at += PositionCountOf(Unit(), Members()[i]);
@@ -1211,10 +1218,11 @@ class TaggedUnionBodies : public OperationBodies {
     for (const mir::LocalId other : std::span{tags}.subspan(1)) {
       ReturnWhere(
           block,
-          block.exprs.Add(MakeBinary(
-              Unit(), block, mir::BinaryOp::kInequality,
-              block.ReadLocal(tags.front(), tag_type),
-              block.ReadLocal(other, tag_type), boolean)),
+          block.exprs.Add(
+              mir::MakeBinary(
+                  Unit(), block, mir::BinaryOp::kInequality,
+                  block.ReadLocal(tags.front(), tag_type),
+                  block.ReadLocal(other, tag_type), boolean)),
           neither);
     }
     for (std::size_t i = 0; i < Members().size(); ++i) {
@@ -1222,12 +1230,13 @@ class TaggedUnionBodies : public OperationBodies {
           Unit().types.Get(Members()[i]).Is<mir::EmptyType>();
       ReturnWhere(
           block,
-          block.exprs.Add(MakeBinary(
-              Unit(), block, mir::BinaryOp::kEquality,
-              block.ReadLocal(tags.front(), tag_type),
-              BuildMachineIntLiteral(
-                  Unit(), block, static_cast<std::int64_t>(i)),
-              boolean)),
+          block.exprs.Add(
+              mir::MakeBinary(
+                  Unit(), block, mir::BinaryOp::kEquality,
+                  block.ReadLocal(tags.front(), tag_type),
+                  mir::BuildMachineIntLiteral(
+                      Unit(), block, static_cast<std::int64_t>(i)),
+                  boolean)),
           [&](mir::Block& taken) {
             return carries_nothing ? alike(taken) : held(taken, i);
           });
@@ -1275,10 +1284,10 @@ auto TaggedUnionBodies::CaseEqual() -> mir::CallableCode {
                   Member(taken, p[1], i));
             },
             [&](mir::Block& taken) {
-              return BuildBit1Literal(Unit(), taken, true);
+              return mir::BuildBit1Literal(Unit(), taken, true);
             },
             [&](mir::Block& taken) {
-              return BuildBit1Literal(Unit(), taken, false);
+              return mir::BuildBit1Literal(Unit(), taken, false);
             });
       });
 }
@@ -1386,15 +1395,18 @@ class ArrayBodies : public OperationBodies {
     mir::Block body;
     each(body, body.ReadLocal(position, position_type));
     const mir::BlockId scope = block.child_scopes.Add(std::move(body));
-    const mir::ExprId within = block.exprs.Add(MakeBinary(
-        Unit(), block, mir::BinaryOp::kLessThan,
-        block.ReadLocal(position, position_type),
-        BuildConstantPosition(Unit(), block, static_cast<std::int64_t>(count_)),
-        OneBitAnswerType(Unit(), std::array{position_type})));
-    const mir::ExprId next = block.exprs.Add(MakeBinary(
-        Unit(), block, mir::BinaryOp::kAdd,
-        block.ReadLocal(position, position_type),
-        BuildConstantPosition(Unit(), block, 1), position_type));
+    const mir::ExprId within = block.exprs.Add(
+        mir::MakeBinary(
+            Unit(), block, mir::BinaryOp::kLessThan,
+            block.ReadLocal(position, position_type),
+            BuildConstantPosition(
+                Unit(), block, static_cast<std::int64_t>(count_)),
+            OneBitAnswerType(Unit(), std::array{position_type})));
+    const mir::ExprId next = block.exprs.Add(
+        mir::MakeBinary(
+            Unit(), block, mir::BinaryOp::kAdd,
+            block.ReadLocal(position, position_type),
+            BuildConstantPosition(Unit(), block, 1), position_type));
     std::vector<mir::ForInit> init;
     init.emplace_back(
         mir::ForInitDecl{
@@ -1470,14 +1482,17 @@ class ArrayBodies : public OperationBodies {
   auto ElementStart(mir::Block& block, mir::ExprId position) -> mir::ExprId {
     const mir::TypeId position_type = mir::PositionType(Unit().types);
     const auto width = static_cast<std::int64_t>(ElementStream().width);
-    return block.exprs.Add(MakeBinary(
-        Unit(), block, mir::BinaryOp::kSub,
-        BuildConstantPosition(
-            Unit(), block, (static_cast<std::int64_t>(count_) - 1) * width),
-        block.exprs.Add(MakeBinary(
-            Unit(), block, mir::BinaryOp::kMul, position,
-            BuildConstantPosition(Unit(), block, width), position_type)),
-        position_type));
+    return block.exprs.Add(
+        mir::MakeBinary(
+            Unit(), block, mir::BinaryOp::kSub,
+            BuildConstantPosition(
+                Unit(), block, (static_cast<std::int64_t>(count_) - 1) * width),
+            block.exprs.Add(
+                mir::MakeBinary(
+                    Unit(), block, mir::BinaryOp::kMul, position,
+                    BuildConstantPosition(Unit(), block, width),
+                    position_type)),
+            position_type));
   }
   // The bits of the stream one element takes.
   auto ElementBits() -> mir::TypeId {
@@ -1520,7 +1535,9 @@ auto ArrayBodies::CaseEqual() -> mir::CallableCode {
           const std::vector<mir::LocalId>& p) {
         return Reduced(
             code, block, bit,
-            [&](mir::Block& at) { return BuildBit1Literal(Unit(), at, true); },
+            [&](mir::Block& at) {
+              return mir::BuildBit1Literal(Unit(), at, true);
+            },
             [&](mir::Block& body, mir::ExprId position) {
               return BuildCaseEquality(
                   Unit(), body, Element(body, p[0], position),
@@ -1582,13 +1599,14 @@ auto ArrayBodies::BitWidth() -> mir::CallableCode {
           const std::vector<mir::LocalId>& p) {
         return Reduced(
             code, block, count,
-            [&](mir::Block& at) { return BuildIntLiteral(Unit(), at, 0); },
+            [&](mir::Block& at) { return mir::BuildIntLiteral(Unit(), at, 0); },
             [&](mir::Block& body, mir::ExprId position) {
               return BuildBitWidth(Unit(), body, Element(body, p[0], position));
             },
             [&](mir::Block& body, mir::ExprId kept, mir::ExprId each) {
-              return body.exprs.Add(MakeBinary(
-                  Unit(), body, mir::BinaryOp::kAdd, kept, each, count));
+              return body.exprs.Add(
+                  mir::MakeBinary(
+                      Unit(), body, mir::BinaryOp::kAdd, kept, each, count));
             });
       });
 }
@@ -1602,15 +1620,16 @@ auto ArrayBodies::CountBits() -> mir::CallableCode {
           const std::vector<mir::LocalId>& p) {
         return Reduced(
             code, block, count,
-            [&](mir::Block& at) { return BuildIntLiteral(Unit(), at, 0); },
+            [&](mir::Block& at) { return mir::BuildIntLiteral(Unit(), at, 0); },
             [&](mir::Block& body, mir::ExprId position) {
               return BuildBitCount(
                   Unit(), body, Element(body, p[0], position),
                   Referent(body, p[1], control));
             },
             [&](mir::Block& body, mir::ExprId kept, mir::ExprId each) {
-              return body.exprs.Add(MakeBinary(
-                  Unit(), body, mir::BinaryOp::kAdd, kept, each, count));
+              return body.exprs.Add(
+                  mir::MakeBinary(
+                      Unit(), body, mir::BinaryOp::kAdd, kept, each, count));
             });
       });
 }
@@ -1627,7 +1646,7 @@ auto ArrayBodies::ToBitstream() -> mir::CallableCode {
         block.AppendStmt(
             mir::LocalDeclStmt{
                 .target = bits,
-                .init = BuildIntegralLiteral(
+                .init = mir::BuildIntegralLiteral(
                     Unit(), block, stream, mir::IntegralConstant{})});
         ForEachPosition(
             code, block, [&](mir::Block& body, mir::ExprId position) {
@@ -1726,10 +1745,10 @@ auto ArrayBodies::TakePositions() -> mir::CallableCode {
           return PartTaken(
               code, body, ElementType(), Element(body, p[0], position),
               Element(body, p[1], position),
-              BuildMachineIntBinary(
+              mir::BuildMachineIntBinary(
                   Unit(), body, mir::BinaryOp::kMul,
                   BuildToInt64Call(Unit(), body, position),
-                  BuildMachineIntLiteral(Unit(), body, per_element)),
+                  mir::BuildMachineIntLiteral(Unit(), body, per_element)),
               run);
         });
       });
@@ -1883,8 +1902,7 @@ auto ArrayOperationsOf(UnitLowerer& lowerer, mir::TypeId type)
       .net_folds = IsValidForNet(unit, type)};
   const mir::UnpackedArrayType array =
       unit.types.Get(type).Get<mir::UnpackedArrayType>();
-  ArrayBodies bodies(
-      lowerer, type, array.element_type, array.dim.ElementCount());
+  ArrayBodies bodies(lowerer, type, array.element_type, array.count);
   StateWholeValue(bodies, add);
   StateStreamAndFolds(bodies, had, add);
   return operations;
@@ -1920,8 +1938,7 @@ auto PositionCountOf(const mir::CompilationUnit& unit, mir::TypeId type)
     return t.Integral().bit_width;
   }
   if (const auto* array = t.As<mir::UnpackedArrayType>()) {
-    return array->dim.ElementCount() *
-           PositionCountOf(unit, array->element_type);
+    return array->count * PositionCountOf(unit, array->element_type);
   }
   if (mir::RecordKindOf(unit, type) == mir::RecordKind::kStruct) {
     std::uint64_t count = 0;
@@ -1962,7 +1979,8 @@ auto BuildValueOperation(
         return mir::ReadIfOverlaid(unit, block, named);
       });
   return block.exprs.Add(
-      MakeBuiltinCall(unit, block, entry, object, std::move(operands), result));
+      mir::MakeBuiltinCall(
+          unit, block, entry, object, std::move(operands), result));
 }
 
 auto BuildEquality(
@@ -1988,9 +2006,10 @@ auto BuildEquality(
     }
     throw InternalError("BuildEquality: unknown value operator");
   };
-  return block.exprs.Add(MakeBinary(
-      unit, block, operator_of(), block.AsValue(unit.types, lhs),
-      block.AsValue(unit.types, rhs), result));
+  return block.exprs.Add(
+      mir::MakeBinary(
+          unit, block, operator_of(), block.AsValue(unit.types, lhs),
+          block.AsValue(unit.types, rhs), result));
 }
 
 auto BuildCaseEquality(
@@ -2042,7 +2061,7 @@ auto BuildBitWidth(
   // An integral value is as many bits as its type is wide.
   const mir::Type& type = unit.types.Get(block.exprs.Get(value).type);
   if (type.IsIntegral()) {
-    return BuildIntLiteral(
+    return mir::BuildIntLiteral(
         unit, block, static_cast<std::int64_t>(type.Integral().bit_width));
   }
   return BuildValueOperation(

@@ -11,7 +11,6 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/packed_concat.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -19,6 +18,7 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/type_builders.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -51,7 +51,7 @@ auto BuildPackedTaggedValue(
       unit.types.Get(result_type).Integral().state_kind;
   std::vector<mir::ExprId> regions;
   if (layout.tag_bits > 0) {
-    const mir::ExprId named = BuildIntLiteral(
+    const mir::ExprId named = mir::BuildIntLiteral(
         unit, block, static_cast<std::int64_t>(t.member_index.value));
     regions.push_back(ConvertToType(
         unit, block, named,

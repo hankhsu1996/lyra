@@ -19,13 +19,13 @@
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -122,7 +122,7 @@ auto LowerRandomSystemSubroutineCall(
   // An omitted low bound is the zero LRM 18.13.2 defines it to be, and the
   // runtime entry always takes both.
   if (info.kind == support::RandomKind::kUrandomRange && operands.size() == 1) {
-    arguments.push_back(BuildMachineIntLiteral(unit, body, 0));
+    arguments.push_back(mir::BuildMachineIntLiteral(unit, body, 0));
   }
 
   return mir::Expr{
@@ -206,10 +206,12 @@ auto LowerDistributionSystemSubroutineCall(
   // the whole signed range, which the source writes as one operand and the
   // entry takes as three.
   if (info.kind == support::DistributionKind::kRandom) {
-    arguments.push_back(BuildMachineIntLiteral(
-        unit, body, std::numeric_limits<std::int32_t>::min()));
-    arguments.push_back(BuildMachineIntLiteral(
-        unit, body, std::numeric_limits<std::int32_t>::max()));
+    arguments.push_back(
+        mir::BuildMachineIntLiteral(
+            unit, body, std::numeric_limits<std::int32_t>::min()));
+    arguments.push_back(
+        mir::BuildMachineIntLiteral(
+            unit, body, std::numeric_limits<std::int32_t>::max()));
   }
 
   const mir::TypeId payload_type =
