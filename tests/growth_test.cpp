@@ -6,7 +6,9 @@
 // runs asked to report on themselves. A step that repeats what is stated once
 // adds nothing to what a compile leaves behind; a step unlike the others adds
 // what its own statements are worth, which the design says kind by kind. Either
-// way a step adds at most proportionally to what a compile spends.
+// way a step adds at most proportionally to what a compile spends. That holds
+// of every compiler a run starts, so along one path the C++ backend's program
+// is built, and what the host compiler spent is held like any other stage.
 //
 // What is held of what a compile leaves is every kind of thing the run reports
 // holding, whichever kinds those are: a kind the design does not name must not
@@ -22,12 +24,14 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <expected>
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <functional>
 #include <gtest/gtest.h>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -80,16 +84,22 @@ constexpr std::uint64_t kPeakAllowanceBytes = 16ULL << 20;
 // does not stretch the larger one every time.
 constexpr int kAttempts = 3;
 
-enum class Backend : std::uint8_t {
+// How a design is compiled: by the C++ backend as far as its emitted project,
+// by the C++ backend and then the host compiler that builds the program, or by
+// the execution backend. A target measures the paths it is told to.
+enum class Path : std::uint8_t {
   kCpp,
+  kCppHost,
   kLlvm,
 };
 
-auto NameOf(Backend backend) -> std::string_view {
-  switch (backend) {
-    case Backend::kCpp:
+auto NameOf(Path path) -> std::string_view {
+  switch (path) {
+    case Path::kCpp:
       return "cpp";
-    case Backend::kLlvm:
+    case Path::kCppHost:
+      return "cpp_host";
+    case Path::kLlvm:
       return "llvm";
   }
   std::unreachable();
@@ -117,9 +127,9 @@ struct GrowthCase {
   // What the design's own file says a step adds. A kind it does not name is
   // one a step adds none of.
   Adds each_adds;
-  // How the larger run is recorded as departing from that today, for every
-  // backend.
-  std::map<Backend, std::set<std::string>> recorded;
+  // How the larger run is recorded as departing from that today, along every
+  // path.
+  std::map<Path, std::set<std::string>> recorded;
 };
 
 // The kinds a run is read for beyond the ones it reports holding.
@@ -144,14 +154,22 @@ struct Reading {
 };
 
 auto CommandFor(
-    Backend backend, const std::filesystem::path& design, std::uint64_t size,
+    Path path, const std::filesystem::path& design, std::uint64_t size,
     const std::filesystem::path& dir) -> std::vector<std::string> {
   std::vector<std::string> command;
-  switch (backend) {
-    case Backend::kCpp:
+  switch (path) {
+    case Path::kCpp:
       command = {"emit", "cpp", "-o", (dir / "project").string()};
       break;
-    case Backend::kLlvm:
+    // Without a prepared header, whose cost is the same at every size and would
+    // hide how the rest grows.
+    case Path::kCppHost:
+      command = {"build",       "--backend",
+                 "cpp",         "--no-pch",
+                 "-o",          (dir / "program").string(),
+                 "--cache-dir", (dir / "cache").string()};
+      break;
+    case Path::kLlvm:
       command = {
           "build",
           "--backend",
@@ -175,6 +193,62 @@ auto CommandFor(
       design.string()};
   command.insert(command.end(), common.begin(), common.end());
   return command;
+}
+
+// A design's text at `size`. A count the source writes out -- the members of a
+// structure, the operands of a chain, the arguments of a call -- is no
+// parameter the language can generate from, so the harness writes it: each
+// `[[piece|separator]]` is the piece written `size` times, joined by the
+// separator, which is what follows the last `|` and may be empty, with `{i}` in
+// the piece each step's index from zero; and `{last}` anywhere is the last
+// step's index.
+auto TextAt(std::string_view text, std::uint64_t size) -> std::string {
+  std::string out;
+  while (true) {
+    const std::size_t open = text.find("[[");
+    out += text.substr(0, open);
+    if (open == std::string_view::npos) {
+      break;
+    }
+    const std::size_t close = text.find("]]", open);
+    const std::string_view inner = text.substr(open + 2, close - open - 2);
+    const std::size_t bar = inner.rfind('|');
+    const std::string_view piece = inner.substr(0, bar);
+    const std::string_view separator = bar == std::string_view::npos
+                                           ? std::string_view{}
+                                           : inner.substr(bar + 1);
+    for (std::uint64_t step = 0; step < size; ++step) {
+      if (step > 0) {
+        out += separator;
+      }
+      std::string_view rest = piece;
+      for (std::size_t at = rest.find("{i}"); at != std::string_view::npos;
+           at = rest.find("{i}")) {
+        out += rest.substr(0, at);
+        out += std::to_string(step);
+        rest = rest.substr(at + 3);
+      }
+      out += rest;
+    }
+    text = text.substr(close + 2);
+  }
+  const std::string last = std::to_string(size - 1);
+  for (std::size_t at = out.find("{last}"); at != std::string::npos;
+       at = out.find("{last}", at + last.size())) {
+    out.replace(at, 6, last);
+  }
+  return out;
+}
+
+// `design` written at `size` to `path`, which a run then compiles.
+auto WrittenAt(
+    const std::filesystem::path& design, std::uint64_t size,
+    const std::filesystem::path& path) -> std::filesystem::path {
+  std::ifstream source(design);
+  const std::string text{
+      std::istreambuf_iterator<char>(source), std::istreambuf_iterator<char>()};
+  std::ofstream(path) << TextAt(text, size);
+  return path;
 }
 
 auto Joined(const std::vector<std::string>& command) -> std::string {
@@ -407,20 +481,22 @@ struct Pair {
   Reading large;
 };
 
-// Holds one design on one backend to what is recorded for it. Nothing where
+// Holds one design along one path to what is recorded for it. Nothing where
 // it holds; otherwise what differs, with the numbers and the two commands
 // that show it.
 auto CheckGrowth(
-    const std::filesystem::path& lyra, const GrowthCase& growth,
-    Backend backend) -> std::optional<std::string> {
+    const std::filesystem::path& lyra, const GrowthCase& growth, Path path)
+    -> std::optional<std::string> {
   auto scratch = MakeScratchDir();
   if (!scratch.has_value()) {
     return scratch.error();
   }
-  const std::vector<std::string> small_command =
-      CommandFor(backend, growth.design, growth.size, *scratch / "small");
-  const std::vector<std::string> large_command =
-      CommandFor(backend, growth.design, 2 * growth.size, *scratch / "large");
+  const std::vector<std::string> small_command = CommandFor(
+      path, WrittenAt(growth.design, growth.size, *scratch / "small.sv"),
+      growth.size, *scratch / "small");
+  const std::vector<std::string> large_command = CommandFor(
+      path, WrittenAt(growth.design, 2 * growth.size, *scratch / "large.sv"),
+      2 * growth.size, *scratch / "large");
 
   const auto compile_pair = [&]() -> std::expected<Pair, std::string> {
     auto small = Compile(lyra, small_command, *scratch / "small");
@@ -434,7 +510,7 @@ auto CheckGrowth(
     return Pair{.small = std::move(*small), .large = std::move(*large)};
   };
 
-  const std::set<std::string>& recorded = growth.recorded.at(backend);
+  const std::set<std::string>& recorded = growth.recorded.at(path);
   auto pair = compile_pair();
   if (!pair.has_value()) {
     return pair.error();
@@ -487,10 +563,10 @@ auto CheckGrowth(
     return std::nullopt;
   }
   return std::format(
-      "'{}' on the {} backend, compiled at N={} and N={}:\n{}"
+      "'{}' along the {} path, compiled at N={} and N={}:\n{}"
       "  spans that outgrew their proportion:\n{}"
       "  the two runs:\n    {}\n    {}\n",
-      growth.name, NameOf(backend), growth.size, 2 * growth.size, differs,
+      growth.name, NameOf(path), growth.size, 2 * growth.size, differs,
       spans.empty() ? "    none\n" : spans, Joined(small_command),
       Joined(large_command));
 }
@@ -572,7 +648,8 @@ auto LoadGrowthCases(
           .design = entry.path(),
           .size = 0,
           .each_adds = EachAddsOf(entry.path(), problems),
-          .recorded = {{Backend::kCpp, {}}, {Backend::kLlvm, {}}}};
+          .recorded = {
+              {Path::kCpp, {}}, {Path::kCppHost, {}}, {Path::kLlvm, {}}}};
     }
   }
 
@@ -585,18 +662,25 @@ auto LoadGrowthCases(
           std::format("'{}' is given a size and is not a design", name));
     }
   }
-  for (const Backend backend : {Backend::kCpp, Backend::kLlvm}) {
-    const std::string file = std::format("{}.growth.yaml", NameOf(backend));
+  for (const Path path : {Path::kCpp, Path::kCppHost, Path::kLlvm}) {
+    const std::string file = std::format("{}.growth.yaml", NameOf(path));
     for (const auto& [name, outgrows] :
          LoadByName<std::vector<std::string>>(paths_root / file)) {
       if (const auto found = cases.find(name); found != cases.end()) {
-        found->second.recorded.at(backend).insert(
+        found->second.recorded.at(path).insert(
             outgrows.begin(), outgrows.end());
       } else {
         problems.push_back(
             std::format("{} records '{}', which is not a design", file, name));
       }
     }
+  }
+  // The cpp_host path is the cpp path and then the host compiler, so it departs
+  // wherever the cpp path does, and its own record holds only what building
+  // the program adds.
+  for (auto& [name, growth] : cases) {
+    const std::set<std::string>& emitted = growth.recorded.at(Path::kCpp);
+    growth.recorded.at(Path::kCppHost).insert(emitted.begin(), emitted.end());
   }
 
   std::vector<GrowthCase> loaded;
@@ -635,14 +719,14 @@ auto LoadCorpus() -> Corpus {
 
 namespace lyra::test {
 
-// One design on one backend. The test framework finds how to print a parameter
+// One design along one path. The test framework finds how to print a parameter
 // by the parameter's own namespace, which is why this one has a name.
 struct GrowthSubject {
   GrowthCase growth;
-  Backend backend;
+  Path path;
 
   friend auto PrintTo(const GrowthSubject& subject, std::ostream* out) -> void {
-    *out << subject.growth.name << " on " << NameOf(subject.backend);
+    *out << subject.growth.name << " along " << NameOf(subject.path);
   }
 };
 
@@ -652,11 +736,35 @@ namespace {
 
 using lyra::test::GrowthSubject;
 
+// The paths this target measures, which its build names, comma-separated, in
+// `LYRA_GROWTH_PATHS`. Building every program with the host compiler costs
+// what compiling an emitted project costs, so the target that pays it runs
+// where that is paid, and the one in the merge gate measures the rest. A
+// target naming none measures nothing, which its record test reports.
+auto MeasuredPaths() -> std::vector<Path> {
+  const char* const named = std::getenv("LYRA_GROWTH_PATHS");
+  const std::string_view list =
+      named == nullptr ? std::string_view{} : std::string_view{named};
+  std::vector<Path> paths;
+  for (const Path path : {Path::kCpp, Path::kCppHost, Path::kLlvm}) {
+    std::string_view rest = list;
+    while (!rest.empty()) {
+      const std::size_t comma = rest.find(',');
+      if (rest.substr(0, comma) == NameOf(path)) {
+        paths.push_back(path);
+      }
+      rest = comma == std::string_view::npos ? std::string_view{}
+                                             : rest.substr(comma + 1);
+    }
+  }
+  return paths;
+}
+
 auto Subjects() -> std::vector<GrowthSubject> {
   std::vector<GrowthSubject> subjects;
   for (const GrowthCase& growth : LoadCorpus().cases) {
-    for (const Backend backend : {Backend::kCpp, Backend::kLlvm}) {
-      subjects.push_back(GrowthSubject{.growth = growth, .backend = backend});
+    for (const Path path : MeasuredPaths()) {
+      subjects.push_back(GrowthSubject{.growth = growth, .path = path});
     }
   }
   return subjects;
@@ -670,6 +778,7 @@ TEST(GrowthRecord, NamesEveryDesignAndNothingElse) {
     ADD_FAILURE() << problem;
   }
   EXPECT_FALSE(corpus.cases.empty());
+  EXPECT_FALSE(MeasuredPaths().empty()) << "LYRA_GROWTH_PATHS names no path";
 }
 
 class Growth : public testing::TestWithParam<GrowthSubject> {};
@@ -677,7 +786,7 @@ class Growth : public testing::TestWithParam<GrowthSubject> {};
 TEST_P(Growth, IsHeldToItsSize) {
   const auto lyra = lyra::test::ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
-  if (auto failure = CheckGrowth(lyra, GetParam().growth, GetParam().backend)) {
+  if (auto failure = CheckGrowth(lyra, GetParam().growth, GetParam().path)) {
     ADD_FAILURE() << *failure;
   }
 }
@@ -686,7 +795,7 @@ INSTANTIATE_TEST_SUITE_P(
     Designs, Growth, testing::ValuesIn(Subjects()),
     [](const testing::TestParamInfo<GrowthSubject>& subject) {
       return std::format(
-          "{}_{}", NameOf(subject.param.backend), subject.param.growth.name);
+          "{}_{}", NameOf(subject.param.path), subject.param.growth.name);
     });
 
 }  // namespace

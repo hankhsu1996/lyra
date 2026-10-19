@@ -134,6 +134,26 @@ cc_test(
 )
 
 cc_test(
+    name = "value_tuple_test",
+    srcs = ["value/tuple_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:value",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "value_union_test",
+    srcs = ["value/union_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:value",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "hir_verify_test",
     srcs = ["hir/verify_test.cpp"],
     copts = LYRA_COPTS,
@@ -431,8 +451,39 @@ cc_test(
         "growth/*.yaml",
         "paths/*.growth.yaml",
     ]),
+    env = {"LYRA_GROWTH_PATHS": "cpp,llvm"},
     shard_count = 4,
     tags = ["cost"],
+    deps = [
+        ":framework",
+        "//:base",
+        "@bazel_tools//tools/cpp/runfiles",
+        "@googletest//:gtest_main",
+        "@nlohmann_json//:json",
+        "@yaml-cpp//:yaml-cpp",
+    ],
+)
+
+# The same designs along the path that builds the C++ backend's program, so
+# what the host compiler pays for the emitted text is held to each design's
+# size. Each design's program is compiled at both sizes, which costs what
+# compiling an emitted project costs, so it runs where that is paid.
+cc_test(
+    name = "growth_host_compile_tests",
+    size = "large",
+    srcs = ["growth_test.cpp"],
+    copts = LYRA_COPTS,
+    data = ["//:lyra"] + glob([
+        "growth/*.sv",
+        "growth/*.yaml",
+        "paths/*.growth.yaml",
+    ]),
+    env = {"LYRA_GROWTH_PATHS": "cpp_host"},
+    shard_count = 12,
+    tags = [
+        "cost",
+        "nightly",
+    ],
     deps = [
         ":framework",
         "//:base",

@@ -6,13 +6,13 @@
 #include <cstddef>
 #include <memory>
 #include <new>
-#include <tuple>
 #include <type_traits>
 #include <utility>
 
 #include "lyra/value/clear_above_widths.hpp"
 #include "lyra/value/element_policy.hpp"
 #include "lyra/value/integral.hpp"
+#include "lyra/value/pack_element.hpp"
 
 namespace lyra::value {
 
@@ -23,9 +23,11 @@ namespace detail {
 // lies by retyping that start, as C reaches one.
 template <typename... Ts>
 class UnionStorage {
+  using Positions = PackPositions<Ts...>;
+
  public:
   template <std::size_t I>
-  using Member = std::tuple_element_t<I, std::tuple<Ts...>>;
+  using Member = PackElement<I, Positions>;
 
   template <std::size_t I>
   [[nodiscard]] auto At() -> Member<I>& {

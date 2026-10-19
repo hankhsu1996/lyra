@@ -37,16 +37,41 @@ awaiter, never in a frame, so it is not boxed. A value inside another value, an 
 container lies flat there; whatever holds that whole is boxed if it is large. The bound is the value
 library's `kMaxInlineBytes`, 1,024 bytes.
 
-**D3. The box is written by a rewrite of the MIR-to-MIR stage**, after HIR-to-MIR has stated every
-value plainly, and both backends read the rewritten unit. The rewrite asks a type how large a value
-of it is by one query over MIR types, as rustc's passes ask `layout_of`; no MIR node carries a size.
-The unit's verification refuses a body that leaves a value too large for a frame outside a box.
+A value an expression makes and then reads is made in a temporary: a local of the body, declared by
+a step of the evaluation the value belongs to, held through a box as every large local is, and ended
+with that evaluation, as a C++ temporary ends with its full-expression. The reader names the
+temporary, which encloses nothing, so a chain the source writes flat -- three hundred additions of
+wide values -- is three hundred steps beside each other rather than each link enclosing the one
+before, which a target compiler bounds. An evaluation is a statement's expression, an arm of a
+choice, or the value a block expression ends with, and its steps run in the order the evaluation
+reads its operands: an operand read or handed to a body before one that takes a step, and that
+computes something, is taken into a temporary of its own first, so holding a value off the stack
+moves no value read ahead of another. What is bound where it lies is formed where it is used -- a
+place keeps its own operands there, and the object a call is entered on may be a reference to part
+of a value, which exists only where it is taken -- so a later operand's step can run before it, an
+order the standard does not fix: it states none for an operator's operands, which it requires only
+to be evaluated (LRM 11.3.5), and leaves a call's arguments' undefined (LRM 13.5). The steps run in
+a block expression whose value is made where the evaluation's value is; an execution's answer has no
+such place, being read and stored into its completion, so its steps run in a scope around the
+return, which reads the temporary where it lies. The call a suspension waits on stands under it as
+it is, so each of its arguments is an evaluation of its own. A box handed to a body is built where
+it is handed, since the body owns it from there and nothing reads it here.
+
+**D3. The box is written by two rewrites of the MIR-to-MIR stage, one job each**, after HIR-to-MIR
+has stated every value plainly, and both backends read the rewritten unit. The first makes every
+large value an expression makes and then reads in a temporary, as above; the second holds every
+large local -- the temporaries among them -- parameter, capture, argument handed to a body and value
+made and discarded through a box. Both are required. Go's compiler divides the work the same way:
+one pass states evaluation order through temporaries (`cmd/compile/internal/walk/order.go`), and a
+later one decides which variables leave the frame. Each rewrite asks a type how large a value of it
+is by one query over MIR types, as rustc's passes ask `layout_of`; no MIR node carries a size. The
+unit's verification refuses a body that leaves a value too large for a frame outside a box.
 
 **D4. A large value is made in its box, and no body answers a box.** An expression of a large type
-is evaluated into the storage its new-expression allocates, never into a temporary first. Every body
-that is not a coroutine answers into its return place, and a caller reading a large call as a value
-makes it in a box: the C++ backend writes `new T(f())`, which elides, and the execution backend
-passes the box's storage as the return place.
+is evaluated into the storage its new-expression allocates, never into storage of its own first.
+Every body that is not a coroutine answers into its return place, and a caller reading a large call
+as a value makes it in a box: the C++ backend writes `new T(f())`, which elides, and the execution
+backend passes the box's storage as the return place.
 
 **D5. What the value library keeps aside while it works is never a large value on its stack.** A
 function compiled once for every type that needs a whole value of its own -- a copy for a
@@ -65,13 +90,14 @@ value lies.
 
 ## Where Lyra differs, and why
 
-| Point                         | Field                                                                                           | Lyra                      | Reason                                                                          |
-| ----------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------- |
-| who writes the box            | the programmer, in Rust (`Box<T>`) and C++ (an owning type)                                     | the compiler              | SystemVerilog has no word for where a value lives                               |
-| where the compiler decides it | Go, in the middle end that owns layout (`escape/utils.go` `HeapAllocReason`, `MaxStackVarSize`) | MIR, before both backends | two backends read one unit, and each deciding again is what this record removes |
-| how a box is filled           | rustc builds `Box::new`'s argument into the box (`builder/expr/into.rs`, `write_box_via_move`)  | the same                  | no condition of ours differs                                                    |
-| a large parameter             | rustc keeps `fn(T)` and passes a large `T` by address through one ABI query (`abi.rs`)          | a box in every signature  | the C++ backend has no ABI layer of its own, so the box is stated in MIR        |
-| a kept closure                | Rust's spawn takes `Box<dyn FnOnce>` (`thread/lifecycle.rs`); Go heap-allocates an escaping one | a box MIR states          | no condition of ours differs                                                    |
+| Point                         | Field                                                                                                                                                                                                                                                                                                                                        | Lyra                                                                          | Reason                                                                                                            |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| who writes the box            | the programmer, in Rust (`Box<T>`) and C++ (an owning type)                                                                                                                                                                                                                                                                                  | the compiler                                                                  | SystemVerilog has no word for where a value lives                                                                 |
+| where the compiler decides it | Go, in the middle end that owns layout (`escape/utils.go` `HeapAllocReason`, `MaxStackVarSize`)                                                                                                                                                                                                                                              | MIR, before both backends                                                     | two backends read one unit, and each deciding again is what this record removes                                   |
+| how a box is filled           | rustc builds `Box::new`'s argument into the box (`builder/expr/into.rs`, `write_box_via_move`)                                                                                                                                                                                                                                               | the same                                                                      | no condition of ours differs                                                                                      |
+| a large parameter             | rustc keeps `fn(T)` and passes a large `T` by address through one ABI query (`abi.rs`)                                                                                                                                                                                                                                                       | a box in every signature                                                      | the C++ backend has no ABI layer of its own, so the box is stated in MIR                                          |
+| a kept closure                | Rust's spawn takes `Box<dyn FnOnce>` (`thread/lifecycle.rs`); Go heap-allocates an escaping one                                                                                                                                                                                                                                              | a box MIR states                                                              | no condition of ours differs                                                                                      |
+| a made value that is read     | rustc builds it into a fresh temporary local, a statement of its own (`builder/expr/as_temp.rs`); clang gives it storage for the full-expression (`CodeGen/CGExpr.cpp`, `createReferenceTemporary`); Go's `order` pass makes it a temporary, a statement before the one it serves or part of an expression's own init list (`walk/order.go`) | a temporary local, a step of a block expression, made by a rewrite of its own | MIR is a tree whose C++ text a compiler parses recursively, so a value built where it is read nests in its reader |
 
 ## Rejected
 
@@ -80,6 +106,13 @@ value lies.
   many small members still lay whole on the stack.
 - **The C++ render choosing a holder per position by the type's size.** A render chooses spellings
   and never by a type's payload, and the host compiler lays out the C++ frames.
+- **A made value boxed where it is read.** The box encloses the expression making the value and the
+  reader encloses the box, so a flat chain of N links nests three brackets a link, and a sum of a
+  few hundred wide values is text no C++ compiler has to accept.
+- **Making temporaries and boxes in one rewrite.** Every case of the first -- a value handed to a
+  body, a suspension's call, an execution's answer, a value discarded -- then grew a case of the
+  second, and the rewrite came to know the evaluation order of every node in order to place a box.
+  Apart, the boxing rewrite holds locals, and a temporary is a local.
 - **A body answering a box.** Once a body has a return place, as rustc's `_0` and clang's `sret`,
   answering a box is a second convention beside it.
 

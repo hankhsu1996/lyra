@@ -131,14 +131,16 @@ The gate asks two things more: that the whole graph still builds optimized, whic
 `bazel build -c opt //...` answers here, and that it builds under GCC, which
 `bazel build //... --config=gcc` answers.
 
-Two targets are out of it, and they are one subject: whether an emitted C++ project still builds and
-runs. `cpp_tests` asks that over the whole corpus, once per case, and `emitted_project_tests` asks
-what such a project does once built. Both carry `nightly` and are reached by `--config=nightly`;
-`--config=full` is both sets. Run them whenever the change touches what the C++ backend emits or how
-an emitted project is built -- which is not the same as editing `backend/cpp`, since the renderer is
-a function of MIR and LIR node shapes. A filtered run names only the tests it ran, so reach for
-`--config=full` whenever a result has to stand as evidence. `docs/ci/README.md` holds the whole
-strategy: which moment answers which question, and what a change selects.
+Three targets are out of it, and they are one subject: whether an emitted C++ project still builds
+and runs, and at what cost. `cpp_tests` asks that over the whole corpus, once per case,
+`emitted_project_tests` asks what such a project does once built, and `growth_host_compile_tests`
+whether what the host compiler pays for one follows a design's size. All three carry `nightly` and
+are reached by `--config=nightly`; `--config=full` is both sets. Run them whenever the change
+touches what the C++ backend emits or how an emitted project is built -- which is not the same as
+editing `backend/cpp`, since the renderer is a function of MIR and LIR node shapes. A filtered run
+names only the tests it ran, so reach for `--config=full` whenever a result has to stand as
+evidence. `docs/ci/README.md` holds the whole strategy: which moment answers which question, and
+what a change selects.
 
 One more target is in neither set and is run only by naming it: `external_design_tests` builds and
 runs designs written elsewhere for other simulators -- today those of RTLMeter, Verilator's

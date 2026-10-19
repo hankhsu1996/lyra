@@ -1,7 +1,9 @@
 #include "lyra/mir_transform/block_rebuild.hpp"
 
+#include <functional>
 #include <optional>
 #include <span>
+#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -14,6 +16,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/field.hpp"
+#include "lyra/mir/operand_use.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::mir_transform {
@@ -47,6 +50,10 @@ auto BlockRebuild::Expr(mir::ExprId old) -> mir::ExprId {
   const mir::ExprId id = Add(std::move(standing));
   carried_exprs_.at(old.value) = id;
   return id;
+}
+
+auto BlockRebuild::Evaluation(mir::ExprId old) -> mir::ExprId {
+  return rules_->evaluation(*this, old);
 }
 
 auto BlockRebuild::Stmt(mir::StmtId old) -> mir::StmtId {
@@ -116,133 +123,36 @@ auto BlockRebuild::BlockExprSteps(mir::BlockId old, mir::ExprId value)
   const mir::Block& child = from_->child_scopes.Get(old);
   BlockRebuild rebuild(child, *rules_);
   std::vector<mir::StmtId> stmts = rebuild.Stmts(child.root_stmts);
-  const mir::ExprId carried = rebuild.Expr(value);
+  const mir::ExprId carried = rebuild.Evaluation(value);
   return {Add(std::move(rebuild).Finish(std::move(stmts))), carried};
 }
 
 auto BlockRebuild::WithOperandsCarried(const mir::ExprData& data)
     -> mir::ExprData {
-  const auto each = [&](std::vector<mir::ExprId> ids) {
-    for (mir::ExprId& id : ids) {
-      id = Expr(id);
-    }
-    return ids;
-  };
-  return std::visit(
-      Overloaded{
-          [](const mir::StringLiteral& e) -> mir::ExprData { return e; },
-          [](const mir::NullLiteral& e) -> mir::ExprData { return e; },
-          [](const mir::MachineBoolLiteral& e) -> mir::ExprData { return e; },
-          [](const mir::MachineIntLiteral& e) -> mir::ExprData { return e; },
-          [](const mir::MachineFloatLiteral& e) -> mir::ExprData { return e; },
-          [](const mir::ReferenceExpr& e) -> mir::ExprData { return e; },
-          [&](mir::UnaryExpr e) -> mir::ExprData {
-            e.operand = Expr(e.operand);
-            return e;
-          },
-          [&](mir::BinaryExpr e) -> mir::ExprData {
-            e.lhs = Expr(e.lhs);
-            e.rhs = Expr(e.rhs);
-            return e;
-          },
-          [&](mir::CastExpr e) -> mir::ExprData {
-            e.operand = Expr(e.operand);
-            return e;
-          },
-          [&](mir::ConditionalExpr e) -> mir::ExprData {
-            e.condition = Expr(e.condition);
-            e.then_value = Expr(e.then_value);
-            e.else_value = Expr(e.else_value);
-            return e;
-          },
-          [&](mir::BlockExpr e) -> mir::ExprData {
-            std::tie(e.scope, e.value) = BlockExprSteps(e.scope, e.value);
-            return e;
-          },
-          [&](mir::AssignExpr e) -> mir::ExprData {
-            e.target = Expr(e.target);
-            e.value = Expr(e.value);
-            return e;
-          },
-          [&](mir::CallExpr e) -> mir::ExprData {
-            std::visit(
-                Overloaded{
-                    [&](mir::Direct& callee) {
-                      if (callee.receiver.has_value()) {
-                        callee.receiver = Expr(*callee.receiver);
-                      }
-                    },
-                    [&](mir::Indirect& callee) {
-                      callee.code = Expr(callee.code);
-                    },
-                    [](mir::Construct&) {},
-                    [&](mir::Virtual& callee) {
-                      callee.receiver = Expr(callee.receiver);
-                    }},
-                e.callee);
-            e.arguments = each(std::move(e.arguments));
-            return e;
-          },
-          [&](mir::NewExpr e) -> mir::ExprData {
-            e.initializer = Expr(e.initializer);
-            return e;
-          },
-          [&](mir::DerefExpr e) -> mir::ExprData {
-            e.pointer = Expr(e.pointer);
-            return e;
-          },
-          [&](mir::AddressOfExpr e) -> mir::ExprData {
-            e.operand = Expr(e.operand);
-            return e;
-          },
-          [&](mir::BorrowExpr e) -> mir::ExprData {
-            e.operand = Expr(e.operand);
-            return e;
-          },
-          [&](mir::MoveExpr e) -> mir::ExprData {
-            e.operand = Expr(e.operand);
-            return e;
-          },
-          [&](mir::CopyExpr e) -> mir::ExprData {
-            e.place = Expr(e.place);
-            return e;
-          },
-          [&](mir::DiscriminantExpr e) -> mir::ExprData {
-            e.tagged = Expr(e.tagged);
-            return e;
-          },
-          [&](mir::FieldAccessExpr e) -> mir::ExprData {
-            e.receiver = Expr(e.receiver);
-            return e;
-          },
-          [&](mir::ClosureExpr e) -> mir::ExprData {
-            for (mir::FieldInit& init : e.field_inits) {
-              init.value = Expr(init.value);
-            }
-            return e;
-          },
-          [&](mir::CompositeExpr e) -> mir::ExprData {
-            e.parts = each(std::move(e.parts));
-            return e;
-          },
-          [&](mir::UnionExpr e) -> mir::ExprData {
-            e.value = Expr(e.value);
-            return e;
-          },
-          [&](mir::AwaitExpr e) -> mir::ExprData {
-            e.execution = Expr(e.execution);
-            return e;
-          },
-          [&](mir::WaitExpr e) -> mir::ExprData {
-            e.park = Expr(e.park);
-            return e;
-          },
-          [&](mir::VectorGetExpr e) -> mir::ExprData {
-            e.vector = Expr(e.vector);
-            e.index = Expr(e.index);
-            return e;
-          }},
-      data);
+  return WithOperandsTaken(data, [this](mir::ExprId old) { return Expr(old); });
+}
+
+// A block expression's steps and the arms of a choice each begin an
+// evaluation of their own; every other operand is taken where it stands.
+auto BlockRebuild::WithOperandsTaken(
+    const mir::ExprData& data,
+    const std::function<mir::ExprId(mir::ExprId)>& take) -> mir::ExprData {
+  mir::ExprData taken = data;
+  if (auto* block = std::get_if<mir::BlockExpr>(&taken)) {
+    std::tie(block->scope, block->value) =
+        BlockExprSteps(block->scope, block->value);
+    return taken;
+  }
+  if (auto* choice = std::get_if<mir::ConditionalExpr>(&taken)) {
+    choice->condition = take(choice->condition);
+    choice->then_value = Evaluation(choice->then_value);
+    choice->else_value = Evaluation(choice->else_value);
+    return taken;
+  }
+  mir::ForEachOperand(taken, [&](mir::ExprId& operand, mir::OperandUse) {
+    operand = take(operand);
+  });
+  return taken;
 }
 
 auto BlockRebuild::WithOperandsCarried(const mir::StmtData& data)
@@ -251,11 +161,11 @@ auto BlockRebuild::WithOperandsCarried(const mir::StmtData& data)
       Overloaded{
           [](const mir::EmptyStmt& s) -> mir::StmtData { return s; },
           [&](mir::LocalDeclStmt s) -> mir::StmtData {
-            s.init = Expr(s.init);
+            s.init = Evaluation(s.init);
             return s;
           },
           [&](mir::ExprStmt s) -> mir::StmtData {
-            s.expr = Expr(s.expr);
+            s.expr = Evaluation(s.expr);
             return s;
           },
           [&](mir::BlockStmt s) -> mir::StmtData {
@@ -268,7 +178,7 @@ auto BlockRebuild::WithOperandsCarried(const mir::StmtData& data)
             return s;
           },
           [&](mir::RaiseStmt s) -> mir::StmtData {
-            s.effect = Expr(s.effect);
+            s.effect = Evaluation(s.effect);
             return s;
           },
           [&](mir::FinallyStmt s) -> mir::StmtData {
@@ -277,7 +187,7 @@ auto BlockRebuild::WithOperandsCarried(const mir::StmtData& data)
             return s;
           },
           [&](mir::IfStmt s) -> mir::StmtData {
-            s.condition = Expr(s.condition);
+            s.condition = Evaluation(s.condition);
             s.then_scope = Child(s.then_scope);
             if (s.else_scope.has_value()) {
               s.else_scope = Child(*s.else_scope);
@@ -289,29 +199,29 @@ auto BlockRebuild::WithOperandsCarried(const mir::StmtData& data)
               std::visit(
                   Overloaded{
                       [&](mir::ForInitDecl& decl) {
-                        decl.init = Expr(decl.init);
+                        decl.init = Evaluation(decl.init);
                       },
                       [&](mir::ForInitExpr& expr) {
-                        expr.expr = Expr(expr.expr);
+                        expr.expr = Evaluation(expr.expr);
                       }},
                   init);
             }
             if (s.condition.has_value()) {
-              s.condition = Expr(*s.condition);
+              s.condition = Evaluation(*s.condition);
             }
             for (mir::ExprId& step : s.step) {
-              step = Expr(step);
+              step = Evaluation(step);
             }
             s.scope = Child(s.scope);
             return s;
           },
           [&](mir::WhileStmt s) -> mir::StmtData {
-            s.condition = Expr(s.condition);
+            s.condition = Evaluation(s.condition);
             s.scope = Child(s.scope);
             return s;
           },
           [&](mir::DoWhileStmt s) -> mir::StmtData {
-            s.condition = Expr(s.condition);
+            s.condition = Evaluation(s.condition);
             s.scope = Child(s.scope);
             return s;
           },
@@ -319,7 +229,7 @@ auto BlockRebuild::WithOperandsCarried(const mir::StmtData& data)
           [](const mir::ContinueStmt& s) -> mir::StmtData { return s; },
           [&](mir::ReturnStmt s) -> mir::StmtData {
             if (s.value.has_value()) {
-              s.value = Expr(*s.value);
+              s.value = Evaluation(*s.value);
             }
             return s;
           }},
@@ -335,7 +245,7 @@ auto RebuildCode(
     BlockRebuild rebuild(*code.body, rules);
     std::vector<mir::StmtId> stmts = rebuild.Stmts(code.body->root_stmts);
     for (mir::ExprId& root : roots) {
-      root = rebuild.Expr(root);
+      root = rebuild.Evaluation(root);
     }
     body = std::move(rebuild).Finish(std::move(stmts));
   }

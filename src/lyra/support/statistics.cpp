@@ -1,5 +1,6 @@
 #include "lyra/support/statistics.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <charconv>
 #include <cstddef>
@@ -58,6 +59,8 @@ struct Statistics {
   // what makes two runs of one design list their units alike.
   std::map<std::string, UnitRecord, std::less<>> units;
   std::vector<ChildRecord> children;
+  // The most memory a tool reaped since the running stage began held.
+  std::uint64_t tools_peak_rss_bytes = 0;
 };
 
 auto TheStatistics() -> Statistics& {
@@ -144,17 +147,26 @@ StageMemory::StageMemory(std::string_view stage) {
       Recording{
           .stage = std::string(stage),
           .mark_lowered = ResetPeakResidentSize()});
+  Statistics& statistics = TheStatistics();
+  const std::scoped_lock lock(statistics.lock);
+  statistics.tools_peak_rss_bytes = 0;
 }
 
 StageMemory::~StageMemory() {
   if (!recording_.has_value()) {
     return;
   }
-  // A mark that was not lowered still holds an earlier stage's peak.
-  const std::optional<std::uint64_t> peak =
+  // A mark that was not lowered still holds an earlier stage's peak. A tool's
+  // figure starts from what the process held as it started it, which the
+  // process's own peak already covers, so the larger of the two is the stage's.
+  const std::optional<std::uint64_t> own =
       recording_->mark_lowered ? PeakResidentSize() : std::nullopt;
   Statistics& statistics = TheStatistics();
   const std::scoped_lock lock(statistics.lock);
+  const std::optional<std::uint64_t> peak =
+      own.has_value()
+          ? std::optional{std::max(*own, statistics.tools_peak_rss_bytes)}
+          : std::nullopt;
   statistics.stages.push_back(
       StagePeak{.name = std::move(recording_->stage), .peak_rss_bytes = peak});
 }
@@ -189,6 +201,8 @@ void RecordChild(std::string command, ChildUsage usage) {
   }
   Statistics& statistics = TheStatistics();
   const std::scoped_lock lock(statistics.lock);
+  statistics.tools_peak_rss_bytes =
+      std::max(statistics.tools_peak_rss_bytes, usage.peak_rss_bytes);
   statistics.children.push_back(
       ChildRecord{.command = std::move(command), .usage = usage});
 }

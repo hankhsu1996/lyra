@@ -30,11 +30,13 @@ void EnableStatistics();
 void RecordWidth(std::size_t width);
 
 // A stage that runs alone, held for as long as it runs. Its peak is the most
-// memory the process held from its start to its end: one process holds every
-// unit of a design, so the peak of the whole run says nothing about which stage
-// to look at. Stages of different units overlap and share one heap, so they are
-// measured together, as the one stage that runs them. On a platform that
-// cannot give a stage's own peak, the stage is recorded without one.
+// memory the process or a tool it ran held from the stage's start to its end:
+// one process holds every unit of a design, so the peak of the whole run says
+// nothing about which stage to look at, and what a stage that compiles a
+// program costs is mostly its compiler's. Stages of different units overlap and
+// share one heap, so they are measured together, as the one stage that runs
+// them. On a platform that cannot give a stage's own peak, the stage is
+// recorded without one.
 class StageMemory {
  public:
   explicit StageMemory(std::string_view stage);
@@ -84,10 +86,14 @@ void RecordCounts(
     std::string_view unit, std::string_view form, std::vector<Count> counts);
 
 // How long one tool the build ran took: on the clock, and of processor time as
-// the system charges it once the child has been reaped.
+// the system charges it once the child has been reaped; and the most memory
+// the system charges it, which it starts from what the process held as it
+// started the tool, so it is read only beside the process's own, as part of
+// the peak of the stage that ran the tool.
 struct ChildUsage {
   std::uint64_t wall_us = 0;
   std::uint64_t cpu_us = 0;
+  std::uint64_t peak_rss_bytes = 0;
 };
 
 void RecordChild(std::string command, ChildUsage usage);

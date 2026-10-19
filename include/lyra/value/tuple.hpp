@@ -3,9 +3,11 @@
 #include <array>
 #include <concepts>
 #include <cstddef>
+#include <type_traits>
 #include <utility>
 
 #include "lyra/value/clear_above_widths.hpp"
+#include "lyra/value/pack_element.hpp"
 
 namespace lyra::value {
 
@@ -14,16 +16,15 @@ namespace detail {
 // One component of a product, told apart from every other by its position, so
 // two components of one type are still two bases.
 template <std::size_t I, typename T>
-struct TupleComponent {
+struct TupleComponent : Positioned<I, T> {
   T value{};
 };
 
-// Every component of a product, each a base of its own. A component is then
-// reached by converting to the one base its position names, and nothing about
-// the product is stated as an expression over all of its components -- which a
-// compiler bounds the length of, where a design does not bound how many members
-// a structure declares (LRM 7.2).
-template <typename Positions, typename... Ts>
+// Every component of a product, each a base of its own, so a product of any
+// length is a list of bases, as libc++ lays out its tuple. libstdc++'s is a
+// chain of bases each holding the rest, which nests as deep as the product is
+// long.
+template <typename Indices, typename... Ts>
 struct TupleComponents;
 
 template <std::size_t... Is, typename... Ts>
@@ -32,25 +33,19 @@ struct TupleComponents<std::index_sequence<Is...>, Ts...>
   TupleComponents() = default;
 
   template <typename... Us>
-    requires(sizeof...(Us) == sizeof...(Ts) && sizeof...(Ts) > 0)
   explicit TupleComponents(Us&&... values)
-      : TupleComponent<Is, Ts>{std::forward<Us>(values)}... {
+      : TupleComponent<Is, Ts>{{}, std::forward<Us>(values)}... {
   }
 };
 
-template <std::size_t I, typename T>
-[[nodiscard]] auto ComponentAt(TupleComponent<I, T>& component) -> T& {
-  return component.value;
-}
-template <std::size_t I, typename T>
-[[nodiscard]] auto ComponentAt(const TupleComponent<I, T>& component)
-    -> const T& {
-  return component.value;
-}
-template <std::size_t I, typename T>
-[[nodiscard]] auto ComponentAt(TupleComponent<I, T>&& component) -> T&& {
-  return std::move(component).value;
-}
+// Whether the values handed to a product's constructor are one product of that
+// very type, which is then copied or moved rather than taken as its one
+// component's value.
+template <typename Product, typename... Us>
+constexpr bool kIsTheProductItself = false;
+template <typename Product, typename U>
+constexpr bool kIsTheProductItself<Product, U> =
+    std::same_as<std::remove_cvref_t<U>, Product>;
 
 }  // namespace detail
 
@@ -67,18 +62,26 @@ template <std::size_t I, typename T>
 // are the methods its declaration states for those operations.
 template <typename... Ts>
 class Tuple {
+  using Components =
+      detail::TupleComponents<std::index_sequence_for<Ts...>, Ts...>;
+
  public:
+  template <std::size_t I>
+  using Element = detail::PackElement<I, Components>;
+
   Tuple() = default;
 
   // Each component is built where it lies, copied or moved from what it is
   // handed, so a large one is never first made a copy of its own on the way
   // in. A product of no components is a value like any other and its only form
   // is the default one, so the constructor that takes components is declared
-  // only where there are components to take.
+  // only where there are components to take. Whether each component can be
+  // built from its value is left to where it is built, since a condition over
+  // every component is an expression as deep as the product is long.
   template <typename... Us>
     requires(
         sizeof...(Us) == sizeof...(Ts) && sizeof...(Ts) > 0 &&
-        (std::constructible_from<Ts, Us &&> && ...))
+        !detail::kIsTheProductItself<Tuple, Us...>)
   explicit Tuple(Us&&... values) : data_(std::forward<Us>(values)...) {
   }
 
@@ -89,20 +92,20 @@ class Tuple {
   // settles nothing about the others, and reading and writing it are the one
   // access.
   template <std::size_t I>
-  [[nodiscard]] auto Component() const& -> decltype(auto) {
-    return detail::ComponentAt<I>(data_);
+  [[nodiscard]] auto Component() const& -> const Element<I>& {
+    return static_cast<const Stored<I>&>(data_).value;
   }
   template <std::size_t I>
-  [[nodiscard]] auto Component() & -> decltype(auto) {
-    return detail::ComponentAt<I>(data_);
+  [[nodiscard]] auto Component() & -> Element<I>& {
+    return static_cast<Stored<I>&>(data_).value;
   }
   template <std::size_t I>
-  [[nodiscard]] auto Component() && -> decltype(auto) {
-    return detail::ComponentAt<I>(std::move(data_));
+  [[nodiscard]] auto Component() && -> Element<I>&& {
+    return std::move(static_cast<Stored<I>&>(data_).value);
   }
 
   // Each component's positions above its widths made clear, through a table
-  // for the reason the components are bases.
+  // of one entry per component rather than one expression over all of them.
   void ClearAboveWidths() {
     using Clear = void (*)(Tuple&);
     static constexpr auto kClears =
@@ -117,7 +120,10 @@ class Tuple {
   }
 
  private:
-  detail::TupleComponents<std::index_sequence_for<Ts...>, Ts...> data_;
+  template <std::size_t I>
+  using Stored = detail::TupleComponent<I, Element<I>>;
+
+  Components data_;
 };
 
 }  // namespace lyra::value
