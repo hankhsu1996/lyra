@@ -383,8 +383,10 @@ constexpr std::array kForLandings{
 // sequence a designation or a reference names where it lies.
 constexpr std::array kForSequencesSteppedInto{
     RealizedFor{.domains = kSequences}};
-constexpr std::array kForSlicesAssigned{
+constexpr std::array kForElementSlicesAssigned{
     RealizedFor{.domains = DomainSet{Domain::kDynArray} | kLaidOutByType}};
+constexpr std::array kForQueueSlicesAssigned{
+    RealizedFor{.domains = {Domain::kQueue}}};
 // A designation of any integral value is told how wide it is where a write of
 // some of its bits is reported (LRM 11.5.1), which holds the bits written to
 // the value's width.
@@ -1299,12 +1301,15 @@ auto OperandReadingsOf(lir::OpenWriteTarget::Op op)
   using enum support::OperandReading;
   // Each acts on what a designation names. A write of a run of elements takes
   // where they start, how many there are, and the elements, a fixed-size
-  // unpacked array crossing with its type.
+  // unpacked array crossing with its type; a write of a queue's slice takes
+  // its two bounds in place of the start and the count.
   switch (op) {
     case lir::OpenWriteTarget::Op::kLand:
       return {};
-    case lir::OpenWriteTarget::Op::kAssignSlice:
+    case lir::OpenWriteTarget::Op::kAssignElementSlice:
       return {kMachine, kPosition, kMachine, kTyped};
+    case lir::OpenWriteTarget::Op::kAssignQueueSlice:
+      return {kMachine, kPosition, kPosition, kTyped};
   }
   throw InternalError("llvm codegen: unknown open-write operation");
 }
@@ -1393,8 +1398,10 @@ auto RealizationsOf(lir::OpenWriteTarget::Op op)
   switch (op) {
     case lir::OpenWriteTarget::Op::kLand:
       return kForLandings;
-    case lir::OpenWriteTarget::Op::kAssignSlice:
-      return kForSlicesAssigned;
+    case lir::OpenWriteTarget::Op::kAssignElementSlice:
+      return kForElementSlicesAssigned;
+    case lir::OpenWriteTarget::Op::kAssignQueueSlice:
+      return kForQueueSlicesAssigned;
   }
   throw InternalError("llvm codegen: unknown open-write operation");
 }
@@ -1939,16 +1946,17 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kDpiOpenArrayHandle:
     case support::BuiltinFn::kDpiOpenArrayValue:
     // An operation whose own name says the one kind of value it is over or
-    // builds: a queue's slice (LRM 7.10.1), a string repeated or built out of
-    // bits (LRM 11.4.12.1, 6.16), an unpacked array of byte built out of text
-    // or of bits (LRM 5.9); an access into an associative array by its key
-    // (LRM 7.8).
+    // builds: a queue's slice, read or written (LRM 7.10.1, 7.6), a string
+    // repeated or built out of bits (LRM 11.4.12.1, 6.16), an unpacked array of
+    // byte built out of text or of bits (LRM 5.9); an access into an
+    // associative array by its key (LRM 7.8).
     case support::BuiltinFn::kAssocElement:
     case support::BuiltinFn::kAssocElementMut:
     case support::BuiltinFn::kAssocDesignateElement:
     case support::BuiltinFn::kAssocReferElement:
     case support::BuiltinFn::kAssocDeleteIndex:
     case support::BuiltinFn::kQueueSlice:
+    case support::BuiltinFn::kAssignQueueSlice:
     case support::BuiltinFn::kReplicateString:
     case support::BuiltinFn::kStringFromBits:
     case support::BuiltinFn::kByteArrayFromString:

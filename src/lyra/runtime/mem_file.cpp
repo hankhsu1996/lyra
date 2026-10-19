@@ -155,6 +155,32 @@ void MalformedWord(
       TaskName(base, Direction::kLoad), token);
 }
 
+// Whether a token of a memory file is an `@address` rather than a data word
+// (LRM 21.4).
+auto IsAddress(std::string_view token) -> bool {
+  return token.front() == '@';
+}
+
+// The addresses a call names, from the first toward the last (LRM 21.4,
+// 21.5): the memory's own from its lowest where it names none, and from a
+// start alone upward toward the memory's highest.
+struct AddressRun {
+  std::int64_t first;
+  std::int64_t last;
+};
+
+auto AddressRunOf(
+    std::int64_t top_lo, std::int64_t top_hi, std::optional<std::int64_t> start,
+    std::optional<std::int64_t> finish) -> AddressRun {
+  if (start.has_value() && finish.has_value()) {
+    return {.first = *start, .last = *finish};
+  }
+  if (start.has_value()) {
+    return {.first = *start, .last = std::max(*start, top_hi)};
+  }
+  return {.first = top_lo, .last = top_hi};
+}
+
 }  // namespace
 
 auto RenderedMemoryWord(const value::ConstIntegralView& word, unsigned base)
@@ -179,7 +205,7 @@ void ReadMemKeyedCore(
   const std::int64_t step = (bounded && *start > *finish) ? -1 : 1;
 
   for (const std::string& token : Tokenize(*text)) {
-    if (token.front() == '@') {
+    if (IsAddress(token)) {
       const auto a = ParseAtAddress(runtime, base, token);
       if (!a) return;
       if (bounded && (*a < active_lo || *a > active_hi)) {
@@ -226,27 +252,17 @@ void ReadMemGridCore(
   const auto text = SlurpFile(runtime, filename, base);
   if (!text) return;
 
-  // The active window and fill direction follow LRM 21.4 from which optional
-  // addresses the call supplied; the addresses index the highest dimension.
-  std::int64_t active_lo = top_lo;
-  std::int64_t active_hi = top_hi;
-  std::int64_t cursor = top_lo;
-  std::int64_t step = 1;
-  if (start.has_value() && finish.has_value()) {
-    cursor = *start;
-    step = (*start <= *finish) ? 1 : -1;
-    active_lo = std::min(*start, *finish);
-    active_hi = std::max(*start, *finish);
-  } else if (start.has_value()) {
-    cursor = *start;
-    active_lo = *start;
-  }
+  // The addresses index the highest dimension.
+  const AddressRun run = AddressRunOf(top_lo, top_hi, start, finish);
+  const std::int64_t active_lo = std::min(run.first, run.last);
+  const std::int64_t active_hi = std::max(run.first, run.last);
+  const std::int64_t step = run.first <= run.last ? 1 : -1;
+  std::int64_t cursor = run.first;
 
-  bool saw_address = false;
-  std::int64_t words = 0;
+  const std::vector<std::string> tokens = Tokenize(*text);
   std::size_t inner = 0;
-  for (const std::string& token : Tokenize(*text)) {
-    if (token.front() == '@') {
+  for (const std::string& token : tokens) {
+    if (IsAddress(token)) {
       const auto a = ParseAtAddress(runtime, base, token);
       if (!a) return;
       if (*a < active_lo || *a > active_hi) {
@@ -257,17 +273,19 @@ void ReadMemGridCore(
       }
       cursor = *a;
       inner = 0;
-      saw_address = true;
       continue;
     }
 
     if (cursor < active_lo || cursor > active_hi) break;
 
-    if (!store(cursor, inner, token)) {
+    // An address is an index into the memory (LRM 21.4), and a write at one
+    // the memory does not hold performs no operation (LRM 7.4.5), so a range
+    // reaching past the memory loads what lies inside it and still consumes
+    // the words the file gives the rest.
+    if (cursor >= top_lo && cursor <= top_hi && !store(cursor, inner, token)) {
       MalformedWord(runtime, base, token);
       return;
     }
-    ++words;
     if (++inner == inner_count) {
       cursor += step;
       inner = 0;
@@ -275,9 +293,13 @@ void ReadMemGridCore(
   }
 
   // LRM 21.4: a start/finish range with no in-file addresses must be filled
-  // exactly; a word-count mismatch is a warning, not an error. The range spans
-  // its highest-dimension words times the leaves each expands to.
-  if (start.has_value() && finish.has_value() && !saw_address) {
+  // exactly; a word-count mismatch is a warning, not an error. The comparison
+  // is between the file and the range, so every data word the file holds
+  // counts, loaded or not. The range spans its highest-dimension words times
+  // the leaves each expands to.
+  if (start.has_value() && finish.has_value() &&
+      std::ranges::none_of(tokens, IsAddress)) {
+    const auto words = static_cast<std::int64_t>(tokens.size());
     const std::int64_t expected =
         (active_hi - active_lo + 1) * static_cast<std::int64_t>(inner_count);
     if (words != expected) {
@@ -298,23 +320,19 @@ void WriteMemGridCore(
   auto out = CreateFile(runtime, filename, base);
   if (!out) return;
 
-  std::int64_t cursor = top_lo;
-  std::int64_t last = top_hi;
-  std::int64_t step = 1;
-  if (start.has_value() && finish.has_value()) {
-    cursor = *start;
-    last = *finish;
-    step = (*start <= *finish) ? 1 : -1;
-  } else if (start.has_value()) {
-    cursor = *start;
-  }
-
-  for (std::int64_t top = cursor;; top += step) {
-    if (top < top_lo || top > top_hi) break;
-    for (std::size_t i = 0; i < inner_count; ++i) {
-      *out << rendered(top, i) << '\n';
+  // Only the addresses the memory holds are written, since an address is an
+  // index into it and a read at one it does not hold names no element (LRM
+  // 7.4.5).
+  const AddressRun run = AddressRunOf(top_lo, top_hi, start, finish);
+  const std::int64_t lowest = std::max(std::min(run.first, run.last), top_lo);
+  const std::int64_t highest = std::min(std::max(run.first, run.last), top_hi);
+  const std::int64_t step = run.first <= run.last ? 1 : -1;
+  const std::int64_t from = step > 0 ? lowest : highest;
+  for (std::int64_t i = 0; i <= highest - lowest; ++i) {
+    const std::int64_t top = from + (step * i);
+    for (std::size_t ordinal = 0; ordinal < inner_count; ++ordinal) {
+      *out << rendered(top, ordinal) << '\n';
     }
-    if (top == last) break;
   }
 }
 

@@ -280,16 +280,22 @@ struct ValueCellTarget {
 // designated within it. `kLand` is where the write lands: the part designated,
 // whose value from before the write the write keeps where anything will ask
 // whether the write changed the variable (LRM 4.3); it answers with where the
-// part lies. `kAssignSlice` writes a run of the elements of the container
-// designated within the write (LRM 7.4.6, 7.6), telling it what moved. `value`
-// is what the part or the container holds, and the domain it is realized in
-// names the runtime entry.
+// part lies. `kAssignElementSlice` writes a run of the elements of the array
+// designated within the write (LRM 7.4.6, 7.6), from where it starts and how
+// many it takes, telling it what moved; `kAssignQueueSlice` does the same for
+// a queue's slice, between the two positions the queue clamps (LRM 7.10.1).
+// `value` is what the part or the container holds, and the domain it is
+// realized in names the runtime entry.
 // A LIR-only target with no MIR twin: MIR states the landing as a dereference
-// and the slice write as the array's own `assign_element_slice` on the
-// designation, and a place is named by an address here, so each is a call on
-// the designation.
+// and the slice write as the container's own slice write on the designation,
+// and a place is named by an address here, so each is a call on the
+// designation.
 struct OpenWriteTarget {
-  enum class Op : std::uint8_t { kLand, kAssignSlice };
+  enum class Op : std::uint8_t {
+    kLand,
+    kAssignElementSlice,
+    kAssignQueueSlice
+  };
   Op op;
   TypeId value;
 };

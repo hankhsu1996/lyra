@@ -46,20 +46,21 @@ enum class StepUse : std::uint8_t { kRead, kWrite, kDesignate, kLend };
       "reference (LRM 13.5.2), and this lent target steps into neither");
 }
 
-// A queue's run of elements is a queue of its own (LRM 7.10.1), so a producer
-// that put one on the way to a write or a reference named a destination the
-// language does not have.
+// A queue's run of elements is read as a queue of its own (LRM 7.10.1), and
+// written by the queue's own slice write, which the store builds rather than
+// a step, as an array's run of elements is (LRM 7.6).
 auto EntryToQueueRun(StepUse use) -> support::BuiltinFn {
   switch (use) {
     case StepUse::kRead:
       return support::BuiltinFn::kQueueSlice;
     case StepUse::kWrite:
     case StepUse::kDesignate:
-    case StepUse::kLend:
       throw InternalError(
-          "access path: a write or a reference reaches a part of what it is "
-          "taken into, and this descent takes a step that builds a value "
-          "instead");
+          "access path: a queue's slice is written by the queue's own slice "
+          "write, which the store builds, and this descent takes a step into "
+          "one for a write");
+    case StepUse::kLend:
+      RefuseReference();
   }
   throw InternalError("access path: unknown step use");
 }
@@ -191,9 +192,9 @@ auto ElementRunStepTaken(
     case StepUse::kWrite:
     case StepUse::kDesignate:
       throw InternalError(
-          "access path: a run of elements is written by its array's "
-          "`assign_element_slice`, which the store builds, and this descent "
-          "takes a step into one for a write");
+          "access path: a run of elements is written by its array's own slice "
+          "write, which the store builds, and this descent takes a step into "
+          "one for a write");
     case StepUse::kLend:
       RefuseReference();
   }
@@ -1195,25 +1196,48 @@ auto PutCharacterExpr(
       {character.position, put}, unit.builtins.void_type);
 }
 
-}  // namespace
-
-namespace {
-
-// A write of `value` into the run of elements `path` ends in: the array's own
-// `assign_element_slice`, the run being several elements rather than one
-// storage (LRM 7.4.6, 7.6).
+// A write of `value` into the run of elements `path` ends in: the container's
+// own slice write, the run being several elements rather than one storage (LRM
+// 7.4.6, 7.6) -- an array's from where it starts and how many it takes, a
+// queue's between the two positions it clamps (LRM 7.10.1). Absent where the
+// path ends in no run.
 auto AssignSliceExpr(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path,
-    mir::ExprId value) -> mir::Expr {
-  const auto& run = std::get<StepToElementRun>(path.descent.back().to);
-  return mir::MakeBuiltinCall(
-      unit, block, support::BuiltinFn::kAssignElementSlice,
-      WriteOperandOf(unit, block, path, path.descent.size() - 1),
-      {run.start,
-       mir::BuildMachineIntLiteral(
-           unit, block, static_cast<std::int64_t>(run.count)),
-       value},
-      unit.builtins.void_type);
+    mir::ExprId value) -> std::optional<mir::Expr> {
+  if (path.descent.empty()) {
+    return std::nullopt;
+  }
+  const auto write = [&](support::BuiltinFn entry,
+                         std::vector<mir::ExprId> bounds) {
+    bounds.push_back(value);
+    return mir::MakeBuiltinCall(
+        unit, block, entry,
+        WriteOperandOf(unit, block, path, path.descent.size() - 1),
+        std::move(bounds), unit.builtins.void_type);
+  };
+  using Write = std::optional<mir::Expr>;
+  return std::visit(
+      Overloaded{
+          [&](const StepToElementRun& run) -> Write {
+            return write(
+                support::BuiltinFn::kAssignElementSlice,
+                {run.start,
+                 mir::BuildMachineIntLiteral(
+                     unit, block, static_cast<std::int64_t>(run.count))});
+          },
+          [&](const StepToQueueRun& run) -> Write {
+            return write(
+                support::BuiltinFn::kAssignQueueSlice,
+                {run.lowest, run.highest});
+          },
+          [](const StepToBits&) -> Write { return std::nullopt; },
+          [](const StepToElement&) -> Write { return std::nullopt; },
+          [](const StepToAssocElement&) -> Write { return std::nullopt; },
+          [](const StepToCharacter&) -> Write { return std::nullopt; },
+          [](const StepToComponent&) -> Write { return std::nullopt; },
+          [](const StepToUnionMember&) -> Write { return std::nullopt; },
+          [](const StepToTaggedMember&) -> Write { return std::nullopt; }},
+      path.descent.back().to);
 }
 
 // Where the bits `path` ends in start among its steps, if it ends in bits:
@@ -1296,9 +1320,9 @@ auto BuildStoreExpr(
   if (const std::optional<std::size_t> at = CharacterAt(path)) {
     return PutCharacterExpr(unit, block, path, *at, rhs_id);
   }
-  if (!path.descent.empty() &&
-      std::holds_alternative<StepToElementRun>(path.descent.back().to)) {
-    return AssignSliceExpr(unit, block, path, rhs_id);
+  if (std::optional<mir::Expr> slice =
+          AssignSliceExpr(unit, block, path, rhs_id)) {
+    return *std::move(slice);
   }
   if (const std::optional<std::size_t> at = TrailingBitsAt(path)) {
     return StoreBitsExpr(unit, block, path, *at, rhs_id);

@@ -21,7 +21,6 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/operator.hpp"
-#include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/runtime/object_layout.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -315,7 +314,7 @@ auto Disagreement(
         std::span(parameters).subspan(told_at.front() + 1),
         [&](const Parameter& p) {
           return p.hands == Hands::kValue &&
-                 !(&p == &parameters.back() && p.name == "out");
+                 (&p != &parameters.back() || p.name != "out");
         });
     if (an_operand_follows) {
       return "takes the type it is realized for ahead of an operand";
@@ -531,7 +530,8 @@ auto DeclaredRealizations() -> Realizations {
   }
   for (const lir::OpenWriteTarget::Op op :
        {lir::OpenWriteTarget::Op::kLand,
-        lir::OpenWriteTarget::Op::kAssignSlice}) {
+        lir::OpenWriteTarget::Op::kAssignElementSlice,
+        lir::OpenWriteTarget::Op::kAssignQueueSlice}) {
     holder(op, support::AnswerTold::kNothing);
   }
   // The entry building a member's storage, for each kind of storage that holds

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
@@ -105,6 +106,12 @@ auto RuntimeQueue::Slice(
     std::optional<std::int64_t> lo, std::optional<std::int64_t> hi,
     const QueueType& type) const -> RuntimeQueue {
   return RuntimeQueue(Core().Slice(lo, hi, WitnessedBound(type)));
+}
+
+auto RuntimeQueue::AssignSlice(
+    std::optional<std::int64_t> lo, std::optional<std::int64_t> hi,
+    std::span<const void* const> replacement) -> std::optional<SliceWindow> {
+  return Core().AssignSlice(lo, hi, replacement);
 }
 
 void RuntimeQueue::PushFront(const void* item) {

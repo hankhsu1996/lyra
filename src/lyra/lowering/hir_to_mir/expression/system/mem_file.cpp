@@ -5,29 +5,36 @@
 #include <expected>
 #include <format>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/param_direction.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
+#include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -37,49 +44,54 @@ namespace {
 // The leaf element type, the addressing operands a memory shape hands to the
 // runtime call, and the address a run starts from where the source names none.
 // Each shape states its addressing differently -- a fixed array of any depth
-// by every dimension's declared range, and an associative array, a dynamic
-// array or a queue by nothing (its keys are of its declared index type, and
-// its `[0, size-1]` range comes from the container).
+// by every dimension's range, and an associative array, a dynamic array or a
+// queue by nothing (its keys are of its declared index type, and its
+// `[0, size-1]` range comes from the container).
 struct MemAddressing {
   hir::TypeId element;
   std::vector<mir::ExprId> operands;
-  std::int64_t lowest_address;
+  mir::ExprId lowest_address;
 };
 
 auto DescribeMemory(
     ProcessLowerer& process, WalkFrame wrapper_frame, hir::TypeId mem_type,
-    std::string_view task, diag::SourceSpan span)
-    -> diag::Result<MemAddressing> {
+    const std::optional<SliceIndices>& slice, std::string_view task,
+    diag::SourceSpan span) -> diag::Result<MemAddressing> {
   UnitLowerer& unit_lowerer = process.Owner();
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
   auto& wrapper = *wrapper_frame.current_block;
   const auto not_a_memory = [&]() -> diag::Result<MemAddressing> {
     throw InternalError(
         std::format(
             "{} reached lowering with a target that is no memory", task));
   };
+  const auto from_zero = [&](hir::TypeId element) {
+    return MemAddressing{
+        .element = element,
+        .operands = {},
+        .lowest_address = mir::BuildMachineIntLiteral(unit, wrapper, 0)};
+  };
   return unit_lowerer.Hir().types.Get(mem_type).Visit(
       Overloaded{
           [&](const hir::UnpackedArrayType&) -> diag::Result<MemAddressing> {
-            // Every dimension's declared range rides in one operand, highest
-            // dimension first, so the runtime traverses row-major by ascending
-            // address (LRM 21.4.3) and a one-dimensional memory is the
-            // one-dimension case of the same traversal.
+            // Every dimension's indices ride in one operand, highest dimension
+            // first, so the runtime traverses row-major by ascending address
+            // (LRM 21.4.3) and a one-dimensional memory is the one-dimension
+            // case of the same traversal.
             const hir::UnpackedShape shape =
                 hir::UnpackedShapeOf(unit_lowerer.Hir().types, mem_type);
+            const MemoryIndices indices =
+                MemoryIndicesOf(unit, wrapper_frame, shape.dims, slice);
             return MemAddressing{
                 .element = shape.element_type,
-                .operands = {mir::BuildDeclaredRanges(
-                    unit_lowerer.Unit(), wrapper, shape.dims)},
-                .lowest_address = std::min(
-                    shape.dims.front().left, shape.dims.front().right)};
+                .operands = {indices.ranges},
+                .lowest_address = indices.lowest};
           },
           [&](const hir::DynamicArrayType& d) -> diag::Result<MemAddressing> {
-            return MemAddressing{
-                .element = d.element_type, .operands = {}, .lowest_address = 0};
+            return from_zero(d.element_type);
           },
           [&](const hir::QueueType& q) -> diag::Result<MemAddressing> {
-            return MemAddressing{
-                .element = q.element_type, .operands = {}, .lowest_address = 0};
+            return from_zero(q.element_type);
           },
           [&](const hir::AssociativeArrayType& a)
               -> diag::Result<MemAddressing> {
@@ -102,8 +114,7 @@ auto DescribeMemory(
                       "index type is not integral",
                       task));
             }
-            return MemAddressing{
-                .element = a.element_type, .operands = {}, .lowest_address = 0};
+            return from_zero(a.element_type);
           },
           // LRM 21.4 / 21.5 name a memory as an array of integral elements, and
           // the front end refuses a task given any other form.
@@ -144,6 +155,68 @@ auto MemoryTask(bool is_store, bool windowed) -> support::BuiltinFn {
 
 }  // namespace
 
+auto NameMemory(
+    ProcessLowerer& process, const WalkFrame& frame, const hir::Expr& memory)
+    -> diag::Result<NamedMemory> {
+  UnitLowerer& unit_lowerer = process.Owner();
+  const auto* sel = std::get_if<hir::RangeSelectExpr>(&memory.data);
+  if (sel != nullptr &&
+      unit_lowerer.Hir().types.Get(memory.type).Is<hir::UnpackedArrayType>()) {
+    return LowerHirArraySliceWithIndices(
+        process, frame, *sel, unit_lowerer.TranslateType(memory.type));
+  }
+  auto path = process.LowerAccessPath(memory, frame);
+  if (!path) return std::unexpected(std::move(path.error()));
+  return NamedMemory{.path = *std::move(path), .slice = std::nullopt};
+}
+
+auto MemoryWriteTarget(
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame, AccessPath path,
+    const hir::Expr& memory) -> Lvalue {
+  SettleForTagChecks(unit_lowerer, frame, path);
+  return Lvalue{
+      .form = std::move(path),
+      .type = unit_lowerer.TranslateType(memory.type),
+      .source_type = memory.type,
+      .span = memory.span};
+}
+
+auto MemoryIndicesOf(
+    mir::CompilationUnit& unit, const WalkFrame& frame,
+    std::span<const hir::UnpackedRange> dims,
+    const std::optional<SliceIndices>& slice) -> MemoryIndices {
+  mir::Block& block = *frame.current_block;
+  const auto number = [&](std::int64_t index) {
+    return mir::BuildMachineIntLiteral(unit, block, index);
+  };
+  const hir::UnpackedRange& highest = dims.front();
+  const SliceIndices top = [&] {
+    if (!slice.has_value()) {
+      return SliceIndices{
+          .left = number(highest.left), .right = number(highest.right)};
+    }
+    return SliceIndices{
+        .left = EvaluatedOnce(frame, slice->left),
+        .right = EvaluatedOnce(frame, slice->right)};
+  }();
+  std::vector<mir::ExprId> bounds{top.left, top.right};
+  for (const hir::UnpackedRange& below : dims.subspan(1)) {
+    bounds.push_back(number(below.left));
+    bounds.push_back(number(below.right));
+  }
+  const mir::TypeId type = mir::MachineArrayOf(
+      unit.types, unit.builtins.machine_int64, bounds.size());
+  // A slice runs the way the array it is taken from does, which its zero-based
+  // type keeps (LRM 7.4.5).
+  const bool descending = highest.left > highest.right;
+  return MemoryIndices{
+      .ranges = block.exprs.Add(
+          mir::Expr{
+              .data = mir::CompositeExpr{.parts = std::move(bounds)},
+              .type = type}),
+      .lowest = descending ? top.right : top.left};
+}
+
 auto LowerMemFileSystemSubroutineCallStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::CallExpr& call, const support::MemFileSystemSubroutineInfo& info)
@@ -153,9 +226,10 @@ auto LowerMemFileSystemSubroutineCallStmt(
   const auto& hir_proc = process.HirBody();
   const bool is_store = info.direction == support::MemFileDirection::kStore;
   const bool is_binary = info.base == 2U;
-  const std::string_view task = is_store
-                                    ? (is_binary ? "$writememb" : "$writememh")
-                                    : (is_binary ? "$readmemb" : "$readmemh");
+  const std::string_view task = [&]() -> std::string_view {
+    if (is_store) return is_binary ? "$writememb" : "$writememh";
+    return is_binary ? "$readmemb" : "$readmemh";
+  }();
 
   // LRM 21.4 / 21.5: arg[0] is the file name, arg[1] the memory, arg[2] /
   // arg[3] the optional start / finish addresses.
@@ -166,8 +240,17 @@ auto LowerMemFileSystemSubroutineCallStmt(
   const WalkFrame& step_frame = steps.Frame();
   mir::Block& body = steps.Body();
 
-  auto addressing =
-      DescribeMemory(process, step_frame, mem_hir.type, task, mem_hir.span);
+  auto name_or = process.LowerExpr(hir_proc.exprs.Get(head[0]), step_frame);
+  if (!name_or) return std::unexpected(std::move(name_or.error()));
+  // The file name is an SV string; a string literal reaches here as a packed
+  // value, so route it to the runtime's String type (LRM 21.4 / 21.5).
+  const mir::ExprId name_id = ConvertToType(
+      unit, body, body.exprs.Add(*std::move(name_or)), unit.builtins.string);
+
+  auto memory = NameMemory(process, step_frame, mem_hir);
+  if (!memory) return std::unexpected(std::move(memory.error()));
+  auto addressing = DescribeMemory(
+      process, step_frame, mem_hir.type, memory->slice, task, mem_hir.span);
   if (!addressing) return std::unexpected(std::move(addressing.error()));
 
   // A word is a single packed vector (LRM 21.4.1 / 21.5.1): a bit vector, or a
@@ -182,13 +265,6 @@ auto LowerMemFileSystemSubroutineCallStmt(
         task);
   }
 
-  auto name_or = process.LowerExpr(hir_proc.exprs.Get(head[0]), step_frame);
-  if (!name_or) return std::unexpected(std::move(name_or.error()));
-  // The file name is an SV string; a string literal reaches here as a packed
-  // value, so route it to the runtime's String type (LRM 21.4 / 21.5).
-  const mir::ExprId name_id = ConvertToType(
-      unit, body, body.exprs.Add(*std::move(name_or)), unit.builtins.string);
-
   // A load's memory is an `inout`: it crosses in because a word the file does
   // not address keeps what it held, and it rides the completion back out (LRM
   // 13.5, 21.4). A dump only reads it.
@@ -196,16 +272,16 @@ auto LowerMemFileSystemSubroutineCallStmt(
   std::optional<Lvalue> mem_place;
   mir::ExprId mem_value{};
   if (is_store) {
-    auto mem_or = process.LowerExpr(mem_hir, step_frame);
-    if (!mem_or) return std::unexpected(std::move(mem_or.error()));
-    mem_value = body.exprs.Add(*std::move(mem_or));
+    AppendReadChecks(unit, body, memory->path);
+    mem_value = PathValue(unit, body, memory->path);
   } else {
-    auto place_or = LowerLvalue(process, mem_hir, step_frame);
-    if (!place_or) return std::unexpected(std::move(place_or.error()));
-    auto memory = ReadThenWrite(unit_lowerer, step_frame, *std::move(place_or));
-    if (!memory) return std::unexpected(std::move(memory.error()));
-    mem_place = std::move(memory->lvalue);
-    mem_value = memory->incoming;
+    auto read = ReadThenWrite(
+        unit_lowerer, step_frame,
+        MemoryWriteTarget(
+            unit_lowerer, step_frame, std::move(memory->path), mem_hir));
+    if (!read) return std::unexpected(std::move(read.error()));
+    mem_place = std::move(read->lvalue);
+    mem_value = read->incoming;
   }
 
   std::vector<mir::ExprId> operands;
@@ -238,8 +314,7 @@ auto LowerMemFileSystemSubroutineCallStmt(
               "the front end refuses",
               task));
     }
-    operands.push_back(
-        mir::BuildMachineIntLiteral(unit, body, addressing->lowest_address));
+    operands.push_back(addressing->lowest_address);
   }
   if (finish.has_value()) {
     auto finish_or = process.LowerExpr(hir_proc.exprs.Get(*finish), step_frame);

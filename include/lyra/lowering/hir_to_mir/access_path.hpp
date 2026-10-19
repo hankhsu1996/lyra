@@ -80,8 +80,9 @@ struct StepToCharacter {
 };
 
 // The elements of a queue between two positions the running program can move
-// (LRM 7.10.1). It builds a queue of its own, so it reaches nothing a write
-// could land in or a reference could name.
+// (LRM 7.10.1). A read of them builds a queue of its own and a write is the
+// queue's own slice write, so no step lands a write in them and no reference
+// names them (LRM 13.5.2).
 struct StepToQueueRun {
   mir::ExprId lowest;
   mir::ExprId highest;
@@ -456,7 +457,7 @@ struct NamedPart {
 // with nothing left to decide that yields nothing: replacing the whole of what
 // a capability wrapper holds acts on the wrapper, a call taking the wrapper as
 // its destination; a write through a character of a string is the string's
-// own put; a run of elements is written by its array's `assign_element_slice`,
+// own put; a run of elements is written by its container's own slice write,
 // and bits by `set` through the reference `slice_mut` answers, each taken on
 // the place the value lies in or on its designation within a write; every
 // other write is a store into the place the path designates.

@@ -348,6 +348,7 @@ void BindWriteEntries(const auto& add) {
   add("lyra_rt_laidout_designate_member", &lyra_rt_laidout_designate_member);
   add("lyra_rt_dynarray_assign_slice", &lyra_rt_dynarray_assign_slice);
   add("lyra_rt_laidout_assign_slice", &lyra_rt_laidout_assign_slice);
+  add("lyra_rt_queue_assign_slice", &lyra_rt_queue_assign_slice);
   add("lyra_rt_string_land", &lyra_rt_string_land);
   add("lyra_rt_real_land", &lyra_rt_real_land);
   add("lyra_rt_shortreal_land", &lyra_rt_shortreal_land);
@@ -871,6 +872,8 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_queue_element", &lyra_rt_queue_element);
   add("lyra_rt_queue_element_mut", &lyra_rt_queue_element_mut);
   add("lyra_rt_queue_slice", &lyra_rt_queue_slice);
+  add("lyra_rt_queue_assign_element_slice",
+      &lyra_rt_queue_assign_element_slice);
   add("lyra_rt_queue_size", &lyra_rt_queue_size);
   add("lyra_rt_queue_push_back", &lyra_rt_queue_push_back);
   add("lyra_rt_queue_push_front", &lyra_rt_queue_push_front);

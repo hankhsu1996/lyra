@@ -4,13 +4,29 @@
 // does the same; a start address above the finish address makes the address
 // decrement between loads instead. Addresses the load never reaches keep the
 // value they already held (LRM 21.4).
+//
+// The addresses are those of the array the memory name selects, so a memory
+// named by a slice is addressed by the indices the slice holds of the array it
+// is taken from -- written as a range, counted from a base the run computes, in
+// the lowest dimension of an array of several, or of a dynamic array -- and the
+// file's own addresses name those indices too (LRM 21.4, 7.4.5).
 module Top;
   bit [15:0] addressed[0:3];
   bit [7:0] from_start[0:3];
   bit [7:0] descending[0:3];
   bit [7:0] preloaded[0:3];
 
+  bit [7:0] slice_whole[8];
+  bit [7:0] slice_addressed[8];
+  bit [7:0] slice_of_descending[7:0];
+  bit [7:0] slice_from_base[8];
+  bit [7:0] slice_at[8];
+  bit [7:0] slice_at_expected[8] = '{0, 0, 0, 8'h0b, 8'h0c, 0, 0, 0};
+  bit [7:0] slice_of_row[2][8];
+  bit [7:0] slice_of_dynamic[];
+
   int fd;
+  int base;
 
   initial begin
     fd = $fopen("addressed.hex", "w");
@@ -30,6 +46,23 @@ module Top;
     $fwrite(fd, "@1\n0a\n0b\n");
     $fclose(fd);
     $readmemh("two_at_one.hex", preloaded);
+
+    fd = $fopen("four.hex", "w");
+    $fwrite(fd, "01 02 03 04\n");
+    $fclose(fd);
+    $readmemh("four.hex", slice_whole[2:5]);
+    $readmemh("four.hex", slice_addressed[2:5], 2, 5);
+    $readmemh("four.hex", slice_of_descending[5:2], 5, 2);
+    base = 2;
+    $readmemh("four.hex", slice_from_base[base+:4], 2, 5);
+    $readmemh("four.hex", slice_of_row[1][2:5], 2, 5);
+    slice_of_dynamic = new[8];
+    $readmemh("four.hex", slice_of_dynamic[2:5], 2, 5);
+
+    fd = $fopen("at_three.hex", "w");
+    $fwrite(fd, "@3\n0b\n0c\n");
+    $fclose(fd);
+    $readmemh("at_three.hex", slice_at[2:5]);
   end
 
   final begin
@@ -74,6 +107,36 @@ module Top;
     if (preloaded[3] !== 8'hFF)
       $fatal(1, "preloaded[3] was %h, expected the ff it started with",
              preloaded[3]);
+
+    for (int i = 0; i < 8; i++) begin
+      automatic bit [7:0] expected = (i >= 2 && i <= 5) ? 8'(i - 1) : 8'h00;
+      if (slice_whole[i] !== expected)
+        $fatal(1, "a slice loaded whole left %h at %0d, expected %h",
+               slice_whole[i], i, expected);
+      if (slice_addressed[i] !== expected)
+        $fatal(1, "a slice loaded by its own indices left %h at %0d, expected %h",
+               slice_addressed[i], i, expected);
+      if (slice_from_base[i] !== expected)
+        $fatal(1, "a slice counted from a base left %h at %0d, expected %h",
+               slice_from_base[i], i, expected);
+      if (slice_of_row[1][i] !== expected)
+        $fatal(1, "a slice of a row left %h at %0d, expected %h",
+               slice_of_row[1][i], i, expected);
+      if (slice_of_row[0][i] !== 8'h00)
+        $fatal(1, "a slice of the other row wrote %h at %0d", slice_of_row[0][i], i);
+      if (slice_of_dynamic[i] !== expected)
+        $fatal(1, "a slice of a dynamic array left %h at %0d, expected %h",
+               slice_of_dynamic[i], i, expected);
+    end
+    for (int i = 0; i < 8; i++) begin
+      automatic bit [7:0] expected = (i >= 2 && i <= 5) ? 8'(6 - i) : 8'h00;
+      if (slice_of_descending[i] !== expected)
+        $fatal(1, "a slice of a descending array left %h at %0d, expected %h",
+               slice_of_descending[i], i, expected);
+    end
+    if (slice_at !== slice_at_expected)
+      $fatal(1, "an address in the file of a slice left %p, expected 0b at 3 and 0c at 4",
+             slice_at);
     $display("All checks passed");
   end
 endmodule

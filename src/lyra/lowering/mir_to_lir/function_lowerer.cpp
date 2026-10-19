@@ -3117,22 +3117,28 @@ auto FunctionLowerer::LowerMutatingCall(
 
   // A value a write in progress designates is changed by the write's own
   // operation, which hears what moved; the one a designation is handed is a
-  // run of its elements written over (LRM 7.6).
+  // run of its elements written over (LRM 7.6), an array's or a queue's.
   if (const auto* designated = unit_->Mir()
                                    .types.Get(block.exprs.Get(*receiver).type)
                                    .As<mir::DesignationType>()) {
-    if (fn != support::BuiltinFn::kAssignElementSlice) {
+    const auto slice_write = [&]() -> lir::OpenWriteTarget::Op {
+      if (fn == support::BuiltinFn::kAssignElementSlice) {
+        return lir::OpenWriteTarget::Op::kAssignElementSlice;
+      }
+      if (fn == support::BuiltinFn::kAssignQueueSlice) {
+        return lir::OpenWriteTarget::Op::kAssignQueueSlice;
+      }
       throw InternalError(
           "mir_to_lir: what a write in progress designates is changed only by "
           "a run of its elements written over -- please report this as a bug");
-    }
+    };
     auto designation = LowerExpr(block, *receiver);
     if (!designation) {
       return std::unexpected(std::move(designation.error()));
     }
     return apply_as(
         lir::OpenWriteTarget{
-            .op = lir::OpenWriteTarget::Op::kAssignSlice,
+            .op = slice_write(),
             .value = unit_->TranslateType(designated->value)},
         *std::move(designation));
   }

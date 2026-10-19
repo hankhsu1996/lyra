@@ -1547,6 +1547,18 @@ class Designation {
     }
   }
 
+  // `value` written into the elements of a queue's slice from `lo` through
+  // `hi` (LRM 7.6, 7.10.1), the ones the queue's clamping names; the write
+  // learns from the assignment which it wrote, where any moved.
+  template <typename Position, typename Value>
+  void AssignSlice(const Position& lo, const Position& hi, const Value& value) {
+    if (const auto written = part_->AssignSlice(lo, hi, value)) {
+      write_->Moved(
+          static_cast<std::int64_t>(written->start),
+          static_cast<std::int64_t>(written->count));
+    }
+  }
+
   auto operator*() -> Part& {
     if (write_->Undecided()) {
       kept_.emplace(*part_);

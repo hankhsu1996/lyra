@@ -25,7 +25,8 @@ auto OpenWriteOpName(OpenWriteTarget::Op op) -> std::string_view {
   switch (op) {
     case OpenWriteTarget::Op::kLand:
       return "land";
-    case OpenWriteTarget::Op::kAssignSlice:
+    case OpenWriteTarget::Op::kAssignElementSlice:
+    case OpenWriteTarget::Op::kAssignQueueSlice:
       return "assign_slice";
   }
   throw InternalError("lir: unknown open-write operation");
@@ -98,7 +99,8 @@ auto CallEndingOf(const CallTarget& target) -> support::CallEnding {
             switch (write.op) {
               case OpenWriteTarget::Op::kLand:
                 return CallEnding::kReturns;
-              case OpenWriteTarget::Op::kAssignSlice:
+              case OpenWriteTarget::Op::kAssignElementSlice:
+              case OpenWriteTarget::Op::kAssignQueueSlice:
                 return CallEnding::kReturnsOrDeparts;
             }
             throw InternalError("lir: unknown open-write operation");

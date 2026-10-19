@@ -9,8 +9,8 @@
 # stands between Lyra and each design, and an entry leaves it only by the design
 # getting all the way.
 Caliptra:default:hello:
-  stops: build
-  says: closure is read as a declaration a value holds part of
+  stops: run
+  says: did not end within
 HammerBlade:16x8:hello:
   stops: run
   says: did not end within
@@ -22,4 +22,4 @@ OpenPiton:1x1:hello:
   says: did not end within
 OpenTitan:default:hello:
   stops: run
-  says: out of memory
+  says: did not end within

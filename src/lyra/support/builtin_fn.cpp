@@ -160,6 +160,12 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = Method{"AssignSlice"},
           .mutates_receiver = true,
           .operands = {kMachine, kPosition, kMachine, kTyped}};
+    case BuiltinFn::kAssignQueueSlice:
+      return {
+          .name = "queue_assign_element_slice",
+          .declaration = Method{"AssignSlice"},
+          .mutates_receiver = true,
+          .operands = {kMachine, kPosition, kPosition, kTyped}};
     case BuiltinFn::kAssert:
       return {.name = "assert", .declaration = ValueFunction("Assert")};
     case BuiltinFn::kSize:

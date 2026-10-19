@@ -5271,6 +5271,14 @@ auto lyra_rt_queue_slice(
           PositionNamedAt(lo), PositionNamedAt(hi), QueueTypeAt(answer_type)));
 }
 
+void lyra_rt_queue_assign_element_slice(
+    void* queue, const void* lo, const void* hi, const void* replacement,
+    const void* replacement_type) {
+  static_cast<RuntimeQueue*>(queue)->AssignSlice(
+      PositionNamedAt(lo), PositionNamedAt(hi),
+      lyra::runtime::ElementHandles(replacement, replacement_type));
+}
+
 auto lyra_rt_queue_size(const void* queue, void* out) -> void* {
   return Emplace(out, Read<RuntimeQueue>(queue).Size());
 }
@@ -6147,6 +6155,21 @@ void lyra_rt_laidout_assign_slice(
   AssignDesignatedArraySlice(
       designation, ArrayTypeAt(array_type), PositionNamedAt(start), count,
       lyra::runtime::ElementHandles(replacement, replacement_type));
+}
+
+void lyra_rt_queue_assign_slice(
+    const void* designation, const void* lo, const void* hi,
+    const void* replacement, const void* replacement_type) {
+  const ErasedDesignation& within = DesignationAt(designation);
+  if (const auto written = static_cast<RuntimeQueue*>(within.part)
+                               ->AssignSlice(
+                                   PositionNamedAt(lo), PositionNamedAt(hi),
+                                   lyra::runtime::ElementHandles(
+                                       replacement, replacement_type))) {
+    within.write->Moved(
+        static_cast<std::int64_t>(written->start),
+        static_cast<std::int64_t>(written->count));
+  }
 }
 
 auto lyra_rt_string_land(const void* designation) noexcept -> void* {
