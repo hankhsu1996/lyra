@@ -10,6 +10,7 @@
 #include "lyra/mir/phase.hpp"
 #include "lyra/mir/verify.hpp"
 #include "lyra/mir_transform/box_large_values.hpp"
+#include "lyra/mir_transform/hold_large_values_in_temporaries.hpp"
 #include "lyra/mir_transform/inst_simplify.hpp"
 #include "lyra/mir_transform/pass.hpp"
 #include "lyra/mir_transform/reaction.hpp"
@@ -20,12 +21,19 @@ namespace lyra::mir_transform {
 namespace {
 
 // InstSimplify runs on the unit as built: a whole it reads is then still a read
-// of the value, which boxing then holds wherever a frame could not.
+// of the value, which boxing then holds wherever a frame could not. A large
+// value read where it is made is put in a temporary before boxing, which then
+// holds the temporary as it holds every local.
 constexpr std::array kPipeline{
     Pass{
         .name = "InstSimplify",
         .policy = PassPolicy::kOptional,
         .run = InstSimplify,
+        .phase_after = std::nullopt},
+    Pass{
+        .name = "HoldLargeValuesInTemporaries",
+        .policy = PassPolicy::kRequired,
+        .run = HoldLargeValuesInTemporaries,
         .phase_after = std::nullopt},
     Pass{
         .name = "BoxLargeValues",

@@ -7,12 +7,13 @@ than naming targets, so a new target is covered the moment it exists and no list
 step with the `BUILD` files.
 
 One split cuts across that, and what it draws is a subject rather than a price: whether an emitted
-C++ project still builds and runs. `cpp_tests` asks it over the whole corpus, once per case, and
-`emitted_project_tests` asks what a project does once built. No per-PR budget holds either, so both
-carry `nightly`, `.bazelrc` makes the default set their complement, and `host-cxx-nightly.yml` takes
-`--config=nightly`. `--config=full` is both sides. So a developer running the tests locally runs
-what the gate runs without naming anything, and the expensive ones are asked for rather than
-avoided.
+C++ project still builds and runs, and at what cost. `cpp_tests` asks it over the whole corpus, once
+per case, `emitted_project_tests` asks what a project does once built, and
+`growth_host_compile_tests` whether what the host compiler pays follows a design's size. No per-PR
+budget holds any of them, so all three carry `nightly`, `.bazelrc` makes the default set their
+complement, and `host-cxx-nightly.yml` takes `--config=nightly`. `--config=full` is both sides. So a
+developer running the tests locally runs what the gate runs without naming anything, and the
+expensive ones are asked for rather than avoided.
 
 Needing a host compiler is a separate question from being too expensive to gate on, and from where a
 test can run. Every program either backend builds is linked by the host C++ compiler, so every
@@ -121,7 +122,8 @@ On top of the default set, what a change touches selects what else to run:
 - **A shipped example, its declaration, or the command its README gives** -- `examples_tests`,
   already in the gate.
 - **What a repeated construct or a wide type costs to compile** -- `growth_tests`, already in the
-  gate.
+  gate; what the host compiler pays for the text the C++ backend emits for one,
+  `growth_host_compile_tests`, under `--config=nightly`.
 - **Which units an edit makes again** -- `incremental_tests`, already in the gate.
 - **How long an expression the compiler follows** -- `compile_stack_tests`, already in the gate.
 - **Anything else** -- HIR, MIR, LIR, the execution backend, the runtime value library -- the
@@ -137,7 +139,23 @@ declares a loop in the square of its count, passes every case and is fast on eac
 compile, at any size. So `growth_tests` compiles each design under `tests/growth/` at one size and
 at twice that, on both backends, each run asked for its trace and its statistics, and holds the
 larger run to the smaller: what it left behind grown by what the design says its extra steps add,
-and each stage's time and peak memory under three times what it was.
+and each stage's time and peak memory under three times what it was. A stage's peak is the larger of
+the compiler's own and that of any tool the stage ran.
+
+Every compiler that reads what Lyra writes is held to the same bound, so `growth_host_compile_tests`
+compiles the same designs along a third path, `cpp_host`, on which the C++ backend's program is
+built by the host compiler without a prepared header, whose cost is the same at every size and would
+hide how the rest grows. Its `host compile` stage is then held like every other. Building every
+design's program twice costs what compiling an emitted project costs, so it runs with that set and
+not in the gate. The path departs wherever the `cpp` path does, so its own record holds only what
+building adds.
+
+A count the source text writes out -- the members of a structure or a union, the operands of a
+chain, the arguments of a call, the ports of an instance -- is no parameter the language can
+generate from, so a design may write one as `[[piece|separator]]`: the harness writes the piece N
+times, joined by what follows the last `|`, with `{i}` in it each step's index and `{last}` anywhere
+the last one's. The designs written that way reach every member and operand they declare, which is
+what the emitted code does and what a test reaching only the first and the last would not.
 
 A design states one thing and takes N steps of it, and its own file says what one more step adds.
 Most say nothing, because a step of theirs repeats what is written once, and repeating adds nothing.
@@ -233,7 +251,7 @@ counted against that commit, starts clean. Two counts of one compiler agree to a
 percent, so what two percent leaves unmarked is a change too small to be worth marking, not noise.
 
 The host compiler a build starts is not counted: tracing it would cost fifty times a compile that is
-most of a build, and what Lyra hands it is held by `growth_tests`.
+most of a build, and what Lyra hands it is held by `growth_host_compile_tests`.
 
 ## What a real design stops on
 

@@ -3193,6 +3193,18 @@ source, or not yet tried.
       unit is a class of its own per value where a realization would do. Target: the front end
       records, with each evaluation, the declaration it was made for.
 
+- [ ] R246 -- The two backends can run one program's operands in different orders. MIR states the
+      operands of an operator and the arguments of a call in a list, and the execution backend runs
+      them first to last, while the C++ backend writes them as one C++ expression, whose operands
+      C++ leaves unsequenced, so the host compiler picks: a sum of two function calls each recording
+      that it ran, and a call of two such arguments, record first-then-second on the execution
+      backend and on the C++ backend built by clang, and second-then-first on the C++ backend built
+      by GCC. The standard fixes neither order (LRM 11.3.5 requires only that each operand is
+      evaluated, and 13.5 leaves an argument list's order undefined), so neither answer is wrong;
+      what is wrong is one MIR meaning two programs. Target: MIR states the order its operands run
+      in, and the C++ backend writes what C++ would leave unsequenced in a form that runs it in that
+      order. Not blocked.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

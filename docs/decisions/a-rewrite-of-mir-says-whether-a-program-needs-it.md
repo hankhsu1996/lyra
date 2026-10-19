@@ -22,9 +22,10 @@ belonged to HIR-to-MIR.
 
 **D1. Each rewrite states its policy.** Required: skipping it leaves a unit a consumer cannot take,
 so no build skips it. Optional: skipping it leaves the same program at another cost. Holding a large
-value through a box is required; replacing a whole select with the whole, and calling a process that
-stops only at its loop head, are optional. That a correct program does not depend on any optional
-rewrite is then a property a run can show, by skipping all of them.
+value read where it is made in a temporary, and then holding a large value through a box, are
+required; replacing a whole select with the whole, and calling a process that stops only at its loop
+head, are optional. That a correct program does not depend on any optional rewrite is then a
+property a run can show, by skipping all of them.
 
 **D2. The rewrites are one ordered list, stated once.** The stage runs the list; a rewrite is a
 function from a unit to a unit, named as its function is. Every optional rewrite runs unless a build
@@ -130,6 +131,6 @@ reads it.
 ## Cross-references
 
 - `a-process-stopping-only-at-its-loop-head-is-called.md` -- the stage and its first rewrite.
-- `a-value-too-large-for-a-frame-is-held-through-a-box.md` -- the required rewrite.
+- `a-value-too-large-for-a-frame-is-held-through-a-box.md` -- the two required rewrites.
 - `a-select-names-a-position.md` -- what a deferred write restates rather than freezes.
 - `unpacked-range-belongs-to-type.md` -- the range as the static type's, which at MIR is HIR's.

@@ -4,13 +4,16 @@
 #include <cstdint>
 #include <ranges>
 #include <span>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/dpi_canonical.hpp"
@@ -251,6 +254,25 @@ auto TakesAValueTooLargeForAFrame(const CompilationUnit& unit, TypeId type)
          std::ranges::any_of(code->params, [&](TypeId param) {
            return IsTooLargeForAFrame(unit, param);
          });
+}
+
+auto EntersACompiledBody(
+    const CompilationUnit& unit, const CallExpr& call, TypeId result) -> bool {
+  return std::visit(
+      Overloaded{
+          [](const Direct& direct) {
+            return !std::holds_alternative<support::BuiltinFn>(direct.target) &&
+                   !std::holds_alternative<ForeignSymbolTarget>(
+                       direct.target) &&
+                   !std::holds_alternative<RecordMethodTarget>(direct.target) &&
+                   !std::holds_alternative<TypeOperationTarget>(direct.target);
+          },
+          [](const Indirect&) { return true; },
+          [](const Virtual&) { return true; },
+          [&](const Construct&) {
+            return unit.types.Get(result).Is<ObjectType>();
+          }},
+      call.callee);
 }
 
 }  // namespace lyra::mir

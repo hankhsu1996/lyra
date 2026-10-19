@@ -180,10 +180,12 @@ auto SpawnCaptured(
       .started = started};
 }
 
-// How a child ended, and the processor time the system charged it.
+// How a child ended, the processor time the system charged it, and the most
+// memory it charged it.
 struct Reaped {
   int exit_code = 0;
   std::uint64_t cpu_us = 0;
+  std::uint64_t peak_rss_bytes = 0;
 };
 
 auto Microseconds(const struct timeval& time) -> std::uint64_t {
@@ -192,9 +194,9 @@ auto Microseconds(const struct timeval& time) -> std::uint64_t {
 }
 
 // Waits for the child to end. Its exit code is its own, or 128 plus the signal
-// that ended it, as a shell reports one. Its peak memory is not read: the
-// system starts a spawned child's figure at its parent's high-water mark, so
-// under a compiler holding a design it says how large the compiler was.
+// that ended it, as a shell reports one. Its peak memory is the system's,
+// which starts a spawned child's figure at its parent's high-water mark, so on
+// its own it can say how large Lyra was rather than the child.
 auto Reap(pid_t pid) -> std::expected<Reaped, base::DiagMessage> {
   int status = 0;
   struct rusage usage{};
@@ -210,7 +212,8 @@ auto Reap(pid_t pid) -> std::expected<Reaped, base::DiagMessage> {
   return Reaped{
       .exit_code =
           WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status),
-      .cpu_us = Microseconds(usage.ru_utime) + Microseconds(usage.ru_stime)};
+      .cpu_us = Microseconds(usage.ru_utime) + Microseconds(usage.ru_stime),
+      .peak_rss_bytes = static_cast<std::uint64_t>(usage.ru_maxrss) * 1024};
 }
 
 // Runs every request, at most `max_concurrent` at once, telling `started` and
@@ -315,7 +318,8 @@ auto RunProcesses(
                   std::chrono::duration_cast<std::chrono::microseconds>(
                       std::chrono::steady_clock::now() - child->started)
                       .count()),
-              .cpu_us = reaped->cpu_us});
+              .cpu_us = reaped->cpu_us,
+              .peak_rss_bytes = reaped->peak_rss_bytes});
       ended(child->index);
       child = running.erase(child);
     }

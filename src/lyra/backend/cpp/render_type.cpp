@@ -219,17 +219,16 @@ void WriteOne(TargetText& out, const CppType& spelling) {
             Write(out, "std::array<", type(m.element), ", ", m.size, ">");
           },
           [&](const mir::MachineFunctionType& m) {
-            // `R (*)(Args)` is only valid where a type stands alone, since a
-            // declared function pointer's name goes inside the parentheses. A
-            // restored prototype is only ever used that way; the erased
-            // function type does get declared, so it uses the runtime's alias.
+            // A pointer to a function type, spelled so that a declaration
+            // names it as it names any other type. The erased function type
+            // is the runtime's alias.
             if (mir::IsErasedFunction(unit.types, type_id)) {
               out += "lyra::runtime::ErasedEntry";
               return;
             }
-            Write(out, type(m.result), " (*)(");
+            Write(out, "std::add_pointer_t<", type(m.result), "(");
             WriteTypeList(out, unit, m.params);
-            out += ")";
+            out += ")>";
           },
           [&](const mir::ChandleType&) { out += "lyra::value::Chandle"; },
           [&](const mir::EventType&) { out += "lyra::runtime::NamedEvent"; },

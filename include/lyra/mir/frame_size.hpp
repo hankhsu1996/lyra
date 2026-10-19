@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/expr.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::mir {
@@ -15,5 +16,15 @@ auto IsTooLargeForAFrame(const CompilationUnit& unit, TypeId type) -> bool;
 // one does.
 auto TakesAValueTooLargeForAFrame(const CompilationUnit& unit, TypeId type)
     -> bool;
+
+// Whether `call`, answering a value of `result`, enters a body this program
+// compiles, which takes each argument too large for a frame in a box: a
+// subroutine, a method, a closure, the constructor of an object of this
+// program's classes. A runtime entry and a foreign one take what the call
+// states as it is, and so does an operation a type answers -- a record's
+// method, or the body a unit states for a type with no declaration -- which the
+// library reaches through the type's table by a convention of its own.
+auto EntersACompiledBody(
+    const CompilationUnit& unit, const CallExpr& call, TypeId result) -> bool;
 
 }  // namespace lyra::mir

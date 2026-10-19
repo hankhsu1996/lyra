@@ -1,6 +1,8 @@
 #pragma once
 
+#include <concepts>
 #include <cstdint>
+#include <type_traits>
 #include <variant>
 
 #include "lyra/base/overloaded.hpp"
@@ -32,83 +34,100 @@ enum class OperandUse : std::uint8_t {
   kPointer,
 };
 
+// `T` as const as `Data` is, so one visit serves a node read and a node being
+// rebuilt.
+template <typename Data, typename T>
+using AsConstAs = std::conditional_t<std::is_const_v<Data>, const T, T>;
+
 // Calls `reach` with each node `data` takes a value from, and how it takes
 // it. Every one is named in the block holding `data` but a block expression's
 // value, which is named in the block of its steps and is reached from there.
-void ForEachOperand(const ExprData& data, const auto& reach) {
-  const auto value = [&](ExprId operand) {
-    reach(operand, OperandUse::kValue);
-  };
+// Handed a node being rebuilt, `reach` is handed each operand to replace.
+template <typename Data>
+  requires std::same_as<std::remove_const_t<Data>, ExprData>
+void ForEachOperand(Data& data, const auto& reach) {
+  using Id = AsConstAs<Data, ExprId>;
+  const auto value = [&](Id& operand) { reach(operand, OperandUse::kValue); };
   std::visit(
       Overloaded{
-          [](const StringLiteral&) {},
-          [](const NullLiteral&) {},
-          [](const MachineBoolLiteral&) {},
-          [](const MachineIntLiteral&) {},
-          [](const MachineFloatLiteral&) {},
-          [](const ReferenceExpr&) {},
-          [&](const UnaryExpr& e) { value(e.operand); },
-          [&](const BinaryExpr& e) {
+          [](AsConstAs<Data, StringLiteral>&) {},
+          [](AsConstAs<Data, NullLiteral>&) {},
+          [](AsConstAs<Data, MachineBoolLiteral>&) {},
+          [](AsConstAs<Data, MachineIntLiteral>&) {},
+          [](AsConstAs<Data, MachineFloatLiteral>&) {},
+          [](AsConstAs<Data, ReferenceExpr>&) {},
+          [&](AsConstAs<Data, UnaryExpr>& e) { value(e.operand); },
+          [&](AsConstAs<Data, BinaryExpr>& e) {
             value(e.lhs);
             value(e.rhs);
           },
-          [&](const CastExpr& e) { value(e.operand); },
-          [&](const ConditionalExpr& e) {
+          [&](AsConstAs<Data, CastExpr>& e) { value(e.operand); },
+          [&](AsConstAs<Data, ConditionalExpr>& e) {
             value(e.condition);
             value(e.then_value);
             value(e.else_value);
           },
-          [](const BlockExpr&) {},
-          [&](const AssignExpr& e) {
+          [](AsConstAs<Data, BlockExpr>&) {},
+          [&](AsConstAs<Data, AssignExpr>& e) {
             reach(e.target, OperandUse::kStorage);
             value(e.value);
           },
-          [&](const CallExpr& e) {
+          [&](AsConstAs<Data, CallExpr>& e) {
             std::visit(
                 Overloaded{
-                    [&](const Direct& callee) {
+                    [&](AsConstAs<Data, Direct>& callee) {
                       if (callee.receiver.has_value()) {
                         reach(*callee.receiver, OperandUse::kObject);
                       }
                     },
-                    [&](const Indirect& callee) { value(callee.code); },
-                    [](const Construct&) {},
-                    [&](const Virtual& callee) {
+                    [&](AsConstAs<Data, Indirect>& callee) {
+                      value(callee.code);
+                    },
+                    [](AsConstAs<Data, Construct>&) {},
+                    [&](AsConstAs<Data, Virtual>& callee) {
                       reach(callee.receiver, OperandUse::kObject);
                     }},
                 e.callee);
-            for (const ExprId argument : e.arguments) {
+            for (Id& argument : e.arguments) {
               value(argument);
             }
           },
-          [&](const NewExpr& e) { value(e.initializer); },
-          [&](const DerefExpr& e) { reach(e.pointer, OperandUse::kPointer); },
-          [&](const AddressOfExpr& e) {
+          [&](AsConstAs<Data, NewExpr>& e) { value(e.initializer); },
+          [&](AsConstAs<Data, DerefExpr>& e) {
+            reach(e.pointer, OperandUse::kPointer);
+          },
+          [&](AsConstAs<Data, AddressOfExpr>& e) {
             reach(e.operand, OperandUse::kStorage);
           },
-          [&](const BorrowExpr& e) { reach(e.operand, OperandUse::kStorage); },
-          [&](const MoveExpr& e) { reach(e.operand, OperandUse::kRead); },
-          [&](const CopyExpr& e) { reach(e.place, OperandUse::kRead); },
-          [&](const DiscriminantExpr& e) {
+          [&](AsConstAs<Data, BorrowExpr>& e) {
+            reach(e.operand, OperandUse::kStorage);
+          },
+          [&](AsConstAs<Data, MoveExpr>& e) {
+            reach(e.operand, OperandUse::kRead);
+          },
+          [&](AsConstAs<Data, CopyExpr>& e) {
+            reach(e.place, OperandUse::kRead);
+          },
+          [&](AsConstAs<Data, DiscriminantExpr>& e) {
             reach(e.tagged, OperandUse::kObject);
           },
-          [&](const FieldAccessExpr& e) {
+          [&](AsConstAs<Data, FieldAccessExpr>& e) {
             reach(e.receiver, OperandUse::kStorage);
           },
-          [&](const ClosureExpr& e) {
-            for (const FieldInit& init : e.field_inits) {
+          [&](AsConstAs<Data, ClosureExpr>& e) {
+            for (AsConstAs<Data, FieldInit>& init : e.field_inits) {
               value(init.value);
             }
           },
-          [&](const CompositeExpr& e) {
-            for (const ExprId part : e.parts) {
+          [&](AsConstAs<Data, CompositeExpr>& e) {
+            for (Id& part : e.parts) {
               value(part);
             }
           },
-          [&](const UnionExpr& e) { value(e.value); },
-          [&](const AwaitExpr& e) { value(e.execution); },
-          [&](const WaitExpr& e) { value(e.park); },
-          [&](const VectorGetExpr& e) {
+          [&](AsConstAs<Data, UnionExpr>& e) { value(e.value); },
+          [&](AsConstAs<Data, AwaitExpr>& e) { value(e.execution); },
+          [&](AsConstAs<Data, WaitExpr>& e) { value(e.park); },
+          [&](AsConstAs<Data, VectorGetExpr>& e) {
             value(e.vector);
             value(e.index);
           }},
