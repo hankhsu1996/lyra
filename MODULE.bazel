@@ -62,12 +62,6 @@ use_repo(llvm, "llvm-project")
 # the runtime library built here, and the two have to use the same library.
 bazel_dep(name = "toolchains_llvm", version = "1.11.3")
 
-# Each clang takes the library of the newest GCC installation it finds. Where
-# the machine's default one is too old, the machine names a newer one in its
-# own `~/.bazelrc`, and such installations live under /opt, which is therefore
-# read as system headers beside the toolchain's own.
-HOST_HEADER_ROOTS = {"linux-x86_64": ["/opt"]}
-
 clang = use_extension("@toolchains_llvm//toolchain/extensions:llvm.bzl", "llvm")
 
 # The compiler that builds Lyra: this clang release, which the build downloads.
@@ -75,7 +69,6 @@ clang = use_extension("@toolchains_llvm//toolchain/extensions:llvm.bzl", "llvm")
 # `--config=gcc` selects the remote image's GCC instead.
 clang.toolchain(
     name = "clang_toolchain",
-    cxx_builtin_include_directories = HOST_HEADER_ROOTS,
     llvm_version = "20.1.8",
     sha256 = {"linux-x86_64": "a110f87318ea5f9dd677c016dc68792716cb4383539282960c3f355ade1b002a"},
     stdlib = {"": "dynamic-stdc++"},
@@ -92,7 +85,6 @@ clang.toolchain(
 # is never run.
 clang.toolchain(
     name = "runtime_clang_toolchain",
-    cxx_builtin_include_directories = HOST_HEADER_ROOTS,
     llvm_version = LLVM_RELEASE,
     sha256 = {"linux-x86_64": "a4b7189ed50433a82aec09169b9321d6a2e77e48c381f97a5cee1284add26e8f"},
     stdlib = {"": "dynamic-stdc++"},

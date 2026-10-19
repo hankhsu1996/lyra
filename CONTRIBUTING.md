@@ -17,21 +17,6 @@ Lyra and every program it builds use the machine's own libstdc++, which has to b
 or newer. A program is compiled and linked by the first `clang++` or `c++` on `PATH`, or by the
 compiler `--cxx` names.
 
-Where the machine's default GCC is older and a newer one is installed beside it, name that
-installation for the machine in `~/.bazelrc` as below, and its compiler with `--cxx` when building a
-program.
-
-```
-build --copt=--gcc-install-dir=<dir>
-build --host_copt=--gcc-install-dir=<dir>
-build --linkopt=--gcc-install-dir=<dir>
-build --host_linkopt=--gcc-install-dir=<dir>
-```
-
-`<dir>` is the installation's `lib/gcc/<target>/<version>` directory, and the installation has to be
-under `/opt`, where the build reads system headers. The lines name a path on this machine, so they
-hold for a build whose compiles run here with the clang the build fetches.
-
 ### Build and Test
 
 ```bash
