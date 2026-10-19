@@ -58,12 +58,8 @@ void ReadValue(
 template <value::LyraValue T>
 class VarProbe final : public DumpProbe {
  public:
-  VarProbe(Var<T>& cell, std::uint32_t width);
-  VarProbe(const VarProbe&) = delete;
-  auto operator=(const VarProbe&) -> VarProbe& = delete;
-  VarProbe(VarProbe&&) = delete;
-  auto operator=(VarProbe&&) -> VarProbe& = delete;
-  ~VarProbe() override;
+  VarProbe(Var<T>& cell, std::uint32_t width) : cell_(&cell), width_(width) {
+  }
 
   void Read(DumpCapture& into, DumpCode code) const override {
     ReadValue(into, code, cell_->Get(), width_);
@@ -85,14 +81,6 @@ class VarProbe final : public DumpProbe {
   Var<T>* cell_;
   std::uint32_t width_;
 };
-
-template <value::LyraValue T>
-VarProbe<T>::VarProbe(Var<T>& cell, std::uint32_t width)
-    : cell_(&cell), width_(width) {
-}
-
-template <value::LyraValue T>
-VarProbe<T>::~VarProbe() = default;
 
 // A variable whose words lie after it, as wide as its declaration states.
 template <class HeldAs>
@@ -163,12 +151,9 @@ class NetProbe final : public DumpProbe {
 template <class T>
 class ReferenceProbe final : public DumpProbe {
  public:
-  ReferenceProbe(const ErasedReference& reference, std::uint32_t width);
-  ReferenceProbe(const ReferenceProbe&) = delete;
-  auto operator=(const ReferenceProbe&) -> ReferenceProbe& = delete;
-  ReferenceProbe(ReferenceProbe&&) = delete;
-  auto operator=(ReferenceProbe&&) -> ReferenceProbe& = delete;
-  ~ReferenceProbe() override;
+  ReferenceProbe(const ErasedReference& reference, std::uint32_t width)
+      : reference_(&reference), width_(width) {
+  }
 
   void Read(DumpCapture& into, DumpCode code) const override {
     if constexpr (value::HeldAsWords<T>) {
@@ -201,15 +186,6 @@ class ReferenceProbe final : public DumpProbe {
   const ErasedReference* reference_;
   std::uint32_t width_;
 };
-
-template <class T>
-ReferenceProbe<T>::ReferenceProbe(
-    const ErasedReference& reference, std::uint32_t width)
-    : reference_(&reference), width_(width) {
-}
-
-template <class T>
-ReferenceProbe<T>::~ReferenceProbe() = default;
 
 }  // namespace dump_detail
 
@@ -267,21 +243,20 @@ void BeginDescribedBlock(RuntimeEffects& runtime, const DumpBlock* block);
 void EndDescribedBlock(RuntimeEffects& runtime);
 
 // A real's value type is fixed by the language rather than shaped by the
-// design, so what describes one is compiled once, here, rather than in every
-// unit that declares one.
-extern template class dump_detail::VarProbe<value::Real>;
-extern template class dump_detail::VarProbe<value::ShortReal>;
-extern template class dump_detail::ReferenceProbe<value::Real>;
-extern template class dump_detail::ReferenceProbe<value::ShortReal>;
-extern template void DescribeTo(
+// design, so what describes one is a function of this library a unit calls,
+// not a template it compiles. It is no instantiation of the template above
+// either: a template constrained by a concept is named differently by one
+// compiler and another, and a unit is built by the user's compiler against a
+// library built by this one.
+void DescribeTo(
     Var<value::Real>& cell, RuntimeEffects& runtime, const DumpEntry* entry);
-extern template void DescribeTo(
+void DescribeTo(
     Var<value::ShortReal>& cell, RuntimeEffects& runtime,
     const DumpEntry* entry);
-extern template void DescribeTo(
+void DescribeTo(
     VariableRef<value::Real>& port, RuntimeEffects& runtime,
     const DumpEntry* entry);
-extern template void DescribeTo(
+void DescribeTo(
     VariableRef<value::ShortReal>& port, RuntimeEffects& runtime,
     const DumpEntry* entry);
 

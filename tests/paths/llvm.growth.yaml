@@ -16,6 +16,10 @@ array_pattern_elements:
 concatenation_operands:
   - lir.types
   - mir.types
+  - time OptFunction
+  - time OptModule
+  - time RunPass
+  - time generate object
 instance_array: [bytes]
 loop_of_children_sized_by_index:
   - lir.classes
@@ -65,14 +69,25 @@ loop_sizing_by_index:
   - mir.classes
   - mir.constructors
   - mir.types
+port_connections:
+  - time OptModule
+  - time lower scope
+  - time lower to HIR
 record_members:
   - lir.types
   - mir.types
 scan_outputs:
   - lir.types
   - mir.types
+  - time HoldLargeValuesInTemporaries
+  - time SwitchCloner
 tagged_union_members:
   - time design root
   - time lower units
 task_outputs:
   - mir.types
+  - time HoldLargeValuesInTemporaries
+  - time lower scope
+  - time lower to HIR
+  - time lower to MIR
+  - time transform MIR

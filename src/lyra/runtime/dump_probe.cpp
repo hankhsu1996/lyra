@@ -69,20 +69,31 @@ void EndDescribedBlock(RuntimeEffects& runtime) {
   Describing(runtime).EndBlock();
 }
 
-template class dump_detail::VarProbe<value::Real>;
-template class dump_detail::VarProbe<value::ShortReal>;
-template class dump_detail::ReferenceProbe<value::Real>;
-template class dump_detail::ReferenceProbe<value::ShortReal>;
-template void DescribeTo(
-    Var<value::Real>& cell, RuntimeEffects& runtime, const DumpEntry* entry);
-template void DescribeTo(
+void DescribeTo(
+    Var<value::Real>& cell, RuntimeEffects& runtime, const DumpEntry* entry) {
+  Describing(runtime).Var(
+      *entry,
+      std::make_unique<dump_detail::VarProbe<value::Real>>(cell, entry->width));
+}
+
+void DescribeTo(
     Var<value::ShortReal>& cell, RuntimeEffects& runtime,
-    const DumpEntry* entry);
-template void DescribeTo(
+    const DumpEntry* entry) {
+  Describing(runtime).Var(
+      *entry, std::make_unique<dump_detail::VarProbe<value::ShortReal>>(
+                  cell, entry->width));
+}
+
+void DescribeTo(
     VariableRef<value::Real>& port, RuntimeEffects& runtime,
-    const DumpEntry* entry);
-template void DescribeTo(
+    const DumpEntry* entry) {
+  DescribeReference<value::Real>(port.Erased(), runtime, entry);
+}
+
+void DescribeTo(
     VariableRef<value::ShortReal>& port, RuntimeEffects& runtime,
-    const DumpEntry* entry);
+    const DumpEntry* entry) {
+  DescribeReference<value::ShortReal>(port.Erased(), runtime, entry);
+}
 
 }  // namespace lyra::runtime

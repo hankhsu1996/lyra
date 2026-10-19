@@ -102,9 +102,11 @@ bazel_dep(name = "boost.context", version = "1.89.0")
 
 # The FST waveform format a value dump may be written in, as GTKWave defines
 # it: the reference implementation of its writer and reader, read at one
-# commit, and the compression it is built on.
-bazel_dep(name = "zlib", version = "1.3.1.bcr.5")
-
+# commit, and the compression it is built on. Both are built by a file of this
+# repository rather than the registry's, because a program built to optimize at
+# the link compiles them again with the user's own compiler from what the build
+# states, and the registry's zlib leaves out the configuration that declares
+# the functions it calls.
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
 http_archive(
@@ -113,6 +115,14 @@ http_archive(
     sha256 = "be5faa372dcaa4141445d0a4f8dd672114679da08fd6a8b32a7e69b262e188b5",
     strip_prefix = "libfst-c716c1f67e21a06aaf8722830b371516e70dc657",
     urls = ["https://github.com/gtkwave/libfst/archive/c716c1f67e21a06aaf8722830b371516e70dc657.tar.gz"],
+)
+
+http_archive(
+    name = "zlib",
+    build_file = "//third_party/zlib:zlib.BUILD",
+    sha256 = "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23",
+    strip_prefix = "zlib-1.3.1",
+    urls = ["https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz"],
 )
 
 # The machine remote actions run on, BuildBuddy's Ubuntu 24.04 image, and its

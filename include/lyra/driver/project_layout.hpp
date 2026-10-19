@@ -54,8 +54,9 @@ inline constexpr std::string_view kRuntimeLibFile = "libcpp_runtime.a";
 inline constexpr std::string_view kRuntimeCacheDir = "runtime/cache";
 // Where a project optimized at the link keeps the runtime's own sources, which
 // its compiler builds beside the design so that it optimizes the two as one
-// program, with a list of those a build compiles and the include directories
-// and macros every such compile is told.
+// program, with a list of those a build compiles, each with the macros its own
+// library defines for it, and the include directories and macros every such
+// compile is told.
 inline constexpr std::string_view kRuntimeSourceDir = "runtime/src";
 inline constexpr std::string_view kRuntimeSourceList = "sources.txt";
 inline constexpr std::string_view kRuntimeIncludeDirList = "include_dirs.txt";
@@ -138,6 +139,16 @@ inline constexpr std::array<std::string_view, 2> kDesignCompileFlags{
       kDesignCompileFlags.begin(), kDesignCompileFlags.end());
   flags.emplace_back(OptimizationFlag(optimization));
   return flags;
+}
+
+// What every compile of a C source the runtime carries is told, at
+// `optimization`. The host compiler is a C++ driver, which reads a `.c` file as
+// C++ unless told its language, and nothing of how the design's own code is
+// read applies to it: it is compiled in the C standard the compiler defaults
+// to, as the runtime's own build compiles it.
+[[nodiscard]] inline auto RuntimeCCompileFlags(OptimizationLevel optimization)
+    -> std::vector<std::string> {
+  return {"-x", "c", std::string(OptimizationFlag(optimization))};
 }
 // A precompiled header stays usable only while the headers it was built from
 // are unchanged, and the compiler decides that by timestamp unless asked to

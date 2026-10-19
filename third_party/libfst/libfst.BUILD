@@ -13,15 +13,15 @@ cc_library(
         "src/lz4.h",
     ],
     hdrs = ["src/fstapi.h"],
-    copts = [
-        "-D_GNU_SOURCE",
-        "-DFST_WRITER_PARALLEL",
-        "-DHAVE_LIBPTHREAD",
-        "-DHAVE_FSEEKO",
-        "-DHAVE_REALPATH",
-    ],
     includes = ["src"],
     linkopts = ["-lpthread"],
+    local_defines = [
+        "_GNU_SOURCE",
+        "FST_WRITER_PARALLEL",
+        "HAVE_LIBPTHREAD",
+        "HAVE_FSEEKO",
+        "HAVE_REALPATH",
+    ],
     visibility = ["//visibility:public"],
     deps = ["@zlib"],
 )

@@ -43,6 +43,9 @@ loop_sizing_by_index:
   - mir.classes
   - mir.constructors
   - mir.types
+port_connections:
+  - time lower scope
+  - time lower to HIR
 record_members:
   - mir.types
 scan_outputs:
@@ -52,4 +55,9 @@ tagged_union_members:
   - time lower units
 task_outputs:
   - mir.types
+  - time HoldLargeValuesInTemporaries
+  - time lower scope
+  - time lower to HIR
+  - time lower to MIR
   - time lower units
+  - time transform MIR
