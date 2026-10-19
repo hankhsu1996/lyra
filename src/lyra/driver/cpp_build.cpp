@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <format>
+#include <fstream>
 #include <iterator>
 #include <optional>
 #include <set>
@@ -199,6 +200,57 @@ compile_all() {
   done
   reap
 }
+# A project built to optimize at the link optimizes the design together with
+# the runtime, whose sources it carries, in the first way this compiler and the
+# linker it drives accept; a small program built each way in turn says which.
+# Whether one is accepted decides how long the build takes and never whether it
+# succeeds, so where none is, or the program's own compile or link is refused
+# all the same, the plain build below builds it.
+LTO=""
+if [ "@LTO@" = "1" ]; then
+  P=@OBJDIR@/probe
+  mkdir -p "$P"
+  printf '%s' '@PROBE@' > "$P/probe.cpp"
+  while IFS='|' read -r compile cache; do
+    if "$CXX" $compile -O2 -c "$P/probe.cpp" -o "$P/probe.o" 2>/dev/null &&
+      "$CXX" $compile ${cache:+${cache}$P/cache} "$P/probe.o" -o "$P/probe" \
+        2>/dev/null; then
+      LTO="$compile"
+      LTO_LINK="$compile${cache:+ ${cache}@OBJDIR@/lto}"
+      break
+    fi
+  done <<FORMS
+@LTOFORMS@
+FORMS
+fi
+if [ -n "$LTO" ]; then
+  RT=@RTSRC@
+  RT_FLAGS=""
+  while read -r flag dir; do RT_FLAGS="$RT_FLAGS $flag $RT/$dir"; done < "$RT/@RTINCS@"
+  while read -r name; do RT_FLAGS="$RT_FLAGS -D$name"; done < "$RT/@RTDEFS@"
+  compile_all "$PCH_FLAG $LTO"
+  if [ "$STATUS" -ne 0 ] && [ "$USE_PCH" = "1" ]; then compile_all "$LTO"; fi
+  if [ "$STATUS" -eq 0 ]; then
+    mkdir -p @OBJDIR@/runtime
+    RT_OBJS=""
+    PIDS=""
+    LIVE=0
+    n=0
+    for src in $(cat "$RT/@RTLIST@"); do
+      n=$((n + 1))
+      RT_OBJS="$RT_OBJS @OBJDIR@/runtime/$n.o"
+      "$CXX" @DESIGN_FLAGS@ $RT_FLAGS $LTO -c "$RT/$src" -o "@OBJDIR@/runtime/$n.o" \
+        >>"$LOG" 2>&1 &
+      PIDS="$PIDS $!"
+      LIVE=$((LIVE + 1))
+      if [ "$LIVE" -ge "$JOBS" ]; then reap; fi
+    done
+    reap
+  fi
+  if [ "$STATUS" -eq 0 ]; then
+@DPICOMPILE@    if "$CXX" -@OPTTAG@ $LTO_LINK$OBJS $RT_OBJS@DPIOBJS@ -o @PROG@ 2>/dev/null; then exit 0; fi
+  fi
+fi
 compile_all "$PCH_FLAG"
 if [ "$STATUS" -ne 0 ] && [ "$USE_PCH" = "1" ]; then
   # The precompiled header is an attempt and never a requirement, so it does not
@@ -269,10 +321,24 @@ auto RenderDpiRecipe(
   return recipe;
 }
 
+// Each way of optimizing at the link as a line the recipe reads in order: what
+// a compile is told, then what the link is told before its cache directory,
+// which is nothing where the form names no cache.
+auto RenderLinkTimeForms() -> std::string {
+  std::string lines;
+  for (const LinkTimeForm& form : kLinkTimeForms) {
+    if (!lines.empty()) lines += "\n";
+    lines += std::format(
+        "{}|{}", form.compile, form.cache ? form.cache->spelling : "");
+  }
+  return lines;
+}
+
 auto RenderBuildScript(
     const std::filesystem::path& cxx, std::span<const DpiLinkInput> dpi_inputs,
     std::span<const TranslationUnit> translation_units,
-    Optimization optimization) -> std::string {
+    OptimizationLevel optimization, LinkTimeOptimization link_time)
+    -> std::string {
   const std::string_view optimization_flag = OptimizationFlag(optimization);
   const DpiRecipe dpi = RenderDpiRecipe(dpi_inputs, optimization_flag);
   std::vector<std::string> relpaths;
@@ -288,7 +354,18 @@ auto RenderBuildScript(
   // separate two builds clang will refuse to share.
   const std::string_view optimization_tag = optimization_flag.substr(1);
   const std::string design_flags = JoinWords(DesignCompileFlags(optimization));
-  const std::array<std::pair<std::string_view, std::string_view>, 15> bindings =
+  // Whether the project optimizes the design together with the runtime.
+  const std::string_view lto = [&] {
+    switch (link_time) {
+      case LinkTimeOptimization::kNone:
+        return "0";
+      case LinkTimeOptimization::kThin:
+        return "1";
+    }
+    std::unreachable();
+  }();
+  const std::string link_time_forms = RenderLinkTimeForms();
+  const std::array<std::pair<std::string_view, std::string_view>, 22> bindings =
       {{
           {"@INCLUDE@", kRuntimeIncludeDir},
           {"@PRELUDE@", support::kRuntimePreludeHeader},
@@ -305,6 +382,13 @@ auto RenderBuildScript(
           {"@PROG@", kProgramName},
           {"@DPICOMPILE@", dpi.compile_steps},
           {"@DPIOBJS@", dpi.link_inputs},
+          {"@LTO@", lto},
+          {"@RTSRC@", kRuntimeSourceDir},
+          {"@RTLIST@", kRuntimeSourceList},
+          {"@RTINCS@", kRuntimeIncludeDirList},
+          {"@RTDEFS@", kRuntimeDefineList},
+          {"@LTOFORMS@", link_time_forms},
+          {"@PROBE@", kLinkTimeProbe},
       }};
   return SubstituteTokens(kBuildScriptTemplate, bindings);
 }
@@ -361,7 +445,7 @@ auto CopyDpiSources(
 // command that compiles a file and the action it is kept under cannot describe
 // different things.
 auto CompileFlags(
-    const std::filesystem::path& include_root, Optimization optimization)
+    const std::filesystem::path& include_root, OptimizationLevel optimization)
     -> std::vector<std::string> {
   std::vector<std::string> flags = DesignCompileFlags(optimization);
   flags.emplace_back("-I");
@@ -441,46 +525,18 @@ auto CompileOne(
   return {};
 }
 
-}  // namespace
-
-auto CompileTranslationUnits(
-    const std::filesystem::path& dir,
-    std::span<const TranslationUnit> translation_units,
-    const RuntimeLocation& runtime, const HostBuild& host, ActionCache& actions)
+// Runs `count` compiles, `width` at once, answering each one's output in
+// order. Seeing every file that does not compile at once saves the run it would
+// otherwise take to find the next, so the first failure carries every later one
+// as notes of its own.
+template <typename Compile>
+auto CompileEach(std::size_t count, std::size_t width, Compile compile)
     -> diag::Result<std::vector<ActionResult>> {
-  const stable_hash::Fingerprint runtime_headers =
-      DigestOfTree(runtime.include_root);
-  const std::vector<std::string> flags =
-      CompileFlags(runtime.include_root, host.optimization);
-  // The prelude is compiled before anything reads it, so several compiles
-  // cannot each find it missing and race to build the same file.
-  const std::optional<ActionResult> prelude = pch::EnsureCached(
-      host.cxx, runtime.include_root, runtime_headers, host.pch, actions,
-      host.optimization);
-
-  const status::Phase phase("Compiling C++");
-  status::Pieces(translation_units.size());
   std::vector<ActionResult> compiled;
-  compiled.reserve(translation_units.size());
-  // A build whose emitted text does not compile is a defect in Lyra, and
-  // seeing every such file at once is what saves the run it would otherwise
-  // take to find the next, so the first failure carries every later one as
-  // notes of its own.
+  compiled.reserve(count);
   std::optional<diag::Diagnostic> failures;
   base::ProduceInOrder(
-      translation_units.size(), host.compile_width,
-      [&](std::size_t i) -> diag::Result<ActionResult> {
-        const TranslationUnit& unit = translation_units[i];
-        const status::Piece piece(unit.source_name);
-        return actions.Execute(
-            CompileFile(dir, unit, runtime_headers, host.cxx, flags),
-            [&](const std::filesystem::path& object) {
-              return CompileOne(
-                  dir / unit.relpath, object, host.cxx, flags, prelude,
-                  actions);
-            });
-      },
-      [&](diag::Result<ActionResult> result) {
+      count, width, compile, [&](diag::Result<ActionResult> result) {
         if (!result) {
           if (!failures) {
             failures = std::move(result.error());
@@ -502,17 +558,222 @@ auto CompileTranslationUnits(
   return compiled;
 }
 
-auto LinkProgram(
-    std::span<const std::filesystem::path> objects,
-    const std::filesystem::path& runtime_lib,
-    const std::filesystem::path& program, const std::filesystem::path& cxx)
-    -> diag::Result<void> {
-  std::vector<std::string> args;
-  args.reserve(objects.size() + 3);
-  for (const std::filesystem::path& object : objects) {
-    args.push_back(object.string());
+// The runtime's own sources and what the runtime's build states each compile
+// is told, read from the lists staged beside them, each path made absolute.
+struct RuntimeSources {
+  std::vector<std::filesystem::path> translation_units;
+  std::vector<std::string> flags;
+};
+
+auto ReadLines(const std::filesystem::path& file)
+    -> diag::Result<std::vector<std::string>> {
+  std::ifstream in(file);
+  if (!in) {
+    return diag::Fail(
+        diag::DiagCode::kHostIoError, "cannot read '{}'", file.string());
   }
-  args.push_back(runtime_lib.string());
+  std::vector<std::string> lines;
+  for (std::string line; std::getline(in, line);) {
+    if (!line.empty()) {
+      lines.push_back(std::move(line));
+    }
+  }
+  return lines;
+}
+
+auto ReadRuntimeSources(const std::filesystem::path& root)
+    -> diag::Result<RuntimeSources> {
+  auto sources = ReadLines(root / kRuntimeSourceList);
+  if (!sources) {
+    return std::unexpected(std::move(sources.error()));
+  }
+  auto include_dirs = ReadLines(root / kRuntimeIncludeDirList);
+  if (!include_dirs) {
+    return std::unexpected(std::move(include_dirs.error()));
+  }
+  auto defines = ReadLines(root / kRuntimeDefineList);
+  if (!defines) {
+    return std::unexpected(std::move(defines.error()));
+  }
+  RuntimeSources read;
+  for (const std::string& source : *sources) {
+    read.translation_units.push_back(root / source);
+  }
+  for (const std::string& line : *include_dirs) {
+    // Each line is a flag and the directory it names.
+    const std::size_t space = line.find(' ');
+    if (space == std::string::npos) {
+      throw InternalError(
+          std::format("the runtime's include list holds '{}'", line));
+    }
+    read.flags.push_back(line.substr(0, space));
+    read.flags.push_back((root / line.substr(space + 1)).string());
+  }
+  for (const std::string& define : *defines) {
+    read.flags.push_back("-D" + define);
+  }
+  return read;
+}
+
+}  // namespace
+
+auto CompileTranslationUnits(
+    const std::filesystem::path& dir,
+    std::span<const TranslationUnit> translation_units,
+    const RuntimeLocation& runtime, const HostBuild& host,
+    std::optional<std::string_view> link_time, ActionCache& actions)
+    -> diag::Result<std::vector<ActionResult>> {
+  const stable_hash::Fingerprint runtime_headers =
+      DigestOfTree(runtime.include_root);
+  std::vector<std::string> flags =
+      CompileFlags(runtime.include_root, host.optimization);
+  if (link_time) {
+    flags.emplace_back(*link_time);
+  }
+  // The prelude is compiled before anything reads it, so several compiles
+  // cannot each find it missing and race to build the same file.
+  const std::optional<ActionResult> prelude = pch::EnsureCached(
+      host.cxx, runtime.include_root, runtime_headers, host.pch, actions,
+      host.optimization);
+
+  const status::Phase phase("Compiling C++");
+  status::Pieces(translation_units.size());
+  return CompileEach(
+      translation_units.size(), host.compile_width,
+      [&](std::size_t i) -> diag::Result<ActionResult> {
+        const TranslationUnit& unit = translation_units[i];
+        const status::Piece piece(unit.source_name);
+        return actions.Execute(
+            CompileFile(dir, unit, runtime_headers, host.cxx, flags),
+            [&](const std::filesystem::path& object) {
+              return CompileOne(
+                  dir / unit.relpath, object, host.cxx, flags, prelude,
+                  actions);
+            });
+      });
+}
+
+auto LinkFlagsFor(
+    const LinkTimeForm& form, OptimizationLevel level,
+    const std::optional<std::filesystem::path>& cache)
+    -> std::vector<std::string> {
+  std::vector<std::string> flags{
+      std::string(form.compile), std::string(OptimizationFlag(level))};
+  if (form.cache && cache) {
+    flags.push_back(std::string(form.cache->spelling) + cache->string());
+  }
+  return flags;
+}
+
+auto AcceptedLinkTimeForm(const HostBuild& host, ActionCache& actions)
+    -> std::optional<LinkTimeForm> {
+  Action action("find how the host compiler optimizes at the link");
+  action.InputExecutable("compiler", host.cxx);
+  action.Input("probe", kLinkTimeProbe);
+  for (const LinkTimeForm& form : kLinkTimeForms) {
+    action.Input("compile", form.compile);
+    action.Input("cache", form.cache ? form.cache->spelling : "");
+  }
+  const status::Phase phase("Checking link-time optimization");
+  // The output names the accepted form by its place in the list, and is empty
+  // where none is accepted.
+  auto probed = actions.Execute(
+      action, [&](const std::filesystem::path& output) -> diag::Result<void> {
+        std::filesystem::path dir = output;
+        dir += ".probe";
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        if (ec) {
+          return diag::Fail(
+              diag::DiagCode::kHostIoError, "cannot create '{}' ({})",
+              dir.string(), ec.message());
+        }
+        const std::filesystem::path source = dir / "probe.cpp";
+        const std::filesystem::path object = dir / "probe.o";
+        if (auto written = WriteFile(source, kLinkTimeProbe); !written) {
+          return written;
+        }
+        // Whether the probe compiles and links under `form`.
+        const auto accepts = [&](const LinkTimeForm& form) {
+          const auto succeeds = [&](const std::vector<std::string>& args) {
+            const auto run = RunProcessCaptured(host.cxx, args);
+            return run && run->exit_code == 0;
+          };
+          std::vector<std::string> link =
+              LinkFlagsFor(form, OptimizationLevel::kO2, dir / "cache");
+          link.push_back(object.string());
+          link.emplace_back("-o");
+          link.push_back((dir / "probe").string());
+          return succeeds(
+                     {std::string(form.compile),
+                      std::string(OptimizationFlag(OptimizationLevel::kO2)),
+                      "-c", source.string(), "-o", object.string()}) &&
+                 succeeds(link);
+        };
+        std::string accepted;
+        for (std::size_t i = 0; i < kLinkTimeForms.size(); ++i) {
+          if (accepts(kLinkTimeForms[i])) {
+            accepted = std::format("{}", i);
+            break;
+          }
+        }
+        return WriteFile(output, accepted);
+      });
+  if (!probed) {
+    return std::nullopt;
+  }
+  std::ifstream in(probed->path);
+  std::size_t index = 0;
+  if (!(in >> index) || index >= kLinkTimeForms.size()) {
+    return std::nullopt;
+  }
+  return kLinkTimeForms.at(index);
+}
+
+auto CompileRuntimeSources(
+    const RuntimeLocation& runtime, const HostBuild& host,
+    std::string_view link_time, ActionCache& actions)
+    -> diag::Result<std::vector<ActionResult>> {
+  auto sources = ReadRuntimeSources(runtime.sources_root);
+  if (!sources) {
+    return std::unexpected(std::move(sources.error()));
+  }
+  std::vector<std::string> flags = DesignCompileFlags(host.optimization);
+  flags.insert(flags.end(), sources->flags.begin(), sources->flags.end());
+  flags.emplace_back(link_time);
+  const stable_hash::Fingerprint tree = DigestOfTree(runtime.sources_root);
+
+  const status::Phase phase("Compiling the runtime");
+  status::Pieces(sources->translation_units.size());
+  return CompileEach(
+      sources->translation_units.size(), host.compile_width,
+      [&](std::size_t i) -> diag::Result<ActionResult> {
+        const std::filesystem::path& source = sources->translation_units[i];
+        const status::Piece piece(source.filename().string());
+        Action action("compile runtime source");
+        action.Input(
+            "source", source.lexically_relative(runtime.sources_root).string());
+        action.InputDigest("source tree", tree);
+        action.InputExecutable("compiler", host.cxx);
+        for (const std::string& flag : flags) {
+          action.Input("flag", flag);
+        }
+        return actions.Execute(
+            action, [&](const std::filesystem::path& object) {
+              return CompileOne(
+                  source, object, host.cxx, flags, std::nullopt, actions);
+            });
+      });
+}
+
+auto LinkProgram(
+    std::span<const std::filesystem::path> inputs,
+    std::span<const std::string> flags, const std::filesystem::path& program,
+    const std::filesystem::path& cxx) -> diag::Result<void> {
+  std::vector<std::string> args(flags.begin(), flags.end());
+  for (const std::filesystem::path& input : inputs) {
+    args.push_back(input.string());
+  }
   args.emplace_back("-o");
   args.push_back(program.string());
   const status::Phase phase("Linking");
@@ -692,7 +953,7 @@ auto AssembleProject(
   if (auto r = WriteFile(
           script_path, RenderBuildScript(
                            host.cxx, dpi_inputs, sources.translation_units,
-                           host.optimization));
+                           host.optimization, host.link_time));
       !r) {
     return r;
   }
@@ -708,7 +969,7 @@ auto AssembleProject(
         script_path.string(), ec.message());
   }
 
-  return ExportRuntimeTree(runtime, dir);
+  return ExportRuntimeTree(runtime, dir, host.link_time);
 }
 
 }  // namespace lyra::driver

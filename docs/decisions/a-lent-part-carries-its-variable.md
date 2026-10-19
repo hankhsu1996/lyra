@@ -119,10 +119,10 @@ reference to its whole.**
   copy of its value, that copy's time stamp and a takeover pointer.
 - An overridden write lands in a copy the write keeps, so a write in progress on the execution
   backend is 288 bytes of stack where it was 160.
-- Instruction counts against `main` at `a95e1e07`, `--release`: unpacked-array-write 1,310.8 M to
-  1,314.2 M, compute-block 2,124.4 M to 2,136.8 M. The difference is a fixed cost per write --
-  opening one asks the variable whether it admits the write and whether anything waits, and a whole
-  store reaches the rare state through the variable's base -- and does not grow with the value.
+- Instruction counts against `main` at `a95e1e07`, `-O2`: unpacked-array-write 1,310.8 M to 1,314.2
+  M, compute-block 2,124.4 M to 2,136.8 M. The difference is a fixed cost per write -- opening one
+  asks the variable whether it admits the write and whether anything waits, and a whole store
+  reaches the rare state through the variable's base -- and does not grow with the value.
 - Still refused: a `ref` port connected to a part, because the port is bound before the variable
   takes its declared initial value, and storing a whole value may move the parts of the one it
   replaces. Waiting on a reference to a part is answered by

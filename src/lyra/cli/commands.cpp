@@ -27,6 +27,7 @@
 #include <slang/text/Json.h>
 
 #include "lyra/backend/llvm/emit.hpp"
+#include "lyra/backend/llvm/link_time_optimization.hpp"
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
@@ -118,6 +119,7 @@ auto ResolveHostBuild(const CommandContext& ctx)
       .cxx = *std::move(cxx),
       .pch = ctx.args->pch,
       .optimization = ctx.args->optimization,
+      .link_time = ctx.args->link_time,
       .compile_width = ctx.args->compile_width};
 }
 
@@ -382,7 +384,7 @@ auto LinkRecipe(
     -> ProgramRecipe {
   driver::Action action("link");
   std::vector<std::filesystem::path> linked;
-  linked.reserve(objects.size() + foreign.size());
+  linked.reserve(objects.size() + foreign.size() + 1);
   for (const driver::ActionResult& object : objects) {
     action.InputDigest("object", object.digest);
     linked.push_back(object.path);
@@ -393,18 +395,118 @@ auto LinkRecipe(
     action.InputFile("foreign object", object);
     linked.push_back(object);
   }
+  linked.push_back(runtime.lib);
   return ProgramRecipe{
       .action = std::move(action),
-      .build = [linked = std::move(linked), runtime_lib = runtime.lib,
+      .build = [linked = std::move(linked),
                 cxx = host.cxx](const std::filesystem::path& program) {
         const profiling::StageScope stage("link");
-        return driver::LinkProgram(linked, runtime_lib, program, cxx);
+        return driver::LinkProgram(linked, {}, program, cxx);
+      }};
+}
+
+// Where a link optimizing the whole program keeps what it compiled per module,
+// in `layout`. A build told to keep nothing reads nothing kept either.
+auto LinkTimeCacheDir(const CommandContext& ctx, driver::LinkTimeCache layout)
+    -> std::optional<std::filesystem::path> {
+  if (!ctx.args->store || ctx.args->rebuild) {
+    return std::nullopt;
+  }
+  return driver::LinkTimeCacheIn(*ctx.args->store, layout);
+}
+
+// The C++ backend's program built the plain way: each emitted file compiled
+// at the build's level, and linked with the prebuilt runtime.
+auto PlainCppRecipe(
+    std::span<const driver::TranslationUnit> translation_units,
+    std::span<const std::filesystem::path> foreign,
+    const std::filesystem::path& project,
+    const driver::RuntimeLocation& runtime, const driver::HostBuild& host,
+    driver::ActionCache& actions) -> diag::Result<ProgramRecipe> {
+  auto objects = [&] {
+    const profiling::StageScope stage("host compile");
+    return driver::CompileTranslationUnits(
+        project, translation_units, runtime, host, std::nullopt, actions);
+  }();
+  if (!objects) {
+    return std::unexpected(std::move(objects.error()));
+  }
+  return LinkRecipe(*objects, foreign, runtime, host);
+}
+
+// The C++ backend's program optimized whole by its host compiler at the link,
+// under `form`: the design's files and the runtime's own sources compiled for
+// that, and linked so. The form was accepted by a probe, so a compile or a
+// link refused all the same says only that this build cannot have it, and the
+// program is then built the plain way: a refused compile answers nothing, and a
+// refused link builds that way in its place.
+auto LinkTimeOptimizedCppRecipe(
+    const CommandContext& ctx, const driver::LinkTimeForm& form,
+    std::span<const driver::TranslationUnit> translation_units,
+    std::span<const std::filesystem::path> foreign,
+    const std::filesystem::path& project,
+    const driver::RuntimeLocation& runtime, const driver::HostBuild& host,
+    driver::ActionCache& actions) -> std::optional<ProgramRecipe> {
+  const profiling::StageScope stage("host compile");
+  auto design = driver::CompileTranslationUnits(
+      project, translation_units, runtime, host, form.compile, actions);
+  if (!design) {
+    return std::nullopt;
+  }
+  auto runtime_objects =
+      driver::CompileRuntimeSources(runtime, host, form.compile, actions);
+  if (!runtime_objects) {
+    return std::nullopt;
+  }
+  driver::Action action("link, optimizing the whole program");
+  std::vector<std::filesystem::path> linked;
+  for (const driver::ActionResult& object : *design) {
+    action.InputDigest("object", object.digest);
+    linked.push_back(object.path);
+  }
+  for (const driver::ActionResult& object : *runtime_objects) {
+    action.InputDigest("runtime object", object.digest);
+    linked.push_back(object.path);
+  }
+  action.InputExecutable("linker", host.cxx);
+  action.Input("flag", form.compile);
+  action.Input("level", driver::OptimizationFlag(host.optimization));
+  for (const std::filesystem::path& object : foreign) {
+    action.InputFile("foreign object", object);
+    linked.push_back(object);
+  }
+  std::vector<std::string> link_time = driver::LinkFlagsFor(
+      form, host.optimization,
+      form.cache ? LinkTimeCacheDir(ctx, form.cache->layout) : std::nullopt);
+  return ProgramRecipe{
+      .action = std::move(action),
+      .build = [linked = std::move(linked), link_time = std::move(link_time),
+                translation_units = std::vector<driver::TranslationUnit>(
+                    translation_units.begin(), translation_units.end()),
+                foreign = std::vector<std::filesystem::path>(
+                    foreign.begin(), foreign.end()),
+                project, runtime, host, actions = &actions](
+                   const std::filesystem::path& program) -> diag::Result<void> {
+        {
+          const profiling::StageScope stage("link");
+          if (driver::LinkProgram(linked, link_time, program, host.cxx)) {
+            return {};
+          }
+        }
+        auto plain = PlainCppRecipe(
+            translation_units, foreign, project, runtime, host, *actions);
+        if (!plain) {
+          return std::unexpected(std::move(plain.error()));
+        }
+        return plain->build(program);
       }};
 }
 
 // The C++ backend's program. Each emitted file is compiled by an action
 // reading what the host compiler reads of the project, and the program is
-// linked from what they produced.
+// linked from what they produced -- with the prebuilt runtime, or where the
+// build optimizes at the link, optimized whole with the runtime compiled beside
+// it where the host compiler accepts a way to.
 auto CppProgramRecipe(
     const CommandContext& ctx, const driver::HostBuild& host,
     const driver::RuntimeLocation& runtime,
@@ -420,16 +522,26 @@ auto CppProgramRecipe(
   if (!foreign) {
     return std::nullopt;
   }
-  auto objects = [&] {
-    const profiling::StageScope stage("host compile");
-    return driver::CompileTranslationUnits(
-        project, sources->translation_units, runtime, host, actions);
-  }();
-  if (!objects) {
-    ctx.sink->Report(std::move(objects.error()));
+  switch (host.link_time) {
+    case driver::LinkTimeOptimization::kNone:
+      break;
+    case driver::LinkTimeOptimization::kThin:
+      if (const auto form = driver::AcceptedLinkTimeForm(host, actions)) {
+        if (auto whole = LinkTimeOptimizedCppRecipe(
+                ctx, *form, sources->translation_units, *foreign, project,
+                runtime, host, actions)) {
+          return whole;
+        }
+      }
+      break;
+  }
+  auto plain = PlainCppRecipe(
+      sources->translation_units, *foreign, project, runtime, host, actions);
+  if (!plain) {
+    ctx.sink->Report(std::move(plain.error()));
     return std::nullopt;
   }
-  return LinkRecipe(*objects, *foreign, runtime, host);
+  return *std::move(plain);
 }
 
 // This compiler's own executable. The LLVM backend's code generator is part of
@@ -439,6 +551,65 @@ auto ThisCompiler(const CommandContext& ctx) -> std::filesystem::path {
   std::error_code ec;
   auto self = std::filesystem::read_symlink("/proc/self/exe", ec);
   return ec ? std::filesystem::path(ctx.program_path) : self;
+}
+
+// The execution backend's program where the build optimizes at the link: the
+// design's modules and the runtime's bitcode optimized as one program at the
+// build's level, then linked by the host with the foreign objects and whatever
+// of the runtime carries no bitcode. The optimization is this compiler's own
+// code generation, so the compiler is an input of the action as the host
+// linker is.
+auto LinkTimeOptimizedLlvmRecipe(
+    const CommandContext& ctx, std::span<const driver::ActionResult> modules,
+    std::span<const std::filesystem::path> foreign,
+    const driver::RuntimeLocation& runtime, const driver::HostBuild& host)
+    -> ProgramRecipe {
+  driver::Action action("link, optimizing the whole program");
+  std::vector<std::filesystem::path> module_paths;
+  module_paths.reserve(modules.size());
+  for (const driver::ActionResult& module : modules) {
+    action.InputDigest("module", module.digest);
+    module_paths.push_back(module.path);
+  }
+  action.InputFile("runtime library", runtime.lib);
+  action.InputExecutable("linker", host.cxx);
+  action.InputExecutable("code generator", ThisCompiler(ctx));
+  action.Input("level", driver::OptimizationFlag(host.optimization));
+  std::vector<std::filesystem::path> foreign_paths;
+  foreign_paths.reserve(foreign.size());
+  for (const std::filesystem::path& object : foreign) {
+    action.InputFile("foreign object", object);
+    foreign_paths.push_back(object);
+  }
+  std::optional<std::filesystem::path> cache =
+      LinkTimeCacheDir(ctx, driver::LinkTimeCache::kLlvm);
+  return ProgramRecipe{
+      .action = std::move(action),
+      .build = [module_paths = std::move(module_paths),
+                foreign_paths = std::move(foreign_paths),
+                runtime_lib = runtime.lib, cxx = host.cxx,
+                level = program::LlvmLevelOf(host.optimization),
+                width = host.compile_width, cache = std::move(cache)](
+                   const std::filesystem::path& program) -> diag::Result<void> {
+        std::filesystem::path dir = program;
+        dir += ".objects";
+        auto optimized = [&] {
+          const profiling::StageScope stage("link-time optimization");
+          return backend::llvm_backend::OptimizeAtLink(
+              {.modules = module_paths,
+               .runtime_library = runtime_lib,
+               .machine_code = foreign_paths},
+              level, dir, width, cache);
+        }();
+        if (!optimized) {
+          return std::unexpected(std::move(optimized.error()));
+        }
+        std::vector<std::filesystem::path> linked = *std::move(optimized);
+        linked.insert(linked.end(), foreign_paths.begin(), foreign_paths.end());
+        linked.push_back(runtime_lib);
+        const profiling::StageScope stage("link");
+        return driver::LinkProgram(linked, {}, program, cxx);
+      }};
 }
 
 // The LLVM backend's program. Each unit is taken all the way to its object as
@@ -456,6 +627,7 @@ auto LlvmProgramRecipe(
   }
   const program::ObjectBuild objects{
       .optimization = ctx.args->optimization,
+      .link_time = ctx.args->link_time,
       .code_generator = ThisCompiler(ctx)};
   program::ProgramSink sink;
   const status::Phase phase("Compiling");
@@ -482,7 +654,14 @@ auto LlvmProgramRecipe(
   if (!foreign) {
     return std::nullopt;
   }
-  return LinkRecipe(built->objects, *foreign, runtime, host);
+  switch (host.link_time) {
+    case driver::LinkTimeOptimization::kNone:
+      return LinkRecipe(built->objects, *foreign, runtime, host);
+    case driver::LinkTimeOptimization::kThin:
+      return LinkTimeOptimizedLlvmRecipe(
+          ctx, built->objects, *foreign, runtime, host);
+  }
+  std::unreachable();
 }
 
 auto RecipeFor(

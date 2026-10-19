@@ -476,22 +476,25 @@ def growth_exponent(history: list[tuple[int, float]], target: float) -> float:
 
 def lyra_build_command(
     lyra: str, backend: str, case: Case, out_dir: str, amount: int | None,
+    run_store: str,
 ) -> list[str]:
-    # Every build is a build: a program kept from an earlier probe of the same
-    # amount would be copied rather than compiled, and time the copy. What it
-    # keeps goes in a store of its own, so a measurement leaves nothing in the
-    # user's. And it draws no progress: drawing follows the clock, which moves
-    # a count of the same build from one run to the next.
-    cmd = [
-        lyra, "build", "--rebuild", "--progress=none",
-        "--cache-dir", str(Path(out_dir) / "store"), "--backend", backend,
-    ]
+    # A build draws no progress: drawing follows the clock, which moves a count
+    # of the same build from one run to the next. What it keeps goes in a store
+    # of this run's, so a measurement leaves nothing in the user's.
+    cmd = [lyra, "build", "--progress=none", "--backend", backend]
     # A simulation is timed on the code a user would ship, so its translation
-    # unit is optimized. A build is timed the way an edit loop builds, since
-    # that is the cost it exists to protect and optimizing it would measure the
-    # host compiler's optimizer instead.
+    # unit is optimized together with the runtime. Its build is not timed, so
+    # every such build shares one store, and the runtime's own sources, which
+    # the C++ backend then compiles, are compiled once for the run. A build is
+    # timed the way an edit loop builds, since that is the cost it exists to
+    # protect and optimizing it would measure the host compiler's optimizer
+    # instead; and every timed build is a build, since a program kept from an
+    # earlier probe of the same amount would be copied rather than compiled.
     if case.measure == MEASURE_RUN:
-        cmd.append("--release")
+        cmd.extend(["-O2", "--lto", "--cache-dir", run_store])
+    else:
+        cmd.extend(
+            ["--rebuild", "--cache-dir", str(Path(out_dir) / "store")])
     cmd.extend(["--top", CASE_TOP])
     cmd.extend(["--max-generate-steps", str(MAX_AMOUNT)])
     cmd.extend(["-o", str(Path(out_dir) / BINARY_NAME)])
@@ -749,11 +752,11 @@ def record_measurement(
     result.growth = growth_exponent(history, target)
 
 
-def lyra_tool(lyra: str, backend: str) -> Tool:
+def lyra_tool(lyra: str, backend: str, run_store: str) -> Tool:
     return Tool(
         name=LYRA,
         build=lambda case, out, amount: lyra_build_command(
-            lyra, backend, case, out, amount),
+            lyra, backend, case, out, amount, run_store),
         binary=lambda out: Path(out) / BINARY_NAME,
         backend=backend,
     )
@@ -1157,7 +1160,10 @@ def main() -> None:
         print("error: no cases found", file=sys.stderr)
         sys.exit(1)
 
-    tools = [lyra_tool(lyra, backend) for backend in backends]
+    # Made before the tools that build into it and removed once the run ends,
+    # however it ends.
+    run_store = tempfile.mkdtemp(prefix="lyra-bench-store-")
+    tools = [lyra_tool(lyra, backend, run_store) for backend in backends]
     if args.count:
         metric = METRIC_INSTRUCTIONS
         step = counting_step(amounts)
@@ -1233,6 +1239,7 @@ def main() -> None:
                 stop_every_step()
                 pool.shutdown(wait=True)
     finally:
+        shutil.rmtree(run_store, ignore_errors=True)
         results.sort(key=lambda r: (r.family, r.case, r.tool, r.backend))
         if metric == METRIC_INSTRUCTIONS:
             print_count_report(cases, tools, backends, results, revision)

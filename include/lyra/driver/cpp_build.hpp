@@ -24,10 +24,11 @@
 namespace lyra::driver {
 
 // How this host turns emitted C++ into a program: which compiler to invoke,
-// what to do about the precompiled header, how hard to optimize, and how much
-// of the machine to take while doing it. Resolved once at the CLI boundary and
-// passed unchanged down every path, so the recipe an emitted project carries
-// and the compile Lyra performs cannot disagree about the toolchain.
+// what to do about the precompiled header, how hard to optimize and whether
+// with the runtime, and how much of the machine to take while doing it.
+// Resolved once at the CLI boundary and passed unchanged down every path, so
+// the recipe an emitted project carries and the compile Lyra performs cannot
+// disagree about the toolchain.
 //
 // What a build produces, and whether it works at all, is baked into that
 // recipe. How much of a machine to take, and where to keep things, are not:
@@ -36,7 +37,8 @@ namespace lyra::driver {
 struct HostBuild {
   std::filesystem::path cxx;
   pch::Policy pch = pch::Policy::kAttempt;
-  Optimization optimization = Optimization::kIterate;
+  OptimizationLevel optimization = OptimizationLevel::kO0;
+  LinkTimeOptimization link_time = LinkTimeOptimization::kNone;
   // How many host compiles may run at once, already a positive count.
   std::size_t compile_width = 1;
 };
@@ -177,20 +179,52 @@ auto AssembleProject(
 // portable, while this compiles against the installed runtime and copies
 // nothing. Sharing `HostBuild` is what keeps them agreeing on the toolchain
 // regardless.
+//
+// `link_time` is the flag each compile is also told, where the build optimizes
+// the program whole at the link.
 auto CompileTranslationUnits(
     const std::filesystem::path& dir,
     std::span<const TranslationUnit> translation_units,
-    const RuntimeLocation& runtime, const HostBuild& host, ActionCache& actions)
+    const RuntimeLocation& runtime, const HostBuild& host,
+    std::optional<std::string_view> link_time, ActionCache& actions)
     -> diag::Result<std::vector<ActionResult>>;
 
-// Links a program's objects -- whatever produced them -- with the runtime
-// library into the executable at `program`; a non-zero linker exit surfaces its
-// stderr as a diagnostic. The host C++ compiler drives the link, because the
-// runtime library is C++ and that driver is what names the libraries it needs.
+// The first of `kLinkTimeForms` that `host`'s compiler and the linker it
+// drives accept, found by compiling and linking `kLinkTimeProbe` with each in
+// turn; nothing where none is. Whether one is accepted decides only how long a
+// build takes, never whether it succeeds, so a probe that cannot run answers
+// nothing too. The probe is an action whose inputs are the compiler and the
+// forms, so it runs once per compiler.
+auto AcceptedLinkTimeForm(const HostBuild& host, ActionCache& actions)
+    -> std::optional<LinkTimeForm>;
+
+// What the link is told under `form` at `level`: the compile's flag, the level,
+// which a C++ driver hands its link-time optimization only when the link names
+// one, and where `cache` is given and the form names a cache, that flag and the
+// directory.
+auto LinkFlagsFor(
+    const LinkTimeForm& form, OptimizationLevel level,
+    const std::optional<std::filesystem::path>& cache)
+    -> std::vector<std::string>;
+
+// Compiles the runtime's own sources with the host compiler, as many at once as
+// `host` was told to take, each told what the runtime's build states for it and
+// the flag `link_time`. Each compile is an action whose inputs are the file,
+// the whole source tree it may include from, the compiler and what it is told,
+// so the runtime is compiled once per compiler and stays kept across designs.
+auto CompileRuntimeSources(
+    const RuntimeLocation& runtime, const HostBuild& host,
+    std::string_view link_time, ActionCache& actions)
+    -> diag::Result<std::vector<ActionResult>>;
+
+// Links `inputs` -- objects and archives, whatever produced them -- into the
+// executable at `program`, telling the link `flags`; a non-zero linker exit
+// surfaces its stderr as a diagnostic. The host C++ compiler drives the link,
+// because the runtime library is C++ and that driver is what names the
+// libraries it needs.
 auto LinkProgram(
-    std::span<const std::filesystem::path> objects,
-    const std::filesystem::path& runtime_lib,
-    const std::filesystem::path& program, const std::filesystem::path& cxx)
-    -> diag::Result<void>;
+    std::span<const std::filesystem::path> inputs,
+    std::span<const std::string> flags, const std::filesystem::path& program,
+    const std::filesystem::path& cxx) -> diag::Result<void>;
 
 }  // namespace lyra::driver

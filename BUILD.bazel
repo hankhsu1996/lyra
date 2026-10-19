@@ -3,7 +3,7 @@ load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_static_library.bzl", "cc_static_library")
 load("//tools/bazel:copts.bzl", "LYRA_COPTS")
-load("//tools/bazel:shipped.bzl", "shipped_artifact", "shipped_headers")
+load("//tools/bazel:shipped.bzl", "shipped_artifact", "shipped_headers", "shipped_sources")
 
 # Compile every declared header once on its own, so a header that only builds
 # because some source happened to include its dependency first fails here
@@ -173,9 +173,17 @@ cc_static_library(
     deps = [":runtime"],
 )
 
-# What an emitted program links. Optimized whatever mode built the compiler:
-# a user's simulation runs this code, and none of it is recompiled on their
-# side, so its speed is fixed here and nowhere else.
+# The runtime's source and how it is compiled, for a build under --lto whose
+# own compiler optimizes a program together with the runtime it calls.
+shipped_sources(
+    name = "runtime_sources",
+    lib = ":runtime",
+    root = "runtime_sources",
+    visibility = ["//visibility:public"],
+)
+
+# What an emitted program links. Optimized whatever mode built the compiler,
+# because a user's simulation runs this code as it is shipped.
 shipped_artifact(
     name = "cpp_runtime",
     out = "libcpp_runtime.a",
@@ -327,12 +335,16 @@ cc_library(
         ":support",
         "@llvm-project//llvm:CodeGen",
         "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:IPO",
+        "@llvm-project//llvm:LTO",
         "@llvm-project//llvm:MC",
+        "@llvm-project//llvm:Object",
         "@llvm-project//llvm:Passes",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:TargetParser",
         "@llvm-project//llvm:TransformUtils",
+        "@llvm-project//llvm:X86AsmParser",
         "@llvm-project//llvm:X86CodeGen",
     ],
 )
@@ -466,6 +478,7 @@ cc_binary(
     copts = LYRA_COPTS,
     data = [
         ":cpp_runtime",
+        ":runtime_sources",
         ":runtime_surface",
         "//third_party/systemverilog:svdpi.h",
     ],

@@ -259,7 +259,7 @@ true of this invocation, or of this machine      -> the command line
 Lyra's spelling of it: **does the option change what program is elaborated and lowered, or how this
 run produces and executes it?** Sources, include directories, defines, library search, the top, the
 compilation-unit model, the language version and the assertion policy all change the program. `-o`,
-`--backend`, `--release`, `--rebuild`, `--no-pch`, `--format`, `--color`, `--jobs`, `--cxx` and
+`--backend`, `-O`, `--lto`, `--rebuild`, `--no-pch`, `--format`, `--color`, `--jobs`, `--cxx` and
 `--cache-dir` change only how this run produces, executes or reports on it -- and `--backend` cannot
 change the program at all, since North Star invariant 3 makes correctness independent of which path
 lowers it.
@@ -280,7 +280,7 @@ D1. `lyra.toml` declares a library -- a named object whose parts are its sources
     simply no declaration, never a mode and never a failure.
 
 D2. A field is admitted only if it is true of the design for everyone who builds it. An invocation
-    property (`-o`, `--release`, `--rebuild`, `--backend`, `--format`, `--color` / `--no-color`)
+    property (`-o`, `-O`, `--lto`, `--rebuild`, `--backend`, `--format`, `--color` / `--no-color`)
     and a machine property (`--cxx`, `--cache-dir`, `--no-pch`, `--jobs`) are refused
     by name.
 

@@ -229,7 +229,7 @@ TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
     std::filesystem::path object = entry.path();
     object.replace_extension(".o");
     std::vector<std::string> args =
-        lyra::driver::DesignCompileFlags(lyra::driver::Optimization::kIterate);
+        lyra::driver::DesignCompileFlags(lyra::driver::OptimizationLevel::kO0);
     args.insert(
         args.end(),
         {"-I", (project / "runtime" / "include").string(), "-I",

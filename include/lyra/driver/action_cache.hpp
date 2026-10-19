@@ -10,6 +10,7 @@
 #include <string_view>
 
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/driver/project_layout.hpp"
 #include "lyra/stable_hash/fingerprint.hpp"
 #include "lyra/stable_hash/stable_hasher.hpp"
 
@@ -124,6 +125,15 @@ class ActionCache {
 // writes into, so a command that keeps nothing leaves no trace of having asked.
 auto LocateStore(const std::optional<std::filesystem::path>& override)
     -> std::optional<std::filesystem::path>;
+
+// Where in the store a link that optimizes the whole program keeps each module
+// it compiled, in `layout`, under a key the link derives from everything that
+// compile reads. Each layout has a directory of its own, since each tool prunes
+// only its own files. Clearing the store reaches both. A trim reaches LLVM's as
+// it reaches the store's own entries, since those are flat files named by key,
+// and leaves GCC's to GCC, which prunes it itself.
+auto LinkTimeCacheIn(const std::filesystem::path& store, LinkTimeCache layout)
+    -> std::filesystem::path;
 
 // A name to write `target` under before renaming it into place: unique to this
 // writer, and beside `target`, since a rename is atomic only within one

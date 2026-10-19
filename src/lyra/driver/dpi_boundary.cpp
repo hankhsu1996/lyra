@@ -86,7 +86,7 @@ auto ForeignLanguageFlags(const DpiLinkInput& input)
 
 auto CompileDpiObjects(
     std::span<const DpiLinkInput> inputs, const std::filesystem::path& cxx,
-    Optimization optimization, std::size_t width,
+    OptimizationLevel optimization, std::size_t width,
     const std::filesystem::path& header_dir,
     const std::filesystem::path& work_dir)
     -> diag::Result<std::vector<std::filesystem::path>> {

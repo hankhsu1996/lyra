@@ -35,7 +35,7 @@ enum class Policy : std::uint8_t { kAttempt, kSkip };
 auto EnsureCached(
     const std::filesystem::path& cxx, const std::filesystem::path& include_root,
     const stable_hash::Fingerprint& runtime_headers, Policy policy,
-    ActionCache& actions, Optimization optimization)
+    ActionCache& actions, OptimizationLevel optimization)
     -> std::optional<ActionResult>;
 
 }  // namespace lyra::driver::pch

@@ -1830,34 +1830,37 @@ auto EmitUnitModule(const mir::CompilationUnit& unit)
       .lowered = *std::move(lowered), .module = *std::move(emitted)};
 }
 
-// The code generator's reading of how hard a build was asked to work: the same
-// two levels the host C++ compiler is handed as `-O0` and `-O2`, so a design
-// is optimized alike whichever backend compiles it.
-auto PipelineLevel(driver::Optimization optimization)
-    -> llvm::OptimizationLevel {
-  switch (optimization) {
-    case driver::Optimization::kIterate:
-      return llvm::OptimizationLevel::O0;
-    case driver::Optimization::kRelease:
-      return llvm::OptimizationLevel::O2;
+// What a unit's module is compiled to under a build: machine code where the
+// link only links, and what a link optimizing the program together with the
+// runtime reads where it does -- the same two forms the host C++ compiler is
+// asked for, so a design is optimized alike whichever backend compiles it.
+auto OutputFor(driver::LinkTimeOptimization link_time)
+    -> backend::llvm_backend::ModuleOutput {
+  switch (link_time) {
+    case driver::LinkTimeOptimization::kNone:
+      return backend::llvm_backend::ModuleOutput::kObject;
+    case driver::LinkTimeOptimization::kThin:
+      return backend::llvm_backend::ModuleOutput::kThinLtoBitcode;
   }
-  throw InternalError("a build names no optimization level");
+  std::unreachable();
 }
 
-// The object a module compiles to under this build: the output of the action
+// What a module compiles to under this build: the output of the action
 // compiling it, performed now or found kept.
 auto CompileObject(
     backend::llvm_backend::EmittedModule module, const ObjectBuild& build,
     driver::ActionCache& actions) -> diag::Result<driver::ActionResult> {
-  const llvm::OptimizationLevel level = PipelineLevel(build.optimization);
+  const backend::llvm_backend::ModuleOutput form = OutputFor(build.link_time);
+  const llvm::OptimizationLevel level = LlvmLevelOf(build.optimization);
   driver::Action action("compile LLVM module");
   action.Input("module", module.Print());
   action.InputExecutable("code generator", build.code_generator);
-  action.Input("pipeline level", std::format("O{}", std::to_underlying(level)));
+  action.Input("output", std::format("{}", std::to_underlying(form)));
+  action.Input("level", driver::OptimizationFlag(build.optimization));
   return actions.Execute(
-      action, [&](const std::filesystem::path& object) -> diag::Result<void> {
-        return backend::llvm_backend::WriteObjectFile(
-            std::move(module), object, level);
+      action, [&](const std::filesystem::path& output) -> diag::Result<void> {
+        return backend::llvm_backend::CompileModule(
+            std::move(module), output, level, form);
       });
 }
 
@@ -1948,6 +1951,21 @@ auto ProgramSink::Finish(
   program_.objects.push_back(*std::move(root_object));
   program_.objects.push_back(*std::move(entry_object));
   return std::move(program_);
+}
+
+auto LlvmLevelOf(driver::OptimizationLevel optimization)
+    -> llvm::OptimizationLevel {
+  switch (optimization) {
+    case driver::OptimizationLevel::kO0:
+      return llvm::OptimizationLevel::O0;
+    case driver::OptimizationLevel::kO1:
+      return llvm::OptimizationLevel::O1;
+    case driver::OptimizationLevel::kO2:
+      return llvm::OptimizationLevel::O2;
+    case driver::OptimizationLevel::kO3:
+      return llvm::OptimizationLevel::O3;
+  }
+  std::unreachable();
 }
 
 }  // namespace lyra::program

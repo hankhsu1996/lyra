@@ -9,7 +9,7 @@ variables.
 A variable port connection is two cells and a continuous assignment between them: the instantiator
 evaluates the actual and stores it whole into the child's cell (input), or the reverse (output).
 Writing one element of a large packed value therefore costs the whole value. Measured on the
-execution backend, `--release`: a parent writes one byte of `logic [N-1:0][7:0] mem` connected to a
+execution backend, `-O2`: a parent writes one byte of `logic [N-1:0][7:0] mem` connected to a
 child's input 2000 times, 81.3 M instructions at N=1024 against 1,155.7 M at N=16384 -- 14 times the
 work for 16 times the size, 61% of it moving bits, the rest copying and clearing the whole value. A
 memory written one entry at a time through a hierarchy is the ordinary case, and its cost grew with

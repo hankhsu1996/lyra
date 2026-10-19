@@ -45,7 +45,8 @@ struct ParsedArgs {
   Backend backend = Backend::kCpp;
   support::AssertionPolicy assertions = support::AssertionPolicy::kCheck;
   driver::SourceFormatting formatting = driver::SourceFormatting::kOff;
-  driver::Optimization optimization = driver::Optimization::kIterate;
+  driver::OptimizationLevel optimization = driver::OptimizationLevel::kO0;
+  driver::LinkTimeOptimization link_time = driver::LinkTimeOptimization::kNone;
   driver::pch::Policy pch = driver::pch::Policy::kAttempt;
   // The host C++ compiler a program is compiled or linked with, when the caller
   // named one: a program name or path, never flags.
@@ -87,7 +88,8 @@ struct CliOptions {
   std::optional<bool> format;
   std::optional<std::string> assertions;
   std::optional<bool> no_pch;
-  std::optional<bool> release;
+  std::optional<std::string> optimization;
+  std::optional<bool> link_time;
   std::optional<std::string> config;
   std::optional<std::string> cache_dir;
   std::optional<bool> rebuild;

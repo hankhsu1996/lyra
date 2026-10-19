@@ -78,11 +78,11 @@ is what its text reads.**
 
 - Every such procedure collects its list once at time zero, then waits on it as any other implicit
   list does.
-- Measured on Ibex running its hello program to the software's `$finish` (execution backend,
-  `--release`, callgrind): 14,960,817,187 instructions before, 14,092,511,014 after (5.8% fewer),
-  with the same console output, `$finish` at 26548 and an identical instruction trace. Listing each
-  place once is what makes it a saving: a first measurement without it was 15,187,749,797, a place
-  two reads reached being tested twice on every write.
+- Measured on Ibex running its hello program to the software's `$finish` (execution backend, `-O2`,
+  callgrind): 14,960,817,187 instructions before, 14,092,511,014 after (5.8% fewer), with the same
+  console output, `$finish` at 26548 and an identical instruction trace. Listing each place once is
+  what makes it a saving: a first measurement without it was 15,187,749,797, a place two reads
+  reached being tested twice on every write.
 - A call through a virtual interface inside such a block adds only its arguments, as a call made on
   a class object does; the front end treats it the same way. A list collected once could not follow
   the handle as it changes in any case.

@@ -18,6 +18,7 @@
 #include <gtest/gtest.h>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "lyra/driver/subprocess.hpp"
@@ -135,7 +136,7 @@ TEST(LyraEmittedProject, RebuildsAfterSwitchingOptimization) {
   const std::vector<std::string> rebuild = {
       "-c", "cd '" + out_dir.string() + "' && sh build.sh"};
 
-  for (const std::string_view mode : {"", "--release"}) {
+  for (const std::string_view mode : {"", "-O2"}) {
     std::vector<std::string> args = {"emit", "cpp", "--top",
                                      "Test", "-o",  out_dir.string()};
     if (!mode.empty()) args.emplace_back(mode);
@@ -150,6 +151,132 @@ TEST(LyraEmittedProject, RebuildsAfterSwitchingOptimization) {
     EXPECT_EQ(run.exit_code, 0) << mode << ": " << run.stderr_text;
     EXPECT_NE(run.stdout_text.find("ran 42"), std::string::npos)
         << mode << " stdout: " << run.stdout_text;
+  }
+}
+
+// A build under --lto optimizes the design together with the runtime in the
+// first way the host compiler and the linker it drives accept, which is theirs
+// to say, so whether one is accepted decides how long a build takes and never
+// whether it succeeds. A compiler that refuses to compile for it, a linker that
+// refuses to link so, and a linker that accepts the probe and then refuses the
+// program each still leave a program, from the project's recipe and from the
+// build Lyra runs itself; a toolchain refusing nothing links the program
+// optimized and never falls back. Each is a wrapper around the compiler that
+// watches, and where it refuses fails, exactly that step.
+TEST(
+    LyraEmittedProject,
+    ABuildUnderLtoBuildsWhereLinkTimeOptimizationIsRefused) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto sh_or = lyra::driver::FindOnPath("sh");
+  ASSERT_TRUE(sh_or.has_value()) << sh_or.error().Text();
+
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteTrivialSource(src);
+
+  // A wrapper leaves a file behind each time the step it watches runs, so a
+  // build that never attempted the optimization cannot pass, and one that
+  // refuses nothing leaves another wherever a link takes the prebuilt runtime,
+  // which is the plain build. A compile names `-c`; a link does not, and the
+  // probe's link writes a file named `probe`.
+  struct Wrapper {
+    std::string name;
+    std::string watched;
+    bool refuses = true;
+  };
+  std::vector<std::pair<std::filesystem::path, Wrapper>> cases;
+  for (const std::string_view compiler : {"clang++", "g++"}) {
+    auto real = lyra::driver::FindOnPath(compiler);
+    if (!real) continue;
+    cases.push_back(
+        {*real,
+         {.name = std::format("{}-refuses-compile", compiler),
+          .watched = "*\" -flto\"*\" -c \"*"}});
+    cases.push_back(
+        {*real,
+         {.name = std::format("{}-refuses-link", compiler),
+          .watched = "*\" -c \"*) ;; *\" -flto\"*"}});
+    cases.push_back(
+        {*real,
+         {.name = std::format("{}-refuses-the-program", compiler),
+          .watched = "*\" -c \"*|*\"/probe \"*) ;; *\" -flto\"*"}});
+    cases.push_back(
+        {*real,
+         {.name = std::format("{}-refuses-nothing", compiler),
+          .watched = "*\" -c \"*|*\"/probe \"*) ;; *\" -flto\"*",
+          .refuses = false}});
+  }
+  ASSERT_FALSE(cases.empty()) << "neither clang++ nor g++ is on the PATH";
+
+  for (const auto& [real, watching] : cases) {
+    const std::string& label = watching.name;
+    const auto wrapper = *tmp_or / label;
+    const auto attempted_marker = *tmp_or / (label + ".attempted");
+    const auto plain_marker = *tmp_or / (label + ".plain");
+    std::ofstream(wrapper) << "#!/bin/sh\n"
+                           << "case \" $* \" in " << watching.watched
+                           << ") touch '" << attempted_marker.string() << "'"
+                           << (watching.refuses ? "; exit 1" : "")
+                           << " ;; *libcpp_runtime.a*) touch '"
+                           << plain_marker.string() << "' ;; esac\n"
+                           << "exec '" << real.string() << "' \"$@\"\n";
+    std::filesystem::permissions(
+        wrapper, std::filesystem::perms::owner_all,
+        std::filesystem::perm_options::add);
+
+    const auto out_dir = *tmp_or / ("out-" + label);
+    const std::vector<std::string> emit = {"emit",      "cpp",
+                                           "-O2",       "--lto",
+                                           "--top",     "Test",
+                                           "--cxx",     wrapper.string(),
+                                           "-o",        out_dir.string(),
+                                           src.string()};
+    const auto emitted = RunChildProcess(lyra, emit, 120s);
+    ASSERT_EQ(emitted.exit_code, 0) << label << ": " << emitted.stderr_text;
+    const std::vector<std::string> recipe = {
+        "-c", "cd '" + out_dir.string() + "' && sh build.sh -j 0"};
+    const auto built = RunChildProcess(*sh_or, recipe, 600s);
+    ASSERT_EQ(built.exit_code, 0) << label << ": " << built.stderr_text;
+    EXPECT_TRUE(std::filesystem::exists(attempted_marker))
+        << label << ": the recipe never attempted link-time optimization";
+    EXPECT_EQ(std::filesystem::exists(plain_marker), watching.refuses)
+        << label << ": the recipe's fallback to the plain build";
+    const auto ran = RunChildProcess(out_dir / "program", {}, 30s);
+    EXPECT_NE(ran.stdout_text.find("ran 42"), std::string::npos)
+        << label << " recipe stdout: " << ran.stdout_text;
+
+    std::filesystem::remove(attempted_marker);
+    std::filesystem::remove(plain_marker);
+    const auto program = *tmp_or / ("program-" + label);
+    const std::vector<std::string> build = {
+        "build",
+        "--backend",
+        "cpp",
+        "-O2",
+        "--lto",
+        "-j",
+        "0",
+        "--top",
+        "Test",
+        "--cxx",
+        wrapper.string(),
+        "--cache-dir",
+        (*tmp_or / "cache").string(),
+        "-o",
+        program.string(),
+        src.string()};
+    const auto in_process = RunChildProcess(lyra, build, 600s);
+    ASSERT_EQ(in_process.exit_code, 0)
+        << label << ": " << in_process.stderr_text;
+    EXPECT_TRUE(std::filesystem::exists(attempted_marker))
+        << label << ": the build never attempted link-time optimization";
+    EXPECT_EQ(std::filesystem::exists(plain_marker), watching.refuses)
+        << label << ": the build's fallback to the plain build";
+    const auto ran_in_process = RunChildProcess(program, {}, 30s);
+    EXPECT_NE(ran_in_process.stdout_text.find("ran 42"), std::string::npos)
+        << label << " in-process stdout: " << ran_in_process.stdout_text;
   }
 }
 

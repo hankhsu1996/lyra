@@ -6,6 +6,14 @@ therefore a property of the artifact, not of how the tool that ships it happened
 to be built -- a compiler built for a quick edit-run loop must still hand out a
 runtime worth running.
 
+So is its compiler. A build under --lto optimizes the design's code together
+with this library, which only works where the library carries bitcode
+the LLVM release Lyra links can read; bitcode is read only by the release that
+wrote it or a newer one. The library is therefore always compiled by the clang
+`MODULE.bazel` pins to that release, whichever compiler builds Lyra, and its
+objects carry that bitcode beside their machine code, so a link that does not
+optimize across it reads them as ordinary objects.
+
 The same holds for whatever else a build was asked to compile and link with. A
 program a user builds links this library with their own compiler and nothing
 this build knew, so a library instrumented because the compiler around it is
@@ -19,10 +27,13 @@ under a root of its own makes the set what is there, so the tool reads what this
 build stated rather than what the tree looks like.
 """
 
+load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
+
 def _shipped_transition_impl(_settings, _attr):
     return {
         "//command_line_option:compilation_mode": "opt",
-        "//command_line_option:copt": [],
+        "//command_line_option:copt": ["-flto=thin", "-ffat-lto-objects"],
+        "//command_line_option:extra_toolchains": ["@runtime_clang_toolchain//:all"],
         "//command_line_option:linkopt": [],
     }
 
@@ -32,6 +43,7 @@ _shipped_transition = transition(
     outputs = [
         "//command_line_option:compilation_mode",
         "//command_line_option:copt",
+        "//command_line_option:extra_toolchains",
         "//command_line_option:linkopt",
     ],
 )
@@ -92,6 +104,110 @@ put there.""",
         "strip_prefix": attr.string(
             doc = "Leading path the staged layout drops.",
             mandatory = True,
+        ),
+    },
+)
+
+_RuntimeSourcesInfo = provider(
+    doc = "The files a C++ library and every library below it compile.",
+    fields = {
+        "sources": "depset of the translation units, assembly included",
+        "private_headers": "depset of headers listed among sources",
+    },
+)
+
+_TRANSLATION_UNITS = ["c", "cc", "cpp", "S"]
+
+def _runtime_sources_aspect_impl(_target, ctx):
+    files = getattr(ctx.rule.files, "srcs", [])
+    below = [
+        dep[_RuntimeSourcesInfo]
+        for dep in getattr(ctx.rule.attr, "deps", [])
+        if _RuntimeSourcesInfo in dep
+    ]
+    return [_RuntimeSourcesInfo(
+        sources = depset(
+            [f for f in files if f.extension in _TRANSLATION_UNITS],
+            transitive = [info.sources for info in below],
+        ),
+        private_headers = depset(
+            [f for f in files if f.extension not in _TRANSLATION_UNITS],
+            transitive = [info.private_headers for info in below],
+        ),
+    )]
+
+_runtime_sources_aspect = aspect(
+    implementation = _runtime_sources_aspect_impl,
+    attr_aspects = ["deps"],
+)
+
+def _shipped_sources_impl(ctx):
+    lib = ctx.attr.lib[0]
+    sources = lib[_RuntimeSourcesInfo].sources.to_list()
+    context = lib[CcInfo].compilation_context
+    root = ctx.attr.root.rstrip("/") + "/"
+
+    staged = []
+    for file in sources + context.headers.to_list() + lib[_RuntimeSourcesInfo].private_headers.to_list():
+        out = ctx.actions.declare_file(root + file.path)
+        ctx.actions.symlink(output = out, target_file = file)
+        staged.append(out)
+
+    # How every source is compiled, beside the files, so that whoever compiles
+    # them reads this build's statement of it rather than restating it. Each
+    # line is a flag and its argument, a path relative to the root.
+    # A directory nothing was staged under is a place the build looks for
+    # generated headers this library has none of, and is left out.
+    staged_dirs = {".": True}
+    for file in staged:
+        path = file.short_path[len(root):]
+        for _ in range(path.count("/")):
+            path = path.rpartition("/")[0]
+            staged_dirs[path] = True
+    include_lines = [
+        "%s %s" % (flag, d)
+        for flag, dirs in [
+            ("-iquote", context.quote_includes),
+            ("-isystem", context.includes),
+            ("-isystem", context.system_includes),
+            ("-isystem", context.external_includes),
+        ]
+        for d in dirs.to_list()
+        if d in staged_dirs
+    ]
+    manifests = {
+        "defines.txt": context.defines.to_list(),
+        "include_dirs.txt": include_lines,
+        "sources.txt": [f.path for f in sources],
+    }
+    for name, lines in manifests.items():
+        out = ctx.actions.declare_file(root + name)
+        ctx.actions.write(out, "".join([line + "\n" for line in lines]))
+        staged.append(out)
+    return [DefaultInfo(files = depset(staged))]
+
+shipped_sources = rule(
+    implementation = _shipped_sources_impl,
+    doc = """Gathers the source of `lib` and of every library below it under a root
+holding them and nothing else, with how each is compiled.
+
+A program's own compiler builds the runtime from these where it optimizes the
+program together with it and cannot read the prebuilt library's bitcode. The
+lists beside the files are this build's own: the translation units, the
+include directories, and the macros every compile defines.""",
+    attrs = {
+        "lib": attr.label(
+            aspects = [_runtime_sources_aspect],
+            cfg = _shipped_transition,
+            mandatory = True,
+            providers = [CcInfo],
+        ),
+        "root": attr.string(
+            doc = "Where the sources are staged, as one path segment or more.",
+            mandatory = True,
+        ),
+        "_allowlist_function_transition": attr.label(
+            default = "@bazel_tools//tools/allowlists/function_transition_allowlist",
         ),
     },
 )
