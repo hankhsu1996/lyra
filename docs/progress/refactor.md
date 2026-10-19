@@ -1636,9 +1636,9 @@ enough to warrant its own focused review.
 - [x] R106 -- A command acts on every option it is given, or refuses it by name. Each row of the
       command table states the options that command acts on, so a command added later has to say
       what it takes, and one check refuses every option given outside that set, naming the commands
-      that do take it -- `dump ast --release` and `emit cpp --backend llvm` are refused where they
-      used to run and act on nothing. What is refused is a function of the command alone: an option
-      a command acts on stands where this time it changes nothing, as `--no-pch` does on the backend
+      that do take it -- `dump ast -O2` and `emit cpp --backend llvm` are refused where they used to
+      run and act on nothing. What is refused is a function of the command alone: an option a
+      command acts on stands where this time it changes nothing, as `--no-pch` does on the backend
       that compiles no C++, because a refusal that depends on the combination is one a caller cannot
       predict. The half-fix this entry was written against -- one option refused while four are
       ignored -- is what the per-command set rules out, since every option is judged by the same
@@ -2404,7 +2404,7 @@ enough to warrant its own focused review.
       Done: the write keeps the part it lands on, and an element or slice step taken within the
       write tells it what forming the part did
       (`decisions/a-write-compares-what-it-reached.md`). A clocked 4096-entry memory read by an
-      `always_comb`, 200,000 cycles, `--release`, 2026-09-25: 0.39 s on the execution backend and
+      `always_comb`, 200,000 cycles, `-O2`, 2026-09-25: 0.39 s on the execution backend and
       0.25 s on the C++ backend, from 8.7 s and 3.07 s.
 
 - [ ] R150 -- What a system task, a system function, or a method the language defines on a built-in
@@ -2591,7 +2591,7 @@ enough to warrant its own focused review.
             realized for, held to its own types, and a construct and destroy entry for each.
       - [x] A body's variables are one record in the body's own frame, each variable built in
             place where the body opens and ended on every way out, at a constant offset in between.
-            At `--release`, call-chain went from about 344,000 to about 600,000 iterations a second.
+            At `-O2`, call-chain went from about 344,000 to about 600,000 iterations a second.
       - [x] Closure captures are laid out where the closure is built, filled by the code building
             it, and ended by a body the closure's definition names.
       - [x] The storage a lifetime-extended block keeps (LRM 6.21) is a value of a generated record,
@@ -2601,7 +2601,7 @@ enough to warrant its own focused review.
             record stated in the signature of a unit other units extend it from. The runtime
             allocates a value of the size its class states and each class begins and ends its own
             storage; the separately built storage objects and their schemas are gone. At
-            `--release`, call-chain went from about 247,000 to about 484,000 iterations a second against
+            `-O2`, call-chain went from about 247,000 to about 484,000 iterations a second against
             `a6da3d17`, clock-pipeline about 36,500 to about 45,000 cycles a second, nba-heavy and
             compute-block unchanged.
       - [x] For an instance of the design hierarchy, the runtime begins storage of the shape its
@@ -2857,8 +2857,8 @@ enough to warrant its own focused review.
       of that list needs the list expanded into one definition per row by a build step, which this
       build does not have. Target: each operation's entry is a symbol that is a function of its row,
       defined once per row from the one list, and called directly. Measured on Ibex under callgrind,
-      `--release`, the calls through the table are below the report's threshold, so this is shape
-      and not a cost found. Blocked on the build gaining a step that expands the list.
+      `-O2`, the calls through the table are below the report's threshold, so this is shape and not
+      a cost found. Blocked on the build gaining a step that expands the list.
 
 - [ ] R214 -- Seven places in the library ask a type whether it is integral and how wide, each to
       read an element, a component or a key through the one constant its type is known by: the two

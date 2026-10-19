@@ -20,12 +20,12 @@ file is stale the next change and invites re-measuring to keep it true.
 Simulation execution speed: the cost of running processes, scheduling events, and reading and
 writing state once the object graph is built.
 
-How hard a program is compiled is settled on one axis and open on another. The runtime library an
-emitted program links is optimized as shipped, independent of how the compiler that ships it was
-built, because a user recompiles none of it. The design's own code is compiled unoptimized by
-default and optimized under `--release`, on either backend, which is the one place the build-time /
-run-time trade is a choice: iterating pays the compile on every edit, while a long run earns it
-back. Which level `--release` asks the host compiler for is the open one, and is an entry below.
+How hard a program is compiled is settled. The runtime library an emitted program links is optimized
+as shipped, independent of how the compiler that ships it was built, unless `--lto` optimizes it
+again with the design. The design's own code is compiled at the level `-O` names, unoptimized by
+default as a C++ or Rust compiler's is, on either backend, and `--lto` optimizes it together with
+the runtime it calls; these are the places the build-time / run-time trade is a choice: iterating
+pays the compile on every edit, while a long run earns it back.
 
 Runtime performance is tracked by the benchmark over the corpus under `tests/benchmark/`, which
 builds every case under Lyra, on each backend, and under Verilator and puts the rates side by side.
@@ -224,29 +224,22 @@ operation is a call into a separately compiled runtime, and the optimizer cannot
       vector's whole select is unsigned (LRM 11.8.1) -- a read converts and a write still writes the
       bits.
 
-- [ ] An emitted program is optimized without the runtime library it spends its time in. The
-      design's translation units and the runtime are compiled separately and linked as native
-      objects, so every value operation a design performs is a call the optimizer cannot see into --
-      which is what the middle layer's own contract already says about a runtime helper call, adding
-      that link-time optimization mitigates it but does not eliminate it. Letting the optimizer see
-      the value layer's definitions runs the representative block markedly faster, and on a design
-      of a few units it costs no build time, because each unit then emits only an intermediate form
-      and the optimization happens once at the link.
+- [x] A build asked for `--lto` optimizes the design's code together with the runtime it spends its
+      time in, on both backends, at the level `-O` names. The execution backend runs link-time
+      optimization over the design's modules and the runtime's bitcode itself, a module at a time in
+      parallel and kept per module, so the link stays parallel and an edit recompiles only what it
+      reached. The C++ backend's host compiler compiles the runtime from its source beside the
+      design and links the two its own way, falling back to the plain build wherever the compiler or
+      its linker refuses. The model is
+      [../decisions/the-design-is-optimized-with-the-runtime-at-the-link.md](../decisions/the-design-is-optimized-with-the-runtime-at-the-link.md).
 
-      **What is not measured is the only thing that decides it**: what that single link step costs
-      on a design of a thousand units, where it is one serial whole-program pass rather than three
-      files. That is the end-to-end trade `north_star.md` puts first, and it is the number to get
-      before this is switched on rather than offered.
-
-      Nothing pulls the other way any more. The value layer's operations are compiled once, in the
-      shipped runtime, and a unit calls them; the copies a unit's object once carried, which an
-      earlier reading attributed to those operations, were the runtime's own entries and families,
-      and those are compiled once too now. So what decides this is the link cost above and nothing
-      else.
-
-      **Target shape**: the runtime ships in a form the optimizer can read, and a design build says
-      whether to use it. It is the run-time half of the same axis `--release` already names, so it
-      belongs to that flag's question rather than to a new one.
+- [ ] A process body that ends by finishing the simulation is compiled as though it were almost
+      never run. Finishing does not return, so every path through the body leads somewhere the
+      optimizer reads as rare, and it then declines to inline the runtime's functions into the body
+      -- even under `--lto`, where those functions are in front of it. A testbench whose work sits
+      in an `initial` block ending in `$finish` is the common shape, and the C++ backend's rendering
+      of it has the same property under the host compiler. Not measured on a design apart from the
+      benchmark cases shaped that way.
 
 - [ ] Writing part of a variable costs many times what writing the whole of it does, on both
       backends, and most of it is not the bits written. A write to some bits of a variable opens a
@@ -262,18 +255,14 @@ operation is a call into a separately compiled runtime, and the optimizer cannot
 
       **Target shape**: a write of bits at a known position within a word is that word's masked
       store and an inline change test, with the call into the runtime left to the case where
-      something watches the bits that changed. It meets the entry below from the other side: an
-      optimizer that sees the runtime's definitions recovers part of this by itself, and what it
-      cannot recover is the protocol's own work.
+      something watches the bits that changed. An optimizer under `--lto`, which sees the
+      runtime's definitions, recovers part of this by itself; what it cannot recover is the
+      protocol's own work.
 
-- [ ] Which optimization level a release build asks the host compiler for, and whether a user names
-      it. `--release` asks for the second level on the C++ backend. An operation on a value of one
-      word is reduced to a few instructions by the host compiler folding the value library's short
-      functions into the design's code, and how large a function a compiler folds in differs by
-      compiler and by level. Every one-word operation counted folds at the second level under both
-      clang and gcc, so what the level decides is the operations larger than those. Undecided: what
-      `--release` asks for, and whether an invoker names the level. Not measured: a benchmark
-      design's build time and rate at each level under clang and under gcc.
+- [x] A user names how hard the design is optimized with `-O0` to `-O3`, as a C++ compiler's, and
+      optimizing it with the runtime with `--lto`, apart from it; the default is the unoptimized
+      level and no link-time optimization, as clang's and rustc's are. An operation on a value of
+      one word folds to a few instructions at the second level under both clang and gcc.
 
 - [x] On the execution backend an operation on a value no larger than a frame keeps is instructions
       at the value's own width, where past 64 bits it was a call into the library at a width the

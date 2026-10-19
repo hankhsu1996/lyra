@@ -39,11 +39,18 @@ constexpr std::string_view kTrimMarker = "trimmed";
 constexpr std::string_view kActionCacheDir = "ac";
 constexpr std::string_view kContentDir = "cas";
 
-// Every entry the store holds: each file in each of its two stores.
+// What a link optimizing a whole program compiled per module, one directory
+// for each layout a link may keep it in.
+constexpr std::string_view kLlvmLinkTimeDir = "thinlto";
+constexpr std::string_view kGccLinkTimeDir = "gcc-lto";
+
+// Every entry the store trims: each file in each directory whose files are
+// named by key and laid out flat.
 auto EntriesOf(const std::filesystem::path& store)
     -> std::vector<std::filesystem::path> {
   std::vector<std::filesystem::path> entries;
-  for (const std::string_view dir : {kActionCacheDir, kContentDir}) {
+  for (const std::string_view dir :
+       {kActionCacheDir, kContentDir, kLlvmLinkTimeDir}) {
     std::error_code ec;
     for (const auto& entry :
          std::filesystem::directory_iterator(store / dir, ec)) {
@@ -405,6 +412,17 @@ auto LocateStore(const std::optional<std::filesystem::path>& override)
   return std::nullopt;
 }
 
+auto LinkTimeCacheIn(const std::filesystem::path& store, LinkTimeCache layout)
+    -> std::filesystem::path {
+  switch (layout) {
+    case LinkTimeCache::kLlvm:
+      return store / kLlvmLinkTimeDir;
+    case LinkTimeCache::kGcc:
+      return store / kGccLinkTimeDir;
+  }
+  std::unreachable();
+}
+
 auto TemporaryBeside(const std::filesystem::path& target)
     -> std::filesystem::path {
   std::random_device random;
@@ -444,8 +462,18 @@ auto CopyOut(const std::filesystem::path& from, const std::filesystem::path& to)
 }
 
 auto ClearStore(const std::filesystem::path& store) -> std::size_t {
+  std::vector<std::filesystem::path> entries = EntriesOf(store);
+  // GCC's cache is laid out as GCC lays it out, so every file under it goes.
+  std::error_code walk_ec;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(
+           store / kGccLinkTimeDir, walk_ec)) {
+    std::error_code entry_ec;
+    if (entry.is_regular_file(entry_ec)) {
+      entries.push_back(entry.path());
+    }
+  }
   std::size_t removed = 0;
-  for (const std::filesystem::path& entry : EntriesOf(store)) {
+  for (const std::filesystem::path& entry : entries) {
     std::error_code ec;
     if (std::filesystem::remove(entry, ec)) {
       ++removed;

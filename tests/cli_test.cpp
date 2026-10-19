@@ -385,8 +385,8 @@ TEST(LyraManifest, RefusesWhatAFileCannotDeclare) {
         .body = "[designs]\ntop = [\"a\"]\n",
         .expected = "is not a recognized table"},
        {.name = "invocation-key.toml",
-        .body = "[compile]\nrelease = true\n",
-        .expected = "note: pass '--release' on the command line instead"},
+        .body = "[compile]\nlto = true\n",
+        .expected = "note: pass '--lto' on the command line instead"},
        {.name = "pattern.toml",
         .body = "[library]\nfiles = [\"rtl/*.sv\"]\n",
         .expected = "is a pattern"},
@@ -1904,8 +1904,11 @@ TEST(LyraBuild, UnitsLoweredAtOnceNameLinesTheFileHas) {
 // own right: moved away from where it was built and run after the compiler has
 // exited, it builds a hierarchy spanning units, reads the simulation's
 // arguments off its own argv (LRM 21.6), leaves a task through a departure the
-// caller lands (LRM 9.6.2), and answers with the design's exit status. It does
-// all of that however hard and however wide it was compiled.
+// caller lands (LRM 9.6.2), lets foreign code call back into the design
+// (LRM 35.6), and answers with the design's exit status. It does all of that
+// however hard and however wide it was compiled -- a build optimizing the
+// design with the runtime at the link included, where only what machine code
+// names may stay reachable from outside.
 TEST(LyraBuild, TheLlvmProgramRunsOnItsOwn) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -1918,6 +1921,11 @@ TEST(LyraBuild, TheLlvmProgramRunsOnItsOwn) {
       << "  assign y = a + 1;\n"
       << "endmodule\n"
       << "module Test;\n"
+      << "  import \"DPI-C\" context function int round_trip(int x);\n"
+      << "  export \"DPI-C\" function twice;\n"
+      << "  function int twice(int x);\n"
+      << "    return 2 * x;\n"
+      << "  endfunction\n"
       << "  int src;\n"
       << "  int dst;\n"
       << "  int after_disable;\n"
@@ -1931,22 +1939,29 @@ TEST(LyraBuild, TheLlvmProgramRunsOnItsOwn) {
       << "    leaves();\n"
       << "    #1;\n"
       << "    if ($test$plusargs(\"fail\")) $fatal(1, \"asked\");\n"
-      << "    $display(\"y=%0d after=%0d\", dst, after_disable);\n"
+      << "    $display(\"y=%0d after=%0d back=%0d\", dst, after_disable,\n"
+      << "             round_trip(5));\n"
       << "  end\n"
       << "endmodule\n";
+  const auto foreign = *tmp_or / "foreign.c";
+  std::ofstream(foreign) << "#include \"dpi.h\"\n"
+                         << "int32_t round_trip(int32_t x) {\n"
+                         << "  return twice(x) + 1;\n"
+                         << "}\n";
 
   const auto program = *tmp_or / "program";
   const auto moved = *tmp_or / "moved";
   for (const std::vector<std::string>& how :
        {std::vector<std::string>{},
-        std::vector<std::string>{"--release", "-j", "4"}}) {
+        std::vector<std::string>{"-O2", "--lto", "-j", "4"}}) {
     std::vector<std::string> args = {
-        "build",          "--backend",   "llvm",
-        "--top",          "Test",        "-o",
-        program.string(), "--cache-dir", (*tmp_or / "cache").string()};
+        "build",          "--backend",     "llvm",
+        "--top",          "Test",          "-o",
+        program.string(), "--cache-dir",   (*tmp_or / "cache").string(),
+        "--dpi-link",     foreign.string()};
     args.insert(args.end(), how.begin(), how.end());
     args.push_back(src.string());
-    const std::string label = how.empty() ? "default" : "--release -j 4";
+    const std::string label = how.empty() ? "default" : "-O2 --lto -j 4";
     const auto built = RunChildProcess(lyra, args, 120s);
     ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
         << label << ": " << built.stdout_text << built.stderr_text;
@@ -1956,7 +1971,8 @@ TEST(LyraBuild, TheLlvmProgramRunsOnItsOwn) {
     const auto passed = RunChildProcess(moved, {}, 60s);
     EXPECT_EQ(passed.termination, TerminationKind::kExitedNormally)
         << label << ": " << passed.stdout_text << passed.stderr_text;
-    EXPECT_NE(passed.stdout_text.find("y=42 after=0"), std::string::npos)
+    EXPECT_NE(
+        passed.stdout_text.find("y=42 after=0 back=11"), std::string::npos)
         << label << " stdout: " << passed.stdout_text;
 
     const std::vector<std::string> failing = {"+fail"};
@@ -2079,8 +2095,8 @@ TEST(LyraCommandLine, RefusesAnOptionTheCommandDoesNotActOn) {
     std::string expected;
   };
   const std::vector<Refusal> refusals = {
-      {.args = {"dump", "ast", "--release", src.string()},
-       .expected = "'--release' means nothing to 'dump ast'"},
+      {.args = {"dump", "ast", "--lto", src.string()},
+       .expected = "'--lto' means nothing to 'dump ast'"},
       {.args = {"check", "--backend", "llvm", src.string()},
        .expected = "'--backend' means nothing to 'check'"},
       {.args =
@@ -2113,13 +2129,11 @@ TEST(LyraCommandLine, RefusesAnOptionTheCommandDoesNotActOn) {
 
   // Each option refused is an error of its own.
   const auto both = RunChildProcess(
-      lyra,
-      std::vector<std::string>{"cache", "clear", "--rebuild", "--release"},
+      lyra, std::vector<std::string>{"cache", "clear", "--rebuild", "-O2"},
       60s);
   EXPECT_NE(both.exit_code, 0);
   EXPECT_NE(
-      both.stderr_text.find(
-          "error: '--release' means nothing to 'cache clear'"),
+      both.stderr_text.find("error: '-O' means nothing to 'cache clear'"),
       std::string::npos)
       << both.stderr_text;
   EXPECT_NE(
@@ -2335,9 +2349,9 @@ TEST(LyraBuild, KeepsAProgramByWhatBuiltIt) {
   EXPECT_EQ(KeptActions(store), kActionsBuildingOneModule)
       << "a design built wider performed a step anew";
 
-  auto released =
-      RunLyraFrom(lyra, work, "build --release " + common + " design.sv");
-  ASSERT_EQ(released.exit_code, 0) << released.stderr_text;
+  auto optimized =
+      RunLyraFrom(lyra, work, "build -O2 " + common + " design.sv");
+  ASSERT_EQ(optimized.exit_code, 0) << optimized.stderr_text;
   EXPECT_EQ(KeptActions(store), 2 * kActionsBuildingOneModule)
       << "a design compiled at another level was handed what was kept for the "
          "first";

@@ -90,8 +90,8 @@ there.**
 
 ## Consequences
 
-- compute-block, `--release`, 2026-09-24: **2,870 table passes a second on the execution backend,
-  4,340 on the C++ backend** the same day.
+- compute-block, `-O2`, 2026-09-24: **2,870 table passes a second on the execution backend, 4,340 on
+  the C++ backend** the same day.
 - What a write into an observed variable keeps, and lending a component out of one, are settled by
   [a-write-compares-what-it-reached](a-write-compares-what-it-reached.md) over the place step and
   the assignment this entry decides.

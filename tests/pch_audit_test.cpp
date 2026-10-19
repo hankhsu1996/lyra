@@ -251,7 +251,8 @@ TEST(PchStaleness, CurrencyIsDecidedByContent) {
   auto project_or = lyra::test::MakeScratchDir();
   ASSERT_TRUE(project_or) << project_or.error();
   const auto& project = *project_or;
-  auto exported = lyra::driver::ExportRuntimeTree(*loc_or, project);
+  auto exported = lyra::driver::ExportRuntimeTree(
+      *loc_or, project, lyra::driver::LinkTimeOptimization::kNone);
   ASSERT_TRUE(exported) << exported.error().primary.message;
 
   const auto include_root = project / lyra::driver::kRuntimeIncludeDir;
@@ -269,7 +270,7 @@ TEST(PchStaleness, CurrencyIsDecidedByContent) {
   const auto policy = lyra::driver::pch::Policy::kAttempt;
   lyra::driver::ActionCache actions(
       project / "cache", project / "scratch", true);
-  const auto optimization = lyra::driver::Optimization::kIterate;
+  const auto optimization = lyra::driver::OptimizationLevel::kO0;
   auto built = lyra::driver::pch::EnsureCached(
       *cxx, include_root, lyra::driver::DigestOfTree(include_root), policy,
       actions, optimization);

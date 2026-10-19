@@ -4,6 +4,7 @@
 #include <string_view>
 
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/driver/project_layout.hpp"
 
 namespace lyra::driver {
 
@@ -16,6 +17,9 @@ struct RuntimeLocation {
   std::filesystem::path include_root;
   // The runtime static library to link.
   std::filesystem::path lib;
+  // The root of the runtime's own sources and the lists saying how each is
+  // compiled, for a build whose compiler builds them beside the design.
+  std::filesystem::path sources_root;
   // The standard DPI-C header (LRM 35, Annex I). Not part of the runtime -- no
   // Lyra source includes it -- but shipped alongside so a user's foreign
   // sources compile against the standard declarations.
@@ -29,11 +33,12 @@ struct RuntimeLocation {
 auto ResolveRuntimeLocation(std::string_view binary_path)
     -> diag::Result<RuntimeLocation>;
 
-// Copy the located runtime (header closure plus the static library) into
-// `dest_dir`, matching the relative layout the emitted build recipe references,
-// so an emitted project builds with no external include or link paths.
+// Copy the located runtime into `dest_dir`, matching the relative layout the
+// emitted build recipe references, so an emitted project builds with no
+// external include or link paths: the header closure and the static library,
+// and for a project optimized at the link the runtime's sources as well.
 auto ExportRuntimeTree(
-    const RuntimeLocation& runtime, const std::filesystem::path& dest_dir)
-    -> diag::Result<void>;
+    const RuntimeLocation& runtime, const std::filesystem::path& dest_dir,
+    LinkTimeOptimization link_time) -> diag::Result<void>;
 
 }  // namespace lyra::driver

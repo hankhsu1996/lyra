@@ -46,9 +46,9 @@ virtual interface as it reaches it, so what the wait watches is what this evalua
   published name -- and a call, a virtual method and an export reach it unchanged. Past that test
   the first form is known to hold no report, so it hands the functions it calls none, which is what
   lets a body run for no evaluation carry nothing of one: handing on a report it holds keeps every
-  callee's test live, and on `call-chain` (sixteen nested calls, `--release`, execution backend) the
-  chain stopped inlining, 170 instructions an iteration becoming 485; with the two forms it is 170.
-  A constructor has one form, so the calls its body makes are handed what it was handed, and a call
+  callee's test live, and on `call-chain` (sixteen nested calls, `-O2`, execution backend) the chain
+  stopped inlining, 170 instructions an iteration becoming 485; with the two forms it is 170. A
+  constructor has one form, so the calls its body makes are handed what it was handed, and a call
   chain inside a constructor keeps its tests.
 - **The cells a body reads are a fact of its text**, stated by the unit declaring it: the storage
   outside the body it names, by the longest static prefix (LRM 11.5.3). They are stated whole at
@@ -125,7 +125,7 @@ text rather than at each load.
 
 - **A function call costs one more argument**, a null pointer, and the function one test of it on
   entry, which a call handing a known null folds away. Measured 2026-10-18 against `9680fd52` on the
-  execution backend under callgrind: `call-chain` (`--release`, 20,000 iterations of sixteen calls)
+  execution backend under callgrind: `call-chain` (`-O2`, 20,000 iterations of sixteen calls)
   5,708,612 instructions before and 5,708,304 after; a function walking a 64-node list through
   handles 2,000 times, 21,607,414 before and 21,604,031 after.
 - **Every function's body is compiled twice**, once in each form; what that costs a build is in the

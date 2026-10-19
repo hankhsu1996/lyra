@@ -87,8 +87,8 @@ compiled and weighed, against a ceiling with an order of magnitude of room.
 ## What was rejected
 
 **Building an emitted project optimized by default.** It is worth 11.2x on the object set, and it
-costs build time on every edit, which is the trade `--release` already names and settles the other
-way. It also leaves this in place: the copy is made whatever the optimizer then does with it.
+costs build time on every edit, which is the trade `-O` already names and settles the other way. It
+also leaves this in place: the copy is made whatever the optimizer then does with it.
 
 **Making a unit include less of the surface.** Falsified by the probe above -- including all of it
 and deriving nothing costs a kilobyte. The umbrella header is not what this costs.

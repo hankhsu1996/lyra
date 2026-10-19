@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include <llvm/Passes/OptimizationLevel.h>
+
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/dpi/abi_header.hpp"
 #include "lyra/driver/action_cache.hpp"
@@ -14,11 +16,18 @@
 namespace lyra::program {
 
 // How this build turns a unit's module into an object: how hard to compile
-// it, and which build of the code generator does.
+// it, whether for a link that optimizes it with the runtime, and which build of
+// the code generator does.
 struct ObjectBuild {
-  driver::Optimization optimization;
+  driver::OptimizationLevel optimization;
+  driver::LinkTimeOptimization link_time;
   std::filesystem::path code_generator;
 };
+
+// The pipeline level LLVM runs for `optimization`, which is the one clang runs
+// for the same `-O`.
+auto LlvmLevelOf(driver::OptimizationLevel optimization)
+    -> llvm::OptimizationLevel;
 
 // One unit's part of the program: its object file, and the text of what the
 // unit states of the foreign name space where it states anything.
@@ -32,8 +41,8 @@ struct BuiltUnit {
 // built at once.
 //
 // Compiling is an action of `actions` whose inputs are the module, the code
-// generator and the level, and a kept result of that action is taken instead
-// of compiling.
+// generator and what the module is compiled to, and a kept result of that
+// action is taken instead of compiling.
 // Before either, the module is checked against the runtime library this
 // compiler ships, which is the library the program links: a module naming an
 // entry that library does not publish is refused by name, so the absence is
@@ -43,8 +52,9 @@ auto BuildUnit(
     const mir::CompilationUnit& unit, const ObjectBuild& build,
     driver::ActionCache& actions) -> diag::Result<BuiltUnit>;
 
-// What the program is linked from: one object per unit plus the design root's
-// and the entry the program starts at, and what the units stated of the
+// What the program is linked from: one compiled module per unit -- an object,
+// or under --lto the bitcode its link optimizes -- plus the design root's and
+// the entry the program starts at, and what the units stated of the
 // program's foreign name space (LRM 35), which the foreign sources are compiled
 // against.
 struct ProgramObjects {

@@ -33,13 +33,15 @@ things did, so a check can be built on it.
 ## Ask what you are measuring before you measure
 
 A program Lyra produces has two halves compiled separately: the design's own translation unit, and
-the runtime library it links. The runtime ships optimized whatever built the compiler, so it is
-never the variable. The design's unit is compiled unoptimized unless `--release` says otherwise,
-because iterating pays that compile on every edit.
+the runtime library it links. The runtime ships optimized whatever built the compiler, so without
+`--lto` it is never the variable; with it, it is optimized again at the level `-O` names. The
+design's unit is compiled unoptimized unless `-O` says otherwise, because iterating pays that
+compile on every edit.
 
 **A profile of the default build is a profile of unoptimized code**, and its cost distribution is
 not the optimized one -- inlining collapses whole layers, and the functions that dominate without it
-disappear. Profile `--release` builds, or the ranking is of something nobody runs.
+disappear. Profile optimized builds, or the ranking is of something nobody runs; `--lto` adds the
+runtime's own code to what the optimizer sees, and a profile says which of the two it measured.
 
 ## Tools
 
@@ -58,7 +60,7 @@ Ubuntu's `linux-tools-*` packages, so it is not part of the standard workflow he
 
 ```bash
 bazel build //:lyra
-./bazel-bin/lyra build --top Top --release -o out/program design.sv
+./bazel-bin/lyra build --top Top -O2 --lto -o out/program design.sv
 ```
 
 The cases under `tests/benchmark/` are the designs to measure, each isolating one cost family:

@@ -6,12 +6,26 @@ no third-party libraries. The runtime is, in effect, a small library that ships 
 and that emitted programs link against. The LLVM backend's modules reach it through the C ABI the
 library publishes rather than through its headers.
 
+## What form the runtime ships in
+
+A build asked for `--lto` optimizes the design's code together with the runtime it calls, by the
+compiler that compiles the design, so the runtime ships in a form each such compiler can read
+([../decisions/the-design-is-optimized-with-the-runtime-at-the-link.md](../decisions/the-design-is-optimized-with-the-runtime-at-the-link.md)).
+
+- **The static library carries machine code and bitcode in each object.** The bitcode is that of the
+  LLVM release Lyra links, because the one link that reads it is the execution backend's link under
+  `--lto`. Every other link reads the same objects as machine code.
+- **Its sources ship beside it, with how each is compiled.** The C++ backend's design is compiled by
+  the user's compiler, of any release or family, and source is the one form every such compiler
+  reads. They are stated by the runtime's own build -- the translation units, their include
+  directories and their macros -- so nothing that compiles them restates any of it.
+
 ## Two consumers of the runtime
 
-- **Bundled (portable artifact).** `emit cpp` copies the runtime -- headers and static library --
-  into the output directory alongside the generated sources and a build recipe. The directory is
-  then self-contained: it builds on another machine of the same platform with no Lyra toolchain
-  present.
+- **Bundled (portable artifact).** `emit cpp` copies the runtime -- headers and static library, and
+  for a project built with `--lto` its sources too -- into the output directory alongside the
+  generated sources and a build recipe. The directory is then self-contained: it builds on another
+  machine of the same platform with no Lyra toolchain present.
 - **In place.** `build` and `run`, on either backend, compile and link the design against the
   runtime where it already lives, and copy nothing. What they produce is an executable, which
   carries the library inside it and runs wherever the machine it was linked for does.

@@ -11,8 +11,8 @@ A write into part of a variable something waits on kept a copy of the whole vari
 write, so that when it ended the variable could say whether it changed (LRM 4.3). For an unpacked
 array that is every element, whatever the write touched. A clocked 4096-entry memory written with
 `<=` and read by an `always_comb` ran 200,000 cycles in 8.7 s on the execution backend and 3.07 s on
-the C++ backend (2026-09-25, `--release`), against 0.43 s for the same design with 16 entries. On
-the execution backend 94% of the run was that copy, its comparison and its destruction.
+the C++ backend (2026-09-25, `-O2`), against 0.43 s for the same design with 16 entries. On the
+execution backend 94% of the run was that copy, its comparison and its destruction.
 
 The copy is taken only while a wait is parked on the variable, and a wait that fires is unlinked, so
 it is paid once per wake rather than once per write. A memory read by a combinational process pays
@@ -66,8 +66,8 @@ part tells the write what forming it did.**
   that address. No lowering below MIR distinguishes the kinds of step: that is the C++ rendering of
   the same MIR compiled by clang, one call for one call, and the only difference is that a prebuilt
   library keeps the part's value from before the write in the write rather than in the designation.
-  Measured 2026-09-28 on the clocked 4096-entry memory, `--release`: 0.42 s on the execution backend
-  and 0.26 s on the C++ backend.
+  Measured 2026-09-28 on the clocked 4096-entry memory, `-O2`: 0.42 s on the execution backend and
+  0.26 s on the C++ backend.
 - **Otherwise the part landed on is compared with its value from before the write.** That value is
   kept only where something reads the answer and no step has given it already.
 - **Bits of a packed value are a slice designated within the write** (revised 2026-10-05). The bits
@@ -146,8 +146,8 @@ part tells the write what forming it did.**
 
 ## Consequences
 
-- The clocked 4096-entry memory, 2026-09-25, `--release`: **0.39 s on the execution backend and 0.25
-  s on the C++ backend**, from 8.7 s and 3.07 s.
+- The clocked 4096-entry memory, 2026-09-25, `-O2`: **0.39 s on the execution backend and 0.25 s on
+  the C++ backend**, from 8.7 s and 3.07 s.
 - A part lent to a `ref` formal is not a place a write lands on: the write would report when the
   call's full-expression ends, and a write through a reference is due when it lands.
   [a-lent-part-carries-its-variable](a-lent-part-carries-its-variable.md) lends it as a reference

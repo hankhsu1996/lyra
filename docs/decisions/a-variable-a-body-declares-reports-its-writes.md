@@ -102,7 +102,7 @@ expression reading only such variables.
   history kept per variable rather than per expression.
 - A variable of a process or a task on the C++ backend is a `Var<T>` where it was a bare value: a
   subscriber record, one pointer of rare state, and a test on each write for whether anything waits.
-  Measured with the benchmark runner (C++ backend, `--release`) against `664a06a6`:
+  Measured with the benchmark runner (C++ backend, `-O2`) against `664a06a6`:
   `representative/compute-block` 4,112 to 3,861 table passes/s, `control-flow/loop-tight` 1,642 to
   1,684 passes/s. Making a function's variables cells as well cost `control-flow/call-chain`
   2,700,101 to 1,455,307 iterations/s, which is what the function half of D1 is measured against;

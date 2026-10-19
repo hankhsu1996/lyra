@@ -2,6 +2,7 @@
 
 #include <expected>
 #include <filesystem>
+#include <format>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -84,22 +85,40 @@ auto ResolveRuntimeLocation(std::string_view binary_path)
         diag::DiagCode::kHostIoError,
         "cannot locate the standard DPI-C header");
   }
+  const std::filesystem::path source_list = runfiles->Rlocation(
+      std::format("_main/runtime_sources/{}", kRuntimeSourceList));
+  if (source_list.empty() || !std::filesystem::exists(source_list)) {
+    return diag::Fail(
+        diag::DiagCode::kHostIoError, "cannot locate the Lyra runtime sources");
+  }
   return RuntimeLocation{
       .include_root = anchor.parent_path().parent_path().parent_path(),
       .lib = lib,
+      .sources_root = source_list.parent_path(),
       .svdpi_header = svdpi};
 }
 
 auto ExportRuntimeTree(
-    const RuntimeLocation& runtime, const std::filesystem::path& dest_dir)
-    -> diag::Result<void> {
+    const RuntimeLocation& runtime, const std::filesystem::path& dest_dir,
+    LinkTimeOptimization link_time) -> diag::Result<void> {
   if (auto r = CopyTree(
           runtime.include_root / "lyra",
           dest_dir / kRuntimeIncludeDir / "lyra");
       !r) {
     return r;
   }
-  return CopyFile(runtime.lib, dest_dir / kRuntimeLibDir / kRuntimeLibFile);
+  if (auto r =
+          CopyFile(runtime.lib, dest_dir / kRuntimeLibDir / kRuntimeLibFile);
+      !r) {
+    return r;
+  }
+  switch (link_time) {
+    case LinkTimeOptimization::kNone:
+      return {};
+    case LinkTimeOptimization::kThin:
+      return CopyTree(runtime.sources_root, dest_dir / kRuntimeSourceDir);
+  }
+  std::unreachable();
 }
 
 }  // namespace lyra::driver

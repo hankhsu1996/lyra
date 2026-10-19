@@ -108,7 +108,7 @@ result may carry `EnumType` as its MIR type while its runtime representation is 
   descriptor, and synthesize a different call. The call site must already name the intended
   operation/artifact before rendering (`backend_contract.md`).
 - Code per member in anything the compiler states for an enumeration. It fails iteration time (north
-  star 1): the release build of a real core spent most of its CPU time on it.
+  star 1): the `-O2` build of a real core spent most of its CPU time on it.
 - Dropping `mir::EnumType` because the value carrier is `PackedArray`. The nominal type identity is
   separate from the value representation and is retained where something reads it; below MIR nothing
   does, so LIR carries an enumeration as its base.
@@ -135,11 +135,11 @@ callable lets the optimizer "inline, constant-propagate, eliminate dead arms, an
 tables", which a linked library helper hides. That requirement is real and narrower than the set
 this decision now answers to:
 
-- **The optimizer is the cost, not the remedy.** Ibex's `--release` build spent 540 of 888 CPU
-  seconds in InstCombine on these bodies, the worst of them called from nowhere. One 200-member
-  enumeration did not finish a `--release` build in ten minutes; at 300 members the chain exceeded
-  clang's bracket depth. With the member list as data, the same 200-member design builds in 4.9 s on
-  the C++ backend and 0.8 s on the execution backend.
+- **The optimizer is the cost, not the remedy.** Ibex's `-O2` build spent 540 of 888 CPU seconds in
+  InstCombine on these bodies, the worst of them called from nowhere. One 200-member enumeration did
+  not finish a `-O2` build in ten minutes; at 300 members the chain exceeded clang's bracket depth.
+  With the member list as data, the same 200-member design builds in 4.9 s on the C++ backend and
+  0.8 s on the execution backend.
 - **The default build optimizes nothing.** Design code is compiled unoptimized, so the per-call work
   ran unoptimized as well; the library is prebuilt and always optimized.
 - **Traversing a set in declared order already has one shape.** An associative array's `first` /

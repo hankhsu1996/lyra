@@ -981,6 +981,16 @@ the detail lives in the entry itself.
 
 ### Compile-time model and specialization
 
+- [the-design-is-optimized-with-the-runtime-at-the-link](the-design-is-optimized-with-the-runtime-at-the-link.md)
+  -- `--lto` optimizes the design's code together with the runtime it calls, at the level `-O` names
+  and apart from it: the runtime is compiled by the clang of the LLVM release Lyra links and ships
+  as fat LTO objects, the execution backend runs ThinLTO itself at the link, every function states
+  its processor, and the C++ backend's host compiler compiles the runtime from its source beside the
+  design, in the first way of asking for link-time optimization its toolchain accepts, found once
+  per compiler, with the link's cache in the store and the plain build wherever it is refused. Full
+  LTO, importing the runtime per unit, the host linker reading the prebuilt bitcode, every project
+  carrying the runtime's sources, fat objects attempted in every build, a link without a cache, and
+  one flag carrying both the level and the link-time optimization are rejected.
 - [program-facts-belong-after-compilation](program-facts-belong-after-compilation.md) -- the
   design's link-level unit reads signatures and nothing else, so what is genuinely program-wide
   moves to whoever runs after compilation: a namespace's initializers order themselves by claiming

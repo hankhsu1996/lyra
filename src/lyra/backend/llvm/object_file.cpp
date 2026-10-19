@@ -10,6 +10,7 @@
 
 #include <llvm/Analysis/CGSCCPassManager.h>
 #include <llvm/Analysis/LoopAnalysisManager.h>
+#include <llvm/IR/Function.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/PassManager.h>
@@ -18,14 +19,13 @@
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/CodeGen.h>
 #include <llvm/Support/FileSystem.h>
-#include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Target/TargetOptions.h>
-#include <llvm/TargetParser/Host.h>
-#include <llvm/TargetParser/Triple.h>
+#include <llvm/Transforms/IPO/ThinLTOBitcodeWriter.h>
 
 #include "lyra/backend/llvm/emit.hpp"
+#include "lyra/backend/llvm/target_machine.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -34,80 +34,95 @@ namespace lyra::backend::llvm_backend {
 
 namespace {
 
-// The kind of machine every object is compiled for, and the target that
-// compiles for it.
-struct NativeTarget {
-  llvm::Triple triple;
-  const llvm::Target* target = nullptr;
-};
+// The analyses a pipeline runs with, registered with one another as every
+// pipeline the pass builder makes expects.
+struct Analyses {
+  explicit Analyses(llvm::PassBuilder& builder) {
+    builder.registerModuleAnalyses(modules);
+    builder.registerCGSCCAnalyses(call_graph);
+    builder.registerFunctionAnalyses(functions);
+    builder.registerLoopAnalyses(loops);
+    builder.crossRegisterProxies(loops, functions, call_graph, modules);
+  }
 
-// Registered and looked up once for the whole process, the first time any
-// module is compiled; a function-local static is initialized exactly once
-// however many compiles reach it at the same moment.
-auto ThisMachine() -> const NativeTarget& {
-  static const NativeTarget host = [] {
-    llvm::InitializeNativeTarget();
-    llvm::InitializeNativeTargetAsmPrinter();
-    llvm::Triple triple(llvm::sys::getProcessTriple());
-    std::string lookup_error;
-    const llvm::Target* target =
-        llvm::TargetRegistry::lookupTarget(triple, lookup_error);
-    if (target == nullptr) {
-      throw InternalError(
-          std::format(
-              "llvm codegen: this compiler carries no target for the machine "
-              "it runs on ({}): {}",
-              triple.str(), lookup_error));
-    }
-    return NativeTarget{.triple = std::move(triple), .target = target};
-  }();
-  return host;
-}
-
-// A target machine holds state its code generation writes, so each compile
-// makes its own. No processor is named, so the code uses what every machine of
-// this kind has. The code is position-independent, because the executable the
-// host's linker makes by default is. How hard code generation works follows
-// the pipeline's level, as a C++ compiler's `-O` sets both.
-auto MachineFor(const NativeTarget& host, const llvm::OptimizationLevel& level)
-    -> std::unique_ptr<llvm::TargetMachine> {
-  const llvm::CodeGenOptLevel codegen = level == llvm::OptimizationLevel::O0
-                                            ? llvm::CodeGenOptLevel::None
-                                            : llvm::CodeGenOptLevel::Default;
-  return std::unique_ptr<llvm::TargetMachine>(host.target->createTargetMachine(
-      host.triple, "", "", llvm::TargetOptions{}, llvm::Reloc::PIC_,
-      std::nullopt, codegen));
-}
-
-void RunPipeline(
-    llvm::Module& module, llvm::TargetMachine& machine,
-    const llvm::OptimizationLevel& level) {
-  llvm::PassBuilder builder(&machine);
   llvm::LoopAnalysisManager loops;
   llvm::FunctionAnalysisManager functions;
   llvm::CGSCCAnalysisManager call_graph;
   llvm::ModuleAnalysisManager modules;
-  builder.registerModuleAnalyses(modules);
-  builder.registerCGSCCAnalyses(call_graph);
-  builder.registerFunctionAnalyses(functions);
-  builder.registerLoopAnalyses(loops);
-  builder.crossRegisterProxies(loops, functions, call_graph, modules);
-  builder.buildPerModuleDefaultPipeline(level).run(module, modules);
+};
+
+// A target machine for `kTargetCpu`. A target machine holds state its code
+// generation writes, so each compile makes its own.
+auto CreateTargetMachine(
+    const CompileTarget& target, llvm::CodeGenOptLevel level)
+    -> std::unique_ptr<llvm::TargetMachine> {
+  return std::unique_ptr<llvm::TargetMachine>(
+      target.target->createTargetMachine(
+          target.triple, kTargetCpu, "", llvm::TargetOptions{}, kRelocation,
+          std::nullopt, level));
+}
+
+// Binds a module to the machine it is compiled for. Every function it defines
+// states the processor, as clang states it on every function it emits, because
+// that is what decides whether a call to a function compiled elsewhere may be
+// inlined.
+void BindToMachine(llvm::Module& module, const llvm::TargetMachine& machine) {
+  module.setTargetTriple(machine.getTargetTriple());
+  module.setDataLayout(machine.createDataLayout());
+  for (llvm::Function& function : module) {
+    if (function.isDeclaration()) {
+      continue;
+    }
+    function.addFnAttr("target-cpu", machine.getTargetCPU());
+    function.addFnAttr("tune-cpu", kTuneCpu);
+  }
+}
+
+// What clang does at `-O<n>`: the per-module default pipeline at that level,
+// then machine code at the level clang pairs with it.
+void WriteObject(
+    llvm::Module& module, llvm::OptimizationLevel level,
+    llvm::raw_pwrite_stream& out) {
+  const std::unique_ptr<llvm::TargetMachine> machine =
+      CreateTargetMachine(ProcessTarget(), CodeGenLevelOf(level));
+  BindToMachine(module, *machine);
+  llvm::PassBuilder builder(machine.get());
+  Analyses analyses(builder);
+  builder.buildPerModuleDefaultPipeline(level).run(module, analyses.modules);
+  llvm::legacy::PassManager passes;
+  if (machine->addPassesToEmitFile(
+          passes, out, nullptr, llvm::CodeGenFileType::ObjectFile)) {
+    throw InternalError(
+        std::format(
+            "llvm codegen: the target for {} cannot write an object file",
+            machine->getTargetTriple().str()));
+  }
+  passes.run(module);
+}
+
+// What clang does at `-O<n> -flto=thin`: the ThinLTO pre-link pipeline at that
+// level, then the module written as bitcode with its summary.
+void WriteThinLtoBitcode(
+    llvm::Module& module, llvm::OptimizationLevel level,
+    llvm::raw_ostream& out) {
+  const std::unique_ptr<llvm::TargetMachine> machine =
+      CreateTargetMachine(ProcessTarget(), CodeGenLevelOf(level));
+  BindToMachine(module, *machine);
+  llvm::PassBuilder builder(machine.get());
+  Analyses analyses(builder);
+  llvm::ModulePassManager passes =
+      builder.buildThinLTOPreLinkDefaultPipeline(level);
+  passes.addPass(llvm::ThinLTOBitcodeWriterPass(out, nullptr));
+  passes.run(module, analyses.modules);
 }
 
 }  // namespace
 
-auto WriteObjectFile(
-    EmittedModule module, const std::filesystem::path& object,
-    const llvm::OptimizationLevel& level) -> diag::Result<void> {
-  const NativeTarget& host = ThisMachine();
-  const std::unique_ptr<llvm::TargetMachine> machine = MachineFor(host, level);
+auto CompileModule(
+    EmittedModule module, const std::filesystem::path& output,
+    llvm::OptimizationLevel level, ModuleOutput form) -> diag::Result<void> {
   EmittedModule::Owned owned = std::move(module).Release();
-  owned.module->setTargetTriple(host.triple);
-  owned.module->setDataLayout(machine->createDataLayout());
-  RunPipeline(*owned.module, *machine, level);
-
-  const std::string path = object.string();
+  const std::string path = output.string();
   std::error_code opened;
   llvm::raw_fd_ostream out(path, opened, llvm::sys::fs::OF_None);
   if (opened) {
@@ -115,15 +130,14 @@ auto WriteObjectFile(
         diag::DiagCode::kHostIoError, "cannot open '{}' for writing ({})", path,
         opened.message());
   }
-  llvm::legacy::PassManager passes;
-  if (machine->addPassesToEmitFile(
-          passes, out, nullptr, llvm::CodeGenFileType::ObjectFile)) {
-    throw InternalError(
-        std::format(
-            "llvm codegen: the target for {} cannot write an object file",
-            host.triple.str()));
+  switch (form) {
+    case ModuleOutput::kObject:
+      WriteObject(*owned.module, level, out);
+      break;
+    case ModuleOutput::kThinLtoBitcode:
+      WriteThinLtoBitcode(*owned.module, level, out);
+      break;
   }
-  passes.run(*owned.module);
   out.close();
   if (out.has_error()) {
     // A stream still holding an error when it is destroyed ends the process,

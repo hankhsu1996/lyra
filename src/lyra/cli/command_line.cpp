@@ -49,7 +49,8 @@ enum class LyraOption : std::uint8_t {
   kFormat,
   kAssertions,
   kConfig,
-  kRelease,
+  kOptimization,
+  kLinkTime,
   kNoPch,
   kCacheDir,
   kRebuild,
@@ -119,10 +120,11 @@ constexpr OptionSet kRewritesMir =
     OptionSet{LyraOption::kMirEnablePasses, LyraOption::kMirVerifyEach};
 // What building the design's program acts on besides.
 constexpr OptionSet kBuildsAProgram =
-    kRewritesMir | OptionSet{LyraOption::kRelease,  LyraOption::kNoPch,
-                             LyraOption::kCacheDir, LyraOption::kRebuild,
-                             LyraOption::kCxx,      LyraOption::kJobs,
-                             LyraOption::kBackend,  LyraOption::kDpiLink};
+    kRewritesMir | OptionSet{LyraOption::kOptimization, LyraOption::kLinkTime,
+                             LyraOption::kNoPch,        LyraOption::kCacheDir,
+                             LyraOption::kRebuild,      LyraOption::kCxx,
+                             LyraOption::kJobs,         LyraOption::kBackend,
+                             LyraOption::kDpiLink};
 
 // Where a command shows what it is doing when nobody said. The error stream
 // carries it, so the answer follows from what else the command's streams are
@@ -196,8 +198,9 @@ constexpr auto kCommands = std::to_array<CommandSpec>(
       .status = SaysStatus::kAlways,
       .takes = kRewritesMir |
                OptionSet{
-                   LyraOption::kFormat, LyraOption::kRelease, LyraOption::kCxx,
-                   LyraOption::kOut, LyraOption::kDpiLink}},
+                   LyraOption::kFormat, LyraOption::kOptimization,
+                   LyraOption::kLinkTime, LyraOption::kCxx, LyraOption::kOut,
+                   LyraOption::kDpiLink}},
      {.verb = "build",
       .object = "",
       .kind = CommandKind::kBuild,
@@ -231,8 +234,10 @@ auto Spelling(LyraOption option) -> std::string_view {
       return "--assertions";
     case LyraOption::kConfig:
       return "--config";
-    case LyraOption::kRelease:
-      return "--release";
+    case LyraOption::kOptimization:
+      return "-O";
+    case LyraOption::kLinkTime:
+      return "--lto";
     case LyraOption::kNoPch:
       return "--no-pch";
     case LyraOption::kCacheDir:
@@ -282,8 +287,10 @@ auto IsGiven(
       return opts.assertions.has_value();
     case LyraOption::kConfig:
       return opts.config.has_value();
-    case LyraOption::kRelease:
-      return opts.release.has_value();
+    case LyraOption::kOptimization:
+      return opts.optimization.has_value();
+    case LyraOption::kLinkTime:
+      return opts.link_time.has_value();
     case LyraOption::kNoPch:
       return opts.no_pch.has_value();
     case LyraOption::kCacheDir:
@@ -342,6 +349,24 @@ auto ParseAssertionPolicy(std::string_view name)
       kNames = {
           {{"check", support::AssertionPolicy::kCheck},
            {"skip", support::AssertionPolicy::kSkip}}};
+  const auto* const it =
+      std::ranges::find(kNames, name, &decltype(kNames)::value_type::first);
+  if (it == kNames.end()) {
+    return std::nullopt;
+  }
+  return it->second;
+}
+
+// The spelling of each optimization level after `-O`, in the same shape.
+auto ParseOptimizationLevel(std::string_view name)
+    -> std::optional<driver::OptimizationLevel> {
+  static constexpr std::array<
+      std::pair<std::string_view, driver::OptimizationLevel>, 4>
+      kNames = {
+          {{"0", driver::OptimizationLevel::kO0},
+           {"1", driver::OptimizationLevel::kO1},
+           {"2", driver::OptimizationLevel::kO2},
+           {"3", driver::OptimizationLevel::kO3}}};
   const auto* const it =
       std::ranges::find(kNames, name, &decltype(kNames)::value_type::first);
   if (it == kNames.end()) {
@@ -550,8 +575,14 @@ void RegisterCliOptions(slang::CommandLine& cmd, CliOptions& opts) {
       "read this lyra.toml instead of searching for one", "<file>",
       slang::CommandLineFlags::FilePath);
   cmd.add(
-      "--release", opts.release,
-      "optimize the simulation rather than the time to build it");
+      "-O", opts.optimization,
+      "how hard the design's code is optimized, as a C++ compiler's -O: a "
+      "higher level builds slower and simulates faster; 0 when not given",
+      "0|1|2|3");
+  cmd.add(
+      "--lto", opts.link_time,
+      "optimize the design together with the runtime it calls, at the link, "
+      "at the level -O gives");
   cmd.add(
       "--no-pch", opts.no_pch,
       "compile the C++ backend's output without a precompiled header");
@@ -996,9 +1027,18 @@ auto ResolveCliOptions(
   out.simulation_args.assign(simulation_args.begin(), simulation_args.end());
   out.formatting = opts.format.value_or(false) ? driver::SourceFormatting::kOn
                                                : driver::SourceFormatting::kOff;
-  out.optimization = opts.release.value_or(false)
-                         ? driver::Optimization::kRelease
-                         : driver::Optimization::kIterate;
+  if (opts.optimization) {
+    auto level = ParseOptimizationLevel(*opts.optimization);
+    if (!level) {
+      return diag::Fail(
+          diag::DiagCode::kHostInvalidCliArgs,
+          "'{}' given to '-O' is not one of 0, 1, 2 and 3", *opts.optimization);
+    }
+    out.optimization = *level;
+  }
+  out.link_time = opts.link_time.value_or(false)
+                      ? driver::LinkTimeOptimization::kThin
+                      : driver::LinkTimeOptimization::kNone;
   out.pch = opts.no_pch.value_or(false) ? driver::pch::Policy::kSkip
                                         : driver::pch::Policy::kAttempt;
   out.cxx = opts.cxx;

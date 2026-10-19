@@ -26,8 +26,8 @@ backend's rendering of it; the one allowed difference is what its prebuilt runti
 The execution backend held every tuple as one erased runtime object: a heap vector of boxed
 components, with every operation written again as a fold over that vector. Building an answer boxed
 each component, reading one was a runtime call, and a struct variable's every write rebuilt the
-vector. On call-chain (`--release`, callgrind, 20,000 iterations) the tuple entries were about a
-fifth of the run.
+vector. On call-chain (`-O2`, callgrind, 20,000 iterations) the tuple entries were about a fifth of
+the run.
 
 The runtime is compiled once, before any tuple type exists, and its value families -- a variable's
 cell, a net, a driver, a history, a container's element -- are instantiated over one type per
@@ -92,9 +92,9 @@ through it.
 
 ## Consequences
 
-- Measured on `--release`, callgrind, 20,000 iterations, against main: call-chain 1,032.0 M to 851.3
-  M instructions, and a loop copying a struct variable through a function and back 278.7 M to 236.3
-  M. Ibex's execution trace is identical to main's.
+- Measured on `-O2`, callgrind, 20,000 iterations, against main: call-chain 1,032.0 M to 851.3 M
+  instructions, and a loop copying a struct variable through a function and back 278.7 M to 236.3 M.
+  Ibex's execution trace is identical to main's.
 - A tuple costs one word more than its components: the table's address.
 - The table is the execution backend's alone. It exists because the runtime's value families hold a
   tuple erased over its domain, so the C++ backend, whose families the host compiler instantiates

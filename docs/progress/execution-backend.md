@@ -567,15 +567,13 @@ each meets the same lifetime question above.
       every merge is counted on it against its parent. The shipped examples still run on the C++
       path.
 - [x] **An optimization pipeline.** A module goes through the toolchain's standard pipeline at the
-      level the build asked for -- unoptimized by default, optimized under `--release`, as the C++
+      level the build asked for -- unoptimized by default, `-O1` to `-O3` otherwise, as the C++
       path's design code is -- and that pipeline is also what makes a suspending body executable, at
-      either level. A program built at one level is kept apart from the same design built at the
-      other.
+      every level. A program built at one level is kept apart from the same design built at another.
 - [x] **As wide as the build was told, from lowering on.** As many units go from their semantic
       model to a module at once as `-j` allows, and as many modules are compiled to objects; what
       the units make is still collected in the order the design lists them, so the program is the
-      same however many ran at once. Measured on the RISC-V core at `-j 4`: 7.2 s to build by
-      default and 27.0 s under `--release`, where the C++ path takes 51.8 s and 679 s.
+      same however many ran at once.
 - [ ] **What optimizing the design's module buys at run time.** Not measured since an operation on a
       value of up to 64 bits became instructions in the module. When every operation was a call into
       the runtime library, a loop of two million iterations ran in the same time at either level.

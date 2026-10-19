@@ -35,37 +35,46 @@ namespace fs = std::filesystem;
 
 constexpr std::string_view kManifestFileName = "lyra.toml";
 
-// Keys naming a property of one invocation or one machine. They are refused
-// with the rule rather than as unrecognized, because whoever wrote one had a
-// coherent idea and needs to hear why this file is not its home.
-constexpr std::array<std::string_view, 14> kInvocationKeys = {
-    "out",
-    "backend",
-    "release",
-    "cxx",
-    "format",
-    "no_pch",
-    "rebuild",
-    "cache_dir",
-    "color",
-    "no_color",
-    "jobs",
-    "time_trace",
-    "time_trace_granularity",
-    "stats_file"};
+// Keys naming a property of one invocation or one machine, each with the
+// option that says it. They are refused with the rule rather than as
+// unrecognized, because whoever wrote one had a coherent idea and needs to
+// hear why this file is not its home.
+struct InvocationKey {
+  std::string_view key;
+  std::string_view option;
+};
+
+constexpr std::array<InvocationKey, 15> kInvocationKeys = {{
+    {.key = "out", .option = "--out"},
+    {.key = "backend", .option = "--backend"},
+    {.key = "optimization", .option = "-O"},
+    {.key = "lto", .option = "--lto"},
+    {.key = "cxx", .option = "--cxx"},
+    {.key = "format", .option = "--format"},
+    {.key = "no_pch", .option = "--no-pch"},
+    {.key = "rebuild", .option = "--rebuild"},
+    {.key = "cache_dir", .option = "--cache-dir"},
+    {.key = "color", .option = "--color"},
+    {.key = "no_color", .option = "--no-color"},
+    {.key = "jobs", .option = "--jobs"},
+    {.key = "time_trace", .option = "--time-trace"},
+    {.key = "time_trace_granularity", .option = "--time-trace-granularity"},
+    {.key = "stats_file", .option = "--stats-file"},
+}};
 
 auto Contains(std::span<const std::string_view> names, std::string_view name)
     -> bool {
   return std::ranges::find(names, name) != names.end();
 }
 
-// The option a key naming a property of one invocation stands for.
-auto OptionSpelling(std::string_view key) -> std::string {
-  std::string option = "--";
-  for (const char c : key) {
-    option += c == '_' ? '-' : c;
+// The option standing for `key`, where it names a property of one invocation.
+auto InvocationOption(std::string_view key) -> std::optional<std::string_view> {
+  const auto* const found =
+      std::ranges::find(kInvocationKeys, key, &InvocationKey::key);
+  if (found == kInvocationKeys.end()) {
+    return std::nullopt;
   }
-  return option;
+  return found->option;
 }
 
 // One declaration's text, as the source manager holds it, so a place in it is
@@ -169,16 +178,14 @@ auto CheckKeys(
     if (Contains(known, name)) {
       continue;
     }
-    if (Contains(kInvocationKeys, name)) {
+    if (const auto option = InvocationOption(name)) {
       return std::unexpected(
           Refusal(
               file, entry.first.source(),
               "'[{}] {}' names a property of one invocation or one machine, "
               "not of what the file declares",
               table, name)
-              .WithNote(
-                  "pass '{}' on the command line instead",
-                  OptionSpelling(name)));
+              .WithNote("pass '{}' on the command line instead", *option));
     }
     return Fail(
         file, entry.first.source(), "'[{}] {}' is not a recognized key", table,
@@ -594,16 +601,14 @@ auto LoadManifest(const fs::path& path, slang::SourceManager& sources)
   for (const auto& entry : root) {
     const std::string_view name = entry.first.str();
     if (!Contains(kTables, name)) {
-      if (Contains(kInvocationKeys, name)) {
+      if (const auto option = InvocationOption(name)) {
         return std::unexpected(
             Refusal(
                 file, entry.first.source(),
                 "'{}' names a property of one invocation or one machine, not "
                 "of what the file declares",
                 name)
-                .WithNote(
-                    "pass '{}' on the command line instead",
-                    OptionSpelling(name)));
+                .WithNote("pass '{}' on the command line instead", *option));
       }
       return Fail(
           file, entry.first.source(), "'[{}]' is not a recognized table", name);

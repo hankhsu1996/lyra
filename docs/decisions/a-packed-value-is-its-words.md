@@ -44,9 +44,10 @@ What the answer rests on:
   over two planes.
 - Every expression's width and signedness come from its type, and the front end hands each operator
   operands of its own type (LRM 11.6, 11.8).
-- The runtime library is compiled by the host compiler that builds Lyra, and Lyra links its own LLVM
-  release. LLVM bitcode is read only by the same or a newer LLVM, so no bitcode of the runtime
-  exists for the execution backend to inline.
+- The runtime library carries bitcode of the LLVM release Lyra links, and the execution backend
+  reads it only where a build asked for `--lto` optimizes the program whole at its link
+  ([the-design-is-optimized-with-the-runtime-at-the-link](the-design-is-optimized-with-the-runtime-at-the-link.md)).
+  A default build inlines none of it.
 - Emitted C++ is held to a small multiple of the SystemVerilog it came from, so text per operation
   and type in every unit is not affordable; a header template costs a unit no lines.
 - A design's own code is compiled unoptimized by default, because the time from an edit to a running
@@ -392,12 +393,12 @@ D3 an operation costs the bits it touches.
 
 Where the execution backend's four-state formula could live:
 
-| Alternative                                                                                    | The requirement it fails                                                                                                                                 |
-| ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The runtime's own implementation compiled to bitcode and inlined into each module              | The host compiler and Lyra's LLVM are different compilers by construction and bitcode reads only forward, so the build cannot produce it.                |
-| HIR-to-MIR synthesizes one MIR function per operation and type, compiled by both backends      | Emitted text per unit must not grow with the operations and types a unit uses.                                                                           |
-| Prebuilt word routines called for every operation                                              | An operation costs the bits it touches: a call per 32-bit add is the cost being removed.                                                                 |
-| The layer below MIR restates each four-state operation on exact-width integers and their pairs | Correct, and the first design. It adds a level only the code generator reads, where the operand type already decides the operation as it does for rustc. |
+| Alternative                                                                                    | The requirement it fails                                                                                                                                                                  |
+| ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The runtime's own implementation compiled to bitcode and inlined into each module              | Only a build asked for `--lto` reads the runtime's bitcode, at its link, so a default build would make a call for every operation; an operation costs the bits it touches in every build. |
+| HIR-to-MIR synthesizes one MIR function per operation and type, compiled by both backends      | Emitted text per unit must not grow with the operations and types a unit uses.                                                                                                            |
+| Prebuilt word routines called for every operation                                              | An operation costs the bits it touches: a call per 32-bit add is the cost being removed.                                                                                                  |
+| The layer below MIR restates each four-state operation on exact-width integers and their pairs | Correct, and the first design. It adds a level only the code generator reads, where the operand type already decides the operation as it does for rustc.                                  |
 
 And beside them:
 
@@ -450,10 +451,10 @@ And beside them:
 - The runtime value class that carried its own width, signedness and state domain, the record of an
   integral type made while the program runs, the type and range descriptions for packed types, and
   the runtime entries that performed a packed operation up to a word are gone on both backends.
-- Measured on Ibex, whole run under callgrind, `--release`, both programs ending at `$finish` at
-  26548: the execution backend 7.16 G instructions, from 13.13 G before this entry, against
-  Verilator's 0.122 G. The C++ backend 3.03 G from 10.87 G, measured on the merged tree, so what
-  else merged in between is in that figure.
+- Measured on Ibex, whole run under callgrind, `-O2`, both programs ending at `$finish` at 26548:
+  the execution backend 7.16 G instructions, from 13.13 G before this entry, against Verilator's
+  0.122 G. The C++ backend 3.03 G from 10.87 G, measured on the merged tree, so what else merged in
+  between is in that figure.
 - The C++ backend's compile time under one instantiation per distinct type, which
   [a-value-is-its-machine-data](a-value-is-its-machine-data.md) says is measured on the way, has not
   been measured; this entry was accepted without it.
@@ -463,11 +464,11 @@ And beside them:
   Measured on that design: the execution backend builds either width in under two seconds and the
   C++ backend in about six, and the two programs differ in size by under a hundred bytes.
 - Writing one 8-bit element of a packed array costs the element wherever the array lies. Measured as
-  20,000 such writes at 1,024, 16,384 and 262,144 elements, `--release`, process start included,
-  writes into a variable take 3, 3 and 4 ms on the execution backend and 2, 3 and 3 ms on the C++
-  backend, and writes into a subroutine's own local 2, 2 and 3 ms on the execution backend and 2, 2
-  and 2 ms on the C++ backend. While the execution backend rebuilt a local to change part of it, the
-  same writes into a local took 7, 42 and 638 ms there.
+  20,000 such writes at 1,024, 16,384 and 262,144 elements, `-O2`, process start included, writes
+  into a variable take 3, 3 and 4 ms on the execution backend and 2, 3 and 3 ms on the C++ backend,
+  and writes into a subroutine's own local 2, 2 and 3 ms on the execution backend and 2, 2 and 2 ms
+  on the C++ backend. While the execution backend rebuilt a local to change part of it, the same
+  writes into a local took 7, 42 and 638 ms there.
 - A fill or an extension of a type too large for a frame is carried out each time it is evaluated, a
   pass over the value, where naming a constant was a copy of the same length.
 - The size past which a value is kept out of a frame, 1024 bytes, is the figure Verilator uses for

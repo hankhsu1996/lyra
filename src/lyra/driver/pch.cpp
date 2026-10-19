@@ -31,7 +31,8 @@ auto IsClangCompiler(const std::filesystem::path& cxx) -> bool {
 // Everything the compiler is told when a prelude is prepared. One list, so the
 // command that prepares one and the action it is kept under cannot describe
 // different things.
-auto PreparationFlags(Optimization optimization) -> std::vector<std::string> {
+auto PreparationFlags(OptimizationLevel optimization)
+    -> std::vector<std::string> {
   std::vector<std::string> flags = DesignCompileFlags(optimization);
   flags.emplace_back(kPchContentValidationFlag);
   flags.emplace_back(kPchInstantiateTemplatesFlag);
@@ -47,8 +48,8 @@ auto PreparationFlags(Optimization optimization) -> std::vector<std::string> {
 // last covers the whole command line a preparation runs.
 auto PrepareHeader(
     const std::filesystem::path& cxx, const std::filesystem::path& include_root,
-    const stable_hash::Fingerprint& runtime_headers, Optimization optimization)
-    -> Action {
+    const stable_hash::Fingerprint& runtime_headers,
+    OptimizationLevel optimization) -> Action {
   Action action("prepare header");
   action.InputExecutable("compiler", cxx);
   std::error_code ec;
@@ -70,7 +71,7 @@ auto PrepareHeader(
 // rewrite that leaves the bytes alone cannot make the two disagree.
 auto BuildAt(
     const std::filesystem::path& cxx, const std::filesystem::path& include_root,
-    const std::filesystem::path& pch_path, Optimization optimization)
+    const std::filesystem::path& pch_path, OptimizationLevel optimization)
     -> diag::Result<void> {
   const auto prelude = include_root / support::kRuntimePreludeHeader;
   std::vector<std::string> args = PreparationFlags(optimization);
@@ -98,7 +99,7 @@ auto BuildAt(
 auto EnsureCached(
     const std::filesystem::path& cxx, const std::filesystem::path& include_root,
     const stable_hash::Fingerprint& runtime_headers, Policy policy,
-    ActionCache& actions, Optimization optimization)
+    ActionCache& actions, OptimizationLevel optimization)
     -> std::optional<ActionResult> {
   if (policy == Policy::kSkip || !actions.Keeps() || !IsClangCompiler(cxx)) {
     return std::nullopt;

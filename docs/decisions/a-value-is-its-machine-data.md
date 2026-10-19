@@ -22,10 +22,10 @@ its default, for an array of any kind
 
 Every packed integral is one runtime type that carries its width, signedness and state domain as
 data, and every operation on it is a call into the prebuilt library that reads them back. On Ibex,
-C++ backend `--release`, a 32-bit add costs about 190 instructions, `&` about 415, `++` about 340,
-and a run makes about 10,000 such calls per simulated cycle. The execution backend realizes every
-value as a pointer to opaque runtime storage and every operation as a runtime entry, and its
-containers hold each element as an erased `RuntimeValue`.
+C++ backend `-O2`, a 32-bit add costs about 190 instructions, `&` about 415, `++` about 340, and a
+run makes about 10,000 such calls per simulated cycle. The execution backend realizes every value as
+a pointer to opaque runtime storage and every operation as a runtime entry, and its containers hold
+each element as an erased `RuntimeValue`.
 
 Nothing in the language asks for that. The width, signedness and state domain of every expression
 are fixed by its type (LRM 11.6, 11.8), the front end hands each operator operands of exactly its
