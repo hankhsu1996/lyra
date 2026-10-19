@@ -13,7 +13,6 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
-#include "lyra/mir/closure_signature.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/type.hpp"
@@ -554,6 +553,92 @@ auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [&](const mir::ClosureType&) { return reaches_nothing(); },
           [&](const mir::ErasedCallableType&) { return reaches_nothing(); },
       });
+}
+
+auto ReceiverSpellingAsCpp(
+    const mir::CompilationUnit& unit, mir::TypeId receiver_type)
+    -> ReceiverSpelling {
+  const auto holds_no_object = []() -> ReceiverSpelling {
+    throw InternalError(
+        "backend::cpp: a body's receiver is of a type that holds no object "
+        "for the body to run against -- please report this as a bug");
+  };
+  return unit.types.Get(receiver_type)
+      .Visit(
+          Overloaded{
+              [&](const mir::PointerType& p) -> ReceiverSpelling {
+                switch (p.ownership) {
+                  case mir::PointerOwnership::kBorrowed:
+                    return ReceiverFromThis{
+                        .object = p.mutability, .bound_from = "this"};
+                  case mir::PointerOwnership::kUnique:
+                    return ReceiverAsParameter{};
+                  // A body shares its object with no one else, so nothing
+                  // hands one over shared.
+                  case mir::PointerOwnership::kShared:
+                    return holds_no_object();
+                }
+                throw InternalError(
+                    "ReceiverSpellingAsCpp: unknown PointerOwnership");
+              },
+              [&](const mir::ReferenceType& r) -> ReceiverSpelling {
+                return ReceiverFromThis{
+                    .object = r.mutability, .bound_from = "*this"};
+              },
+              [&](const mir::VariableRefType&) { return holds_no_object(); },
+              [&](const mir::ReferenceWrapperType&) {
+                return holds_no_object();
+              },
+              [&](const mir::DesignationType&) { return holds_no_object(); },
+              [&](const mir::OpenWriteType&) { return holds_no_object(); },
+              [&](const mir::BitsReferenceType&) { return holds_no_object(); },
+              [&](const mir::ObjectWriteType&) { return holds_no_object(); },
+              [&](const mir::ManagedRefType&) { return holds_no_object(); },
+              [&](const mir::IntegralType&) { return holds_no_object(); },
+              [&](const mir::EnumType&) { return holds_no_object(); },
+              [&](const mir::UnpackedArrayType&) { return holds_no_object(); },
+              [&](const mir::DynamicArrayType&) { return holds_no_object(); },
+              [&](const mir::QueueType&) { return holds_no_object(); },
+              [&](const mir::AssociativeArrayType&) {
+                return holds_no_object();
+              },
+              [&](const mir::WildcardIndexType&) { return holds_no_object(); },
+              [&](const mir::StringType&) { return holds_no_object(); },
+              [&](const mir::MachineCStringType&) { return holds_no_object(); },
+              [&](const mir::MachineBoolType&) { return holds_no_object(); },
+              [&](const mir::MachineIntType&) { return holds_no_object(); },
+              [&](const mir::MachineFloatType&) { return holds_no_object(); },
+              [&](const mir::MachineArrayType&) { return holds_no_object(); },
+              [&](const mir::MachineFunctionType&) {
+                return holds_no_object();
+              },
+              [&](const mir::EventType&) { return holds_no_object(); },
+              [&](const mir::RealType&) { return holds_no_object(); },
+              [&](const mir::ShortRealType&) { return holds_no_object(); },
+              [&](const mir::ChandleType&) { return holds_no_object(); },
+              [&](const mir::VoidType&) { return holds_no_object(); },
+              [&](const mir::EmptyType&) { return holds_no_object(); },
+              [&](const mir::ObjectType&) { return holds_no_object(); },
+              [&](const mir::RuntimeClassType&) { return holds_no_object(); },
+              [&](const mir::RuntimeEffectsType&) { return holds_no_object(); },
+              [&](const mir::FilesType&) { return holds_no_object(); },
+              [&](const mir::DiagnosticType&) { return holds_no_object(); },
+              [&](const mir::RuntimeLibraryType&) { return holds_no_object(); },
+              [&](const mir::CoroutineType&) { return holds_no_object(); },
+              [&](const mir::VectorType&) { return holds_no_object(); },
+              [&](const mir::TupleType&) { return holds_no_object(); },
+              [&](const mir::ObservableType&) { return holds_no_object(); },
+              [&](const mir::ResolvedType&) { return holds_no_object(); },
+              [&](const mir::DriverType&) { return holds_no_object(); },
+              [&](const mir::SampledHistoryType&) { return holds_no_object(); },
+              [&](const mir::EvaluationAttemptsType&) {
+                return holds_no_object();
+              },
+              [&](const mir::LoopBlocksType&) { return holds_no_object(); },
+              [&](const mir::RecordType&) { return holds_no_object(); },
+              [&](const mir::ClosureType&) { return holds_no_object(); },
+              [&](const mir::ErasedCallableType&) { return holds_no_object(); },
+          });
 }
 
 auto NullSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type)
