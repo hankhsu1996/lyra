@@ -27,8 +27,9 @@ terms.
 
 ## Getting started
 
-You need [Bazel](https://bazel.build/), via [bazelisk](https://github.com/bazelbuild/bazelisk), and
-a C++23 compiler. Lyra builds under both Clang and GCC.
+You need [Bazel](https://bazel.build/), via [bazelisk](https://github.com/bazelbuild/bazelisk); the
+build fetches the compiler that builds Lyra. Lyra and every program it builds use the machine's own
+C++ library, and [CONTRIBUTING.md](CONTRIBUTING.md) says which release that has to be.
 
 ```bash
 bazel build //:lyra

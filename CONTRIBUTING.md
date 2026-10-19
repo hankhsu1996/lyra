@@ -11,6 +11,12 @@
 | [buildifier](https://github.com/bazelbuild/buildtools)       | Bazel file formatting | `go install github.com/bazelbuild/buildtools/buildifier@latest` |
 | [Node.js](https://nodejs.org/)                               | For prettier          | `nvm install --lts`                                             |
 
+### The C++ library
+
+Lyra and every program it builds use the machine's own libstdc++, which has to be the one of GCC 13
+or newer. A program is compiled and linked by the first `clang++` or `c++` on `PATH`, or by the
+compiler `--cxx` names.
+
 ### Build and Test
 
 ```bash

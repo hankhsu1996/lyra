@@ -10,6 +10,15 @@
 // Per-line `IWYU pragma: keep` marks the file's intent so include-cleaner
 // tools do not flag the umbrella as having unused includes.
 
+#include <version>  // IWYU pragma: keep
+
+// Checked first, so a compiler whose library predates what the runtime uses
+// stops on this rather than on the first header it lacks. 13 is the release
+// that brought <format>.
+#if defined(__GLIBCXX__) && _GLIBCXX_RELEASE < 13
+#error "a program Lyra builds needs libstdc++ 13 or newer"
+#endif
+
 #include <array>       // IWYU pragma: keep
 #include <cmath>       // IWYU pragma: keep
 #include <cstdint>     // IWYU pragma: keep
