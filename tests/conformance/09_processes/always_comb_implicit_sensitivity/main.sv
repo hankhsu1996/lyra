@@ -23,9 +23,14 @@
 //
 // A function called within the block is analyzed however it is reached -- one
 // it calls in turn, one handed a variable by `const ref`, a static method, one
-// that calls itself -- and collecting the list runs none of them. A method
+// that calls itself -- and collecting the list runs none of them. The actual a
+// call is handed is the block's own text, so it is read whether or not the
+// function reads the formal bound to it. A method
 // called on a class object adds nothing but its arguments (LRM 9.2.2.2.1), so
-// what it reads moves nothing and an argument it is handed does.
+// what it reads moves nothing and an argument it is handed does. That holds of
+// a static method called through an object too: the clause analyzes a static
+// method as a normal function only where the class scope resolution operator
+// names it.
 class Shared;
   static int level = 0;
 endclass
@@ -160,6 +165,29 @@ module Top;
   always_comb from_static_method = Scaled::plus(1);
   always_comb from_recursive = countdown(3);
 
+  int unread_actual;
+  int runs_unread;
+  int before_unread;
+
+  function automatic int ignores(const ref int r);
+    return 0;
+  endfunction
+
+  always_comb begin
+    runs_unread++;
+    void'(ignores(unread_actual));
+  end
+
+  Scaled scaled = new;
+  int from_static_by_handle;
+  int runs_by_handle;
+  int before_by_handle;
+
+  always_comb begin
+    runs_by_handle++;
+    from_static_by_handle = scaled.plus(1);
+  end
+
   int hidden;
   int method_arg;
   int from_method;
@@ -201,6 +229,9 @@ module Top;
     before_conditional = runs_conditional;
     before_operand = runs_operand;
     before_loop = runs_loop;
+    before_unread = runs_unread;
+    before_by_handle = runs_by_handle;
+    unread_actual = 1;
     under_if = 1'b1;
     under_case = 1'b1;
     under_conditional = 1'b1;
@@ -263,6 +294,15 @@ module Top;
       $fatal(1, "a function a called function calls left %0d, expected 4", from_nested);
     if (from_const_ref !== 11)
       $fatal(1, "a function handed a 'const ref' left %0d, expected 11", from_const_ref);
+    if (runs_unread - before_unread !== 1)
+      $fatal(1, "an actual a function never reads ran the block %0d times, expected 1",
+             runs_unread - before_unread);
+    if (runs_by_handle - before_by_handle !== 0)
+      $fatal(1, "a static method called through an object ran the block %0d times, expected 0",
+             runs_by_handle - before_by_handle);
+    if (from_static_by_handle !== 1)
+      $fatal(1, "a static method called through an object left %0d, expected 1",
+             from_static_by_handle);
     if (from_static_method !== 8)
       $fatal(1, "a static method left %0d, expected 8", from_static_method);
     if (from_recursive !== 8)
