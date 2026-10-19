@@ -26,8 +26,10 @@
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_object_access.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 
@@ -154,18 +156,74 @@ auto QueueSliceStep(
       .part_type = result_type};
 }
 
-// The step `receiver[hi:lo]`, `receiver[base+:w]` and `receiver[base-:w]` take
-// (LRM 7.4.5 / 7.4.6 / 7.10.1 / 11.5.1).
+// How many positions a slice of a value that numbers its parts covers, which
+// the select's own result type states: its bits, or its elements.
+auto SliceCount(const mir::CompilationUnit& unit, mir::TypeId result_type)
+    -> std::uint64_t {
+  const mir::Type& result = unit.types.Get(result_type);
+  return result.IsIntegral() ? result.Integral().bit_width
+                             : result.Get<mir::UnpackedArrayType>().Size();
+}
+
+// Where a slice of `count` positions starts: the index its lowest position is
+// named by, and how far below that index's own position the slice starts.
 //
-// A packed value and a fixed-size or dynamic array take a slice of a fixed
-// count, which the select's own result type states, starting at the part of
-// the slice lowest in the receiver's numbering. For a constant range that is
-// the bound the declaration's direction puts there -- the right bound of a
-// packed value, whose numbering starts at its least significant bit, and the
-// left bound of an unpacked one, whose numbering starts at its left (the front
-// end has already held the range to the declaration's direction). An indexed
-// select counts `w` from its base; where positions grow opposite to the way the
-// select counts, the slice starts `w - 1` steps below the base.
+// For a constant range the index is the bound the declaration's direction puts
+// at the slice's lowest position -- the right bound of a packed value, whose
+// numbering starts at its least significant bit, and the left bound of an
+// unpacked one, whose numbering starts at its left (the front end has already
+// held the range to the declaration's direction). An indexed select counts `w`
+// from its base; where positions grow opposite to the way the select counts,
+// the slice starts `w - 1` steps below the base.
+struct SliceStart {
+  hir::ExprId index;
+  std::int64_t shift = 0;
+};
+
+auto SliceStartOf(
+    const hir::RangeBounds& bounds, const PositionMap& map, std::uint64_t count)
+    -> SliceStart {
+  // Back over every position the slice covers beyond the base's own step.
+  const std::int64_t below = map.step - static_cast<std::int64_t>(count);
+  return std::visit(
+      Overloaded{
+          [&](const hir::RangeConstantBounds& c) {
+            return SliceStart{
+                .index = map.from_right ? c.right_bound : c.left_bound,
+                .shift = 0};
+          },
+          [&](const hir::RangeIndexedUpBounds& c) {
+            return SliceStart{
+                .index = c.base_index, .shift = map.reversed ? below : 0};
+          },
+          [&](const hir::RangeIndexedDownBounds& c) {
+            return SliceStart{
+                .index = c.base_index, .shift = map.reversed ? 0 : below};
+          },
+      },
+      bounds);
+}
+
+// The step a slice of `count` positions takes from the index `index_id` its
+// start names.
+auto SliceStepAt(
+    mir::CompilationUnit& unit, mir::Block& block, const PositionMap& map,
+    const SliceStart& start, mir::ExprId index_id, std::uint64_t count,
+    mir::TypeId result_type) -> DescentStep {
+  const mir::ExprId position =
+      WrapIndexAsPosition(unit, block, map, index_id, start.shift);
+  if (unit.types.Get(result_type).IsIntegral()) {
+    return BitsStep(position, result_type);
+  }
+  return DescentStep{
+      .to = StepToElementRun{.start = position, .count = count},
+      .part_type = result_type};
+}
+
+// The step `receiver[hi:lo]`, `receiver[base+:w]` and `receiver[base-:w]` take
+// (LRM 7.4.5 / 7.4.6 / 7.10.1 / 11.5.1). A packed value and a fixed-size or
+// dynamic array take a slice of a fixed count, starting at the part of the
+// slice lowest in the receiver's numbering.
 template <ExprLowerer Lowerer>
 auto RangeStep(
     Lowerer& lowerer, WalkFrame frame, const hir::RangeBounds& bounds,
@@ -179,50 +237,13 @@ auto RangeStep(
   }
 
   const PositionMap map = PositionMapOf(unit_lowerer, receiver_type);
-  // How many positions the slice covers, which the select's own result type
-  // states: its bits, or its elements.
-  const mir::Type& result = unit.types.Get(result_type);
-  const std::uint64_t count = result.IsIntegral()
-                                  ? result.Integral().bit_width
-                                  : result.Get<mir::UnpackedArrayType>().Size();
-  // The shift from the base's own position to the slice's lowest when the
-  // slice counts toward lower positions: back over every position the slice
-  // covers beyond the base's own step.
-  const std::int64_t below = map.step - static_cast<std::int64_t>(count);
-  // The index the slice's lowest position is named by, and how far below that
-  // index's own position the slice starts.
-  struct Start {
-    hir::ExprId index;
-    std::int64_t shift = 0;
-  };
-  const Start start = std::visit(
-      Overloaded{
-          [&](const hir::RangeConstantBounds& c) {
-            return Start{
-                .index = map.from_right ? c.right_bound : c.left_bound,
-                .shift = 0};
-          },
-          [&](const hir::RangeIndexedUpBounds& c) {
-            return Start{
-                .index = c.base_index, .shift = map.reversed ? below : 0};
-          },
-          [&](const hir::RangeIndexedDownBounds& c) {
-            return Start{
-                .index = c.base_index, .shift = map.reversed ? 0 : below};
-          },
-      },
-      bounds);
+  const std::uint64_t count = SliceCount(unit, result_type);
+  const SliceStart start = SliceStartOf(bounds, map, count);
   auto index = lowerer.LowerExpr(lowerer.HirExprs().Get(start.index), frame);
   if (!index) return std::unexpected(std::move(index.error()));
-  const mir::ExprId index_id = block.exprs.Add(*std::move(index));
-  const mir::ExprId position =
-      WrapIndexAsPosition(unit, block, map, index_id, start.shift);
-  if (result.IsIntegral()) {
-    return BitsStep(position, result_type);
-  }
-  return DescentStep{
-      .to = StepToElementRun{.start = position, .count = count},
-      .part_type = result_type};
+  return SliceStepAt(
+      unit, block, map, start, block.exprs.Add(*std::move(index)), count,
+      result_type);
 }
 
 // The tag a member of the packed aggregate `projection` describes needs carried
@@ -760,6 +781,45 @@ auto LowerHirRangeSelectExprPath(
 }
 
 template <ExprLowerer Lowerer>
+auto LowerHirArraySliceWithIndices(
+    Lowerer& lowerer, WalkFrame frame, const hir::RangeSelectExpr& sel,
+    mir::TypeId result_type) -> diag::Result<NamedMemory> {
+  const UnitLowerer& unit_lowerer = lowerer.Owner();
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  mir::Block& block = *frame.current_block;
+  const hir::Expr& base_expr = lowerer.HirExprs().Get(sel.base_value);
+  auto base = lowerer.LowerAccessPath(base_expr, frame);
+  if (!base) return std::unexpected(std::move(base.error()));
+  const PositionMap map = PositionMapOf(unit_lowerer, base_expr.type);
+  const std::uint64_t count = SliceCount(unit, result_type);
+  const SliceStart start = SliceStartOf(sel.bounds, map, count);
+  auto index = lowerer.LowerExpr(lowerer.HirExprs().Get(start.index), frame);
+  if (!index) return std::unexpected(std::move(index.error()));
+  const mir::ExprId index_id =
+      EvaluatedOnce(frame, block.exprs.Add(*std::move(index)));
+  // The array's index at the slice's leftmost position, and at its rightmost,
+  // which lies `count - 1` positions on: an index falls as positions grow
+  // where the array is declared descending (LRM 7.4.5).
+  const std::int64_t sign = map.reversed ? -1 : 1;
+  const std::int64_t to_left = sign * start.shift;
+  const std::int64_t to_right =
+      to_left + (sign * (static_cast<std::int64_t>(count) - 1));
+  const mir::ExprId index_number =
+      EvaluatedOnce(frame, BuildToInt64Call(unit, block, index_id));
+  const auto offset = [&](std::int64_t by) {
+    return mir::BuildMachineIntBinary(
+        unit, block, mir::BinaryOp::kAdd, index_number,
+        mir::BuildMachineIntLiteral(unit, block, by));
+  };
+  return NamedMemory{
+      .path = DescendInto(
+          *std::move(base),
+          SliceStepAt(unit, block, map, start, index_id, count, result_type)),
+      .slice =
+          SliceIndices{.left = offset(to_left), .right = offset(to_right)}};
+}
+
+template <ExprLowerer Lowerer>
 auto LowerHirMemberAccessExprPath(
     Lowerer& lowerer, WalkFrame frame, const hir::MemberAccessExpr& sel,
     mir::TypeId result_type) -> diag::Result<AccessPath> {
@@ -911,6 +971,9 @@ template auto LowerHirRangeSelectExprPath(
 template auto LowerHirRangeSelectExprPath(
     const StructuralScopeLowerer&, WalkFrame, const hir::RangeSelectExpr&,
     mir::TypeId) -> diag::Result<AccessPath>;
+template auto LowerHirArraySliceWithIndices(
+    ProcessLowerer&, WalkFrame, const hir::RangeSelectExpr&, mir::TypeId)
+    -> diag::Result<NamedMemory>;
 template auto LowerHirMemberAccessExprPath(
     ProcessLowerer&, WalkFrame, const hir::MemberAccessExpr&, mir::TypeId)
     -> diag::Result<AccessPath>;

@@ -158,8 +158,9 @@ comes from a type.
   working and stop folding. The count is read from the result type, so it assumes what every MIR
   integral type already assumes -- a width fixed per specialization -- and would become an operand
   together with the types if widths ever stop being fixed.
-- A memory file still states addresses in the declared coordinates (LRM 21.4), so reading one is the
-  one place the runtime applies a declared range, and it does so to name a position.
+- A memory file states addresses as indices of the array the memory names (LRM 21.4), so a memory
+  task is the one place the runtime applies an index range, and it does so to name a position; for a
+  slice that range is the indices the slice holds, evaluated with the select.
 
 ## Cross-references
 

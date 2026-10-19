@@ -1,6 +1,5 @@
 #include "lyra/lowering/hir_to_mir/expression/system/file_io.hpp"
 
-#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <expected>
@@ -19,10 +18,13 @@
 #include "lyra/hir/param_direction.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/expression/selects.hpp"
+#include "lyra/lowering/hir_to_mir/expression/system/mem_file.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -259,9 +261,20 @@ auto LowerFileReadCall(
   // The destination is an `inout`: its own shape decides how many bytes a word
   // takes and what the file does not reach keeps what it held, so its value
   // crosses in as well as riding the completion back (LRM 13.5, 21.3.4.4).
+  // A memory is addressed by its indices, and a slice by the indices it holds
+  // of the array it is taken from (LRM 21.3.4.4).
   const hir::Expr& dest_hir = hir_proc.exprs.Get(head[0]);
   const mir::TypeId dest_type = unit_lowerer.TranslateType(dest_hir.type);
-  auto dest_or = LowerLvalue(process, dest_hir, step_frame);
+  std::optional<NamedMemory> named;
+  if (memory != nullptr) {
+    auto named_or = NameMemory(process, step_frame, dest_hir);
+    if (!named_or) return std::unexpected(std::move(named_or.error()));
+    named = *std::move(named_or);
+  }
+  auto dest_or = named.has_value()
+                     ? diag::Result<Lvalue>(MemoryWriteTarget(
+                           unit_lowerer, step_frame, named->path, dest_hir))
+                     : LowerLvalue(process, dest_hir, step_frame);
   if (!dest_or) return std::unexpected(std::move(dest_or.error()));
   auto dest = ReadThenWrite(unit_lowerer, step_frame, *std::move(dest_or));
   if (!dest) return std::unexpected(std::move(dest.error()));
@@ -275,24 +288,23 @@ auto LowerFileReadCall(
   if (!fd_or) return std::unexpected(std::move(fd_or.error()));
   operands.push_back(*fd_or);
 
-  if (memory != nullptr) {
-    // The destination's declared range, which is what says where a source
-    // address lands in it.
-    operands.push_back(
-        mir::BuildDeclaredRanges(
-            unit, body, std::span<const hir::UnpackedRange>{&memory->dim, 1}));
-    const std::int64_t lowest = std::min(memory->dim.left, memory->dim.right);
-    const std::int64_t highest = std::max(memory->dim.left, memory->dim.right);
-    // The start the source left out is the lowest declared index, and the
-    // count it left out is the whole memory -- which the entry then clamps to
-    // what stands between the start and the end. Materializing both keeps one
-    // entry for every form the source may write.
+  if (named.has_value()) {
+    // The destination's indices, which are what say where a source address
+    // lands in it.
+    const MemoryIndices indices = MemoryIndicesOf(
+        unit, step_frame, std::span<const hir::UnpackedRange>{&memory->dim, 1},
+        named->slice);
+    operands.push_back(indices.ranges);
+    // The start the source left out is the lowest index, and the count it
+    // left out is the whole memory -- which the entry then clamps to what
+    // stands between the start and the end. Materializing both keeps one entry
+    // for every form the source may write.
     if (const std::optional<hir::ExprId> start = OptionalOperand(call, 2)) {
       auto start_or = BuildMachineIntOperand(process, step_frame, *start);
       if (!start_or) return std::unexpected(std::move(start_or.error()));
       operands.push_back(*start_or);
     } else {
-      operands.push_back(mir::BuildMachineIntLiteral(unit, body, lowest));
+      operands.push_back(indices.lowest);
     }
     if (const std::optional<hir::ExprId> count = OptionalOperand(call, 3)) {
       auto count_or = BuildMachineIntOperand(process, step_frame, *count);
@@ -300,7 +312,9 @@ auto LowerFileReadCall(
       operands.push_back(*count_or);
     } else {
       operands.push_back(
-          mir::BuildMachineIntLiteral(unit, body, highest - lowest + 1));
+          mir::BuildMachineIntLiteral(
+              unit, body,
+              static_cast<std::int64_t>(memory->dim.ElementCount())));
     }
   }
 

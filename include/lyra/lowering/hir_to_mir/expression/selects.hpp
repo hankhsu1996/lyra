@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 
 #include "lyra/base/component_index.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -144,6 +145,32 @@ template <ExprLowerer Lowerer>
 auto LowerHirRangeSelectExprPath(
     Lowerer& lowerer, WalkFrame frame, const hir::RangeSelectExpr& sel,
     mir::TypeId result_type) -> diag::Result<AccessPath>;
+// The indices of its array a slice holds, at its left and at its right, as
+// machine integers.
+struct SliceIndices {
+  mir::ExprId left;
+  mir::ExprId right;
+};
+
+// The memory a task loads or dumps by its indices (LRM 21.3.4.4, 21.4, 21.5):
+// the part it is, and, where the source names a slice of a fixed-size or
+// dynamic array, the indices of that array the slice holds, which are the
+// addresses the task reaches it by. Any other memory is addressed by its
+// type's ranges.
+struct NamedMemory {
+  AccessPath path;
+  std::optional<SliceIndices> slice;
+};
+
+// A slice of fixed size, taken of a fixed-size or a dynamic array, named as
+// such a memory. The slice's type numbers its elements from zero, since its
+// range may follow the instance or the run, so the indices are the select's
+// own; the index the slice starts at is evaluated once for the part and both
+// indices.
+template <ExprLowerer Lowerer>
+auto LowerHirArraySliceWithIndices(
+    Lowerer& lowerer, WalkFrame frame, const hir::RangeSelectExpr& sel,
+    mir::TypeId result_type) -> diag::Result<NamedMemory>;
 template <ExprLowerer Lowerer>
 auto LowerHirMemberAccessExprPath(
     Lowerer& lowerer, WalkFrame frame, const hir::MemberAccessExpr& sel,

@@ -3,10 +3,9 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
-#include <type_traits>
 #include <utility>
-#include <vector>
 
 #include "lyra/value/array_ordering.hpp"
 #include "lyra/value/basic_queue.hpp"
@@ -184,6 +183,16 @@ class Queue : public OrdinalArrayMethods<Queue<T, kBound>> {
       -> Queue<T> {
     return Queue<T>(
         core_.Slice(ReadPosition(lo), ReadPosition(hi), StaticBound<-1>{}));
+  }
+
+  // LRM 7.6 / 7.10.1: the elements of that slice take `value`, element for
+  // element, an array of another count being a run-time error. Answers the
+  // elements written where any of them took a different value (LRM 4.3).
+  template <OrdinalElements C>
+  auto AssignSlice(const Position& lo, const Position& hi, const C& value)
+      -> std::optional<SliceWindow> {
+    return core_.AssignSlice(
+        ReadPosition(lo), ReadPosition(hi), detail::OrdinalAddresses(value));
   }
 
   // LRM 7.10.2.7 / 7.10.2.6: append / prepend a single element.

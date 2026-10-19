@@ -37,8 +37,7 @@ enum class BuiltinFn : std::uint16_t {
   // they are read at is wide (LRM 11.5.1). Elements of a fixed-size or dynamic
   // array are named by where they start and how many there are (LRM 7.4.6). A
   // queue's slice is bounded by two positions the running program can move,
-  // and is a queue the slice builds rather than a part that may be written (LRM
-  // 7.10.1).
+  // and is read as a queue the slice builds (LRM 7.10.1).
   kSlice,
   kElementSlice,
   kQueueSlice,
@@ -56,6 +55,10 @@ enum class BuiltinFn : std::uint16_t {
   // operation on the place the array lies in, or on the array designated
   // within a write in progress, as `putc` writes a character.
   kAssignElementSlice,
+  // LRM 7.6, 7.10.1: the same for a queue's slice. It is bounded, as a read of
+  // it is, by two positions the running program can move, so the queue clamps
+  // them and checks the value holds as many elements as they name.
+  kAssignQueueSlice,
   // LRM 11.5.1: an integral value with the bits a position names replaced,
   // which is how bits of a value lying in no storage are written.
   kWithSlice,

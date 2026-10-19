@@ -5,7 +5,9 @@
 // spans -- one for an 8-bit word, two for a 9-bit one -- and locations the
 // load does not reach keep the value they had (LRM 21.3.4.4). A word is any
 // integral type (LRM 6.11.1), so a memory of enumerations or of packed
-// structures loads exactly as one of vectors of the same width does.
+// structures loads exactly as one of vectors of the same width does. A start
+// address is an address in the memory, so where the memory is a slice it is
+// one of the indices the slice holds of the array it is taken from.
 module Top;
   typedef enum bit [31:0] {
     NONE = 32'h00000000,
@@ -42,6 +44,13 @@ module Top;
 
   halves_t structured[0:1];
   int structured_count;
+
+  bit [31:0] sliced[0:7];
+  bit [31:0] sliced_expected[0:7] =
+      '{0, 0, 0, 0, 32'h01020304, 32'h05060708, 0, 0};
+  bit [31:0] dynamic_sliced[];
+  int dynamic_sliced_count;
+  int sliced_count;
 
   initial begin
     fd = $fopen("sixteen.bin", "wb");
@@ -87,6 +96,15 @@ module Top;
 
     fd = $fopen("sixteen.bin", "rb");
     structured_count = $fread(structured, fd);
+    $fclose(fd);
+
+    fd = $fopen("sixteen.bin", "rb");
+    sliced_count = $fread(sliced[2:5], fd, 4);
+    $fclose(fd);
+
+    dynamic_sliced = new[8];
+    fd = $fopen("sixteen.bin", "rb");
+    dynamic_sliced_count = $fread(dynamic_sliced[2:5], fd, 4);
     $fclose(fd);
   end
 
@@ -175,6 +193,18 @@ module Top;
     if (structured[1].upper !== 16'h0506)
       $fatal(1, "structured[1].upper was %h, expected 0506",
              structured[1].upper);
+
+    if (sliced_count !== 8)
+      $fatal(1, "two words of a slice returned %0d, expected 8", sliced_count);
+    if (sliced !== sliced_expected)
+      $fatal(1, "a slice loaded from index 4 left %p, expected its words at 4 and 5",
+             sliced);
+    if (dynamic_sliced_count !== 8)
+      $fatal(1, "two words of a slice of a dynamic array returned %0d, expected 8",
+             dynamic_sliced_count);
+    if (dynamic_sliced[4] !== 32'h01020304 || dynamic_sliced[5] !== 32'h05060708 ||
+        dynamic_sliced[3] !== 32'h0 || dynamic_sliced[6] !== 32'h0)
+      $fatal(1, "a slice of a dynamic array loaded from index 4 left %p", dynamic_sliced);
     $display("All checks passed");
   end
 endmodule

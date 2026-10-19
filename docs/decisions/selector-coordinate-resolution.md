@@ -76,8 +76,11 @@ to a storage position is the selected value's job, done once, inside the value.
 ## Consequences
 
 - A slice read is a materialized owned value whose storage copies position-wise into any
-  destination, per decision 4. It carries no declared sub-range in any family: the result range is
-  non-observable, and a packed slice is as wide as the bits it took and unsigned (LRM 11.8.1).
+  destination, per decision 4. It carries no declared sub-range in any family, and a packed slice is
+  as wide as the bits it took and unsigned (LRM 11.8.1). The range is observed in one place: a
+  memory task named by a slice of a fixed-size or dynamic array addresses it by the indices it holds
+  of that array (LRM 21.4, 21.3.4.4), so the task's lowering states them from the select itself,
+  beside the slice, rather than from the slice's type.
 - Packed, unpacked, and the zero-based families sit under one model. A packed value resolves a
   coordinate in its bit domain against the shape the select states. A dynamic array and a queue are
   declared zero-based, so their coordinate system is the identity and resolution is a no-op; a

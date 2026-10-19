@@ -1554,6 +1554,11 @@ auto lyra_rt_queue_element_mut(void* queue, const void* position) -> void*;
 auto lyra_rt_queue_slice(
     const void* queue, const void* lo, const void* hi, const void* answer_type,
     void* out) -> void*;
+// The elements of a queue's slice take a replacement of as many elements,
+// which crosses with its type (LRM 7.6, 7.10.1).
+void lyra_rt_queue_assign_element_slice(
+    void* queue, const void* lo, const void* hi, const void* replacement,
+    const void* replacement_type);
 auto lyra_rt_queue_size(const void* queue, void* out) -> void*;
 void lyra_rt_queue_push_back(void* queue, const void* item);
 void lyra_rt_queue_push_front(void* queue, const void* item);
@@ -2074,6 +2079,12 @@ void lyra_rt_laidout_assign_slice(
     const void* designation, const void* start, std::int64_t count,
     const void* replacement, const void* replacement_type,
     const void* array_type);
+// A designated queue's slice is bounded by two positions instead, which the
+// queue clamps (LRM 7.10.1), and its replacement is a queue of the slice's
+// type, crossing with its type.
+void lyra_rt_queue_assign_slice(
+    const void* designation, const void* lo, const void* hi,
+    const void* replacement, const void* replacement_type);
 // Where a write in progress lands: the part a designation names, whose value
 // from before the write the write keeps where anything will ask whether the
 // write changed what it was opened on (LRM 4.3). Answers with where the part

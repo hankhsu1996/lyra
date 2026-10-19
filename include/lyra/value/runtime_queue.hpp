@@ -86,6 +86,13 @@ class RuntimeQueue {
       std::optional<std::int64_t> lo, std::optional<std::int64_t> hi,
       const QueueType& type) const -> RuntimeQueue;
 
+  // LRM 7.6 / 7.10.1: the elements of that slice take `replacement`, element
+  // for element, an array of another count being a run-time error. Answers the
+  // elements written where any of them took a different value (LRM 4.3).
+  auto AssignSlice(
+      std::optional<std::int64_t> lo, std::optional<std::int64_t> hi,
+      std::span<const void* const> replacement) -> std::optional<SliceWindow>;
+
   // LRM 7.10.2.2 / 7.10.2.6 / 7.10.2.7: a copy of `item` added, the queue then
   // held to its bound.
   void PushFront(const void* item);

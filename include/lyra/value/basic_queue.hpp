@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/simulation_error.hpp"
 #include "lyra/value/element_policy.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/position.hpp"
@@ -24,6 +25,13 @@ namespace lyra::value {
 template <typename B>
 concept QueueBound = std::copyable<B> && requires(const B& b) {
   { b.Bound() } -> std::same_as<std::int64_t>;
+};
+
+// The elements a slice of a queue names: where they start and how many there
+// are.
+struct SliceWindow {
+  std::size_t start = 0;
+  std::size_t count = 0;
 };
 
 // A queue (LRM 7.10), written once over what its element answers: compiled
@@ -148,16 +156,41 @@ class BasicQueue {
       std::optional<std::int64_t> first, std::optional<std::int64_t> last,
       Into into) const -> BasicQueue<Elem, Into> {
     BasicQueue<Elem, Into> out(elem_, std::move(into));
-    if (!first || !last) {
-      return out;
-    }
-    const std::int64_t a = std::max<std::int64_t>(*first, 0);
-    const std::int64_t b =
-        std::min<std::int64_t>(*last, static_cast<std::int64_t>(count_) - 1);
-    for (std::int64_t i = a; i <= b; ++i) {
-      out.PushBack(At(static_cast<std::size_t>(i)));
+    const SliceWindow window = WindowOf(first, last);
+    for (std::size_t i = 0; i < window.count; ++i) {
+      out.PushBack(At(window.start + i));
     }
     return out;
+  }
+
+  // LRM 7.6 / 7.10.1: the elements of that same slice take `replacement`,
+  // element for element. A slice is assignment compatible only with an array
+  // of as many elements, so one of another count is a run-time error and
+  // nothing is written. Answers the elements written where any of them took a
+  // different value (LRM 4.3).
+  auto AssignSlice(
+      std::optional<std::int64_t> first, std::optional<std::int64_t> last,
+      std::span<const void* const> replacement) -> std::optional<SliceWindow> {
+    const SliceWindow window = WindowOf(first, last);
+    if (replacement.size() != window.count) {
+      throw SimulationError(
+          "a slice of a queue holding {} elements cannot be assigned an "
+          "array of {}",
+          window.count, replacement.size());
+    }
+    bool moved = false;
+    for (std::size_t i = 0; i < window.count; ++i) {
+      void* element = At(window.start + i);
+      if (elem_.BitIdentical(element, replacement[i])) {
+        continue;
+      }
+      elem_.Assign(element, replacement[i]);
+      moved = true;
+    }
+    if (!moved) {
+      return std::nullopt;
+    }
+    return window;
   }
 
   // LRM 7.10.2.7 / 7.10.2.6: one element added at the back or the front, the
@@ -260,6 +293,26 @@ class BasicQueue {
   }
 
  private:
+  // The elements a slice `[first:last]` names (LRM 7.10.1): `first` clamped up
+  // to 0 and `last` down to the last index, none where either bound names no
+  // position or the first clamped lies past the last.
+  [[nodiscard]] auto WindowOf(
+      std::optional<std::int64_t> first, std::optional<std::int64_t> last) const
+      -> SliceWindow {
+    if (!first || !last) {
+      return {};
+    }
+    const std::int64_t a = std::max<std::int64_t>(*first, 0);
+    const std::int64_t b =
+        std::min<std::int64_t>(*last, static_cast<std::int64_t>(count_) - 1);
+    if (a > b) {
+      return {};
+    }
+    return SliceWindow{
+        .start = static_cast<std::size_t>(a),
+        .count = static_cast<std::size_t>(b - a + 1)};
+  }
+
   // Ends the element at `position`; the ones after it move one place forward.
   void Erase(std::size_t position) {
     void* slot = At(position);

@@ -609,28 +609,29 @@ coercion, and that the owning value is the value updated. The owner is a place; 
 of steps on it -- a field step where the part means the same for reading and writing, the write form
 of an element where it does not -- and what it ends in may be no place: bits are written through the
 reference to them the packed value's `slice_mut` answers, taken once for each part they are reached
-through, and a window by its array's own `assign_element_slice`, each taken on the place the value
-lies in. Where the owner is a capability wrapper, the write is opened on it, the whole of the
-wrapper's contents is designated within it, and each step into a part a write lands on (an element,
-or a component, a union's member among them) is taken within the write in progress rather than on
-the storage. So the write hears what forming each part did -- an element made by being written, an
-index naming none -- and keeps only what it lands on. It lands where what those steps designate is
-dereferenced, or, where the descent ends in bits or a window, the reference to the bits or the
-window's write is taken on the last designation. A union's member is no storage of its own, so the
-change the write reports is to the union, whose bytes every member reads. The write and a place
-designated within it are two types: the write is held by the writer, ended with the full-expression,
-which is when it reports, and names no place itself, while a designation borrows the write and ends
-with nothing to do. The variable learns whether the write changed it from what it heard and from the
-part it landed on (LRM 4.3). Whether a part is storage of its own is the language's fact about the
-type it is part of (`storage.md`), and the place states it as its kind (invariant 16), so no layer
-below works it out. A construct that binds the designated part rather than writing it -- an output
-pack component, a nonblocking update -- binds the same statement of owner and descent; it is
-owner-relative, so it names no interior pointer and aliases nothing the owner does not already own.
-A reference actual binds the part for as long as the callee holds it, and each write through it is a
-write of the owner at the moment it lands (LRM 13.5.2, 4.3), which no write ended with the caller's
-full-expression can be; so a reference is formed over the owner and each step into a part is taken
-on the reference (`refer_element`, `refer_component`), answering a reference to that part that
-belongs to the same owner.
+through, and a window by its array's own `assign_element_slice` or a queue's own slice write between
+the two positions it clamps (LRM 7.10.1), each taken on the place the value lies in. Where the owner
+is a capability wrapper, the write is opened on it, the whole of the wrapper's contents is
+designated within it, and each step into a part a write lands on (an element, or a component, a
+union's member among them) is taken within the write in progress rather than on the storage. So the
+write hears what forming each part did -- an element made by being written, an index naming none --
+and keeps only what it lands on. It lands where what those steps designate is dereferenced, or,
+where the descent ends in bits or a window, the reference to the bits or the window's write is taken
+on the last designation. A union's member is no storage of its own, so the change the write reports
+is to the union, whose bytes every member reads. The write and a place designated within it are two
+types: the write is held by the writer, ended with the full-expression, which is when it reports,
+and names no place itself, while a designation borrows the write and ends with nothing to do. The
+variable learns whether the write changed it from what it heard and from the part it landed on (LRM
+4.3). Whether a part is storage of its own is the language's fact about the type it is part of
+(`storage.md`), and the place states it as its kind (invariant 16), so no layer below works it out.
+A construct that binds the designated part rather than writing it -- an output pack component, a
+nonblocking update -- binds the same statement of owner and descent; it is owner-relative, so it
+names no interior pointer and aliases nothing the owner does not already own. A reference actual
+binds the part for as long as the callee holds it, and each write through it is a write of the owner
+at the moment it lands (LRM 13.5.2, 4.3), which no write ended with the caller's full-expression can
+be; so a reference is formed over the owner and each step into a part is taken on the reference
+(`refer_element`, `refer_component`), answering a reference to that part that belongs to the same
+owner.
 
 Where the owner is a property of an object (LRM 8.4), the object is what hears the write (LRM
 9.4.2), and it is reached once, as the source reaches it once. A write is a write-in-progress value
