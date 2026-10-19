@@ -305,6 +305,11 @@ class FunctionLowerer {
   };
   auto LowerRvalue(const mir::Block& block, mir::ExprId id)
       -> diag::Result<TypedRvalue>;
+  // The value `operand` makes, read as a value of `type`: the one value seen
+  // another way, so one with no copy goes on to the new type with its end.
+  auto LowerReadAsAnother(
+      const mir::Block& block, mir::ExprId operand, mir::TypeId type)
+      -> diag::Result<lir::Operand>;
   // An expression's value put where `destination` says, as rustc's
   // `expr_into_dest`: a call and the step that makes a value make it there.
   auto LowerExprInto(

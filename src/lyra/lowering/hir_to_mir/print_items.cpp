@@ -25,7 +25,6 @@
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/pattern_rendering.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -33,6 +32,7 @@
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/integral_constant_folding.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -407,7 +407,7 @@ auto BuildFormatSpecExpr(
   std::vector<mir::ExprId> args;
   for (const std::int64_t field :
        FormatSpecFields(spec, is_time ? time_unit_power : 0)) {
-    args.push_back(BuildMachineIntLiteral(unit, block, field));
+    args.push_back(mir::BuildMachineIntLiteral(unit, block, field));
   }
   return mir::Expr{
       .data =
@@ -598,7 +598,7 @@ auto BuildRuntimeFormatCallExpr(
                           .receiver = runtime_id},
                   .arguments = {}},
           .type = unit.builtins.time_format});
-  const mir::ExprId time_unit_power = BuildMachineIntLiteral(
+  const mir::ExprId time_unit_power = mir::BuildMachineIntLiteral(
       unit, body, static_cast<std::int64_t>(lowerer.Resolution().unit_power));
 
   const mir::ExprId formatted = body.exprs.Add(

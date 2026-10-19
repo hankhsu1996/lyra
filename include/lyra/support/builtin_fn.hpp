@@ -795,6 +795,20 @@ enum class BuiltinFn : std::uint16_t {
   // part rather than on a reference to it, and a handle refers to one without
   // being one.
   kViewOf,
+  // A handle to the object its operand refers to, seen as the class of the
+  // type the call is at, as clang names the two conversions of a pointer to a
+  // class. Toward a class the operand's class extends the object is always one
+  // (LRM 8.14, 8.26.5); toward any other the object answers, and the handle
+  // refers to nothing where it is not one, which is what `$cast` asks of a
+  // class handle (LRM 8.16).
+  kDerivedToBase,
+  kDynamicCast,
+  // A box or a borrow of a closure made one of a closure of no known type, the
+  // one the type the call is at holds, as rustc's unsizing coercion makes a
+  // `Box<dyn FnMut>` of a `Box<T>` and a `&dyn FnMut` of a `&T`. The closure
+  // stays where it was made, and is called, and for a box ended, from then on
+  // through the definition it opens with.
+  kUnsize,
   // What reports a change to an object's properties (LRM 9.4.2): the event
   // source a wait reaching the object enrols on; a write into its
   // properties, opened on the object alone, open while the full-expression
@@ -1338,6 +1352,18 @@ enum class AnswerTold : std::uint8_t {
 // site reaches it, and what it does with the operands it is given. A consumer
 // asking any of those reads the field for it, never a list of its own, so an
 // entry gains a property by saying so here and nowhere else.
+// What an entry generic over a type is told of it where the call is written:
+// the type itself; the two classes an entry seeing an object as another class
+// is told, the one the handle it is handed refers through and then the one the
+// type it is called at refers through, as a pointer conversion is between two
+// classes; or the signature a closure of no known type is called at, which is
+// what a box or a borrow of one is named by.
+enum class TypeArgumentNamed : std::uint8_t {
+  kTheType,
+  kTheClassesSeen,
+  kTheCallSignature,
+};
+
 struct RuntimeEntry {
   // The entry's stable spelling. It aligns with the SV method spelling where
   // one exists (LRM 6.16 / 7.9 / 7.10 / 7.12 / 15.5) and with what the library
@@ -1360,6 +1386,9 @@ struct RuntimeEntry {
   // written names it there, and one calling code compiled once for every type
   // hands over what that code needs of it.
   bool takes_a_type_argument = false;
+  // What a target resolving types where the call is written names for that
+  // type. A target laying values out itself reads what it needs off the type.
+  TypeArgumentNamed type_argument_named = TypeArgumentNamed::kTheType;
   // Whether the entry acts on an object, its first operand being whatever
   // reaches that object -- a class handle, the running method's own object, or
   // a write in progress into it -- as an access's receiver is. Reaching the

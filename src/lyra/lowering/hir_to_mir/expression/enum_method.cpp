@@ -10,12 +10,12 @@
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/enum_table.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -86,7 +86,7 @@ auto LowerStepCall(
     count =
         BuildToInt64Call(unit, block, block.exprs.Add(*std::move(count_or)));
   } else {
-    count = BuildMachineIntLiteral(unit, block, 1);
+    count = mir::BuildMachineIntLiteral(unit, block, 1);
   }
   return AskMembers(
       lowerer.Owner(), block, question, enum_type, {value, count}, result_type);
@@ -121,18 +121,21 @@ auto LowerEnumMethod(
   mir::Block& block = *frame.current_block;
   switch (ref.method) {
     case hir::EnumMethod::kNum:
-      return block.exprs.Get(BuildIntLiteral(
-          unit, block,
-          static_cast<std::int64_t>(
-              MembersOf(lowerer.Owner(), enum_type).size())));
+      return block.exprs.Get(
+          mir::BuildIntLiteral(
+              unit, block,
+              static_cast<std::int64_t>(
+                  MembersOf(lowerer.Owner(), enum_type).size())));
     case hir::EnumMethod::kFirst:
-      return block.exprs.Get(BuildIntegralLiteral(
-          unit, block, result_type,
-          MembersOf(lowerer.Owner(), enum_type).front().value));
+      return block.exprs.Get(
+          mir::BuildIntegralLiteral(
+              unit, block, result_type,
+              MembersOf(lowerer.Owner(), enum_type).front().value));
     case hir::EnumMethod::kLast:
-      return block.exprs.Get(BuildIntegralLiteral(
-          unit, block, result_type,
-          MembersOf(lowerer.Owner(), enum_type).back().value));
+      return block.exprs.Get(
+          mir::BuildIntegralLiteral(
+              unit, block, result_type,
+              MembersOf(lowerer.Owner(), enum_type).back().value));
     case hir::EnumMethod::kName: {
       auto value_or = lowerer.LowerExpr(lowerer.HirExprs().Get(bearer), frame);
       if (!value_or) return std::unexpected(std::move(value_or.error()));

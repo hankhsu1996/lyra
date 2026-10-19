@@ -8,9 +8,9 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
@@ -119,11 +119,12 @@ auto BuildReorderedStream(
     return stream_id;
   }
   const mir::TypeId stream_type = block.exprs.Get(stream_id).type;
-  const mir::ExprId size_id = BuildMachineIntLiteral(
+  const mir::ExprId size_id = mir::BuildMachineIntLiteral(
       unit, block, static_cast<std::int64_t>(block_bits));
-  return block.exprs.Add(MakeBuiltinCall(
-      unit, block, support::BuiltinFn::kReverseBlocks, stream_id, {size_id},
-      stream_type));
+  return block.exprs.Add(
+      mir::MakeBuiltinCall(
+          unit, block, support::BuiltinFn::kReverseBlocks, stream_id, {size_id},
+          stream_type));
 }
 
 auto BuildFromBitstream(
@@ -151,11 +152,12 @@ auto BuildFromBitstream(
     const mir::TypeId pad_type = mir::PackedVectorOf(
         unit.types, target->width - stream_width,
         mir::IntegralStateKind::kTwoState);
-    const mir::ExprId pad_id =
-        BuildIntegralLiteral(unit, block, pad_type, mir::IntegralConstant{});
-    filled = block.exprs.Add(MakeBuiltinCall(
-        unit, block, support::BuiltinFn::kConcatBits, bits_id, {pad_id},
-        mir::PackedVectorOf(unit.types, target->width, stream.state_kind)));
+    const mir::ExprId pad_id = mir::BuildIntegralLiteral(
+        unit, block, pad_type, mir::IntegralConstant{});
+    filled = block.exprs.Add(
+        mir::MakeBuiltinCall(
+            unit, block, support::BuiltinFn::kConcatBits, bits_id, {pad_id},
+            mir::PackedVectorOf(unit.types, target->width, stream.state_kind)));
   }
   // A packed destination is those bits, at the signedness and state domain it
   // declares.

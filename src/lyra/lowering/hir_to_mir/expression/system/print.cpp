@@ -15,13 +15,13 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
@@ -36,7 +36,7 @@ namespace {
 // $write / $strobe lowerings that don't carry a user-supplied descriptor.
 auto BuildStdoutFdLiteral(const mir::CompilationUnit& unit, mir::Block& block)
     -> mir::ExprId {
-  return BuildMachineIntLiteral(unit, block, support::kStdoutFd);
+  return mir::BuildMachineIntLiteral(unit, block, support::kStdoutFd);
 }
 
 auto LowerDescriptor(

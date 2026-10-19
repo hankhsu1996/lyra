@@ -60,20 +60,19 @@ auto BuildCompletionLayout(
 }
 
 auto ParamTypeOf(
-    UnitLowerer& unit_lowerer, hir::TypeId value_type,
+    const mir::CompilationUnit& unit, mir::TypeId value_type,
     hir::ParamDirection direction) -> std::optional<mir::TypeId> {
-  const mir::TypeId mir_value = unit_lowerer.TranslateType(value_type);
   switch (direction) {
     case hir::ParamDirection::kOutput:
       return std::nullopt;
     case hir::ParamDirection::kInput:
     case hir::ParamDirection::kInOut:
-      return mir_value;
+      return value_type;
     case hir::ParamDirection::kRef:
     case hir::ParamDirection::kConstRef:
-      return unit_lowerer.Unit().types.Intern(
+      return unit.types.Intern(
           mir::Type{mir::VariableRefType{
-              .pointee = mir_value,
+              .pointee = value_type,
               .mutability = direction == hir::ParamDirection::kConstRef
                                 ? mir::Mutability::kReadOnly
                                 : mir::Mutability::kMutable}});
@@ -184,8 +183,9 @@ auto BuildPrototype(
   std::vector<mir::LocalId> params{bindings.Declare(ReceiverOrigin{}, self)};
   params.reserve(formals.size() + 2);
   for (const PrototypeFormal& formal : formals) {
-    const std::optional<mir::TypeId> type =
-        ParamTypeOf(unit_lowerer, formal.type, formal.direction);
+    const std::optional<mir::TypeId> type = ParamTypeOf(
+        unit_lowerer.Unit(), unit_lowerer.TranslateType(formal.type),
+        formal.direction);
     if (!type.has_value()) continue;
     params.push_back(
         formal.declared.has_value()

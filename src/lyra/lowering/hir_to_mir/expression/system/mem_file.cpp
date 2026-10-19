@@ -21,12 +21,12 @@
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
@@ -68,7 +68,7 @@ auto DescribeMemory(
                 hir::UnpackedShapeOf(unit_lowerer.Hir().types, mem_type);
             return MemAddressing{
                 .element = shape.element_type,
-                .operands = {BuildDeclaredRanges(
+                .operands = {mir::BuildDeclaredRanges(
                     unit_lowerer.Unit(), wrapper, shape.dims)},
                 .lowest_address = std::min(
                     shape.dims.front().left, shape.dims.front().right)};
@@ -216,7 +216,8 @@ auto LowerMemFileSystemSubroutineCallStmt(
     operands.push_back(operand);
   }
   operands.push_back(
-      BuildMachineIntLiteral(unit, body, static_cast<std::int64_t>(info.base)));
+      mir::BuildMachineIntLiteral(
+          unit, body, static_cast<std::int64_t>(info.base)));
 
   // The addresses start where the source said, or at the memory's lowest
   // address where it said nothing -- which is the same addresses the clause's
@@ -238,7 +239,7 @@ auto LowerMemFileSystemSubroutineCallStmt(
               task));
     }
     operands.push_back(
-        BuildMachineIntLiteral(unit, body, addressing->lowest_address));
+        mir::BuildMachineIntLiteral(unit, body, addressing->lowest_address));
   }
   if (finish.has_value()) {
     auto finish_or = process.LowerExpr(hir_proc.exprs.Get(*finish), step_frame);

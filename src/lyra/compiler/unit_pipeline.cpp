@@ -23,7 +23,8 @@ void RecordSemanticForm(const mir::CompilationUnit& unit) {
 }
 
 auto LowerUnitToSemantic(
-    const hir::CompilationUnit& unit, const diag::SourceManager& source_manager)
+    const hir::CompilationUnit& unit, const diag::SourceManager& source_manager,
+    const mir_transform::PassOptions& passes)
     -> diag::Result<mir::CompilationUnit> {
   const profiling::TimeTraceScope span(
       "lower to MIR", [&] { return unit.body_name; });
@@ -34,7 +35,7 @@ auto LowerUnitToSemantic(
     return semantic;
   }
   mir::CompilationUnit transformed =
-      mir_transform::Transform(*std::move(semantic));
+      mir_transform::Transform(*std::move(semantic), passes);
   RecordSemanticForm(transformed);
   return transformed;
 }

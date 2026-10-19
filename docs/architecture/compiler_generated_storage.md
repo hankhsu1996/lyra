@@ -237,8 +237,8 @@ vtable, which leads with the drop and carries the methods after it, and of a `dy
 one, whose one method is the call. A body that is started rather than called has the ending entry
 alone. No entry is chosen: the table's type is its signature, so a holder calls the one call at the
 signature it was handed the closure at. The runtime reaches every closure through that table, so
-neither backend's own callable wrapper crosses into it. Both realize the two casts the same way too:
-the box cast hands the same storage on as a box ended through the table, as rustc's unsizing
-coercion makes a `Box<dyn Fn>` of a `Box<T>`; and the borrow cast is made through the closure's
-table, giving the library's one generic borrowed callable of that signature, a pointer to the
-closure beside the entry to call.
+neither backend's own callable wrapper crosses into it. Both realize the two erasures the same way
+too: a box's hands the same storage on as a box ended through the table, as rustc's unsizing
+coercion makes a `Box<dyn Fn>` of a `Box<T>`; and a borrow's is made through the closure's table,
+giving the library's one generic borrowed callable of that signature, a pointer to the closure
+beside the entry to call.

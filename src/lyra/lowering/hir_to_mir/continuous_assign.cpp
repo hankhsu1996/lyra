@@ -23,7 +23,6 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/net_declaration.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -37,6 +36,7 @@
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -182,9 +182,9 @@ auto DelayTicksOf(
     amount_id = ConvertToType(unit, block, amount_id, unit.builtins.real);
   }
   const TimeResolution resolution = lowerer.HirScope().time_resolution;
-  const mir::ExprId unit_power =
-      BuildMachineIntLiteral(unit, block, std::int64_t{resolution.unit_power});
-  const mir::ExprId precision_power = BuildMachineIntLiteral(
+  const mir::ExprId unit_power = mir::BuildMachineIntLiteral(
+      unit, block, std::int64_t{resolution.unit_power});
+  const mir::ExprId precision_power = mir::BuildMachineIntLiteral(
       unit, block, std::int64_t{resolution.precision_power});
   return block.exprs.Add(
       mir::MakeCallExpr(
@@ -269,7 +269,7 @@ auto AppendArm(
   if (!ticks) return std::unexpected(std::move(ticks.error()));
   const mir::ExprId runtime =
       block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
-  const mir::ExprId precision_power = BuildMachineIntLiteral(
+  const mir::ExprId precision_power = mir::BuildMachineIntLiteral(
       unit, block,
       std::int64_t{lowerer.HirScope().time_resolution.precision_power});
   block.AppendStmt(

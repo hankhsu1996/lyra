@@ -16,7 +16,6 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
@@ -25,6 +24,7 @@
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/runtime_print.hpp"
@@ -137,7 +137,7 @@ auto BuildUniquenessReportBody(
   };
   body.AppendStmt(
       mir::LocalDeclStmt{
-          .target = count, .init = BuildIntLiteral(unit, body, 0)});
+          .target = count, .init = mir::BuildIntLiteral(unit, body, 0)});
   for (const HeldArm& arm : arms) {
     const mir::ExprId held =
         body.Read(body.exprs.Add(closure.Bindings().MakeBindingPlace(
@@ -147,12 +147,13 @@ auto BuildUniquenessReportBody(
             .data =
                 mir::ConditionalExpr{
                     .condition = ReduceToCondition(unit, body, held),
-                    .then_value = BuildIntLiteral(unit, body, 1),
-                    .else_value = BuildIntLiteral(unit, body, 0)},
+                    .then_value = mir::BuildIntLiteral(unit, body, 1),
+                    .else_value = mir::BuildIntLiteral(unit, body, 0)},
             .type = int_type});
-    const mir::ExprId counted = body.exprs.Add(MakeBinary(
-        unit, body, mir::BinaryOp::kAdd, body.ReadLocal(count, int_type),
-        one_if_held, int_type));
+    const mir::ExprId counted = body.exprs.Add(
+        mir::MakeBinary(
+            unit, body, mir::BinaryOp::kAdd, body.ReadLocal(count, int_type),
+            one_if_held, int_type));
     body.AppendStmt(
         mir::ExprStmt{
             .expr = body.exprs.Add(
@@ -170,9 +171,11 @@ auto BuildUniquenessReportBody(
                       .TakeText()});
   AppendReportEmit(unit, report, std::move(items), std::move(origin));
 
-  const mir::ExprId violated = body.exprs.Add(MakeBinary(
-      unit, body, mir::BinaryOp::kGreaterThan, body.ReadLocal(count, int_type),
-      BuildIntLiteral(unit, body, 1), unit.builtins.bit1));
+  const mir::ExprId violated = body.exprs.Add(
+      mir::MakeBinary(
+          unit, body, mir::BinaryOp::kGreaterThan,
+          body.ReadLocal(count, int_type), mir::BuildIntLiteral(unit, body, 1),
+          unit.builtins.bit1));
   body.AppendStmt(
       mir::IfStmt{
           .condition = ReduceToCondition(unit, body, violated),

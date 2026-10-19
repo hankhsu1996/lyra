@@ -5,9 +5,9 @@
 #include <span>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -39,9 +39,10 @@ auto BuildPackedConcat(
     if (operand.state_kind == mir::IntegralStateKind::kFourState) {
       state_kind = mir::IntegralStateKind::kFourState;
     }
-    joined = block.exprs.Add(MakeBuiltinCall(
-        unit, block, support::BuiltinFn::kConcatBits, joined, {operands[i]},
-        mir::PackedVectorOf(unit.types, width, state_kind)));
+    joined = block.exprs.Add(
+        mir::MakeBuiltinCall(
+            unit, block, support::BuiltinFn::kConcatBits, joined, {operands[i]},
+            mir::PackedVectorOf(unit.types, width, state_kind)));
   }
   return joined;
 }

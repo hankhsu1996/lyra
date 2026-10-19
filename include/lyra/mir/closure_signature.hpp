@@ -28,8 +28,8 @@ namespace lyra::mir {
 [[nodiscard]] auto ErasedTypeOf(
     const TypePool& types, const ClosureDecl& closure) -> TypeId;
 
-// A cast making a closure one of no known type, which is how a closure is
-// handed to the library without its type, as rustc's unsizing coercion makes
+// A closure made one of no known type, which is how a closure is handed to
+// the library without its type, as rustc's unsizing coercion makes
 // a `Box<dyn FnMut>` of a `Box<T>` or a `&dyn FnMut` of a `&T`: the closure,
 // and the erased callable it is made.
 struct ClosureErasure {
@@ -37,9 +37,9 @@ struct ClosureErasure {
   TypeId erased;
 };
 
-// The erasure a cast from a value of `from` to one of `to` is: `from` holds a
-// closure as `to` holds an erased callable -- both a box, or both a borrow of
-// one mutability. Nothing for any other cast.
+// The erasure making a value of `from` one of `to`: `from` holds a closure as
+// `to` holds an erased callable -- both a box, or both a borrow of one
+// mutability. Nothing for any other pair.
 [[nodiscard]] auto ClosureErasureOf(
     const TypePool& types, TypeId from, TypeId to)
     -> std::optional<ClosureErasure>;

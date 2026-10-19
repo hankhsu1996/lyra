@@ -17,6 +17,8 @@
 #include "lyra/hir/foreign_export.hpp"
 #include "lyra/hir/subroutine_kind.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
+#include "lyra/hir/type.hpp"
+#include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
@@ -27,7 +29,6 @@
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -38,6 +39,7 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -211,7 +213,7 @@ auto MarshalCarrierToSv(
           mir::Expr{
               .data = mir::CastExpr{.operand = call_id},
               .type = unit_lowerer.Unit().builtins.machine_int64});
-      return MakeBuiltinCall(
+      return mir::MakeBuiltinCall(
           unit_lowerer.Unit(), block, support::BuiltinFn::kIntegralFromInt,
           std::nullopt, {machine_int}, result_type);
     }
@@ -223,7 +225,7 @@ auto MarshalCarrierToSv(
               mir::CallExpr{.callee = mir::Construct{}, .arguments = {call_id}},
           .type = result_type};
     case support::DpiScalarAbi::kLogicScalar:
-      return MakeBuiltinCall(
+      return mir::MakeBuiltinCall(
           unit_lowerer.Unit(), block, support::BuiltinFn::kFromSvLogic,
           std::nullopt, {call_id}, result_type);
     case support::DpiScalarAbi::kVoid:
@@ -338,13 +340,13 @@ auto OpenArrayElementType(
 // overrides what the actual declares.
 auto BuildOpenArrayBounds(
     mir::CompilationUnit& unit, mir::Block& block,
-    const support::OpenArrayCarrier& open, mir::TypeId actual_type)
-    -> mir::ExprId {
+    const support::OpenArrayCarrier& open, const hir::TypePool& hir_types,
+    hir::TypeId actual_type) -> mir::ExprId {
   std::vector<support::DpiRange> ranges;
   ranges.reserve(open.unpacked.size());
-  mir::TypeId cursor = actual_type;
+  hir::TypeId cursor = actual_type;
   for (const std::optional<support::DpiRange>& declared : open.unpacked) {
-    const auto* layer = unit.types.Get(cursor).As<mir::UnpackedArrayType>();
+    const auto* layer = hir_types.Get(cursor).As<hir::UnpackedArrayType>();
     if (layer == nullptr) {
       throw InternalError(
           "BuildOpenArrayBounds: the actual of an open-array formal has fewer "
@@ -354,7 +356,7 @@ auto BuildOpenArrayBounds(
         support::DpiRange{.left = layer->dim.left, .right = layer->dim.right}));
     cursor = layer->element_type;
   }
-  return BuildDeclaredRanges(unit, block, ranges);
+  return mir::BuildDeclaredRanges(unit, block, ranges);
 }
 
 // The initializer of one argument's boundary object, seeded from the actual's
@@ -366,7 +368,8 @@ auto BuildOpenArrayBounds(
 auto BuildBoundaryInit(
     mir::CompilationUnit& unit, mir::Block& block,
     const support::DpiCarrier& carrier, mir::ExprId seed_sv,
-    mir::TypeId actual_type, mir::TypeId carrier_type)
+    mir::TypeId actual_type, const hir::TypePool& hir_types,
+    hir::TypeId actual_hir_type, mir::TypeId carrier_type)
     -> diag::Result<mir::ExprId> {
   const auto construct = [&](std::vector<mir::ExprId> arguments) {
     return block.exprs.Add(
@@ -401,8 +404,8 @@ auto BuildBoundaryInit(
             // H.7.7), which the element's own type fixes, and the actual's
             // type states that type under its unpacked layers. What the
             // formal's declaration adds to it is the operands beside the seed.
-            const mir::ExprId bounds =
-                BuildOpenArrayBounds(unit, block, open, actual_type);
+            const mir::ExprId bounds = BuildOpenArrayBounds(
+                unit, block, open, hir_types, actual_hir_type);
             return construct(
                 {seed_sv, bounds,
                  block.exprs.Add(
@@ -675,7 +678,8 @@ auto PopulateForeignImportBoundary(
     const mir::TypeId carrier_type = CarrierTypeId(unit, carrier);
     const mir::LocalId temp = cframe.bindings->DeclareAnonymous(carrier_type);
     auto init_or = BuildBoundaryInit(
-        unit, body, carrier, seed_sv, crossing_type, carrier_type);
+        unit, body, carrier, seed_sv, crossing_type, unit_lowerer.Hir().types,
+        hir_exprs.Get(actual).type, carrier_type);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     body.AppendStmt(mir::LocalDeclStmt{.target = temp, .init = *init_or});
     call_args.push_back(

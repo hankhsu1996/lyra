@@ -18,19 +18,18 @@
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
-namespace lyra::lowering::hir_to_mir {
+namespace lyra::mir {
 
 // A machine integer, written as MIR's own literal. This is the domain a
 // runtime entry's count, size, and index operands are in: they are not
 // SystemVerilog values, so they carry no declared type.
 [[nodiscard]] auto BuildMachineIntLiteral(
-    const mir::CompilationUnit& unit, mir::Block& block, std::int64_t value)
-    -> mir::ExprId;
+    const CompilationUnit& unit, Block& block, std::int64_t value) -> ExprId;
 
 // A machine integer `op` makes of two machine integers.
 [[nodiscard]] auto BuildMachineIntBinary(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::BinaryOp op,
-    mir::ExprId lhs, mir::ExprId rhs) -> mir::ExprId;
+    const CompilationUnit& unit, Block& block, BinaryOp op, ExprId lhs,
+    ExprId rhs) -> ExprId;
 
 // A declared range as whichever layer states one: its left bound and its
 // right.
@@ -47,20 +46,17 @@ concept DeclaredRange = requires(const Range& range) {
 template <std::ranges::sized_range Ranges>
   requires DeclaredRange<std::ranges::range_value_t<Ranges>>
 [[nodiscard]] auto BuildDeclaredRanges(
-    const mir::CompilationUnit& unit, mir::Block& block, const Ranges& ranges)
-    -> mir::ExprId {
-  std::vector<mir::ExprId> bounds;
+    const CompilationUnit& unit, Block& block, const Ranges& ranges) -> ExprId {
+  std::vector<ExprId> bounds;
   bounds.reserve(2 * std::ranges::size(ranges));
   for (const auto& range : ranges) {
     bounds.push_back(BuildMachineIntLiteral(unit, block, range.left));
     bounds.push_back(BuildMachineIntLiteral(unit, block, range.right));
   }
-  const mir::TypeId type = mir::MachineArrayOf(
-      unit.types, unit.builtins.machine_int64, bounds.size());
+  const TypeId type =
+      MachineArrayOf(unit.types, unit.builtins.machine_int64, bounds.size());
   return block.exprs.Add(
-      mir::Expr{
-          .data = mir::CompositeExpr{.parts = std::move(bounds)},
-          .type = type});
+      Expr{.data = CompositeExpr{.parts = std::move(bounds)}, .type = type});
 }
 
 // The bits of `value` in the form a value of `integral` holds them: one word
@@ -68,30 +64,30 @@ template <std::ranges::sized_range Ranges>
 // unless the type has one. Two spellings of one value come out as the same
 // words, and a consumer never reads bits the type does not have.
 [[nodiscard]] auto CanonicalIntegralConstant(
-    const mir::IntegralType& integral, const mir::IntegralConstant& value)
-    -> mir::IntegralConstant;
+    const IntegralType& integral, const IntegralConstant& value)
+    -> IntegralConstant;
 
 // An integral constant at `type`: the unit holds it once, among the constants
 // it was written with, and an occurrence names that entry. The bits are brought
 // to the canonical form the pool keys on first, so two spellings of one value
 // are one entry.
 [[nodiscard]] auto MakeIntegralLiteral(
-    const mir::CompilationUnit& unit, mir::TypeId type,
-    const mir::IntegralConstant& value) -> mir::Expr;
+    const CompilationUnit& unit, TypeId type, const IntegralConstant& value)
+    -> Expr;
 
 // A value of `type` whose bits are `value`, added to `block`: that constant,
 // or, where the type is too large for a frame and the value is one scalar
 // above a few bits, the extension of the constant those bits are.
 [[nodiscard]] auto BuildIntegralLiteral(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type,
-    const mir::IntegralConstant& value) -> mir::ExprId;
+    const CompilationUnit& unit, Block& block, TypeId type,
+    const IntegralConstant& value) -> ExprId;
 
 // The entry that carries `entry` out over a value of type `over`. An entry the
 // source states over values of several kinds names the one over integral
 // values alone where `over` is integral, and every other entry is itself.
 [[nodiscard]] auto EntryOver(
-    const mir::CompilationUnit& unit, support::BuiltinFn entry,
-    mir::TypeId over) -> support::BuiltinFn;
+    const CompilationUnit& unit, support::BuiltinFn entry, TypeId over)
+    -> support::BuiltinFn;
 
 // The three ways an operation over values is stated: an operator a target
 // applies to two values of one type or to one, and a call to the runtime entry
@@ -102,46 +98,52 @@ template <std::ranges::sized_range Ranges>
 // `result_type`, and a call of `stated` names the entry over the kind of value
 // its first operand is.
 [[nodiscard]] auto MakeBinary(
-    const mir::CompilationUnit& unit, const mir::Block& block, mir::BinaryOp op,
-    mir::ExprId lhs, mir::ExprId rhs, mir::TypeId result_type) -> mir::Expr;
+    const CompilationUnit& unit, const Block& block, BinaryOp op, ExprId lhs,
+    ExprId rhs, TypeId result_type) -> Expr;
 [[nodiscard]] auto MakeUnary(
-    const mir::CompilationUnit& unit, const mir::Block& block, mir::UnaryOp op,
-    mir::ExprId operand, mir::TypeId result_type) -> mir::Expr;
+    const CompilationUnit& unit, const Block& block, UnaryOp op, ExprId operand,
+    TypeId result_type) -> Expr;
 [[nodiscard]] auto MakeBuiltinCall(
-    const mir::CompilationUnit& unit, const mir::Block& block,
-    support::BuiltinFn stated, std::optional<mir::ExprId> receiver,
-    std::vector<mir::ExprId> arguments, mir::TypeId result_type) -> mir::Expr;
+    const CompilationUnit& unit, const Block& block, support::BuiltinFn stated,
+    std::optional<ExprId> receiver, std::vector<ExprId> arguments,
+    TypeId result_type) -> Expr;
 // The same where the callee states more than its receiver: the part it names,
 // and the type it is called at.
 [[nodiscard]] auto MakeBuiltinCall(
-    const mir::CompilationUnit& unit, const mir::Block& block,
-    support::BuiltinFn stated, std::optional<mir::ExprId> receiver,
-    std::optional<mir::CallPart> part, std::optional<mir::TypeId> type_argument,
-    std::vector<mir::ExprId> arguments, mir::TypeId result_type) -> mir::Expr;
+    const CompilationUnit& unit, const Block& block, support::BuiltinFn stated,
+    std::optional<ExprId> receiver, std::optional<CallPart> part,
+    std::optional<TypeId> type_argument, std::vector<ExprId> arguments,
+    TypeId result_type) -> Expr;
 // `operand` held to `type`, which lays a value out as the operand's own type
-// does (LRM 6.19.3, 6.24.1): the bits already fit, so only what the program
-// holds the value to be changes.
+// does -- an enumeration and its base (LRM 6.19.3, 6.24.1), a reference and
+// one to the same referent read-only (LRM 13.5.2) -- so the value already
+// fits, and only what the program holds it to be changes.
 [[nodiscard]] auto MakeSameRepresentationCast(
-    const mir::CompilationUnit& unit, const mir::Block& block,
-    mir::ExprId operand, mir::TypeId type) -> mir::Expr;
+    const CompilationUnit& unit, const Block& block, ExprId operand,
+    TypeId type) -> Expr;
+
+// `operand`, an integral value, as a value of the integral type `type`. A
+// representation is all an integral type says -- width, signedness and state
+// domain -- and an enumeration (LRM 6.19.3) shares its base's while being a
+// type of its own. Two types that differ in it are a reshape of the bits; two
+// that agree hold the same bits, and only the type the program holds the value
+// to be changes.
+[[nodiscard]] auto MakeIntegralConversion(
+    const CompilationUnit& unit, const Block& block, ExprId operand,
+    TypeId type) -> Expr;
 
 // 2-state signed 32-bit constant, typed `int` (LRM 6.11.1).
 [[nodiscard]] auto BuildIntLiteral(
-    const mir::CompilationUnit& unit, mir::Block& block, std::int64_t value)
-    -> mir::ExprId;
+    const CompilationUnit& unit, Block& block, std::int64_t value) -> ExprId;
 
-// 4-state signed 32-bit constant, typed `integer` (LRM 6.11.1). Used by sites
-// that compare against the matched-count return of `$sscanf` / `$fscanf` --
-// those return `integer`, so the operand on the other side must match
-// state-kind.
+// 4-state signed 32-bit constant, typed `integer` (LRM 6.11.1), for an operand
+// that meets an `integer` value and has to share its state domain.
 [[nodiscard]] auto BuildIntegerLiteral(
-    const mir::CompilationUnit& unit, mir::Block& block, std::int64_t value)
-    -> mir::ExprId;
+    const CompilationUnit& unit, Block& block, std::int64_t value) -> ExprId;
 
 // 1-bit unsigned 2-state constant. The value a boolean fold yields when it has
 // nothing to fold, and the constant a synthesized flag is seeded with.
 [[nodiscard]] auto BuildBit1Literal(
-    const mir::CompilationUnit& unit, mir::Block& block, bool value)
-    -> mir::ExprId;
+    const CompilationUnit& unit, Block& block, bool value) -> ExprId;
 
-}  // namespace lyra::lowering::hir_to_mir
+}  // namespace lyra::mir

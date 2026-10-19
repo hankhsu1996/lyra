@@ -185,7 +185,8 @@ auto WriteCppSources(
   const status::Phase phase("Generating C++");
   driver::CppProjectSink sources(dir, ctx.args->formatting, *ctx.sink);
   auto lowered = compiler::LowerToSemantic(
-      *design, ctx.elaborated->diag_sources, *ctx.sink, ctx.args->compile_width,
+      *design, ctx.elaborated->diag_sources, ctx.args->mir_passes, *ctx.sink,
+      ctx.args->compile_width,
       [&](mir::CompilationUnit unit) { return sources.Write(unit); },
       [&](driver::EmittedUnit unit) { sources.Collect(std::move(unit)); });
   if (!lowered) {
@@ -228,7 +229,8 @@ auto RunDumpMir(const CommandContext& ctx) -> int {
     return 1;
   }
   auto lowered = compiler::LowerToSemantic(
-      *design, ctx.elaborated->diag_sources, *ctx.sink, ctx.args->compile_width,
+      *design, ctx.elaborated->diag_sources, ctx.args->mir_passes, *ctx.sink,
+      ctx.args->compile_width,
       [](mir::CompilationUnit unit) -> diag::Result<std::string> {
         return mir::DumpMir(unit);
       },
@@ -246,7 +248,8 @@ auto RunDumpLir(const CommandContext& ctx) -> int {
     return 1;
   }
   auto lowered = compiler::LowerToExecutable(
-      *design, ctx.elaborated->diag_sources, *ctx.sink, ctx.args->compile_width,
+      *design, ctx.elaborated->diag_sources, ctx.args->mir_passes, *ctx.sink,
+      ctx.args->compile_width,
       [](const lir::CompilationUnit& unit) -> diag::Result<std::string> {
         return lir::DumpLir(unit);
       },
@@ -275,8 +278,8 @@ auto RunDumpLlvm(const CommandContext& ctx) -> int {
     return 1;
   }
   auto lowered = compiler::LowerToExecutable(
-      *design, ctx.elaborated->diag_sources, *ctx.sink, ctx.args->compile_width,
-      text, print);
+      *design, ctx.elaborated->diag_sources, ctx.args->mir_passes, *ctx.sink,
+      ctx.args->compile_width, text, print);
   if (!lowered) {
     return 1;
   }
@@ -457,7 +460,8 @@ auto LlvmProgramRecipe(
   program::ProgramSink sink;
   const status::Phase phase("Compiling");
   auto lowered = compiler::LowerToSemantic(
-      *design, ctx.elaborated->diag_sources, *ctx.sink, host.compile_width,
+      *design, ctx.elaborated->diag_sources, ctx.args->mir_passes, *ctx.sink,
+      host.compile_width,
       [&objects, &actions](mir::CompilationUnit unit) {
         return program::BuildUnit(unit, objects, actions);
       },

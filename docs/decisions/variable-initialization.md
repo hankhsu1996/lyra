@@ -103,7 +103,7 @@ that were previously deferred:
    `T` through `T value_{}`. `PackedArray`, `UnpackedArray<T>`, and `DynamicArray<T>` gain default
    constructors that produce a 0-bit unestablished shape; the cell installs its declared type at
    construction, before any store, and a store then requires the right-hand side to already be at
-   that representation (LRM 10.6.1). The `WordCountForBits` / `PackedWords` 0-bit guards are relaxed
+   that representation (LRM 10.7). The `WordCountForBits` / `PackedWords` 0-bit guards are relaxed
    correspondingly. The default state is unobservable: MIR guarantees the install runs before any
    read.
 
@@ -193,6 +193,6 @@ class of this or another unit, or an event does not get an init statement.
 - LRM 10.5 -- Variable declaration assignment (variable initialization)
 - LRM 6.8 -- Variable declarations
 - LRM 6.21 -- Scope and lifetime
-- LRM 10.6.1 -- Variable declaration assignment shape preservation
+- LRM 10.7 -- Assignment extension and truncation
 - `docs/architecture/mir.md` -- invariant 11 (`self` binding); Forbidden Shapes
 - `docs/decisions/callable-receiver.md` -- explicit `self` first binding

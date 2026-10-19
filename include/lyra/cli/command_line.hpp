@@ -16,6 +16,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/driver/pch.hpp"
 #include "lyra/driver/project_layout.hpp"
+#include "lyra/mir_transform/pass.hpp"
 #include "lyra/status/status.hpp"
 #include "lyra/support/assertion_policy.hpp"
 
@@ -72,6 +73,9 @@ struct ParsedArgs {
   // foreign symbols an `import "DPI-C"` calls. Compiled and linked into the
   // program alongside the design's own objects.
   std::vector<std::string> dpi_link_sources;
+  // Which optional rewrites of MIR run, and whether the unit is checked after
+  // each, where a compiler developer asked.
+  mir_transform::PassOptions mir_passes;
 };
 
 // What Lyra adds to the front end's command line. Every field is optional
@@ -96,6 +100,8 @@ struct CliOptions {
   std::optional<std::int32_t> time_trace_granularity;
   std::optional<std::string> stats_file;
   std::optional<std::string> progress;
+  std::optional<std::string> mir_enable_passes;
+  std::optional<bool> mir_verify_each;
 };
 
 // What Lyra parses and what it hands the simulation, told apart by a standalone

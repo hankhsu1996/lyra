@@ -21,7 +21,6 @@
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/deferred_effect.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -30,6 +29,7 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -120,7 +120,6 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
           [&](const mir::UnaryExpr&) { return not_a_target(); },
           [&](const mir::BinaryExpr&) { return not_a_target(); },
           [&](const mir::CastExpr&) { return not_a_target(); },
-          [&](const mir::DynamicCastExpr&) { return not_a_target(); },
           [&](const mir::ConditionalExpr&) { return not_a_target(); },
           [&](const mir::BlockExpr&) { return not_a_target(); },
           [&](const mir::AssignExpr&) { return not_a_target(); },
@@ -280,7 +279,7 @@ auto StepOperator(hir::IncDecOp op) -> hir::BinaryOp {
 
 auto One(const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type)
     -> mir::ExprId {
-  return ConvertToType(unit, block, BuildIntLiteral(unit, block, 1), type);
+  return ConvertToType(unit, block, mir::BuildIntLiteral(unit, block, 1), type);
 }
 
 // What an assignment operator computes from what its target held and its

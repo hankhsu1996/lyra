@@ -31,6 +31,8 @@
 #include "lyra/driver/action_cache.hpp"
 #include "lyra/driver/pch.hpp"
 #include "lyra/driver/project_layout.hpp"
+#include "lyra/mir_transform/pass.hpp"
+#include "lyra/mir_transform/transform.hpp"
 #include "lyra/status/status.hpp"
 #include "lyra/support/assertion_policy.hpp"
 
@@ -60,6 +62,8 @@ enum class LyraOption : std::uint8_t {
   kTimeTraceGranularity,
   kStatsFile,
   kProgress,
+  kMirEnablePasses,
+  kMirVerifyEach,
   kSimulationArgs,
 };
 
@@ -108,12 +112,17 @@ constexpr OptionSet kReadsADesign = {
 // follows.
 constexpr OptionSet kLowersADesign =
     kReadsADesign | OptionSet{LyraOption::kAssertions};
+// What every command taking the design to MIR and past it acts on besides:
+// which of MIR's optional rewrites run, and how often the result is checked.
+constexpr OptionSet kRewritesMir =
+    kLowersADesign |
+    OptionSet{LyraOption::kMirEnablePasses, LyraOption::kMirVerifyEach};
 // What building the design's program acts on besides.
 constexpr OptionSet kBuildsAProgram =
-    kLowersADesign | OptionSet{LyraOption::kRelease,  LyraOption::kNoPch,
-                               LyraOption::kCacheDir, LyraOption::kRebuild,
-                               LyraOption::kCxx,      LyraOption::kJobs,
-                               LyraOption::kBackend,  LyraOption::kDpiLink};
+    kRewritesMir | OptionSet{LyraOption::kRelease,  LyraOption::kNoPch,
+                             LyraOption::kCacheDir, LyraOption::kRebuild,
+                             LyraOption::kCxx,      LyraOption::kJobs,
+                             LyraOption::kBackend,  LyraOption::kDpiLink};
 
 // Where a command shows what it is doing when nobody said. The error stream
 // carries it, so the answer follows from what else the command's streams are
@@ -164,19 +173,19 @@ constexpr auto kCommands = std::to_array<CommandSpec>(
       .kind = CommandKind::kDumpMir,
       .requires_out = false,
       .status = SaysStatus::kNever,
-      .takes = kLowersADesign},
+      .takes = kRewritesMir},
      {.verb = "dump",
       .object = "lir",
       .kind = CommandKind::kDumpLir,
       .requires_out = false,
       .status = SaysStatus::kNever,
-      .takes = kLowersADesign},
+      .takes = kRewritesMir},
      {.verb = "dump",
       .object = "llvm",
       .kind = CommandKind::kDumpLlvm,
       .requires_out = false,
       .status = SaysStatus::kNever,
-      .takes = kLowersADesign},
+      .takes = kRewritesMir},
      // The project's recipe is written with the compiler and the level it
      // compiles at baked in, and takes its own width and precompiled header
      // when it is run.
@@ -185,7 +194,7 @@ constexpr auto kCommands = std::to_array<CommandSpec>(
       .kind = CommandKind::kEmitCpp,
       .requires_out = true,
       .status = SaysStatus::kAlways,
-      .takes = kLowersADesign |
+      .takes = kRewritesMir |
                OptionSet{
                    LyraOption::kFormat, LyraOption::kRelease, LyraOption::kCxx,
                    LyraOption::kOut, LyraOption::kDpiLink}},
@@ -248,6 +257,10 @@ auto Spelling(LyraOption option) -> std::string_view {
       return "--stats-file";
     case LyraOption::kProgress:
       return "--progress";
+    case LyraOption::kMirEnablePasses:
+      return "--mir-enable-passes";
+    case LyraOption::kMirVerifyEach:
+      return "--mir-verify-each";
     case LyraOption::kSimulationArgs:
       return "--";
   }
@@ -295,6 +308,10 @@ auto IsGiven(
       return opts.stats_file.has_value();
     case LyraOption::kProgress:
       return opts.progress.has_value();
+    case LyraOption::kMirEnablePasses:
+      return opts.mir_enable_passes.has_value();
+    case LyraOption::kMirVerifyEach:
+      return opts.mir_verify_each.has_value();
     case LyraOption::kSimulationArgs:
       return has_simulation_args;
   }
@@ -435,6 +452,44 @@ auto QuotedList(
   return out;
 }
 
+// The rewrites `--mir-enable-passes` asks to have run or skipped, each written
+// as its name after '+' or '-', the words separated by commas. A required
+// rewrite is no rewrite a build may skip, so naming one is refused as an
+// unknown name is.
+auto ParseMirPassOverrides(std::string_view list)
+    -> diag::Result<std::vector<mir_transform::PassOverride>> {
+  std::vector<std::string> optional;
+  for (const mir_transform::Pass& pass : mir_transform::Pipeline()) {
+    if (mir_transform::MayBeSkipped(pass.policy)) {
+      optional.emplace_back(pass.name);
+    }
+  }
+  std::vector<mir_transform::PassOverride> overrides;
+  for (const auto word : std::views::split(list, ',')) {
+    const std::string_view asked(word.begin(), word.end());
+    if (!asked.starts_with('+') && !asked.starts_with('-')) {
+      return diag::Fail(
+          diag::DiagCode::kHostInvalidCliArgs,
+          "'{}' given to '--mir-enable-passes' does not start with '+' or '-'",
+          asked);
+    }
+    const std::string_view name = asked.substr(1);
+    if (!std::ranges::contains(optional, name)) {
+      return std::unexpected(
+          diag::Make(
+              diag::DiagCode::kHostInvalidCliArgs,
+              "'{}' given to '--mir-enable-passes' names no rewrite a build "
+              "may skip",
+              name)
+              .WithNote("name one of {}", QuotedList(optional, "or")));
+    }
+    overrides.push_back(
+        mir_transform::PassOverride{
+            .name = std::string(name), .runs = asked.starts_with('+')});
+  }
+  return overrides;
+}
+
 // What a caller reads when the command line names no command it has.
 auto NoSuchCommand(std::string_view verb) -> diag::Diagnostic {
   auto refused = verb.empty() ? diag::Make(
@@ -551,6 +606,15 @@ void RegisterCliOptions(slang::CommandLine& cmd, CliOptions& opts) {
       "terminal and a line at intervals elsewhere (auto), lines wherever it "
       "is written (plain), or nothing (none)",
       "auto|plain|none");
+  cmd.add(
+      "--mir-enable-passes", opts.mir_enable_passes,
+      "run (+Name) or skip (-Name) each named optional rewrite of MIR, for "
+      "finding which one changed an answer",
+      "<+Name|-Name,...>");
+  cmd.add(
+      "--mir-verify-each", opts.mir_verify_each,
+      "check MIR before and after every rewrite rather than once after the "
+      "last");
 }
 
 auto SplitAtSeparator(std::span<char* const> raw) -> SplitArgv {
@@ -997,6 +1061,15 @@ auto ResolveCliOptions(
     }
     out.backend = *backend;
   }
+
+  if (opts.mir_enable_passes) {
+    auto overrides = ParseMirPassOverrides(*opts.mir_enable_passes);
+    if (!overrides) {
+      return std::unexpected(std::move(overrides.error()));
+    }
+    out.mir_passes.overrides = *std::move(overrides);
+  }
+  out.mir_passes.verify_each = opts.mir_verify_each.value_or(false);
 
   if (RequiresOut(cmd) && !out.out) {
     return diag::Fail(

@@ -566,7 +566,9 @@ auto EmitSubroutineCall(
       case hir::ParamDirection::kConstRef: {
         auto arg_or = lowerer.LowerLhsExpr(hir_arg, frame);
         if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-        call_args.push_back(PathReference(unit, block, *arg_or));
+        call_args.push_back(AtType(
+            unit, block, PathReference(unit, block, *arg_or),
+            *ParamTypeOf(unit, formal.type, formal.direction)));
         break;
       }
 
@@ -891,7 +893,9 @@ auto EmitReportingCall(
         }
         auto place = lowerer.LowerLhsExpr(hir_arg, at);
         if (!place) return std::unexpected(std::move(place.error()));
-        call_args.push_back(PathReference(unit, block, *place));
+        call_args.push_back(AtType(
+            unit, block, PathReference(unit, block, *place),
+            *ParamTypeOf(unit, formal.type, formal.direction)));
         break;
       }
     }

@@ -449,6 +449,7 @@ cc_library(
         ":hir",
         ":lir",
         ":mir",
+        ":mir_transform",
         ":profiling",
         ":program",
         ":status",

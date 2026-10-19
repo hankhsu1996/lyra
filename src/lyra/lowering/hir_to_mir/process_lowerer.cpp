@@ -20,7 +20,6 @@
 #include "lyra/lowering/hir_to_mir/concurrent_assertion.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
@@ -37,6 +36,7 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -410,7 +410,7 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
     const auto& hir_var = src.body.procedural_vars.Get(param.var);
     const hir::ParamDirection dir = param.direction;
     const std::optional<mir::TypeId> param_type =
-        ParamTypeOf(*owner_, hir_var.type, dir);
+        ParamTypeOf(owner_->Unit(), owner_->TranslateType(hir_var.type), dir);
 
     const BindingOriginId origin = ProceduralOrigin{.var = param.var};
     if (!param_type.has_value()) {
@@ -572,9 +572,11 @@ auto ProcessLowerer::BuildReportPrologue(
     const mir::ExprId entered_at = BuildReportCall(
         unit, asked, report, support::BuiltinFn::kReadReportEnter, {},
         unit.builtins.machine_int64);
-    const mir::ExprId goes_on = asked.exprs.Add(MakeBinary(
-        unit, asked, mir::BinaryOp::kInequality, entered_at,
-        BuildMachineIntLiteral(unit, asked, 0), unit.builtins.machine_bool));
+    const mir::ExprId goes_on = asked.exprs.Add(
+        mir::MakeBinary(
+            unit, asked, mir::BinaryOp::kInequality, entered_at,
+            mir::BuildMachineIntLiteral(unit, asked, 0),
+            unit.builtins.machine_bool));
     asked.AppendStmt(
         mir::IfStmt{
             .condition = goes_on,
@@ -594,9 +596,11 @@ auto ProcessLowerer::BuildReportPrologue(
   const mir::ExprId runs_the_body = BuildReportCall(
       unit, asked, report, support::BuiltinFn::kReadReportRunsTheBody, {},
       unit.builtins.machine_int64);
-  const mir::ExprId within_a_report = asked.exprs.Add(MakeBinary(
-      unit, asked, mir::BinaryOp::kEquality, runs_the_body,
-      BuildMachineIntLiteral(unit, asked, 0), unit.builtins.machine_bool));
+  const mir::ExprId within_a_report = asked.exprs.Add(
+      mir::MakeBinary(
+          unit, asked, mir::BinaryOp::kEquality, runs_the_body,
+          mir::BuildMachineIntLiteral(unit, asked, 0),
+          unit.builtins.machine_bool));
   asked.AppendStmt(
       mir::IfStmt{
           .condition = within_a_report,
@@ -608,9 +612,10 @@ auto ProcessLowerer::BuildReportPrologue(
   const mir::ExprId no_report = block.exprs.Add(
       mir::Expr{
           .data = mir::NullLiteral{}, .type = unit.builtins.read_report_ptr});
-  const mir::ExprId handed = block.exprs.Add(MakeBinary(
-      unit, block, mir::BinaryOp::kInequality, report_read, no_report,
-      unit.builtins.machine_bool));
+  const mir::ExprId handed = block.exprs.Add(
+      mir::MakeBinary(
+          unit, block, mir::BinaryOp::kInequality, report_read, no_report,
+          unit.builtins.machine_bool));
   block.AppendStmt(
       mir::IfStmt{
           .condition = handed,

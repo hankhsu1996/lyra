@@ -37,7 +37,6 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/pattern_rendering.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -51,6 +50,7 @@
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/external_class.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -289,9 +289,11 @@ void GuardNamespaceInitialization(
                               support::BuiltinFn::kClaimNamespaceInitialize},
                   .arguments = {runtime, name}},
           .type = unit.builtins.machine_int64});
-  const mir::ExprId took_it = outer.exprs.Add(MakeBinary(
-      unit, outer, mir::BinaryOp::kInequality, claimed,
-      BuildMachineIntLiteral(unit, outer, 0), unit.builtins.machine_bool));
+  const mir::ExprId took_it = outer.exprs.Add(
+      mir::MakeBinary(
+          unit, outer, mir::BinaryOp::kInequality, claimed,
+          mir::BuildMachineIntLiteral(unit, outer, 0),
+          unit.builtins.machine_bool));
 
   mir::Block bring_up;
   for (const std::string& read : reads) {

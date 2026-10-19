@@ -16,13 +16,13 @@
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
@@ -120,7 +120,7 @@ auto MakeControlBitsExpr(
       state_word |= std::uint64_t{1} << position;
     }
   }
-  return BuildIntegralLiteral(
+  return mir::BuildIntegralLiteral(
       unit, block, BitCountControlType(unit),
       mir::IntegralConstant{
           .value_words = {value_word}, .state_words = {state_word}});
@@ -209,8 +209,8 @@ auto LowerBitVectorSystemSubroutineCall(
   if (!op) {
     return body.exprs.Get(count);
   }
-  return MakeBinary(
-      unit, body, *op, count, BuildIntLiteral(unit, body, 1),
+  return mir::MakeBinary(
+      unit, body, *op, count, mir::BuildIntLiteral(unit, body, 1),
       unit.builtins.bit1);
 }
 

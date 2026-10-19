@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <optional>
+#include <span>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -10,6 +11,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class.hpp"
+#include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/frame_size.hpp"
@@ -129,18 +131,23 @@ class BodyBoxing {
     }
   }
 
-  // The code rewritten, read where it lies, with `base_args` rewritten along
-  // with it: nodes of the body no statement reaches, which a constructor
-  // enters its base's with, a body this program compiles.
-  auto Rewritten(std::vector<mir::ExprId>& base_args) -> mir::CallableCode {
-    std::optional<mir::Block> body = RewrittenBody(base_args);
-    return mir::CallableCode{
-        .params = code_->params,
-        .receiver = code_->receiver,
-        .result_type = WithParamsBoxed(*unit_, code_->result_type),
-        .locals = BoxedLocals(),
-        .named_locals = code_->named_locals,
-        .body = std::move(body)};
+  // The code rewritten, read where it lies, with each outside root rewritten
+  // as an argument is, since a constructor enters its base's constructor with
+  // them.
+  auto Rewritten(std::span<const mir::ExprId> outside_roots)
+      -> mir::SourcedCode {
+    std::vector<mir::ExprId> roots(outside_roots.begin(), outside_roots.end());
+    std::optional<mir::Block> body = RewrittenBody(roots);
+    return mir::SourcedCode{
+        .code =
+            mir::CallableCode{
+                .params = code_->params,
+                .receiver = code_->receiver,
+                .result_type = WithParamsBoxed(*unit_, code_->result_type),
+                .locals = BoxedLocals(),
+                .named_locals = code_->named_locals,
+                .body = std::move(body)},
+        .outside_roots = std::move(roots)};
   }
 
   // Whether the rewrite changes the body at all.
@@ -165,7 +172,7 @@ class BodyBoxing {
     return locals;
   }
 
-  auto RewrittenBody(std::vector<mir::ExprId>& base_args)
+  auto RewrittenBody(std::vector<mir::ExprId>& outside_roots)
       -> std::optional<mir::Block> {
     if (!code_->body.has_value()) {
       return std::nullopt;
@@ -182,7 +189,7 @@ class BodyBoxing {
             [this](mir::TypeId type) { return WithParamsBoxed(*unit_, type); }};
     BlockRebuild rebuild(*code_->body, rules);
     std::vector<mir::StmtId> stmts = rebuild.Stmts(code_->body->root_stmts);
-    for (mir::ExprId& argument : base_args) {
+    for (mir::ExprId& argument : outside_roots) {
       argument = Argument(rebuild, argument);
     }
     return std::move(rebuild).Finish(std::move(stmts));
@@ -270,11 +277,6 @@ class BodyBoxing {
             },
             [&](const mir::CastExpr& e) {
               return node(mir::CastExpr{.operand = value(e.operand)});
-            },
-            [&](const mir::DynamicCastExpr& e) {
-              mir::DynamicCastExpr carried = e;
-              carried.operand = value(e.operand);
-              return node(std::move(carried));
             },
             // The arm a conditional chooses is made where the conditional's
             // value is, as clang evaluates each arm of an aggregate conditional
@@ -407,32 +409,6 @@ class BodyBoxing {
   bool completes_;
 };
 
-// A constructor with its large values held through boxes; one with nothing to
-// box is handed back as it is.
-auto BoxedConstructor(
-    const mir::CompilationUnit& unit, mir::ConstructorDecl constructor)
-    -> mir::ConstructorDecl {
-  BodyBoxing boxing(unit, constructor.code);
-  if (!boxing.ChangesAnything()) {
-    return constructor;
-  }
-  mir::CallableCode code = boxing.Rewritten(constructor.base_args);
-  return mir::ConstructorDecl{
-      .code = std::move(code), .base_args = std::move(constructor.base_args)};
-}
-
-// `code` with its large values held through boxes; code with nothing to box
-// is handed back as it is.
-auto BoxedCode(const mir::CompilationUnit& unit, mir::CallableCode code)
-    -> mir::CallableCode {
-  BodyBoxing boxing(unit, code);
-  if (!boxing.ChangesAnything()) {
-    return code;
-  }
-  std::vector<mir::ExprId> no_base_args;
-  return boxing.Rewritten(no_base_args);
-}
-
 // `build` with its large values boxed. What a constant builds is a table of
 // machine values and code addresses, so the address of code is all that
 // changes in one.
@@ -455,9 +431,7 @@ auto BoxedBuild(const mir::CompilationUnit& unit, const mir::ValueBuild& build)
 auto BoxLargeValues(mir::CompilationUnit unit) -> mir::CompilationUnit {
   // A capture of a large value is held through its box, as a local is. A
   // closure is as large as its captures as it holds them, so the fields are
-  // replaced first, before any body asks how large a closure is. Each invoke is
-  // rewritten from the unit as it then stands and put in place only afterwards,
-  // since rewriting reads the closures.
+  // replaced first, before any body asks how large a closure is.
   std::vector<base::Arena<mir::FieldDecl, mir::FieldId>> fields(
       unit.closures.size());
   for (const mir::ClosureId id : unit.closures.Ids()) {
@@ -485,59 +459,25 @@ auto BoxLargeValues(mir::CompilationUnit unit) -> mir::CompilationUnit {
             cls.constants = std::move(constants);
             cls.object_definition_initializer =
                 BoxedBuild(unit, cls.object_definition_initializer);
-            if (cls.constructor.has_value()) {
-              cls.constructor =
-                  BoxedConstructor(unit, *std::move(cls.constructor));
-            }
-            cls.callables =
-                std::move(cls.callables)
-                    .TransformValues(
-                        [&](mir::CallableId, mir::CallableDecl decl) {
-                          decl.code = BoxedCode(unit, std::move(decl.code));
-                          return decl;
-                        });
             return cls;
           });
-  // A foreign body is entered by the convention its declaration states, which
-  // nothing here changes.
-  unit.callables =
-      std::move(unit.callables)
-          .TransformValues([&](mir::CallableId, mir::CallableDecl decl) {
-            if (!decl.foreign.has_value()) {
-              decl.code = BoxedCode(unit, std::move(decl.code));
-            }
-            return decl;
-          });
-  // The body a foreign name's scope entries share is this unit's own. What it
-  // takes the foreign side passes, by value only where the value is small (LRM
-  // H.8.1), and it calls the subroutine of the scope it resolves as any call
-  // does.
-  for (mir::ForeignScopeEntry& entry : unit.foreign_scope_entries) {
-    entry.definition = BoxedCode(unit, std::move(entry.definition));
-  }
-  unit.record_methods =
-      std::move(unit.record_methods)
-          .TransformValues([&](mir::RecordId, mir::RecordMethods methods) {
-            for (mir::RecordMethod& method : methods) {
-              method.code = BoxedCode(unit, std::move(method.code));
-            }
-            return methods;
-          });
-  for (mir::TypeOperation& stated : unit.type_operations) {
-    stated.code = BoxedCode(unit, std::move(stated.code));
-  }
-  std::vector<mir::CallableCode> invokes;
-  invokes.reserve(unit.closures.size());
-  for (const mir::ClosureId id : unit.closures.Ids()) {
-    invokes.push_back(BoxedCode(unit, unit.GetClosure(id).invoke));
-  }
-  unit.closures =
-      std::move(unit.closures)
-          .TransformValues([&](mir::ClosureId id, mir::ClosureDecl closure) {
-            closure.invoke = std::move(invokes.at(id.value));
-            return closure;
-          });
-  return unit;
+  return mir::RewriteEachCode(
+      std::move(unit),
+      [](const mir::CompilationUnit& unit, const mir::CodeSource& at,
+         const mir::CallableCode& code,
+         std::span<const mir::ExprId> outside_roots)
+          -> std::optional<mir::SourcedCode> {
+        // A foreign body is entered by the convention its declaration states,
+        // which nothing here changes.
+        if (mir::IsEnteredForeign(unit, at)) {
+          return std::nullopt;
+        }
+        BodyBoxing boxing(unit, code);
+        if (!boxing.ChangesAnything()) {
+          return std::nullopt;
+        }
+        return boxing.Rewritten(outside_roots);
+      });
 }
 
 }  // namespace lyra::mir_transform

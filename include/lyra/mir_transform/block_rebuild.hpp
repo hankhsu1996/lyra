@@ -7,6 +7,8 @@
 #include <vector>
 
 #include "lyra/mir/block_id.hpp"
+#include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/code_source.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -59,6 +61,9 @@ class BlockRebuild {
   auto Add(mir::Block block) -> mir::BlockId;
 
   [[nodiscard]] auto From() const -> const mir::Block&;
+  // The block being built, which names every node added so far, so a builder
+  // reading the operands of a node it builds reads them here.
+  [[nodiscard]] auto To() const -> const mir::Block&;
 
   // The block, running `root_stmts`.
   [[nodiscard]] auto Finish(
@@ -77,5 +82,13 @@ class BlockRebuild {
   std::vector<std::optional<mir::ExprId>> carried_exprs_;
   std::vector<std::optional<mir::StmtId>> carried_stmts_;
 };
+
+// `code` with its body rebuilt under `rules` from its statements, and
+// `outside_roots` -- nodes of the body no statement reaches -- named again in
+// the body that replaces it. Code with no body has nothing to rebuild and is
+// carried over as it is.
+[[nodiscard]] auto RebuildCode(
+    const mir::CallableCode& code, std::span<const mir::ExprId> outside_roots,
+    const RebuildRules& rules) -> mir::SourcedCode;
 
 }  // namespace lyra::mir_transform

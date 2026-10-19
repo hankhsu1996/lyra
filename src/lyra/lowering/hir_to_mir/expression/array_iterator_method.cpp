@@ -22,7 +22,6 @@
 #include "lyra/lowering/hir_to_mir/entry_walk.hpp"
 #include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/loops.hpp"
@@ -31,6 +30,7 @@
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
@@ -220,10 +220,12 @@ auto WalkedOperand(
     Lowerer& lowerer, const hir::CallExpr& c, const WalkFrame& frame)
     -> diag::Result<WalkedArray> {
   mir::Block& block = *frame.current_block;
-  auto object =
-      lowerer.LowerAsPlace(lowerer.HirExprs().Get(ArrayOperand(c)), frame);
+  const hir::Expr& operand = lowerer.HirExprs().Get(ArrayOperand(c));
+  auto object = lowerer.LowerAsPlace(operand, frame);
   if (!object) return std::unexpected(std::move(object.error()));
-  return WalkedArrayOf(lowerer.Owner(), frame, block.exprs.Add(*object));
+  return WalkedArrayOf(
+      lowerer.Owner(), frame, block.exprs.Add(*object),
+      DeclaredRangeOf(lowerer.Owner(), operand.type));
 }
 
 // LRM 7.12.3: the keys folded by `op`, the first seeding the fold, at the type
@@ -413,8 +415,8 @@ auto LowerUnique(
         const mir::LocalId held =
             DeclareLocal(at, ConvertToType(unit, b, key.key, key_type));
         const mir::LocalId repeated = DeclareFlag(unit, at);
-        const WalkedArray seen =
-            WalkedArrayOf(unit_lowerer, at, b.LocalPlace(seen_keys, keys_type));
+        const WalkedArray seen = WalkedArrayOf(
+            unit_lowerer, at, b.LocalPlace(seen_keys, keys_type), std::nullopt);
         auto searched = BuildEntryLoopStmt(
             unit_lowerer, at, seen, WalkOrder::kFromFirst, std::nullopt,
             [&](const WalkFrame& in,
@@ -536,9 +538,10 @@ auto BuildIsLess(
       unit_lowerer, frame, is_less, PathReference(unit, block, sequence));
   const mir::TypeId position = unit.builtins.machine_int64;
   const auto entry_at = [&](mir::LocalId at) {
-    const mir::ExprId reached = body.exprs.Add(MakeBuiltinCall(
-        unit, body, support::BuiltinFn::kIntegralFromInt, std::nullopt,
-        {body.ReadLocal(at, position)}, mir::PositionType(unit.types)));
+    const mir::ExprId reached = body.exprs.Add(
+        mir::MakeBuiltinCall(
+            unit, body, support::BuiltinFn::kIntegralFromInt, std::nullopt,
+            {body.ReadLocal(at, position)}, mir::PositionType(unit.types)));
     return PathValue(
         unit, body,
         DescendInto(
@@ -583,13 +586,16 @@ auto LowerSort(
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   BlockBuilder steps(frame);
   mir::Block& body = steps.Body();
-  auto target = lowerer.LowerLhsExpr(
-      lowerer.HirExprs().Get(ArrayOperand(c)), steps.Frame());
+  const hir::Expr& operand = lowerer.HirExprs().Get(ArrayOperand(c));
+  auto target = lowerer.LowerLhsExpr(operand, steps.Frame());
   if (!target) return std::unexpected(std::move(target.error()));
+  const std::optional<hir::UnpackedRange> declared =
+      DeclaredRangeOf(unit_lowerer, operand.type);
   std::optional<AccessPath> written_back;
   WalkedArray array = [&] {
     if (!ReachesOverlaidStorage(*target)) {
-      return WalkedArrayAt(unit_lowerer, steps.Frame(), *std::move(target));
+      return WalkedArrayAt(
+          unit_lowerer, steps.Frame(), *std::move(target), declared);
     }
     ReadThenWritten changed =
         ReadThenWrite(unit_lowerer, steps.Frame(), *std::move(target));
@@ -600,7 +606,8 @@ auto LowerSort(
         AccessPath{
             .owner = body.LocalPlace(
                 DeclareLocal(steps.Frame(), changed.incoming), type),
-            .descent = {}});
+            .descent = {}},
+        declared);
   }();
 
   const mir::TypeId key_type = KeyType(lowerer, ref, array);

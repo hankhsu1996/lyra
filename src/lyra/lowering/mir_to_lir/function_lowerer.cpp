@@ -2286,9 +2286,6 @@ auto FunctionLowerer::LowerPlace(
           [&](const mir::CastExpr&) {
             return names_no_place("a converted value");
           },
-          [&](const mir::DynamicCastExpr&) {
-            return names_no_place("a converted value");
-          },
           [&](const mir::ConditionalExpr&) {
             return names_no_place("a value a condition chooses");
           },
@@ -2730,7 +2727,31 @@ auto FunctionLowerer::LowerCallInto(
     return settled(EnterCoroutine(block, call, type, std::nullopt));
   }
 
+  // A handle seen as another class's is a new handle to the same object,
+  // formed by this target's own conversion between the two classes, as clang
+  // realizes one between two pointers to classes.
+  const auto seen_as = [&](auto instruction) -> diag::Result<lir::Operand> {
+    auto handle = LowerExpr(block, call.arguments.front());
+    if (!handle) {
+      return std::unexpected(std::move(handle.error()));
+    }
+    instruction.operand = *std::move(handle);
+    return Emit(unit_->TranslateType(type), std::move(instruction));
+  };
   if (const auto fn = mir::DirectBuiltinFn(call); fn.has_value()) {
+    if (*fn == support::BuiltinFn::kDerivedToBase) {
+      return settled(seen_as(lir::HandleCastInstr{}));
+    }
+    if (*fn == support::BuiltinFn::kDynamicCast) {
+      return settled(seen_as(lir::DynamicCastInstr{}));
+    }
+    // A closure made one of no known type is the one value read as another
+    // type: this target's closure opens with its definition, so the address
+    // it lies at is the erased closure's too, as a C++ object's is its first
+    // base's.
+    if (*fn == support::BuiltinFn::kUnsize) {
+      return settled(LowerReadAsAnother(block, call.arguments.front(), type));
+    }
     if (*fn == support::BuiltinFn::kReferProperty) {
       return settled(LowerPropertyReference(block, call, type));
     }
@@ -3311,23 +3332,8 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
           [&](const mir::BorrowExpr&) -> Lowered { return computed(); },
           [&](const mir::AddressOfExpr&) -> Lowered { return computed(); },
           [&](const mir::CastExpr& cast) -> Lowered {
-            // A value with no copy read as another type is the one value,
-            // whose end goes with it to the new type.
-            const lir::TypeId cast_to = unit_->TranslateType(type);
-            if (!unit_->Types().Get(cast_to).IsMoveOnly()) {
-              return computed();
-            }
-            auto operand = LowerExpr(block, cast.operand);
-            if (!operand) {
-              return std::unexpected(std::move(operand.error()));
-            }
-            const lir::Operand moved = Emit(
-                cast_to,
-                lir::CastInstr{.operand = HandOn(*std::move(operand))});
-            OpenScope(ValueEnd{.value = std::get<lir::Use>(moved).value});
-            return moved;
+            return LowerReadAsAnother(block, cast.operand, type);
           },
-          [&](const mir::DynamicCastExpr&) -> Lowered { return computed(); },
           [&](const mir::CompositeExpr&) -> Lowered { return computed(); },
           [&](const mir::UnionExpr&) -> Lowered { return computed(); },
           [&](const mir::VectorGetExpr&) -> Lowered { return computed(); },
@@ -3337,6 +3343,23 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
           [&](const mir::BinaryExpr&) -> Lowered { return computed(); },
       },
       expr.data);
+}
+
+auto FunctionLowerer::LowerReadAsAnother(
+    const mir::Block& block, mir::ExprId operand, mir::TypeId type)
+    -> diag::Result<lir::Operand> {
+  const lir::TypeId read_as = unit_->TranslateType(type);
+  auto value = LowerExpr(block, operand);
+  if (!value) {
+    return std::unexpected(std::move(value.error()));
+  }
+  if (!unit_->Types().Get(read_as).IsMoveOnly()) {
+    return Emit(read_as, lir::CastInstr{.operand = *std::move(value)});
+  }
+  const lir::Operand moved =
+      Emit(read_as, lir::CastInstr{.operand = HandOn(*std::move(value))});
+  OpenScope(ValueEnd{.value = std::get<lir::Use>(moved).value});
+  return moved;
 }
 
 auto FunctionLowerer::LowerRvalue(const mir::Block& block, mir::ExprId id)
@@ -3422,26 +3445,7 @@ auto FunctionLowerer::LowerRvalue(const mir::Block& block, mir::ExprId id)
             if (!operand) {
               return std::unexpected(std::move(operand.error()));
             }
-            // A handle read as another class's handle is a new handle to the
-            // same object; every other cast reads its operand again. Which of
-            // the two a cast is follows from the pair of types, as a C++ cast
-            // is chosen from its pair.
-            const auto& types = unit_->Mir().types;
-            if (types.Get(type).Is<mir::ManagedRefType>() &&
-                types.Get(block.exprs.Get(cast.operand).type)
-                    .Is<mir::ManagedRefType>()) {
-              return of_type(
-                  lir::HandleCastInstr{.operand = *std::move(operand)});
-            }
             return of_type(lir::CastInstr{.operand = *std::move(operand)});
-          },
-          [&](const mir::DynamicCastExpr& cast) -> Lowered {
-            auto operand = LowerExpr(block, cast.operand);
-            if (!operand) {
-              return std::unexpected(std::move(operand.error()));
-            }
-            return of_type(
-                lir::DynamicCastInstr{.operand = *std::move(operand)});
           },
           [&](const mir::CompositeExpr& composite) -> Lowered {
             auto parts = LowerEachExpr(block, composite.parts);
@@ -3616,7 +3620,6 @@ auto FunctionLowerer::LowerExprInto(
           [&](const mir::BorrowExpr&) { return assigned(); },
           [&](const mir::AddressOfExpr&) { return assigned(); },
           [&](const mir::CastExpr&) { return assigned(); },
-          [&](const mir::DynamicCastExpr&) { return assigned(); },
           [&](const mir::CompositeExpr&) { return assigned(); },
           [&](const mir::UnionExpr&) { return assigned(); },
           [&](const mir::VectorGetExpr&) { return assigned(); },

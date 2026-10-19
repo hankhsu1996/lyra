@@ -18,7 +18,6 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/expression/calls.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -26,6 +25,7 @@
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -198,13 +198,15 @@ auto BuildIndexLoopStmt(
     const Read& read, const Write& write, mir::BinaryOp goes_on_while,
     mir::ExprId bound, mir::BinaryOp advance, mir::BlockId body_scope,
     std::optional<mir::LoopLabelId> break_label) -> mir::Stmt {
-  const mir::ExprId goes_on = block.exprs.Add(MakeBinary(
-      unit, block, goes_on_while, read(), bound, unit.builtins.bit1));
+  const mir::ExprId goes_on = block.exprs.Add(
+      mir::MakeBinary(
+          unit, block, goes_on_while, read(), bound, unit.builtins.bit1));
   const mir::ExprId cond_id = ReduceToCondition(unit, block, goes_on);
 
-  const mir::ExprId next = block.exprs.Add(MakeBinary(
-      unit, block, advance, read(), BuildIntLiteral(unit, block, 1),
-      unit.builtins.int_type));
+  const mir::ExprId next = block.exprs.Add(
+      mir::MakeBinary(
+          unit, block, advance, read(), mir::BuildIntLiteral(unit, block, 1),
+          unit.builtins.int_type));
 
   std::vector<mir::ForInit> for_init;
   for_init.push_back(std::move(init));
@@ -276,7 +278,7 @@ auto BuildCountingLoopStmt(
     std::optional<mir::LoopLabelId> break_label) -> mir::Stmt {
   const mir::ExprId bound = SampledCount(unit, frame, block, count);
   return BuildDeclaredIndexLoopStmt(
-      unit, block, position, BuildIntLiteral(unit, block, 0),
+      unit, block, position, mir::BuildIntLiteral(unit, block, 0),
       mir::BinaryOp::kLessThan, bound, mir::BinaryOp::kAdd, body_scope,
       break_label);
 }
@@ -290,13 +292,14 @@ auto BuildPositionWalkStmt(
       return BuildCountingLoopStmt(
           unit, frame, block, count, position, body_scope);
     case WalkOrder::kFromLast: {
-      const mir::ExprId last = block.exprs.Add(MakeBinary(
-          unit, block, mir::BinaryOp::kSub,
-          SampledCount(unit, frame, block, count),
-          BuildIntLiteral(unit, block, 1), unit.builtins.int_type));
+      const mir::ExprId last = block.exprs.Add(
+          mir::MakeBinary(
+              unit, block, mir::BinaryOp::kSub,
+              SampledCount(unit, frame, block, count),
+              mir::BuildIntLiteral(unit, block, 1), unit.builtins.int_type));
       return BuildDeclaredIndexLoopStmt(
           unit, block, position, last, mir::BinaryOp::kGreaterEqual,
-          BuildIntLiteral(unit, block, 0), mir::BinaryOp::kSub, body_scope,
+          mir::BuildIntLiteral(unit, block, 0), mir::BinaryOp::kSub, body_scope,
           std::nullopt);
     }
   }
@@ -309,7 +312,7 @@ auto BuildCountingLoopStmt(
     std::optional<mir::LoopLabelId> break_label) -> mir::Stmt {
   const mir::ExprId bound = SampledCount(unit, frame, block, count);
   return BuildStoredIndexLoopStmt(
-      unit, block, position, BuildIntLiteral(unit, block, 0),
+      unit, block, position, mir::BuildIntLiteral(unit, block, 0),
       mir::BinaryOp::kLessThan, bound, mir::BinaryOp::kAdd, body_scope,
       break_label);
 }
@@ -320,9 +323,9 @@ auto BuildRangeLoopStmt(
     std::optional<mir::LoopLabelId> break_label) -> mir::Stmt {
   const bool ascending = left <= right;
   return BuildStoredIndexLoopStmt(
-      unit, block, index, BuildIntLiteral(unit, block, left),
+      unit, block, index, mir::BuildIntLiteral(unit, block, left),
       ascending ? mir::BinaryOp::kLessEqual : mir::BinaryOp::kGreaterEqual,
-      BuildIntLiteral(unit, block, right),
+      mir::BuildIntLiteral(unit, block, right),
       ascending ? mir::BinaryOp::kAdd : mir::BinaryOp::kSub, body_scope,
       break_label);
 }

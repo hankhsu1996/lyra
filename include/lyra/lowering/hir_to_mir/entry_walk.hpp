@@ -4,6 +4,8 @@
 #include <optional>
 
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/type.hpp"
+#include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/statement/loops.hpp"
@@ -19,24 +21,35 @@ namespace lyra::lowering::hir_to_mir {
 
 // An unpacked array whose entries a loop visits: the path to it, settled where
 // the loop stands, so whatever reaching it computes is evaluated once however
-// many entries are visited, and the array's type.
+// many entries are visited, the array's type, and the range a fixed-size
+// array's declaration numbers its entries by (LRM 7.4.5). The range is the
+// static type's, which MIR's array type does not hold, and an array sized
+// while the program runs has none.
 struct WalkedArray {
   SettledPath path;
   mir::TypeId type;
+  std::optional<hir::UnpackedRange> declared;
 };
 
-// The array `path` names, settled in the frame's block.
+// The range a value of the static type `type` numbers its entries by: its
+// declaration's for a fixed-size array, and none for any other.
+[[nodiscard]] auto DeclaredRangeOf(
+    const UnitLowerer& unit_lowerer, hir::TypeId type)
+    -> std::optional<hir::UnpackedRange>;
+
+// The array `path` names, settled in the frame's block, numbered by
+// `declared`.
 [[nodiscard]] auto WalkedArrayAt(
-    const UnitLowerer& unit_lowerer, const WalkFrame& frame, AccessPath path)
-    -> WalkedArray;
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame, AccessPath path,
+    std::optional<hir::UnpackedRange> declared) -> WalkedArray;
 
 // The array `object` evaluates to, already in the frame's block: the storage
 // it names where it is a place, and otherwise its value, held in a local of
 // that block for as long as the loop runs, as Rust's `for` holds the value it
 // iterates.
 [[nodiscard]] auto WalkedArrayOf(
-    const UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId object)
-    -> WalkedArray;
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId object,
+    std::optional<hir::UnpackedRange> declared) -> WalkedArray;
 
 // How many entries `array` holds, read in `block`: fixed by the declaration
 // for a fixed-size array (LRM 7.4), and read while the program runs otherwise

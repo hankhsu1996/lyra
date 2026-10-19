@@ -21,7 +21,6 @@
 #include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 #include "lyra/lowering/hir_to_mir/expression/enum_method.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -30,6 +29,7 @@
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -182,10 +182,11 @@ auto Renderer::Join(const WalkFrame& frame, std::vector<mir::ExprId> parts)
 auto Renderer::SeparatorAfterFirst(const WalkFrame& frame, mir::LocalId ordinal)
     -> mir::ExprId {
   mir::Block& block = *frame.current_block;
-  const mir::ExprId past_first = block.exprs.Add(MakeBinary(
-      Unit(), block, mir::BinaryOp::kInequality,
-      frame.current_block->ReadLocal(ordinal, IntType()),
-      BuildIntLiteral(Unit(), block, 0), Unit().builtins.bit1));
+  const mir::ExprId past_first = block.exprs.Add(
+      mir::MakeBinary(
+          Unit(), block, mir::BinaryOp::kInequality,
+          frame.current_block->ReadLocal(ordinal, IntType()),
+          mir::BuildIntLiteral(Unit(), block, 0), Unit().builtins.bit1));
   return block.exprs.Add(
       mir::Expr{
           .data =
@@ -200,10 +201,11 @@ auto Renderer::Advanced(
     const WalkFrame& frame, mir::LocalId counter, std::int64_t step)
     -> mir::ExprId {
   mir::Block& block = *frame.current_block;
-  return block.exprs.Add(MakeBinary(
-      Unit(), block, mir::BinaryOp::kAdd,
-      frame.current_block->ReadLocal(counter, IntType()),
-      BuildIntLiteral(Unit(), block, step), IntType()));
+  return block.exprs.Add(
+      mir::MakeBinary(
+          Unit(), block, mir::BinaryOp::kAdd,
+          frame.current_block->ReadLocal(counter, IntType()),
+          mir::BuildIntLiteral(Unit(), block, step), IntType()));
 }
 
 auto Renderer::FormatLeaf(
@@ -493,9 +495,10 @@ auto Renderer::BuildEnumeration(
                           .target = support::BuiltinFn::kLen, .receiver = name},
                   .arguments = {}},
           .type = IntType()});
-  const mir::ExprId has_name = block.exprs.Add(MakeBinary(
-      Unit(), block, mir::BinaryOp::kInequality, length,
-      BuildIntLiteral(Unit(), block, 0), Unit().builtins.bit1));
+  const mir::ExprId has_name = block.exprs.Add(
+      mir::MakeBinary(
+          Unit(), block, mir::BinaryOp::kInequality, length,
+          mir::BuildIntLiteral(Unit(), block, 0), Unit().builtins.bit1));
   return block.exprs.Add(
       mir::Expr{
           .data =
@@ -525,7 +528,7 @@ auto Renderer::BuildIndexedElements(
   if (const auto* fixed = t.As<hir::UnpackedArrayType>()) {
     first_index = fixed->dim.left;
     index_step = fixed->dim.left <= fixed->dim.right ? 1 : -1;
-    count = BuildIntLiteral(
+    count = mir::BuildIntLiteral(
         Unit(), block, static_cast<std::int64_t>(fixed->dim.ElementCount()));
   } else {
     count = block.exprs.Add(
@@ -551,7 +554,7 @@ auto Renderer::BuildIndexedElements(
   block.AppendStmt(
       mir::LocalDeclStmt{
           .target = index,
-          .init = BuildIntLiteral(Unit(), block, first_index)});
+          .init = mir::BuildIntLiteral(Unit(), block, first_index)});
   const mir::LocalId ordinal = frame.bindings->DeclareAnonymous(IntType());
 
   mir::Block loop_body;
@@ -571,10 +574,11 @@ auto Renderer::BuildIndexedElements(
   }
   const mir::BlockId loop_scope = block.child_scopes.Add(std::move(loop_body));
 
-  const mir::ExprId bound = block.exprs.Add(MakeBinary(
-      Unit(), block, mir::BinaryOp::kLessThan,
-      frame.current_block->ReadLocal(ordinal, IntType()), count,
-      Unit().builtins.bit1));
+  const mir::ExprId bound = block.exprs.Add(
+      mir::MakeBinary(
+          Unit(), block, mir::BinaryOp::kLessThan,
+          frame.current_block->ReadLocal(ordinal, IntType()), count,
+          Unit().builtins.bit1));
   const mir::ExprId next_ordinal =
       Assign(Unit(), frame, ordinal, IntType(), Advanced(frame, ordinal, 1));
   const mir::ExprId next_index = Assign(
@@ -583,7 +587,8 @@ auto Renderer::BuildIndexedElements(
   std::vector<mir::ForInit> init;
   init.emplace_back(
       mir::ForInitDecl{
-          .induction_var = ordinal, .init = BuildIntLiteral(Unit(), block, 0)});
+          .induction_var = ordinal,
+          .init = mir::BuildIntLiteral(Unit(), block, 0)});
   block.AppendStmt(
       mir::ForStmt{
           .init = std::move(init),
@@ -637,7 +642,7 @@ auto Renderer::BuildAssociativeEntries(
   const mir::LocalId ordinal = frame.bindings->DeclareAnonymous(IntType());
   block.AppendStmt(
       mir::LocalDeclStmt{
-          .target = ordinal, .init = BuildIntLiteral(Unit(), block, 0)});
+          .target = ordinal, .init = mir::BuildIntLiteral(Unit(), block, 0)});
   const mir::LocalId more = frame.bindings->DeclareAnonymous(IntType());
 
   mir::Block loop_body;

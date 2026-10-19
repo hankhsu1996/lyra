@@ -20,8 +20,7 @@
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
-#include "lyra/mir/closure_decl.hpp"
-#include "lyra/mir/closure_id.hpp"
+#include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -456,7 +455,7 @@ auto LoopBodyReturningAtStop(
 // the setup goes on to that stop and answers as a pass does.
 auto SetupOf(
     const mir::CompilationUnit& unit, const mir::CallableCode& process,
-    const ReactionShape& shape) -> mir::CallableDecl {
+    const ReactionShape& shape) -> mir::CallableCode {
   PartCode part = PartCodeOf(unit, process, shape.wait_local);
   const mir::Block& body = process.Body();
   const RebuildRules rules{
@@ -500,7 +499,7 @@ auto SetupOf(
     }
   }
   part.code.body = std::move(rebuild).Finish(std::move(stmts));
-  return PartDecl(std::move(part.code));
+  return std::move(part.code);
 }
 
 // The loop's statements run once and then its stop, answering whether the wait
@@ -508,7 +507,7 @@ auto SetupOf(
 // comes last here, since the setup made the first one.
 auto PassOf(
     const mir::CompilationUnit& unit, const mir::CallableCode& process,
-    const ReactionShape& shape) -> mir::CallableDecl {
+    const ReactionShape& shape) -> mir::CallableCode {
   PartCode part = PartCodeOf(unit, process, shape.wait_local);
   const mir::Block& loop = LoopBody(process.Body(), shape);
   std::vector<mir::StmtId> once = loop.root_stmts;
@@ -530,7 +529,7 @@ auto PassOf(
           .scope =
               rebuild.Add(LoopBodyReturningAtStop(unit, loop, shape, once))}));
   part.code.body = std::move(rebuild).Finish(std::move(stmts));
-  return PartDecl(std::move(part.code));
+  return std::move(part.code);
 }
 
 // The split process `data` starts, where it is a call starting one.
@@ -562,8 +561,9 @@ auto StartsSplitProcess(const mir::Block& block, const SplitProcesses& split)
 // pass)`: the same execution, run by the runtime's one coroutine for every
 // split process.
 auto RewriteSplitStarts(
-    const mir::CompilationUnit& unit, const mir::Block& body,
-    const SplitProcesses& split) -> mir::Block {
+    const mir::CompilationUnit& unit, const mir::CallableCode& code,
+    std::span<const mir::ExprId> outside_roots, const SplitProcesses& split)
+    -> mir::SourcedCode {
   const mir::TypeId part_type = PartType(unit);
   const RebuildRules rules{
       .expr = [&](BlockRebuild& rebuild,
@@ -612,67 +612,24 @@ auto RewriteSplitStarts(
             mir::Direct{.target = parts.entry},
             {erased, code(parts.setup), code(target->slot)}, expr.type);
       }};
-  BlockRebuild rebuild(body, rules);
-  std::vector<mir::StmtId> stmts = rebuild.Stmts(body.root_stmts);
-  return std::move(rebuild).Finish(std::move(stmts));
-}
-
-// A body, rewritten where it starts a split process.
-auto RewriteSplitStartsIn(
-    const mir::CompilationUnit& unit, mir::CallableCode code,
-    const SplitProcesses& split) -> mir::CallableCode {
-  if (code.body.has_value() && StartsSplitProcess(*code.body, split)) {
-    code.body = RewriteSplitStarts(unit, *code.body, split);
-  }
-  return code;
+  return RebuildCode(code, outside_roots, rules);
 }
 
 using ReactionShapes = std::unordered_map<mir::CallableTarget, ReactionShape>;
-
-// `cls` with each of its processes that was split replaced by its pass, its
-// setup defined at the identity declared for it, and every body that starts a
-// split process starting it through the runtime.
-auto SplitIn(
-    const mir::CompilationUnit& unit, mir::ClassId owner, mir::Class cls,
-    const ReactionShapes& shapes, const SplitProcesses& split) -> mir::Class {
-  if (cls.constructor.has_value()) {
-    cls.constructor->code =
-        RewriteSplitStartsIn(unit, std::move(cls.constructor->code), split);
-  }
-  std::vector<std::pair<mir::CallableId, mir::CallableDecl>> setups;
-  cls.callables =
-      std::move(cls.callables)
-          .TransformValues([&](mir::CallableId slot, mir::CallableDecl decl) {
-            const mir::CallableTarget target{.owner = owner, .slot = slot};
-            const auto shape = shapes.find(target);
-            if (shape == shapes.end()) {
-              decl.code =
-                  RewriteSplitStartsIn(unit, std::move(decl.code), split);
-              return decl;
-            }
-            setups.emplace_back(
-                split.at(target).setup,
-                SetupOf(unit, decl.code, shape->second));
-            return PassOf(unit, decl.code, shape->second);
-          });
-  for (auto& [slot, setup] : setups) {
-    cls.callables.Define(slot, std::move(setup));
-  }
-  return cls;
-}
 
 }  // namespace
 
 auto SplitReactions(mir::CompilationUnit unit) -> mir::CompilationUnit {
   ReactionShapes shapes;
+  std::unordered_map<mir::CallableTarget, mir::CallableCode> setups;
   for (const mir::ClassId owner : unit.classes.Ids()) {
     const mir::Class& cls = unit.GetClass(owner);
     for (const mir::CallableId slot : cls.callables.Ids()) {
-      if (std::optional<ReactionShape> shape =
-              MatchReaction(unit, cls.callables.Get(slot))) {
-        shapes.emplace(
-            mir::CallableTarget{.owner = owner, .slot = slot},
-            *std::move(shape));
+      const mir::CallableDecl& process = cls.callables.Get(slot);
+      if (std::optional<ReactionShape> shape = MatchReaction(unit, process)) {
+        const mir::CallableTarget target{.owner = owner, .slot = slot};
+        setups.emplace(target, SetupOf(unit, process.code, *shape));
+        shapes.emplace(target, *std::move(shape));
       }
     }
   }
@@ -680,8 +637,8 @@ auto SplitReactions(mir::CompilationUnit unit) -> mir::CompilationUnit {
     return unit;
   }
 
-  // Each setup takes an identity its class's registry gives before any body
-  // naming one is rebuilt.
+  // Each setup is added to its class before any code naming one is rebuilt,
+  // so every code the rewrite below reads is defined.
   SplitProcesses split;
   unit.classes =
       std::move(unit.classes)
@@ -692,32 +649,33 @@ auto SplitReactions(mir::CompilationUnit unit) -> mir::CompilationUnit {
                   shape != shapes.end()) {
                 split.emplace(
                     target, SplitParts{
-                                .setup = cls.callables.Declare(),
+                                .setup = cls.callables.Add(
+                                    PartDecl(std::move(setups.at(target)))),
                                 .entry = EntryFor(shape->second.order)});
               }
             }
             return cls;
           });
 
-  unit.classes =
-      std::move(unit.classes)
-          .TransformValues([&](mir::ClassId owner, mir::Class cls) {
-            return SplitIn(unit, owner, std::move(cls), shapes, split);
-          });
-  unit.callables =
-      std::move(unit.callables)
-          .TransformValues([&](mir::CallableId, mir::CallableDecl decl) {
-            decl.code = RewriteSplitStartsIn(unit, std::move(decl.code), split);
-            return decl;
-          });
-  unit.closures =
-      std::move(unit.closures)
-          .TransformValues([&](mir::ClosureId, mir::ClosureDecl closure) {
-            closure.invoke =
-                RewriteSplitStartsIn(unit, std::move(closure.invoke), split);
-            return closure;
-          });
-  return unit;
+  // Each split process becomes its pass, and every other code starting a split
+  // process starts it through the runtime.
+  return mir::RewriteEachCode(
+      std::move(unit),
+      [&](const mir::CompilationUnit& unit, const mir::CodeSource& at,
+          const mir::CallableCode& code,
+          std::span<const mir::ExprId> outside_roots)
+          -> std::optional<mir::SourcedCode> {
+        if (const auto* method = std::get_if<mir::CallableTarget>(&at)) {
+          if (const auto shape = shapes.find(*method); shape != shapes.end()) {
+            return mir::SourcedCode{
+                .code = PassOf(unit, code, shape->second), .outside_roots = {}};
+          }
+        }
+        if (!code.body.has_value() || !StartsSplitProcess(*code.body, split)) {
+          return std::nullopt;
+        }
+        return RewriteSplitStarts(unit, code, outside_roots, split);
+      });
 }
 
 }  // namespace lyra::mir_transform

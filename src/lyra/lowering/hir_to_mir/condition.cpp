@@ -5,9 +5,9 @@
 #include <span>
 #include <vector>
 
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -41,18 +41,20 @@ auto ReduceToCondition(
 auto BuildConditionNot(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId condition)
     -> mir::ExprId {
-  return block.exprs.Add(MakeUnary(
-      unit, block, mir::UnaryOp::kLogicalNot, condition,
-      unit.builtins.machine_bool));
+  return block.exprs.Add(
+      mir::MakeUnary(
+          unit, block, mir::UnaryOp::kLogicalNot, condition,
+          unit.builtins.machine_bool));
 }
 
 auto ConditionAsBit(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value)
     -> mir::ExprId {
   const mir::ExprId condition = ReduceToCondition(unit, block, value);
-  return block.exprs.Add(MakeBuiltinCall(
-      unit, block, support::BuiltinFn::kFromBool, std::nullopt, {condition},
-      unit.builtins.bit1));
+  return block.exprs.Add(
+      mir::MakeBuiltinCall(
+          unit, block, support::BuiltinFn::kFromBool, std::nullopt, {condition},
+          unit.builtins.bit1));
 }
 
 auto BuildSelectionChain(

@@ -7,9 +7,9 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/structural_data_object.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -138,7 +138,7 @@ auto BuildNetInstall(
     mir::TypeId void_type) -> mir::Expr {
   const NetTypeResolution resolution = ResolutionOf(net);
   // The scalar crosses as the number it is, the way a strength does.
-  const mir::ExprId fill = BuildMachineIntLiteral(
+  const mir::ExprId fill = mir::BuildMachineIntLiteral(
       unit, block, std::int64_t{std::to_underlying(resolution.undriven)});
   const mir::ExprId strength =
       BuildStrengthOperand(unit, block, resolution.strength);
@@ -160,7 +160,8 @@ auto BuildNetInstall(
 auto BuildStrengthOperand(
     const mir::CompilationUnit& unit, mir::Block& block,
     support::StrengthLevel level) -> mir::ExprId {
-  return BuildMachineIntLiteral(unit, block, static_cast<std::int64_t>(level));
+  return mir::BuildMachineIntLiteral(
+      unit, block, static_cast<std::int64_t>(level));
 }
 
 }  // namespace lyra::lowering::hir_to_mir

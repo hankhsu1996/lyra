@@ -8,7 +8,9 @@
 
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/block_id.hpp"
+#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/closure.hpp"
+#include "lyra/mir/code_source.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/field.hpp"
@@ -90,6 +92,10 @@ auto BlockRebuild::From() const -> const mir::Block& {
   return *from_;
 }
 
+auto BlockRebuild::To() const -> const mir::Block& {
+  return to_;
+}
+
 auto BlockRebuild::Finish(
     std::vector<mir::StmtId> root_stmts) && -> mir::Block {
   to_.root_stmts = std::move(root_stmts);
@@ -140,10 +146,6 @@ auto BlockRebuild::WithOperandsCarried(const mir::ExprData& data)
             return e;
           },
           [&](mir::CastExpr e) -> mir::ExprData {
-            e.operand = Expr(e.operand);
-            return e;
-          },
-          [&](mir::DynamicCastExpr e) -> mir::ExprData {
             e.operand = Expr(e.operand);
             return e;
           },
@@ -322,6 +324,31 @@ auto BlockRebuild::WithOperandsCarried(const mir::StmtData& data)
             return s;
           }},
       data);
+}
+
+auto RebuildCode(
+    const mir::CallableCode& code, std::span<const mir::ExprId> outside_roots,
+    const RebuildRules& rules) -> mir::SourcedCode {
+  std::vector<mir::ExprId> roots(outside_roots.begin(), outside_roots.end());
+  std::optional<mir::Block> body;
+  if (code.body.has_value()) {
+    BlockRebuild rebuild(*code.body, rules);
+    std::vector<mir::StmtId> stmts = rebuild.Stmts(code.body->root_stmts);
+    for (mir::ExprId& root : roots) {
+      root = rebuild.Expr(root);
+    }
+    body = std::move(rebuild).Finish(std::move(stmts));
+  }
+  return mir::SourcedCode{
+      .code =
+          mir::CallableCode{
+              .params = code.params,
+              .receiver = code.receiver,
+              .result_type = code.result_type,
+              .locals = code.locals,
+              .named_locals = code.named_locals,
+              .body = std::move(body)},
+      .outside_roots = std::move(roots)};
 }
 
 }  // namespace lyra::mir_transform

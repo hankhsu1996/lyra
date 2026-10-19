@@ -17,7 +17,6 @@
 #include "lyra/lowering/hir_to_mir/bitstream.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/predicate.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -26,6 +25,7 @@
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/mir/unary_op.hpp"
@@ -126,11 +126,12 @@ auto BuildLogicalFold(
     -> mir::ExprId {
   if (tests.empty()) {
     return ConvertToType(
-        unit, block, BuildBit1Literal(unit, block, identity), type);
+        unit, block, mir::BuildBit1Literal(unit, block, identity), type);
   }
   mir::ExprId folded = tests.front();
   for (const mir::ExprId test : tests.subspan(1)) {
-    folded = block.exprs.Add(MakeBinary(unit, block, op, folded, test, type));
+    folded =
+        block.exprs.Add(mir::MakeBinary(unit, block, op, folded, test, type));
   }
   return folded;
 }
@@ -142,14 +143,14 @@ auto BuildMirUnaryExpr(
     const mir::CompilationUnit& unit, mir::Block& block, hir::UnaryOp op,
     mir::Expr operand, mir::TypeId result_type) -> mir::Expr {
   const auto apply = [&](mir::UnaryOp value_op) {
-    return MakeUnary(
+    return mir::MakeUnary(
         unit, block, value_op, block.exprs.Add(std::move(operand)),
         result_type);
   };
   // LRM 11.4.9: a reduction is an operation over the operand's bits, which a
   // library performs and no target spells as an operator on a value.
   const auto reduce = [&](support::BuiltinFn entry) {
-    return MakeBuiltinCall(
+    return mir::MakeBuiltinCall(
         unit, block, entry, block.exprs.Add(std::move(operand)), {},
         result_type);
   };
@@ -165,7 +166,7 @@ auto BuildMirUnaryExpr(
     // LRM 11.4.7 negates the operand's truth, and a real (LRM 11.3.1) or a
     // handle (LRM 6.14, 8.4) has one as well as an integral value does.
     case hir::UnaryOp::kLogicalNot:
-      return MakeUnary(
+      return mir::MakeUnary(
           unit, block, mir::UnaryOp::kLogicalNot,
           BuildLogicalOperand(unit, block, block.exprs.Add(std::move(operand))),
           result_type);
@@ -217,7 +218,7 @@ auto BuildMirBinaryExpr(
     return block.exprs.Get(ConvertToType(unit, block, answer, result_type));
   };
   const auto apply = [&](mir::BinaryOp value_op) {
-    return MakeBinary(
+    return mir::MakeBinary(
         unit, block, value_op, lhs_value(), rhs_value(), result_type);
   };
   // The entry that performs an operator a target cannot apply to two values of
@@ -227,16 +228,18 @@ auto BuildMirBinaryExpr(
   // x and z as themselves, LRM 11.4.6); or it composes several operations into
   // one (power, xnor).
   const auto library = [&](support::BuiltinFn entry) {
-    return MakeBuiltinCall(
+    return mir::MakeBuiltinCall(
         unit, block, entry, lhs_value(), {rhs_value()}, result_type);
   };
   // LRM 11.4.6 `==?`: the answer can be unknown exactly where an operand can,
   // so it is stated at the one-bit type of the operands' own state domain, and
   // a context wanting another representation takes the conversion.
   const auto wildcard_equality = [&] {
-    return block.exprs.Add(MakeBuiltinCall(
-        unit, block, support::BuiltinFn::kWildcardEquals, lhs_value(),
-        {rhs_value()}, OneBitAnswerType(unit, std::array{lhs_type, rhs_type})));
+    return block.exprs.Add(
+        mir::MakeBuiltinCall(
+            unit, block, support::BuiltinFn::kWildcardEquals, lhs_value(),
+            {rhs_value()},
+            OneBitAnswerType(unit, std::array{lhs_type, rhs_type})));
   };
 
   // LRM 8.4 admits `null` as either operand of a handle comparison, and the
@@ -312,11 +315,12 @@ auto BuildMirBinaryExpr(
     // LRM 11.4.7 evaluates both operands of `<->` exactly once and compares
     // their truths, and the answer can be unknown exactly where an operand can.
     case hir::BinaryOp::kLogicalEquivalence:
-      return at_result_type(block.exprs.Add(MakeBuiltinCall(
-          unit, block, support::BuiltinFn::kLogicalEquivalence,
-          BuildLogicalOperand(unit, block, lhs_value()),
-          {BuildLogicalOperand(unit, block, rhs_value())},
-          OneBitAnswerType(unit, std::array{lhs_type, rhs_type}))));
+      return at_result_type(block.exprs.Add(
+          mir::MakeBuiltinCall(
+              unit, block, support::BuiltinFn::kLogicalEquivalence,
+              BuildLogicalOperand(unit, block, lhs_value()),
+              {BuildLogicalOperand(unit, block, rhs_value())},
+              OneBitAnswerType(unit, std::array{lhs_type, rhs_type}))));
     case hir::BinaryOp::kLogicalAnd:
     case hir::BinaryOp::kLogicalOr:
     case hir::BinaryOp::kLogicalImplication:

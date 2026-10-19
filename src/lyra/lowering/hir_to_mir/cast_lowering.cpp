@@ -10,8 +10,8 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/integral_constant_folding.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -120,26 +120,16 @@ auto ToIntegral(
   const mir::Type& source = unit.types.Get(block.exprs.Get(operand).type);
   if (source.IsRealFamily()) {
     const mir::ExprId rounded = block.exprs.Add(MakeRoundCall(unit, operand));
-    return MakeBuiltinCall(
+    return mir::MakeBuiltinCall(
         unit, block, support::BuiltinFn::kIntegralFromInt, std::nullopt,
         {rounded}, destination);
   }
-  // An enumeration (LRM 6.19.3) shares its representation with its base while
-  // being a type of its own, and a representation is all an integral type says
-  // -- width, signedness and state domain. Two types that differ in it are a
-  // reshape of the bits; two that agree hold the same bits, and only the type
-  // the program holds the value to be changes.
   if (source.IsIntegral()) {
-    if (source.Integral() != unit.types.Get(destination).Integral()) {
-      return MakeBuiltinCall(
-          unit, block, support::BuiltinFn::kIntegralConvert, std::nullopt,
-          {operand}, destination);
-    }
-    return MakeSameRepresentationCast(unit, block, operand, destination);
+    return mir::MakeIntegralConversion(unit, block, operand, destination);
   }
   // LRM 5.9: right-justified into the destination type.
   if (source.Is<mir::StringType>()) {
-    return MakeBuiltinCall(
+    return mir::MakeBuiltinCall(
         unit, block, support::BuiltinFn::kIntegralFromString, std::nullopt,
         {operand}, destination);
   }
@@ -192,13 +182,6 @@ auto ToFixedSizeArray(
     mir::TypeId destination) -> mir::Expr {
   const mir::Type& source = unit.types.Get(block.exprs.Get(operand).type);
   const auto& array = unit.types.Get(destination).Get<mir::UnpackedArrayType>();
-  // LRM 7.6: two arrays of one kind are assigned where their element types
-  // are equivalent, and a fixed-size one where the counts agree too. What can
-  // then differ between the two types is how a range is declared, which is
-  // read where an element is selected and never held by the value.
-  if (source.Is<mir::UnpackedArrayType>()) {
-    return block.exprs.Get(operand);
-  }
   if (source.Is<mir::DynamicArrayType>() || source.Is<mir::QueueType>()) {
     return BuildArrayFromArrayCall(
         support::BuiltinFn::kUnpackedArrayFromArray, operand, destination);
@@ -223,9 +206,6 @@ auto ToDynamicArray(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand,
     mir::TypeId destination) -> mir::Expr {
   const mir::Type& source = unit.types.Get(block.exprs.Get(operand).type);
-  if (source.Is<mir::DynamicArrayType>()) {
-    return block.exprs.Get(operand);
-  }
   if (source.Is<mir::UnpackedArrayType>() || source.Is<mir::QueueType>()) {
     return BuildArrayFromArrayCall(
         support::BuiltinFn::kDynamicArrayFromArray, operand, destination);
@@ -252,16 +232,6 @@ auto ToQueue(
   RefuseConversion("a queue");
 }
 
-// LRM 7.9.9: an associative array is assigned only another of a compatible
-// type and the same index type, which leaves nothing of the value to change.
-auto ToAssociativeArray(
-    const mir::CompilationUnit& unit, const mir::Expr& operand) -> mir::Expr {
-  if (unit.types.Get(operand.type).Is<mir::AssociativeArrayType>()) {
-    return operand;
-  }
-  RefuseConversion("an associative array");
-}
-
 // LRM 8.14: an object of a subclass is also an object of its base class, so a
 // handle to one is a value of a variable declared with the base class. The
 // object is unchanged and only the handle's declared class differs.
@@ -269,8 +239,11 @@ auto ToClassHandle(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand,
     mir::TypeId destination) -> mir::Expr {
   if (unit.types.Get(block.exprs.Get(operand).type).Is<mir::ManagedRefType>()) {
-    return mir::Expr{
-        .data = mir::CastExpr{.operand = operand}, .type = destination};
+    return mir::MakeCallExpr(
+        mir::Direct{
+            .target = support::BuiltinFn::kDerivedToBase,
+            .type_argument = destination},
+        {operand}, destination);
   }
   RefuseConversion("a class handle");
 }
@@ -280,9 +253,10 @@ auto ToClassHandle(
 auto BuildToInt64Call(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id)
     -> mir::ExprId {
-  return block.exprs.Add(MakeBuiltinCall(
-      unit, block, support::BuiltinFn::kToInt64, operand_id, {},
-      unit.builtins.machine_int64));
+  return block.exprs.Add(
+      mir::MakeBuiltinCall(
+          unit, block, support::BuiltinFn::kToInt64, operand_id, {},
+          unit.builtins.machine_int64));
 }
 
 auto BuildValueConversion(
@@ -334,9 +308,9 @@ auto BuildValueConversion(
           [&](const mir::ManagedRefType&) {
             return ToClassHandle(unit, block, operand_id, dst_type);
           },
-          [&](const mir::AssociativeArrayType&) {
-            return ToAssociativeArray(unit, operand_expr);
-          },
+          // LRM 7.9.9: an associative array is assigned only another of a
+          // compatible type and the same index type, which is its own type.
+          [&](const mir::AssociativeArrayType& t) { return none(t); },
           [&](const mir::WildcardIndexType& t) { return none(t); },
           [&](const mir::MachineCStringType& t) { return none(t); },
           [&](const mir::MachineBoolType& t) { return none(t); },
@@ -354,7 +328,16 @@ auto BuildValueConversion(
           [&](const mir::DiagnosticType& t) { return none(t); },
           [&](const mir::RuntimeLibraryType& t) { return none(t); },
           [&](const mir::CoroutineType& t) { return none(t); },
-          [&](const mir::VariableRefType& t) { return none(t); },
+          // LRM 13.5.2: a `ref` formal binds an actual of an equivalent type,
+          // and a `const ref` one takes it read-only, so what the actual
+          // refers to is the formal's referent as it is.
+          [&](const mir::VariableRefType& t) {
+            if (!unit.types.Get(operand_expr.type).Is<mir::VariableRefType>()) {
+              return none(t);
+            }
+            return mir::MakeSameRepresentationCast(
+                unit, block, operand_id, dst_type);
+          },
           [&](const mir::ReferenceWrapperType& t) { return none(t); },
           [&](const mir::PointerType& t) { return none(t); },
           [&](const mir::ReferenceType& t) { return none(t); },

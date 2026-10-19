@@ -7,13 +7,15 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/type.hpp"
+#include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/entry_walk.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -21,6 +23,7 @@
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -55,13 +58,14 @@ auto BuildMatch(
 }
 
 // Whether `left` matches any single value `value` holds, both already in the
-// frame's block. An unpacked array holds the single values its elements hold
-// (LRM 11.4.13), so the answer over them is the OR of this same question asked
-// of each element in turn: one bit, unknown where no element matched and some
-// comparison was unknown, and 0 for an array holding nothing.
+// frame's block, `value` being of the static type `value_type`. An unpacked
+// array holds the single values its elements hold (LRM 11.4.13), so the answer
+// over them is the OR of this same question asked of each element in turn: one
+// bit, unknown where no element matched and some comparison was unknown, and 0
+// for an array holding nothing.
 auto BuildMatchAnywhereIn(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId left,
-    mir::ExprId value) -> diag::Result<mir::ExprId> {
+    mir::ExprId value, hir::TypeId value_type) -> diag::Result<mir::ExprId> {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& block = *frame.current_block;
   const mir::TypeId held = block.exprs.Get(value).type;
@@ -71,21 +75,29 @@ auto BuildMatchAnywhereIn(
 
   const mir::TypeId left_type = block.exprs.Get(left).type;
   const mir::LocalId compared = DeclareLocal(frame, left);
-  const WalkedArray array = WalkedArrayOf(unit_lowerer, frame, value);
+  const WalkedArray array = WalkedArrayOf(
+      unit_lowerer, frame, value, DeclaredRangeOf(unit_lowerer, value_type));
+  const std::optional<hir::TypeId> element_type =
+      unit_lowerer.Hir().types.Get(value_type).ContainerElementType();
+  if (!element_type.has_value()) {
+    throw InternalError(
+        "BuildMatchAnywhereIn: an array's static type holds no element type");
+  }
   const mir::TypeId bit =
       mir::PackedVectorOf(unit.types, 1, mir::IntegralStateKind::kFourState);
   BlockBuilder steps(frame);
   mir::Block& body = steps.Body();
   const mir::LocalId any = DeclareLocal(
       steps.Frame(),
-      ConvertToType(unit, body, BuildBit1Literal(unit, body, false), bit));
+      ConvertToType(unit, body, mir::BuildBit1Literal(unit, body, false), bit));
   auto walked = BuildEntryLoopStmt(
       unit_lowerer, steps.Frame(), array, WalkOrder::kFromFirst, std::nullopt,
       [&](const WalkFrame& at,
           const VisitedEntry& entry) -> diag::Result<void> {
         mir::Block& b = *at.current_block;
         auto matched = BuildMatchAnywhereIn(
-            unit_lowerer, at, b.ReadLocal(compared, left_type), entry.element);
+            unit_lowerer, at, b.ReadLocal(compared, left_type), entry.element,
+            *element_type);
         if (!matched) return std::unexpected(std::move(matched.error()));
         AssignLocal(
             unit, b, any,
@@ -119,7 +131,8 @@ auto BuildSetMemberTest(
   if (range == nullptr) {
     auto value = lower(member);
     if (!value) return std::unexpected(std::move(value.error()));
-    auto matched = BuildMatchAnywhereIn(lowerer.Owner(), frame, left, *value);
+    auto matched = BuildMatchAnywhereIn(
+        lowerer.Owner(), frame, left, *value, hir_exprs.Get(member).type);
     if (!matched) return std::unexpected(std::move(matched.error()));
     return ConvertToType(unit, block, *matched, result_type);
   }

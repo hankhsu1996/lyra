@@ -1182,6 +1182,24 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = RuntimeFunction("ExtendSequence")};
     case BuiltinFn::kViewOf:
       return {.name = "view_of", .declaration = RuntimeFunction("ViewOf")};
+    case BuiltinFn::kDerivedToBase:
+      return {
+          .name = "derived_to_base",
+          .declaration = RuntimeFunction("ViewAs"),
+          .takes_a_type_argument = true,
+          .type_argument_named = TypeArgumentNamed::kTheClassesSeen};
+    case BuiltinFn::kDynamicCast:
+      return {
+          .name = "dynamic_cast",
+          .declaration = RuntimeFunction("ViewAs"),
+          .takes_a_type_argument = true,
+          .type_argument_named = TypeArgumentNamed::kTheClassesSeen};
+    case BuiltinFn::kUnsize:
+      return {
+          .name = "unsize",
+          .declaration = RuntimeFunction("Unsize"),
+          .takes_a_type_argument = true,
+          .type_argument_named = TypeArgumentNamed::kTheCallSignature};
     case BuiltinFn::kObjectEventSource:
       return {
           .name = "object_event_source",

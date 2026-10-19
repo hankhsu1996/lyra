@@ -22,7 +22,6 @@
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/predicate.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -31,6 +30,7 @@
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -216,8 +216,8 @@ auto LowerScanSystemSubroutineCall(
   body.AppendStmt(
       mir::LocalDeclStmt{
           .target = count_var,
-          .init =
-              BuildIntegerLiteral(unit, body, static_cast<std::int64_t>(-1))});
+          .init = mir::BuildIntegerLiteral(
+              unit, body, static_cast<std::int64_t>(-1))});
 
   // The format is always an operand the rule covers. The source is one only
   // where the call names it, which `$fscanf` does not: its source is the file's
@@ -358,13 +358,15 @@ auto LowerScanSystemSubroutineCall(
   // k+1 matches were made, so the commit is gated on the matched count.
   for (std::size_t k = 0; k < target_types.size(); ++k) {
     const mir::ExprId count_read_id = scan_body.ReadLocal(count_var, integer_t);
-    const mir::ExprId k_lit_id =
-        BuildIntegerLiteral(unit, scan_body, static_cast<std::int64_t>(k + 1));
+    const mir::ExprId k_lit_id = mir::BuildIntegerLiteral(
+        unit, scan_body, static_cast<std::int64_t>(k + 1));
     // The count is an `integer`, so the comparison answers a bit that can be
     // unknown (LRM 11.4.4), and the condition reads its truth.
-    const mir::ExprId cond_id = scan_body.exprs.Add(MakeBinary(
-        unit, scan_body, mir::BinaryOp::kGreaterEqual, count_read_id, k_lit_id,
-        OneBitAnswerType(unit, std::array{integer_t, integer_t})));
+    const mir::ExprId cond_id = scan_body.exprs.Add(
+        mir::MakeBinary(
+            unit, scan_body, mir::BinaryOp::kGreaterEqual, count_read_id,
+            k_lit_id,
+            OneBitAnswerType(unit, std::array{integer_t, integer_t})));
 
     mir::Block then_body;
     const WalkFrame then_frame = scan_frame.WithBlock(&then_body);

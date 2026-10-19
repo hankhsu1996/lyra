@@ -20,7 +20,6 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/lowering/hir_to_mir/statement/flow.hpp"
@@ -29,6 +28,7 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -395,7 +395,7 @@ auto LowerForeachStmt(
     if (!body) return std::unexpected(std::move(body.error()));
     const mir::BlockId body_scope = wrapper.child_scopes.Add(*std::move(body));
     wrapper.AppendStmt(BuildCountingLoopStmt(
-        unit, wrapper_frame, wrapper, BuildIntLiteral(unit, wrapper, 1),
+        unit, wrapper_frame, wrapper, mir::BuildIntLiteral(unit, wrapper, 1),
         wrapper_frame.bindings->DeclareAnonymous(unit.builtins.int_type),
         body_scope, nest.leaves));
   } else {

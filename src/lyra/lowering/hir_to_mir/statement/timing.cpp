@@ -26,7 +26,6 @@
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/deferred_effect.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
@@ -36,6 +35,7 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
@@ -101,7 +101,8 @@ auto BuildEventOccurred(
   const auto is = [&](mir::LocalId bit, bool one) {
     return BuildBitIdentity(
         unit, block, block.ReadLocal(bit, type),
-        ConvertToType(unit, block, BuildBit1Literal(unit, block, one), type));
+        ConvertToType(
+            unit, block, mir::BuildBit1Literal(unit, block, one), type));
   };
   const auto leaves = [&](bool one) {
     const std::array left{
@@ -305,9 +306,9 @@ auto BuildDelayWaitStmt(
 
   const mir::ExprId runtime_id =
       block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-  const mir::ExprId unit_power_id = BuildMachineIntLiteral(
+  const mir::ExprId unit_power_id = mir::BuildMachineIntLiteral(
       unit, block, static_cast<std::int64_t>(process.Resolution().unit_power));
-  const mir::ExprId precision_power_id = BuildMachineIntLiteral(
+  const mir::ExprId precision_power_id = mir::BuildMachineIntLiteral(
       unit, block,
       static_cast<std::int64_t>(process.Resolution().precision_power));
   const support::BuiltinFn entry =
@@ -408,13 +409,16 @@ auto WaitUntilOneFires(
   };
   mir::ExprId fired = fires(observations.front());
   for (const mir::LocalId observation : observations.subspan(1)) {
-    fired = block.exprs.Add(MakeBinary(
-        unit, block, mir::BinaryOp::kBitwiseOr, fired, fires(observation),
-        unit.builtins.machine_int64));
+    fired = block.exprs.Add(
+        mir::MakeBinary(
+            unit, block, mir::BinaryOp::kBitwiseOr, fired, fires(observation),
+            unit.builtins.machine_int64));
   }
-  const mir::ExprId none = block.exprs.Add(MakeBinary(
-      unit, block, mir::BinaryOp::kEquality, fired,
-      BuildMachineIntLiteral(unit, block, 0), unit.builtins.machine_bool));
+  const mir::ExprId none = block.exprs.Add(
+      mir::MakeBinary(
+          unit, block, mir::BinaryOp::kEquality, fired,
+          mir::BuildMachineIntLiteral(unit, block, 0),
+          unit.builtins.machine_bool));
   return mir::Stmt{
       .label = std::nullopt,
       .data = mir::WhileStmt{

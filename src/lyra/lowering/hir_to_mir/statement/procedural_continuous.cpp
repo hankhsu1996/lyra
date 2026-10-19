@@ -20,7 +20,6 @@
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/deferred_effect.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
@@ -28,6 +27,7 @@
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/takeover_level.hpp"
@@ -39,7 +39,8 @@ namespace {
 auto LevelOperand(
     const mir::CompilationUnit& unit, mir::Block& block,
     support::TakeoverLevel level) -> mir::ExprId {
-  return BuildMachineIntLiteral(unit, block, static_cast<std::int64_t>(level));
+  return mir::BuildMachineIntLiteral(
+      unit, block, static_cast<std::int64_t>(level));
 }
 
 // One place of a takeover's target as the takeover acts on it: what holds the
@@ -97,14 +98,14 @@ auto TakeoverPart(
     if (!unit.types.Get(within).Is<mir::UnpackedArrayType>()) {
       return dynamic();
     }
-    return BuildMachineIntBinary(
+    return mir::BuildMachineIntBinary(
         unit, block, mir::BinaryOp::kMul, BuildToInt64Call(unit, block, start),
-        BuildMachineIntLiteral(
+        mir::BuildMachineIntLiteral(
             unit, block,
             static_cast<std::int64_t>(PositionCountOf(unit, element))));
   };
   mir::TypeId within = OwnerValueType(unit, block, place.owner);
-  mir::ExprId first = BuildMachineIntLiteral(unit, block, 0);
+  mir::ExprId first = mir::BuildMachineIntLiteral(unit, block, 0);
   for (const DescentStep& step : place.descent) {
     auto before = std::visit(
         Overloaded{
@@ -127,7 +128,7 @@ auto TakeoverPart(
                    members.first(component.position.value)) {
                 at += PositionCountOf(unit, member);
               }
-              return BuildMachineIntLiteral(
+              return mir::BuildMachineIntLiteral(
                   unit, block, static_cast<std::int64_t>(at));
             },
             [&](const StepToUnionMember&) -> diag::Result<mir::ExprId> {
@@ -147,14 +148,14 @@ auto TakeoverPart(
             }},
         step.to);
     if (!before) return std::unexpected(std::move(before.error()));
-    first =
-        BuildMachineIntBinary(unit, block, mir::BinaryOp::kAdd, first, *before);
+    first = mir::BuildMachineIntBinary(
+        unit, block, mir::BinaryOp::kAdd, first, *before);
     within = step.part_type;
   }
   return TakenPart{
       .holder = TakeoverHolder(place),
       .first = first,
-      .count = BuildMachineIntLiteral(
+      .count = mir::BuildMachineIntLiteral(
           unit, block,
           static_cast<std::int64_t>(PositionCountOf(unit, within)))};
 }

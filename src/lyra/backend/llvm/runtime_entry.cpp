@@ -1403,6 +1403,12 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
   constexpr std::string_view kLeavesByUnwinding =
       "leaves a body by unwinding it, where this target's bodies leave by "
       "branching";
+  constexpr std::string_view kSeenThroughItsOwnLayout =
+      "sees an object as another class, which this target does from the "
+      "layout of the object's classes it states itself";
+  constexpr std::string_view kErasedWhereItLies =
+      "makes a closure one of no known type, which this target's closure is "
+      "where it lies, its definition opening it";
   constexpr std::string_view kWrittenWhereTheBitsLie =
       "answers a reference to bits, which this target writes through by a "
       "store of the bits where they lie";
@@ -1686,6 +1692,16 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // lowering reaches in place of this call.
     case support::BuiltinFn::kSliceMut:
       return NotRealized{.shape = kWrittenWhereTheBitsLie};
+
+    // The lowering reaches an object's part of another class in place of this
+    // call, as a conversion between two pointers to classes is reached.
+    case support::BuiltinFn::kDerivedToBase:
+    case support::BuiltinFn::kDynamicCast:
+      return NotRealized{.shape = kSeenThroughItsOwnLayout};
+
+    // The lowering reads the closure as the erased one in place of this call.
+    case support::BuiltinFn::kUnsize:
+      return NotRealized{.shape = kErasedWhereItLies};
 
     // The runtime leads, and the memory whose addressing names the entry
     // follows.

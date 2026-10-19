@@ -23,12 +23,12 @@
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -278,8 +278,9 @@ auto LowerFileReadCall(
   if (memory != nullptr) {
     // The destination's declared range, which is what says where a source
     // address lands in it.
-    operands.push_back(BuildDeclaredRanges(
-        unit, body, std::span<const hir::UnpackedRange>{&memory->dim, 1}));
+    operands.push_back(
+        mir::BuildDeclaredRanges(
+            unit, body, std::span<const hir::UnpackedRange>{&memory->dim, 1}));
     const std::int64_t lowest = std::min(memory->dim.left, memory->dim.right);
     const std::int64_t highest = std::max(memory->dim.left, memory->dim.right);
     // The start the source left out is the lowest declared index, and the
@@ -291,7 +292,7 @@ auto LowerFileReadCall(
       if (!start_or) return std::unexpected(std::move(start_or.error()));
       operands.push_back(*start_or);
     } else {
-      operands.push_back(BuildMachineIntLiteral(unit, body, lowest));
+      operands.push_back(mir::BuildMachineIntLiteral(unit, body, lowest));
     }
     if (const std::optional<hir::ExprId> count = OptionalOperand(call, 3)) {
       auto count_or = BuildMachineIntOperand(process, step_frame, *count);
@@ -299,7 +300,7 @@ auto LowerFileReadCall(
       operands.push_back(*count_or);
     } else {
       operands.push_back(
-          BuildMachineIntLiteral(unit, body, highest - lowest + 1));
+          mir::BuildMachineIntLiteral(unit, body, highest - lowest + 1));
     }
   }
 

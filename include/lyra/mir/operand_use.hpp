@@ -53,7 +53,6 @@ void ForEachOperand(const ExprData& data, const auto& reach) {
             value(e.rhs);
           },
           [&](const CastExpr& e) { value(e.operand); },
-          [&](const DynamicCastExpr& e) { value(e.operand); },
           [&](const ConditionalExpr& e) {
             value(e.condition);
             value(e.then_value);

@@ -188,7 +188,8 @@ auto SynthesizeDesignRoot(
     std::span<const lowering::ast_to_hir::TopLevelUnit> tops,
     const hir::UnitSignatures& signatures,
     lowering::hir_to_mir::DesignInstantiations instantiations,
-    const diag::SourceManager& source_manager)
+    const diag::SourceManager& source_manager,
+    const mir_transform::PassOptions& passes)
     -> diag::Result<mir::CompilationUnit> {
   hir::CompilationUnit root_hir = BuildDesignRootHir(tops, signatures);
   auto object_entries =
@@ -205,7 +206,7 @@ auto SynthesizeDesignRoot(
     return std::unexpected(std::move(root_mir.error()));
   }
   mir::CompilationUnit transformed =
-      mir_transform::Transform(*std::move(root_mir));
+      mir_transform::Transform(*std::move(root_mir), passes);
   RecordSemanticForm(transformed);
   return transformed;
 }

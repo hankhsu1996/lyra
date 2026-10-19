@@ -38,6 +38,7 @@
 #include "lyra/diag/sink.hpp"
 #include "lyra/driver/cpp_build.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir_transform/pass.hpp"
 #include "tests/compiled_twice.hpp"
 #include "tests/framework/conformance_case.hpp"
 
@@ -89,7 +90,8 @@ auto Emit(
   lyra::driver::CppProjectSink project(
       dir, lyra::driver::SourceFormatting::kOff, sink);
   auto semantic = lyra::compiler::LowerToSemantic(
-      *design, compilation.front.elaborated->diag_sources, sink, width,
+      *design, compilation.front.elaborated->diag_sources,
+      lyra::mir_transform::PassOptions{}, sink, width,
       [&project](lyra::mir::CompilationUnit unit) {
         return project.Write(unit);
       },
