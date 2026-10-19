@@ -31,6 +31,7 @@
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/enum_table.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/type.hpp"
@@ -142,12 +143,18 @@ auto DescribeMemory(
       });
 }
 
-// Which of the four entries a call means: the direction the source wrote, and
-// whether it named a window (LRM 21.4 / 21.5).
-auto MemoryTask(bool is_store, bool windowed) -> support::BuiltinFn {
-  if (is_store) {
-    return windowed ? support::BuiltinFn::kWriteMemWithin
-                    : support::BuiltinFn::kWriteMem;
+// Which dump a call means: whether it named a window (LRM 21.5).
+auto DumpTask(bool windowed) -> support::BuiltinFn {
+  return windowed ? support::BuiltinFn::kWriteMemWithin
+                  : support::BuiltinFn::kWriteMem;
+}
+
+// Which load a call means: whether it named a window, and whether its words are
+// an enumeration's members (LRM 21.4, 21.4.2).
+auto LoadTask(bool windowed, bool enumerated) -> support::BuiltinFn {
+  if (enumerated) {
+    return windowed ? support::BuiltinFn::kReadEnumeratedMemWithin
+                    : support::BuiltinFn::kReadEnumeratedMem;
   }
   return windowed ? support::BuiltinFn::kReadMemWithin
                   : support::BuiltinFn::kReadMem;
@@ -284,9 +291,17 @@ auto LowerMemFileSystemSubroutineCallStmt(
     mem_value = read->incoming;
   }
 
+  // A word of an enumerated memory is a member's value and nothing else (LRM
+  // 21.4.2), so its load names the member list it reads the words as.
+  const bool enumerated =
+      !is_store && unit.types.Get(elem_mir).Is<mir::EnumType>();
+
   std::vector<mir::ExprId> operands;
   operands.push_back(body.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer)));
   operands.push_back(mem_value);
+  if (enumerated) {
+    operands.push_back(mir::BuildEnumTableRef(unit, body, elem_mir));
+  }
   operands.push_back(name_id);
   for (const mir::ExprId operand : addressing->operands) {
     operands.push_back(operand);
@@ -324,7 +339,8 @@ auto LowerMemFileSystemSubroutineCallStmt(
   }
 
   const bool windowed = finish.has_value();
-  const support::BuiltinFn target = MemoryTask(is_store, windowed);
+  const support::BuiltinFn target =
+      is_store ? DumpTask(windowed) : LoadTask(windowed, enumerated);
 
   if (is_store) {
     body.AppendStmt(

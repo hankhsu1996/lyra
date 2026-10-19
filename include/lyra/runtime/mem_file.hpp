@@ -8,11 +8,12 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
-#include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/value/associative_array.hpp"
 #include "lyra/value/dynamic_array.hpp"
+#include "lyra/value/enumeration.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/queue.hpp"
@@ -53,7 +54,9 @@ class RuntimeEffects;
 // The file, its tokens, the addressing and the diagnostics are compiled once,
 // in the cores below. What a word is -- how a token becomes one, and how one
 // is written out -- is the holder's, so each core reaches the words through
-// what its caller hands it.
+// what its caller hands it. Which numbers a word takes is its type's (LRM
+// 21.4.2), so a load into a memory of an enumerated type is handed the
+// enumeration's members as its own constant.
 
 // What a load completes with: the memory it filled.
 template <typename Memory>
@@ -76,10 +79,23 @@ template <value::IntegralValue T>
   return RenderedMemoryWord(word.AsWords().View(), base);
 }
 
-// Stores the word a token names at one grid coordinate, answering whether the
-// token is a word at all.
-using StoreMemoryWord = std::function<bool(
+// The values a word of a memory takes from its file (LRM 21.4.2): any number
+// the file writes, or, in a memory of an enumerated type, a member's only.
+struct AnyNumber {};
+struct MemberValues {
+  value::Enumeration members;
+};
+using WordValues = std::variant<AnyNumber, MemberValues>;
+
+// Stores the word a token names at one grid coordinate. The token is already
+// known to be a word the memory takes.
+using StoreMemoryWord = std::function<void(
     std::int64_t address, std::size_t ordinal, std::string_view token)>;
+
+// Stores the word a token names at one key, making the entry where there is
+// none. The token is already known to be a word the memory takes.
+using StoreKeyedWord =
+    std::function<void(std::int64_t key, std::string_view token)>;
 
 // The word at one grid coordinate, written out.
 using RenderMemoryWord =
@@ -91,12 +107,13 @@ using RenderMemoryWord =
 // `inner_count == 1` case; a multidimensional one passes its inner leaf span.
 // An `@address` repositions the highest-dimension cursor and resets the inner
 // ordinal, and a highest-dimension word the file leaves partly filled keeps
-// its remaining leaves.
+// its remaining leaves. A token that is no word of `values` is an error after
+// which nothing more is read.
 void ReadMemGridCore(
     RuntimeEffects& runtime, const value::String& filename, unsigned base,
     std::int64_t top_lo, std::int64_t top_hi, std::size_t inner_count,
     std::optional<std::int64_t> start, std::optional<std::int64_t> finish,
-    const StoreMemoryWord& store);
+    const WordValues& values, const StoreMemoryWord& store);
 
 // LRM 21.5 dump core over the same grid. Writes every leaf in ascending-address
 // row-major order; no `@address` is written (that is the associative dump's
@@ -110,11 +127,12 @@ void WriteMemGridCore(
 // LRM 21.4.1 associative load. Addressing is by key: an `@key` sets the
 // cursor, and consecutive words advance it. `start` / `finish` bound the key
 // range; without them the keys come entirely from the file. A word is stored
-// at its key through `store`, which makes the entry where there is none.
+// at its key through `store`, and one that is no word of `values` ends the
+// load as on the grid.
 void ReadMemKeyedCore(
     RuntimeEffects& runtime, const value::String& filename, unsigned base,
     std::optional<std::int64_t> start, std::optional<std::int64_t> finish,
-    const std::function<bool(std::int64_t key, std::string_view token)>& store);
+    const WordValues& values, const StoreKeyedWord& store);
 
 // One entry of an associative memory as a dump writes it: its key, and the key
 // and the word written out.
@@ -213,11 +231,10 @@ template <typename T>
   }
 }
 
-// Stores a token as the word `slot` holds, answering whether it is one.
+// Stores a token the memory takes as the word `slot` holds.
 template <value::IntegralValue T>
-[[nodiscard]] auto StoreParsed(T& slot, std::string_view token, unsigned base)
-    -> bool {
-  return value::FromDigits(slot, MemoryRadix(base), token);
+void StoreParsed(T& slot, std::string_view token, unsigned base) {
+  value::FromDigits(slot, MemoryRadix(base), token);
 }
 
 // A dynamic array or queue is a 0-based memory whose address range is
@@ -228,12 +245,12 @@ template <typename Container>
 void ReadMemZeroBased(
     RuntimeEffects& runtime, Container& dest, const value::String& filename,
     unsigned base, std::optional<std::int64_t> start,
-    std::optional<std::int64_t> finish) {
+    std::optional<std::int64_t> finish, const WordValues& values) {
   ReadMemGridCore(
       runtime, filename, base, 0, static_cast<std::int64_t>(dest.RawSize()) - 1,
-      1, start, finish,
+      1, start, finish, values,
       [&dest, base](std::int64_t address, std::size_t, std::string_view token) {
-        return StoreParsed(
+        StoreParsed(
             dest.ElementMut(value::Position::FromInt(address)), token, base);
       });
 }
@@ -255,11 +272,12 @@ template <value::IntegralValue K, value::IntegralValue T>
 void ReadMemAssociative(
     RuntimeEffects& runtime, value::AssociativeArray<K, T>& dest,
     const value::String& filename, unsigned base,
-    std::optional<std::int64_t> start, std::optional<std::int64_t> finish) {
+    std::optional<std::int64_t> start, std::optional<std::int64_t> finish,
+    const WordValues& values) {
   ReadMemKeyedCore(
-      runtime, filename, base, start, finish,
+      runtime, filename, base, start, finish, values,
       [&dest, base](std::int64_t key, std::string_view token) {
-        return StoreParsed(dest.ElementMut(K::FromInt(key)), token, base);
+        StoreParsed(dest.ElementMut(K::FromInt(key)), token, base);
       });
 }
 
@@ -284,17 +302,16 @@ void ReadMemMultidim(
     RuntimeEffects& runtime, value::UnpackedArray<Inner, N>& dest,
     const value::String& filename, std::span<const value::UnpackedRange> dims,
     unsigned base, std::optional<std::int64_t> start,
-    std::optional<std::int64_t> finish) {
+    std::optional<std::int64_t> finish, const WordValues& values) {
   const value::UnpackedRange addressed = dims[0];
   const std::span<const value::UnpackedRange> inner = dims.subspan(1);
   ReadMemGridCore(
       runtime, filename, base, addressed.Low(), addressed.High(),
-      InnerLeafCount(inner), start, finish,
+      InnerLeafCount(inner), start, finish, values,
       [&dest, addressed, inner, base](
           std::int64_t top, std::size_t ordinal, std::string_view token) {
         auto& slot = dest.ElementMut(AddressPosition(addressed, top));
-        return StoreParsed(
-            LeafByLinearIndex(slot, inner, ordinal), token, base);
+        StoreParsed(LeafByLinearIndex(slot, inner, ordinal), token, base);
       });
 }
 
@@ -318,125 +335,70 @@ void WriteMemMultidim(
 
 }  // namespace detail
 
+// The load and the dump of each kind of memory. A run with no window is one
+// with no finish.
 template <value::IntegralValue T>
-auto ReadMem(
+auto LoadMemory(
     RuntimeEffects& runtime, const value::DynamicArray<T>& memory,
-    const value::String& filename, std::int64_t base, std::int64_t start)
+    const WordValues& values, const value::String& filename, std::int64_t base,
+    std::int64_t start, std::optional<std::int64_t> finish)
     -> MemoryLoad<value::DynamicArray<T>> {
   MemoryLoad<value::DynamicArray<T>> load(memory);
   detail::ReadMemZeroBased(
       runtime, load.template Component<0>(), filename,
-      static_cast<unsigned>(base), start, std::nullopt);
+      static_cast<unsigned>(base), start, finish, values);
   return load;
 }
 
 template <value::IntegralValue T>
-auto ReadMemWithin(
-    RuntimeEffects& runtime, const value::DynamicArray<T>& memory,
-    const value::String& filename, std::int64_t base, std::int64_t start,
-    std::int64_t finish) -> MemoryLoad<value::DynamicArray<T>> {
-  MemoryLoad<value::DynamicArray<T>> load(memory);
-  detail::ReadMemZeroBased(
-      runtime, load.template Component<0>(), filename,
-      static_cast<unsigned>(base), start, finish);
-  return load;
-}
-
-template <value::IntegralValue T>
-void WriteMem(
-    RuntimeEffects& runtime, const value::DynamicArray<T>& src,
-    const value::String& filename, std::int64_t base, std::int64_t start) {
-  detail::WriteMemZeroBased(
-      runtime, src, filename, static_cast<unsigned>(base), start, std::nullopt);
-}
-
-template <value::IntegralValue T>
-void WriteMemWithin(
+void DumpMemory(
     RuntimeEffects& runtime, const value::DynamicArray<T>& src,
     const value::String& filename, std::int64_t base, std::int64_t start,
-    std::int64_t finish) {
+    std::optional<std::int64_t> finish) {
   detail::WriteMemZeroBased(
       runtime, src, filename, static_cast<unsigned>(base), start, finish);
 }
 
 template <value::IntegralValue T, std::int64_t kBound>
-auto ReadMem(
+auto LoadMemory(
     RuntimeEffects& runtime, const value::Queue<T, kBound>& memory,
-    const value::String& filename, std::int64_t base, std::int64_t start)
+    const WordValues& values, const value::String& filename, std::int64_t base,
+    std::int64_t start, std::optional<std::int64_t> finish)
     -> MemoryLoad<value::Queue<T, kBound>> {
   MemoryLoad<value::Queue<T, kBound>> load(memory);
   detail::ReadMemZeroBased(
       runtime, load.template Component<0>(), filename,
-      static_cast<unsigned>(base), start, std::nullopt);
+      static_cast<unsigned>(base), start, finish, values);
   return load;
 }
 
 template <value::IntegralValue T, std::int64_t kBound>
-auto ReadMemWithin(
-    RuntimeEffects& runtime, const value::Queue<T, kBound>& memory,
-    const value::String& filename, std::int64_t base, std::int64_t start,
-    std::int64_t finish) -> MemoryLoad<value::Queue<T, kBound>> {
-  MemoryLoad<value::Queue<T, kBound>> load(memory);
-  detail::ReadMemZeroBased(
-      runtime, load.template Component<0>(), filename,
-      static_cast<unsigned>(base), start, finish);
-  return load;
-}
-
-template <value::IntegralValue T, std::int64_t kBound>
-void WriteMem(
-    RuntimeEffects& runtime, const value::Queue<T, kBound>& src,
-    const value::String& filename, std::int64_t base, std::int64_t start) {
-  detail::WriteMemZeroBased(
-      runtime, src, filename, static_cast<unsigned>(base), start, std::nullopt);
-}
-
-template <value::IntegralValue T, std::int64_t kBound>
-void WriteMemWithin(
+void DumpMemory(
     RuntimeEffects& runtime, const value::Queue<T, kBound>& src,
     const value::String& filename, std::int64_t base, std::int64_t start,
-    std::int64_t finish) {
+    std::optional<std::int64_t> finish) {
   detail::WriteMemZeroBased(
       runtime, src, filename, static_cast<unsigned>(base), start, finish);
 }
 
 template <value::IntegralValue K, value::IntegralValue T>
-auto ReadMem(
+auto LoadMemory(
     RuntimeEffects& runtime, const value::AssociativeArray<K, T>& memory,
-    const value::String& filename, std::int64_t base, std::int64_t start)
+    const WordValues& values, const value::String& filename, std::int64_t base,
+    std::int64_t start, std::optional<std::int64_t> finish)
     -> MemoryLoad<value::AssociativeArray<K, T>> {
   MemoryLoad<value::AssociativeArray<K, T>> load(memory);
   detail::ReadMemAssociative(
       runtime, load.template Component<0>(), filename,
-      static_cast<unsigned>(base), start, std::nullopt);
+      static_cast<unsigned>(base), start, finish, values);
   return load;
 }
 
 template <value::IntegralValue K, value::IntegralValue T>
-auto ReadMemWithin(
-    RuntimeEffects& runtime, const value::AssociativeArray<K, T>& memory,
-    const value::String& filename, std::int64_t base, std::int64_t start,
-    std::int64_t finish) -> MemoryLoad<value::AssociativeArray<K, T>> {
-  MemoryLoad<value::AssociativeArray<K, T>> load(memory);
-  detail::ReadMemAssociative(
-      runtime, load.template Component<0>(), filename,
-      static_cast<unsigned>(base), start, finish);
-  return load;
-}
-
-template <value::IntegralValue K, value::IntegralValue T>
-void WriteMem(
-    RuntimeEffects& runtime, const value::AssociativeArray<K, T>& src,
-    const value::String& filename, std::int64_t base, std::int64_t start) {
-  detail::WriteMemAssociative(
-      runtime, src, filename, static_cast<unsigned>(base), start, std::nullopt);
-}
-
-template <value::IntegralValue K, value::IntegralValue T>
-void WriteMemWithin(
+void DumpMemory(
     RuntimeEffects& runtime, const value::AssociativeArray<K, T>& src,
     const value::String& filename, std::int64_t base, std::int64_t start,
-    std::int64_t finish) {
+    std::optional<std::int64_t> finish) {
   detail::WriteMemAssociative(
       runtime, src, filename, static_cast<unsigned>(base), start, finish);
 }
@@ -447,54 +409,88 @@ void WriteMemWithin(
 // one-element case of the same traversal.
 template <typename Inner, std::size_t N>
   requires detail::IsMemoryLevel<Inner>::value
-auto ReadMem(
+auto LoadMemory(
     RuntimeEffects& runtime, const value::UnpackedArray<Inner, N>& memory,
-    const value::String& filename, std::span<const std::int64_t> bounds,
-    std::int64_t base, std::int64_t start)
+    const WordValues& values, const value::String& filename,
+    std::span<const std::int64_t> bounds, std::int64_t base, std::int64_t start,
+    std::optional<std::int64_t> finish)
     -> MemoryLoad<value::UnpackedArray<Inner, N>> {
   MemoryLoad<value::UnpackedArray<Inner, N>> load(memory);
   detail::ReadMemMultidim(
       runtime, load.template Component<0>(), filename,
       value::UnpackedRangesOf(bounds), static_cast<unsigned>(base), start,
-      std::nullopt);
+      finish, values);
   return load;
 }
 
 template <typename Inner, std::size_t N>
   requires detail::IsMemoryLevel<Inner>::value
-auto ReadMemWithin(
-    RuntimeEffects& runtime, const value::UnpackedArray<Inner, N>& memory,
-    const value::String& filename, std::span<const std::int64_t> bounds,
-    std::int64_t base, std::int64_t start, std::int64_t finish)
-    -> MemoryLoad<value::UnpackedArray<Inner, N>> {
-  MemoryLoad<value::UnpackedArray<Inner, N>> load(memory);
-  detail::ReadMemMultidim(
-      runtime, load.template Component<0>(), filename,
-      value::UnpackedRangesOf(bounds), static_cast<unsigned>(base), start,
-      finish);
-  return load;
-}
-
-template <typename Inner, std::size_t N>
-  requires detail::IsMemoryLevel<Inner>::value
-void WriteMem(
+void DumpMemory(
     RuntimeEffects& runtime, const value::UnpackedArray<Inner, N>& src,
     const value::String& filename, std::span<const std::int64_t> bounds,
-    std::int64_t base, std::int64_t start) {
-  detail::WriteMemMultidim(
-      runtime, src, filename, value::UnpackedRangesOf(bounds),
-      static_cast<unsigned>(base), start, std::nullopt);
-}
-
-template <typename Inner, std::size_t N>
-  requires detail::IsMemoryLevel<Inner>::value
-void WriteMemWithin(
-    RuntimeEffects& runtime, const value::UnpackedArray<Inner, N>& src,
-    const value::String& filename, std::span<const std::int64_t> bounds,
-    std::int64_t base, std::int64_t start, std::int64_t finish) {
+    std::int64_t base, std::int64_t start, std::optional<std::int64_t> finish) {
   detail::WriteMemMultidim(
       runtime, src, filename, value::UnpackedRangesOf(bounds),
       static_cast<unsigned>(base), start, finish);
+}
+
+// The loads and dumps a call names: either addressing request (above), and for
+// a load a memory of any type or of an enumerated one, which names the members
+// its words are read as after the memory. Each reaches the load or the dump of
+// the memory's own kind.
+template <typename Memory, typename... Addressing>
+auto ReadMem(
+    RuntimeEffects& runtime, const Memory& memory,
+    const value::String& filename, const Addressing&... addressing) {
+  return LoadMemory(
+      runtime, memory, WordValues{AnyNumber{}}, filename, addressing...,
+      std::nullopt);
+}
+
+template <typename Memory, typename... Addressing>
+auto ReadMemWithin(
+    RuntimeEffects& runtime, const Memory& memory,
+    const value::String& filename, const Addressing&... addressing) {
+  return LoadMemory(
+      runtime, memory, WordValues{AnyNumber{}}, filename, addressing...);
+}
+
+template <
+    typename Memory, std::uint64_t kWidth, bool kFourState,
+    std::size_t kMembers, typename... Addressing>
+auto ReadMem(
+    RuntimeEffects& runtime, const Memory& memory,
+    const value::EnumerationMembers<kWidth, kFourState, kMembers>& members,
+    const value::String& filename, const Addressing&... addressing) {
+  return LoadMemory(
+      runtime, memory, WordValues{MemberValues{members.Read()}}, filename,
+      addressing..., std::nullopt);
+}
+
+template <
+    typename Memory, std::uint64_t kWidth, bool kFourState,
+    std::size_t kMembers, typename... Addressing>
+auto ReadMemWithin(
+    RuntimeEffects& runtime, const Memory& memory,
+    const value::EnumerationMembers<kWidth, kFourState, kMembers>& members,
+    const value::String& filename, const Addressing&... addressing) {
+  return LoadMemory(
+      runtime, memory, WordValues{MemberValues{members.Read()}}, filename,
+      addressing...);
+}
+
+template <typename Memory, typename... Addressing>
+void WriteMem(
+    RuntimeEffects& runtime, const Memory& memory,
+    const value::String& filename, const Addressing&... addressing) {
+  DumpMemory(runtime, memory, filename, addressing..., std::nullopt);
+}
+
+template <typename Memory, typename... Addressing>
+void WriteMemWithin(
+    RuntimeEffects& runtime, const Memory& memory,
+    const value::String& filename, const Addressing&... addressing) {
+  DumpMemory(runtime, memory, filename, addressing...);
 }
 
 }  // namespace lyra::runtime

@@ -949,19 +949,34 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_assocarray_read_mem", &lyra_rt_assocarray_read_mem);
   add("lyra_rt_assocarray_read_mem_within",
       &lyra_rt_assocarray_read_mem_within);
+  add("lyra_rt_assocarray_read_enumerated_mem",
+      &lyra_rt_assocarray_read_enumerated_mem);
+  add("lyra_rt_assocarray_read_enumerated_mem_within",
+      &lyra_rt_assocarray_read_enumerated_mem_within);
   add("lyra_rt_assocarray_write_mem", &lyra_rt_assocarray_write_mem);
   add("lyra_rt_assocarray_write_mem_within",
       &lyra_rt_assocarray_write_mem_within);
   add("lyra_rt_dynarray_read_mem", &lyra_rt_dynarray_read_mem);
   add("lyra_rt_dynarray_read_mem_within", &lyra_rt_dynarray_read_mem_within);
+  add("lyra_rt_dynarray_read_enumerated_mem",
+      &lyra_rt_dynarray_read_enumerated_mem);
+  add("lyra_rt_dynarray_read_enumerated_mem_within",
+      &lyra_rt_dynarray_read_enumerated_mem_within);
   add("lyra_rt_dynarray_write_mem", &lyra_rt_dynarray_write_mem);
   add("lyra_rt_dynarray_write_mem_within", &lyra_rt_dynarray_write_mem_within);
   add("lyra_rt_queue_read_mem", &lyra_rt_queue_read_mem);
   add("lyra_rt_queue_read_mem_within", &lyra_rt_queue_read_mem_within);
+  add("lyra_rt_queue_read_enumerated_mem", &lyra_rt_queue_read_enumerated_mem);
+  add("lyra_rt_queue_read_enumerated_mem_within",
+      &lyra_rt_queue_read_enumerated_mem_within);
   add("lyra_rt_queue_write_mem", &lyra_rt_queue_write_mem);
   add("lyra_rt_queue_write_mem_within", &lyra_rt_queue_write_mem_within);
   add("lyra_rt_laidout_read_mem", &lyra_rt_laidout_read_mem);
   add("lyra_rt_laidout_read_mem_within", &lyra_rt_laidout_read_mem_within);
+  add("lyra_rt_laidout_read_enumerated_mem",
+      &lyra_rt_laidout_read_enumerated_mem);
+  add("lyra_rt_laidout_read_enumerated_mem_within",
+      &lyra_rt_laidout_read_enumerated_mem_within);
   add("lyra_rt_laidout_write_mem", &lyra_rt_laidout_write_mem);
   add("lyra_rt_laidout_write_mem_within", &lyra_rt_laidout_write_mem_within);
   add("lyra_rt_laidout_element_slice", &lyra_rt_laidout_element_slice);

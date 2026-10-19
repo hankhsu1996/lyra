@@ -1465,10 +1465,10 @@ auto EmplaceEnumerationMember(
 // type of the word it replaces, and a word is written out through its planes.
 // Each memory is read into a copy, which the load answers with: a fixed-size
 // one arrives as that copy, the entry having made it of the caller's bytes.
-auto StoreMemoryWord(
-    value::MemoryWord word, std::string_view token, unsigned base) -> bool {
+void StoreParsed(
+    value::MemoryWord word, std::string_view token, unsigned base) {
   value::ScopedWordsWrite parsed(word.bytes, word.type->Shape());
-  return value::FromDigits(parsed.MutableView(), MemoryRadix(base), token);
+  value::FromDigits(parsed.MutableView(), MemoryRadix(base), token);
 }
 
 auto RenderedWord(value::ConstMemoryWord word, unsigned base) -> std::string {
@@ -1479,14 +1479,14 @@ auto RenderedWord(value::ConstMemoryWord word, unsigned base) -> std::string {
 auto ReadUnpackedMemory(
     RuntimeEffects& runtime, value::LaidOutValue loaded,
     const value::String& filename, std::span<const value::UnpackedRange> dims,
-    std::int64_t base, std::int64_t start, std::optional<std::int64_t> finish)
-    -> value::LaidOutValue {
+    std::int64_t base, std::int64_t start, std::optional<std::int64_t> finish,
+    const WordValues& values) -> value::LaidOutValue {
   const auto radix = static_cast<unsigned>(base);
   ReadMemGridCore(
       runtime, filename, radix, dims[0].Low(), dims[0].High(),
-      detail::InnerLeafCount(dims.subspan(1)), start, finish,
+      detail::InnerLeafCount(dims.subspan(1)), start, finish, values,
       [&](std::int64_t top, std::size_t ordinal, std::string_view token) {
-        return StoreMemoryWord(
+        StoreParsed(
             value::MemoryLeaf(loaded, dims, top, ordinal), token, radix);
       });
   return loaded;
@@ -1511,14 +1511,14 @@ template <typename Container>
 auto ReadFlatMemory(
     RuntimeEffects& runtime, const Container& dest,
     const value::String& filename, std::int64_t base, std::int64_t start,
-    std::optional<std::int64_t> finish) -> Container {
+    std::optional<std::int64_t> finish, const WordValues& values) -> Container {
   Container loaded = dest;
   const auto radix = static_cast<unsigned>(base);
   ReadMemGridCore(
       runtime, filename, radix, 0,
-      static_cast<std::int64_t>(loaded.Count()) - 1, 1, start, finish,
+      static_cast<std::int64_t>(loaded.Count()) - 1, 1, start, finish, values,
       [&](std::int64_t address, std::size_t, std::string_view token) {
-        return StoreMemoryWord(
+        StoreParsed(
             value::MemoryWordOf(
                 loaded.ElementType().Type(),
                 loaded.ElementAt(static_cast<std::size_t>(address))),
@@ -1550,13 +1550,13 @@ void WriteFlatMemory(
 auto ReadKeyedMemory(
     RuntimeEffects& runtime, const value::RuntimeAssociativeArray& dest,
     const value::String& filename, std::int64_t base, std::int64_t start,
-    std::optional<std::int64_t> finish, const void* key_type)
-    -> value::RuntimeAssociativeArray {
+    std::optional<std::int64_t> finish, const void* key_type,
+    const WordValues& values) -> value::RuntimeAssociativeArray {
   value::RuntimeAssociativeArray loaded = dest;
   const auto radix = static_cast<unsigned>(base);
   const value::IntegralValueType& index_type = IntegralTypeAt(key_type);
   ReadMemKeyedCore(
-      runtime, filename, radix, start, finish,
+      runtime, filename, radix, start, finish, values,
       [&](std::int64_t key, std::string_view token) {
         value::WrittenWords words(index_type.Shape());
         value::FromInt(words.MutableView(), key);
@@ -1567,7 +1567,7 @@ auto ReadKeyedMemory(
             value::IndexView{
                 .bytes = index.Bytes(), .type = &index_type.Type()},
             formed);
-        return StoreMemoryWord(
+        StoreParsed(
             value::MemoryWordOf(loaded.ElementType().Type(), word), token,
             radix);
       });
@@ -5617,7 +5617,8 @@ auto lyra_rt_laidout_read_mem(
               *static_cast<RuntimeEffects*>(runtime),
               OwnedLaidOutCopy(memory, memory_type), Read<String>(name),
               lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(dims)),
-              base, start, std::nullopt)));
+              base, start, std::nullopt,
+              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}})));
 }
 
 auto lyra_rt_laidout_read_mem_within(
@@ -5631,7 +5632,41 @@ auto lyra_rt_laidout_read_mem_within(
               *static_cast<RuntimeEffects*>(runtime),
               OwnedLaidOutCopy(memory, memory_type), Read<String>(name),
               lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(dims)),
-              base, start, finish)));
+              base, start, finish,
+              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}})));
+}
+
+auto lyra_rt_laidout_read_enumerated_mem(
+    void* runtime, const void* memory, const void* enumeration,
+    const void* name, LyraSpan dims, std::int64_t base, std::int64_t start,
+    const void* memory_type, const void* answer_type, void* out) -> void* {
+  return lyra::runtime::EmplaceCompletion(
+      out, lyra::runtime::TupleTypeAt(answer_type),
+      lyra::runtime::Single(
+          lyra::runtime::ReadUnpackedMemory(
+              *static_cast<RuntimeEffects*>(runtime),
+              OwnedLaidOutCopy(memory, memory_type), Read<String>(name),
+              lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(dims)),
+              base, start, std::nullopt,
+              lyra::runtime::WordValues{lyra::runtime::MemberValues{
+                  Read<Enumeration>(enumeration)}})));
+}
+
+auto lyra_rt_laidout_read_enumerated_mem_within(
+    void* runtime, const void* memory, const void* enumeration,
+    const void* name, LyraSpan dims, std::int64_t base, std::int64_t start,
+    std::int64_t finish, const void* memory_type, const void* answer_type,
+    void* out) -> void* {
+  return lyra::runtime::EmplaceCompletion(
+      out, lyra::runtime::TupleTypeAt(answer_type),
+      lyra::runtime::Single(
+          lyra::runtime::ReadUnpackedMemory(
+              *static_cast<RuntimeEffects*>(runtime),
+              OwnedLaidOutCopy(memory, memory_type), Read<String>(name),
+              lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(dims)),
+              base, start, finish,
+              lyra::runtime::WordValues{lyra::runtime::MemberValues{
+                  Read<Enumeration>(enumeration)}})));
 }
 
 void lyra_rt_laidout_write_mem(
@@ -5664,7 +5699,8 @@ auto lyra_rt_dynarray_read_mem(
           lyra::runtime::ReadFlatMemory(
               *static_cast<RuntimeEffects*>(runtime),
               Read<RuntimeDynamicArray>(memory), Read<String>(name), base,
-              start, std::nullopt)));
+              start, std::nullopt,
+              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}})));
 }
 
 auto lyra_rt_dynarray_read_mem_within(
@@ -5677,7 +5713,38 @@ auto lyra_rt_dynarray_read_mem_within(
           lyra::runtime::ReadFlatMemory(
               *static_cast<RuntimeEffects*>(runtime),
               Read<RuntimeDynamicArray>(memory), Read<String>(name), base,
-              start, finish)));
+              start, finish,
+              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}})));
+}
+
+auto lyra_rt_dynarray_read_enumerated_mem(
+    void* runtime, const void* memory, const void* enumeration,
+    const void* name, std::int64_t base, std::int64_t start,
+    const void* answer_type, void* out) -> void* {
+  return lyra::runtime::EmplaceCompletion(
+      out, lyra::runtime::TupleTypeAt(answer_type),
+      lyra::runtime::Single(
+          lyra::runtime::ReadFlatMemory(
+              *static_cast<RuntimeEffects*>(runtime),
+              Read<RuntimeDynamicArray>(memory), Read<String>(name), base,
+              start, std::nullopt,
+              lyra::runtime::WordValues{lyra::runtime::MemberValues{
+                  Read<Enumeration>(enumeration)}})));
+}
+
+auto lyra_rt_dynarray_read_enumerated_mem_within(
+    void* runtime, const void* memory, const void* enumeration,
+    const void* name, std::int64_t base, std::int64_t start,
+    std::int64_t finish, const void* answer_type, void* out) -> void* {
+  return lyra::runtime::EmplaceCompletion(
+      out, lyra::runtime::TupleTypeAt(answer_type),
+      lyra::runtime::Single(
+          lyra::runtime::ReadFlatMemory(
+              *static_cast<RuntimeEffects*>(runtime),
+              Read<RuntimeDynamicArray>(memory), Read<String>(name), base,
+              start, finish,
+              lyra::runtime::WordValues{lyra::runtime::MemberValues{
+                  Read<Enumeration>(enumeration)}})));
 }
 
 void lyra_rt_dynarray_write_mem(
@@ -5705,7 +5772,8 @@ auto lyra_rt_queue_read_mem(
           lyra::runtime::ReadFlatMemory(
               *static_cast<RuntimeEffects*>(runtime),
               Read<RuntimeQueue>(memory), Read<String>(name), base, start,
-              std::nullopt)));
+              std::nullopt,
+              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}})));
 }
 
 auto lyra_rt_queue_read_mem_within(
@@ -5718,7 +5786,37 @@ auto lyra_rt_queue_read_mem_within(
           lyra::runtime::ReadFlatMemory(
               *static_cast<RuntimeEffects*>(runtime),
               Read<RuntimeQueue>(memory), Read<String>(name), base, start,
-              finish)));
+              finish, lyra::runtime::WordValues{lyra::runtime::AnyNumber{}})));
+}
+
+auto lyra_rt_queue_read_enumerated_mem(
+    void* runtime, const void* memory, const void* enumeration,
+    const void* name, std::int64_t base, std::int64_t start,
+    const void* answer_type, void* out) -> void* {
+  return lyra::runtime::EmplaceCompletion(
+      out, lyra::runtime::TupleTypeAt(answer_type),
+      lyra::runtime::Single(
+          lyra::runtime::ReadFlatMemory(
+              *static_cast<RuntimeEffects*>(runtime),
+              Read<RuntimeQueue>(memory), Read<String>(name), base, start,
+              std::nullopt,
+              lyra::runtime::WordValues{lyra::runtime::MemberValues{
+                  Read<Enumeration>(enumeration)}})));
+}
+
+auto lyra_rt_queue_read_enumerated_mem_within(
+    void* runtime, const void* memory, const void* enumeration,
+    const void* name, std::int64_t base, std::int64_t start,
+    std::int64_t finish, const void* answer_type, void* out) -> void* {
+  return lyra::runtime::EmplaceCompletion(
+      out, lyra::runtime::TupleTypeAt(answer_type),
+      lyra::runtime::Single(
+          lyra::runtime::ReadFlatMemory(
+              *static_cast<RuntimeEffects*>(runtime),
+              Read<RuntimeQueue>(memory), Read<String>(name), base, start,
+              finish,
+              lyra::runtime::WordValues{lyra::runtime::MemberValues{
+                  Read<Enumeration>(enumeration)}})));
 }
 
 void lyra_rt_queue_write_mem(
@@ -5747,7 +5845,8 @@ auto lyra_rt_assocarray_read_mem(
           lyra::runtime::ReadKeyedMemory(
               *static_cast<RuntimeEffects*>(runtime),
               Read<RuntimeAssociativeArray>(memory), Read<String>(name), base,
-              start, std::nullopt, key_type)));
+              start, std::nullopt, key_type,
+              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}})));
 }
 
 auto lyra_rt_assocarray_read_mem_within(
@@ -5760,7 +5859,39 @@ auto lyra_rt_assocarray_read_mem_within(
           lyra::runtime::ReadKeyedMemory(
               *static_cast<RuntimeEffects*>(runtime),
               Read<RuntimeAssociativeArray>(memory), Read<String>(name), base,
-              start, finish, key_type)));
+              start, finish, key_type,
+              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}})));
+}
+
+auto lyra_rt_assocarray_read_enumerated_mem(
+    void* runtime, const void* memory, const void* key_type,
+    const void* enumeration, const void* name, std::int64_t base,
+    std::int64_t start, const void* answer_type, void* out) -> void* {
+  return lyra::runtime::EmplaceCompletion(
+      out, lyra::runtime::TupleTypeAt(answer_type),
+      lyra::runtime::Single(
+          lyra::runtime::ReadKeyedMemory(
+              *static_cast<RuntimeEffects*>(runtime),
+              Read<RuntimeAssociativeArray>(memory), Read<String>(name), base,
+              start, std::nullopt, key_type,
+              lyra::runtime::WordValues{lyra::runtime::MemberValues{
+                  Read<Enumeration>(enumeration)}})));
+}
+
+auto lyra_rt_assocarray_read_enumerated_mem_within(
+    void* runtime, const void* memory, const void* key_type,
+    const void* enumeration, const void* name, std::int64_t base,
+    std::int64_t start, std::int64_t finish, const void* answer_type, void* out)
+    -> void* {
+  return lyra::runtime::EmplaceCompletion(
+      out, lyra::runtime::TupleTypeAt(answer_type),
+      lyra::runtime::Single(
+          lyra::runtime::ReadKeyedMemory(
+              *static_cast<RuntimeEffects*>(runtime),
+              Read<RuntimeAssociativeArray>(memory), Read<String>(name), base,
+              start, finish, key_type,
+              lyra::runtime::WordValues{lyra::runtime::MemberValues{
+                  Read<Enumeration>(enumeration)}})));
 }
 
 void lyra_rt_assocarray_write_mem(

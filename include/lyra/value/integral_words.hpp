@@ -1770,28 +1770,36 @@ constexpr void FromBytes(IntegralView out, std::span<const char> bytes) {
   return c == 'z' || c == 'Z' || c == '?';
 }
 
-// LRM 21.4: a word of digits read as the value `out` is, its last digit the
-// least significant -- a shorter word leaves the positions above it 0 and a
-// longer one loses its leading digits. `_` separates digits; an x digit is x
-// in every bit it covers and a z or ? digit z in every one. Answers false,
-// leaving `out` as it was, where a character is no digit of the radix, or
-// there is no digit at all.
-[[nodiscard]] constexpr auto FromDigits(
-    IntegralView out, DigitRadix radix, std::string_view digits) -> bool {
+// Whether `c` is a digit of `radix`, an x, z or ? digit among them.
+[[nodiscard]] constexpr auto IsDigit(char c, DigitRadix radix) -> bool {
+  return IsUnknownDigit(c) || IsHighImpedanceDigit(c) ||
+         DigitOf(c, radix).has_value();
+}
+
+// LRM 21.4: whether a word is a number of `radix` -- at least one digit of it,
+// separated by any `_`.
+[[nodiscard]] constexpr auto IsDigits(DigitRadix radix, std::string_view digits)
+    -> bool {
   bool any_digit = false;
   for (const char c : digits) {
     if (c == '_') {
       continue;
     }
-    if (!IsUnknownDigit(c) && !IsHighImpedanceDigit(c) &&
-        !DigitOf(c, radix).has_value()) {
+    if (!IsDigit(c, radix)) {
       return false;
     }
     any_digit = true;
   }
-  if (!any_digit) {
-    return false;
-  }
+  return any_digit;
+}
+
+// LRM 21.4: a word of digits read as the value `out` is, its last digit the
+// least significant -- a shorter word leaves the positions above it 0 and a
+// longer one loses its leading digits. `_` separates digits; an x digit is x
+// in every bit it covers and a z or ? digit z in every one. The word is a
+// number of the radix, which whoever took it from text has already asked.
+constexpr void FromDigits(
+    IntegralView out, DigitRadix radix, std::string_view digits) {
   const std::uint64_t bits_per_digit = BitsPerDigit(radix);
   const std::uint64_t all = LowBits(bits_per_digit);
   const bool four_state = out.IsFourState();
@@ -1833,7 +1841,6 @@ constexpr void FromBytes(IntegralView out, std::span<const char> bytes) {
   }
   ClearAboveWidth(out.value, out.width);
   ClearAboveWidth(out.unknown, out.width);
-  return true;
 }
 
 // The byte `index` positions up from a value's least significant end, a

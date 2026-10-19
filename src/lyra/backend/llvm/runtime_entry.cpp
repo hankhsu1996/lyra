@@ -1714,6 +1714,8 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // follows.
     case support::BuiltinFn::kReadMem:
     case support::BuiltinFn::kReadMemWithin:
+    case support::BuiltinFn::kReadEnumeratedMem:
+    case support::BuiltinFn::kReadEnumeratedMemWithin:
       return NamedByValue{.operand = 1, .realized = kForLoadedMemories};
     case support::BuiltinFn::kWriteMem:
     case support::BuiltinFn::kWriteMemWithin:

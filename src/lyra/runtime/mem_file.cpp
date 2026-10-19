@@ -4,20 +4,23 @@
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
-#include <functional>
 #include <optional>
 #include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/diag_message.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/value/enumeration.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/integral.hpp"
+#include "lyra/value/integral_words.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
@@ -136,23 +139,71 @@ auto Tokenize(std::string_view text) -> std::vector<std::string> {
 auto ParseAtAddress(
     RuntimeEffects& runtime, unsigned base, const std::string& token)
     -> std::optional<std::int64_t> {
-  value::LongInt address;
-  if (!value::FromDigits(
-          address, value::DigitRadix::kHex,
-          std::string_view{token}.substr(1))) {
+  const std::string_view digits = std::string_view{token}.substr(1);
+  if (!value::IsDigits(value::DigitRadix::kHex, digits)) {
     Error(
         runtime, "'{}' read a malformed address '{}'",
         TaskName(base, Direction::kLoad), token);
     return std::nullopt;
   }
+  value::LongInt address;
+  value::FromDigits(address, value::DigitRadix::kHex, digits);
   return address.ToInt64();
 }
 
-void MalformedWord(
-    RuntimeEffects& runtime, unsigned base, const std::string& token) {
-  Error(
-      runtime, "'{}' read a malformed data word '{}'",
-      TaskName(base, Direction::kLoad), token);
+// LRM 21.4.2: whether the number a token writes is the value of a member. It
+// is the number the file writes, read at the width its digits take, so a digit
+// a word of the type would lose still counts; over a 2-state base an x or z
+// digit is 0.
+auto IsMemberNumber(
+    const value::Enumeration& members, std::string_view token, unsigned base)
+    -> bool {
+  const value::DigitRadix radix = MemoryRadix(base);
+  const auto digits = static_cast<std::uint64_t>(
+      std::ranges::count_if(token, [](char c) { return c != '_'; }));
+  const value::StateDomain domain = members.four_state
+                                        ? value::StateDomain::kFourState
+                                        : value::StateDomain::kTwoState;
+  const value::IntegralShape written{
+      .width = std::max(digits * value::BitsPerDigit(radix), members.width),
+      .domain = domain};
+  value::WrittenWords number(written);
+  value::FromDigits(number.MutableView(), radix, token);
+  value::WrittenWords word({.width = members.width, .domain = domain});
+  value::Convert(word.MutableView(), number.View());
+  value::WrittenWords kept(written);
+  value::Convert(kept.MutableView(), word.View());
+  return value::CaseEqual(kept.View(), number.View()) &&
+         members.PositionOf(word.View()).has_value();
+}
+
+// Whether a token is a word of a memory whose words take `values`, reporting
+// why not where it is not; a load reads nothing after such a token (LRM 21.4,
+// 21.4.2).
+auto AdmitWord(
+    RuntimeEffects& runtime, const WordValues& values, unsigned base,
+    const std::string& token) -> bool {
+  if (!value::IsDigits(MemoryRadix(base), token)) {
+    Error(
+        runtime, "'{}' read a malformed data word '{}'",
+        TaskName(base, Direction::kLoad), token);
+    return false;
+  }
+  return std::visit(
+      Overloaded{
+          [](const AnyNumber&) { return true; },
+          [&](const MemberValues& only) {
+            if (IsMemberNumber(only.members, token, base)) {
+              return true;
+            }
+            Error(
+                runtime,
+                "'{}' read the word '{}', which is no member of the memory's "
+                "enumeration",
+                TaskName(base, Direction::kLoad), token);
+            return false;
+          }},
+      values);
 }
 
 // Whether a token of a memory file is an `@address` rather than a data word
@@ -193,8 +244,7 @@ auto RenderedMemoryWord(const value::ConstIntegralView& word, unsigned base)
 void ReadMemKeyedCore(
     RuntimeEffects& runtime, const value::String& filename, unsigned base,
     std::optional<std::int64_t> start, std::optional<std::int64_t> finish,
-    const std::function<bool(std::int64_t key, std::string_view token)>&
-        store) {
+    const WordValues& values, const StoreKeyedWord& store) {
   const auto text = SlurpFile(runtime, filename, base);
   if (!text) return;
 
@@ -220,10 +270,8 @@ void ReadMemKeyedCore(
 
     if (bounded && (cursor < active_lo || cursor > active_hi)) break;
 
-    if (!store(cursor, token)) {
-      MalformedWord(runtime, base, token);
-      return;
-    }
+    if (!AdmitWord(runtime, values, base, token)) return;
+    store(cursor, token);
     cursor += step;
   }
 }
@@ -248,7 +296,7 @@ void ReadMemGridCore(
     RuntimeEffects& runtime, const value::String& filename, unsigned base,
     std::int64_t top_lo, std::int64_t top_hi, std::size_t inner_count,
     std::optional<std::int64_t> start, std::optional<std::int64_t> finish,
-    const StoreMemoryWord& store) {
+    const WordValues& values, const StoreMemoryWord& store) {
   const auto text = SlurpFile(runtime, filename, base);
   if (!text) return;
 
@@ -280,11 +328,11 @@ void ReadMemGridCore(
 
     // An address is an index into the memory (LRM 21.4), and a write at one
     // the memory does not hold performs no operation (LRM 7.4.5), so a range
-    // reaching past the memory loads what lies inside it and still consumes
-    // the words the file gives the rest.
-    if (cursor >= top_lo && cursor <= top_hi && !store(cursor, inner, token)) {
-      MalformedWord(runtime, base, token);
-      return;
+    // reaching past the memory loads what lies inside it and still reads the
+    // words the file gives the rest.
+    if (!AdmitWord(runtime, values, base, token)) return;
+    if (cursor >= top_lo && cursor <= top_hi) {
+      store(cursor, inner, token);
     }
     if (++inner == inner_count) {
       cursor += step;

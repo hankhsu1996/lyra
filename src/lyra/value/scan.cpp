@@ -214,8 +214,7 @@ struct DecimalResult {
       break;
     }
     const auto c = static_cast<char>(ch);
-    const bool is_digit = DigitOf(c, radix).has_value() || IsUnknownDigit(c) ||
-                          IsHighImpedanceDigit(c);
+    const bool is_digit = IsDigit(c, radix);
     if (!is_digit && c != '_') {
       break;
     }
@@ -286,11 +285,7 @@ void WriteDecimal(const DecimalResult& parsed, const IntegralView& dest) {
 // target holds an x or z digit as 0.
 void WriteDigits(
     std::string_view run, DigitRadix radix, const IntegralView& dest) {
-  if (!FromDigits(dest, radix, run)) {
-    throw InternalError(
-        "$sscanf/$fscanf: a scanned run of digits holds a character that is no "
-        "digit of its radix -- please report this as a bug");
-  }
+  FromDigits(dest, radix, run);
 }
 
 void WriteChar(unsigned char ch, const IntegralView& dest) {

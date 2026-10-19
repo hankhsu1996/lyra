@@ -958,6 +958,16 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "read_mem_within",
           .declaration = RuntimeFunction("ReadMemWithin"),
           .answer_told = AnswerTold::kAnswerType};
+    case BuiltinFn::kReadEnumeratedMem:
+      return {
+          .name = "read_enumerated_mem",
+          .declaration = RuntimeFunction("ReadMem"),
+          .answer_told = AnswerTold::kAnswerType};
+    case BuiltinFn::kReadEnumeratedMemWithin:
+      return {
+          .name = "read_enumerated_mem_within",
+          .declaration = RuntimeFunction("ReadMemWithin"),
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kWriteMem:
       return {.name = "write_mem", .declaration = RuntimeFunction("WriteMem")};
     case BuiltinFn::kWriteMemWithin:

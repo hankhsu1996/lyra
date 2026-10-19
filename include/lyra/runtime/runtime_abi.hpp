@@ -1703,7 +1703,9 @@ void lyra_rt_queue_reverse(void* receiver);
 // is its own entry. A load answers through its completion, because a word the
 // file does not address keeps what it held. The radix and the addresses cross
 // as machine integers, like every runtime scalar. An unpacked memory crosses
-// with its type.
+// with its type. A load into a memory of an enumerated type is an entry of its
+// own, handed the enumeration's members ahead of the file name, since only a
+// member's value is a word of it (LRM 21.4.2).
 auto lyra_rt_laidout_read_mem(
     void* runtime, const void* memory, const void* name, LyraSpan dims,
     std::int64_t base, std::int64_t start, const void* memory_type,
@@ -1712,6 +1714,15 @@ auto lyra_rt_laidout_read_mem_within(
     void* runtime, const void* memory, const void* name, LyraSpan dims,
     std::int64_t base, std::int64_t start, std::int64_t finish,
     const void* memory_type, const void* answer_type, void* out) -> void*;
+auto lyra_rt_laidout_read_enumerated_mem(
+    void* runtime, const void* memory, const void* enumeration,
+    const void* name, LyraSpan dims, std::int64_t base, std::int64_t start,
+    const void* memory_type, const void* answer_type, void* out) -> void*;
+auto lyra_rt_laidout_read_enumerated_mem_within(
+    void* runtime, const void* memory, const void* enumeration,
+    const void* name, LyraSpan dims, std::int64_t base, std::int64_t start,
+    std::int64_t finish, const void* memory_type, const void* answer_type,
+    void* out) -> void*;
 void lyra_rt_laidout_write_mem(
     void* runtime, const void* memory, const void* name, LyraSpan dims,
     std::int64_t base, std::int64_t start, const void* memory_type);
@@ -1726,6 +1737,14 @@ auto lyra_rt_dynarray_read_mem_within(
     void* runtime, const void* memory, const void* name, std::int64_t base,
     std::int64_t start, std::int64_t finish, const void* answer_type, void* out)
     -> void*;
+auto lyra_rt_dynarray_read_enumerated_mem(
+    void* runtime, const void* memory, const void* enumeration,
+    const void* name, std::int64_t base, std::int64_t start,
+    const void* answer_type, void* out) -> void*;
+auto lyra_rt_dynarray_read_enumerated_mem_within(
+    void* runtime, const void* memory, const void* enumeration,
+    const void* name, std::int64_t base, std::int64_t start,
+    std::int64_t finish, const void* answer_type, void* out) -> void*;
 void lyra_rt_dynarray_write_mem(
     void* runtime, const void* memory, const void* name, std::int64_t base,
     std::int64_t start);
@@ -1739,6 +1758,14 @@ auto lyra_rt_queue_read_mem_within(
     void* runtime, const void* memory, const void* name, std::int64_t base,
     std::int64_t start, std::int64_t finish, const void* answer_type, void* out)
     -> void*;
+auto lyra_rt_queue_read_enumerated_mem(
+    void* runtime, const void* memory, const void* enumeration,
+    const void* name, std::int64_t base, std::int64_t start,
+    const void* answer_type, void* out) -> void*;
+auto lyra_rt_queue_read_enumerated_mem_within(
+    void* runtime, const void* memory, const void* enumeration,
+    const void* name, std::int64_t base, std::int64_t start,
+    std::int64_t finish, const void* answer_type, void* out) -> void*;
 void lyra_rt_queue_write_mem(
     void* runtime, const void* memory, const void* name, std::int64_t base,
     std::int64_t start);
@@ -1755,6 +1782,15 @@ auto lyra_rt_assocarray_read_mem_within(
     void* runtime, const void* memory, const void* key_type, const void* name,
     std::int64_t base, std::int64_t start, std::int64_t finish,
     const void* answer_type, void* out) -> void*;
+auto lyra_rt_assocarray_read_enumerated_mem(
+    void* runtime, const void* memory, const void* key_type,
+    const void* enumeration, const void* name, std::int64_t base,
+    std::int64_t start, const void* answer_type, void* out) -> void*;
+auto lyra_rt_assocarray_read_enumerated_mem_within(
+    void* runtime, const void* memory, const void* key_type,
+    const void* enumeration, const void* name, std::int64_t base,
+    std::int64_t start, std::int64_t finish, const void* answer_type, void* out)
+    -> void*;
 void lyra_rt_assocarray_write_mem(
     void* runtime, const void* memory, const void* name, std::int64_t base,
     std::int64_t start);
