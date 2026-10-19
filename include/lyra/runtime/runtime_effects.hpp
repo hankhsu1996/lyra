@@ -92,11 +92,6 @@ class RuntimeEffects {
   void WakeParkedOn(
       Observable& place, const PartPath& written, const Change& change);
 
-  // What every object's change also reaches: a wait whose expression reads an
-  // object no report could follow is reevaluated whenever a property of any
-  // object is written, which LRM 9.4.2 permits.
-  [[nodiscard]] auto EveryObject() -> Observable&;
-
   // The members of scopes that references were bound into, which a force on
   // one acts through (LRM 10.6.2).
   [[nodiscard]] auto Bound() -> BoundMembers&;

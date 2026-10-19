@@ -4,7 +4,7 @@
 #include <string>
 
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/hir/timing.hpp"
+#include "lyra/hir/expr_id.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
@@ -57,16 +57,15 @@ auto LowerSubroutineCallStmtForm(
     const std::optional<std::string>& label, const hir::CallExpr& call,
     mir::TypeId result_type) -> std::optional<diag::Result<mir::Stmt>>;
 
-// Makes `reporting`'s call of a function so it reports what it reads into the
-// report `report` holds a pointer to, rather than running (LRM 9.4.2),
-// appending it to the block `frame` is writing. An argument the reads could not
-// evaluate is handed as its type's default, what the function would write back
-// is dropped, and a call made through a handle is made only where the handle
-// names something.
+// Makes the call `call` names, of a function an implicit list follows, so it
+// states what it reads and writes into the report `report` holds a pointer to
+// rather than running (LRM 9.2.2.2.1), appending it to the block `frame` is
+// writing. What the function reads is fixed by its text, so every argument is
+// handed as its type's default -- a `ref` one as storage holding it -- and
+// what the function would write back is dropped.
 template <ExprLowerer Lowerer>
 auto EmitReportingCall(
-    Lowerer& lowerer, const WalkFrame& frame,
-    const hir::ReportingCall& reporting, mir::LocalId report)
-    -> diag::Result<void>;
+    Lowerer& lowerer, const WalkFrame& frame, hir::ExprId call,
+    mir::LocalId report) -> diag::Result<void>;
 
 }  // namespace lyra::lowering::hir_to_mir

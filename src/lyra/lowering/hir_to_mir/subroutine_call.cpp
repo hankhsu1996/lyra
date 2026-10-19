@@ -29,6 +29,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
+#include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/unit_object_access.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -581,17 +582,11 @@ auto EmitSubroutineCall(
     }
   }
 
-  // A call an evaluation makes that states what it reaches hands that report
-  // on, and the function states what it reads before it runs (LRM 9.4.2); any
-  // other call hands none.
-  if (const std::optional<mir::TypeId> report =
-          ReportParamTypeOf(unit, plan.kind)) {
-    call_args.push_back(block.AsValue(
-        unit.types,
-        block.exprs.Add(
-            frame.reports_reached_to.has_value()
-                ? mir::MakeLocalRefExpr(*frame.reports_reached_to, *report)
-                : mir::Expr{.data = mir::NullLiteral{}, .type = *report})));
+  // A call made where an evaluation states what it reaches hands that report
+  // on, so the function states what it reads as it runs (LRM 9.4.2); any other
+  // call hands none.
+  if (ReportParamTypeOf(unit, plan.kind).has_value()) {
+    call_args.push_back(BuildReportHandedOn(unit, frame));
   }
 
   return EmittedCall{
@@ -733,122 +728,33 @@ auto LowerSubroutineCall(
       *callee.result_type)};
 }
 
-namespace {
-
-// The handle a call is made through, where the source wrote one: a class
-// handle a method is called on, or a virtual interface holding the instance an
-// interface's subroutine is called on. A report stands where nothing has tested
-// it, so it is tested before the call is made on it.
-auto HandleCalledThrough(const hir::SubroutineRef& callee)
-    -> std::optional<hir::ExprId> {
-  return std::visit(
-      Overloaded{
-          [](const hir::MethodCallRef& method) -> std::optional<hir::ExprId> {
-            if (const auto* handle =
-                    std::get_if<hir::HandleReceiver>(&method.receiver)) {
-              return handle->expr;
-            }
-            return std::nullopt;
-          },
-          [](const hir::ExternalUnitMethodRef& method)
-              -> std::optional<hir::ExprId> {
-            if (const auto* held =
-                    std::get_if<hir::InterfaceInstanceAccessExpr>(
-                        &method.receiver)) {
-              return held->handle;
-            }
-            return std::nullopt;
-          },
-          // Each of these is made on nothing, or on an object elaboration
-          // bound, which names something whenever it is reached.
-          [](const hir::StructuralSubroutineRef&)
-              -> std::optional<hir::ExprId> { return std::nullopt; },
-          [](const hir::StaticMethodCallRef&) -> std::optional<hir::ExprId> {
-            return std::nullopt;
-          },
-          [](const hir::ExternalUnitSubroutineRef&)
-              -> std::optional<hir::ExprId> { return std::nullopt; },
-          // A report calls only functions a source declared, never these.
-          [](const hir::SystemSubroutineRef&) -> std::optional<hir::ExprId> {
-            throw InternalError(
-                "HandleCalledThrough: a report calls a system subroutine");
-          },
-          [](const hir::BuiltinMethodRef&) -> std::optional<hir::ExprId> {
-            throw InternalError(
-                "HandleCalledThrough: a report calls a built-in method");
-          },
-          [](const hir::EnumMethodRef&) -> std::optional<hir::ExprId> {
-            throw InternalError(
-                "HandleCalledThrough: a report calls an enumeration method");
-          },
-          [](const hir::ArrayIteratorMethodRef&) -> std::optional<hir::ExprId> {
-            throw InternalError(
-                "HandleCalledThrough: a report calls an array iterator method");
-          },
-          [](const hir::PastValueRef&) -> std::optional<hir::ExprId> {
-            throw InternalError(
-                "HandleCalledThrough: a report calls a sampled value function");
-          },
-          [](const hir::ValueChangeRef&) -> std::optional<hir::ExprId> {
-            throw InternalError(
-                "HandleCalledThrough: a report calls a sampled value function");
-          },
-          [](const hir::ForeignImportRef&) -> std::optional<hir::ExprId> {
-            throw InternalError(
-                "HandleCalledThrough: a report calls a foreign import");
-          }},
-      callee);
-}
-
-}  // namespace
-
 template <ExprLowerer Lowerer>
 auto EmitReportingCall(
-    Lowerer& lowerer, const WalkFrame& frame,
-    const hir::ReportingCall& reporting, mir::LocalId report)
-    -> diag::Result<void> {
-  // Nothing was left to make the call on, so the report watches every object
-  // instead and there is no call to make.
-  if (reporting.receiver == hir::ReportedArgument::kDefaulted) {
-    return {};
-  }
+    Lowerer& lowerer, const WalkFrame& frame, hir::ExprId call_id,
+    mir::LocalId report) -> diag::Result<void> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  const auto& hir_exprs = lowerer.HirExprs();
-  const hir::Expr& hir_call = hir_exprs.Get(reporting.call);
+  const hir::Expr& hir_call = lowerer.HirExprs().Get(call_id);
   const auto* call = std::get_if<hir::CallExpr>(&hir_call.data);
   if (call == nullptr) {
     throw InternalError(
-        "EmitReportingCall: a reporting call names an expression that is not "
-        "a call");
+        "EmitReportingCall: a call an implicit list follows names an "
+        "expression that is not a call");
   }
   const std::optional<SubroutineCallee> planned = PlanSubroutineCall(
       lowerer, *call, lowerer.Owner().TranslateType(hir_call.type));
   if (!planned.has_value() || planned->kind != hir::SubroutineKind::kFunction) {
     throw InternalError(
-        "EmitReportingCall: a reporting call names something other than a "
-        "function");
+        "EmitReportingCall: a call an implicit list follows names something "
+        "other than a function");
   }
   const SubroutineCallee& plan = *planned;
-  if (call->arguments.size() != plan.completion.formals.size() ||
-      reporting.arguments.size() != plan.completion.formals.size()) {
-    throw InternalError("EmitReportingCall: argument / formal count mismatch");
-  }
-
-  // Where the call is made through a handle, it is made only when the handle
-  // names something, in a block of its own.
-  mir::Block guarded;
-  WalkFrame at = frame;
-  const std::optional<hir::ExprId> through = HandleCalledThrough(call->callee);
-  if (through.has_value()) {
-    at = frame.WithBlock(&guarded);
-  }
-  mir::Block& block = *at.current_block;
+  mir::Block& block = *frame.current_block;
 
   const mir::TypeId payload_type =
       CompletionPayloadType(unit, plan.completion.components);
   const mir::TypeId call_result_type =
       SubroutineCallType(unit, plan.kind, payload_type);
-  auto resolved = ResolveCallee(lowerer, at, plan);
+  auto resolved = ResolveCallee(lowerer, frame, plan);
   if (!resolved) return std::unexpected(std::move(resolved.error()));
 
   std::vector<mir::ExprId> call_args;
@@ -856,64 +762,48 @@ auto EmitReportingCall(
     call_args.push_back(*resolved->leading);
   }
   const std::vector<hir::ExprId> operands = RequiredOperands(*call);
+  if (operands.size() != plan.completion.formals.size()) {
+    throw InternalError("EmitReportingCall: argument / formal count mismatch");
+  }
   for (std::size_t i = 0; i < operands.size(); ++i) {
     const CompletionLayout::Formal& formal = plan.completion.formals[i];
-    const hir::Expr& hir_arg = hir_exprs.Get(operands[i]);
-    const bool evaluated =
-        reporting.arguments[i] == hir::ReportedArgument::kEvaluated;
+    const hir::TypeId actual_type = lowerer.HirExprs().Get(operands[i]).type;
     switch (formal.direction) {
-      // What the function would write back is no part of a report, which
+      // What the function would write back is no part of the list, which
       // writes nothing back.
       case hir::ParamDirection::kOutput:
         break;
+      // An `inout` actual is of its own type, and the function takes the
+      // formal's.
       case hir::ParamDirection::kInput:
-      case hir::ParamDirection::kInOut: {
-        // An `inout` actual is of its own type, and the function takes the
-        // formal's.
-        if (!evaluated) {
-          call_args.push_back(ConvertToType(
-              unit, block,
-              block.exprs.Add(BuildDefaultValueFromHir(
-                  lowerer.Owner(), block, hir_arg.type)),
-              formal.type));
-          break;
-        }
-        auto value = lowerer.LowerExpr(hir_arg, at);
-        if (!value) return std::unexpected(std::move(value.error()));
+      case hir::ParamDirection::kInOut:
         call_args.push_back(ConvertToType(
-            unit, block, block.exprs.Add(*std::move(value)), formal.type));
+            unit, block,
+            block.exprs.Add(
+                BuildDefaultValueFromHir(lowerer.Owner(), block, actual_type)),
+            formal.type));
         break;
-      }
+      // What the function reads through a `ref` formal is what the caller
+      // names there, which the caller's own text states.
       case hir::ParamDirection::kRef:
       case hir::ParamDirection::kConstRef: {
-        if (!evaluated) {
-          throw InternalError(
-              "EmitReportingCall: a `ref` actual the report cannot name "
-              "reached a call, where the reporting function refuses first");
-        }
-        auto place = lowerer.LowerLhsExpr(hir_arg, at);
-        if (!place) return std::unexpected(std::move(place.error()));
+        const mir::TypeId value_type =
+            lowerer.Owner().TranslateType(actual_type);
+        const mir::LocalId held = DeclareLocal(
+            frame, block.exprs.Add(BuildDefaultValueFromHir(
+                       lowerer.Owner(), block, actual_type)));
         call_args.push_back(AtType(
-            unit, block, PathReference(unit, block, *place),
+            unit, block,
+            BuildReferenceArg(
+                unit, block,
+                block.exprs.Add(mir::MakeLocalRefExpr(held, value_type)),
+                value_type),
             *ParamTypeOf(unit, formal.type, formal.direction)));
         break;
       }
     }
   }
   call_args.push_back(block.ReadLocal(report, unit.builtins.read_report_ptr));
-  // What a call made on an object or through a virtual interface reads is
-  // reached through that handle, which the report keeps apart (LRM 9.2.2.2.1
-  // takes nothing of it into an implicit list; LRM 9.4.2 waits on it).
-  const auto on_the_report = [&](support::BuiltinFn entry) {
-    block.AppendStmt(
-        mir::ExprStmt{
-            .expr = BuildReportCall(
-                unit, block, report, entry, {}, unit.builtins.void_type)});
-  };
-  const bool on_a_handle = reporting.receiver.has_value();
-  if (on_a_handle) {
-    on_the_report(support::BuiltinFn::kReadReportEnterCallOnHandle);
-  }
   block.AppendStmt(
       mir::ExprStmt{
           .expr = block.exprs.Add(
@@ -923,30 +813,15 @@ auto EmitReportingCall(
                           .callee = std::move(resolved->callee),
                           .arguments = std::move(call_args)},
                   .type = call_result_type})});
-  if (on_a_handle) {
-    on_the_report(support::BuiltinFn::kReadReportLeaveCallOnHandle);
-  }
-
-  if (through.has_value()) {
-    mir::Block& outer = *frame.current_block;
-    auto handle = lowerer.LowerExpr(hir_exprs.Get(*through), frame);
-    if (!handle) return std::unexpected(std::move(handle.error()));
-    outer.AppendStmt(
-        mir::IfStmt{
-            .condition = ReduceToCondition(
-                unit, outer, outer.exprs.Add(*std::move(handle))),
-            .then_scope = outer.child_scopes.Add(std::move(guarded)),
-            .else_scope = std::nullopt});
-  }
   return {};
 }
 
 template auto EmitReportingCall(
-    ProcessLowerer&, const WalkFrame&, const hir::ReportingCall&, mir::LocalId)
+    ProcessLowerer&, const WalkFrame&, hir::ExprId, mir::LocalId)
     -> diag::Result<void>;
 template auto EmitReportingCall(
-    const StructuralScopeLowerer&, const WalkFrame&, const hir::ReportingCall&,
-    mir::LocalId) -> diag::Result<void>;
+    const StructuralScopeLowerer&, const WalkFrame&, hir::ExprId, mir::LocalId)
+    -> diag::Result<void>;
 
 template auto LowerSubroutineCall(
     ProcessLowerer&, WalkFrame, const hir::CallExpr&, mir::TypeId)

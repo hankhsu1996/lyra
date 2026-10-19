@@ -312,9 +312,6 @@ class Runtime final : public RuntimeEffects {
   // out of, which meanwhile collects the next pass's work (LRM 9.3.2). Held for
   // the whole run so its storage outlives each pass.
   RegionQueue draining_;
-  // Reached by a write to a property of any object, for the waits nothing
-  // narrower covers.
-  Observable every_object_;
   BoundMembers bound_members_;
   std::unordered_set<const VariableCell*> driven_continuously_;
   // Every execution no process started and no program keeps. Released before

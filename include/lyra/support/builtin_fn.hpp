@@ -691,27 +691,30 @@ enum class BuiltinFn : std::uint16_t {
   kWaitUntil,
   // What an evaluation states the places it reached in (LRM 9.4.2): an empty
   // report, or one no evaluation makes, a procedure's implicit list, whose
-  // calls report and never run; a place it reads and the bits it reads there;
-  // a place reached through a handle; every object at once; the bracket around
-  // a call made on a handle, while which everything reported is reached
-  // through it; a place written and its bits; settling what was reported as a
-  // procedure's implicit list (LRM 9.2.2.2.1), which keeps only what was read
-  // directly, less what was written; the bracket a function takes around
-  // reporting into it, which answers whether to go on at all; and whether the
-  // function, having reported, runs -- the one an evaluation called does. A
-  // function reaching a read no leaf watches yet refuses the report instead.
+  // calls state what they read and never run; a place it reads and the bits it
+  // reads there; an object a property is read on, which the wait keeps while
+  // it watches it; a place written and its bits; settling what was reported as
+  // a
+  // procedure's implicit list (LRM 9.2.2.2.1), which keeps what was read less
+  // what was written; the bracket a function takes around collecting into the
+  // list, which answers whether to go on at all; whether a function handed a
+  // report runs -- one an evaluation handed it does; and the extent of the
+  // evaluation itself, while which an exported function foreign code calls
+  // reports into it, together with the report that exported function asks for
+  // (LRM 35.5.3). A body reading something no wait can watch yet refuses the
+  // report instead.
   kReadReportEmpty,
   kReadReportForImplicitList,
   kReadReportAdd,
-  kReadReportAddThroughHandle,
-  kReadReportAddEveryObject,
-  kReadReportEnterCallOnHandle,
-  kReadReportLeaveCallOnHandle,
+  kReadReportAddObject,
   kReadReportAddWrite,
   kReadReportSettleAsImplicitList,
   kReadReportEnter,
   kReadReportLeave,
   kReadReportRunsTheBody,
+  kReadReportBeginEvaluation,
+  kReadReportEndEvaluation,
+  kEvaluationInProgress,
   kRefuseReport,
   // LRM 20.3 simulation-time read functions. Each takes the runtime handle
   // and the calling scope's unit power; the runtime scales the design-global

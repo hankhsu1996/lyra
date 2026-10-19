@@ -16,10 +16,9 @@
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/endpoint.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
-#include "lyra/lowering/hir_to_mir/object_change.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -27,7 +26,6 @@
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/unit_object_access.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -347,191 +345,115 @@ void ReportCell(
       {cell.place, cell.part.steps, cell.part.first, cell.part.width});
 }
 
-// Records a place reached through a handle -- an object a chain passes
-// through, by its event source, or a variable of the instance a virtual
-// interface holds -- and which bits of it are read.
-void ReportThroughHandle(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId report,
-    mir::ExprId place, LeafPart watched) {
-  ActOnReport(
-      unit, block, report, support::BuiltinFn::kReadReportAddThroughHandle,
-      {place, watched.steps, watched.first, watched.width});
-}
-
-// Appends `if (holds(local)) { fill(inner) }` to `frame`'s block: what reaches
-// through a handle is reached only where the handle names something, because a
-// function's report stands where nothing has tested the handle (LRM 8.4).
-template <typename Fill>
-auto WhereItNamesSomething(
-    const mir::CompilationUnit& unit, const WalkFrame& frame,
-    mir::LocalId handle, mir::TypeId handle_type, Fill fill)
-    -> diag::Result<void> {
-  mir::Block& block = *frame.current_block;
-  mir::Block inner;
-  auto filled = fill(frame.WithBlock(&inner));
-  if (!filled) return std::unexpected(std::move(filled.error()));
-  const mir::ExprId held = block.ReadLocal(handle, handle_type);
-  block.AppendStmt(
-      mir::IfStmt{
-          .condition = ReduceToCondition(unit, block, held),
-          .then_scope = block.child_scopes.Add(std::move(inner)),
-          .else_scope = std::nullopt});
-  return {};
-}
-
-template <typename Lowerer>
-auto ReportChainFrom(
-    Lowerer& lowerer, const WalkFrame& frame, mir::LocalId report,
-    mir::LocalId handle, mir::TypeId handle_type,
-    std::span<const hir::ObjectChain::Hop> hops) -> diag::Result<void>;
-
-// Records the object `object` reaches, then the ones the chain's remaining hops
-// reach from it. `object` is read afresh each time it is needed, as a handle or
-// as the running method's own receiver.
-template <typename Lowerer, typename ReadObject>
-auto ReportObjectThenHops(
-    Lowerer& lowerer, const WalkFrame& frame, mir::LocalId report,
-    ReadObject object, std::span<const hir::ObjectChain::Hop> hops)
-    -> diag::Result<void> {
-  mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  mir::Block& block = *frame.current_block;
-  ReportThroughHandle(
-      unit, block, report, ObjectEventSourceOf(unit, block, object()),
-      WholePlace(unit, block));
-  if (hops.empty()) return {};
-  const hir::ObjectChain::Hop& hop = hops.front();
-  const mir::TypeId next_type = lowerer.Owner().TranslateType(hop.handle_type);
-  const mir::LocalId next = DeclareLocal(
-      frame, block.exprs.Add(BuildClassPropertyAccess(
-                 lowerer, frame, object(), hop.property, next_type)));
-  return ReportChainFrom(
-      lowerer, frame, report, next, next_type, hops.subspan(1));
-}
-
-// Records the object `handle` names and what the remaining hops reach from it,
-// where the handle names something at all.
-template <typename Lowerer>
-auto ReportChainFrom(
-    Lowerer& lowerer, const WalkFrame& frame, mir::LocalId report,
-    mir::LocalId handle, mir::TypeId handle_type,
-    std::span<const hir::ObjectChain::Hop> hops) -> diag::Result<void> {
-  return WhereItNamesSomething(
-      lowerer.Owner().Unit(), frame, handle, handle_type,
-      [&](const WalkFrame& inner) -> diag::Result<void> {
-        return ReportObjectThenHops(
-            lowerer, inner, report,
-            [&] {
-              return inner.current_block->LocalPlace(handle, handle_type);
-            },
-            hops);
-      });
-}
-
-template <typename Lowerer>
-auto ReportLeaf(
-    Lowerer& lowerer, const WalkFrame& frame, mir::LocalId report,
-    const hir::WaitLeaf& leaf) -> diag::Result<void> {
-  mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  mir::Block& block = *frame.current_block;
-  return std::visit(
-      Overloaded{
-          [&](const hir::SensitivityEntry& cell) -> diag::Result<void> {
-            auto read = ReportedCellOf(lowerer, frame, cell);
-            if (!read) return std::unexpected(std::move(read.error()));
-            ReportCell(
-                unit, block, report, support::BuiltinFn::kReadReportAdd, *read);
-            return {};
-          },
-          // A variable of the instance a virtual interface holds (LRM 25.9),
-          // whose address the instance answers with.
-          [&](const hir::InterfaceMemberAccessExpr& held)
-              -> diag::Result<void> {
-            auto handle = lowerer.LowerExpr(
-                lowerer.HirExprs().Get(held.instance.handle), frame);
-            if (!handle) return std::unexpected(std::move(handle.error()));
-            const mir::TypeId handle_type = handle->type;
-            const mir::LocalId bound =
-                DeclareLocal(frame, block.exprs.Add(*std::move(handle)));
-            return WhereItNamesSomething(
-                unit, frame, bound, handle_type,
-                [&](const WalkFrame& inner) -> diag::Result<void> {
-                  auto place = HeldInterfaceMember(lowerer, inner, held);
-                  if (!place) return std::unexpected(std::move(place.error()));
-                  ReportThroughHandle(
-                      unit, *inner.current_block, report, *place,
-                      WholePlace(unit, *inner.current_block));
-                  return {};
-                });
-          },
-          [&](const hir::ObjectChain& chain) -> diag::Result<void> {
-            return std::visit(
-                Overloaded{
-                    [&](hir::ExprId handle) -> diag::Result<void> {
-                      auto root = lowerer.LowerExpr(
-                          lowerer.HirExprs().Get(handle), frame);
-                      if (!root) {
-                        return std::unexpected(std::move(root.error()));
-                      }
-                      const mir::TypeId root_type = root->type;
-                      const mir::LocalId bound = DeclareLocal(
-                          frame, block.exprs.Add(*std::move(root)));
-                      return ReportChainFrom(
-                          lowerer, frame, report, bound, root_type, chain.hops);
-                    },
-                    // A method runs on an object, so there is nothing to
-                    // test before reaching it.
-                    [&](const hir::ReceiverObject&) -> diag::Result<void> {
-                      return ReportObjectThenHops(
-                          lowerer, frame, report,
-                          [&] {
-                            return block.exprs.Add(MakeSelfRefExpr(frame));
-                          },
-                          chain.hops);
-                    }},
-                chain.root);
-          },
-          [&](const hir::EveryObject&) -> diag::Result<void> {
-            ActOnReport(
-                unit, block, report,
-                support::BuiltinFn::kReadReportAddEveryObject, {});
-            return {};
-          },
-      },
-      leaf);
-}
-
 // `value` as the evaluation `frame` is lowering goes on to read through it,
-// having stated the whole of the place `place_of` makes of it as reached, where
-// the evaluation states what it reaches at all.
-template <typename PlaceOf>
+// having had `state` state it as reached, where the evaluation is handed a
+// report (LRM 9.4.2). A body is handed one only by an evaluation, so the
+// statement is made where the report is there. The value is held where that
+// statement can name it too: a place, or the read of one, by a pointer to the
+// place, which copies nothing, and anything else in a local it is evaluated
+// into once.
+template <typename State>
 auto Reported(
-    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::ExprId value,
-    PlaceOf place_of) -> mir::ExprId {
+    mir::CompilationUnit& unit, const WalkFrame& frame, mir::ExprId value,
+    State state) -> mir::ExprId {
   if (!frame.reports_reached_to.has_value()) {
     return value;
   }
   mir::Block& block = *frame.current_block;
-  const mir::ExprId held = EvaluatedOnce(frame, value);
-  ReportThroughHandle(
-      unit, block, *frame.reports_reached_to, place_of(held),
-      WholePlace(unit, block));
-  return held;
+  const auto* copy = std::get_if<mir::CopyExpr>(&block.exprs.Get(value).data);
+  const bool reads_storage = copy != nullptr;
+  if (reads_storage) value = copy->place;
+  const mir::TypeId type = block.exprs.Get(value).type;
+  const bool is_place = mir::IsPlace(block.exprs.Get(value).data);
+  const mir::TypeId held_type =
+      is_place ? unit.types.Intern(
+                     mir::Type{mir::PointerType{
+                         .pointee = type,
+                         .ownership = mir::PointerOwnership::kBorrowed,
+                         .mutability = mir::Mutability::kReadOnly}})
+               : type;
+  const mir::LocalId held = DeclareLocal(
+      frame, is_place
+                 ? block.exprs.Add(mir::MakeAddressOfExpr(value, held_type))
+                 : value);
+  const auto named_in = [&](mir::Block& at) {
+    const mir::ExprId local = at.ReadLocal(held, held_type);
+    if (!is_place) return local;
+    const mir::ExprId place = at.Deref(unit.types, local, type);
+    return reads_storage ? at.Read(place) : place;
+  };
+  const mir::LocalId report = *frame.reports_reached_to;
+  mir::Block reporting;
+  state(reporting, report, named_in(reporting));
+  block.AppendIfThen(
+      BuildReportHanded(unit, block, report), std::move(reporting));
+  return named_in(block);
 }
 
 }  // namespace
 
+auto BuildReportHanded(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId report)
+    -> mir::ExprId {
+  return block.exprs.Add(
+      mir::MakeBinary(
+          unit, block, mir::BinaryOp::kInequality,
+          block.ReadLocal(report, unit.builtins.read_report_ptr),
+          block.exprs.Add(
+              mir::Expr{
+                  .data = mir::NullLiteral{},
+                  .type = unit.builtins.read_report_ptr}),
+          unit.builtins.machine_bool));
+}
+
+auto BuildReportHandedOn(
+    const mir::CompilationUnit& unit, const WalkFrame& frame) -> mir::ExprId {
+  mir::Block& block = *frame.current_block;
+  const mir::TypeId report = unit.builtins.read_report_ptr;
+  if (frame.reports_reached_to.has_value()) {
+    return block.ReadLocal(*frame.reports_reached_to, report);
+  }
+  return block.exprs.Add(mir::Expr{.data = mir::NullLiteral{}, .type = report});
+}
+
+auto ClosureFrameReportingTo(
+    UnitLowerer& unit_lowerer, const WalkFrame& outer, ClosureBuilder& closure,
+    std::optional<mir::LocalId> report) -> WalkFrame {
+  const WalkFrame& inner = closure.Frame();
+  if (!report.has_value()) {
+    return inner;
+  }
+  const mir::TypeId pointer = unit_lowerer.Unit().builtins.read_report_ptr;
+  const mir::ExprId held = SnapshotValueIntoClosure(
+      unit_lowerer, outer, closure,
+      outer.current_block->ReadLocal(*report, pointer));
+  const mir::LocalId own = inner.bindings->DeclareAnonymous(pointer);
+  closure.Body().AppendStmt(mir::LocalDeclStmt{.target = own, .init = held});
+  return inner.WithReportingReachedTo(own);
+}
+
 auto ReportedObject(
     mir::CompilationUnit& unit, const WalkFrame& frame, mir::ExprId object)
     -> mir::ExprId {
-  return Reported(unit, frame, object, [&](mir::ExprId held) {
-    return ObjectEventSourceOf(unit, *frame.current_block, held);
-  });
+  return Reported(
+      unit, frame, object,
+      [&](mir::Block& at, mir::LocalId report, mir::ExprId held) {
+        ActOnReport(
+            unit, at, report, support::BuiltinFn::kReadReportAddObject, {held});
+      });
 }
 
 auto ReportedPlace(
-    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::ExprId place)
+    mir::CompilationUnit& unit, const WalkFrame& frame, mir::ExprId place)
     -> mir::ExprId {
-  return Reported(unit, frame, place, [](mir::ExprId held) { return held; });
+  return Reported(
+      unit, frame, place,
+      [&](mir::Block& at, mir::LocalId report, mir::ExprId held) {
+        const LeafPart whole = WholePlace(unit, at);
+        ActOnReport(
+            unit, at, report, support::BuiltinFn::kReadReportAdd,
+            {held, whole.steps, whole.first, whole.width});
+      });
 }
 
 template <typename Lowerer>
@@ -539,8 +461,11 @@ auto ReportCells(
     Lowerer& lowerer, const WalkFrame& frame, mir::LocalId report,
     std::span<const hir::SensitivityEntry> cells) -> diag::Result<void> {
   for (const hir::SensitivityEntry& cell : cells) {
-    auto reported = ReportLeaf(lowerer, frame, report, hir::WaitLeaf{cell});
-    if (!reported) return std::unexpected(std::move(reported.error()));
+    auto read = ReportedCellOf(lowerer, frame, cell);
+    if (!read) return std::unexpected(std::move(read.error()));
+    ReportCell(
+        lowerer.Owner().Unit(), *frame.current_block, report,
+        support::BuiltinFn::kReadReportAdd, *read);
   }
   return {};
 }
@@ -549,10 +474,8 @@ template <typename Lowerer>
 auto ReportReads(
     Lowerer& lowerer, const WalkFrame& frame, const hir::Reads& reads,
     mir::LocalId report) -> diag::Result<void> {
-  for (const hir::WaitLeaf& leaf : reads.leaves) {
-    auto reported = ReportLeaf(lowerer, frame, report, leaf);
-    if (!reported) return std::unexpected(std::move(reported.error()));
-  }
+  auto cells = ReportCells(lowerer, frame, report, reads.cells);
+  if (!cells) return std::unexpected(std::move(cells.error()));
   for (const hir::SensitivityEntry& write : reads.writes) {
     auto written = ReportedCellOf(lowerer, frame, write);
     if (!written) return std::unexpected(std::move(written.error()));
@@ -564,7 +487,7 @@ auto ReportReads(
         lowerer.Owner().Unit(), *frame.current_block, report,
         support::BuiltinFn::kReadReportAddWrite, *written);
   }
-  for (const hir::ReportingCall& call : reads.calls) {
+  for (const hir::ExprId call : reads.calls) {
     auto made = EmitReportingCall(lowerer, frame, call, report);
     if (!made) return std::unexpected(std::move(made.error()));
   }

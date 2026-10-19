@@ -5,7 +5,6 @@
 #include <string>
 #include <utility>
 #include <variant>
-#include <vector>
 
 #include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
@@ -178,42 +177,6 @@ auto LowerVirtualInterfaceMember(
                 .type = held.type,
                 .data = std::move(held.access),
                 .span = span};
-          }},
-      *reached);
-}
-
-auto WatchedThroughHandle(
-    UnitLowerer& unit_lowerer, hir::ExprId handle,
-    const slang::ast::VirtualInterfaceType& handle_type,
-    const slang::ast::Symbol& member, diag::SourceSpan span)
-    -> diag::Result<std::vector<hir::InterfaceMemberAccessExpr>> {
-  auto reached =
-      ReachThroughHandle(unit_lowerer, handle, handle_type, member, span);
-  if (!reached) return std::unexpected(std::move(reached.error()));
-  return std::visit(
-      Overloaded{
-          [](const HeldViewName& view)
-              -> diag::Result<std::vector<hir::InterfaceMemberAccessExpr>> {
-            std::vector<hir::InterfaceMemberAccessExpr> watched;
-            for (const hir::PublishedMemberId id :
-                 hir::WatchedMembers(view.meaning)) {
-              watched.push_back(
-                  hir::InterfaceMemberAccessExpr{
-                      .instance = view.instance,
-                      .scope_class = view.instance.scope_class,
-                      .member = id});
-            }
-            return watched;
-          },
-          [](const HeldInstance&)
-              -> diag::Result<std::vector<hir::InterfaceMemberAccessExpr>> {
-            throw InternalError(
-                "WatchedThroughHandle: a wait reading which instance a virtual "
-                "interface holds is refused before its leaves are asked for");
-          },
-          [](HeldMember& held)
-              -> diag::Result<std::vector<hir::InterfaceMemberAccessExpr>> {
-            return std::vector{std::move(held.access)};
           }},
       *reached);
 }

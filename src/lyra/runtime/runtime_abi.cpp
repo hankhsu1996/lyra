@@ -2693,35 +2693,19 @@ auto lyra_rt_read_report_for_implicit_list(void* out) -> void* {
 
 void lyra_rt_read_report_add(
     void* report, void* place, LyraSpan steps, std::int64_t lsb_bit_offset,
-    std::int64_t bit_width) {
+    std::int64_t bit_width) noexcept {
   static_cast<ReadReport*>(report)->Add(
       WatchedPlace::FromWord(place), lyra::runtime::StepsAt(steps),
       lsb_bit_offset, bit_width);
 }
 
-void lyra_rt_read_report_add_through_handle(
-    void* report, void* place, LyraSpan steps, std::int64_t lsb_bit_offset,
-    std::int64_t bit_width) {
-  static_cast<ReadReport*>(report)->AddThroughHandle(
-      WatchedPlace::FromWord(place), lyra::runtime::StepsAt(steps),
-      lsb_bit_offset, bit_width);
-}
-
-void lyra_rt_read_report_enter_call_on_handle(void* report) {
-  static_cast<ReadReport*>(report)->EnterCallOnHandle();
-}
-
-void lyra_rt_read_report_leave_call_on_handle(void* report) {
-  static_cast<ReadReport*>(report)->LeaveCallOnHandle();
-}
-
-void lyra_rt_read_report_add_every_object(void* report) {
-  static_cast<ReadReport*>(report)->AddEveryObject();
+void lyra_rt_read_report_add_object(void* report, void* object) {
+  static_cast<ReadReport*>(report)->AddObject(static_cast<GcObject*>(object));
 }
 
 void lyra_rt_read_report_add_write(
     void* report, void* place, LyraSpan steps, std::int64_t lsb_bit_offset,
-    std::int64_t bit_width) {
+    std::int64_t bit_width) noexcept {
   static_cast<ReadReport*>(report)->AddWrite(
       WatchedPlace::FromWord(place), lyra::runtime::StepsAt(steps),
       lsb_bit_offset, bit_width);
@@ -2731,16 +2715,32 @@ void lyra_rt_read_report_settle_as_implicit_list(void* report) {
   static_cast<ReadReport*>(report)->SettleAsImplicitList();
 }
 
-auto lyra_rt_read_report_enter(void* report) -> std::int64_t {
+auto lyra_rt_read_report_enter(void* report) noexcept -> std::int64_t {
   return static_cast<ReadReport*>(report)->Enter();
 }
 
-void lyra_rt_read_report_leave(void* report) {
+void lyra_rt_read_report_leave(void* report) noexcept {
   static_cast<ReadReport*>(report)->Leave();
 }
 
-auto lyra_rt_read_report_runs_the_body(const void* report) -> std::int64_t {
+auto lyra_rt_read_report_runs_the_body(const void* report) noexcept
+    -> std::int64_t {
   return static_cast<const ReadReport*>(report)->RunsTheBody();
+}
+
+void lyra_rt_read_report_begin_evaluation(void* report, void* runtime) {
+  static_cast<ReadReport*>(report)->BeginEvaluation(
+      *static_cast<RuntimeEffects*>(runtime));
+}
+
+void lyra_rt_read_report_end_evaluation(void* report, void* runtime) noexcept {
+  static_cast<ReadReport*>(report)->EndEvaluation(
+      *static_cast<RuntimeEffects*>(runtime));
+}
+
+auto lyra_rt_evaluation_in_progress(void* runtime) -> void* {
+  return lyra::runtime::EvaluationInProgress(
+      *static_cast<RuntimeEffects*>(runtime));
 }
 
 void lyra_rt_refuse_report(const void* why) {

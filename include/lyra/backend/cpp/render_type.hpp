@@ -59,6 +59,15 @@ class CppType {
 
 void WriteOne(TargetText& out, const CppType& spelling);
 
+// What follows a type to say whether it may be written through, ` const` for
+// read-only and nothing otherwise. It is written after the type, so it
+// qualifies that type whatever the type is, a pointer included.
+struct CppConstQualifier {
+  mir::Mutability of;
+};
+
+void WriteOne(TargetText& out, const CppConstQualifier& qualifier);
+
 // A constant of an integral type, written as the value its words are: the
 // value plane's words and then the unknown plane's, least significant first.
 class CppIntegralLiteral {

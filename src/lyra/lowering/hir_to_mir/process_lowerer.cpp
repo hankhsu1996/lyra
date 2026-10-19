@@ -369,11 +369,10 @@ auto ProcessLowerer::Run(const hir::Process& src)
       src.kind);
 }
 
-auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
-    -> diag::Result<mir::CallableCode> {
+auto ProcessLowerer::EnterSubroutineBody(
+    const hir::SubroutineDecl& src, mir::CallableCode& code,
+    CallableBindings& bindings) -> BoundImplicitParameters {
   const WalkFrame& parent = owner_ctor_frame_;
-  mir::CallableCode code = mir::CallableCode::Defined();
-  CallableBindings bindings(owner_->Unit(), code);
   // A task or function is a scope the source named (LRM 23.9), so the body
   // starts in that scope's own name node and `%m` inside it reports the task,
   // not the instance around it. What it takes ahead of its formals is what the
@@ -384,15 +383,23 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
           .WithBindings(&bindings)
           .WithScopeNameBorrowedHandle(RootScope().NameBorrowedHandle())
           .WithBodyCanWait(CanWait(src.kind));
-  BoundImplicitParameters bound =
-      parent.current_class == nullptr
-          ? BoundImplicitParameters{.params = {}, .frame = entry_frame}
-          : BindImplicitParameters(
-                *owner_, entry_frame,
-                owner_->GetClassShape(parent.current_class_id),
-                src.is_static ? CallableForm::kTypeAssociated
-                              : CallableForm::kInstanceMember);
-  const WalkFrame& body_frame = bound.frame;
+  if (parent.current_class == nullptr) {
+    return BoundImplicitParameters{.params = {}, .frame = entry_frame};
+  }
+  return BindImplicitParameters(
+      *owner_, entry_frame, owner_->GetClassShape(parent.current_class_id),
+      src.is_static ? CallableForm::kTypeAssociated
+                    : CallableForm::kInstanceMember);
+}
+
+template <typename AfterFormals>
+auto ProcessLowerer::LowerSubroutine(
+    const hir::SubroutineDecl& src, AfterFormals after_formals)
+    -> diag::Result<mir::CallableCode> {
+  mir::CallableCode code = mir::CallableCode::Defined();
+  CallableBindings bindings(owner_->Unit(), code);
+  BoundImplicitParameters bound = EnterSubroutineBody(src, code, bindings);
+  WalkFrame body_frame = bound.frame;
   std::vector<mir::LocalId> params = std::move(bound.params);
   const mir::CompilationUnit& unit = owner_->Unit();
 
@@ -463,16 +470,8 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   const mir::TypeId result_type = SubroutineCallTypeOf(*owner_, src);
   result_type_ = result_type;
 
-  // A function is handed where to report what a call of it reads (LRM 9.4.2),
-  // after its formals. Handed one, it reports first, and runs only where the
-  // waited evaluation itself made the call.
-  if (const std::optional<mir::TypeId> report_type =
-          ReportParamTypeOf(owner_->Unit(), src.kind)) {
-    const mir::LocalId report = bindings.DeclareAnonymous(*report_type);
-    params.push_back(report);
-    auto asked = BuildReportPrologue(body_frame, src.reads, report);
-    if (!asked) return std::unexpected(std::move(asked.error()));
-  }
+  auto after = after_formals(code, bindings, body_frame, params);
+  if (!after) return std::unexpected(std::move(after.error()));
 
   // A task carries a name, so any task can be a `disable` target (LRM 9.6.2)
   // and every task is therefore a region that consumes the effect naming it:
@@ -511,6 +510,57 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   return code;
 }
 
+auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
+    -> diag::Result<mir::CallableCode> {
+  const std::optional<mir::TypeId> report_type =
+      ReportParamTypeOf(owner_->Unit(), src.kind);
+  // A task is never run by a waited evaluation, so it has one form.
+  if (!report_type.has_value()) {
+    return LowerSubroutine(
+        src,
+        [](mir::CallableCode&, CallableBindings&, WalkFrame&,
+           std::vector<mir::LocalId>&) -> diag::Result<void> { return {}; });
+  }
+
+  // A function is handed where to report what a call of it reads (LRM 9.4.2),
+  // after its formals. The form a waited evaluation runs states there what its
+  // body reaches as it reaches it, and is made from the same body by a lowerer
+  // of its own; the form every other call runs states nothing and enters the
+  // first where it is handed a report, so a body run for no evaluation carries
+  // nothing of what one does, and hands the functions it calls none.
+  ProcessLowerer recording_lowerer = *this;
+  auto recording_code = recording_lowerer.LowerSubroutine(
+      src,
+      [&](mir::CallableCode&, CallableBindings& bindings, WalkFrame& frame,
+          std::vector<mir::LocalId>& params) -> diag::Result<void> {
+        const mir::LocalId report = bindings.DeclareAnonymous(*report_type);
+        params.push_back(report);
+        auto stated =
+            recording_lowerer.BuildRecordingPrologue(frame, src.reads, report);
+        if (!stated) return std::unexpected(std::move(stated.error()));
+        frame = frame.WithReportingReachedTo(report);
+        return {};
+      });
+  if (!recording_code) {
+    return std::unexpected(std::move(recording_code.error()));
+  }
+  const mir::CallableId recording = owner_->Unit().callables.Add(
+      mir::CallableDecl{
+          .code = *std::move(recording_code),
+          .foreign = std::nullopt,
+          .virtual_dispatch = std::nullopt});
+
+  return LowerSubroutine(
+      src,
+      [&](mir::CallableCode& code, CallableBindings& bindings, WalkFrame& frame,
+          std::vector<mir::LocalId>& params) -> diag::Result<void> {
+        const mir::LocalId report = bindings.DeclareAnonymous(*report_type);
+        params.push_back(report);
+        ForwardToRecording(frame, code, params, report, recording);
+        return {};
+      });
+}
+
 auto ProcessLowerer::RegisterConstructorFormals(
     const hir::SubroutineDecl& ctor, const WalkFrame& frame,
     std::vector<mir::LocalId>& params) -> diag::Result<void> {
@@ -534,94 +584,127 @@ auto ProcessLowerer::LowerConstructorBodyInto(const WalkFrame& frame)
   return LowerStraightLineBodyInto(*this, frame);
 }
 
-auto ProcessLowerer::BuildReportPrologue(
+namespace {
+
+// The design asked a wait to watch what `why` says cannot be watched yet. The
+// body compiled whether or not a wait reached it, so the request fails here,
+// at the wait that asked (LRM 9.4.2).
+void AppendRefuseReport(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    const std::string& why) {
+  block.AppendStmt(
+      mir::ExprStmt{
+          .expr = block.exprs.Add(
+              mir::MakeCallExpr(
+                  mir::Direct{.target = support::BuiltinFn::kRefuseReport},
+                  {block.exprs.Add(
+                      mir::MakeStringLiteral(unit.builtins.string, why))},
+                  unit.builtins.void_type))});
+}
+
+}  // namespace
+
+auto ProcessLowerer::ReportCellsRead(
+    const WalkFrame& frame, const hir::Reads& reads, mir::LocalId report)
+    -> diag::Result<void> {
+  if (reads.unreportable.has_value()) {
+    AppendRefuseReport(
+        owner_->Unit(), *frame.current_block, *reads.unreportable);
+    return {};
+  }
+  return ReportCells(*this, frame, report, reads.cells);
+}
+
+auto ProcessLowerer::BuildConstructionReport(
+    const WalkFrame& frame, const hir::Reads& reads, mir::LocalId report)
+    -> diag::Result<void> {
+  mir::Block& block = *frame.current_block;
+  mir::Block asked;
+  auto reported = ReportCellsRead(frame.WithBlock(&asked), reads, report);
+  if (!reported) return std::unexpected(std::move(reported.error()));
+  block.AppendIfThen(
+      BuildReportHanded(owner_->Unit(), block, report), std::move(asked));
+  return {};
+}
+
+auto ProcessLowerer::BuildRecordingPrologue(
     const WalkFrame& frame, const hir::Reads& reads, mir::LocalId report)
     -> diag::Result<void> {
   mir::CompilationUnit& unit = owner_->Unit();
   mir::Block& block = *frame.current_block;
-  mir::Block asked;
-  const WalkFrame asked_frame = frame.WithBlock(&asked);
-  if (reads.unreportable.has_value()) {
-    asked.AppendStmt(
-        mir::ExprStmt{
-            .expr = asked.exprs.Add(
-                mir::Expr{
-                    .data =
-                        mir::CallExpr{
-                            .callee =
-                                mir::Direct{
-                                    .target =
-                                        support::BuiltinFn::kRefuseReport},
-                            .arguments = {asked.exprs.Add(
-                                mir::MakeStringLiteral(
-                                    unit.builtins.string,
-                                    *reads.unreportable))}},
-                    .type = unit.builtins.void_type})});
-  } else {
-    // The report bounds how deep reports nest, and past the bound this one
-    // reports nothing of its own.
+
+  // An implicit list is collected without running anything (LRM 9.2.2.2.1):
+  // the function states what its text reads and writes, has each function it
+  // calls do the same, one level deeper, and hands back the defaults its
+  // result and outputs start at. Past the depth bound the functions are ones a
+  // shallower level of the same cycle already stated.
+  if (!reads.unreportable.has_value()) {
     mir::Block entered;
-    auto reported =
-        ReportReads(*this, asked_frame.WithBlock(&entered), reads, report);
-    if (!reported) return std::unexpected(std::move(reported.error()));
+    auto listed = ReportReads(*this, frame.WithBlock(&entered), reads, report);
+    if (!listed) return std::unexpected(std::move(listed.error()));
     entered.AppendStmt(
         mir::ExprStmt{
             .expr = BuildReportCall(
                 unit, entered, report, support::BuiltinFn::kReadReportLeave, {},
                 unit.builtins.void_type)});
+    mir::Block collecting;
     const mir::ExprId entered_at = BuildReportCall(
-        unit, asked, report, support::BuiltinFn::kReadReportEnter, {},
+        unit, collecting, report, support::BuiltinFn::kReadReportEnter, {},
         unit.builtins.machine_int64);
-    const mir::ExprId goes_on = asked.exprs.Add(
-        mir::MakeBinary(
-            unit, asked, mir::BinaryOp::kInequality, entered_at,
-            mir::BuildMachineIntLiteral(unit, asked, 0),
-            unit.builtins.machine_bool));
-    asked.AppendStmt(
-        mir::IfStmt{
-            .condition = goes_on,
-            .then_scope = asked.child_scopes.Add(std::move(entered)),
-            .else_scope = std::nullopt});
+    collecting.AppendIfThen(
+        collecting.exprs.Add(
+            mir::MakeBinary(
+                unit, collecting, mir::BinaryOp::kInequality, entered_at,
+                mir::BuildMachineIntLiteral(unit, collecting, 0),
+                unit.builtins.machine_bool)),
+        std::move(entered));
+    collecting.AppendStmt(
+        mir::ReturnStmt{
+            .value = BuildReturnPayload(
+                frame.WithBlock(&collecting), std::nullopt)});
+    const mir::ExprId runs_the_body = BuildReportCall(
+        unit, block, report, support::BuiltinFn::kReadReportRunsTheBody, {},
+        unit.builtins.machine_int64);
+    block.AppendIfThen(
+        block.exprs.Add(
+            mir::MakeBinary(
+                unit, block, mir::BinaryOp::kEquality, runs_the_body,
+                mir::BuildMachineIntLiteral(unit, block, 0),
+                unit.builtins.machine_bool)),
+        std::move(collecting));
   }
-  // The function a waited evaluation called runs once it has reported, since
-  // the evaluation needs its value. One another function's report called
-  // stands in for a body that does not run, and what that body would have
-  // settled is no part of a report, so it hands back the defaults its result
-  // and outputs start at.
-  mir::Block stands_in;
-  stands_in.AppendStmt(
-      mir::ReturnStmt{
-          .value =
-              BuildReturnPayload(frame.WithBlock(&stands_in), std::nullopt)});
-  const mir::ExprId runs_the_body = BuildReportCall(
-      unit, asked, report, support::BuiltinFn::kReadReportRunsTheBody, {},
-      unit.builtins.machine_int64);
-  const mir::ExprId within_a_report = asked.exprs.Add(
-      mir::MakeBinary(
-          unit, asked, mir::BinaryOp::kEquality, runs_the_body,
-          mir::BuildMachineIntLiteral(unit, asked, 0),
-          unit.builtins.machine_bool));
-  asked.AppendStmt(
-      mir::IfStmt{
-          .condition = within_a_report,
-          .then_scope = asked.child_scopes.Add(std::move(stands_in)),
-          .else_scope = std::nullopt});
 
-  const mir::ExprId report_read =
-      block.ReadLocal(report, unit.builtins.read_report_ptr);
-  const mir::ExprId no_report = block.exprs.Add(
-      mir::Expr{
-          .data = mir::NullLiteral{}, .type = unit.builtins.read_report_ptr});
-  const mir::ExprId handed = block.exprs.Add(
-      mir::MakeBinary(
-          unit, block, mir::BinaryOp::kInequality, report_read, no_report,
-          unit.builtins.machine_bool));
-  block.AppendStmt(
-      mir::IfStmt{
-          .condition = handed,
-          .then_scope = block.child_scopes.Add(std::move(asked)),
-          .else_scope = std::nullopt});
-  return {};
+  // A waited evaluation runs the function, since it needs its value, and the
+  // function states the cells its text reads before its body states what it
+  // reaches through a handle.
+  return ReportCellsRead(frame, reads, report);
+}
+
+void ProcessLowerer::ForwardToRecording(
+    const WalkFrame& frame, const mir::CallableCode& code,
+    std::span<const mir::LocalId> params, mir::LocalId report,
+    mir::CallableId recording) {
+  const mir::CompilationUnit& unit = owner_->Unit();
+  mir::Block& block = *frame.current_block;
+  mir::Block forwarding;
+  std::vector<mir::ExprId> arguments;
+  arguments.reserve(params.size());
+  for (const mir::LocalId param : params) {
+    arguments.push_back(
+        forwarding.ReadLocal(param, code.locals.Get(param).type));
+  }
+  const mir::ExprId call = forwarding.exprs.Add(
+      mir::MakeCallExpr(
+          mir::Direct{.target = mir::UnitCallableTarget{.slot = recording}},
+          std::move(arguments), result_type_));
+  if (result_type_ == unit.builtins.void_type) {
+    forwarding.AppendStmt(mir::ExprStmt{.expr = call});
+    forwarding.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+  } else {
+    forwarding.AppendStmt(mir::ReturnStmt{.value = call});
+  }
+  block.AppendIfThen(
+      BuildReportHanded(unit, block, report), std::move(forwarding));
 }
 
 auto ProcessLowerer::BuildReturnPayload(

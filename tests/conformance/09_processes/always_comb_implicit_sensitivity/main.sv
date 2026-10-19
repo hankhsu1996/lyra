@@ -18,9 +18,24 @@
 // conditional operator, and the operand a logical operator skips -- and the
 // procedure runs again when it changes. A select indexed by a loop variable is
 // not a static prefix (LRM 11.5.3), so a loop over part of a vector reads all
-// of it.
+// of it. A system function answering from the current size of a dynamically
+// sized value reads that value (LRM 20.6.2, 20.7).
+//
+// A function called within the block is analyzed however it is reached -- one
+// it calls in turn, one handed a variable by `const ref`, a static method, one
+// that calls itself -- and collecting the list runs none of them. A method
+// called on a class object adds nothing but its arguments (LRM 9.2.2.2.1), so
+// what it reads moves nothing and an argument it is handed does.
 class Shared;
   static int level = 0;
+endclass
+
+class Scaled;
+  static int base = 0;
+
+  static function int plus(int x);
+    return x + base;
+  endfunction
 endclass
 
 module Top;
@@ -102,10 +117,70 @@ module Top;
     sink_operand = (kNever == 1) && under_skipped_operand;
   end
 
+  int sized[];
+  byte stream[$];
+  int sized_count;
+  int stream_bits;
+  always_comb sized_count = $size(sized);
+  always_comb stream_bits = $bits(stream);
+
   always_comb begin
     runs_loop++;
     sink_loop = 1'b0;
     for (int j = 0; j < 2; j++) sink_loop ^= looped[j];
+  end
+
+  int deep;
+  int from_nested;
+  int by_const_ref;
+  int ref_offset;
+  int from_const_ref;
+  int from_static_method;
+  int recursion_base;
+  int from_recursive;
+
+  function automatic int read_deep();
+    return deep;
+  endfunction
+
+  function automatic int read_through();
+    return read_deep();
+  endfunction
+
+  function automatic int offset_of(const ref int r);
+    return r + ref_offset;
+  endfunction
+
+  function automatic int countdown(int n);
+    return n <= 0 ? recursion_base : countdown(n - 1);
+  endfunction
+
+  always_comb from_nested = read_through();
+  always_comb from_const_ref = offset_of(by_const_ref);
+  always_comb from_static_method = Scaled::plus(1);
+  always_comb from_recursive = countdown(3);
+
+  int hidden;
+  int method_arg;
+  int from_method;
+  int runs_method;
+  int before_method;
+  int after_hidden;
+
+  class Probe;
+    int calls = 0;
+
+    function int read_hidden(int x);
+      calls++;
+      return x + hidden;
+    endfunction
+  endclass
+
+  Probe probe = new;
+
+  always_comb begin
+    runs_method++;
+    from_method = probe.read_hidden(method_arg);
   end
 
   initial begin
@@ -138,6 +213,19 @@ module Top;
     q.sig = 8'd4;
     Shared::level = 7;
     Owned::level = 8;
+    sized = new[3];
+    stream.push_back(8'd1);
+    stream.push_back(8'd2);
+    deep = 4;
+    by_const_ref = 5;
+    ref_offset = 6;
+    Scaled::base = 7;
+    recursion_base = 8;
+    before_method = runs_method;
+    hidden = 9;
+    #1;
+    after_hidden = runs_method;
+    method_arg = 1;
     #1;
   end
 
@@ -152,6 +240,10 @@ module Top;
       $fatal(1, "from_shared was %0d, expected 107", from_shared);
     if (from_owned !== 208)
       $fatal(1, "from_owned was %0d, expected 208", from_owned);
+    if (sized_count !== 3)
+      $fatal(1, "the size of a dynamic array was %0d, expected 3", sized_count);
+    if (stream_bits !== 16)
+      $fatal(1, "the bits a queue holds were %0d, expected 16", stream_bits);
     if (runs_if - before_if !== 1)
       $fatal(1, "a read under an if never taken ran the block %0d times, expected 1",
              runs_if - before_if);
@@ -167,6 +259,25 @@ module Top;
     if (runs_loop - before_loop !== 1)
       $fatal(1, "a bit a loop does not reach ran the block %0d times, expected 1",
              runs_loop - before_loop);
+    if (from_nested !== 4)
+      $fatal(1, "a function a called function calls left %0d, expected 4", from_nested);
+    if (from_const_ref !== 11)
+      $fatal(1, "a function handed a 'const ref' left %0d, expected 11", from_const_ref);
+    if (from_static_method !== 8)
+      $fatal(1, "a static method left %0d, expected 8", from_static_method);
+    if (from_recursive !== 8)
+      $fatal(1, "a function calling itself left %0d, expected 8", from_recursive);
+    if (after_hidden - before_method !== 0)
+      $fatal(1, "what a method of an object reads ran the block %0d times, expected 0",
+             after_hidden - before_method);
+    if (runs_method - after_hidden !== 1)
+      $fatal(1, "an argument handed to a method of an object ran the block %0d times, expected 1",
+             runs_method - after_hidden);
+    if (from_method !== 10)
+      $fatal(1, "a method of an object left %0d, expected 10", from_method);
+    if (probe.calls !== runs_method)
+      $fatal(1, "a method of an object ran %0d times over %0d runs of the block",
+             probe.calls, runs_method);
     $display("All checks passed");
   end
 endmodule

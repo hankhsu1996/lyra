@@ -179,11 +179,9 @@ the subscription must represent. A virtual interface is stricter -- LRM 25.9 mak
   ([the-waiting-process-evaluates-its-wait](the-waiting-process-evaluates-its-wait.md)). Revised
   2026-10-04: the process used to evaluate the handles again apart from the value and compare once
   more before waiting, which ran a call in a handle's operand once per pass. What a function the
-  expression calls reaches (D7) the function reports when it is called, stated by the unit that
-  declares it:
-  [a-function-reports-what-a-call-of-it-reads](a-function-reports-what-a-call-of-it-reads.md). An
-  object it reaches along no chain it can evaluate is covered by every object at once, which D5
-  permits.
+  expression calls reaches (D7) is stated the same way, by the function's body as the evaluation
+  runs it:
+  [a-function-reports-what-a-call-of-it-reads](a-function-reports-what-a-call-of-it-reads.md).
 
 - **A write to any property wakes every waiter on that object, and each filters.** That is the
   permission being spent, and it is where a per-property source would earn its keep once something

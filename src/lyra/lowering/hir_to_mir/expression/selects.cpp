@@ -851,7 +851,7 @@ auto LowerHirInterfaceMemberAccessExpr(
     const hir::InterfaceMemberAccessExpr& sel) -> diag::Result<mir::Expr> {
   auto held = HeldInterfaceMember(lowerer, frame, sel);
   if (!held) return std::unexpected(std::move(held.error()));
-  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const mir::ExprId storage = ReportedPlace(unit, frame, *held);
   return mir::MakeDerefExpr(
       frame.current_block->DerefOperand(unit.types, storage),

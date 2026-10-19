@@ -3,14 +3,19 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/runtime/object_change.hpp"
+#include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/observation.hpp"
 #include "lyra/runtime/part_path.hpp"
+#include "lyra/runtime/running_state.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -19,10 +24,29 @@ namespace lyra::runtime {
 
 namespace {
 
-// How deep reports may nest before a report stops following calls. It bounds
-// only a cycle of calls: no program without one nests reports past the depth
-// its own calls nest, which is far below this.
+// How deep the functions an implicit list follows may nest before it stops
+// following calls. It bounds only a cycle of calls: no program without one
+// nests past the depth its own calls nest, which is far below this.
 constexpr std::int64_t kReportDepthBound = 64;
+
+// An order on what a reached place is watched for -- the place, the part of
+// it, the positions of that part -- so that one reached many times, by every
+// call of a function a loop makes, is watched once. Every place an evaluation
+// reaches is watched only for being reached, so nothing else tells two apart.
+auto LeafKey(const Trigger& trigger) {
+  return std::tuple{
+      trigger.observable, trigger.through, trigger.part.IsInexact(),
+      trigger.reads.lsb, trigger.reads.width};
+}
+
+auto LeafBefore(const Trigger& a, const Trigger& b) -> bool {
+  if (LeafKey(a) != LeafKey(b)) return LeafKey(a) < LeafKey(b);
+  return std::ranges::lexicographical_compare(a.part.Steps(), b.part.Steps());
+}
+
+auto SameLeaf(const Trigger& a, const Trigger& b) -> bool {
+  return LeafKey(a) == LeafKey(b) && a.part == b.part;
+}
 
 }  // namespace
 
@@ -42,11 +66,6 @@ ReadReport::ReadReport(ReadReport&&) noexcept = default;
 auto ReadReport::operator=(ReadReport&&) noexcept -> ReadReport& = default;
 ReadReport::~ReadReport() = default;
 
-void ReadReport::Reach(Trigger trigger) {
-  (calls_on_handles_ == 0 ? read_directly_ : through_handles_)
-      .push_back(std::move(trigger));
-}
-
 // A place is watched only for being reached: the process decides by its own
 // evaluation, so nothing is asked where the change happens, and an implicit
 // list wakes on any change to what it lists.
@@ -59,30 +78,19 @@ void ReadReport::Add(
 void ReadReport::Add(
     WatchedPlace place, std::span<const std::int64_t> steps,
     std::int64_t lsb_bit_offset, std::int64_t bit_width) {
-  Reach(
-      Trigger{
-          place, Observation::OnReaching(), steps, lsb_bit_offset, bit_width});
-}
-
-void ReadReport::AddThroughHandle(
-    Observable* place, std::span<const std::int64_t> steps,
-    std::int64_t lsb_bit_offset, std::int64_t bit_width) {
-  AddThroughHandle(WatchedPlace{place}, steps, lsb_bit_offset, bit_width);
-}
-
-void ReadReport::AddThroughHandle(
-    WatchedPlace place, std::span<const std::int64_t> steps,
-    std::int64_t lsb_bit_offset, std::int64_t bit_width) {
-  through_handles_.emplace_back(
+  reached_.emplace_back(
       place, Observation::OnReaching(), steps, lsb_bit_offset, bit_width);
 }
 
-void ReadReport::EnterCallOnHandle() {
-  ++calls_on_handles_;
-}
-
-void ReadReport::LeaveCallOnHandle() {
-  --calls_on_handles_;
+void ReadReport::AddObject(GcObject* object) {
+  if (object != nullptr) {
+    std::shared_ptr<GcObject> owned = object->weak_from_this().lock();
+    if (owned == nullptr) return;
+    objects_.push_back(std::move(owned));
+  }
+  reached_.emplace_back(
+      WatchedPlace{EventSourceOf(object)}, Observation::OnReaching(),
+      std::span<const std::int64_t>{}, 0, 0);
 }
 
 void ReadReport::AddWrite(
@@ -118,7 +126,7 @@ void ReadReport::SettleAsImplicitList() {
     std::vector<Interval> intervals;
   };
   std::vector<Watched> watched;
-  for (const Trigger& read : read_directly_) {
+  for (const Trigger& read : reached_) {
     std::vector<Interval> intervals{
         {read.reads.lsb, read.reads.lsb + read.reads.width}};
     bool taken_whole = false;
@@ -220,32 +228,28 @@ void ReadReport::SettleAsImplicitList() {
       leaf(place, {.lsb = lo, .width = hi - lo});
     }
   }
-  read_directly_ = std::move(left);
-  through_handles_.clear();
+  reached_ = std::move(left);
   writes_.clear();
 }
 
-void ReadReport::AddEveryObject() {
-  Trigger trigger;
-  trigger.observable = &current_runtime().EveryObject();
-  through_handles_.push_back(std::move(trigger));
-}
-
-auto ReadReport::TakeTriggers() -> std::vector<Trigger> {
-  std::vector<Trigger> triggers = std::exchange(read_directly_, {});
-  triggers.insert(
-      triggers.end(), std::make_move_iterator(through_handles_.begin()),
-      std::make_move_iterator(through_handles_.end()));
-  through_handles_.clear();
+auto ReadReport::TakeReached() -> ReachedPlaces {
+  ReachedPlaces reached{
+      .triggers = std::exchange(reached_, {}),
+      .objects = std::exchange(objects_, {})};
+  std::ranges::sort(reached.triggers, LeafBefore);
+  const auto repeated_leaves = std::ranges::unique(reached.triggers, SameLeaf);
+  reached.triggers.erase(repeated_leaves.begin(), repeated_leaves.end());
+  std::ranges::sort(reached.objects);
+  const auto repeated_objects = std::ranges::unique(reached.objects);
+  reached.objects.erase(repeated_objects.begin(), repeated_objects.end());
   // A wait watches what was written as well (LRM 9.4.2 leaves nothing out),
   // so the writes only an implicit list reads are dropped with the rest.
   writes_.clear();
-  return triggers;
+  return reached;
 }
 
 auto ReadReport::Enter() -> std::int64_t {
   if (depth_ == kReportDepthBound) {
-    AddEveryObject();
     return 0;
   }
   ++depth_;
@@ -256,10 +260,25 @@ void ReadReport::Leave() {
   --depth_;
 }
 
-// A report a function makes nests in the report of whatever called it, so the
-// call the evaluation made is the one that leaves nothing open.
 auto ReadReport::RunsTheBody() const -> std::int64_t {
-  return an_evaluation_reports_ && depth_ == 0 ? 1 : 0;
+  return an_evaluation_reports_ ? 1 : 0;
+}
+
+void ReadReport::BeginEvaluation(RuntimeEffects& effects) {
+  displaced_ = std::exchange(effects.Running().evaluation_report, this);
+}
+
+// The end runs on every way out of the evaluation, one of which is the frame
+// being released where it stands as the run ends, with nothing running.
+void ReadReport::EndEvaluation(RuntimeEffects& effects) noexcept {
+  if (RunningState* running = effects.TryRunning(); running != nullptr) {
+    running->evaluation_report = displaced_;
+  }
+}
+
+auto EvaluationInProgress(RuntimeEffects& effects) -> ReadReport* {
+  RunningState* running = effects.TryRunning();
+  return running == nullptr ? nullptr : running->evaluation_report;
 }
 
 void RefuseReport(std::string_view why) {

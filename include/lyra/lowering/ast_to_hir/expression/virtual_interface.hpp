@@ -7,8 +7,6 @@
 // out of what that interface published where this unit compiles, and only the
 // instance is chosen when the access runs.
 
-#include <vector>
-
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/interface_member_access.hpp"
@@ -51,16 +49,5 @@ auto LowerVirtualInterfaceMember(
     const slang::ast::VirtualInterfaceType& handle_type,
     const slang::ast::Symbol& member, diag::SourceSpan span)
     -> diag::Result<hir::Expr>;
-
-// What a process waiting on `member` of the interface instance `handle` holds
-// waits on (LRM 9.4.2): the variable itself, or, for a name a view defines,
-// every member of the instance a change to that name is a change to -- the same
-// members a wait on the name through an interface port watches. Which instance
-// they sit in is known each time the wait evaluates the handle.
-auto WatchedThroughHandle(
-    UnitLowerer& unit_lowerer, hir::ExprId handle,
-    const slang::ast::VirtualInterfaceType& handle_type,
-    const slang::ast::Symbol& member, diag::SourceSpan span)
-    -> diag::Result<std::vector<hir::InterfaceMemberAccessExpr>>;
 
 }  // namespace lyra::lowering::ast_to_hir

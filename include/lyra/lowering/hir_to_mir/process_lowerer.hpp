@@ -22,7 +22,9 @@
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -149,6 +151,14 @@ class ProcessLowerer {
   // assuming the formals have already been registered and any base-call
   // arguments the caller wants placed before them are already in the block.
   auto LowerConstructorBodyInto(const WalkFrame& frame) -> diag::Result<void>;
+
+  // What a construction does first where it is handed a report (LRM 9.4.2):
+  // it states the cells constructing reads, `reads`, before what the
+  // construction reaches through a handle is stated as it is reached. `report`
+  // is the parameter it is handed it by.
+  auto BuildConstructionReport(
+      const WalkFrame& frame, const hir::Reads& reads, mir::LocalId report)
+      -> diag::Result<void>;
 
   // Central expression dispatcher. One switch over `hir::Expr::data` routing
   // each kind to its per-family handler; handlers recurse through this
@@ -370,11 +380,41 @@ class ProcessLowerer {
       -> std::optional<mir::ExprId>;
 
  private:
-  // What a function does first where it is handed a report (LRM 9.4.2): it
-  // records what a call of it reads -- or refuses where it reads something no
-  // leaf watches yet -- and returns the defaults its result and outputs start
-  // at, running none of its body. `report` is the parameter it is handed it by.
-  auto BuildReportPrologue(
+  // The frame a body of `src` is lowered in, in `code` and its `bindings`,
+  // with what it takes ahead of its formals bound.
+  auto EnterSubroutineBody(
+      const hir::SubroutineDecl& src, mir::CallableCode& code,
+      CallableBindings& bindings) -> BoundImplicitParameters;
+
+  // A form of the subroutine `src`: what it takes ahead of its formals, its
+  // formals and its result, then whatever `after_formals` adds to the
+  // parameters and to the frame the body is lowered in, then the body.
+  template <typename AfterFormals>
+  auto LowerSubroutine(
+      const hir::SubroutineDecl& src, AfterFormals after_formals)
+      -> diag::Result<mir::CallableCode>;
+
+  // What the form of a function a waited evaluation runs does first with the
+  // report it is handed: for an implicit list being collected (LRM 9.2.2.2.1)
+  // it states what its text reads and writes and what the functions it calls
+  // do, and returns the defaults its result and outputs start at; for a waited
+  // evaluation (LRM 9.4.2) it states the cells its text reads, and its body
+  // then states what it reaches through a handle as it reaches it.
+  auto BuildRecordingPrologue(
+      const WalkFrame& frame, const hir::Reads& reads, mir::LocalId report)
+      -> diag::Result<void>;
+
+  // What the form every call runs does first: where it is handed a report, it
+  // answers with what `recording`, the form that states what it reads, answers
+  // for `params`, which are all of its own.
+  void ForwardToRecording(
+      const WalkFrame& frame, const mir::CallableCode& code,
+      std::span<const mir::LocalId> params, mir::LocalId report,
+      mir::CallableId recording);
+
+  // States the cells of `reads` into `report`. Where they cannot be stated,
+  // the design fails here, at the wait that asked.
+  auto ReportCellsRead(
       const WalkFrame& frame, const hir::Reads& reads, mir::LocalId report)
       -> diag::Result<void>;
 

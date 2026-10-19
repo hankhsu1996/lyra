@@ -295,10 +295,6 @@ void RuntimeEffects::WakeParkedOn(
   place.WakeAffectedBy(*this, written, change);
 }
 
-auto RuntimeEffects::EveryObject() -> Observable& {
-  return AsRuntime(*this).every_object_;
-}
-
 auto RuntimeEffects::Bound() -> BoundMembers& {
   return AsRuntime(*this).bound_members_;
 }

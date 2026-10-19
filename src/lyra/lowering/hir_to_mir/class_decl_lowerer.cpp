@@ -14,10 +14,8 @@
 #include "lyra/hir/class_decl.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/procedural_body.hpp"
-#include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
-#include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/class_definition.hpp"
@@ -512,6 +510,17 @@ auto ClassDeclLowerer::PopulateBodies(
   auto formals_or =
       ctor_lowerer.RegisterConstructorFormals(ctor, frame, ctor_params);
   if (!formals_or) return std::unexpected(std::move(formals_or.error()));
+  // A construction is handed where to report what it reads (LRM 9.4.2), after
+  // its formals, as a function is, and everything it evaluates -- its base's
+  // arguments, its property initializers, its body -- states there what it
+  // reaches through a handle as it reaches it.
+  const mir::LocalId report = ctor_bindings.DeclareAnonymous(
+      unit_lowerer.Unit().builtins.read_report_ptr);
+  ctor_params.push_back(report);
+  auto reported_or =
+      ctor_lowerer.BuildConstructionReport(frame, ctor.reads, report);
+  if (!reported_or) return std::unexpected(std::move(reported_or.error()));
+  const WalkFrame reporting = frame.WithReportingReachedTo(report);
 
   // Base construction (LRM 8.7): a derived class always forwards to its base,
   // and what that forward carries came with the base itself. Publishing it here
@@ -526,10 +535,14 @@ auto ClassDeclLowerer::PopulateBodies(
           ctor_lowerer, frame, *hir_class.base_call.declaring_instance));
     }
     for (const hir::ExprId arg : hir_class.base_call.arguments) {
-      auto arg_or = ctor_lowerer.LowerExpr(ctor.body.exprs.Get(arg), frame);
+      auto arg_or = ctor_lowerer.LowerExpr(ctor.body.exprs.Get(arg), reporting);
       if (!arg_or) return std::unexpected(std::move(arg_or.error()));
       base_args.push_back(ctor_block.exprs.Add(*std::move(arg_or)));
     }
+    // The base's construction is part of this one, so it reports where this
+    // one does.
+    base_args.push_back(ctor_block.ReadLocal(
+        report, unit_lowerer.Unit().builtins.read_report_ptr));
   }
 
   // Initialize each property in declaration order before the constructor body
@@ -554,7 +567,7 @@ auto ClassDeclLowerer::PopulateBodies(
     if (const auto it = initializer_of.find(hir_field_id);
         it != initializer_of.end()) {
       auto value_or =
-          ctor_lowerer.LowerExpr(ctor.body.exprs.Get(it->second), frame);
+          ctor_lowerer.LowerExpr(ctor.body.exprs.Get(it->second), reporting);
       if (!value_or) return std::unexpected(std::move(value_or.error()));
       value_id = ctor_block.exprs.Add(*std::move(value_or));
     } else {
@@ -626,7 +639,7 @@ auto ClassDeclLowerer::PopulateBodies(
   // The constructor body statements (LRM 8.7) run after base construction
   // and property initialization, so they follow both the field-init prologue
   // and the base-call arg evaluation already emitted into the ctor block.
-  auto body_or = ctor_lowerer.LowerConstructorBodyInto(frame);
+  auto body_or = ctor_lowerer.LowerConstructorBodyInto(reporting);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
 
   ctor_code.params = std::move(ctor_params);

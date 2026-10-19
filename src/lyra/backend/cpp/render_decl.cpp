@@ -85,26 +85,22 @@ auto StaticPrefix(const mir::CallableCode& code) -> std::string_view {
 void WriteMemberSignatureTail(
     const mir::CompilationUnit& unit, const mir::CallableCode& code,
     TargetText& out) {
-  const auto qualifier = [&]() -> std::string_view {
+  const auto object_mutability = [&] {
     if (!code.TakesReceiver()) {
-      return "";
+      return mir::Mutability::kMutable;
     }
     const auto* referred = unit.types.Get(code.locals.Get(*code.receiver).type)
                                .As<mir::ReferenceType>();
     if (referred == nullptr) {
-      return "";
+      return mir::Mutability::kMutable;
     }
-    switch (referred->mutability) {
-      case mir::Mutability::kReadOnly:
-        return " const";
-      case mir::Mutability::kMutable:
-        return "";
-    }
-    throw InternalError("backend::cpp: unknown Mutability");
+    return referred->mutability;
   };
   out += "(";
   WriteParameters(unit, code, code.ParamsAfterReceiver(), out);
-  Write(out, ")", qualifier(), " -> ", CppType(unit, code.result_type));
+  Write(
+      out, ")", CppConstQualifier{object_mutability()}, " -> ",
+      CppType(unit, code.result_type));
 }
 
 // The definition of a member function -- a class's method (LRM 8.6), static

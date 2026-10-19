@@ -751,71 +751,13 @@ class HirDumper {
     return std::format("cells={}", FormatSensitivityList(cells));
   }
 
-  static auto FormatWaitLeaf(const WaitLeaf& leaf) -> std::string {
-    return std::visit(
-        Overloaded{
-            [](const SensitivityEntry& e) -> std::string {
-              return FormatSensitivityEntry(e);
-            },
-            [](const InterfaceMemberAccessExpr& c) -> std::string {
-              return std::format(
-                  "held=Expr[{}] steps={} member[{}]", c.instance.handle.value,
-                  c.instance.steps.size(), c.member.value);
-            },
-            [](const ObjectChain& c) -> std::string {
-              const std::string root = std::visit(
-                  Overloaded{
-                      [](ExprId handle) {
-                        return std::format("Expr[{}]", handle.value);
-                      },
-                      [](const ReceiverObject&) {
-                        return std::string{"receiver"};
-                      }},
-                  c.root);
-              return std::format("objects={} hops={}", root, c.hops.size());
-            },
-            [](const EveryObject&) -> std::string { return "every_object"; },
-        },
-        leaf);
-  }
-
-  static auto FormatReportedArgument(ReportedArgument argument)
-      -> std::string_view {
-    switch (argument) {
-      case ReportedArgument::kEvaluated:
-        return "evaluated";
-      case ReportedArgument::kDefaulted:
-        return "defaulted";
-    }
-    throw InternalError("HirDumper::FormatReportedArgument: unknown argument");
-  }
-
   static auto FormatReads(const Reads& reads) -> std::string {
-    std::string out = "reads=[";
-    for (std::size_t i = 0; i < reads.leaves.size(); ++i) {
-      if (i != 0) out += ", ";
-      out += std::format("{{{}}}", FormatWaitLeaf(reads.leaves[i]));
-    }
-    out += "] writes=[";
-    for (std::size_t i = 0; i < reads.writes.size(); ++i) {
-      if (i != 0) out += ", ";
-      out += std::format("{{{}}}", FormatSensitivityEntry(reads.writes[i]));
-    }
-    out += "] calls=[";
+    std::string out = std::format(
+        "reads={} writes={} calls=[", FormatSensitivityList(reads.cells),
+        FormatSensitivityList(reads.writes));
     for (std::size_t i = 0; i < reads.calls.size(); ++i) {
       if (i != 0) out += ", ";
-      const ReportingCall& call = reads.calls[i];
-      out += std::format("{{Expr[{}]", call.call.value);
-      if (call.receiver.has_value()) {
-        out +=
-            std::format(" receiver={}", FormatReportedArgument(*call.receiver));
-      }
-      out += " args=[";
-      for (std::size_t j = 0; j < call.arguments.size(); ++j) {
-        if (j != 0) out += ", ";
-        out += FormatReportedArgument(call.arguments[j]);
-      }
-      out += "]}";
+      out += std::format("Expr[{}]", reads.calls[i].value);
     }
     out += "]";
     if (reads.unreportable.has_value()) {

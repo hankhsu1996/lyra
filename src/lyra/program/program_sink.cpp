@@ -185,20 +185,18 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_read_report_for_implicit_list",
       &lyra_rt_read_report_for_implicit_list);
   add("lyra_rt_read_report_add", &lyra_rt_read_report_add);
-  add("lyra_rt_read_report_add_through_handle",
-      &lyra_rt_read_report_add_through_handle);
-  add("lyra_rt_read_report_enter_call_on_handle",
-      &lyra_rt_read_report_enter_call_on_handle);
-  add("lyra_rt_read_report_leave_call_on_handle",
-      &lyra_rt_read_report_leave_call_on_handle);
-  add("lyra_rt_read_report_add_every_object",
-      &lyra_rt_read_report_add_every_object);
+  add("lyra_rt_read_report_add_object", &lyra_rt_read_report_add_object);
   add("lyra_rt_read_report_add_write", &lyra_rt_read_report_add_write);
   add("lyra_rt_read_report_settle_as_implicit_list",
       &lyra_rt_read_report_settle_as_implicit_list);
   add("lyra_rt_read_report_enter", &lyra_rt_read_report_enter);
   add("lyra_rt_read_report_leave", &lyra_rt_read_report_leave);
   add("lyra_rt_read_report_runs_the_body", &lyra_rt_read_report_runs_the_body);
+  add("lyra_rt_read_report_begin_evaluation",
+      &lyra_rt_read_report_begin_evaluation);
+  add("lyra_rt_read_report_end_evaluation",
+      &lyra_rt_read_report_end_evaluation);
+  add("lyra_rt_evaluation_in_progress", &lyra_rt_evaluation_in_progress);
   add("lyra_rt_refuse_report", &lyra_rt_refuse_report);
   add("lyra_rt_triggered", &lyra_rt_triggered);
   add("lyra_rt_trigger", &lyra_rt_trigger);

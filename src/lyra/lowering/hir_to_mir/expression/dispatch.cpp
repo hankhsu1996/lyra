@@ -26,6 +26,7 @@
 #include "lyra/lowering/hir_to_mir/expression/tagged_union.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
@@ -196,6 +197,7 @@ auto LowerAsPlaceImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
               args.push_back(
                   frame.current_block->exprs.Add(*std::move(arg_or)));
             }
+            args.push_back(BuildReportHandedOn(lowerer.Owner().Unit(), frame));
             const mir::TypeId object_type =
                 *mir::AllocatedType(lowerer.Owner().Unit().types, result_type);
             return mir::MakeNewExpr(

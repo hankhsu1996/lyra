@@ -45,13 +45,13 @@ is what its text reads.**
   analysis answering the same question, and the reason to keep it -- that collecting costs something
   -- does not hold for a list collected once.
 
-- A function's report is the one a wait already asks, now stating what the function writes beside
-  what it reads, and keeping apart what is reached through a handle: a class object, a variable of
-  the instance a virtual interface holds, and everything a call made on either reports. A wait
-  watches both and ignores the writes (LRM 9.4.2 leaves nothing out); an implicit list takes only
-  what was read directly. So the clause's "method calls of class objects do not add anything" holds
-  however deep the call is, in the block or in a function it calls, and no text has to know which of
-  the two is asking.
+- A function is asked through the parameter a wait already hands it, and a list's report tells it to
+  run nothing: it states what its text reads and writes and makes each call the list follows, with
+  every argument defaulted, since none of what it states depends on one. The calls followed are
+  those the clause analyzes as functions; one made on a class object or through a virtual interface
+  is not among them, in the block or in a function it calls, so the clause's "method calls of class
+  objects do not add anything" holds however deep the call is. A wait ignores the writes (LRM 9.4.2
+  leaves nothing out).
 - A write is stated only where it compares exactly with a read: a run of a packed value's bits, or
   the whole of anything else. A write of one element of an unpacked array is not stated, because the
   array is watched whole and taking the whole away would miss a change to an element nothing wrote.
