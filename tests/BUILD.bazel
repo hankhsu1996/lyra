@@ -465,7 +465,7 @@ cc_test(
         "paths/*.growth.yaml",
     ]),
     env = {"LYRA_GROWTH_PATHS": "cpp,llvm"},
-    shard_count = 4,
+    shard_count = 8,
     tags = ["cost"],
     deps = [
         ":framework",
