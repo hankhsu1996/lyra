@@ -69,7 +69,7 @@ constexpr auto MachineKindOf() -> MachineKind {
 class MachineSignature {
  public:
   // The most values any function of the library takes.
-  static constexpr std::size_t kMostTaken = 10;
+  static constexpr std::size_t kMostTaken = 11;
 
   constexpr MachineSignature(
       MachineKind returns, std::initializer_list<MachineKind> takes)

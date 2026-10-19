@@ -1120,14 +1120,10 @@ template <IntegralValue R>
   return out;
 }
 
-// LRM 21.4: a word of digits read into `out`, which is left as it was where a
-// character is no digit of the radix or there is no digit at all. Answers
-// whether the word was one.
+// LRM 21.4: a number of the radix read into `out`.
 template <IntegralValue T>
-[[nodiscard]] auto FromDigits(T& out, DigitRadix radix, std::string_view digits)
-    -> bool {
-  return lyra::value::FromDigits(
-      out.AsMutableWords().MutableView(), radix, digits);
+void FromDigits(T& out, DigitRadix radix, std::string_view digits) {
+  lyra::value::FromDigits(out.AsMutableWords().MutableView(), radix, digits);
 }
 
 // A value's bytes, most significant first, the top one holding whatever the

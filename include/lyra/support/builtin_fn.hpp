@@ -631,8 +631,14 @@ enum class BuiltinFn : std::uint16_t {
   // the run descend, and obliges the file to fill the whole of it. Each is its
   // own entry, so which one a call means is settled here rather than by
   // counting arguments.
+  //
+  // A load into a memory of an enumerated type takes only the members' values
+  // as words (LRM 21.4.2), so it is a load of its own, handed the
+  // enumeration's member list after the memory.
   kReadMem,
   kReadMemWithin,
+  kReadEnumeratedMem,
+  kReadEnumeratedMemWithin,
   kWriteMem,
   kWriteMemWithin,
   // LRM 9.4.1 `#N`. The runtime free functions answering the wait of a delay.

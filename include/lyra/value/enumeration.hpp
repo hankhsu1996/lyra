@@ -103,7 +103,7 @@ struct EnumerationMembers {
     return MemberOr<T>(Read().MemberBefore(value.AsWords().View(), count));
   }
 
- private:
+  // The members as code compiled once for every enumeration reads them.
   [[nodiscard]] constexpr auto Read() const -> Enumeration {
     return Enumeration{
         .planes = planes.data(),
@@ -113,6 +113,7 @@ struct EnumerationMembers {
         .four_state = kFourState};
   }
 
+ private:
   template <IntegralValue T>
   [[nodiscard]] static auto MemberOr(std::optional<ConstIntegralView> member)
       -> T {

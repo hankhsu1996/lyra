@@ -1076,46 +1076,45 @@ TEST(IntegralTest, BlocksAreReversedInPlace) {
 // reads them as 0.
 TEST(IntegralTest, AWordIsReadInItsRadix) {
   WrittenWords read(kShapeOf<Logic8>);
-  ASSERT_TRUE(FromDigits(read.MutableView(), DigitRadix::kHex, "a_5"));
+  FromDigits(read.MutableView(), DigitRadix::kHex, "a_5");
   EXPECT_EQ(HeldIn<Logic8>(read).ToInt64(), 0xa5);
-  ASSERT_TRUE(FromDigits(read.MutableView(), DigitRadix::kBinary, "1x0z"));
+  FromDigits(read.MutableView(), DigitRadix::kBinary, "1x0z");
   const auto with_unknown = HeldIn<Logic8>(read);
   EXPECT_EQ(ValueBits(with_unknown), 0b1100U);
   EXPECT_EQ(UnknownBits(with_unknown), 0b0101U);
-  ASSERT_TRUE(FromDigits(read.MutableView(), DigitRadix::kHex, "?1"));
+  FromDigits(read.MutableView(), DigitRadix::kHex, "?1");
   EXPECT_EQ(ValueBits(HeldIn<Logic8>(read)), 0x01U);
   EXPECT_EQ(UnknownBits(HeldIn<Logic8>(read)), 0xF0U);
   WrittenWords two_state(kShapeOf<Byte8>);
-  ASSERT_TRUE(FromDigits(two_state.MutableView(), DigitRadix::kOctal, "z7"));
+  FromDigits(two_state.MutableView(), DigitRadix::kOctal, "z7");
   EXPECT_EQ(HeldIn<Byte8>(two_state).ToInt64(), 7);
-  ASSERT_TRUE(FromDigits(two_state.MutableView(), DigitRadix::kHex, "x7"));
+  FromDigits(two_state.MutableView(), DigitRadix::kHex, "x7");
   EXPECT_EQ(HeldIn<Byte8>(two_state).ToInt64(), 7);
   // A longer word loses its leading digits, and a digit the width cuts keeps
   // the bits below it.
-  ASSERT_TRUE(FromDigits(read.MutableView(), DigitRadix::kHex, "123"));
+  FromDigits(read.MutableView(), DigitRadix::kHex, "123");
   EXPECT_EQ(HeldIn<Logic8>(read).ToInt64(), 0x23);
   WrittenWords five(kShapeOf<BitVector<5>>);
-  ASSERT_TRUE(FromDigits(five.MutableView(), DigitRadix::kOctal, "77"));
+  FromDigits(five.MutableView(), DigitRadix::kOctal, "77");
   EXPECT_EQ(HeldIn<BitVector<5>>(five).ToInt64(), 0x1f);
-  EXPECT_FALSE(FromDigits(read.MutableView(), DigitRadix::kOctal, "9"));
-  EXPECT_FALSE(FromDigits(read.MutableView(), DigitRadix::kBinary, "2"));
-  EXPECT_FALSE(FromDigits(read.MutableView(), DigitRadix::kHex, "g"));
-  EXPECT_FALSE(FromDigits(read.MutableView(), DigitRadix::kHex, "_"));
-  EXPECT_FALSE(FromDigits(read.MutableView(), DigitRadix::kHex, ""));
-  // A word that is no word leaves what it was read into as it was, even where
-  // its digits before the bad one were good.
-  EXPECT_FALSE(FromDigits(read.MutableView(), DigitRadix::kHex, "5g"));
-  EXPECT_EQ(HeldIn<Logic8>(read).ToInt64(), 0x23);
-  Logic8 slot = Logic8::FromInt(0x42);
-  EXPECT_FALSE(FromDigits(slot, DigitRadix::kHex, "g1"));
-  EXPECT_EQ(slot.ToInt64(), 0x42);
-  ASSERT_TRUE(FromDigits(slot, DigitRadix::kHex, "1_7"));
+  // A word is a number of its radix only where every character is one of its
+  // digits or a separator, and at least one is a digit.
+  EXPECT_TRUE(IsDigits(DigitRadix::kHex, "a_5"));
+  EXPECT_TRUE(IsDigits(DigitRadix::kBinary, "1x0z?"));
+  EXPECT_FALSE(IsDigits(DigitRadix::kOctal, "9"));
+  EXPECT_FALSE(IsDigits(DigitRadix::kBinary, "2"));
+  EXPECT_FALSE(IsDigits(DigitRadix::kHex, "g"));
+  EXPECT_FALSE(IsDigits(DigitRadix::kHex, "_"));
+  EXPECT_FALSE(IsDigits(DigitRadix::kHex, ""));
+  EXPECT_FALSE(IsDigits(DigitRadix::kHex, "5g"));
+  EXPECT_FALSE(IsDigits(DigitRadix::kHex, "g1"));
+  Logic8 slot;
+  FromDigits(slot, DigitRadix::kHex, "1_7");
   EXPECT_EQ(slot.ToInt64(), 0x17);
 
   // An octal digit lying across two words lands in both.
   WrittenWords wide(kShapeOf<BitVector<100>>);
-  ASSERT_TRUE(FromDigits(
-      wide.MutableView(), DigitRadix::kOctal, "7000000000000000000000"));
+  FromDigits(wide.MutableView(), DigitRadix::kOctal, "7000000000000000000000");
   const auto across = HeldIn<BitVector<100>>(wide);
   EXPECT_EQ(ExtractBits<Bits4>(across, 62).ToInt64(), 0b1110);
   EXPECT_EQ(across.CountBits(Bit::FromInt(1)).ToInt64(), 3);
