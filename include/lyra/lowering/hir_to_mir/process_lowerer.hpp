@@ -238,6 +238,11 @@ class ProcessLowerer {
     return *owner_;
   }
 
+  // Whether this body stands in a structural scope it counts hops from.
+  [[nodiscard]] auto HasEnclosingScope() const -> bool {
+    return enclosing_scope_lowerer_ != nullptr;
+  }
+
   // The lowering pass for the structural scope this body sits inside; its
   // registries resolve every reference to an enclosing-scope declaration (a
   // structural variable, a generate loop variable, a cross-unit reference, a

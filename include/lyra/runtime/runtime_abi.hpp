@@ -666,6 +666,86 @@ auto lyra_rt_run_host_command(void* runtime, const void* command, void* out)
     -> void*;
 auto lyra_rt_run_null_host_command(void* out) -> void*;
 
+// The run's value dump (LRM 21.7.1), acted on through the runtime handle: its
+// file named as an opaque string, an instance a `$dumpvars` names by its
+// address, and a variable by the address of the member it is of the instance
+// declaring it.
+void lyra_rt_dump_file(void* runtime, const void* name);
+void lyra_rt_dump_vars(void* runtime);
+void lyra_rt_dump_vars_levels(void* runtime, std::int64_t levels);
+void lyra_rt_dump_vars_of(void* runtime, std::int64_t levels, void* instance);
+void lyra_rt_dump_vars_of_variable(void* runtime, const void* member);
+void lyra_rt_dump_off(void* runtime);
+void lyra_rt_dump_on(void* runtime);
+void lyra_rt_dump_all(void* runtime);
+void lyra_rt_dump_limit(void* runtime, std::int64_t bytes);
+void lyra_rt_dump_flush(void* runtime);
+// The extended dumps of ports (LRM 21.7.3), each file named as an opaque
+// string, the empty one naming every file.
+void lyra_rt_dump_ports_of(void* runtime, void* instance, const void* name);
+void lyra_rt_dump_ports_off(void* runtime, const void* name);
+void lyra_rt_dump_ports_on(void* runtime, const void* name);
+void lyra_rt_dump_ports_all(void* runtime, const void* name);
+void lyra_rt_dump_ports_limit(
+    void* runtime, std::int64_t bytes, const void* name);
+void lyra_rt_dump_ports_flush(void* runtime, const void* name);
+
+// What an instance describes of itself to a dump starting (LRM 21.7.1.2): one
+// member, by the wrapper it is and the domain of what it holds, with the
+// constant stating its declaration; a named event; and the bracket around the
+// static variables of a named block, task or function.
+void lyra_rt_bit8_cell_describe(void* cell, void* runtime, const void* entry);
+void lyra_rt_bit16_cell_describe(void* cell, void* runtime, const void* entry);
+void lyra_rt_bit32_cell_describe(void* cell, void* runtime, const void* entry);
+void lyra_rt_bit64_cell_describe(void* cell, void* runtime, const void* entry);
+void lyra_rt_logic8_cell_describe(void* cell, void* runtime, const void* entry);
+void lyra_rt_logic16_cell_describe(
+    void* cell, void* runtime, const void* entry);
+void lyra_rt_logic32_cell_describe(
+    void* cell, void* runtime, const void* entry);
+void lyra_rt_logic64_cell_describe(
+    void* cell, void* runtime, const void* entry);
+void lyra_rt_bit_wide_cell_describe(
+    void* cell, void* runtime, const void* entry);
+void lyra_rt_logic_wide_cell_describe(
+    void* cell, void* runtime, const void* entry);
+void lyra_rt_real_cell_describe(void* cell, void* runtime, const void* entry);
+void lyra_rt_shortreal_cell_describe(
+    void* cell, void* runtime, const void* entry);
+void lyra_rt_logic8_net_describe(void* net, void* runtime, const void* entry);
+void lyra_rt_logic16_net_describe(void* net, void* runtime, const void* entry);
+void lyra_rt_logic32_net_describe(void* net, void* runtime, const void* entry);
+void lyra_rt_logic64_net_describe(void* net, void* runtime, const void* entry);
+void lyra_rt_logic_wide_net_describe(
+    void* net, void* runtime, const void* entry);
+void lyra_rt_bit8_ref_describe(
+    void* reference, void* runtime, const void* entry);
+void lyra_rt_bit16_ref_describe(
+    void* reference, void* runtime, const void* entry);
+void lyra_rt_bit32_ref_describe(
+    void* reference, void* runtime, const void* entry);
+void lyra_rt_bit64_ref_describe(
+    void* reference, void* runtime, const void* entry);
+void lyra_rt_logic8_ref_describe(
+    void* reference, void* runtime, const void* entry);
+void lyra_rt_logic16_ref_describe(
+    void* reference, void* runtime, const void* entry);
+void lyra_rt_logic32_ref_describe(
+    void* reference, void* runtime, const void* entry);
+void lyra_rt_logic64_ref_describe(
+    void* reference, void* runtime, const void* entry);
+void lyra_rt_bit_wide_ref_describe(
+    void* reference, void* runtime, const void* entry);
+void lyra_rt_logic_wide_ref_describe(
+    void* reference, void* runtime, const void* entry);
+void lyra_rt_real_ref_describe(
+    void* reference, void* runtime, const void* entry);
+void lyra_rt_shortreal_ref_describe(
+    void* reference, void* runtime, const void* entry);
+void lyra_rt_describe_event(void* event, void* runtime, const void* entry);
+void lyra_rt_begin_described_block(void* runtime, const void* block);
+void lyra_rt_end_described_block(void* runtime);
+
 // Whether the simulation's own arguments carry a plusarg with the given prefix
 // (LRM 21.6). Those arguments are the runtime's, so only the prefix crosses, as
 // an opaque string; the answer is an integral value laid out in `out`.

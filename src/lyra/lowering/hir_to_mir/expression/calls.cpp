@@ -43,6 +43,7 @@
 #include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/time.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/timescale.hpp"
+#include "lyra/lowering/hir_to_mir/expression/system/value_dump.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/sampled_history.hpp"
@@ -250,6 +251,15 @@ auto LowerSystemSubroutineCall(
                 "LowerSystemSubroutineCall: a call answering across the ticks "
                 "of a clocking event names the history it answers from, so it "
                 "is planned before this dispatch");
+          },
+          [&](const support::ValueDumpSystemSubroutineInfo& dump)
+              -> diag::Result<mir::Expr> {
+            if constexpr (kProcedural) {
+              return LowerValueDumpSystemSubroutineCall(
+                  lowerer, frame, call, dump, span);
+            } else {
+              return RejectStructuralEffect(span);
+            }
           },
           [&](const support::MemFileSystemSubroutineInfo&)
               -> diag::Result<mir::Expr> {

@@ -7,6 +7,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -34,6 +35,7 @@
 #include "lyra/diag/failure_context.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/continuous_assign.hpp"
+#include "lyra/hir/dumped_declaration.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/structural_data_object.hpp"
@@ -58,10 +60,169 @@
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 #include "lyra/profiling/time_trace.hpp"
+#include "lyra/support/dump_kind.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
+
+// What a net or a variable is recorded as in a value dump (LRM 21.7.2.1
+// `var_type`), none for one a dump records nothing of: a variable holding no
+// integral value, real or event -- an unpacked array or structure, a string, a
+// handle, a container (LRM 21.7.2.1) -- one of automatic lifetime, which no
+// dump can reach, and a net of a type the language gives no keyword there or
+// holding no integral value.
+auto DumpedKindOf(const slang::ast::ValueSymbol& value)
+    -> std::optional<support::DumpVarKind> {
+  if (const auto* net = value.as_if<slang::ast::NetSymbol>()) {
+    if (!value.getType().isIntegral()) {
+      return std::nullopt;
+    }
+    switch (net->netType.netKind) {
+      case slang::ast::NetType::Wire:
+      case slang::ast::NetType::UWire:
+        // LRM 21.7.2.3: a `uwire` is recorded as a `wire`.
+        return support::DumpVarKind::kWire;
+      case slang::ast::NetType::Tri:
+        return support::DumpVarKind::kTri;
+      case slang::ast::NetType::WAnd:
+        return support::DumpVarKind::kWand;
+      case slang::ast::NetType::TriAnd:
+        return support::DumpVarKind::kTriand;
+      case slang::ast::NetType::WOr:
+        return support::DumpVarKind::kWor;
+      case slang::ast::NetType::TriOr:
+        return support::DumpVarKind::kTrior;
+      case slang::ast::NetType::Tri0:
+        return support::DumpVarKind::kTri0;
+      case slang::ast::NetType::Tri1:
+        return support::DumpVarKind::kTri1;
+      case slang::ast::NetType::Supply0:
+        return support::DumpVarKind::kSupply0;
+      case slang::ast::NetType::Supply1:
+        return support::DumpVarKind::kSupply1;
+      case slang::ast::NetType::TriReg:
+        return support::DumpVarKind::kTrireg;
+      case slang::ast::NetType::Interconnect:
+      case slang::ast::NetType::UserDefined:
+      case slang::ast::NetType::Unknown:
+        return std::nullopt;
+    }
+    return std::nullopt;
+  }
+  const auto* variable = value.as_if<slang::ast::VariableSymbol>();
+  if (variable == nullptr ||
+      variable->lifetime != slang::ast::VariableLifetime::Static) {
+    return std::nullopt;
+  }
+  const slang::ast::Type& type = value.getType().getCanonicalType();
+  if (type.isEvent()) {
+    return support::DumpVarKind::kEvent;
+  }
+  if (const auto* floating = type.as_if<slang::ast::FloatingType>()) {
+    switch (floating->floatKind) {
+      case slang::ast::FloatingType::Real:
+      case slang::ast::FloatingType::ShortReal:
+        return support::DumpVarKind::kReal;
+      case slang::ast::FloatingType::RealTime:
+        return support::DumpVarKind::kRealtime;
+    }
+    return std::nullopt;
+  }
+  if (const auto* predefined =
+          type.as_if<slang::ast::PredefinedIntegerType>()) {
+    switch (predefined->integerKind) {
+      case slang::ast::PredefinedIntegerType::Integer:
+        return support::DumpVarKind::kInteger;
+      case slang::ast::PredefinedIntegerType::Time:
+        return support::DumpVarKind::kTime;
+      case slang::ast::PredefinedIntegerType::ShortInt:
+      case slang::ast::PredefinedIntegerType::Int:
+      case slang::ast::PredefinedIntegerType::LongInt:
+      case slang::ast::PredefinedIntegerType::Byte:
+        return support::DumpVarKind::kReg;
+    }
+    return std::nullopt;
+  }
+  if (type.isIntegral()) {
+    return support::DumpVarKind::kReg;
+  }
+  return std::nullopt;
+}
+
+// How many bits a dump declares a thing of `kind` and type `type` with: an
+// event the one bit the format gives it, a real a double's.
+auto DumpedWidthOf(support::DumpVarKind kind, const slang::ast::Type& type)
+    -> std::uint32_t {
+  switch (support::DumpValueFormOf(kind)) {
+    case support::DumpValueForm::kTriggered:
+      return 1;
+    case support::DumpValueForm::kReal:
+      return 64;
+    case support::DumpValueForm::kBits:
+      return static_cast<std::uint32_t>(type.getBitWidth());
+  }
+  throw InternalError("DumpedWidthOf: unknown value");
+}
+
+// The range a vector declares, which a dump writes beside its name (LRM
+// 21.7.2.3 `$var`): the outermost of a packed array's, none for anything else.
+auto DumpedRangeOf(const slang::ast::Type& type)
+    -> std::optional<hir::DumpedDeclaration::Range> {
+  const auto* packed =
+      type.getCanonicalType().as_if<slang::ast::PackedArrayType>();
+  if (packed == nullptr) {
+    return std::nullopt;
+  }
+  return hir::DumpedDeclaration::Range{
+      .left = packed->range.left, .right = packed->range.right};
+}
+
+// Each port `scope` declares, by the net or variable inside the instance it
+// connects, with its direction and its position among the ports in the order
+// the declaration gives them -- a port written as a concatenation being one
+// position for each part (LRM 21.7.4.2). A port connecting nothing inside, or
+// one connecting storage by reference, is no port an extended dump records.
+auto DumpedPortsOf(const slang::ast::Scope& scope) -> DumpedPorts {
+  DumpedPorts ports;
+  const auto* body = scope.asSymbol().as_if<slang::ast::InstanceBodySymbol>();
+  if (body == nullptr) {
+    return ports;
+  }
+  std::uint32_t position = 0;
+  const auto take = [&](const slang::ast::PortSymbol& port) {
+    const std::uint32_t at = position++;
+    std::optional<support::DumpPortDirection> direction;
+    switch (port.direction) {
+      case slang::ast::ArgumentDirection::In:
+        direction = support::DumpPortDirection::kInput;
+        break;
+      case slang::ast::ArgumentDirection::Out:
+        direction = support::DumpPortDirection::kOutput;
+        break;
+      case slang::ast::ArgumentDirection::InOut:
+        direction = support::DumpPortDirection::kInOut;
+        break;
+      case slang::ast::ArgumentDirection::Ref:
+        break;
+    }
+    if (direction.has_value() && port.internalSymbol != nullptr) {
+      ports.try_emplace(
+          port.internalSymbol, hir::DumpedDeclaration::Port{
+                                   .direction = *direction, .position = at});
+    }
+  };
+  for (const slang::ast::Symbol* port : body->getPortList()) {
+    if (const auto* single = port->as_if<slang::ast::PortSymbol>()) {
+      take(*single);
+    } else if (const auto* multi = port->as_if<slang::ast::MultiPortSymbol>()) {
+      for (const slang::ast::PortSymbol* part : multi->ports) {
+        take(*part);
+      }
+    }
+  }
+  return ports;
+}
 
 // Whether a value of `type` holds an unpacked tagged union anywhere in it. LRM
 // 6.7.1 admits one in a net's data type, and no resolution of its drivers is
@@ -334,6 +495,11 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   // order.
   auto pc = PopulatePortConnections(*slang_scope_, frame);
   if (!pc) return std::unexpected(std::move(pc.error()));
+
+  auto dumped =
+      CollectDumped(*slang_scope_, DumpedPortsOf(*slang_scope_), frame);
+  if (!dumped) return std::unexpected(std::move(dumped.error()));
+  scope.dumped = *std::move(dumped);
 
   scope.routes = owner_->TakeRoutesForFrame(frame_);
   scope.published = owner_->TakePublication(*slang_scope_);
@@ -976,6 +1142,78 @@ auto StructuralScopeLowerer::PopulateNetAliasMember(
   frame.current_structural_scope->net_joins.push_back(
       hir::NetJoin{.span = span, .sides = std::move(sides)});
   return {};
+}
+
+auto StructuralScopeLowerer::CollectDumped(
+    const slang::ast::Scope& members, const DumpedPorts& ports, WalkFrame frame)
+    -> diag::Result<hir::DumpedMembers> {
+  hir::DumpedMembers dumped;
+  // A named block, task or function, recorded where it declares something a
+  // dump records.
+  const auto collect_block =
+      [&](const slang::ast::Scope& scope, std::string_view name,
+          support::DumpScopeKind kind) -> diag::Result<void> {
+    auto inner = CollectDumped(scope, {}, frame);
+    if (!inner) return std::unexpected(std::move(inner.error()));
+    if (!inner->declarations.empty() || !inner->blocks.empty()) {
+      dumped.blocks.push_back(
+          hir::DumpedBlock{
+              .identifier = std::string{name},
+              .kind = kind,
+              .members = *std::move(inner)});
+    }
+    return {};
+  };
+  for (const slang::ast::Symbol& member : members.members()) {
+    if (!owner_->Owns(member)) {
+      continue;
+    }
+    if (const auto* block = member.as_if<slang::ast::StatementBlockSymbol>();
+        block != nullptr && !block->name.empty()) {
+      auto collected = collect_block(
+          *block, block->name,
+          block->blockKind == slang::ast::StatementBlockKind::Sequential
+              ? support::DumpScopeKind::kBegin
+              : support::DumpScopeKind::kFork);
+      if (!collected) return std::unexpected(std::move(collected.error()));
+      continue;
+    }
+    if (const auto* subroutine = member.as_if<slang::ast::SubroutineSymbol>()) {
+      auto collected = collect_block(
+          *subroutine, subroutine->name,
+          subroutine->subroutineKind == slang::ast::SubroutineKind::Task
+              ? support::DumpScopeKind::kTask
+              : support::DumpScopeKind::kFunction);
+      if (!collected) return std::unexpected(std::move(collected.error()));
+      continue;
+    }
+    const auto* value = member.as_if<slang::ast::ValueSymbol>();
+    if (value == nullptr) {
+      continue;
+    }
+    const std::optional<support::DumpVarKind> kind = DumpedKindOf(*value);
+    if (!kind.has_value()) {
+      continue;
+    }
+    const auto span = frontend::PointSpanOf(value->location);
+    auto type = owner_->InternType(value->getType(), span);
+    if (!type) return std::unexpected(std::move(type.error()));
+    auto named =
+        owner_->MakeRoutedValueRef(*value, frame_, ScopeRoute::Enclosing({}));
+    if (!named) return std::unexpected(std::move(named.error()));
+    const auto port = ports.find(value);
+    dumped.declarations.push_back(
+        hir::DumpedDeclaration{
+            .identifier = std::string{value->name},
+            .kind = *kind,
+            .width = DumpedWidthOf(*kind, value->getType().getCanonicalType()),
+            .range = DumpedRangeOf(value->getType()),
+            .port = port != ports.end() ? std::optional(port->second)
+                                        : std::nullopt,
+            .named = frame.Exprs().Add(
+                hir::MakeRefExpr(*std::move(named), *type, span))});
+  }
+  return dumped;
 }
 
 auto StructuralScopeLowerer::PopulateGenerateArrayMember(

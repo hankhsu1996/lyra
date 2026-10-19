@@ -29,6 +29,31 @@ the feature file its domain belongs to.
 - [x] `$typename` (LRM 20.6.1) of a structure or union holding an enumeration written in place
       (`struct packed { enum logic {A, B} e; }`), where the program runs and as a constant.
 
+## Value change dumps
+
+LRM 21.7. A built program records the values of a design to a file a waveform viewer reads, chosen
+by the design's own tasks or, without building again, by plusargs given when it runs:
+`+lyra+dump=<file>`, `+lyra+dump+scope=<path>[:<levels>]`, `+lyra+dump+window=<from>:<to>`,
+`+lyra+dump+force` and `+lyra+dump+none`. The file's extension picks its format: `.fst` is FST,
+`.txt` is text a person reads, and anything else is the VCD format the standard defines.
+
+- [x] `$dumpfile`, `$dumpvars` in every form the standard gives it -- the whole design, a number of
+      levels, instances and variables named by hierarchical name -- `$dumpoff`, `$dumpon`,
+      `$dumpall`, `$dumplimit` and `$dumpflush` (LRM 21.7.1). Variables, nets, ports, named events,
+      the static variables of named blocks, tasks and functions, and generate blocks, which are part
+      of the instance holding them.
+- [x] `$dumpports` and its control tasks (LRM 21.7.3): the ports of each instance named, or of the
+      calling one, in the extended format (LRM 21.7.4).
+- [ ] The extended format records a driven value as driven strongly, whatever strength drives it,
+      and never writes the states that tell an input's driver from an output's (`d`, `u`, `l`, `h`,
+      and `A` to `f`): the values a dump reads carry neither the strength of a net's resolved value
+      nor which side of a port drives it.
+- [ ] `$dumpports` naming no instance, called from a class method, stops the build as not yet
+      supported; the instance it means is the module whose code calls it (LRM 21.7.3.1).
+- [ ] What a whole-design dump costs a run has not been measured: every write of a dumped variable
+      is compared, and whether a scan once a time step over what is dumped would be cheaper for a
+      design that dumps everything is open.
+
 ## Tracked with their domain
 
 - The output family's continuous monitor -- `$monitor`, `$fmonitor`, `$monitoron`, `$monitoroff`
@@ -44,8 +69,6 @@ the feature file its domain belongs to.
 No concrete driver; listed so an encounter is read as a known gap rather than a compiler bug:
 
 - Functional coverage system functions (LRM 20.13).
-- VCD value-change dump -- `$dumpfile`, `$dumpvars`, `$dumpon`, `$dumpoff`, `$dumpall`,
-  `$dumplimit`, `$dumpflush`, and the `$dumpports` variants (LRM 21.7).
 - `$sdf_annotate` (LRM 20.14), `$countdrivers`, `$getpattern`, `$sreadmemb` / `$sreadmemh`, the
   interactive `$list` / `$scope` / `$input`, and the PLA modeling tasks (LRM 20.16).
 - `$psprintf`, a vendor alias for `$sformatf`, which runs.

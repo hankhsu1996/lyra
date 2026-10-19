@@ -19,6 +19,7 @@
 #include "lyra/hir/class_id.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/continuous_assign.hpp"
+#include "lyra/hir/dumped_declaration.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/external_scope_class.hpp"
 #include "lyra/hir/external_scope_ref.hpp"
@@ -748,6 +749,9 @@ struct StructuralScope {
   // later. That is what the declare-then-define gap buys: the id exists up
   // front and the body pass fills the contents when it reaches the scope.
   base::Registry<ProceduralScopeDecl, ProceduralScopeId> procedural_scopes;
+  // What a value dump records of an instance of this scope (LRM 21.7.1.2). The
+  // scopes inside this one are dumped as their own.
+  DumpedMembers dumped;
 
   // Two scopes are equal when everything they state is equal. Derived rather
   // than written. A field added to any node below is compared

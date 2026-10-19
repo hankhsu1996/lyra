@@ -34,6 +34,7 @@
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/stream_dispatcher.hpp"
 #include "lyra/runtime/time_slot.hpp"
+#include "lyra/runtime/value_dumps.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/string.hpp"
 
@@ -283,6 +284,8 @@ class Runtime final : public RuntimeEffects {
   StreamDispatcher stream_;
   DiagnosticDispatcher diagnostic_;
   FileTable files_{stream_};
+  // Built from the plusargs before they are moved into their own source.
+  ValueDumps dumps_;
   PlusArgsSource plusargs_;
   CoverageLog coverage_;
   CurrentRuntimeGuard current_runtime_guard_{*this};

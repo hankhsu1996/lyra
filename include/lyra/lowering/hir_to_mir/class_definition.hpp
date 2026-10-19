@@ -5,6 +5,7 @@
 #include <span>
 #include <string>
 
+#include "lyra/hir/dumped_declaration.hpp"
 #include "lyra/hir/unit_body_ref.hpp"
 #include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
 #include "lyra/mir/class.hpp"
@@ -40,6 +41,17 @@ void StateNamedClassDefinition(
 void StateScopeDefinition(
     const mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
     std::span<const mir::NamedCallable> exports);
+
+// The address, as a value of `block`, of what class `id` states of one thing a
+// value dump may record of its instances, and of one named block, task or
+// function around such things (LRM 21.7.1.2), each held as a constant of the
+// class.
+auto DumpEntryAddress(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ClassId id,
+    mir::Class& cls, const hir::DumpedDeclaration& declaration) -> mir::ExprId;
+auto DumpBlockAddress(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ClassId id,
+    mir::Class& cls, const hir::DumpedBlock& dumped) -> mir::ExprId;
 
 // States, as constants of class `id` of the design's root unit, the
 // construction table of every body `instantiations` names that an object is

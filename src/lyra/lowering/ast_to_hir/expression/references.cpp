@@ -699,24 +699,70 @@ auto LowerNamedValueStructural(
   throw InternalError("LowerNamedValueStructural: unknown Referent");
 }
 
-auto LowerInterfaceInstanceValue(
+auto LowerArbitrarySymbol(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::ArbitrarySymbolExpression& named, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
+  const RouteOrigin origin =
+      unit_lowerer.StartOf(frame, *named.symbol, named.hierRef);
+  const auto refuse = [&] {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "a name standing for a declaration other than a variable, a net or "
+        "an instance is not yet supported here");
+  };
+  if (const auto* value = named.symbol->as_if<slang::ast::ValueSymbol>()) {
+    auto resolved = ResolveReferent(*value, span);
+    if (!resolved) return std::unexpected(std::move(resolved.error()));
+    switch (resolved->kind) {
+      case Referent::kVariableStorage:
+      case Referent::kNetStorage: {
+        auto type_id = unit_lowerer.InternType(value->getType(), span);
+        if (!type_id) return std::unexpected(std::move(type_id.error()));
+        auto reached = unit_lowerer.ResolveValueTarget(
+            frame, *resolved->symbol, origin, span);
+        if (!reached) return std::unexpected(std::move(reached.error()));
+        return hir::MakeValueTargetRefExpr(*reached, *type_id, span);
+      }
+      case Referent::kParameterConstant:
+      case Referent::kEnumConstant:
+      case Referent::kSpecparam:
+      case Referent::kClassProperty:
+      case Referent::kThisHandle:
+      case Referent::kPatternBinding:
+      case Referent::kViewDefinedName:
+      case Referent::kPrimitivePort:
+      case Referent::kClockingSignal:
+      case Referent::kAssertionLocal:
+      case Referent::kStructureMember:
+      case Referent::kNotAValue:
+        return refuse();
+    }
+    throw InternalError("LowerArbitrarySymbol: unknown Referent");
+  }
   const auto* handle_type =
       named.type->getCanonicalType().as_if<slang::ast::VirtualInterfaceType>();
   if (handle_type == nullptr) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm,
-        "a name that denotes no value is not yet supported here");
+    const auto* instance = named.symbol->as_if<slang::ast::InstanceSymbol>();
+    if (instance == nullptr) {
+      return refuse();
+    }
+    auto route =
+        unit_lowerer.RouteToScopeOrRefuse(frame, instance->body, origin, span);
+    if (!route) return std::unexpected(std::move(route.error()));
+    const hir::TypeId object_type = unit_lowerer.ScopeClassTypeOf(
+        unit_lowerer.ScopeClassOfInstance(*instance));
+    return hir::MakeRefExpr(
+        unit_lowerer.MakeRoutedObjectRef(
+            frame.Current(), *std::move(route), object_type),
+        object_type, span);
   }
   // The type names the instance the name reached, whether it was written
   // directly, through a port bound to it, or with a modport selected; a
   // modport narrows what is reached through the value and not which instance
   // it is.
   auto route = unit_lowerer.RouteToScopeOrRefuse(
-      frame, handle_type->iface.body,
-      unit_lowerer.StartOf(frame, *named.symbol, named.hierRef), span);
+      frame, handle_type->iface.body, origin, span);
   if (!route) return std::unexpected(std::move(route.error()));
   auto type_id = unit_lowerer.InternExpressionType(named, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));

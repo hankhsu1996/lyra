@@ -2,6 +2,7 @@
 
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -19,6 +20,7 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/continuous_assign.hpp"
+#include "lyra/hir/dumped_declaration.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type.hpp"
@@ -27,6 +29,10 @@
 #include "lyra/support/strength_level.hpp"
 
 namespace lyra::lowering::ast_to_hir {
+
+// The ports a scope declares, by the net or variable each connects inside it.
+using DumpedPorts =
+    std::unordered_map<const slang::ast::Symbol*, hir::DumpedDeclaration::Port>;
 
 // Per-structural-scope lowerer: produces one hir::StructuralScope populated
 // with the members of a slang scope (variables, subroutines, processes,
@@ -145,6 +151,13 @@ class StructuralScopeLowerer {
   auto PopulateNetAliasMember(
       const slang::ast::NetAliasSymbol& alias, WalkFrame frame)
       -> diag::Result<void>;
+  // LRM 21.7.1.2: what a value dump records of an instance of this scope, the
+  // data objects `members` declares and the named blocks, tasks and functions
+  // among them, each named as a body of the scope names it, and of those
+  // `ports` connects, the port each is (LRM 21.7.3.1).
+  auto CollectDumped(
+      const slang::ast::Scope& members, const DumpedPorts& ports,
+      WalkFrame frame) -> diag::Result<hir::DumpedMembers>;
   auto LowerContinuousAssign(
       const slang::ast::ContinuousAssignSymbol& sym, WalkFrame frame)
       -> diag::Result<hir::ContinuousAssign>;

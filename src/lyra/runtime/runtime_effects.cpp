@@ -23,6 +23,7 @@
 #include "lyra/runtime/sampled_value.hpp"
 #include "lyra/runtime/source_follower.hpp"
 #include "lyra/runtime/timer.hpp"
+#include "lyra/runtime/value_dump.hpp"
 #include "lyra/runtime/wait.hpp"
 #include "lyra/value/format.hpp"
 
@@ -133,6 +134,10 @@ auto RuntimeEffects::Diagnostic() -> DiagnosticDispatcher& {
 
 auto RuntimeEffects::Files() -> FileTable& {
   return AsRuntime(*this).files_;
+}
+
+auto RuntimeEffects::Dumps() -> ValueDumps& {
+  return AsRuntime(*this).dumps_;
 }
 
 auto RuntimeEffects::PlusArgs() -> PlusArgsSource& {
@@ -285,7 +290,8 @@ void RuntimeEffects::WakeParkedOn(
             [this](ProgramThreads* program) { program->RootEnded(*this); },
             [&](PropertyEvaluation* evaluation) {
               evaluation->Reached(membership);
-            }},
+            },
+            [](DumpWatch* watch) { watch->Reached(); }},
         membership.observer);
   });
 }

@@ -1,6 +1,5 @@
 #include "lyra/value/format.hpp"
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -23,24 +22,36 @@
 
 namespace lyra::value {
 
+auto TimeUnitSpellingOf(std::int8_t power) -> TimeUnitSpelling {
+  std::int8_t unit_power = power;
+  while (unit_power % 3 != 0) {
+    --unit_power;
+  }
+  std::uint64_t count = 1;
+  for (std::int8_t i = unit_power; i < power; ++i) {
+    count *= 10;
+  }
+  switch (unit_power) {
+    case 0:
+      return TimeUnitSpelling{.count = count, .unit = "s"};
+    case -3:
+      return TimeUnitSpelling{.count = count, .unit = "ms"};
+    case -6:
+      return TimeUnitSpelling{.count = count, .unit = "us"};
+    case -9:
+      return TimeUnitSpelling{.count = count, .unit = "ns"};
+    case -12:
+      return TimeUnitSpelling{.count = count, .unit = "ps"};
+    case -15:
+      return TimeUnitSpelling{.count = count, .unit = "fs"};
+    default:
+      throw InternalError(std::format("no time unit at 10^{}", power));
+  }
+}
+
 auto TimeUnitText(std::int8_t power) -> std::string {
-  constexpr std::array<std::string_view, 6> kUnits = {"s",  "ms", "us",
-                                                      "ns", "ps", "fs"};
-  constexpr std::array<std::string_view, 3> kMantissa = {"1", "10", "100"};
-  // A time power is a small signed number (LRM 3.14): -9 is ns, so widening it
-  // with sign extension is the meaning, not the byte read this check looks for.
-  // NOLINTNEXTLINE(bugprone-signed-char-misuse)
-  const int p = static_cast<int>(power);
-  const int index = (-p + 2) / 3;
-  const int mantissa_exp = p + (3 * index);
-  const std::string_view unit = (index >= 0 && index < 6)
-                                    ? kUnits.at(static_cast<std::size_t>(index))
-                                    : "?";
-  const std::string_view mantissa =
-      (mantissa_exp >= 0 && mantissa_exp < 3)
-          ? kMantissa.at(static_cast<std::size_t>(mantissa_exp))
-          : "?";
-  return std::string(mantissa) + std::string(unit);
+  const TimeUnitSpelling spelling = TimeUnitSpellingOf(power);
+  return std::format("{}{}", spelling.count, spelling.unit);
 }
 
 namespace {

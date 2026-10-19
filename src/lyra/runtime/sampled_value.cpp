@@ -1,17 +1,14 @@
 #include "lyra/runtime/sampled_value.hpp"
 
 #include "lyra/base/time.hpp"
-#include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/trigger.hpp"
+#include "lyra/runtime/wait.hpp"
 
 namespace lyra::runtime {
 
 SampledValue::SampledValue(const Trigger& watched) {
-  membership_.observer = this;
-  membership_.through = watched.through;
-  membership_.reads = watched.reads;
-  watched.observable->MembersAt(watched.part).PushBack(membership_);
+  EnrolOnPlace(membership_, this, watched);
 }
 
 SampledValue::~SampledValue() = default;

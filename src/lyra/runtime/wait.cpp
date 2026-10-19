@@ -16,40 +16,42 @@
 
 namespace lyra::runtime {
 
+void EnrolOnPlace(
+    WaitMembership& membership, Observer observer, const Trigger& watched) {
+  // Storage that belongs to nothing is never told of a write, so there is
+  // nothing to enrol on.
+  if (watched.observable == nullptr) {
+    return;
+  }
+  membership.observer = observer;
+  membership.through = watched.through;
+  membership.reads = watched.reads;
+  membership.observation = watched.observation;
+  watched.observable->MembersAt(watched.part).PushBack(membership);
+}
+
 Awaiter::Awaiter(std::size_t places) : memberships_(places) {
 }
 
 Awaiter::~Awaiter() = default;
 
 void Awaiter::EnrolOnLeaf(const Trigger& trigger) {
-  // Storage that belongs to nothing is never told of a write, so a wait on it
-  // has nothing to enrol on and waits on its other leaves.
-  if (trigger.observable == nullptr) {
-    return;
-  }
-  Enrol(
-      trigger.observable->MembersAt(trigger.part), trigger.through,
-      trigger.reads, trigger.observation);
+  EnrolOnPlace(NextMembership(), this, trigger);
 }
 
 void Awaiter::EnrolOn(IntrusiveList<WaitMembership>& target) {
-  Enrol(target, nullptr, value::BitPositions{}, Observation{});
+  WaitMembership& membership = NextMembership();
+  membership.observer = this;
+  target.PushBack(membership);
 }
 
-void Awaiter::Enrol(
-    IntrusiveList<WaitMembership>& target, const ErasedReference* through,
-    value::BitPositions reads, Observation observation) {
+auto Awaiter::NextMembership() -> WaitMembership& {
   if (enrolled_ == memberships_.size()) {
     throw InternalError(
-        "Awaiter::Enrol: an awaiter enrolled on more places than it was built "
-        "to watch");
+        "Awaiter: an awaiter enrolled on more places than it was built to "
+        "watch");
   }
-  WaitMembership& membership = memberships_[enrolled_++];
-  membership.observer = this;
-  membership.through = through;
-  membership.reads = reads;
-  membership.observation = std::move(observation);
-  target.PushBack(membership);
+  return memberships_[enrolled_++];
 }
 
 auto StateAwaiter::Begin() -> Resumption {

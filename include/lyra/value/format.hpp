@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <string_view>
 #include <variant>
 
 #include "lyra/value/integral.hpp"
@@ -75,11 +76,17 @@ struct TimeFormat {
   std::int32_t min_width = 20;
 };
 
+struct TimeUnitSpelling {
+  std::uint64_t count;
+  std::string_view unit;
+};
+
 // LRM Table 20-2: a power value maps to one of {1, 10, 100} times a unit
-// that cycles s / ms / us / ns / ps / fs every three decades below 1 s.
-// Used by the `$printtimescale` lowering to compile-time format the
-// "Time scale of ..." message and by any future caller that needs the same
-// power-to-text projection.
+// that cycles s / ms / us / ns / ps / fs every three decades below 1 s. A
+// power outside the table is no time unit the language can write.
+[[nodiscard]] auto TimeUnitSpellingOf(std::int8_t power) -> TimeUnitSpelling;
+
+// The same written out, `10ns`.
 [[nodiscard]] auto TimeUnitText(std::int8_t power) -> std::string;
 
 // Per-call context routed alongside the spec into every Formatter::Format.

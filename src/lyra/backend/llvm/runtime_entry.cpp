@@ -327,6 +327,17 @@ constexpr std::array kSampled{
         .wrapper = WrapperKind::kRef,
         .domains = kVariableValues,
         .told = ToldNothing{}}};
+// What a dump records of a member (LRM 21.7.2): an integral value or a real,
+// held by a variable, shown by a net of an integral type, or stood for by a
+// port.
+constexpr std::array kDescribed{
+    ThroughWrapper{
+        .wrapper = WrapperKind::kCell, .domains = kIntegral | kReals},
+    ThroughWrapper{.wrapper = WrapperKind::kNet, .domains = kFourStateIntegral},
+    ThroughWrapper{
+        .wrapper = WrapperKind::kRef,
+        .domains = kIntegral | kReals,
+        .told = ToldNothing{}}};
 constexpr ThroughWrapper kThroughAReferenceToBytesOrAnObject{
     .wrapper = WrapperKind::kRef,
     .domains = kOneWordIntegral | kObjectsThatStateThemselves};
@@ -974,6 +985,8 @@ auto MemberStorageKindOf(
               case lir::RuntimeLibraryKind::kScopeCallable:
               case lir::RuntimeLibraryKind::kConstructionTable:
               case lir::RuntimeLibraryKind::kInstantiation:
+              case lir::RuntimeLibraryKind::kDumpEntry:
+              case lir::RuntimeLibraryKind::kDumpBlock:
                 return std::nullopt;
             }
             throw InternalError("llvm codegen: unknown runtime library kind");
@@ -1623,6 +1636,12 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
       return NamedByWrapper{.realized = kSampled};
     case support::BuiltinFn::kArmSampling:
       return NamedByWrapper{.realized = kSampled};
+    // What a dump starting is told of a member (LRM 21.7.1.2): the wrapper
+    // decides where the value lies and where a change to it is reported, and
+    // the constant beside it states the declaration, its width included, so
+    // nothing more is told.
+    case support::BuiltinFn::kDescribe:
+      return NamedByWrapper{.realized = kDescribed};
     // A takeover acts on the cell it covers and carries that cell's value, so
     // the wrapper it is reached through is what names the entry (LRM 10.6).
     case support::BuiltinFn::kBeginTakeover:
@@ -1773,6 +1792,25 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kTestPlusargs:
     case support::BuiltinFn::kValuePlusargs:
     case support::BuiltinFn::kValuePlusargsString:
+    case support::BuiltinFn::kDumpFile:
+    case support::BuiltinFn::kDumpVars:
+    case support::BuiltinFn::kDumpVarsLevels:
+    case support::BuiltinFn::kDumpVarsOf:
+    case support::BuiltinFn::kDumpVarsOfVariable:
+    case support::BuiltinFn::kDumpOff:
+    case support::BuiltinFn::kDumpOn:
+    case support::BuiltinFn::kDumpAll:
+    case support::BuiltinFn::kDumpLimit:
+    case support::BuiltinFn::kDumpFlush:
+    case support::BuiltinFn::kDumpPortsOf:
+    case support::BuiltinFn::kDumpPortsOff:
+    case support::BuiltinFn::kDumpPortsOn:
+    case support::BuiltinFn::kDumpPortsAll:
+    case support::BuiltinFn::kDumpPortsLimit:
+    case support::BuiltinFn::kDumpPortsFlush:
+    case support::BuiltinFn::kDescribeEvent:
+    case support::BuiltinFn::kBeginDescribedBlock:
+    case support::BuiltinFn::kEndDescribedBlock:
     case support::BuiltinFn::kRunHostCommand:
     case support::BuiltinFn::kRunNullHostCommand:
     case support::BuiltinFn::kDelay:

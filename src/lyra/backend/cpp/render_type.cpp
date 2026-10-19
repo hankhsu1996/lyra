@@ -102,6 +102,10 @@ auto RuntimeLibraryCppType(mir::RuntimeLibraryKind kind) -> std::string_view {
       return "lyra::runtime::ConstructionTable";
     case mir::RuntimeLibraryKind::kInstantiation:
       return "lyra::runtime::Instantiation";
+    case mir::RuntimeLibraryKind::kDumpEntry:
+      return "lyra::runtime::DumpEntry";
+    case mir::RuntimeLibraryKind::kDumpBlock:
+      return "lyra::runtime::DumpBlock";
     case mir::RuntimeLibraryKind::kDpiBitBuffer:
       return "lyra::value::DpiBitBuffer";
     case mir::RuntimeLibraryKind::kDpiLogicBuffer:

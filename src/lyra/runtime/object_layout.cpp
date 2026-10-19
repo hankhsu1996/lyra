@@ -498,6 +498,8 @@ auto VirtualFunctionSymbolOf(support::LibraryVirtual function)
       return "_ZN4lyra7runtime5Scope13sv_initializeEv";
     case support::LibraryVirtual::kScopeCreateProcesses:
       return "_ZN4lyra7runtime5Scope19sv_create_processesEv";
+    case support::LibraryVirtual::kScopeDescribe:
+      return "_ZN4lyra7runtime5Scope11sv_describeEv";
   }
   throw InternalError("object layout: unknown library virtual");
 }

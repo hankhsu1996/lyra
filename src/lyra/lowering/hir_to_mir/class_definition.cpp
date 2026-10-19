@@ -23,6 +23,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/value_build.hpp"
+#include "lyra/support/dump_kind.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -214,9 +215,10 @@ void AppendNamedBodyTable(
 
 // What a class of the design hierarchy states of its instances, as a constant
 // of class `id`, and its address as a value of `block`: its timescale, how what
-// an instance starts is run, then the bodies its export names reach.
+// an instance starts is run, what a dump records it as, then the bodies its
+// export names reach.
 //
-//   {unit, precision, execution, exports, n}
+//   {unit, precision, execution, dumped_as, exports, n}
 auto ScopeInfoAddress(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ClassId id,
     mir::Class& cls, std::span<const mir::NamedCallable> exports)
@@ -234,12 +236,81 @@ auto ScopeInfoAddress(
           mir::MachineIntWidth::k8, mir::Signedness::kSigned),
       MachineInt(
           unit, info, static_cast<std::uint8_t>(cls.execution),
+          mir::MachineIntWidth::k8, mir::Signedness::kUnsigned),
+      MachineInt(
+          unit, info, static_cast<std::uint8_t>(cls.dumped_as),
           mir::MachineIntWidth::k8, mir::Signedness::kUnsigned)};
   AppendNamedBodyTable(
       parts, unit, info, id, cls, Kind::kScopeCallable, exports);
   build.value = Record(unit, info, Kind::kScopeInfo, std::move(parts));
   return ConstantAddress(unit, block, id, cls, type, std::move(build));
 }
+
+}  // namespace
+
+//   {"count", 7, 0, 8, kReg, 1, 1, kInput, 2}
+auto DumpEntryAddress(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ClassId id,
+    mir::Class& cls, const hir::DumpedDeclaration& declaration) -> mir::ExprId {
+  using Kind = mir::RuntimeLibraryKind;
+  mir::ValueBuild build;
+  mir::Block& entry = build.body;
+  const hir::DumpedDeclaration::Range range = declaration.range.value_or(
+      hir::DumpedDeclaration::Range{.left = 0, .right = 0});
+  const hir::DumpedDeclaration::Port port = declaration.port.value_or(
+      hir::DumpedDeclaration::Port{
+          .direction = support::DumpPortDirection::kInput, .position = 0});
+  build.value = Record(
+      unit, entry, Kind::kDumpEntry,
+      {Name(unit, entry, declaration.identifier),
+       MachineInt(
+           unit, entry, range.left, mir::MachineIntWidth::k64,
+           mir::Signedness::kSigned),
+       MachineInt(
+           unit, entry, range.right, mir::MachineIntWidth::k64,
+           mir::Signedness::kSigned),
+       MachineInt(
+           unit, entry, declaration.width, mir::MachineIntWidth::k32,
+           mir::Signedness::kUnsigned),
+       MachineInt(
+           unit, entry, static_cast<std::uint8_t>(declaration.kind),
+           mir::MachineIntWidth::k8, mir::Signedness::kUnsigned),
+       MachineInt(
+           unit, entry, declaration.range.has_value() ? 1 : 0,
+           mir::MachineIntWidth::k8, mir::Signedness::kUnsigned),
+       MachineInt(
+           unit, entry, declaration.port.has_value() ? 1 : 0,
+           mir::MachineIntWidth::k8, mir::Signedness::kUnsigned),
+       MachineInt(
+           unit, entry, static_cast<std::uint8_t>(port.direction),
+           mir::MachineIntWidth::k8, mir::Signedness::kUnsigned),
+       MachineInt(
+           unit, entry, port.position, mir::MachineIntWidth::k32,
+           mir::Signedness::kUnsigned)});
+  return ConstantAddress(
+      unit, block, id, cls, LibraryType(unit, Kind::kDumpEntry),
+      std::move(build));
+}
+
+//   {"blk", kBegin}
+auto DumpBlockAddress(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ClassId id,
+    mir::Class& cls, const hir::DumpedBlock& dumped) -> mir::ExprId {
+  using Kind = mir::RuntimeLibraryKind;
+  mir::ValueBuild build;
+  mir::Block& entry = build.body;
+  build.value = Record(
+      unit, entry, Kind::kDumpBlock,
+      {Name(unit, entry, dumped.identifier),
+       MachineInt(
+           unit, entry, static_cast<std::uint8_t>(dumped.kind),
+           mir::MachineIntWidth::k8, mir::Signedness::kUnsigned)});
+  return ConstantAddress(
+      unit, block, id, cls, LibraryType(unit, Kind::kDumpBlock),
+      std::move(build));
+}
+
+namespace {
 
 // States the definition of `cls`: the class it extends, and what it states of
 // its instances, which `instances` writes into the block it is handed.

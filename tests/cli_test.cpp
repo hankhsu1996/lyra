@@ -1579,6 +1579,135 @@ TEST(LyraRun, AnErrorInTimeZeroInitializationIsReported) {
       << "stdout: " << run.stdout_text;
 }
 
+// A built program is dumped as the run's own options ask, with no build
+// between: a file, the part of the design under a path, stretches of time,
+// and nothing at all. The design's own `$dumpvars` in time step 0 takes the
+// dump over, choosing what it records and writing to its own `$dumpfile`, and
+// `force` hands it back to the options.
+TEST(LyraRun, TheRunsOptionsChooseWhatIsDumped) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const std::filesystem::path dir = *tmp_or;
+
+  const auto quiet = dir / "quiet.sv";
+  std::ofstream(quiet) << "module Test;\n"
+                       << "  logic [3:0] a = 4'h1;\n"
+                       << "  logic [3:0] b = 4'h2;\n"
+                       << "  initial begin\n"
+                       << "    #10 a = 4'h3;\n"
+                       << "    #10 a = 4'h4;\n"
+                       << "    #10 a = 4'h5;\n"
+                       << "  end\n"
+                       << "endmodule\n";
+  const auto owning = dir / "owning.sv";
+  std::ofstream(owning) << "module Test;\n"
+                        << "  logic [3:0] a = 4'h1;\n"
+                        << "  logic [3:0] b = 4'h2;\n"
+                        << "  logic [3:0] c = 4'h4;\n"
+                        << "  logic [3:0] d = 4'h8;\n"
+                        << "  initial begin\n"
+                        << "    $dumpfile(\"" << (dir / "own.txt").string()
+                        << "\");\n"
+                        << "    $dumpvars(0, a);\n"
+                        << "    #10 a = 4'h3;\n"
+                        << "  end\n"
+                        << "endmodule\n";
+
+  const auto run = [&](const std::filesystem::path& source,
+                       const std::vector<std::string>& options) {
+    std::vector<std::string> args = {
+        "run",
+        "--backend",
+        "llvm",
+        "--top",
+        "Test",
+        "--cache-dir",
+        (dir / "cache").string(),
+        source.string(),
+        "--"};
+    args.insert(args.end(), options.begin(), options.end());
+    return RunChildProcess(lyra, args, 120s);
+  };
+  const auto read = [](const std::filesystem::path& file) {
+    std::ifstream in(file);
+    return std::string(
+        std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+  };
+  const auto has = [](const std::string& text, std::string_view line) {
+    return text.find(line) != std::string::npos;
+  };
+
+  {
+    const auto file = dir / "whole.txt";
+    const auto ran = run(quiet, {"+lyra+dump=" + file.string()});
+    ASSERT_EQ(ran.termination, TerminationKind::kExitedNormally)
+        << ran.stdout_text << ran.stderr_text;
+    const std::string text = read(file);
+    EXPECT_TRUE(has(text, "0ns Test.a = 0001")) << text;
+    EXPECT_TRUE(has(text, "0ns Test.b = 0010")) << text;
+    EXPECT_TRUE(has(text, "30ns Test.a = 0101")) << text;
+  }
+  {
+    const auto file = dir / "scoped.txt";
+    const auto ran =
+        run(quiet, {"+lyra+dump=" + file.string(), "+lyra+dump+scope=Test.b"});
+    ASSERT_EQ(ran.termination, TerminationKind::kExitedNormally)
+        << ran.stdout_text << ran.stderr_text;
+    const std::string text = read(file);
+    EXPECT_TRUE(has(text, "0ns Test.b = 0010")) << text;
+    EXPECT_FALSE(has(text, "Test.a")) << text;
+  }
+  {
+    // Windows that overlap, nest and meet are one stretch: the dump is on
+    // from 5ns up to 25ns, and what changes at its end is not recorded.
+    const auto file = dir / "windowed.txt";
+    const auto ran =
+        run(quiet, {"+lyra+dump=" + file.string(), "+lyra+dump+window=5ns:15ns",
+                    "+lyra+dump+window=6ns:8ns", "+lyra+dump+window=12ns:18ns",
+                    "+lyra+dump+window=18ns:25ns"});
+    ASSERT_EQ(ran.termination, TerminationKind::kExitedNormally)
+        << ran.stdout_text << ran.stderr_text;
+    const std::string text = read(file);
+    EXPECT_TRUE(has(text, "5ns $dumpvars")) << text;
+    EXPECT_FALSE(has(text, "15ns $dumpoff")) << text;
+    EXPECT_TRUE(has(text, "10ns Test.a = 0011")) << text;
+    EXPECT_TRUE(has(text, "20ns Test.a = 0100")) << text;
+    EXPECT_TRUE(has(text, "25ns $dumpoff")) << text;
+    EXPECT_FALSE(has(text, "30ns Test.a")) << text;
+  }
+  {
+    const auto file = dir / "none.txt";
+    const auto ran =
+        run(quiet, {"+lyra+dump=" + file.string(), "+lyra+dump+none"});
+    ASSERT_EQ(ran.termination, TerminationKind::kExitedNormally)
+        << ran.stdout_text << ran.stderr_text;
+    EXPECT_FALSE(std::filesystem::exists(file));
+  }
+  {
+    const auto file = dir / "taken.txt";
+    const auto ran = run(owning, {"+lyra+dump=" + file.string()});
+    ASSERT_EQ(ran.termination, TerminationKind::kExitedNormally)
+        << ran.stdout_text << ran.stderr_text;
+    EXPECT_FALSE(std::filesystem::exists(file));
+    const std::string text = read(dir / "own.txt");
+    EXPECT_TRUE(has(text, "10ns Test.a = 0011")) << text;
+    EXPECT_FALSE(has(text, "Test.d")) << text;
+  }
+  {
+    std::filesystem::remove(dir / "own.txt");
+    const auto file = dir / "forced.txt";
+    const auto ran =
+        run(owning, {"+lyra+dump=" + file.string(), "+lyra+dump+force"});
+    ASSERT_EQ(ran.termination, TerminationKind::kExitedNormally)
+        << ran.stdout_text << ran.stderr_text;
+    EXPECT_FALSE(std::filesystem::exists(dir / "own.txt"));
+    const std::string text = read(file);
+    EXPECT_TRUE(has(text, "10ns Test.a = 0011")) << text;
+  }
+}
+
 // `$printtimescale` with no argument names the design element it is called in
 // by the name that element was declared under (LRM 20.4.2, whose example
 // prints `a_dat` for module `a_dat`). Two instances whose parameters make them

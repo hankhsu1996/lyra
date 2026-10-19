@@ -99,6 +99,8 @@ auto LayoutOfLibraryObject(RuntimeLibraryKind kind) -> support::Layout {
     case RuntimeLibraryKind::kConstructionTable:
     case RuntimeLibraryKind::kInstantiation:
     case RuntimeLibraryKind::kTimer:
+    case RuntimeLibraryKind::kDumpEntry:
+    case RuntimeLibraryKind::kDumpBlock:
       return kAddress;
   }
   throw InternalError("mir: unknown runtime library kind");

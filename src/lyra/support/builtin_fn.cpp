@@ -921,6 +921,106 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {.name = "file_flush", .declaration = Method{"Flush"}};
     case BuiltinFn::kFileFlushAll:
       return {.name = "file_flush_all", .declaration = Method{"FlushAll"}};
+    case BuiltinFn::kDumpFile:
+      return {
+          .name = "dump_file",
+          .declaration = RuntimeFunction("DumpFile"),
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kDumpVars:
+      return {
+          .name = "dump_vars",
+          .declaration = RuntimeFunction("DumpVars"),
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kDumpVarsLevels:
+      return {
+          .name = "dump_vars_levels",
+          .declaration = RuntimeFunction("DumpVarsLevels"),
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kDumpVarsOf:
+      return {
+          .name = "dump_vars_of",
+          .declaration = RuntimeFunction("DumpVarsOf"),
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kDumpVarsOfVariable:
+      return {
+          .name = "dump_vars_of_variable",
+          .declaration = RuntimeFunction("DumpVarsOfVariable"),
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kDumpOff:
+      return {
+          .name = "dump_off",
+          .declaration = RuntimeFunction("DumpOff"),
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kDumpOn:
+      return {
+          .name = "dump_on",
+          .declaration = RuntimeFunction("DumpOn"),
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kDumpAll:
+      return {
+          .name = "dump_all",
+          .declaration = RuntimeFunction("DumpAll"),
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kDumpLimit:
+      return {
+          .name = "dump_limit",
+          .declaration = RuntimeFunction("DumpLimit"),
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kDumpFlush:
+      return {
+          .name = "dump_flush",
+          .declaration = RuntimeFunction("DumpFlush"),
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kDumpPortsOf:
+      return {
+          .name = "dump_ports_of",
+          .declaration = RuntimeFunction("DumpPortsOf"),
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kDumpPortsOff:
+      return {
+          .name = "dump_ports_off",
+          .declaration = RuntimeFunction("DumpPortsOff"),
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kDumpPortsOn:
+      return {
+          .name = "dump_ports_on",
+          .declaration = RuntimeFunction("DumpPortsOn"),
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kDumpPortsAll:
+      return {
+          .name = "dump_ports_all",
+          .declaration = RuntimeFunction("DumpPortsAll"),
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kDumpPortsLimit:
+      return {
+          .name = "dump_ports_limit",
+          .declaration = RuntimeFunction("DumpPortsLimit"),
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kDumpPortsFlush:
+      return {
+          .name = "dump_ports_flush",
+          .declaration = RuntimeFunction("DumpPortsFlush"),
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kDescribe:
+      return {
+          .name = "describe",
+          .declaration = RuntimeFunction("DescribeTo"),
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kDescribeEvent:
+      return {
+          .name = "describe_event",
+          .declaration = RuntimeFunction("DescribeTo"),
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kBeginDescribedBlock:
+      return {
+          .name = "begin_described_block",
+          .declaration = RuntimeFunction("BeginDescribedBlock"),
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kEndDescribedBlock:
+      return {
+          .name = "end_described_block",
+          .declaration = RuntimeFunction("EndDescribedBlock"),
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kTestPlusargs:
       return {
           .name = "test_plusargs",

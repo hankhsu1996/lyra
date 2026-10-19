@@ -600,6 +600,42 @@ enum class BuiltinFn : std::uint16_t {
   kFileError,
   kFileFlush,
   kFileFlushAll,
+  // LRM 21.7 value dumps. Free functions on `lyra::runtime` that take the
+  // runtime handle and act on the run's one dump: naming its file, selecting
+  // what it records -- the whole design, an instance and the levels below it,
+  // or one variable, as the instance declaring it and the member it is there
+  // -- and switching it off, on, checkpointing, bounding and flushing it. Each
+  // form `$dumpvars` takes is its own entry, so which a call means is settled
+  // here rather than by counting its arguments.
+  kDumpFile,
+  kDumpVars,
+  kDumpVarsLevels,
+  kDumpVarsOf,
+  kDumpVarsOfVariable,
+  kDumpOff,
+  kDumpOn,
+  kDumpAll,
+  kDumpLimit,
+  kDumpFlush,
+  // LRM 21.7.3 extended dumps of ports, each acting on the file it names, or
+  // on every file where the name is empty: an instance's ports going to a
+  // file, and each file switched off, on, checkpointed, bounded and flushed.
+  kDumpPortsOf,
+  kDumpPortsOff,
+  kDumpPortsOn,
+  kDumpPortsAll,
+  kDumpPortsLimit,
+  kDumpPortsFlush,
+  // LRM 21.7.1.2: what an instance describes of itself to a dump starting, in
+  // the order listed: one member -- a variable, a net, a port -- with the
+  // constant stating its declaration, a named event, and the opening and the
+  // closing of a named block, task or function the instance declares, around
+  // its static variables. Each reaches the describer the starting dump
+  // installed through the runtime handle.
+  kDescribe,
+  kDescribeEvent,
+  kBeginDescribedBlock,
+  kEndDescribedBlock,
   // LRM 21.6 command-line plusargs. Free functions on `lyra::runtime` that
   // take the runtime handle plus SV `string` operands; the value form also
   // takes the destination's value and completes with it beside the answer. A

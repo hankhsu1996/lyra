@@ -82,6 +82,10 @@ void Scope::CreateProcesses() {
   sv_create_processes();
 }
 
+void Scope::Describe() {
+  sv_describe();
+}
+
 void Scope::sv_resolve() {
 }
 
@@ -89,6 +93,9 @@ void Scope::sv_initialize() {
 }
 
 void Scope::sv_create_processes() {
+}
+
+void Scope::sv_describe() {
 }
 
 auto Scope::IsOfClass(const ObjectDefinition* cls) const -> bool {

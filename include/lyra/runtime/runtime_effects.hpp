@@ -33,6 +33,7 @@ class EvaluationAttempts;
 class Observable;
 class RuntimeProcess;
 class Timer;
+class ValueDumps;
 
 // The runtime capability surface reachable from generated code. Every side
 // effect an emitted body performs -- I/O, scheduler verbs, time queries,
@@ -49,6 +50,8 @@ class RuntimeEffects {
   auto Diagnostic() -> DiagnosticDispatcher&;
   auto Files() -> FileTable&;
   auto PlusArgs() -> PlusArgsSource&;
+  // LRM 21.7: the run's value dump, which the design's `$dump*` tasks act on.
+  auto Dumps() -> ValueDumps&;
 
   // LRM 16.3: record one evaluation of an immediate cover statement, and
   // whether that evaluation succeeded. `site` is the statement's own source

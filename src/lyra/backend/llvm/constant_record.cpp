@@ -16,6 +16,7 @@
 #include "lyra/runtime/class_definition.hpp"
 #include "lyra/runtime/construction_table.hpp"
 #include "lyra/runtime/scope_info.hpp"
+#include "lyra/runtime/value_dump.hpp"
 #include "lyra/value/value_type.hpp"
 
 namespace lyra::backend::llvm_backend {
@@ -87,9 +88,11 @@ void AppendRecord(
 void AppendRecord(
     std::vector<FieldLayout>& out, std::uint64_t at,
     const runtime::ScopeMetadata& record) {
-  const auto& [time_unit_power, time_precision_power, execution] = record;
+  const auto& [time_unit_power, time_precision_power, execution, dumped_as] =
+      record;
   AppendFieldsOf(
-      out, at, record, time_unit_power, time_precision_power, execution);
+      out, at, record, time_unit_power, time_precision_power, execution,
+      dumped_as);
 }
 
 void AppendRecord(
@@ -118,6 +121,23 @@ void AppendRecord(
     const runtime::Instantiation& record) {
   const auto& [entry, table] = record;
   AppendFieldsOf(out, at, record, entry, table);
+}
+
+void AppendRecord(
+    std::vector<FieldLayout>& out, std::uint64_t at,
+    const runtime::DumpEntry& record) {
+  const auto& [identifier, left, right, width, kind, has_range, has_port, port_direction, port_position] =
+      record;
+  AppendFieldsOf(
+      out, at, record, identifier, left, right, width, kind, has_range,
+      has_port, port_direction, port_position);
+}
+
+void AppendRecord(
+    std::vector<FieldLayout>& out, std::uint64_t at,
+    const runtime::DumpBlock& record) {
+  const auto& [identifier, kind] = record;
+  AppendFieldsOf(out, at, record, identifier, kind);
 }
 
 void AppendRecord(
@@ -167,6 +187,10 @@ auto LayoutOfLibraryRecord(lir::RuntimeLibraryKind kind)
       return LayoutOf<runtime::ConstructionTable>();
     case lir::RuntimeLibraryKind::kInstantiation:
       return LayoutOf<runtime::Instantiation>();
+    case lir::RuntimeLibraryKind::kDumpEntry:
+      return LayoutOf<runtime::DumpEntry>();
+    case lir::RuntimeLibraryKind::kDumpBlock:
+      return LayoutOf<runtime::DumpBlock>();
     case lir::RuntimeLibraryKind::kEnumeration:
     case lir::RuntimeLibraryKind::kPrintItem:
     case lir::RuntimeLibraryKind::kPrintLiteralItem:

@@ -148,16 +148,23 @@ class Scope : public GcObject {
   void Initialize();
   void CreateProcesses();
 
+  // Describes what this instance declares that a value dump may record (LRM
+  // 21.7.1.2), in the order it declares them, to the describer the running
+  // dump installed. Asked once a dump starts, after every route is bound, so a
+  // port is described as the storage it is connected to.
+  void Describe();
+
   void ForEachChild(const ChildVisitor& fn);
 
  private:
-  // What a class extending this one does in each phase, which the entries
-  // above call. The class a generated scope is of overrides all three; here
-  // each does nothing. They are declared in the order the phases run, which is
-  // the order they take in this class's table.
+  // What a class extending this one does in each phase, and what it describes
+  // to a dump, which the entries above call. The class a generated scope is of
+  // overrides all four; here each does nothing. The phases are declared in the
+  // order they run, and the order is the one they take in this class's table.
   virtual void sv_resolve();
   virtual void sv_initialize();
   virtual void sv_create_processes();
+  virtual void sv_describe();
 
   Scope* parent_ = nullptr;
   HierarchySegment segment_;

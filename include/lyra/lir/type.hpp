@@ -80,6 +80,11 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // a table's address to the library and never reads inside it.
   kConstructionTable,
   kInstantiation,
+  // What a class states of each thing a value dump may record and of each
+  // named block, task or function around them, which only a constant names
+  // and a body forwards the address of.
+  kDumpEntry,
+  kDumpBlock,
 };
 
 // An integral value's type: how many bits it has, whether they are read as
