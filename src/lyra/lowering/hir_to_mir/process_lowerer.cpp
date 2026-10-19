@@ -544,11 +544,23 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   if (!recording_code) {
     return std::unexpected(std::move(recording_code.error()));
   }
-  const mir::CallableId recording = owner_->Unit().callables.Add(
-      mir::CallableDecl{
-          .code = *std::move(recording_code),
-          .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt});
+  // It is declared beside the form that enters it -- a member of the class
+  // that declares the function, or of the unit where none does -- so it is
+  // entered on the same object.
+  mir::CallableDecl recording_decl{
+      .code = *std::move(recording_code),
+      .foreign = std::nullopt,
+      .virtual_dispatch = std::nullopt};
+  mir::DirectTarget recording;
+  if (mir::Class* declaring = owner_ctor_frame_.current_class;
+      declaring != nullptr) {
+    recording = mir::CallableTarget{
+        .owner = owner_ctor_frame_.current_class_id,
+        .slot = declaring->callables.Add(std::move(recording_decl))};
+  } else {
+    recording = mir::UnitCallableTarget{
+        .slot = owner_->Unit().callables.Add(std::move(recording_decl))};
+  }
 
   return LowerSubroutine(
       src,
@@ -683,20 +695,26 @@ auto ProcessLowerer::BuildRecordingPrologue(
 void ProcessLowerer::ForwardToRecording(
     const WalkFrame& frame, const mir::CallableCode& code,
     std::span<const mir::LocalId> params, mir::LocalId report,
-    mir::CallableId recording) {
+    mir::DirectTarget recording) {
   const mir::CompilationUnit& unit = owner_->Unit();
   mir::Block& block = *frame.current_block;
   mir::Block forwarding;
+  // The recording form is entered on the object this one was, and handed
+  // every other parameter as it was handed them.
+  mir::Direct callee{.target = recording};
   std::vector<mir::ExprId> arguments;
   arguments.reserve(params.size());
   for (const mir::LocalId param : params) {
-    arguments.push_back(
-        forwarding.ReadLocal(param, code.locals.Get(param).type));
+    const mir::ExprId value =
+        forwarding.ReadLocal(param, code.locals.Get(param).type);
+    if (param == code.receiver) {
+      callee.receiver = BuildObjectDeref(unit, forwarding, value);
+      continue;
+    }
+    arguments.push_back(value);
   }
   const mir::ExprId call = forwarding.exprs.Add(
-      mir::MakeCallExpr(
-          mir::Direct{.target = mir::UnitCallableTarget{.slot = recording}},
-          std::move(arguments), result_type_));
+      mir::MakeCallExpr(std::move(callee), std::move(arguments), result_type_));
   if (result_type_ == unit.builtins.void_type) {
     forwarding.AppendStmt(mir::ExprStmt{.expr = call});
     forwarding.AppendStmt(mir::ReturnStmt{.value = std::nullopt});

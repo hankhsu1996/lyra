@@ -410,7 +410,7 @@ class ProcessLowerer {
   void ForwardToRecording(
       const WalkFrame& frame, const mir::CallableCode& code,
       std::span<const mir::LocalId> params, mir::LocalId report,
-      mir::CallableId recording);
+      mir::DirectTarget recording);
 
   // States the cells of `reads` into `report`. Where they cannot be stated,
   // the design fails here, at the wait that asked.
