@@ -229,16 +229,18 @@ under each item, and the conformance gaps at the end.
       of the instance a virtual interface holds, and what a function it calls reads in turn -- a
       method, a static method, a package function, an interface's function and one reached by a
       hierarchical name alike, virtual or not. Before this, a function reading a module variable
-      left the wait unwoken on both backends, and a method call was refused. A handle the function
-      tests for null before reading through is not followed while it is null. An object reached only
-      through a variable of the function's own -- walking a list, recursing -- is covered by any
-      object's property being written, which the clause permits.
-  - [ ] A function reaching a variable of an interface instance through a virtual interface its own
-        variables hold, or lending a `ref` to what its own variables hold, cannot say what a call of
-        it reads, and a wait calling it fails the simulation saying so; the function itself compiles
-        and runs as before.
-  - [ ] A constructor called inside such a function: what the constructor's own body reads is not
-        followed.
+      left the wait unwoken on both backends, and a method call was refused. What a function reads
+      is what the evaluation the wait makes read while running it, so an object or a virtual
+      interface it reaches only through a variable of its own -- walking a list, recursing, an array
+      method's `with` clause -- is followed exactly, and a handle it tests for null is not followed
+      while it is null. A variable handed by `ref` to a function that reads it, what a constructor
+      the function runs reads (its body, its properties' initializers, its base's arguments, written
+      in `super.new` or on the extends specifier), and what a context DPI import reads through the
+      exports it calls (LRM 35.5.3) are followed too; before this each left the wait unwoken.
+      Finding out what a function reads is the evaluation itself, so a `$urandom` or `$random(seed)`
+      inside one draws once per evaluation, where it drew twice. A system function answering from a
+      dynamically sized value's current extent -- `$bits`, `$size`, `$high` -- reads that value, in
+      a wait, `@*` and `always_comb` alike (LRM 20.6.2, 20.7); before this none of them ever woke.
 - [x] A wait's expression and its `iff` qualifier are evaluated by the waiting process (LRM 4.5):
       once where the wait begins and once per change that reaches it, and a call in them runs as
       that process -- `process::self()` there answers the waiter. What that evaluation writes is no

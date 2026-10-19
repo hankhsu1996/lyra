@@ -15,17 +15,84 @@
 // Which object a method reads is the one the call is made on when the wait
 // looks, so writing the handle moves the wait to the new object, and a write
 // to the object it named before no longer reaches it. A function that reaches
-// an object only through a variable of its own still wakes the wait when that
-// object changes, and a handle it guards against null is not followed while
-// it is null. A static variable the function declares exists before any call
-// runs, so another call changing it is a change the wait sees.
+// an object or a virtual interface only through a variable of its own still
+// wakes the wait when what it read there changes, and so does an array
+// method's `with` clause it hands each element to; a handle it guards against
+// null is not followed while it is null. A static variable the function
+// declares exists before any call runs, so another call changing it is a
+// change the wait sees.
+//
+// Every call in the function is followed the same way. A variable handed by
+// `ref` to a function that reads it is read (LRM 13.5.2). An object the
+// function constructs reads, in its constructor, in its properties'
+// initializers, in what an extends specifier hands its base and in its base's
+// constructor, what any function would. A
+// system function that answers from the current size of a dynamically sized
+// value reads that value, written in the waited expression or in the function
+// alike (LRM 20.6.2, 20.7). Learning what the function reads is the evaluation
+// the wait makes anyway, so a system function with an effect inside it -- one
+// that draws from a seed -- and a function a constructor calls run once per
+// evaluation and no more.
 package counters;
   int count = 0;
+  int built_from = 0;
+  int initialized_from = 0;
+  int base_built_from = 0;
+  int clause_from = 0;
+  int counted_calls = 0;
 
   function automatic int current();
     return count;
   endfunction
+
+  function automatic int counted();
+    counted_calls++;
+    return count;
+  endfunction
 endpackage
+
+class CallsInItsConstructor;
+  int got;
+
+  function new();
+    got = counters::counted();
+    got = got + 0;
+  endfunction
+endclass
+
+class Built;
+  int from_body;
+  int from_initializer = counters::initialized_from;
+
+  function new();
+    from_body = counters::built_from;
+  endfunction
+endclass
+
+class BuiltOnBase;
+  int from_base;
+
+  function new();
+    from_base = counters::base_built_from;
+  endfunction
+endclass
+
+class Derived extends BuiltOnBase;
+  function new();
+    super.new();
+  endfunction
+endclass
+
+class TakesOne;
+  int got;
+
+  function new(int x);
+    got = x;
+  endfunction
+endclass
+
+class HandedOnTheClause extends TakesOne(counters::clause_from);
+endclass
 
 interface Bus;
   int d;
@@ -123,6 +190,74 @@ module Top;
   time hierarchical_woke = 0;
   time virtual_woke = 0;
   time own_static_woke = 0;
+  time by_ref_woke = 0;
+  time constructor_body_woke = 0;
+  time initializer_woke = 0;
+  time base_constructor_woke = 0;
+  time size_woke = 0;
+  time size_in_function_woke = 0;
+  time bits_woke = 0;
+  time high_in_function_woke = 0;
+  time drawing_woke = 0;
+  time interface_local_woke = 0;
+  time with_clause_woke = 0;
+  time base_clause_woke = 0;
+
+  Node bag[$];
+
+  int by_ref_target = 0;
+  int sized[];
+  byte stream[$];
+  int seed = 3;
+
+  function automatic int read_through_ref(ref int r);
+    return r;
+  endfunction
+
+  function automatic int passes_by_ref();
+    return read_through_ref(by_ref_target);
+  endfunction
+
+  function automatic int built_body();
+    Built b = new;
+    return b.from_body;
+  endfunction
+
+  function automatic int built_initializer();
+    Built b = new;
+    return b.from_initializer;
+  endfunction
+
+  function automatic int built_base();
+    Derived d = new;
+    return d.from_base;
+  endfunction
+
+  function automatic int built_on_clause();
+    HandedOnTheClause h = new;
+    return h.got;
+  endfunction
+
+  function int size_of_sized();
+    return $size(sized);
+  endfunction
+
+  function int high_of_stream();
+    return $high(stream);
+  endfunction
+
+  function int plus_g(int x);
+    return x - x + g;
+  endfunction
+
+  function int draws();
+    return plus_g($random(seed));
+  endfunction
+
+  function automatic int built_calling();
+    CallsInItsConstructor c = new;
+    return c.got;
+  endfunction
 
   function int reads_g();
     return g;
@@ -148,6 +283,15 @@ module Top;
     return vb.d;
   endfunction
 
+  function automatic int reads_interface_held_locally();
+    virtual Bus held = vb;
+    return held.d;
+  endfunction
+
+  function int bag_total();
+    return bag.sum() with (item.status);
+  endfunction
+
   function int reads_through_another();
     return reads_static_property();
   endfunction
@@ -171,7 +315,7 @@ module Top;
   endfunction
 
   function automatic int tally(bit bump);
-    static int count = 0;
+    static int count;
     if (bump) count = count + 1;
     return count;
   endfunction
@@ -191,7 +335,11 @@ module Top;
     level = new;
     vb = bus;
     begin
-      Doubled d = new;
+      automatic Node first = new;
+      automatic Node second = new;
+      automatic Doubled d = new;
+      bag.push_back(first);
+      bag.push_back(second);
       dispatched = d;
     end
     fork
@@ -203,6 +351,9 @@ module Top;
       begin @(Node::read_shared()); static_method_woke = $time; end
       begin @(reads_global_handle()); global_handle_woke = $time; end
       begin @(reads_interface()); interface_woke = $time; end
+      begin @(reads_interface_held_locally()); interface_local_woke = $time; end
+      begin @(bag_total()); with_clause_woke = $time; end
+      begin @(built_on_clause()); base_clause_woke = $time; end
       begin @(reads_through_another()); transitive_woke = $time; end
       begin @(counters::current()); package_woke = $time; end
       begin @(p.get()); method_woke = $time; end
@@ -218,6 +369,14 @@ module Top;
       begin @(holder_inst.read_held()); hierarchical_woke = $time; end
       begin @(dispatched.read_level()); virtual_woke = $time; end
       begin @(tally(0)); own_static_woke = $time; end
+      begin @(passes_by_ref()); by_ref_woke = $time; end
+      begin @(built_body()); constructor_body_woke = $time; end
+      begin @(built_initializer()); initializer_woke = $time; end
+      begin @(built_base()); base_constructor_woke = $time; end
+      begin @($size(sized)); size_woke = $time; end
+      begin @(size_of_sized()); size_in_function_woke = $time; end
+      begin wait ($bits(stream) > 8); bits_woke = $time; end
+      begin @(high_of_stream()); high_in_function_woke = $time; end
     join_none
     #5 g = 1;
     #5 arr[2] = 3;
@@ -248,6 +407,20 @@ module Top;
     #5 holder_inst.held = 1;
     #5 dispatched.level = 1;
     #5 void'(tally(1));
+    #5 by_ref_target = 1;
+    #5 counters::built_from = 1;
+    #5 counters::initialized_from = 1;
+    #5 counters::base_built_from = 1;
+    #5 sized = new[2];
+    #5 stream.push_back(8'd1);
+    #5 stream.push_back(8'd2);
+    #5 fork
+      begin @(draws()); drawing_woke = $time; end
+      begin @(built_calling()); end
+    join_none
+    #5 g = 2;
+    #5 bag[1].status = 4;
+    #5 counters::clause_from = 1;
   end
 
   final begin
@@ -260,6 +433,9 @@ module Top;
     if (transitive_woke !== 15) $fatal(1, "a function calling another ended the wait at %0t, expected 15", transitive_woke);
     if (global_handle_woke !== 20) $fatal(1, "a function reading through a module handle ended the wait at %0t, expected 20", global_handle_woke);
     if (interface_woke !== 25) $fatal(1, "a function reading through a virtual interface ended the wait at %0t, expected 25", interface_woke);
+    if (interface_local_woke !== 25) $fatal(1, "a function reading through a virtual interface it holds itself ended the wait at %0t, expected 25", interface_local_woke);
+    if (base_clause_woke !== 155) $fatal(1, "what an extends specifier hands the base ended the wait at %0t, expected 155", base_clause_woke);
+    if (with_clause_woke !== 150) $fatal(1, "a function's array method reading through each element ended the wait at %0t, expected 150", with_clause_woke);
     if (package_woke !== 30) $fatal(1, "a package function ended the wait at %0t, expected 30", package_woke);
     if (method_woke !== 35) $fatal(1, "a method ended the wait at %0t, expected 35", method_woke);
     if (method_chain_woke !== 45) $fatal(1, "a method reading through a member handle ended the wait at %0t, expected 45", method_chain_woke);
@@ -274,6 +450,25 @@ module Top;
     if (hierarchical_woke !== 90) $fatal(1, "a function called by a hierarchical name ended the wait at %0t, expected 90", hierarchical_woke);
     if (virtual_woke !== 95) $fatal(1, "a virtual method ended the wait at %0t, expected 95", virtual_woke);
     if (own_static_woke !== 100) $fatal(1, "a function's own static variable ended the wait at %0t, expected 100", own_static_woke);
+    if (by_ref_woke !== 105) $fatal(1, "a variable handed by 'ref' ended the wait at %0t, expected 105", by_ref_woke);
+    if (constructor_body_woke !== 110) $fatal(1, "what a constructor reads ended the wait at %0t, expected 110", constructor_body_woke);
+    if (initializer_woke !== 115) $fatal(1, "what a property's initializer reads ended the wait at %0t, expected 115", initializer_woke);
+    if (base_constructor_woke !== 120) $fatal(1, "what a base's constructor reads ended the wait at %0t, expected 120", base_constructor_woke);
+    if (size_woke !== 125) $fatal(1, "the size of a dynamic array ended the wait at %0t, expected 125", size_woke);
+    if (size_in_function_woke !== 125) $fatal(1, "the size of a dynamic array a function reads ended the wait at %0t, expected 125", size_in_function_woke);
+    if (high_in_function_woke !== 130) $fatal(1, "the top index of a queue a function reads ended the wait at %0t, expected 130", high_in_function_woke);
+    if (bits_woke !== 135) $fatal(1, "a level wait on the bits a queue holds ended at %0t, expected 135", bits_woke);
+    if (drawing_woke !== 145) $fatal(1, "a function drawing from a seed ended the wait at %0t, expected 145", drawing_woke);
+    begin
+      automatic int reference = 3;
+      automatic int drawn;
+      drawn = $random(reference);
+      drawn = $random(reference);
+      if (seed !== reference) $fatal(1, "a wait and one change drew from the seed more than twice");
+    end
+    if (counters::counted_calls !== 1)
+      $fatal(1, "a function a constructor calls ran %0d times in one evaluation, expected 1",
+             counters::counted_calls);
     $display("All checks passed");
   end
 endmodule

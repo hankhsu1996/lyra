@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -17,6 +18,7 @@
 
 namespace lyra::lowering::hir_to_mir {
 
+class ClosureBuilder;
 class ProcessLowerer;
 class UnitLowerer;
 
@@ -46,10 +48,9 @@ template <typename Lowerer>
 
 // What an evaluation reaches through `object` -- a class handle, or the running
 // method's own object -- to be read through: the same value, stated as reached
-// in the report the evaluation states the places it reaches in, where it has
-// one (LRM 9.4.2). One event source covers every property of an object, so the
-// object is what is stated. Stating it names the value a second time, so it is
-// evaluated once first.
+// in the report the evaluation states the places it reaches in, where it is
+// handed one (LRM 9.4.2). One event source covers every property of an object,
+// so the object is what is stated.
 [[nodiscard]] auto ReportedObject(
     mir::CompilationUnit& unit, const WalkFrame& frame, mir::ExprId object)
     -> mir::ExprId;
@@ -57,22 +58,43 @@ template <typename Lowerer>
 // The same for `place`, a pointer to a variable an evaluation reaches through a
 // virtual interface (LRM 25.9).
 [[nodiscard]] auto ReportedPlace(
-    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::ExprId place)
+    mir::CompilationUnit& unit, const WalkFrame& frame, mir::ExprId place)
     -> mir::ExprId;
 
-// States each of `cells` as reached in the report `report` holds a pointer to,
+// Whether the local `report` holds a report at all, as a machine boolean added
+// to `block`'s expressions: a body is handed one by an evaluation that states
+// what it reaches, and null by any other call.
+[[nodiscard]] auto BuildReportHanded(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId report)
+    -> mir::ExprId;
+
+// The report a call or a construction made in the block `frame` is writing
+// hands on, as an argument added to that block: the one the evaluation being
+// lowered states what it reaches in, and null where there is none.
+[[nodiscard]] auto BuildReportHandedOn(
+    const mir::CompilationUnit& unit, const WalkFrame& frame) -> mir::ExprId;
+
+// The frame `closure`'s body is lowered in, where the closure runs within an
+// evaluation that states what it reaches in the report the local `report` of
+// the body `outer` is writing holds -- the evaluation's own closure, or an
+// array method's `with` clause the evaluation calls -- and so states what it
+// reaches there too: the closure captures the pointer, and its body reports
+// through its own copy. With no report, the closure's own frame.
+[[nodiscard]] auto ClosureFrameReportingTo(
+    UnitLowerer& unit_lowerer, const WalkFrame& outer, ClosureBuilder& closure,
+    std::optional<mir::LocalId> report) -> WalkFrame;
+
+// States each of `cells` as read in the report `report` holds a pointer to,
 // appending to the block `frame` is writing.
 template <typename Lowerer>
 auto ReportCells(
     Lowerer& lowerer, const WalkFrame& frame, mir::LocalId report,
     std::span<const hir::SensitivityEntry> cells) -> diag::Result<void>;
 
-// Records in the report `report` holds a pointer to everything `reads` names,
-// appending to the block `frame` is writing: each cell and the bits read of
-// it, each object a chain passes through and each interface variable a virtual
-// interface holds -- where the handle names something -- every object where a
-// read follows no chain, and each cell and the bits written of it. Each call is
-// made so it reports into the same report.
+// States into the report `report` holds a pointer to what an implicit list
+// takes of `reads` (LRM 9.2.2.2.1), appending to the block `frame` is writing:
+// each cell and the bits read of it, each cell and the bits written of it, and
+// each call, made so it states its own into the same report without running.
 template <typename Lowerer>
 auto ReportReads(
     Lowerer& lowerer, const WalkFrame& frame, const hir::Reads& reads,

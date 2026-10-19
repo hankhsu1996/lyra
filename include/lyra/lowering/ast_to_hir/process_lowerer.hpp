@@ -155,8 +155,8 @@ class ProcessLowerer {
   // `always_comb` or `always_latch` waits on, stated in `frame`, the frame its
   // body lowered in.
   auto KindOf(
-      const slang::ast::ProceduralBlockSymbol& proc, const WalkFrame& frame,
-      diag::SourceSpan span) -> diag::Result<hir::ProcessKind>;
+      const slang::ast::ProceduralBlockSymbol& proc, const WalkFrame& frame)
+      -> diag::Result<hir::ProcessKind>;
 
   UnitLowerer* owner_;
   const slang::ast::Symbol* containing_symbol_;

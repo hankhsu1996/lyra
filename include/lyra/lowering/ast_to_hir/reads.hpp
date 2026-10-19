@@ -1,19 +1,20 @@
 #pragma once
 
-// What an evaluation can read (LRM 9.4.2): the storage elaboration sealed that
-// a waited expression reads, and what a call of a function reports to a wait.
-// What a waited expression reaches beyond that is its own nodes, found by the
-// evaluation that reaches them, and needs nothing stated here.
+// The cells an evaluation reads that its text fixes (LRM 9.4.2, 9.2.2.2.1): the
+// storage elaboration sealed that a waited expression reads, and what a body
+// it runs reads and writes outside it. What any of them reaches through a
+// handle is the evaluation's to state as it reaches it, and needs nothing
+// stated here.
 
 #include <vector>
 
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/diag/source_span.hpp"
 #include "lyra/hir/timing.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace slang::ast {
+class ClassType;
 class Expression;
 class ProceduralBlockSymbol;
 class SubroutineSymbol;
@@ -27,24 +28,30 @@ auto CellsOfWaitedExpression(
     ProcessLowerer& proc, WalkFrame frame, const slang::ast::Expression& expr)
     -> diag::Result<std::vector<hir::SensitivityEntry>>;
 
-// What a call of `function` can read, stated so its own report can evaluate
-// it: over its formals, the object it runs on, and storage that exists before
-// its body runs. Its automatic variables hold nothing yet when it reports, so
-// what it reaches through one of them is covered by every object, and a call it
-// makes is handed its type's default for an argument that reads one. `frame` is
-// the frame the body lowered in, after it lowered.
+// The cells a call of `function` reads and writes, and the calls an implicit
+// list follows out of it. `frame` is the frame the body lowered in, after it
+// lowered.
 auto ReadsOfFunctionBody(
     ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::SubroutineSymbol& function, diag::SourceSpan span)
-    -> diag::Result<hir::Reads>;
+    const slang::ast::SubroutineSymbol& function) -> hir::Reads;
+
+// The cells constructing an object of `cls` reads (LRM 9.4.2): its property
+// initializers, the body of `constructor`, which is null for the implicit
+// `new` (LRM 8.7), and `base_clause`, the arguments an extends specifier hands
+// the base (LRM 8.17), null where the constructor's own body hands them or
+// none are handed; the base's construction states its own. `frame` is the
+// constructor body's frame.
+auto ReadsOfConstruction(
+    ProcessLowerer& proc, WalkFrame frame, const slang::ast::ClassType& cls,
+    const slang::ast::SubroutineSymbol* constructor,
+    const slang::ast::Expression* base_clause) -> hir::Reads;
 
 // The implicit list of an `always_comb` / `always_latch` (LRM 9.2.2.2.1): what
-// its own text reads and writes, and each function call it makes, which
-// reports what that function reads and writes once, ahead of the first run,
-// where the call reaches it -- wherever the function is declared.
+// its own text reads and writes, and each function call it makes, which states
+// what that function reads and writes once, ahead of the first run.
 auto ReadsOfProcedure(
     ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::ProceduralBlockSymbol& procedure, diag::SourceSpan span)
+    const slang::ast::ProceduralBlockSymbol& procedure)
     -> diag::Result<hir::Reads>;
 
 }  // namespace lyra::lowering::ast_to_hir

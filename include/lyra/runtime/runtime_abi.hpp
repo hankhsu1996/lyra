@@ -552,33 +552,34 @@ void lyra_rt_disable_property_evaluation(void* wait);
 // the boundary.
 auto lyra_rt_park_at(void* runtime, void* wait) -> bool;
 
-// What an evaluation states the places it reached in: an empty report; a place
-// read and the bits of it read; a place reached through a handle; every object
-// at once; the bracket around a call made on a handle; a place written; each
-// place with the part of it meant, as a leaf names one;
+// What an evaluation states the places it reached in: an empty report, and one
+// an implicit list is collected into; a place read and the bits of it read; an
+// object a property is read on; a place written; each place with the part of
+// it meant, as a leaf names one;
 // settling it as a procedure's implicit list once all is reported; the bracket
-// a function reporting into it takes, which answers one or zero for whether it
-// goes on; and one or zero for whether the function then runs. A function
-// meeting a read no leaf watches yet refuses the report, and the design fails
-// there.
+// a function collecting into the list takes, which answers one or zero for
+// whether it goes on; one or zero for whether a function handed it runs; the
+// bracket an evaluation takes around itself; and the report of the evaluation
+// in progress, which an exported function foreign code calls is handed. A body
+// reading something no wait can watch yet refuses the report, and the design
+// fails there.
 auto lyra_rt_read_report_empty(void* out) -> void*;
 auto lyra_rt_read_report_for_implicit_list(void* out) -> void*;
 void lyra_rt_read_report_add(
     void* report, void* place, LyraSpan steps, std::int64_t lsb_bit_offset,
-    std::int64_t bit_width);
-void lyra_rt_read_report_add_through_handle(
-    void* report, void* place, LyraSpan steps, std::int64_t lsb_bit_offset,
-    std::int64_t bit_width);
-void lyra_rt_read_report_enter_call_on_handle(void* report);
-void lyra_rt_read_report_leave_call_on_handle(void* report);
-void lyra_rt_read_report_add_every_object(void* report);
+    std::int64_t bit_width) noexcept;
+void lyra_rt_read_report_add_object(void* report, void* object);
 void lyra_rt_read_report_add_write(
     void* report, void* place, LyraSpan steps, std::int64_t lsb_bit_offset,
-    std::int64_t bit_width);
+    std::int64_t bit_width) noexcept;
 void lyra_rt_read_report_settle_as_implicit_list(void* report);
-auto lyra_rt_read_report_enter(void* report) -> std::int64_t;
-void lyra_rt_read_report_leave(void* report);
-auto lyra_rt_read_report_runs_the_body(const void* report) -> std::int64_t;
+auto lyra_rt_read_report_enter(void* report) noexcept -> std::int64_t;
+void lyra_rt_read_report_leave(void* report) noexcept;
+auto lyra_rt_read_report_runs_the_body(const void* report) noexcept
+    -> std::int64_t;
+void lyra_rt_read_report_begin_evaluation(void* report, void* runtime);
+void lyra_rt_read_report_end_evaluation(void* report, void* runtime) noexcept;
+auto lyra_rt_evaluation_in_progress(void* runtime) -> void*;
 void lyra_rt_refuse_report(const void* why);
 
 // A named event (LRM 15.5). Triggering records the instant and ends the wait of

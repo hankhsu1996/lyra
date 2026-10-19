@@ -371,15 +371,14 @@ auto LowerSubroutineDeclImpl(
   if (!body_stmt_or) return std::unexpected(std::move(body_stmt_or.error()));
   const hir::StmtId root_stmt = body.stmts.Add(*std::move(body_stmt_or));
 
-  // A function may be called from an expression a wait watches, so it states
-  // what a call of it reads (LRM 9.4.2). A constructor and a task never are.
+  // A function may be called from an expression a wait watches (LRM 9.4.2) or
+  // by a procedure whose implicit list is collected (LRM 9.2.2.2.1), so it
+  // states the cells it reads. A task never is, and a construction states its
+  // own, from the class.
   hir::Reads reads;
   if (sym.subroutineKind == slang::ast::SubroutineKind::Function &&
       !sym.flags.has(slang::ast::MethodFlags::Constructor)) {
-    auto reads_or = ReadsOfFunctionBody(
-        lowerer, body_frame, sym, frontend::PointSpanOf(sym.location));
-    if (!reads_or) return std::unexpected(std::move(reads_or.error()));
-    reads = *std::move(reads_or);
+    reads = ReadsOfFunctionBody(lowerer, body_frame, sym);
   }
 
   // The registry the root is defined in belongs to whichever declaration scope

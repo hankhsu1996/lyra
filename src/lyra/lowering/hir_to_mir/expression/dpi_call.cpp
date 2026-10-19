@@ -1282,12 +1282,17 @@ auto SynthesizeForeignExportEntry(
     body.AppendStmt(mir::LocalDeclStmt{.target = sv_in, .init = sv_init});
     call_args.push_back(body.ReadLocal(sv_in, sv_type));
   }
-  // The foreign caller has the subroutine run, so it hands no report.
+  // Foreign code reads SystemVerilog data only through the exports it calls
+  // (LRM 35.5.3), so an evaluation of a waited expression that called into it
+  // is what the function reports into; with none in progress, it reports
+  // nowhere and runs.
   if (const std::optional<mir::TypeId> report = ReportParamTypeOf(
           unit, is_task ? hir::SubroutineKind::kTask
                         : hir::SubroutineKind::kFunction)) {
-    call_args.push_back(
-        body.exprs.Add(mir::Expr{.data = mir::NullLiteral{}, .type = *report}));
+    call_args.push_back(body.exprs.Add(
+        mir::MakeCallExpr(
+            mir::Direct{.target = support::BuiltinFn::kEvaluationInProgress},
+            {body.exprs.Add(BuildCurrentRuntimeCallExpr(module))}, *report)));
   }
 
   // The completion payload the writeback loop below destructures is the

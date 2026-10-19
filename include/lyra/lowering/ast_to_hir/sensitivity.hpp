@@ -167,15 +167,4 @@ class SensitivityAnalyzer {
       procedure_clock_cache_;
 };
 
-// Whether `symbol` holds state before a call of `subroutine` runs, by the same
-// rule the analyzer reads with.
-[[nodiscard]] auto HoldsStateBeforeItRuns(
-    const slang::ast::Symbol& symbol,
-    const slang::ast::SubroutineSymbol& subroutine) -> bool;
-
-// The same, before `proc`'s body runs.
-[[nodiscard]] auto HoldsStateBeforeItRuns(
-    const slang::ast::Symbol& symbol,
-    const slang::ast::ProceduralBlockSymbol& proc) -> bool;
-
 }  // namespace lyra::lowering::ast_to_hir

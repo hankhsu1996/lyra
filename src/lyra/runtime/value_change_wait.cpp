@@ -1,9 +1,12 @@
 #include "lyra/runtime/value_change_wait.hpp"
 
 #include <iterator>
+#include <memory>
 #include <span>
+#include <utility>
 #include <vector>
 
+#include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/observation.hpp"
 #include "lyra/runtime/read_report.hpp"
 #include "lyra/runtime/trigger.hpp"
@@ -89,9 +92,9 @@ class StandingAwaiter final : public Awaiter {
 // asks (LRM 9.7).
 class ReachedPlacesAwaiter : public Awaiter {
  public:
-  explicit ReachedPlacesAwaiter(std::span<const Trigger> triggers)
-      : Awaiter(triggers.size()) {
-    for (const Trigger& trigger : triggers) {
+  explicit ReachedPlacesAwaiter(ReachedPlaces reached)
+      : Awaiter(reached.triggers.size()), objects_(std::move(reached.objects)) {
+    for (const Trigger& trigger : reached.triggers) {
       EnrolOnLeaf(trigger);
     }
   }
@@ -106,6 +109,11 @@ class ReachedPlacesAwaiter : public Awaiter {
   [[nodiscard]] auto IsReportFlushPoint() const -> bool override {
     return true;
   }
+
+ private:
+  // The objects the evaluation read, kept for as long as the wait watches
+  // their event sources.
+  std::vector<std::shared_ptr<GcObject>> objects_;
 };
 
 // Waiting for a condition the body itself tests (LRM 9.4.3). It watches the
@@ -137,9 +145,8 @@ class LevelConditionAwaiter final : public ReachedPlacesAwaiter {
 class RecollectingEventAwaiter final : public ReachedPlacesAwaiter {
  public:
   RecollectingEventAwaiter(
-      std::span<const Trigger> triggers,
-      std::span<const Observation* const> observations)
-      : ReachedPlacesAwaiter(triggers) {
+      ReachedPlaces reached, std::span<const Observation* const> observations)
+      : ReachedPlacesAwaiter(std::move(reached)) {
     observations_.reserve(observations.size());
     for (const Observation* observation : observations) {
       observations_.push_back(*observation);
@@ -157,18 +164,22 @@ class RecollectingEventAwaiter final : public ReachedPlacesAwaiter {
   std::vector<Observation> observations_;
 };
 
-// Every leaf the reports collected, one wait's worth, leaving each report empty
+// Everything the reports collected, one wait's worth, leaving each report empty
 // for the evaluation after.
-auto CollectedLeaves(std::span<ReadReport* const> reports)
-    -> std::vector<Trigger> {
-  std::vector<Trigger> leaves;
+auto Collected(std::span<ReadReport* const> reports) -> ReachedPlaces {
+  ReachedPlaces collected;
   for (ReadReport* report : reports) {
-    std::vector<Trigger> reported = report->TakeTriggers();
-    leaves.insert(
-        leaves.end(), std::make_move_iterator(reported.begin()),
-        std::make_move_iterator(reported.end()));
+    ReachedPlaces reached = report->TakeReached();
+    collected.triggers.insert(
+        collected.triggers.end(),
+        std::make_move_iterator(reached.triggers.begin()),
+        std::make_move_iterator(reached.triggers.end()));
+    collected.objects.insert(
+        collected.objects.end(),
+        std::make_move_iterator(reached.objects.begin()),
+        std::make_move_iterator(reached.objects.end()));
   }
-  return leaves;
+  return collected;
 }
 
 }  // namespace
@@ -188,14 +199,11 @@ auto WaitOnImplicitList(const ReadReport* report) -> Wait {
 auto WaitRecollecting(
     std::span<ReadReport* const> reports,
     std::span<const Observation* const> observations) -> Wait {
-  const std::vector<Trigger> leaves = CollectedLeaves(reports);
-  return MakeWait<RecollectingEventAwaiter>(
-      std::span<const Trigger>{leaves}, observations);
+  return MakeWait<RecollectingEventAwaiter>(Collected(reports), observations);
 }
 
 auto WaitUntil(std::span<ReadReport* const> reports) -> Wait {
-  const std::vector<Trigger> leaves = CollectedLeaves(reports);
-  return MakeWait<LevelConditionAwaiter>(std::span<const Trigger>{leaves});
+  return MakeWait<LevelConditionAwaiter>(Collected(reports));
 }
 
 }  // namespace lyra::runtime

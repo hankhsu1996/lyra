@@ -1,11 +1,9 @@
 #include "lyra/backend/cpp/render_type.hpp"
 
 #include <cstdint>
-#include <expected>
 #include <optional>
 #include <span>
 #include <string_view>
-#include <utility>
 #include <variant>
 #include <vector>
 
@@ -184,6 +182,17 @@ auto MachineFloatCppType(const mir::MachineFloatType& m) -> std::string_view {
 
 }  // namespace
 
+void WriteOne(TargetText& out, const CppConstQualifier& qualifier) {
+  switch (qualifier.of) {
+    case mir::Mutability::kReadOnly:
+      out += " const";
+      return;
+    case mir::Mutability::kMutable:
+      return;
+  }
+  throw InternalError("backend::cpp: unknown Mutability");
+}
+
 void WriteOne(TargetText& out, const CppType& spelling) {
   const mir::CompilationUnit& unit = spelling.Unit();
   const mir::TypeId type_id = spelling.Type();
@@ -276,10 +285,9 @@ void WriteOne(TargetText& out, const CppType& spelling) {
             Write(out, "lyra::runtime::Coroutine<", type(c.payload), ">");
           },
           [&](const mir::VariableRefType& r) {
-            if (r.mutability == mir::Mutability::kReadOnly) {
-              out += "const ";
-            }
-            Write(out, "lyra::runtime::VariableRef<", type(r.pointee), ">");
+            Write(
+                out, "lyra::runtime::VariableRef<", type(r.pointee), ">",
+                CppConstQualifier{r.mutability});
           },
           // The runtime's reference is re-seatable, so it holds a reference
           // bound after its object is built as well. Binding writes the
@@ -289,7 +297,10 @@ void WriteOne(TargetText& out, const CppType& spelling) {
             Write(out, "lyra::runtime::VariableRef<", type(r.pointee), ">");
           },
           [&](const mir::VoidType&) { out += "void"; },
+          // Whether the holder may write through it qualifies the pointee,
+          // whoever owns it.
           [&](const mir::PointerType& p) {
+            const CppConstQualifier pointee_qualifier{p.mutability};
             switch (p.ownership) {
               // A box of a closure of no known type is the library's, which
               // calls the closure at the signature the type states and ends
@@ -301,18 +312,19 @@ void WriteOne(TargetText& out, const CppType& spelling) {
                       CppCallSignature(unit, p.pointee), ">");
                   return;
                 }
-                Write(out, "std::unique_ptr<", type(p.pointee), ">");
+                Write(
+                    out, "std::unique_ptr<", type(p.pointee), pointee_qualifier,
+                    ">");
                 return;
               case mir::PointerOwnership::kShared:
-                Write(out, "std::shared_ptr<", type(p.pointee), ">");
+                Write(
+                    out, "std::shared_ptr<", type(p.pointee), pointee_qualifier,
+                    ">");
                 return;
+              // A borrowed pointer is a plain pointer to the pointee's type, a
+              // `Var<T>` included.
               case mir::PointerOwnership::kBorrowed:
-                // A borrowed pointer is a plain pointer to the pointee's
-                // type, a `Var<T>` included; a read-only one is `const T*`.
-                if (p.mutability == mir::Mutability::kReadOnly) {
-                  out += "const ";
-                }
-                Write(out, type(p.pointee), "*");
+                Write(out, type(p.pointee), pointee_qualifier, "*");
                 return;
             }
             throw InternalError("backend::cpp: unknown PointerOwnership");
@@ -327,15 +339,7 @@ void WriteOne(TargetText& out, const CppType& spelling) {
                   CppCallSignature(unit, r.referent), ">");
               return;
             }
-            switch (r.mutability) {
-              case mir::Mutability::kReadOnly:
-                Write(out, "const ", type(r.referent), "&");
-                return;
-              case mir::Mutability::kMutable:
-                Write(out, type(r.referent), "&");
-                return;
-            }
-            throw InternalError("backend::cpp: unknown Mutability");
+            Write(out, type(r.referent), CppConstQualifier{r.mutability}, "&");
           },
           // Every object reference is one type, whatever class it is seen as.
           // The class is written where the reference is used, because two

@@ -10,14 +10,15 @@ library identifier, because every name it emits comes from the target's own synt
 dispatch that owns naming. That is the north star for every item here -- an item is finished when
 the entries it touched carry punctuation and nothing else.
 
-**That count now answers zero**, and `tools/policy/check_render_names.py` is what answers it. Which
-leaves the count no longer sufficient as a finish line, and the reason is worth keeping: the check
-used to match library names by their namespace, so it never saw a runtime method spelling an emitter
-had invented for itself -- one written where a receiver already stands carries no namespace at all.
-It matches on capitalization now, because the target language's own syntax is lowercase, and it was
-run in both directions before being believed. What remains below is the other half of "done": no
-backend entry decides anything the node did not state, and no closed set holds an alternative no
-node carries.
+**That count answers zero over what the emitters write themselves**, and
+`tools/policy/check_render_names.py` is what answers it; a name an emitter takes from a helper that
+owns no naming still passes it (T43). Which leaves the count no longer sufficient as a finish line,
+and the reason is worth keeping: the check used to match library names by their namespace, so it
+never saw a runtime method spelling an emitter had invented for itself -- one written where a
+receiver already stands carries no namespace at all. It matches on capitalization now, because the
+target language's own syntax is lowercase, and it was run in both directions before being believed.
+What remains below is the other half of "done": no backend entry decides anything the node did not
+state, and no closed set holds an alternative no node carries.
 
 The contracts this answers are `../architecture/backend_contract.md` (a backend entry is a fixed
 function of one MIR node and chooses a spelling rather than an operation) and
@@ -634,6 +635,92 @@ cross-check predicts. This file owns only which instances are known and what is 
       is a method of the scope's published class that forwards to its body, and a caller calls it
       directly. Nothing re-joins published identifiers to bodies by comparing strings -- a join that
       held only while no two bodies of one scope could share an identifier.
+
+## Open
+
+Found by one review of the whole source backend against the contract, 2026-10-18. Each was read from
+the code; where a program was run, the entry says so.
+
+- [ ] T41 -- A code address's type is spelled two ways, chosen by whether it is the one prototype
+      every entry is erased to, which stands in for the real question of whether a declarator
+      follows it: the plain target form is invalid where a declaration's name follows, and holds
+      only because no other prototype is yet declared as a variable, a field or a capture. Target:
+      one spelling valid in every position, which removes the branch and the library name in its
+      arm. Not blocked; the source backend alone.
+
+- [ ] T42 -- An enumeration's member table has one MIR type, which the execution backend realizes as
+      one record. The source backend's type mapping answers with a template that names no type, and
+      the table's literal writes the template's arguments itself from the table's contents, so the
+      answer is a type only where a definition deduces it. Target: the source backend follows the
+      one type MIR states, with the table's planes and names as constant data of their own, as the
+      execution backend lays them out. Open: whether a table built at its own shape helps the host
+      compiler fold enough to argue for MIR typing each table at its shape instead; unmeasured.
+
+- [ ] T43 -- Library names reach the source backend's emitters through helpers that are none of the
+      three naming owners: how a product's component and a tagged union's tag are reached, the
+      member names of a library array's own operations, the read of union storage another member may
+      have written (named outright as a function, where only a structure type may be), the entry the
+      host program starts through, and two labels an emitter mints for a cleanup and a loop's exit
+      (outside the naming that mints every other compiler-made name, and spelled in the form the
+      target reserves to its implementation). The name check reads only the text of four emitter
+      files, so each passes it. Target: each answered by its owner -- the type mapping for how a
+      part, a tag or an overlaid read is reached; the backend's own table for the start entry, as
+      the execution backend names it; the naming owner for minted labels -- and the check follows
+      those answers and covers every emitter file. Not blocked. Which read an overlaid one is, is
+      still recovered by walking the finished place; a place stating its kind is designed apart.
+
+- [ ] T44 -- A call of a type's own operation that is generic over its answer states no type, so the
+      source backend works the type out from the call's result, which the contract forbids; the
+      verifier refuses a type on any such call, though the same operation called as a runtime entry
+      states it. Target: the call states the type wherever the operation's declaration takes one,
+      the verifier keys on that declaration, and the render reads what the call states. Not blocked.
+
+- [ ] T45 -- Whether a closure's construction starts a coroutine is stated by the type of the
+      closure expression, which the execution backend reads; the source backend reads the result
+      type of the closure's body instead, so one question has two inputs held in step by nothing.
+      Target: the render reads the expression's type. Not blocked; the source backend alone.
+
+- [ ] T46 -- A block expression with no steps is written as its bare value, collapsing a construct
+      the producer built (T16). The producer wraps every arm of a conditional in a block whether or
+      not the arm gathered a step. Open: whether a block with no steps is a MIR shape at all, or the
+      render always writes the block.
+
+- [ ] T47 -- A conditional one of whose arms is a literal truth value is written as a short-circuit
+      operator, recovered by matching that literal. MIR has no short-circuit operator by its own
+      rule, so a search that stops when settled is stated as conditionals over literals. It is a
+      spelling the host compiler's limits admit, so it is low priority. Open: whether MIR states
+      short-circuit as one node, as clang's AST does, where rustc lowers it to control flow.
+
+- [ ] T48 -- MIR's logical and and or evaluate both operands, and the source backend writes them as
+      the target operators that skip the right operand on built-in operands. They evaluate both only
+      because every operand today is an integral value whose library type overloads them, and
+      nothing states that: the verifier accepts a logical operation on any operand. Target: the
+      verifier refuses one whose operands are not integral values. Not blocked; no program reaches
+      the difference today.
+
+- [ ] T49 -- The read of a tagged union's tag reaches its member through a member token written by
+      hand, where every other member access goes through the one rule that writes the receiver, so a
+      question settled once is answered a second way. Target: the shared rule. Not blocked; the
+      source backend alone.
+
+- [ ] T50 -- How a member function's body binds its object -- by reference or by pointer, and
+      whether read-only -- is worked out by member render from the receiver's type, while the type
+      mapping already answers how each kind of handle is opened. A receiver of any type but a
+      reference loses its read-only qualifier, with nothing refusing it. Target: the type mapping
+      answers, per receiver type, how the target's object pointer is held as that receiver and with
+      which qualifier, and member render writes punctuation around it. Not blocked; T36 settled only
+      the call side.
+
+- [ ] T51 -- A statement's source label is a MIR field only the source backend realizes, as a target
+      label nothing jumps to; a loop's exit jumps to a label of its own. Run on a label before an
+      assertion and before an assignment, each became a named scope and never reached the field.
+      Target: the field goes, or the producer still filling it is found and what the label means
+      there is stated. Open.
+
+- [ ] T52 -- Member render refuses states no producer reaches: a constructor's or a closure's body
+      with no object, a closure started at once that takes parameters, a foreign function in a
+      class. Target: the shape of that code states its object, so the absence cannot be written.
+      Open: whether that is a kind of code of its own or the verifier refusing the absence.
 
 ## Cross-references
 

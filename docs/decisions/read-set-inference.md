@@ -297,6 +297,15 @@ any other name from where it starts. Searching the reader's ports for the one bo
 interface guesses the name from the landing, and is wrong where two ports carry one instance or the
 text named it another way.
 
+**A query reads its operand where its answer is the operand's current extent.** `$bits` of a
+dynamically sized value and `$size`, `$high` or `$right` of a queue or dynamic array answer from
+what the value holds now (LRM 20.6.2, 20.7), and LRM 9.4.2's own example waits on
+`$bits(stream) > 60`. The front end binds a query's operand unevaluated whatever its type, and the
+walk once took that for "not read", so no wait, `@*` or `always_comb` on one of them ever ran again.
+Whether the answer is fixed by the type is the query lowering's own decision, which folds it to a
+constant exactly there, so the walk asks the lowering rather than the binding -- the way clang makes
+`sizeof` of a variable-length array potentially evaluated where it builds the node (`SemaExpr.cpp`).
+
 The project-owned code is the analyzer: the flattening of `getRValues()` into a flat list of the
 parts read (mirrors `AnalyzedProcedure.cpp:223-227`), the collection of what a node declares, and a
 cache per node. No subclass, no state type, no hook overrides, no use of slang's `detail::`

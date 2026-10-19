@@ -7,6 +7,7 @@
 namespace lyra::runtime {
 
 class ProgramThreads;
+class ReadReport;
 class Scope;
 
 // What an execution runs in, which one it starts carries over unchanged.
@@ -56,11 +57,13 @@ struct ExecutionContext {
   }
 };
 
-// What is in force while something runs. Two things are: the generator a
-// randomization call draws from (LRM 18.14), and the DPI-C import calls this
-// execution is inside (LRM 35.5.3). Neither is ever handed to the code that
-// reads it -- a subroutine body is compiled once and reached from more than one
-// runner, so both are read from whatever is running rather than passed in.
+// What is in force while something runs. Three things are: the generator a
+// randomization call draws from (LRM 18.14), the DPI-C import calls this
+// execution is inside (LRM 35.5.3), and the evaluation of a waited expression
+// it is making, whose report an exported function foreign code calls reports
+// into (LRM 9.4.2). None is ever handed to the code that reads it -- a
+// subroutine body is compiled once and reached from more than one runner, so
+// each is read from whatever is running rather than passed in.
 //
 // A process owns one for its whole life, so its generator survives a suspension
 // and two foreign calls suspended on different processes never share a chain. A
@@ -74,6 +77,8 @@ struct RunningState {
 
   DrawRng rng;
   ImportCallChain import_calls;
+  // Null where no evaluation is in progress.
+  ReadReport* evaluation_report = nullptr;
 };
 
 // A `RunningState` a static initialization owns, carrying what it displaced so

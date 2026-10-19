@@ -1791,15 +1791,15 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kReadReportEmpty:
     case support::BuiltinFn::kReadReportForImplicitList:
     case support::BuiltinFn::kReadReportAdd:
-    case support::BuiltinFn::kReadReportAddThroughHandle:
-    case support::BuiltinFn::kReadReportEnterCallOnHandle:
-    case support::BuiltinFn::kReadReportLeaveCallOnHandle:
-    case support::BuiltinFn::kReadReportAddEveryObject:
+    case support::BuiltinFn::kReadReportAddObject:
     case support::BuiltinFn::kReadReportAddWrite:
     case support::BuiltinFn::kReadReportSettleAsImplicitList:
     case support::BuiltinFn::kReadReportEnter:
     case support::BuiltinFn::kReadReportLeave:
     case support::BuiltinFn::kReadReportRunsTheBody:
+    case support::BuiltinFn::kReadReportBeginEvaluation:
+    case support::BuiltinFn::kReadReportEndEvaluation:
+    case support::BuiltinFn::kEvaluationInProgress:
     case support::BuiltinFn::kRefuseReport:
     case support::BuiltinFn::kSimTime:
     case support::BuiltinFn::kSTime:

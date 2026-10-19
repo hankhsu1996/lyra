@@ -76,28 +76,10 @@ void ReachSensitivity(
 }
 
 void ReachReads(const Reads& reads, const auto& reach) {
-  for (const WaitLeaf& leaf : reads.leaves) {
-    std::visit(
-        Overloaded{
-            [&](const SensitivityEntry& entry) {
-              ReachSensitivityEntry(entry, reach);
-            },
-            [&](const InterfaceMemberAccessExpr& access) {
-              reach(access.instance.handle, Slot::kReport);
-            },
-            [&](const ObjectChain& chain) {
-              std::visit(
-                  Overloaded{
-                      [&](const ExprId& root) { reach(root, Slot::kReport); },
-                      [](const ReceiverObject&) {}},
-                  chain.root);
-            },
-            [](const EveryObject&) {}},
-        leaf);
-  }
+  ReachSensitivity(reads.cells, reach);
   ReachSensitivity(reads.writes, reach);
-  for (const ReportingCall& call : reads.calls) {
-    reach(call.call, Slot::kReport);
+  for (const ExprId call : reads.calls) {
+    reach(call, Slot::kReport);
   }
 }
 

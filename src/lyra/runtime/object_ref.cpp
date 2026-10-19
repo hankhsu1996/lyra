@@ -52,6 +52,7 @@ auto GcObject::TakeCreatorsShare() -> std::shared_ptr<GcObject> {
   return std::move(creators_share_);
 }
 
+// Assigning changes what an object holds, not which object it is.
 auto GcObject::operator=(const GcObject& other) -> GcObject& {
   if (this == &other) {
     return *this;
@@ -67,21 +68,13 @@ auto GcObject::EventSource() -> Observable& {
   return *event_source_;
 }
 
-// A write to any object also reaches the waits watching every object, so the
-// object is watched while one of them is, whether or not it has a source of
-// its own.
 auto GcObject::Watched() const -> bool {
-  return (event_source_ != nullptr && event_source_->HasMembers()) ||
-         current_runtime().EveryObject().HasMembers();
+  return event_source_ != nullptr && event_source_->HasMembers();
 }
 
 void GcObject::PublishChange() {
-  RuntimeEffects& runtime = current_runtime();
-  if (event_source_ != nullptr && event_source_->HasMembers()) {
-    runtime.WakeParkedOn(*event_source_, PartPath{}, Change::Whole());
-  }
-  if (Observable& every = runtime.EveryObject(); every.HasMembers()) {
-    runtime.WakeParkedOn(every, PartPath{}, Change::Whole());
+  if (Watched()) {
+    current_runtime().WakeParkedOn(*event_source_, PartPath{}, Change::Whole());
   }
 }
 

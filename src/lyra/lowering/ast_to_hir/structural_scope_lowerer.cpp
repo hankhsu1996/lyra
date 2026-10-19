@@ -816,8 +816,11 @@ auto StructuralScopeLowerer::DefineEvaluator(
   // expression a scope evaluates reads that scope's own storage.
   auto cells = CellsOfWaitedExpression(lowerer, body_frame, expr);
   if (!cells) return std::unexpected(std::move(cells.error()));
-  hir::Reads reads;
-  reads.leaves.assign(cells->begin(), cells->end());
+  hir::Reads reads{
+      .cells = *std::move(cells),
+      .writes = {},
+      .calls = {},
+      .unreportable = std::nullopt};
   const hir::StmtId root_stmt = body.stmts.Add(
       hir::Stmt{
           .label = std::nullopt,

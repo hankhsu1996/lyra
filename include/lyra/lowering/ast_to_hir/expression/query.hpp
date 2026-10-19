@@ -19,10 +19,10 @@ class CallExpression;
 namespace lyra::lowering::ast_to_hir {
 
 // A query reports a property of a type or of an array's shape rather than
-// computing over a value, so its operand is never evaluated (LRM 20.6.1,
-// 20.6.2) and may be a data type, which has no value form. The call is
-// therefore resolved ahead of the argument loop, and returns nullopt when it is
-// not a query.
+// computing over a value, so its operand is determined without being evaluated
+// (LRM 20.6.1, 20.6.2) and may be a data type, which has no value form. The
+// call is therefore resolved ahead of the argument loop, and returns nullopt
+// when it is not a query.
 //
 // Whatever the operand's type fixes, the query reports as an elaboration-time
 // constant: a type's bit count or name, a dimension count, and every property

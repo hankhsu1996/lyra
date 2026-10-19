@@ -42,6 +42,7 @@
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 #include "lyra/lowering/ast_to_hir/name_in_a_path.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/reads.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
@@ -765,18 +766,9 @@ auto BuildInterfaceForwardingMethod(
   auto taken = unit_lowerer.MakeOverriddenBehavior(impl, span);
   if (!taken) return std::unexpected(std::move(taken.error()));
 
-  // What a call of the forwarder reads and writes is what the implementation it
-  // forwards to does, handed the same object and the same formals.
-  hir::Reads reads{
-      .leaves = {},
-      .writes = {},
-      .calls = {hir::ReportingCall{
-          .call = call,
-          .receiver = hir::ReportedArgument::kEvaluated,
-          .arguments = std::vector<hir::ReportedArgument>(
-              params.size(), hir::ReportedArgument::kEvaluated)}},
-      .unreportable = std::nullopt};
-
+  // The forwarder's text reads no cell of its own: what a call of it reads is
+  // what the implementation reads, which states its own as the forwarder calls
+  // it, and a method of an object is no call an implicit list follows.
   return hir::SubroutineDecl{
       .name = std::string{name},
       .kind = hir::SubroutineKind::kFunction,
@@ -789,7 +781,7 @@ auto BuildInterfaceForwardingMethod(
       .is_prototype = false,
       .is_static = false,
       .overrides = *std::move(taken),
-      .reads = std::move(reads)};
+      .reads = {}};
 }
 
 // Synthesizes forwarding methods for every interface pure virtual method a
@@ -1885,9 +1877,11 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
   // answers nothing for the third, having first established that every formal
   // of the base constructor has a default -- so an answer of nothing is the
   // third case, and whether it owes any default is what the base declares.
+  const slang::ast::Expression* base_clause = nullptr;
   if (const auto* base_type = cls.getBaseClass(); base_type != nullptr) {
     if (!base_arguments.has_value()) {
       if (const auto* written = cls.getBaseConstructorCall()) {
+        base_clause = written;
         std::vector<hir::ExprId> lowered;
         const auto actuals = BaseCallArguments(*written);
         lowered.reserve(actuals.size());
@@ -1960,6 +1954,10 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
             .target = LookupClassPropertyFieldId(prop),
             .value = constructor.body.exprs.Add(*std::move(init_expr))});
   }
+  // The cells constructing an object of the class reads are what a `new` of it
+  // reads (LRM 9.4.2), stated for whichever waited evaluation constructs one.
+  constructor.reads = ReadsOfConstruction(
+      init_lowerer, init_frame, cls, constructor_sym, base_clause);
   decl.constructor = std::move(constructor);
 
   // Where the compile checks itself, every application of the unit builds the

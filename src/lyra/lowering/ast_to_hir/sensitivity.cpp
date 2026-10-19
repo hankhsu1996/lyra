@@ -29,6 +29,8 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/Type.h>
 
+#include "lyra/lowering/ast_to_hir/expression/query_reads_its_operand.hpp"
+
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
@@ -62,14 +64,15 @@ auto IsThroughHandle(const slang::ast::MemberAccessExpression& access) -> bool {
 
 // Every name in a node's text, in the order the text has them, each marked
 // read or written as LRM 9.2.2.2.1 and 9.4.2.2 count it: an assignment's
-// target, an `++` / `--` operand, a by-reference or output argument is written;
-// what selects inside any name, a procedural `force` target, and everything
-// else is read. A timing control's own expressions count for neither (LRM
-// 9.2.2.2.1 c), and neither does what runs apart from the statement: a
-// concurrent assertion, a deferred assertion's action, and the reads of an
-// immediate assertion's action. Every name counts wherever the text has it, so
-// a branch that a value the body is built with never takes still counts, and
-// so does a select that value puts past its value's end.
+// target, an `++` / `--` operand, an output argument is written; a
+// by-reference argument is both; what selects inside any name, a procedural
+// `force` target, and everything else is read. A timing control's own
+// expressions count for neither (LRM 9.2.2.2.1 c), and neither does what runs
+// apart from the statement: a concurrent assertion, a deferred assertion's
+// action, and the reads of an immediate assertion's action. Every name counts
+// wherever the text has it, so a branch that a value the body is built with
+// never takes still counts, and so does a select that value puts past its
+// value's end.
 class NameCollector : public slang::ast::ASTVisitor<
                           NameCollector, slang::ast::VisitFlags::AllGood> {
  public:
@@ -150,10 +153,15 @@ class NameCollector : public slang::ast::ASTVisitor<
             std::get_if<slang::ast::CallExpression::SystemCallInfo>(
                 &call.subroutine)) {
       const auto& subroutine = *system->subroutine;
+      // A query's operand is bound unevaluated whatever its type, and where
+      // the answer is the operand's current extent the run reads it all the
+      // same (LRM 20.6.2, 20.7).
+      const bool operand_read = QueryReadsItsOperand(call);
       for (std::size_t i = 0; i < args.size(); ++i) {
-        if (subroutine.isArgUnevaluated(i)) continue;
+        const bool read_all_the_same = i == 0 && operand_read;
+        if (subroutine.isArgUnevaluated(i) && !read_all_the_same) continue;
         if (subroutine.isArgByRef(i)) {
-          Write(*args[i]);
+          ReadAndWrite(*args[i]);
         } else {
           args[i]->visit(*this);
         }
@@ -167,7 +175,7 @@ class NameCollector : public slang::ast::ASTVisitor<
       const auto& formal = *formals[i];
       if (formal.direction == slang::ast::ArgumentDirection::Ref &&
           !formal.flags.has(slang::ast::VariableFlags::Const)) {
-        Write(*args[i]);
+        ReadAndWrite(*args[i]);
       } else {
         args[i]->visit(*this);
       }
@@ -242,6 +250,13 @@ class NameCollector : public slang::ast::ASTVisitor<
     const bool outer = std::exchange(writing_, true);
     target.visit(*this);
     writing_ = outer;
+  }
+
+  // A by-reference argument names storage the callee reads and writes where it
+  // lies (LRM 13.5.2).
+  void ReadAndWrite(const slang::ast::Expression& target) {
+    Write(target);
+    target.visit(*this);
   }
 
   // The longest static prefix of `path` (LRM 11.5.3) as the source wrote it:
@@ -604,19 +619,6 @@ auto SensitivityAnalyzer::AnalyzeAccesses(
   auto [inserted_it, _] = subroutine_cache_.emplace(
       &subroutine, AccessesOfNode(subroutine, body, declarations));
   return inserted_it->second;
-}
-
-auto HoldsStateBeforeItRuns(
-    const slang::ast::Symbol& symbol,
-    const slang::ast::SubroutineSymbol& subroutine) -> bool {
-  return IsStateOutside(
-      symbol, NodeDeclarations{.scopes = {&subroutine}, .temporaries = {}});
-}
-
-auto HoldsStateBeforeItRuns(
-    const slang::ast::Symbol& symbol,
-    const slang::ast::ProceduralBlockSymbol& proc) -> bool {
-  return IsStateOutside(symbol, DeclarationsOf(proc.getBody()));
 }
 
 auto SensitivityAnalyzer::AnalyzeProcedureText(

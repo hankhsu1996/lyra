@@ -565,15 +565,17 @@ the detail lives in the entry itself.
   `update-events-are-per-variable` invariant 4 rather than reversing it: a place may name a target
   whose identity is resolved at run time.
 - [a-function-reports-what-a-call-of-it-reads](a-function-reports-what-a-call-of-it-reads.md) --
-  what a function an awaited expression calls reads is stated by the unit declaring it and reported
-  at run time: every function takes one more parameter, where to report, and handed one it records
-  what a call of it reads -- cells, objects a chain reaches, interface variables, and the functions
-  it calls in turn -- and then runs where the waited evaluation called it, or returns without
-  running where another function's report did. An object reached through its own variables is
-  covered by every object at once, a null link ends a chain, a depth bound stops a cycle, and a read
-  no leaf watches yet is refused at the wait that asks. Summarizing the callee in the waiting unit,
-  publishing a summary in the signature, a sibling report body, recording every read, and polling
-  are rejected.
+  what an awaited expression reads through the functions it calls is recorded by the evaluation that
+  runs them, as it runs: every function and class constructor takes one more parameter, the
+  evaluation's report, and hands it on; handed one, a body states the cells its text reads as it is
+  entered and each object and interface variable it reads through a handle as it reaches it, and the
+  wait keeps the objects it watches. A function is compiled in two forms from its one body, the one
+  every call reaches entering the recording one only where it is handed a report, so a body run for
+  no evaluation hands its callees none. An export foreign code calls finds the evaluation in
+  progress, an implicit list is collected through the same parameter without running anything, and a
+  read no wait can watch yet is refused at the wait that asks. Stating ahead of the body what a call
+  will read, summarizing the callee in the waiting unit, publishing a summary in the signature, a
+  second form callers name directly, and polling are rejected.
 - [the-waiting-process-evaluates-its-wait](the-waiting-process-evaluates-its-wait.md) -- a change to
   what a wait reads schedules the waiting process, which evaluates the event expression and its
   qualifier once and compares (LRM 4.5); a change evaluates them itself only where they read nothing

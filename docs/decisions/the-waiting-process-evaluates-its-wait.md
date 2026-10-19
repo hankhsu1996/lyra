@@ -52,8 +52,9 @@ learn that a change was no event -- for `@(posedge clk)`, every falling edge.
 
 - **The one evaluation states what it reaches.** Each object a property is read on and each
   interface variable read through a handle is stated where the evaluation reads it, from the value
-  it read it through, and each function it calls is handed the report and states what it reads
-  before it runs. Nothing evaluates an operand a second time to learn what it reaches.
+  it read it through, and each function and construction it runs is handed the report and states
+  there what it reads as it runs. Nothing evaluates an operand a second time to learn what it
+  reaches.
 - **Building an observation evaluates nothing.** It is armed where the wait begins -- by the process
   for a wait it decides, whose first evaluation is no event -- and re-armed by that process after a
   restart (LRM 9.7), never by whoever asked for the restart.

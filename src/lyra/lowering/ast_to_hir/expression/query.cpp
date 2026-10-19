@@ -22,6 +22,7 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
+#include "lyra/lowering/ast_to_hir/expression/query_reads_its_operand.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -155,15 +156,16 @@ auto MakeQueryConstant(
       span);
 }
 
+auto QueryInt(std::int64_t value) -> slang::SVInt {
+  return {32, static_cast<std::uint64_t>(value), true};
+}
+
 auto MakeQueryInt(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::CallExpression& call, std::int64_t value,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
   return MakeQueryConstant(
-      unit_lowerer, frame, call,
-      slang::ConstantValue{
-          slang::SVInt(32, static_cast<std::uint64_t>(value), true)},
-      span);
+      unit_lowerer, frame, call, slang::ConstantValue{QueryInt(value)}, span);
 }
 
 // The number of elements the operand currently holds, as a value of the query's
@@ -222,21 +224,102 @@ auto BuildQueryBinary(
       .span = span};
 }
 
-// LRM 20.7 over a dimension whose size only the running simulation knows. The
-// dimension's direction is still fixed by its kind -- a queue or dynamic array
-// dimension ascends from 0 -- so `$left`, `$low`, and `$increment` remain
-// constants; only the dimension's extent has to be read from the value.
+// The largest value the index type can hold, which is the highest index an
+// associative dimension can ever be given (LRM 20.7 `$right`). All ones, less
+// the sign bit when the index type is signed.
+auto HighestIndexValue(const slang::ast::Type& index_type) -> slang::SVInt {
+  slang::SVInt value(index_type.getBitWidth(), 0, index_type.isSigned());
+  value.setAllOnes();
+  if (index_type.isSigned()) {
+    value = value.lshr(1);
+  }
+  return value;
+}
+
+// The query's answer about `dimension` where the dimension's type fixes it
+// (LRM 20.7), and none where only the value can say. A fixed dimension fixes
+// every answer. A queue or dynamic array dimension ascends from 0, so its
+// left and low ends and its direction are fixed and its extent is not; an
+// associative dimension's index space ascends from 0 to the index type's
+// highest value, so only which indices are allocated is left to the value,
+// and its answers are of the index type rather than `integer`.
+auto AnswerTheTypeFixes(QueryKind query, const slang::ast::Type& dimension)
+    -> std::optional<slang::SVInt> {
+  if (dimension.hasFixedRange() && !dimension.isScalar()) {
+    return QueryInt(FixedDimensionValue(query, dimension.getFixedRange()));
+  }
+  switch (query) {
+    case QueryKind::kLeft:
+      return QueryInt(0);
+    case QueryKind::kIncrement:
+      return QueryInt(-1);
+    case QueryKind::kLow:
+      return dimension.isAssociativeArray()
+                 ? std::nullopt
+                 : std::optional<slang::SVInt>{QueryInt(0)};
+    case QueryKind::kRight:
+      return dimension.isAssociativeArray()
+                 ? std::optional<slang::SVInt>{HighestIndexValue(
+                       *dimension.getAssociativeIndexType())}
+                 : std::nullopt;
+    case QueryKind::kHigh:
+    case QueryKind::kSize:
+      return std::nullopt;
+    case QueryKind::kBits:
+    case QueryKind::kTypename:
+    case QueryKind::kDimensions:
+    case QueryKind::kUnpackedDimensions:
+      break;
+  }
+  throw InternalError("AnswerTheTypeFixes: not a dimension function");
+}
+
+// Whether a query's answer is read from its operand's value rather than fixed
+// by the operand's type: the bit count of a dynamically sized value (LRM
+// 20.6.2), and an answer about the operand's own dimension that the dimension's
+// type does not fix (LRM 20.7). Whichever dimension a run-time index names,
+// only the operand's own can be one whose answers the value holds.
+auto OperandIsRead(QueryKind query, const slang::ast::Type& operand) -> bool {
+  switch (query) {
+    case QueryKind::kBits:
+      return !operand.isFixedSize();
+    case QueryKind::kTypename:
+    case QueryKind::kDimensions:
+    case QueryKind::kUnpackedDimensions:
+      return false;
+    case QueryKind::kLeft:
+    case QueryKind::kRight:
+    case QueryKind::kLow:
+    case QueryKind::kHigh:
+    case QueryKind::kIncrement:
+    case QueryKind::kSize:
+      return !AnswerTheTypeFixes(query, operand).has_value();
+  }
+  throw InternalError("OperandIsRead: unknown QueryKind");
+}
+
+// The query a call is, where it is one.
+auto QueryOf(const slang::ast::CallExpression& call)
+    -> std::optional<QueryKind> {
+  if (!call.isSystemCall()) {
+    return std::nullopt;
+  }
+  const auto& info =
+      std::get<slang::ast::CallExpression::SystemCallInfo>(call.subroutine);
+  if (info.subroutine == nullptr) {
+    return std::nullopt;
+  }
+  return ClassifyQuery(info.subroutine->knownNameId);
+}
+
+// LRM 20.7 over a queue or dynamic array dimension, for an answer only its
+// current extent gives.
 template <ExprLowerer Lowerer>
 auto LowerOrderedDynamicDimensionQuery(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
     QueryKind query, diag::SourceSpan span) -> diag::Result<hir::Expr> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
   switch (query) {
-    case QueryKind::kLeft:
-    case QueryKind::kLow:
-      return MakeQueryInt(unit_lowerer, frame, call, 0, span);
-    case QueryKind::kIncrement:
-      return MakeQueryInt(unit_lowerer, frame, call, -1, span);
     case QueryKind::kSize:
       return BuildElementCountExpr(lowerer, frame, call, span);
     case QueryKind::kRight:
@@ -261,41 +344,15 @@ auto LowerOrderedDynamicDimensionQuery(
   }
 }
 
-// The largest value the index type can hold, which is the highest index an
-// associative dimension can ever be given (LRM 20.7 `$right`). All ones, less
-// the sign bit when the index type is signed.
-auto HighestIndexValue(const slang::ast::Type& index_type) -> slang::SVInt {
-  slang::SVInt value(index_type.getBitWidth(), 0, index_type.isSigned());
-  value.setAllOnes();
-  if (index_type.isSigned()) {
-    value = value.lshr(1);
-  }
-  return value;
-}
-
-// LRM 20.7 over an associative dimension. The index space is a property of the
-// index type: it ascends from 0 up to that type's highest value, which leaves
-// `$left`, `$right`, and `$increment` constants. What the array currently holds
-// decides only how many indices are allocated and which of them are the
-// smallest and the largest. Every result here is typed as the index type, not
-// `integer`.
+// LRM 20.7 over an associative dimension, for an answer only what the array
+// currently holds gives: how many indices are allocated, and which of them are
+// the smallest and the largest.
 template <ExprLowerer Lowerer>
 auto LowerAssociativeDimensionQuery(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
-    const slang::ast::Type& dimension, QueryKind query, diag::SourceSpan span)
-    -> diag::Result<hir::Expr> {
+    QueryKind query, diag::SourceSpan span) -> diag::Result<hir::Expr> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
   switch (query) {
-    case QueryKind::kLeft:
-      return MakeQueryInt(unit_lowerer, frame, call, 0, span);
-    case QueryKind::kIncrement:
-      return MakeQueryInt(unit_lowerer, frame, call, -1, span);
-    case QueryKind::kRight:
-      return MakeQueryConstant(
-          unit_lowerer, frame, call,
-          slang::ConstantValue{
-              HighestIndexValue(*dimension.getAssociativeIndexType())},
-          span);
     case QueryKind::kSize:
       return BuildElementCountExpr(lowerer, frame, call, span);
     case QueryKind::kLow:
@@ -375,7 +432,7 @@ auto LowerBitsQuery(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
   const slang::ast::Type& operand_type = *call.arguments()[0]->type;
-  if (!operand_type.isFixedSize()) {
+  if (OperandIsRead(QueryKind::kBits, operand_type)) {
     return LowerDynamicBitsQuery(lowerer, frame, call, span);
   }
   return MakeQueryConstant(
@@ -412,25 +469,24 @@ auto LowerDimensionCountQuery(
 }
 
 // The query's result for the dimension whose own range is `dimension` (LRM
-// 20.7). A fixed dimension folds to a constant; the operand's own top
-// dimension, when it is dynamic or associative, reads the value's current
-// state. The caller guarantees `dimension` is either fixed-size or the
-// operand's top dimension -- a variable-sized dimension below the top has no
-// single extent (LRM 20.7.1) and is rejected before reaching here.
+// 20.7): a constant where the dimension's type fixes it, and a read of the
+// value's current state otherwise. The caller guarantees `dimension` is either
+// fixed-size or the operand's top dimension -- a variable-sized dimension below
+// the top has no single extent (LRM 20.7.1) and is rejected before reaching
+// here.
 template <ExprLowerer Lowerer>
 auto LowerDimensionResult(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
     const slang::ast::Type& dimension, QueryKind query, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  UnitLowerer& unit_lowerer = lowerer.Owner();
-  if (dimension.hasFixedRange() && !dimension.isScalar()) {
-    return MakeQueryInt(
-        unit_lowerer, frame, call,
-        FixedDimensionValue(query, dimension.getFixedRange()), span);
+  if (std::optional<slang::SVInt> fixed = AnswerTheTypeFixes(query, dimension);
+      fixed.has_value()) {
+    return MakeQueryConstant(
+        lowerer.Owner(), frame, call, slang::ConstantValue{*std::move(fixed)},
+        span);
   }
   if (dimension.isAssociativeArray()) {
-    return LowerAssociativeDimensionQuery(
-        lowerer, frame, call, dimension, query, span);
+    return LowerAssociativeDimensionQuery(lowerer, frame, call, query, span);
   }
   return LowerOrderedDynamicDimensionQuery(lowerer, frame, call, query, span);
 }
@@ -533,16 +589,7 @@ template <ExprLowerer Lowerer>
 auto LowerQueryExpr(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
     diag::SourceSpan span) -> diag::Result<std::optional<hir::Expr>> {
-  if (!call.isSystemCall()) {
-    return std::optional<hir::Expr>{};
-  }
-  const auto& info =
-      std::get<slang::ast::CallExpression::SystemCallInfo>(call.subroutine);
-  if (info.subroutine == nullptr) {
-    return std::optional<hir::Expr>{};
-  }
-  const std::optional<QueryKind> query =
-      ClassifyQuery(info.subroutine->knownNameId);
+  const std::optional<QueryKind> query = QueryOf(call);
   if (!query.has_value()) {
     return std::optional<hir::Expr>{};
   }
@@ -584,5 +631,10 @@ template auto LowerQueryExpr(
     StructuralScopeLowerer& lowerer, WalkFrame frame,
     const slang::ast::CallExpression& call, diag::SourceSpan span)
     -> diag::Result<std::optional<hir::Expr>>;
+
+auto QueryReadsItsOperand(const slang::ast::CallExpression& call) -> bool {
+  const std::optional<QueryKind> query = QueryOf(call);
+  return query.has_value() && OperandIsRead(*query, *call.arguments()[0]->type);
+}
 
 }  // namespace lyra::lowering::ast_to_hir

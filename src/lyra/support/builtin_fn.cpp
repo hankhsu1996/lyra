@@ -1035,38 +1035,55 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "read_report_for_implicit_list",
           .declaration = StaticFactory{"ForImplicitList"}};
     case BuiltinFn::kReadReportAdd:
-      return {.name = "read_report_add", .declaration = Method{"Add"}};
-    case BuiltinFn::kReadReportAddThroughHandle:
       return {
-          .name = "read_report_add_through_handle",
-          .declaration = Method{"AddThroughHandle"}};
-    case BuiltinFn::kReadReportEnterCallOnHandle:
+          .name = "read_report_add",
+          .declaration = Method{"Add"},
+          .ending = CallEnding::kReturns};
+    case BuiltinFn::kReadReportAddObject:
       return {
-          .name = "read_report_enter_call_on_handle",
-          .declaration = Method{"EnterCallOnHandle"}};
-    case BuiltinFn::kReadReportLeaveCallOnHandle:
-      return {
-          .name = "read_report_leave_call_on_handle",
-          .declaration = Method{"LeaveCallOnHandle"}};
-    case BuiltinFn::kReadReportAddEveryObject:
-      return {
-          .name = "read_report_add_every_object",
-          .declaration = Method{"AddEveryObject"}};
+          .name = "read_report_add_object",
+          .declaration = Method{"AddObject"},
+          .reaches_an_object = true};
     case BuiltinFn::kReadReportAddWrite:
       return {
-          .name = "read_report_add_write", .declaration = Method{"AddWrite"}};
+          .name = "read_report_add_write",
+          .declaration = Method{"AddWrite"},
+          .ending = CallEnding::kReturns};
     case BuiltinFn::kReadReportSettleAsImplicitList:
       return {
           .name = "read_report_settle_as_implicit_list",
           .declaration = Method{"SettleAsImplicitList"}};
     case BuiltinFn::kReadReportEnter:
-      return {.name = "read_report_enter", .declaration = Method{"Enter"}};
+      return {
+          .name = "read_report_enter",
+          .declaration = Method{"Enter"},
+          .ending = CallEnding::kReturns};
     case BuiltinFn::kReadReportLeave:
-      return {.name = "read_report_leave", .declaration = Method{"Leave"}};
+      return {
+          .name = "read_report_leave",
+          .declaration = Method{"Leave"},
+          .ending = CallEnding::kReturns};
     case BuiltinFn::kReadReportRunsTheBody:
       return {
           .name = "read_report_runs_the_body",
-          .declaration = Method{"RunsTheBody"}};
+          .declaration = Method{"RunsTheBody"},
+          .ending = CallEnding::kReturns};
+    case BuiltinFn::kReadReportBeginEvaluation:
+      return {
+          .name = "read_report_begin_evaluation",
+          .declaration = Method{"BeginEvaluation"},
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kReadReportEndEvaluation:
+      return {
+          .name = "read_report_end_evaluation",
+          .declaration = Method{"EndEvaluation"},
+          .takes_the_runtime_handle = true,
+          .ending = CallEnding::kReturns};
+    case BuiltinFn::kEvaluationInProgress:
+      return {
+          .name = "evaluation_in_progress",
+          .declaration = RuntimeFunction("EvaluationInProgress"),
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kRefuseReport:
       return {
           .name = "refuse_report",

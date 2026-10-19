@@ -162,6 +162,44 @@ auto BuildWatchedPart(
   throw InternalError("BuildWatchedPart: unknown event edge");
 }
 
+// The value `lower_value` builds in the frame it is handed, evaluated as the
+// evaluation that states what it reaches in `report`. Foreign code reads
+// SystemVerilog data only through the exported functions it calls (LRM
+// 35.5.3), so an exported function called while the evaluation runs reports
+// there too; on every way out of the evaluation it stops being the one in
+// progress.
+auto EvaluatedReporting(
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    mir::LocalId report, auto lower_value) -> diag::Result<mir::ExprId> {
+  const mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const auto on_the_report = [&](mir::Block& at, support::BuiltinFn entry) {
+    at.AppendStmt(
+        mir::ExprStmt{
+            .expr = BuildReportCall(
+                unit, at, report, entry,
+                {at.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer))},
+                unit.builtins.void_type)});
+  };
+  mir::Block& block = *frame.current_block;
+  on_the_report(block, support::BuiltinFn::kReadReportBeginEvaluation);
+  mir::Block evaluated;
+  auto value = lower_value(frame.WithBlock(&evaluated));
+  if (!value) return std::unexpected(std::move(value.error()));
+  const mir::ExprId answer = evaluated.AsValue(unit.types, *value);
+  const mir::TypeId type = evaluated.exprs.Get(answer).type;
+  const mir::LocalId held = DeclareLocal(
+      frame, block.exprs.Add(BuildDefaultValueExpr(unit, block, type)));
+  evaluated.AppendStmt(
+      mir::ExprStmt{
+          .expr = evaluated.exprs.Add(
+              mir::MakeAssignExpr(
+                  unit.builtins, evaluated.LocalPlace(held, type), answer))});
+  mir::Block cleanup;
+  on_the_report(cleanup, support::BuiltinFn::kReadReportEndEvaluation);
+  block.AppendFinally(std::move(evaluated), std::move(cleanup));
+  return block.ReadLocal(held, type);
+}
+
 // The observation one event expression is watched through (LRM 9.4.2): the
 // expression's watch, and the `iff` qualifier where the source wrote one. It is
 // one value every leaf of that expression names, since the value being watched
@@ -186,25 +224,30 @@ auto BuildObservationLocal(
 
   ClosureBuilder closure(unit, frame, support::ClosureKind::kFnMut);
   const mir::LocalId arming = closure.AddParam(unit.builtins.machine_bool);
-  WalkFrame evaluation = closure.Frame();
-  if (report.has_value()) {
-    const mir::ExprId held = SnapshotValueIntoClosure(
-        lowerer.Owner(), frame, closure,
-        block.ReadLocal(*report, unit.builtins.read_report_ptr));
-    const mir::LocalId reported_to =
-        evaluation.bindings->DeclareAnonymous(unit.builtins.read_report_ptr);
-    closure.Body().AppendStmt(
-        mir::LocalDeclStmt{.target = reported_to, .init = held});
-    evaluation = evaluation.WithReportingReachedTo(reported_to);
+  const WalkFrame evaluation =
+      ClosureFrameReportingTo(lowerer.Owner(), frame, closure, report);
+  const auto watched_part =
+      [&](const WalkFrame& at) -> diag::Result<mir::ExprId> {
+    auto value_or =
+        lowerer.LowerExpr(lowerer.HirExprs().Get(trigger.signal), at);
+    if (!value_or) return std::unexpected(std::move(value_or.error()));
+    mir::Block& at_block = *at.current_block;
+    return BuildWatchedPart(
+        unit, at_block, trigger.edge, at_block.exprs.Add(*std::move(value_or)));
+  };
+  diag::Result<mir::ExprId> watched_or = [&]() -> diag::Result<mir::ExprId> {
+    if (!evaluation.reports_reached_to.has_value()) {
+      return watched_part(evaluation);
+    }
+    const mir::LocalId reported_to = *evaluation.reports_reached_to;
     auto cells = ReportCells(lowerer, evaluation, reported_to, trigger.cells);
     if (!cells) return std::unexpected(std::move(cells.error()));
-  }
-  auto value_or =
-      lowerer.LowerExpr(lowerer.HirExprs().Get(trigger.signal), evaluation);
-  if (!value_or) return std::unexpected(std::move(value_or.error()));
+    return EvaluatedReporting(
+        lowerer.Owner(), evaluation, reported_to, watched_part);
+  }();
+  if (!watched_or) return std::unexpected(std::move(watched_or.error()));
   mir::Block& body = closure.Body();
-  const mir::ExprId value_id = BuildWatchedPart(
-      unit, body, trigger.edge, body.exprs.Add(*std::move(value_or)));
+  const mir::ExprId value_id = *watched_or;
   const mir::TypeId watched = body.exprs.Get(value_id).type;
 
   const BodyBindingRef previous = SnapshotBindingIntoClosure(
@@ -753,14 +796,17 @@ auto LowerWaitStmt(
   const WalkFrame test_frame = test.Frame().WithReportingReachedTo(report);
   auto cells = ReportCells(process, test_frame, report, w.cells);
   if (!cells) return std::unexpected(std::move(cells.error()));
-  auto cond_or = process.LowerExpr(hir_proc.exprs.Get(w.cond), test_frame);
-  if (!cond_or) {
-    return std::unexpected(std::move(cond_or.error()));
-  }
+  auto cond_id = EvaluatedReporting(
+      process.Owner(), test_frame, report,
+      [&](const WalkFrame& at) -> diag::Result<mir::ExprId> {
+        auto cond_or = process.LowerExpr(hir_proc.exprs.Get(w.cond), at);
+        if (!cond_or) return std::unexpected(std::move(cond_or.error()));
+        return at.current_block->exprs.Add(*std::move(cond_or));
+      });
+  if (!cond_id) return std::unexpected(std::move(cond_id.error()));
   mir::Block& test_block = test.Body();
-  const mir::ExprId cond_id = test_block.exprs.Add(*std::move(cond_or));
   const mir::ExprId not_yet = BuildConditionNot(
-      unit, test_block, ReduceToCondition(unit, test_block, cond_id));
+      unit, test_block, ReduceToCondition(unit, test_block, *cond_id));
   const mir::ExprId waiting_id = wrapper.exprs.Add(test.Build(not_yet));
 
   mir::Block inner_block;

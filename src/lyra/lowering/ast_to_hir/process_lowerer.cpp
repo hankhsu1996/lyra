@@ -64,23 +64,22 @@ auto ProcessLowerer::Run(
   // whole procedure reads, including what any function it calls reads, less
   // what either writes. What it watches is stated in the body, so it is stated
   // while the body is still open.
-  const diag::SourceSpan span = frontend::PointSpanOf(proc.location);
-  auto kind = KindOf(proc, frame, span);
+  auto kind = KindOf(proc, frame);
   if (!kind) return std::unexpected(std::move(kind.error()));
   body.root_scope = parent_frame.SealScope(std::move(root));
 
   return hir::Process{
       .kind = *std::move(kind),
-      .span = span,
+      .span = frontend::PointSpanOf(proc.location),
       .body = std::move(body),
       .root_stmt = root_stmt};
 }
 
 auto ProcessLowerer::KindOf(
-    const slang::ast::ProceduralBlockSymbol& proc, const WalkFrame& frame,
-    diag::SourceSpan span) -> diag::Result<hir::ProcessKind> {
+    const slang::ast::ProceduralBlockSymbol& proc, const WalkFrame& frame)
+    -> diag::Result<hir::ProcessKind> {
   const auto always_comb = [&]() -> diag::Result<hir::ProcessKind> {
-    auto reads = ReadsOfProcedure(*this, frame, proc, span);
+    auto reads = ReadsOfProcedure(*this, frame, proc);
     if (!reads) return std::unexpected(std::move(reads.error()));
     return hir::ProcessKind{
         hir::AlwaysCombProcess{.implicit_reads = *std::move(reads)}};
@@ -102,7 +101,7 @@ auto ProcessLowerer::KindOf(
     case slang::ast::ProceduralBlockKind::AlwaysComb:
       return always_comb();
     case slang::ast::ProceduralBlockKind::AlwaysLatch: {
-      auto reads = ReadsOfProcedure(*this, frame, proc, span);
+      auto reads = ReadsOfProcedure(*this, frame, proc);
       if (!reads) return std::unexpected(std::move(reads.error()));
       return hir::ProcessKind{
           hir::AlwaysLatchProcess{.implicit_reads = *std::move(reads)}};
