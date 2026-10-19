@@ -17,7 +17,10 @@ optimize across it reads them as ordinary objects.
 The same holds for whatever else a build was asked to compile and link with. A
 program a user builds links this library with their own compiler and nothing
 this build knew, so a library instrumented because the compiler around it is
-would ask that link for a runtime it was never told about.
+would ask that link for a runtime it was never told about. The one option it
+keeps names which GCC installation provides the C++ library, since that is a
+fact of the machine running the compiles rather than of the build, and the
+library has to be the one the rest of that machine's builds use.
 
 The surface a user compiles against answers to the same thing, and for a second
 reason: it has to be reachable as a set. A source file is staged by its place in
@@ -29,17 +32,22 @@ build stated rather than what the tree looks like.
 
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 
-def _shipped_transition_impl(_settings, _attr):
+_NAMES_GCC_INSTALLATION = ("--gcc-install-dir=", "--gcc-toolchain=")
+
+def _gcc_installation(options):
+    return [o for o in options if o.startswith(_NAMES_GCC_INSTALLATION)]
+
+def _shipped_transition_impl(settings, _attr):
     return {
         "//command_line_option:compilation_mode": "opt",
-        "//command_line_option:copt": ["-flto=thin", "-ffat-lto-objects"],
+        "//command_line_option:copt": _gcc_installation(settings["//command_line_option:copt"]) + ["-flto=thin", "-ffat-lto-objects"],
         "//command_line_option:extra_toolchains": ["@runtime_clang_toolchain//:all"],
         "//command_line_option:linkopt": [],
     }
 
 _shipped_transition = transition(
     implementation = _shipped_transition_impl,
-    inputs = [],
+    inputs = ["//command_line_option:copt"],
     outputs = [
         "//command_line_option:compilation_mode",
         "//command_line_option:copt",
@@ -55,7 +63,7 @@ def _shipped_artifact_impl(ctx):
 
 shipped_artifact = rule(
     implementation = _shipped_artifact_impl,
-    doc = "Re-exports `lib` as `out`, built optimized and with no option the enclosing build added.",
+    doc = "Re-exports `lib` as `out`, built optimized with none of the enclosing build's `--copt` but the one naming the machine's GCC installation, and no `--linkopt`.",
     attrs = {
         "lib": attr.label(
             allow_single_file = True,
