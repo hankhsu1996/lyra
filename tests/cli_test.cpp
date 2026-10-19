@@ -2190,7 +2190,7 @@ TEST(LyraCommandLine, NamesWhichOptionalRewritesOfMirRun) {
       std::string::npos)
       << not_lowered.stderr_text;
 
-  for (const std::string& backend : {"cpp", "llvm"}) {
+  for (const char* backend : {"cpp", "llvm"}) {
     const auto every = RunChildProcess(
         lyra,
         std::vector<std::string>{
