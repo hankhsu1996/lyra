@@ -621,6 +621,17 @@ cross-check predicts. This file owns only which instances are known and what is 
       receiver's type and picked a member token of its own, the shortened form of the dereference
       the type mapping already spells.
 
+- [x] T50 -- How a body is handed the object it runs against is answered by the type mapping from
+      the receiver's type, for a class's method, a record's method, a constructor and a closure
+      alike, and member render writes punctuation around the answer. The source backend hands an
+      object as `this`, read-only exactly where the function is qualified so, so a receiver pointing
+      at its object or referring to it is bound from `this` or `*this` and the function is read-only
+      where the receiver is; a box the body takes over is the first parameter of a static function.
+      The question had three answers -- a closure's from its kind, a member's binding from whether
+      its receiver was a reference, its qualifier from a reference's mutability alone -- so a
+      read-only receiver held through a pointer would have lost its qualifier with nothing refusing
+      it. T36 is the call side of the same question.
+
 - [x] T37 -- How a value that names nothing is spelled is a question about its type, answered by the
       type mapping. An object reference and a chandle are the type's own empty value, a pointer and
       a code address the null address, and any other type has no such value on this target and is
@@ -702,14 +713,6 @@ the code; where a program was run, the entry says so.
       hand, where every other member access goes through the one rule that writes the receiver, so a
       question settled once is answered a second way. Target: the shared rule. Not blocked; the
       source backend alone.
-
-- [ ] T50 -- How a member function's body binds its object -- by reference or by pointer, and
-      whether read-only -- is worked out by member render from the receiver's type, while the type
-      mapping already answers how each kind of handle is opened. A receiver of any type but a
-      reference loses its read-only qualifier, with nothing refusing it. Target: the type mapping
-      answers, per receiver type, how the target's object pointer is held as that receiver and with
-      which qualifier, and member render writes punctuation around it. Not blocked; T36 settled only
-      the call side.
 
 - [ ] T51 -- A statement's source label is a MIR field only the source backend realizes, as a target
       label nothing jumps to; a loop's exit jumps to a label of its own. Run on a label before an

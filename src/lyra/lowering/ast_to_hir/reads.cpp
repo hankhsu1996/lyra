@@ -34,22 +34,15 @@ auto IsRuntimeLibraryMethod(const slang::ast::SubroutineSymbol& method)
   return owner != nullptr && ImportedRuntimeClassOf(*owner).has_value();
 }
 
-// A method run on an object rather than on its class (LRM 8.10).
-auto IsInstanceMethod(const slang::ast::SubroutineSymbol& subroutine) -> bool {
-  const slang::ast::Scope* declaring = subroutine.getParentScope();
-  return declaring != nullptr &&
-         declaring->asSymbol().kind == slang::ast::SymbolKind::ClassType &&
-         !subroutine.flags.has(slang::ast::MethodFlags::Static);
-}
-
 // Walks a function body's or a procedure's statements for the calls an
 // implicit list follows into the function called (LRM 9.2.2.2.1): those the
 // clause analyzes as normal functions -- a function of a design element or a
-// package, one named hierarchically, a static method. A method called on an
-// object adds nothing but its arguments, which are the caller's text; a task
-// adds nothing at all; foreign code and a method of a class the runtime
-// library defines (LRM 9.7 `process`) read nothing a list can hold; and a
-// construction is a reference to a class object.
+// package, one named hierarchically, a static method named through its class.
+// A method called on an object, a static one included, adds nothing but its
+// arguments, which are the caller's text; a task adds nothing at all; foreign
+// code and a method of a class the runtime library defines (LRM 9.7 `process`)
+// read nothing a list can hold; and a construction is a reference to a class
+// object.
 class ListedCalls : public slang::ast::ASTVisitor<
                         ListedCalls, slang::ast::VisitFlags::AllGood> {
  public:
@@ -79,8 +72,7 @@ class ListedCalls : public slang::ast::ASTVisitor<
     return callee.subroutineKind == slang::ast::SubroutineKind::Function &&
            !callee.flags.has(slang::ast::MethodFlags::DPIImport) &&
            !callee.flags.has(slang::ast::MethodFlags::Constructor) &&
-           !IsRuntimeLibraryMethod(callee) && call.thisClass() == nullptr &&
-           !IsInstanceMethod(callee);
+           !IsRuntimeLibraryMethod(callee) && call.thisClass() == nullptr;
   }
 
   void Add(const slang::ast::CallExpression& call) {

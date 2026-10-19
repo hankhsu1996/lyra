@@ -295,6 +295,27 @@ void WriteArrowAccess(
       DerefSpellingAsCpp(unit, pointer_type));
 }
 
+// How C++ hands a member function's body the object it runs against, as the
+// body's receiver of this type holds it. C++ hands it as `this`, a pointer
+// that is read-only exactly where the function is qualified `const`
+// ([class.this]), so a receiver pointing at its object is bound from `this`
+// and one referring to it from `*this`, the function read-only where the
+// receiver is. A body taking its object over is handed a box, which `this`
+// cannot be, so it is a static function taking the box as its first
+// parameter. Any other type holds no object and is refused.
+struct ReceiverFromThis {
+  mir::Mutability object;
+  std::string_view bound_from;
+};
+
+struct ReceiverAsParameter {};
+
+using ReceiverSpelling = std::variant<ReceiverFromThis, ReceiverAsParameter>;
+
+[[nodiscard]] auto ReceiverSpellingAsCpp(
+    const mir::CompilationUnit& unit, mir::TypeId receiver_type)
+    -> ReceiverSpelling;
+
 // How a value of a type that names nothing is written (LRM 8.4, 6.14). An
 // object reference and a chandle are values of their own types, `T{}`; a
 // pointer and a code address are the null address. Any other type has no such

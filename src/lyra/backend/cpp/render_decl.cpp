@@ -29,7 +29,6 @@
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/record_id.hpp"
-#include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/value_build.hpp"
 #include "lyra/support/callable_bounds.hpp"
@@ -49,80 +48,99 @@ void WriteParameters(
 
 namespace {
 
-// The body's first line, binding its receiver to the object it runs against,
-// `C* self = this;`: MIR reaches the object through that binding in every body,
-// and what C++ holds it as is `from`.
-template <typename... From>
-void WriteReceiverBinding(
-    const mir::CompilationUnit& unit, const mir::CallableCode& code,
-    TargetText& out, const From&... from) {
-  const mir::LocalId receiver = *code.receiver;
-  out.OpenLine();
-  Write(
-      out, CppType(unit, code.locals.Get(receiver).type), " ",
-      CppLocalName(code.named_locals, receiver), " = ", from..., ";\n");
+// How C++ hands a body its receiver, for a body with one.
+auto ReceiverOf(const mir::CompilationUnit& unit, const mir::CallableCode& code)
+    -> ReceiverSpelling {
+  return ReceiverSpellingAsCpp(unit, code.locals.Get(*code.receiver).type);
 }
 
-// Whether a body refers to the object it runs against by reference rather
-// than through a pointer, which is how a record's method receives its record:
-// it reads the record where it lies.
-auto ReceivesAReference(
-    const mir::CompilationUnit& unit, const mir::CallableCode& code) -> bool {
-  return code.TakesReceiver() &&
-         unit.types.Get(code.locals.Get(*code.receiver).type)
-             .Is<mir::ReferenceType>();
+// The same for a member function, which is handed none where its caller
+// enters it on no object (LRM 8.10), or hands it a scope it narrows itself.
+auto MemberReceiverOf(
+    const mir::CompilationUnit& unit, const mir::CallableCode& code)
+    -> std::optional<ReceiverSpelling> {
+  if (!code.TakesReceiver()) return std::nullopt;
+  return ReceiverOf(unit, code);
 }
 
-// `static ` for a member function entered on no object (LRM 8.10), or handed
-// one it narrows itself.
-auto StaticPrefix(const mir::CallableCode& code) -> std::string_view {
-  return code.TakesReceiver() ? "" : "static ";
+// `static ` for a member function C++ hands no object as `this`.
+auto StaticPrefix(const std::optional<ReceiverSpelling>& receiver)
+    -> std::string_view {
+  if (!receiver.has_value()) return "static ";
+  return std::visit(
+      Overloaded{
+          [](const ReceiverFromThis&) -> std::string_view { return ""; },
+          [](ReceiverAsParameter) -> std::string_view { return "static "; }},
+      *receiver);
 }
 
 // What a member function's declaration and its definition share after its
-// name, `(params) -> R`, with `const` for a body referring to its object by a
-// read-only reference.
+// name, `(params) const -> R`: a receiver taken as a parameter leads the
+// parameters, and `const` follows them where the body is handed its object
+// read-only.
 void WriteMemberSignatureTail(
     const mir::CompilationUnit& unit, const mir::CallableCode& code,
-    TargetText& out) {
-  const auto object_mutability = [&] {
-    if (!code.TakesReceiver()) {
-      return mir::Mutability::kMutable;
-    }
-    const auto* referred = unit.types.Get(code.locals.Get(*code.receiver).type)
-                               .As<mir::ReferenceType>();
-    if (referred == nullptr) {
-      return mir::Mutability::kMutable;
-    }
-    return referred->mutability;
-  };
+    const std::optional<ReceiverSpelling>& receiver,
+    std::span<const mir::LocalId> params, TargetText& out) {
+  const CppType result(unit, code.result_type);
   out += "(";
-  WriteParameters(unit, code, code.ParamsAfterReceiver(), out);
-  Write(
-      out, ")", CppConstQualifier{object_mutability()}, " -> ",
-      CppType(unit, code.result_type));
+  if (!receiver.has_value()) {
+    WriteParameters(unit, code, params, out);
+    Write(out, ") -> ", result);
+    return;
+  }
+  std::visit(
+      Overloaded{
+          [&](const ReceiverFromThis& from) {
+            WriteParameters(unit, code, params, out);
+            Write(out, ")", CppConstQualifier{from.object}, " -> ", result);
+          },
+          [&](ReceiverAsParameter) {
+            std::vector<mir::LocalId> taken{*code.receiver};
+            taken.insert(taken.end(), params.begin(), params.end());
+            WriteParameters(unit, code, taken, out);
+            Write(out, ") -> ", result);
+          }},
+      *receiver);
+}
+
+// The body's first line, binding its receiver to the object C++ hands it as
+// `this`: `C* self = this;` for an object pointed at, `const S& self = *this;`
+// for a record referred to. MIR reaches the object through that binding in
+// every body. A receiver taken as a parameter is bound already.
+void WriteReceiverBinding(
+    const mir::CompilationUnit& unit, const mir::CallableCode& code,
+    const std::optional<ReceiverSpelling>& receiver, TargetText& out) {
+  if (!receiver.has_value()) return;
+  std::visit(
+      Overloaded{
+          [&](const ReceiverFromThis& from) {
+            out.OpenLine();
+            Write(
+                out, CppType(unit, code.locals.Get(*code.receiver).type), " ",
+                CppLocalName(code.named_locals, *code.receiver), " = ",
+                from.bound_from, ";\n");
+          },
+          [](ReceiverAsParameter) {}},
+      *receiver);
 }
 
 // The definition of a member function -- a class's method (LRM 8.6), static
 // method (LRM 8.10), process or lifecycle body, the entry a scope answers a
 // foreign caller with (LRM 35.5.3), or a record's method -- written
 // outside its type so the body can use any type of the unit as a complete one.
-// The body starts by binding its receiver, because MIR reaches the object
-// through a parameter like any other: `C* self = this;` for an object reached
-// through a pointer, `const S& self = *this;` for a record referred to.
 template <typename Owner, typename Member>
 void RenderMemberFunctionDef(
     const mir::CompilationUnit& unit, UnitRenderReport& report,
     std::string_view specifiers, const Owner& owner, const Member& member,
     const mir::CallableCode& code, TargetText& out) {
+  const std::optional<ReceiverSpelling> receiver = MemberReceiverOf(unit, code);
   Write(out, specifiers, "auto ", owner, "::", member);
-  WriteMemberSignatureTail(unit, code, out);
+  WriteMemberSignatureTail(
+      unit, code, receiver, code.ParamsAfterReceiver(), out);
   out += " ";
   WriteBody(out, [&] {
-    if (code.TakesReceiver()) {
-      WriteReceiverBinding(
-          unit, code, out, ReceivesAReference(unit, code) ? "*this" : "this");
-    }
+    WriteReceiverBinding(unit, code, receiver, out);
     RenderBlockStatements(ScopeView::ForCode(unit, code, report), out);
   });
   out += "\n";
@@ -178,11 +196,13 @@ void RenderClassCallableDecl(
     const mir::CompilationUnit& unit, const mir::Class& s, mir::CallableId id,
     const mir::CallableDecl& m, TargetText& out) {
   const mir::CallableCode& code = m.code;
+  const std::optional<ReceiverSpelling> receiver = MemberReceiverOf(unit, code);
   out.OpenLine();
-  out += StaticPrefix(code);
+  out += StaticPrefix(receiver);
   out += VirtualPrefix(m);
   Write(out, "auto ", CppClassCallableName(unit, s, id));
-  WriteMemberSignatureTail(unit, code, out);
+  WriteMemberSignatureTail(
+      unit, code, receiver, code.ParamsAfterReceiver(), out);
   out += OverrideSuffix(m);
   // `= 0` also makes C++ treat the class as abstract.
   std::visit(
@@ -227,6 +247,12 @@ void RenderConstructor(
         "RenderConstructor: a constructor is entered on the object it builds, "
         "yet states no receiver -- please report this as a bug");
   }
+  const ReceiverSpelling receiver = ReceiverOf(unit, ctor_code);
+  if (std::holds_alternative<ReceiverAsParameter>(receiver)) {
+    throw InternalError(
+        "RenderConstructor: a constructor is handed the object it builds to "
+        "take over -- please report this as a bug");
+  }
   const ScopeView scope_view = ScopeView::ForCode(unit, ctor_code, report);
   const CppName cpp_name = CppClassName(unit, cls_id);
   const std::span<const mir::LocalId> formals = ctor_code.ParamsAfterReceiver();
@@ -246,7 +272,7 @@ void RenderConstructor(
   }
   code += " ";
   WriteBody(code, [&] {
-    WriteReceiverBinding(unit, ctor_code, code, "this");
+    WriteReceiverBinding(unit, ctor_code, receiver, code);
     RenderBlockStatements(scope_view, code);
   });
   code += "\n";
@@ -582,9 +608,13 @@ void RenderRecord(
   Write(declared, "using ", base, "::", base, ";\n");
   for (const mir::RecordMethod& method : unit.GetRecordMethods(id)) {
     const VerbatimName member = CppValueOperationMemberName(method.answers);
+    const std::optional<ReceiverSpelling> receiver =
+        MemberReceiverOf(unit, method.code);
     declared.OpenLine();
-    Write(declared, StaticPrefix(method.code), "auto ", member);
-    WriteMemberSignatureTail(unit, method.code, declared);
+    Write(declared, StaticPrefix(receiver), "auto ", member);
+    WriteMemberSignatureTail(
+        unit, method.code, receiver, method.code.ParamsAfterReceiver(),
+        declared);
     declared += ";\n";
     RenderMemberFunctionDef(
         unit, report, specifiers, name, member, method.code, defined);
@@ -631,43 +661,23 @@ auto RenderUnitClosures(
           "RenderUnitClosures: a closure's body reads its captures through the "
           "closure, yet states no receiver -- please report this as a bug");
     }
-    const support::ClosureKind kind = mir::ClosureKindOf(unit.types, decl);
-    // What follows the function's name or qualifier, the same in the
-    // declaration and the definition. A body borrows its closure to read, as
-    // Rust's `Fn` takes `&self`, or to write, as `FnMut` takes `&mut self`;
-    // one taking it over is handed the box it was made in, as `FnOnce` takes
-    // `self`.
+    const ReceiverSpelling receiver = ReceiverOf(unit, code);
+    // The function's name and what follows it, the same in the declaration
+    // and the definition. The library calls a body borrowing its closure, as
+    // Rust's `Fn` and `FnMut` take `&self` and `&mut self`, as the closure's
+    // call operator, and one taking over the box it was made in, as `FnOnce`
+    // takes `self`, by a name of its own.
     const auto write_function = [&](TargetText& out) {
-      switch (kind) {
-        case support::ClosureKind::kFn:
-          out += "operator()(";
-          WriteParameters(unit, code, code.params, out);
-          Write(out, ") const -> ", CppType(unit, code.result_type));
-          return;
-        case support::ClosureKind::kFnMut:
-          out += "operator()(";
-          WriteParameters(unit, code, code.params, out);
-          Write(out, ") -> ", CppType(unit, code.result_type));
-          return;
-        case support::ClosureKind::kFnOnce:
-          Write(
-              out, CppClosureCallOnceName(), "(",
-              CppType(unit, code.locals.Get(*code.receiver).type), " ",
-              CppLocalName(code.named_locals, *code.receiver), ") -> ",
-              CppType(unit, code.result_type));
-          return;
-      }
-      throw InternalError("RenderUnitClosures: unknown ClosureKind");
-    };
-    const auto static_prefix = [&]() -> std::string_view {
-      switch (kind) {
+      switch (mir::ClosureKindOf(unit.types, decl)) {
         case support::ClosureKind::kFn:
         case support::ClosureKind::kFnMut:
-          return "";
+          out += "operator()";
+          break;
         case support::ClosureKind::kFnOnce:
-          return "static ";
+          Write(out, CppClosureCallOnceName());
+          break;
       }
-      throw InternalError("RenderUnitClosures: unknown ClosureKind");
+      WriteMemberSignatureTail(unit, code, receiver, code.params, out);
     };
     // The constructor takes each capture in the closure's member order.
     const auto write_constructor_params = [&](TargetText& out) {
@@ -699,7 +709,7 @@ auto RenderUnitClosures(
                      .name = CppClosureCaptureName(field)});
       }
       out.OpenLine();
-      Write(out, static_prefix(), "auto ");
+      Write(out, StaticPrefix(receiver), "auto ");
       write_function(out);
       out += ";\n";
       out.Outdent();
@@ -728,14 +738,7 @@ auto RenderUnitClosures(
     write_function(out);
     out += " ";
     WriteBody(out, [&] {
-      switch (kind) {
-        case support::ClosureKind::kFn:
-        case support::ClosureKind::kFnMut:
-          WriteReceiverBinding(unit, code, out, "this");
-          break;
-        case support::ClosureKind::kFnOnce:
-          break;
-      }
+      WriteReceiverBinding(unit, code, receiver, out);
       RenderBlockStatements(ScopeView::ForCode(unit, code, report), out);
     });
     out += "\n";
