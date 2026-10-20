@@ -48,12 +48,18 @@ Done when:
       draws independently of every other, because each container's generator starts from the same
       default seed and none of them advances another's.
 
-- [ ] Manual seeding and state save / restore: `srandom`, `get_randstate`, and `set_randstate` (LRM
-      18.13.3 -- 18.13.5), reached on a process through its process handle (LRM 9.7). The RNG state
-      is an opaque string whose length and content the standard leaves to the implementation, and
-      only a state this implementation produced can be restored. The object-side form of the same
-      three methods lands with part two, because until `randomize()` exists nothing draws from an
-      object's RNG for a saved state to be about.
+- [x] Manual seeding and state save / restore: `srandom`, `get_randstate`, and `set_randstate` (LRM
+      18.13.3 -- 18.13.5), reached on a process through its process handle (LRM 9.7), whichever
+      process makes the call, so a thread seeded or restored through another's handle draws from
+      what was set. The RNG state is an opaque string whose length and content the standard leaves
+      to the implementation; only a state this implementation produced can be restored, and setting
+      any other ends the run with an error, since the standard leaves it undefined and the string is
+      one the design computed. `process::self()` called where no process runs -- in a declaration
+      assignment, which runs before any procedure starts -- answers a null handle. The object-side
+      form of the same three methods lands with part two, because until `randomize()` exists nothing
+      draws from an object's RNG for a saved state to be about; until then calling one of them on an
+      object is refused as not yet supported, as is calling `randomize`, `pre_randomize`,
+      `post_randomize`, `rand_mode` or `constraint_mode` on one.
 
 - [x] The probabilistic distribution functions -- `$dist_uniform`, `$dist_normal`,
       `$dist_exponential`, `$dist_poisson`, `$dist_chi_square`, `$dist_t`, `$dist_erlang` (LRM

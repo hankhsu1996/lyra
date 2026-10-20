@@ -1,6 +1,7 @@
 #include "lyra/runtime/process_control.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
@@ -8,11 +9,14 @@
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/object_ref.hpp"
+#include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/wait.hpp"
 #include "lyra/value/integral.hpp"
+#include "lyra/value/integral_words.hpp"
 #include "lyra/value/object_ref.hpp"
+#include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
 
@@ -56,7 +60,11 @@ class ProcessTerminationAwaiter final : public StateAwaiter {
 }  // namespace
 
 auto ProcessSelf(RuntimeEffects& runtime) -> value::ObjectRef {
-  return RefToObject(runtime.CurrentProcess().shared_from_this());
+  RuntimeProcess* const running = runtime.TryCurrentProcess();
+  if (running == nullptr) {
+    return nullptr;
+  }
+  return RefToObject(running->shared_from_this());
 }
 
 auto ProcessStatus(const value::ObjectRef& self) -> value::Int {
@@ -119,6 +127,27 @@ void ProcessSuspend(const value::ObjectRef& self, RuntimeEffects& runtime) {
 
 void ProcessResume(const value::ObjectRef& self, RuntimeEffects& runtime) {
   ProcessNodeOf(self).Resume(runtime);
+}
+
+void ProcessSrandom(
+    const value::ObjectRef& self, const value::ConstIntegralView& seed) {
+  ProcessNodeOf(self).Running().rng.Reseed(
+      RandomSeed{static_cast<std::uint32_t>(value::ToInt64(seed))});
+}
+
+auto ProcessGetRandstate(const value::ObjectRef& self) -> value::String {
+  return value::String{ProcessNodeOf(self).Running().rng.StateText()};
+}
+
+void ProcessSetRandstate(
+    const value::ObjectRef& self, const value::String& state) {
+  const std::optional<DrawRng> restored = DrawRng::FromStateText(state.View());
+  if (!restored.has_value()) {
+    throw SimulationError(
+        "'process::set_randstate' was given a state that no 'get_randstate' "
+        "returned");
+  }
+  ProcessNodeOf(self).Running().rng = *restored;
 }
 
 }  // namespace lyra::runtime

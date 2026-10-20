@@ -2,6 +2,9 @@
 
 #include <bit>
 #include <cstdint>
+#include <optional>
+#include <string>
+#include <string_view>
 
 namespace lyra::runtime {
 
@@ -60,6 +63,17 @@ class DrawRng {
   void Reseed(RandomSeed seed) {
     *this = DrawRng{seed};
   }
+
+  // What `get_randstate` answers (LRM 18.13.4), a text whose length and format
+  // the standard leaves to the implementation: the four words of the state in
+  // decimal, separated by single spaces.
+  [[nodiscard]] auto StateText() const -> std::string;
+
+  // The generator a state text names, for `set_randstate` (LRM 18.13.5). Only
+  // a text that writes a state this generator can be in names one; the
+  // standard leaves any other undefined, and here it names none.
+  [[nodiscard]] static auto FromStateText(std::string_view text)
+      -> std::optional<DrawRng>;
 
  private:
   static constexpr std::uint64_t kGoldenRatio = 0x9e3779b97f4a7c15ULL;

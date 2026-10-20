@@ -1939,6 +1939,9 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kProcessAwait:
     case support::BuiltinFn::kProcessSuspend:
     case support::BuiltinFn::kProcessResume:
+    case support::BuiltinFn::kProcessSrandom:
+    case support::BuiltinFn::kProcessGetRandstate:
+    case support::BuiltinFn::kProcessSetRandstate:
     case support::BuiltinFn::kParent:
     case support::BuiltinFn::kHierarchicalPath:
     // An assertion's attempts hold machine words and no value of the design,

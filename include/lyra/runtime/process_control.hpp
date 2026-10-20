@@ -6,6 +6,7 @@
 #include "lyra/runtime/wait.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/object_ref.hpp"
+#include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
 
@@ -23,7 +24,9 @@ enum class ProcessStatusCode : std::int32_t {
 
 // LRM 9.7 `process::self()`: a handle to the process making the call. A task or
 // function runs in its caller's thread (LRM 9.5), so this returns the enclosing
-// executing process, reached through the ambient execution context.
+// executing process, reached through the ambient execution context. A
+// declaration assignment runs before any procedure starts (LRM 10.5), so a call
+// written there is made by no process, and the handle it answers is null.
 auto ProcessSelf(RuntimeEffects& runtime) -> value::ObjectRef;
 
 // LRM 9.7 `process::status()`: the process's execution state projected onto the
@@ -69,5 +72,25 @@ void ProcessSuspend(const value::ObjectRef& self, RuntimeEffects& runtime);
 // happened -- which is the whole of the clause, because a process that was
 // runnable when it was stopped is one whose wait was already satisfied.
 void ProcessResume(const value::ObjectRef& self, RuntimeEffects& runtime);
+
+// LRM 18.13.3 -- 18.13.5, reached through a process handle (LRM 9.7): the
+// generator these act on is the one the process draws from (LRM 18.14.2),
+// whichever process makes the call, so a thread seeded or restored through its
+// handle draws from what was set the next time it draws.
+void ProcessSrandom(
+    const value::ObjectRef& self, const value::ConstIntegralView& seed);
+
+template <value::IntegralValue T>
+void ProcessSrandom(const value::ObjectRef& self, const T& seed) {
+  ProcessSrandom(self, seed.AsWords().View());
+}
+
+auto ProcessGetRandstate(const value::ObjectRef& self) -> value::String;
+
+// A state no `get_randstate` answered is undefined (LRM 18.13.5), and it is a
+// value the design computed, so setting one is the design's error and leaves
+// the generator as it was.
+void ProcessSetRandstate(
+    const value::ObjectRef& self, const value::String& state);
 
 }  // namespace lyra::runtime

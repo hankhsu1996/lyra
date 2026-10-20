@@ -302,15 +302,20 @@ void lyra_rt_disable_fork(void* runtime);
 
 // LRM 9.7 process control. The receiver is a handle of the managed-reference
 // domain naming a process node; `self` builds one for the calling process,
-// which the engine already owns, so nothing is constructed here. `await` is the
-// one that waits, and it answers the wait for the target to terminate, which
-// the caller then stops at.
+// which the engine already owns, so nothing is constructed here, and a null one
+// where no process is calling. `await` is the one that waits, and it answers
+// the wait for the target to terminate, which the caller then stops at.
 auto lyra_rt_process_self(void* runtime, void* out) -> void*;
 auto lyra_rt_process_status(const void* self, void* out) -> void*;
 void lyra_rt_process_kill(const void* self, void* runtime);
 auto lyra_rt_process_await(const void* self, void* runtime, void* out) -> void*;
 void lyra_rt_process_suspend(const void* self, void* runtime);
 void lyra_rt_process_resume(const void* self, void* runtime);
+void lyra_rt_process_srandom(
+    const void* self, const void* seed, std::int64_t seed_width,
+    bool seed_is_signed, bool seed_is_four_state);
+auto lyra_rt_process_get_randstate(const void* self, void* out) -> void*;
+void lyra_rt_process_set_randstate(const void* self, const void* state);
 
 // Ends a closure held through a box of a closure of no known type, and gives
 // the storage back: what ending such a box is, since only the definition the

@@ -11,6 +11,7 @@
 09_processes/always_comb_writes_one_key_of_an_associative_array: "driven by always_comb procedure cannot be written to by any other process"
 10_assignments/net_delay: "a net delay is not yet supported"
 16_assertions/procedural_concurrent_assertion_queues_where_it_runs: "a concurrent assertion embedded in a procedure is not yet supported"
+18_random_value_generation/object_seed_reproduces_randomize: "the built-in class method 'srandom' is not yet supported"
 21_output/assignment_pattern_format_of_a_wildcard_indexed_array: "an operand holding an associative array with a wildcard index type"
 23_hierarchy/defparam_reaches_a_block_parameter: "is a localparam and so cannot be the target of a defparam"
 35_dpi/open_array_actual_sized_at_run_time: "a dynamic array or a queue passed to an open array formal of a DPI-C import is not yet supported"
