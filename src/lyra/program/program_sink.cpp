@@ -863,6 +863,9 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_process_await", &lyra_rt_process_await);
   add("lyra_rt_process_suspend", &lyra_rt_process_suspend);
   add("lyra_rt_process_resume", &lyra_rt_process_resume);
+  add("lyra_rt_process_srandom", &lyra_rt_process_srandom);
+  add("lyra_rt_process_get_randstate", &lyra_rt_process_get_randstate);
+  add("lyra_rt_process_set_randstate", &lyra_rt_process_set_randstate);
   add("lyra_rt_laidout_cell_initialize", &lyra_rt_laidout_cell_initialize);
   add("lyra_rt_laidout_cell_set", &lyra_rt_laidout_cell_set);
   add("lyra_rt_laidout_cell_arm_sampling", &lyra_rt_laidout_cell_arm_sampling);

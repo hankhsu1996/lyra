@@ -56,6 +56,17 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
+// The class declaring a subroutine, or none where no class declares it.
+auto DeclaringClassOf(const slang::ast::SubroutineSymbol& sym)
+    -> const slang::ast::ClassType* {
+  const slang::ast::Scope* scope = sym.getParentScope();
+  if (scope == nullptr ||
+      scope->asSymbol().kind != slang::ast::SymbolKind::ClassType) {
+    return nullptr;
+  }
+  return &scope->asSymbol().as<slang::ast::ClassType>();
+}
+
 // True when the call reaches an instance method through its enclosing class
 // -- either the source supplied a handle (`h.foo()`) or slang resolved an
 // unqualified call to a class-scope subroutine, whose enclosing class is
@@ -64,10 +75,7 @@ namespace {
 auto CallReachesInstanceMethod(
     const slang::ast::CallExpression& call,
     const slang::ast::SubroutineSymbol& sym) -> bool {
-  if (call.thisClass() != nullptr) return true;
-  const auto* parent = sym.getParentScope();
-  return parent != nullptr &&
-         parent->asSymbol().kind == slang::ast::SymbolKind::ClassType;
+  return call.thisClass() != nullptr || DeclaringClassOf(sym) != nullptr;
 }
 
 // Classifies which object an instance-method call runs against into a
@@ -419,15 +427,11 @@ auto BuiltinCall(
 // user method.
 auto DetectImportedRuntimeMethod(const slang::ast::SubroutineSymbol& method)
     -> std::optional<support::BuiltinFn> {
-  const slang::ast::Scope* scope = method.getParentScope();
-  if (scope == nullptr) {
+  const slang::ast::ClassType* owner = DeclaringClassOf(method);
+  if (owner == nullptr) {
     return std::nullopt;
   }
-  const slang::ast::Symbol& owner = scope->asSymbol();
-  if (owner.kind != slang::ast::SymbolKind::ClassType) {
-    return std::nullopt;
-  }
-  const auto klass = ImportedRuntimeClassOf(owner.as<slang::ast::ClassType>());
+  const auto klass = ImportedRuntimeClassOf(*owner);
   if (!klass.has_value()) {
     return std::nullopt;
   }
@@ -906,6 +910,18 @@ auto LowerSubroutineCall(
     };
   }
 
+  // A class method the front end supplies itself has no body, so there is no
+  // declaration of this unit for the call to name. Every class has such
+  // methods for its generator and its constraints (LRM 18.6, 18.8, 18.9,
+  // 18.13.3 -- 18.13.5); those of a library class the runtime carries out were
+  // routed above.
+  if (sym->flags.has(slang::ast::MethodFlags::BuiltIn) &&
+      DeclaringClassOf(*sym) != nullptr) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "the built-in class method '{}' is not yet supported", sym->name);
+  }
+
   // A static class method call (LRM 8.10): the target has no receiver, so it
   // lowers to `StaticMethodCallRef` rather than `MethodCallRef` -- a `handle`-
   // qualified call to a static method still discards the handle because the
@@ -914,16 +930,13 @@ auto LowerSubroutineCall(
   // static call reaches the base's arena the same way an instance-method
   // call does under LRM 8.13.
   bool is_type_associated = false;
-  if (sym->getParentScope() != nullptr &&
-      sym->getParentScope()->asSymbol().kind ==
-          slang::ast::SymbolKind::ClassType) {
+  if (DeclaringClassOf(*sym) != nullptr) {
     auto answered = unit_lowerer.IsTypeAssociatedMethod(*sym, span);
     if (!answered) return std::unexpected(std::move(answered.error()));
     is_type_associated = *answered;
   }
   if (is_type_associated) {
-    const auto& declaring_class =
-        sym->getParentScope()->asSymbol().as<slang::ast::ClassType>();
+    const auto& declaring_class = *DeclaringClassOf(*sym);
     auto callee = unit_lowerer.MakeMethodCallee(declaring_class, *sym, span);
     if (!callee) return std::unexpected(std::move(callee.error()));
     auto static_result_type = unit_lowerer.InternExpressionType(call, span);
@@ -969,8 +982,7 @@ auto LowerSubroutineCall(
   if (CallReachesInstanceMethod(call, *sym)) {
     auto receiver_or = ClassifyMethodReceiver(lowerer, frame, call);
     if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
-    const auto& declaring_class =
-        sym->getParentScope()->asSymbol().as<slang::ast::ClassType>();
+    const auto& declaring_class = *DeclaringClassOf(*sym);
     auto callee = unit_lowerer.MakeMethodCallee(declaring_class, *sym, span);
     if (!callee) return std::unexpected(std::move(callee.error()));
     auto method_result_type = unit_lowerer.InternExpressionType(call, span);

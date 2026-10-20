@@ -2037,10 +2037,13 @@ using lyra::runtime::OwnedLaidOutCopy;
 using lyra::runtime::ParkAt;
 using lyra::runtime::PositionNamedAt;
 using lyra::runtime::ProcessAwait;
+using lyra::runtime::ProcessGetRandstate;
 using lyra::runtime::ProcessKill;
 using lyra::runtime::ProcessOf;
 using lyra::runtime::ProcessResume;
 using lyra::runtime::ProcessSelf;
+using lyra::runtime::ProcessSetRandstate;
+using lyra::runtime::ProcessSrandom;
 using lyra::runtime::ProcessStatus;
 using lyra::runtime::ProcessSuspend;
 using lyra::runtime::ProgramLifetime;
@@ -2439,6 +2442,22 @@ void lyra_rt_process_suspend(const void* self, void* runtime) {
 
 void lyra_rt_process_resume(const void* self, void* runtime) {
   ProcessResume(ProcessOf(self), *static_cast<RuntimeEffects*>(runtime));
+}
+
+void lyra_rt_process_srandom(
+    const void* self, const void* seed, std::int64_t seed_width,
+    bool seed_is_signed, bool seed_is_four_state) {
+  ProcessSrandom(
+      ProcessOf(self),
+      NumberAt(seed, seed_width, seed_is_signed, seed_is_four_state).View());
+}
+
+auto lyra_rt_process_get_randstate(const void* self, void* out) -> void* {
+  return Emplace(out, ProcessGetRandstate(ProcessOf(self)));
+}
+
+void lyra_rt_process_set_randstate(const void* self, const void* state) {
+  ProcessSetRandstate(ProcessOf(self), Read<String>(state));
 }
 
 void lyra_rt_closure_box_end(void* closure) {

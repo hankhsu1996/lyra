@@ -912,14 +912,17 @@ enum class BuiltinFn : std::uint16_t {
   // LRM 9.7's `process` methods. The class is one the runtime library defines
   // and every unit imports rather than declares, so no per-unit declaration
   // names these and the library carries each of them out. `kProcessSelf` names
-  // the running process, so it acts on no object; the other five act on the
-  // handle one of those answered with.
+  // the running process, so it acts on no object; the others act on a handle it
+  // answered with.
   kProcessSelf,
   kProcessStatus,
   kProcessKill,
   kProcessAwait,
   kProcessSuspend,
   kProcessResume,
+  kProcessSrandom,
+  kProcessGetRandstate,
+  kProcessSetRandstate,
   // Lifecycle activation registration (LRM 9.2): binds a process body's
   // coroutine to the scope's startup (`kRegisterInitial`) or shutdown
   // (`kRegisterFinal`) lifecycle. Distinct callees, not one tagged call --

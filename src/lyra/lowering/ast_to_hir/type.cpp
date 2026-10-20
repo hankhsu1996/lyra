@@ -1575,8 +1575,9 @@ auto UnitLowerer::InternLocalClass(
     if (method.getParentScope() != &cls) {
       continue;
     }
-    // Every class carries compiler-generated built-ins (the randomize family,
-    // LRM 18.6); they are provided by the runtime, not lowered from source.
+    // Every class carries methods the front end supplies itself, for its
+    // generator and its constraints (LRM 18.6, 18.8, 18.9, 18.13.3 --
+    // 18.13.5); none has a body to lower.
     if (method.flags.has(slang::ast::MethodFlags::BuiltIn)) {
       continue;
     }
