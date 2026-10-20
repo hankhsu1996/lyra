@@ -2356,17 +2356,18 @@ TEST(LyraCommandLine, NamesWhichOptionalRewritesOfMirRun) {
   // Each rewrite that runs is a span of the run's time trace, so which ran is
   // read off the trace.
   const auto spans_of = [&](const std::string& passes) {
-    const auto trace = *tmp_or / "trace.json";
+    const auto trace_path = *tmp_or / "trace.json";
     const auto traced = RunChildProcess(
         lyra,
         std::vector<std::string>{
             "dump", "mir", "--mir-enable-passes=" + passes,
-            "--time-trace=" + trace.string(), "--time-trace-granularity=0",
+            "--time-trace=" + trace_path.string(), "--time-trace-granularity=0",
             src.string()},
         60s);
     EXPECT_EQ(traced.exit_code, 0) << traced.stderr_text;
+    const nlohmann::json trace = ReadJson(trace_path);
     std::set<std::string> names;
-    for (const auto& event : ReadJson(trace)["traceEvents"]) {
+    for (const auto& event : trace.at("traceEvents")) {
       if (event.contains("name")) {
         names.insert(event["name"].get<std::string>());
       }

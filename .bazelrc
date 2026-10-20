@@ -37,6 +37,13 @@ build --cxxopt='-std=c++23'
 # was written against and silently leaves LLVM unoptimized under another one.
 build --per_file_copt=external/[^/]*llvm-project[^/]*/.*@-O2
 
+# LLVM is built without zlib. Its build reaches zlib-ng, which defines every
+# zlib function under zlib's own names, while the value dump's FST writer is
+# built on zlib itself, so a program linking both holds two definitions of
+# each and which one a call reaches depends on the link. Nothing Lyra asks of
+# LLVM compresses, so the one zlib in a link is the dump's.
+build --@llvm-project//third-party:llvm_enable_zlib=false
+
 build --incompatible_strict_action_env
 build --verbose_failures
 
@@ -101,6 +108,14 @@ build:asan --features=-symbol_check
 # A test of what the compiler costs as it ships -- time, stack, memory -- would
 # measure this build instead, so the set is the gate's own less those.
 test:asan --test_tag_filters=-nightly,-cost
+# A thread's alternate signal stack has one slot and several owners: the
+# sanitizer maps one when a thread starts, LLVM's signal handling swaps in a
+# larger one of its own from the heap, and the sanitizer runtime of the clang
+# and GCC that build Lyra unmaps whichever stack is in the slot when the thread
+# ends, which fails on LLVM's and stops the process. The sanitizer of LLVM 23
+# unmaps only the one it mapped; until the compilers building Lyra carry that,
+# the sanitizer leaves the slot to the program.
+test:asan --test_env=ASAN_OPTIONS=use_sigaltstack=0
 
 # Shared cache and result streaming with actions still running locally. Needs a
 # BuildBuddy key via `--remote_header`.
