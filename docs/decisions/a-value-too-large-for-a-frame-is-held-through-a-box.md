@@ -64,8 +64,12 @@ large local -- the temporaries among them -- parameter, capture, argument handed
 made and discarded through a box. Both are required. Go's compiler divides the work the same way:
 one pass states evaluation order through temporaries (`cmd/compile/internal/walk/order.go`), and a
 later one decides which variables leave the frame. Each rewrite asks a type how large a value of it
-is by one query over MIR types, as rustc's passes ask `layout_of`; no MIR node carries a size. The
-unit's verification refuses a body that leaves a value too large for a frame outside a box.
+is by one query over MIR types, as rustc's passes ask `layout_of`; no MIR node carries a size. As
+rustc's query and clang's record layout are, the answer is worked out once per type and kept with
+the unit, because a structure's size is worked out from every member and is asked at every value of
+it. A closure is sized by its captures as it holds them, as D2 says, so the rewrite that boxes a
+capture changes no closure's size, and the kept answers hold for the unit's whole life. The unit's
+verification refuses a body that leaves a value too large for a frame outside a box.
 
 **D4. A large value is made in its box, and no body answers a box.** An expression of a large type
 is evaluated into the storage its new-expression allocates, never into storage of its own first.

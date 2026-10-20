@@ -10,9 +10,6 @@
 # size still costs on this path that it should not. A time or a peak depends on
 # the machine as well, so one listed is owed even on a run that stayed under the
 # bound, and only the change fixing that cost takes its line out.
-array_pattern_elements:
-  - lir.types
-  - mir.types
 concatenation_operands:
   - lir.types
   - mir.types
@@ -58,7 +55,6 @@ loop_reaching_its_neighbour:
   - mir.constructors
   - mir.fields
   - mir.types
-  - time lower units
 loop_sizing_by_index:
   - lir.classes
   - lir.constants
@@ -79,15 +75,7 @@ record_members:
 scan_outputs:
   - lir.types
   - mir.types
-  - time HoldLargeValuesInTemporaries
   - time SwitchCloner
-tagged_union_members:
-  - time design root
-  - time lower units
 task_outputs:
-  - mir.types
-  - time HoldLargeValuesInTemporaries
   - time lower scope
   - time lower to HIR
-  - time lower to MIR
-  - time transform MIR

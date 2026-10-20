@@ -14,7 +14,9 @@
 // holding, whichever kinds those are: a kind the design does not name must not
 // follow its size, and one it names must follow it as named. So a kind of thing
 // the compiler starts to make per step is held from the day it is reported,
-// without this file naming it.
+// without this file naming it. How deep the text a run writes nests is held the
+// same way, read off the text, since a compiler reading it bounds its depth and
+// no design is bounded by one.
 //
 // The two runs are made back to back on one machine, which is what lets time
 // be held at all: a duration says how fast the machine is, the ratio of two
@@ -46,6 +48,7 @@
 
 #include "lyra/base/overloaded.hpp"
 #include "tests/framework/cli_fixture.hpp"
+#include "tests/framework/emitted_nesting.hpp"
 #include "tests/framework/held_record.hpp"
 #include "tests/framework/process.hpp"
 #include "tools/cpp/runfiles/runfiles.h"
@@ -138,6 +141,9 @@ constexpr std::string_view kFiles = "files";
 constexpr std::string_view kBytes = "bytes";
 // A unit's own body and every other instance's lowered into it beside.
 constexpr std::string_view kBodiesLowered = "bodies lowered";
+// How deep the text a run writes nests at the deepest, over every file, which
+// a compiler reading the text bounds and a design does not.
+constexpr std::string_view kDeepestNesting = "deepest nesting";
 
 // What one compile left behind and spent, as the run itself recorded it.
 struct Reading {
@@ -286,6 +292,20 @@ auto Compile(
       reading.left[std::string(kFiles)] += 1;
       reading.left[std::string(kBytes)] +=
           artifact.at("bytes").get<std::uint64_t>();
+      // What the unit wrote as text lies where the run wrote its project; a
+      // path that writes none leaves nothing to read there.
+      std::ifstream text_file(
+          dir / "project" / artifact.at("name").get<std::string>(),
+          std::ios::binary);
+      if (!text_file) {
+        continue;
+      }
+      const std::string text{
+          std::istreambuf_iterator<char>(text_file),
+          std::istreambuf_iterator<char>()};
+      std::uint64_t& deepest = reading.left[std::string(kDeepestNesting)];
+      deepest = std::max<std::uint64_t>(
+          deepest, lyra::test::DeepestNesting(text).depth);
     }
     for (const auto& [form, held] : unit.at("counts").items()) {
       for (const auto& [kind, count] : held.items()) {

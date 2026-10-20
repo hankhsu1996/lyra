@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <utility>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -22,6 +23,14 @@ TEST(OperandReadingsTest, RefusesMoreReadingsThanAnEntryHolds) {
           kHeld, kBits, kNumber, kHeld, kPosition, kMachine, kMachine}),
       InternalError);
 }
+
+// The readings are held in place, so they are listed from an entry that lasts
+// and never from one a statement is about to end, whose list would name
+// storage already gone by the time it is read.
+template <typename Entry>
+concept ListsItsReadings = requires { std::declval<Entry>().operands.All(); };
+static_assert(ListsItsReadings<const RuntimeEntry&>);
+static_assert(!ListsItsReadings<RuntimeEntry>);
 
 // Every entry, found by asking for each one's declaration until the set
 // refuses a value.

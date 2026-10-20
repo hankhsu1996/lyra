@@ -41,14 +41,17 @@
 #include "lyra/mir_transform/pass.hpp"
 #include "tests/compiled_twice.hpp"
 #include "tests/framework/conformance_case.hpp"
+#include "tests/framework/emitted_nesting.hpp"
 
 namespace {
 
 using lyra::test::Compilation;
 using lyra::test::ConformanceCase;
+using lyra::test::DeepestNesting;
 using lyra::test::Elaborate;
 using lyra::test::FirstDifference;
 using lyra::test::kWide;
+using lyra::test::Nesting;
 using lyra::test::ScratchDirectory;
 
 auto ReadEveryFileUnder(const std::filesystem::path& dir)
@@ -105,58 +108,6 @@ auto Emit(
     return {};
   }
   return ReadEveryFileUnder(dir);
-}
-
-// How deep one written file nests its parentheses, braces and brackets at the
-// deepest, and the line that depth is reached on. What stands inside a string
-// literal is text, not nesting.
-struct Nesting {
-  std::size_t depth = 0;
-  std::size_t line = 0;
-};
-
-auto DeepestNesting(std::string_view text) -> Nesting {
-  Nesting deepest;
-  std::size_t depth = 0;
-  std::size_t line = 1;
-  bool in_string = false;
-  bool escaped = false;
-  for (const char c : text) {
-    if (c == '\n') {
-      ++line;
-    }
-    if (in_string) {
-      if (escaped) {
-        escaped = false;
-      } else if (c == '\\') {
-        escaped = true;
-      } else if (c == '"') {
-        in_string = false;
-      }
-      continue;
-    }
-    switch (c) {
-      case '"':
-        in_string = true;
-        break;
-      case '(':
-      case '[':
-      case '{':
-        ++depth;
-        if (depth > deepest.depth) {
-          deepest = {.depth = depth, .line = line};
-        }
-        break;
-      case ')':
-      case ']':
-      case '}':
-        --depth;
-        break;
-      default:
-        break;
-    }
-  }
-  return deepest;
 }
 
 // What a C++ compiler is asked to accept at the least: 256 levels of

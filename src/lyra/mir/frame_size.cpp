@@ -106,29 +106,28 @@ auto LayoutOfLibraryObject(RuntimeLibraryKind kind) -> support::Layout {
   throw InternalError("mir: unknown runtime library kind");
 }
 
-auto LayoutOf(const CompilationUnit& unit, TypeId type) -> support::Layout;
+// Whether a value laid out as `layout` is too large for a frame, which is a
+// stack no design chose the size of.
+auto TooLargeForAFrame(const support::Layout& layout) -> bool {
+  return layout.size > value::kMaxInlineBytes;
+}
 
 // Values one after another, each at its alignment.
-auto Sequence(const CompilationUnit& unit, TypeId element, std::uint64_t count)
+auto Sequence(const auto& part, TypeId element, std::uint64_t count)
     -> support::Layout {
-  return value::SequenceLayoutOf(LayoutOf(unit, element), count).whole;
+  return value::SequenceLayoutOf(part(element), count).whole;
 }
 
 // Values side by side, as a C++ struct lays its members out.
-auto Product(const CompilationUnit& unit, std::span<const TypeId> parts)
+auto Product(const auto& part, std::span<const TypeId> parts)
     -> support::Layout {
-  return value::ProductLayoutOf(parts | std::views::transform([&](TypeId part) {
-                                  return LayoutOf(unit, part);
-                                }))
-      .whole;
+  return value::ProductLayoutOf(parts | std::views::transform(part)).whole;
 }
 
 // Values sharing one storage, each at its start.
-auto Overlay(const CompilationUnit& unit, std::span<const TypeId> members)
+auto Overlay(const auto& part, std::span<const TypeId> members)
     -> support::Layout {
-  return value::OverlayLayoutOf(
-      members | std::views::transform(
-                    [&](TypeId member) { return LayoutOf(unit, member); }));
+  return value::OverlayLayoutOf(members | std::views::transform(part));
 }
 
 // A value laid out by what it holds is that; a value of the library's is the
@@ -136,20 +135,22 @@ auto Overlay(const CompilationUnit& unit, std::span<const TypeId> members)
 // holds. Storage the library keeps -- a cell, a write in progress, an object of
 // the hierarchy -- is never a part of a value, and keeps a value too large for
 // a frame in storage of its own, as every holder does, so it is never too large
-// for one either; it is counted as the handle a frame names it by.
-auto LayoutOf(const CompilationUnit& unit, TypeId type) -> support::Layout {
+// for one either; it is counted as the handle a frame names it by. `part`
+// answers the layout of each type `type` is made of.
+auto LaidOut(const CompilationUnit& unit, TypeId type, const auto& part)
+    -> support::Layout {
   const auto handle = [](const auto&) { return kAddress; };
   return unit.types.Get(type).Visit(
       Overloaded{
           [&](const IntegralType& t) { return LayoutOfIntegral(t); },
           [&](const EnumType& t) { return LayoutOfIntegral(t.base); },
           [&](const UnpackedArrayType& t) {
-            return Sequence(unit, t.element_type, t.Size());
+            return Sequence(part, t.element_type, t.Size());
           },
           [&](const MachineArrayType& t) {
-            return Sequence(unit, t.element, t.size);
+            return Sequence(part, t.element, t.size);
           },
-          [&](const TupleType& t) { return Product(unit, t.elements); },
+          [&](const TupleType& t) { return Product(part, t.elements); },
           // A structure's members side by side, a union's each at the start
           // of one storage, and a tagged union's tag after them.
           [&](const RecordType& t) {
@@ -157,23 +158,27 @@ auto LayoutOf(const CompilationUnit& unit, TypeId type) -> support::Layout {
                 RecordElements(unit, t.declaration);
             switch (RecordKindOf(unit, t.declaration)) {
               case RecordKind::kStruct:
-                return Product(unit, members);
+                return Product(part, members);
               case RecordKind::kUnion:
-                return Overlay(unit, members);
+                return Overlay(part, members);
               case RecordKind::kTaggedUnion:
                 return value::TaggedUnionLayoutOf(
-                           Overlay(unit, members), members.size())
+                           Overlay(part, members), members.size())
                     .whole;
             }
             throw InternalError("mir: unknown record kind");
           },
           // A closure opens with the address of the definition the library
-          // runs and ends it through, and its captures lie after it.
+          // runs and ends it through, and its captures lie after it, each as
+          // it is held: one too large for a frame is held through a box,
+          // whether its declaration names the value or that box.
           [&](const ClosureType& t) {
             std::vector<support::Layout> parts{kAddress};
             for (const FieldDecl& field :
                  unit.GetClosure(t.closure_id).fields) {
-              parts.push_back(LayoutOf(unit, field.type));
+              const support::Layout captured = part(field.type);
+              parts.push_back(
+                  TooLargeForAFrame(captured) ? kAddress : captured);
             }
             return value::ProductLayoutOf(parts).whole;
           },
@@ -243,10 +248,22 @@ auto LayoutOf(const CompilationUnit& unit, TypeId type) -> support::Layout {
           [&](const LoopBlocksType& t) { return handle(t); }});
 }
 
+// `type`'s layout, worked out the first time it is asked of `unit` and kept on
+// it from then on.
+auto LayoutOf(const CompilationUnit& unit, TypeId type) -> support::Layout {
+  if (const auto known = unit.layouts.find(type); known != unit.layouts.end()) {
+    return known->second;
+  }
+  const support::Layout layout =
+      LaidOut(unit, type, [&](TypeId part) { return LayoutOf(unit, part); });
+  unit.layouts.emplace(type, layout);
+  return layout;
+}
+
 }  // namespace
 
 auto IsTooLargeForAFrame(const CompilationUnit& unit, TypeId type) -> bool {
-  return LayoutOf(unit, type).size > value::kMaxInlineBytes;
+  return TooLargeForAFrame(LayoutOf(unit, type));
 }
 
 auto TakesAValueTooLargeForAFrame(const CompilationUnit& unit, TypeId type)

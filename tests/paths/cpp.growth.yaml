@@ -10,8 +10,6 @@
 # size still costs on this path that it should not. A time or a peak depends on
 # the machine as well, so one listed is owed even on a run that stayed under the
 # bound, and only the change fixing that cost takes its line out.
-array_pattern_elements:
-  - mir.types
 concatenation_operands:
   - mir.types
 instance_array: [bytes]
@@ -50,14 +48,6 @@ record_members:
   - mir.types
 scan_outputs:
   - mir.types
-tagged_union_members:
-  - time design root
-  - time lower units
 task_outputs:
-  - mir.types
-  - time HoldLargeValuesInTemporaries
   - time lower scope
   - time lower to HIR
-  - time lower to MIR
-  - time lower units
-  - time transform MIR

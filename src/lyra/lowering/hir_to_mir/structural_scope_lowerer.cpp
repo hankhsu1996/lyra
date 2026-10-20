@@ -30,6 +30,7 @@
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
+#include "lyra/lowering/hir_to_mir/arm_chain.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
@@ -2000,41 +2001,46 @@ auto LowerRepeatedGenerate(
               AccessPath{.owner = index_place(body), .descent = {}},
               body.exprs.Add(*std::move(initial_or))))});
 
-  // Which body is built is chosen from the last outwards, so each test states
-  // only the values its own body stands at.
+  // Which body is built is chosen as a case statement chooses an item: each
+  // arm tests the values its own body stands at, the last standing at every
+  // value the others do not. A test reads the index in its condition rather
+  // than ahead of the arms, since reading it changes nothing, so an arm's
+  // `else` holds its `if` alone, and a loop of one body reads nothing.
+  mir::Block chosen;
+  const WalkFrame chosen_frame = body_frame.WithBlock(&chosen);
   const std::span<const hir::LoopBody> tested =
       std::span{repeat.bodies}.first(repeat.bodies.size() - 1);
-  mir::Block chosen;
-  if (auto last = build_into(chosen, repeat.bodies.back()); !last) {
-    return std::unexpected(std::move(last.error()));
+  mir::Block last;
+  if (auto built = build_into(last, repeat.bodies.back()); !built) {
+    return std::unexpected(std::move(built.error()));
   }
-  for (std::size_t back = tested.size(); back > 0; --back) {
-    const hir::LoopBody& built = tested[back - 1];
-    mir::Block stands;
-    if (auto here = build_into(stands, built); !here) {
-      return std::unexpected(std::move(here.error()));
-    }
-    mir::Block step;
-    const mir::ExprId index = EvaluatedOnce(
-        body_frame.WithBlock(&step),
-        BuildToInt64Call(unit, step, index_read(step)));
-    std::vector<mir::ExprId> at_one_of_them;
-    at_one_of_them.reserve(built.indices.size());
-    for (const std::int64_t value : built.indices) {
-      at_one_of_them.push_back(step.exprs.Add(
-          mir::MakeBinary(
-              unit, step, mir::BinaryOp::kEquality, index,
-              mir::BuildMachineIntLiteral(unit, step, value),
-              unit.builtins.machine_bool)));
-    }
-    const mir::ExprId test = AnyHolds(unit, step, at_one_of_them);
-    step.AppendStmt(
-        mir::IfStmt{
-            .condition = test,
-            .then_scope = step.child_scopes.Add(std::move(stands)),
-            .else_scope = step.child_scopes.Add(std::move(chosen))});
-    chosen = std::move(step);
-  }
+  auto choice_or = BuildArmChain(
+      unit, chosen_frame, tested.size(),
+      [&](const WalkFrame& arm_frame,
+          std::size_t arm) -> diag::Result<mir::ExprId> {
+        mir::Block& in = *arm_frame.current_block;
+        std::vector<mir::ExprId> at_one_of_them;
+        at_one_of_them.reserve(tested[arm].indices.size());
+        for (const std::int64_t value : tested[arm].indices) {
+          at_one_of_them.push_back(in.exprs.Add(
+              mir::MakeBinary(
+                  unit, in, mir::BinaryOp::kEquality,
+                  BuildToInt64Call(unit, in, index_read(in)),
+                  mir::BuildMachineIntLiteral(unit, in, value),
+                  unit.builtins.machine_bool)));
+        }
+        return AnyHolds(unit, in, at_one_of_them);
+      },
+      [&](const WalkFrame&, std::size_t arm) -> diag::Result<mir::Block> {
+        mir::Block stands;
+        if (auto built = build_into(stands, tested[arm]); !built) {
+          return std::unexpected(std::move(built.error()));
+        }
+        return stands;
+      },
+      std::move(last));
+  if (!choice_or) return std::unexpected(std::move(choice_or.error()));
+  chosen.AppendStmt(*std::move(choice_or));
 
   mir::Block loop_body;
   const WalkFrame loop_frame = body_frame.WithBlock(&loop_body);

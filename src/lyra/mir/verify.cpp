@@ -1759,8 +1759,9 @@ class HandedClosures {
       if (!builtin.has_value()) {
         continue;
       }
+      const support::RuntimeEntry entry = support::RuntimeEntryOf(*builtin);
       const std::span<const support::CallableBounds> declared =
-          support::RuntimeEntryOf(*builtin).callables.All();
+          entry.callables.All();
       std::size_t next = 0;
       for (const ExprId argument : call->arguments) {
         if (!HandsCallablesOver(unit_->types, block.exprs.Get(argument).type)) {

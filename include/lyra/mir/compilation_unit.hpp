@@ -5,6 +5,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -33,6 +34,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/layout.hpp"
 #include "lyra/support/runtime_class.hpp"
 #include "lyra/support/value_operation.hpp"
 
@@ -384,6 +386,14 @@ struct CompilationUnit {
   // closure's type identity, in a separate registry from `records`: a
   // closure is its own callable-value category, not a record.
   base::Registry<ClosureDecl, ClosureId> closures;
+  // How large a value of each type asked about is, worked out once per type and
+  // kept, as clang keeps a record's layout beside the declarations it follows.
+  // A structure's layout follows every member and is asked at every value of
+  // it, so working it out each time costs a design's member count at each
+  // value. A layout follows only what the type's declaration states, a
+  // capture counting as it is held, so no rewrite changes one; a unit is
+  // lowered by one thread, so the answers are kept wherever the unit is read.
+  mutable std::unordered_map<TypeId, support::Layout> layouts;
   // Every other compilation unit whose signature this one consumed, once each.
   // That set is the whole of what this unit depends on another for, so whoever
   // asks what an edit reaches asks this and nothing else -- an instantiated
