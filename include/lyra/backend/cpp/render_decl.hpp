@@ -79,10 +79,9 @@ auto RenderUnitClosures(
 // entry points of DPI-C exports, the entries a namespace is brought up
 // through -- in the unit's own namespace and header; the entry that makes an
 // object of one body, which is that body's, in its namespace and header; and
-// those nothing outside this artifact
-// names, declared and defined in its code file alone, so two bodies of one
-// unit each keep their own. An import is only declared; the user's C code
-// defines it.
+// those nothing outside this artifact names, declared and defined in its code
+// file alone, so two bodies of one unit each keep their own. An import is only
+// declared; the user's C code defines it.
 struct UnitCallables {
   UnitText of_unit;
   UnitText of_body;

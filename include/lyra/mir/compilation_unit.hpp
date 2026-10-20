@@ -285,12 +285,11 @@ struct CompilationUnit {
   // it, so a unit whose root is a namespace rather than a class (a package)
   // still has a stable identity independent of any member.
   std::string name;
-  // Which body of the unit this is: its own name where the unit is compiled to
-  // one body, and otherwise that name with the digest of the values its
-  // instances' code uses. Its bodies each state the declarations the unit
-  // names, alike, and what only one body holds -- the classes realizing its
-  // scopes, their entries, the artifact it is emitted as -- is named under
-  // this.
+  // Which body of the unit this is: the unit's name with the digest of the
+  // values its instances' code uses, or the unit's name alone where that code
+  // uses none. Its bodies each state the declarations the unit names, alike,
+  // and what only one body holds -- the classes realizing its scopes, their
+  // entries, the artifact it is emitted as -- is named under this.
   std::string body_name;
   // The identifier the source declares the unit under, which several units
   // share where one definition is compiled once per specialization, and which

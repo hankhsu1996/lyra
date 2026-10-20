@@ -101,11 +101,11 @@ void WriteRequiredIncludes(
 }
 
 // The header for one thing this unit's bodies read of another: the opening
-// header for its namespace, the header defining one class, or the opening
-// header of the body an object entry makes. A body reaches a member of another
-// unit's object without writing the class's name, so its text cannot ask for
-// the class's definition; what the unit read is what says so. Including only
-// those means a change elsewhere in that unit does not recompile this one.
+// header for its namespace, the header defining one class, or the header of
+// the body an object entry makes. A body reaches a member of another unit's
+// object without writing the class's name, so its text cannot ask for the
+// class's definition; what the unit read is what says so. Including only those
+// means a change elsewhere in that unit does not recompile this one.
 auto FileConsumed(const mir::ConsumedSignature& consumed) -> std::string {
   return std::visit(
       Overloaded{
@@ -117,7 +117,7 @@ auto FileConsumed(const mir::ConsumedSignature& consumed) -> std::string {
                 consumed_class.unit_name, consumed_class.class_path);
           },
           [](const mir::ConsumedObjectEntry& consumed_entry) {
-            return UnitOpeningFileOf(consumed_entry.body_name);
+            return BodyHeaderFileOf(consumed_entry.body_name);
           }},
       consumed);
 }
@@ -142,15 +142,31 @@ void AppendToHeader(
   AppendSection(file->text, text);
 }
 
+// Lays out `text` as the header `relpath`, in the unit's namespace: the
+// runtime, then what the text said it needs ahead of it, then the text.
+auto HeaderOf(
+    std::string relpath, SourceName unit_namespace, const TargetText& text)
+    -> CppArtifact {
+  ProjectFile file;
+  file.text += "#pragma once\n";
+  WriteInclude(file.text, support::kRuntimePreludeHeader);
+  WriteRequiredIncludes(file, text, relpath);
+  file.text += "\n";
+  OpenNamespace(file.text, unit_namespace);
+  file.text += text.View();
+  CloseNamespace(file.text, unit_namespace);
+  return std::move(file).Into(std::move(relpath));
+}
+
 // A unit becomes one C++ namespace, named after it, and each body of it is
-// written across these files, `Body` being the unit's name where the unit is
-// compiled to one body:
+// written across these files, `Body` being the body's name, which is the
+// unit's where the body's code uses no parameter value:
 //
 //   Top.<Record>.types.hpp  one per struct or union the unit declares
 //   Top.forward.hpp         the classes other units may name, declared
 //   Top.opening.hpp         namespace functions and variables
-//   Body.opening.hpp        the entry that makes an object of this body
-//   Top.<Class>.hpp         one per class the source declared
+//   Body.body.hpp           the entry that makes an object of this body
+//   Top.<Class>.class.hpp   one per class the source declared
 //   Top.hpp                 what the unit published of its scopes: the class
 //                           of its instance, and the class of each generate
 //                           block declared inside the class of the scope
@@ -207,17 +223,9 @@ auto RenderUnitFiles(
 
   std::vector<CppArtifact> declarations;
   for (const UnitRecord& declared : records.declared) {
-    std::string relpath =
-        UnitRecordFileOf(unit.name, CppRecordName(unit.GetRecord(declared.id)));
-    ProjectFile file;
-    file.text += "#pragma once\n";
-    WriteInclude(file.text, support::kRuntimePreludeHeader);
-    WriteRequiredIncludes(file, declared.declaration, relpath);
-    file.text += "\n";
-    OpenNamespace(file.text, unit_namespace);
-    file.text += declared.declaration.View();
-    CloseNamespace(file.text, unit_namespace);
-    declarations.push_back(std::move(file).Into(std::move(relpath)));
+    declarations.push_back(HeaderOf(
+        UnitRecordFileOf(unit.name, CppRecordName(unit.GetRecord(declared.id))),
+        unit_namespace, declared.declaration));
   }
 
   ProjectFile forward;
@@ -227,35 +235,19 @@ auto RenderUnitFiles(
   CloseNamespace(forward.text, unit_namespace);
   declarations.push_back(std::move(forward).Into(UnitForwardFileOf(unit.name)));
 
-  // What the unit's namespace offers another unit opens its own header; the
-  // entries that make an object of this body open the body's, in the body's
-  // namespace, after what the unit's header declares. A unit compiled to one
-  // body is that body, and the two are one file.
+  // What the unit's namespace offers another unit opens its own header, which
+  // every body writes alike; the entries that make an object of this body are
+  // in the body's own, in the body's namespace, after what the unit's header
+  // declares.
   const std::string opening_file = UnitOpeningFileOf(unit.name);
-  const std::string body_opening_file = UnitOpeningFileOf(unit.body_name);
+  const std::string body_file = BodyHeaderFileOf(unit.body_name);
   TargetText opened;
   AppendSection(opened, callables.of_unit.signature);
   AppendSection(opened, variables.signature);
-  TargetText opened_by_unit;
-  OpenNamespace(opened_by_unit, unit_namespace);
-  opened_by_unit += opened;
-  CloseNamespace(opened_by_unit, unit_namespace);
-  TargetText opened_by_body;
+  declarations.push_back(HeaderOf(opening_file, unit_namespace, opened));
+  TargetText opened_by_body = in_body(callables.of_body.signature);
   opened_by_body.Require(opening_file);
-  AppendSectionInNamespace(
-      opened_by_body, unit_namespace, in_body(callables.of_body.signature));
-  std::vector<HeaderFile> opening_files;
-  AppendToHeader(opening_files, opening_file, opened_by_unit);
-  AppendToHeader(opening_files, body_opening_file, opened_by_body);
-  for (const HeaderFile& opening : opening_files) {
-    ProjectFile file;
-    file.text += "#pragma once\n";
-    WriteInclude(file.text, support::kRuntimePreludeHeader);
-    WriteRequiredIncludes(file, opening.text, opening.relpath);
-    file.text += "\n";
-    file.text += opening.text.View();
-    declarations.push_back(std::move(file).Into(opening.relpath));
-  }
+  declarations.push_back(HeaderOf(body_file, unit_namespace, opened_by_body));
 
   // Each class other units may name is written into the file that defines it,
   // after whatever that file already holds. The unit's own header comes first
@@ -268,16 +260,10 @@ auto RenderUnitFiles(
         ClassDefinitionFileOf(unit.name, *unit.GetClass(published.id).path),
         published.text);
   }
-  for (const HeaderFile& class_file : class_files) {
-    ProjectFile file;
-    file.text += "#pragma once\n";
-    file.Include(opening_file);
-    WriteRequiredIncludes(file, class_file.text, class_file.relpath);
-    file.text += "\n";
-    OpenNamespace(file.text, unit_namespace);
-    file.text += class_file.text.View();
-    CloseNamespace(file.text, unit_namespace);
-    declarations.push_back(std::move(file).Into(class_file.relpath));
+  for (HeaderFile& class_file : class_files) {
+    class_file.text.Require(opening_file);
+    declarations.push_back(
+        HeaderOf(class_file.relpath, unit_namespace, class_file.text));
   }
 
   // What nothing outside this file names -- the classes realizing the unit's
@@ -312,14 +298,14 @@ auto RenderUnitFiles(
   // The whole runtime through its one umbrella header, which is also what the
   // precompiled header covers; then every header of this unit, and of every
   // other unit only the headers this unit uses, each once.
-  std::string code_file = UnitCodeFileOf(unit.body_name);
+  std::string code_file = BodyCodeFileOf(unit.body_name);
   std::set<std::string> included{code_file};
   ProjectFile code;
   WriteInclude(code.text, support::kRuntimePreludeHeader);
   const auto include_once = [&](const std::string& file) {
     if (included.insert(file).second) code.Include(file);
   };
-  include_once(body_opening_file);
+  include_once(body_file);
   for (const HeaderFile& class_file : class_files) {
     include_once(class_file.relpath);
   }
@@ -357,7 +343,7 @@ auto RenderHostMain(const mir::CompilationUnit& root) -> CppArtifact {
   ProjectFile out;
   WriteInclude(out.text, support::kHostEntryHeader);
   out.Include(UnitSignatureFileOf(root.name));
-  out.Include(UnitOpeningFileOf(root.body_name));
+  out.Include(BodyHeaderFileOf(root.body_name));
   out.text += "\n";
   out.text += "auto main(int argc, char** argv) -> int {\n";
   Write(

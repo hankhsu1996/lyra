@@ -6,6 +6,18 @@
 // one level down, and the parameter read as a value reads the instance's own.
 // A structure the module declares is one type of the module (LRM 7.2), built
 // and compared alike in every instance whatever its code was compiled for.
+// Where one instance's code needs no constant of the parameter and another's
+// does -- a part select only one value reaches out of range (LRM 11.5.1) --
+// each still runs its own, a forked process included.
+module Window #(parameter int K = 0) (input logic [7:0] v, output logic [7:0] w,
+                                      output int forked);
+  assign w = v[K+:8];
+
+  initial fork
+    forked = K + 40;
+  join_none
+endmodule
+
 module Leaf #(parameter int P = 1) (input logic [7:0] in, output logic [7:0] out);
   always_comb out = 8'(in[P:0]);
 
@@ -43,9 +55,14 @@ module Top;
   logic [7:0] in = 8'hff;
   logic [7:0] narrow_out, wide_out;
   logic [7:0] mid_out [2];
+  logic [7:0] in_range, past_the_end;
+  int in_range_forked, past_the_end_forked;
 
   Leaf #(.P(1)) narrow (.in(in), .out(narrow_out));
   Leaf #(.P(3)) wide (.in(in), .out(wide_out));
+  Window #(.K(0)) fits (.v(8'ha5), .w(in_range), .forked(in_range_forked));
+  Window #(.K(1)) overhangs (.v(8'ha5), .w(past_the_end),
+                             .forked(past_the_end_forked));
 
   for (genvar i = 0; i < 2; i++) begin : g
     Mid #(.K(i + 2)) mid (.in(in), .out(mid_out[i]));
@@ -70,6 +87,12 @@ module Top;
       $fatal(1, "g[0].mid.leaf.ones() is %h", g[0].mid.leaf.ones());
     if (g[1].mid.leaf.ones() !== 8'h0f)
       $fatal(1, "g[1].mid.leaf.ones() is %h", g[1].mid.leaf.ones());
+    if (in_range !== 8'ha5) $fatal(1, "the select in range read %h", in_range);
+    if (past_the_end !== 8'bx1010010)
+      $fatal(1, "the select past the end read %b", past_the_end);
+    if (in_range_forked !== 40 || past_the_end_forked !== 41)
+      $fatal(1, "the forked processes wrote %0d and %0d", in_range_forked,
+             past_the_end_forked);
     $display("All checks passed");
   end
 endmodule

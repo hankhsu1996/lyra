@@ -42,7 +42,10 @@ inline constexpr std::string_view kMintedPrefix = "sv_";
 // spellings, and identifiers with a special meaning ([lex.key], [lex.name]
 // table 4). SystemVerilog reserves none of them, so a design may declare any.
 // The last group would compile as a name and is listed anyway: escaping one
-// only makes it read worse, while missing one breaks the build.
+// only makes it read worse, while missing one breaks the build. `main` is
+// listed as well: the program's entry function takes it at the global scope
+// ([basic.start.main]), where a unit's namespace is declared and after which
+// its file is named.
 inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
     {"alignas",
      "alignof",
@@ -95,6 +98,7 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
      "inline",
      "int",
      "long",
+     "main",
      "module",
      "mutable",
      "namespace",
@@ -271,8 +275,10 @@ void WriteOne(TargetText& out, UnitScope scope);
 
 // The namespace what only one body of a unit states is in: one inside the
 // unit's, named after the body, so the body's own text sees the unit's
-// declarations and another body's stands apart from it. A unit compiled to one
-// body is that body, and its namespace is the unit's.
+// declarations and another body's stands apart from it. A body named as the
+// unit is -- one whose code uses no parameter value -- has the unit's
+// namespace, since a namespace inside it of the same name would be taken by
+// the class of the unit's instance.
 [[nodiscard]] inline auto BodyNamespaceOf(
     std::string_view unit_name, std::string_view body_name)
     -> std::optional<SourceName> {
@@ -298,6 +304,11 @@ void WriteOne(TargetText& out, BodyScope scope);
 // another unit without seeing how that unit was emitted. A file name is a
 // string rather than output text, because what uses it first is the code that
 // writes the file to disk.
+//
+// Every body of a unit writes the unit's files and only one body writes its
+// own, so no two kinds of file may be named alike: each but the unit's own
+// header ends in a word naming its kind, and no name a file is made from
+// holds a dot.
 
 // `Top.hpp`: the classes of the unit's scopes, the class of a generate block
 // declared inside the class of the scope holding it. It carries the unit's
@@ -314,6 +325,21 @@ void WriteOne(TargetText& out, BodyScope scope);
 [[nodiscard]] inline auto UnitOpeningFileOf(std::string_view unit_name)
     -> std::string {
   return TextOf(ToCppName(unit_name), ".opening.hpp");
+}
+
+// `Body.body.hpp`: the entry that makes an object of one body, which only that
+// body writes. A body whose code uses no parameter value is named as its unit
+// is, so this name stands apart from the unit's files by its kind alone.
+[[nodiscard]] inline auto BodyHeaderFileOf(std::string_view body_name)
+    -> std::string {
+  return TextOf(ToCppName(body_name), ".body.hpp");
+}
+
+// `Body.cpp`: the translation unit of one body, defining everything the
+// headers declare.
+[[nodiscard]] inline auto BodyCodeFileOf(std::string_view body_name)
+    -> std::string {
+  return TextOf(ToCppName(body_name), ".cpp");
 }
 
 // `Top.forward.hpp`: every class another unit may name that is declared in no
@@ -336,19 +362,13 @@ void WriteOne(TargetText& out, BodyScope scope);
   return TextOf(ToCppName(unit_name), ".", record_name, ".types.hpp");
 }
 
-// `Top.Base.hpp`: one class the source declared, alone in its file, which a
-// class of another unit extending it needs complete. It includes the file of
-// each class it derives from, so whichever file is included first, every class
-// is defined after its bases and only once.
+// `Top.Base.class.hpp`: one class the source declared, alone in its file,
+// which a class of another unit extending it needs complete. It includes the
+// file of each class it derives from, so whichever file is included first,
+// every class is defined after its bases and only once.
 [[nodiscard]] inline auto UnitClassFileOf(
     std::string_view unit_name, const CppName& declared_as) -> std::string {
-  return TextOf(ToCppName(unit_name), ".", declared_as, ".hpp");
-}
-
-// `Top.cpp`: the translation unit defining everything the headers declare.
-[[nodiscard]] inline auto UnitCodeFileOf(std::string_view unit_name)
-    -> std::string {
-  return TextOf(ToCppName(unit_name), ".cpp");
+  return TextOf(ToCppName(unit_name), ".", declared_as, ".class.hpp");
 }
 
 [[nodiscard]] inline auto MintedCppName(

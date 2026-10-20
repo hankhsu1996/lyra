@@ -310,9 +310,9 @@ class SpecializationPolicy {
       -> std::optional<std::uint64_t>;
 
   // The name of the body `inst` is compiled to: the name of its unit, with the
-  // digest of the values its body uses where it uses any. A unit compiled to
-  // one body is that body, under the unit's own name. It reads every block the
-  // instance built, so it is worked out once and kept, as the unit's name is.
+  // digest of the values its body uses where it uses any. It reads every block
+  // the instance built, so it is worked out once and kept, as the unit's name
+  // is.
   [[nodiscard]] auto BodyNameOf(const slang::ast::InstanceSymbol& inst) const
       -> std::string;
 
