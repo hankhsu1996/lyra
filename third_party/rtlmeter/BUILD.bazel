@@ -1,0 +1,6 @@
+# Corrections to Verilator's benchmark suite that have been sent to it, applied
+# to the commit `MODULE.bazel` names. Each file opens with what it corrects and
+# the clause of IEEE 1800 that says so, and leaves when the named commit holds
+# it.
+
+exports_files(glob(["*.patch"]))

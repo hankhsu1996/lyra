@@ -1,0 +1,25 @@
+VeeR-EL2's testbench declares its ECC error injection mode with no initial
+value, so a 4-state simulation starts it as x (IEEE 1800-2023 6.8, Table 6-7).
+The DCCM injection block then never takes its "injection off" branch, since
+12.4 does not take a branch whose condition is x, and every DCCM write gets a
+bit flipped. The program still passes, but the core corrects each flip and
+runs more cycles than the same program on Verilator, where the mode starts at
+0. Start it at 0, as upstream VeeR-EL2 has reset it since
+chipsalliance/Cores-VeeR-EL2@21c5e9b; nothing changes on Verilator.
+
+Sent to the suite as https://github.com/verilator/rtlmeter/pull/63
+
+diff --git a/designs/VeeR-EL2/src/tb_top.sv b/designs/VeeR-EL2/src/tb_top.sv
+index 6cd3df7..6b7ed7f 100644
+--- a/designs/VeeR-EL2/src/tb_top.sv
++++ b/designs/VeeR-EL2/src/tb_top.sv
+@@ -522,7 +522,8 @@ module tb_top
+     logic [pt.DCCM_NUM_BANKS-1:0][pt.DCCM_FDATA_WIDTH-1:0] dccm_wr_fdata_bank;
+     logic [pt.DCCM_NUM_BANKS-1:0][pt.DCCM_FDATA_WIDTH-1:0] dccm_bank_fdout;
+
+-    tb_top_pkg::veer_sram_error_injection_mode_t error_injection_mode;
++    // Upstream resets this to 0 since chipsalliance/Cores-VeeR-EL2@21c5e9b.
++    tb_top_pkg::veer_sram_error_injection_mode_t error_injection_mode = '0;
+
+ `define DEC rvtop_wrapper.rvtop.veer.dec
+
