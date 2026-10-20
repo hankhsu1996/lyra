@@ -57,9 +57,15 @@ test --test_output=errors
 # out, so a result that has to stand as evidence uses `--config=full`. A change
 # to what the C++ backend emits needs it too: that target is the only thing
 # compiling emitted text, and a green default run says nothing about it.
-test --test_tag_filters=-nightly
+#
+# A target whose result does not hold from one run of a tree to the next is
+# `quarantined`: the gate leaves it out, so it decides no merge, and the
+# nightly set takes it in, so it is still run and still read. The two sets stay
+# complements. `tests/BUILD.bazel` says beside each such target why its result
+# moves, and the tag comes off once it no longer does.
+test --test_tag_filters=-nightly,-quarantined
 test:full --test_tag_filters=
-test:nightly --test_tag_filters=nightly
+test:nightly --test_tag_filters=nightly,quarantined
 
 # A run someone is waiting on stops at the first case that fails, because a
 # defect the whole corpus shares and a defect one case has look identical from
@@ -100,7 +106,7 @@ build:asan --strip=never
 build:asan --features=-symbol_check
 # A test of what the compiler costs as it ships -- time, stack, memory -- would
 # measure this build instead, so the set is the gate's own less those.
-test:asan --test_tag_filters=-nightly,-cost
+test:asan --test_tag_filters=-nightly,-cost,-quarantined
 
 # Shared cache and result streaming with actions still running locally. Needs a
 # BuildBuddy key via `--remote_header`.

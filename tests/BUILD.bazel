@@ -454,6 +454,12 @@ cc_test(
 # a time found past its bound is measured again, so the cost is a few compiles
 # per design and is spread over shards. The execution backend links a program
 # with the host C++ compiler, whichever one the executing machine has.
+#
+# Quarantined: each stage's time is held to three times what it was, and that
+# time is wall time on whatever executor runs the shard, which a busy one moves
+# from one run of a tree to the next -- the same tree has failed its time bound,
+# timed out, and passed. It returns to the gate once what it bounds is
+# something a run reproduces.
 cc_test(
     name = "growth_tests",
     size = "medium",
@@ -466,7 +472,10 @@ cc_test(
     ]),
     env = {"LYRA_GROWTH_PATHS": "cpp,llvm"},
     shard_count = 8,
-    tags = ["cost"],
+    tags = [
+        "cost",
+        "quarantined",
+    ],
     deps = [
         ":framework",
         "//:base",

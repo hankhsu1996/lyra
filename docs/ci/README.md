@@ -45,6 +45,17 @@ The two sides of `nightly` are complements, so every test target is covered once
 That is the property to preserve: a new target joins whichever side its tag puts it on, and neither
 list is maintained by hand.
 
+**A target whose result does not hold from one run of a tree to the next carries `quarantined`**,
+and moves to the nightly side with it: the gate leaves it out, so it decides no merge, while the
+nightly still runs it and reports it. A gate that one tree can both pass and fail stops every pull
+request on a result none of them caused, so such a target is taken out of the gate at once, by
+whoever meets it, in a change of its own; the comment beside the tag says why its result moves, and
+the queue of unfixed findings holds its repair. The tag comes off once what the target asserts is
+something a run reproduces. This is the field's practice -- Rust marks such a test `#[ignore]` with
+its reason, LLVM's tests mark one `UNSUPPORTED` or `XFAIL` -- and it is kept apart from a recorded
+refusal under `tests/paths/`, which holds a result that is the same every run and fails the case the
+moment it changes.
+
 One target on the gate's side builds an emitted C++ project and runs it: `examples_tests`, which
 runs every directory under `examples/` the way its README tells a reader to, from that directory,
 with a command that names nothing. That command builds on the default backend, so a change that
@@ -121,9 +132,9 @@ On top of the default set, what a change touches selects what else to run:
   -- `cli_tests`, `pch_audit_test` and `runtime_surface_test`, already in the gate.
 - **A shipped example, its declaration, or the command its README gives** -- `examples_tests`,
   already in the gate.
-- **What a repeated construct or a wide type costs to compile** -- `growth_tests`, already in the
-  gate; what the host compiler pays for the text the C++ backend emits for one,
-  `growth_host_compile_tests`, under `--config=nightly`.
+- **What a repeated construct or a wide type costs to compile** -- `growth_tests`, quarantined to
+  the nightly side while its time bound reads wall time; what the host compiler pays for the text
+  the C++ backend emits for one, `growth_host_compile_tests`, under `--config=nightly`.
 - **Which units an edit makes again** -- `incremental_tests`, already in the gate.
 - **How long an expression the compiler follows** -- `compile_stack_tests`, already in the gate.
 - **Anything else** -- HIR, MIR, LIR, the execution backend, the runtime value library -- the
@@ -140,7 +151,9 @@ compile, at any size. So `growth_tests` compiles each design under `tests/growth
 at twice that, on both backends, each run asked for its trace and its statistics, and holds the
 larger run to the smaller: what it left behind grown by what the design says its extra steps add,
 and each stage's time and peak memory under three times what it was. A stage's peak is the larger of
-the compiler's own and that of any tool the stage ran.
+the compiler's own and that of any tool the stage ran. The time is wall time on whatever executor
+runs the shard, which moves from one run of a tree to the next, so the target is quarantined: it
+runs on the nightly side until what it bounds is something a run reproduces.
 
 Every compiler that reads what Lyra writes is held to the same bound, so `growth_host_compile_tests`
 compiles the same designs along a third path, `cpp_host`, on which the C++ backend's program is

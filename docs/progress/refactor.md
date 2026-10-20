@@ -3093,6 +3093,13 @@ enough to warrant its own focused review.
       would select it -- a design whose time goes into calls through a type's table -- has not been
       taken.
 
+- [ ] R248 -- What a design's size may cost is held to a bound on each stage's time, and that time
+      is wall time on whatever executor runs the test, so one tree passes the bound, fails it and
+      runs past the test's timeout on different runs; the target is quarantined to the nightly side
+      until that stops. Target: the gate bounds a quantity a run reproduces exactly -- the count of
+      what each stage made or did, or the instructions it retired, as rustc's and LLVM's own
+      compile-time tracking compare -- and wall time is reported, never held. Not blocked.
+
 The entries from R221 on come from one audit of the lowering against the front end: places where
 this compiler works out again, or steps around, something the front end already knows or could keep.
 Each says whether it was confirmed by running a program, confirmed by reading the front end's

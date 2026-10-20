@@ -139,8 +139,10 @@ are reached by `--config=nightly`; `--config=full` is both sets. Run them whenev
 touches what the C++ backend emits or how an emitted project is built -- which is not the same as
 editing `backend/cpp`, since the renderer is a function of MIR and LIR node shapes. A filtered run
 names only the tests it ran, so reach for `--config=full` whenever a result has to stand as
-evidence. `docs/ci/README.md` holds the whole strategy: which moment answers which question, and
-what a change selects.
+evidence. A target whose result does not hold from one run of a tree to the next carries
+`quarantined`, which moves it to the nightly side until it does, so no gate stops on a result the
+change did not cause. `docs/ci/README.md` holds the whole strategy: which moment answers which
+question, and what a change selects.
 
 One more target is in neither set and is run only by naming it: `external_design_tests` builds and
 runs designs written elsewhere for other simulators -- today those of RTLMeter, Verilator's
