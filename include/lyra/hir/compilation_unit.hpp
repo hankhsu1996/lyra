@@ -4,7 +4,6 @@
 #include <string>
 #include <string_view>
 #include <utility>
-#include <vector>
 
 #include "lyra/base/arena.hpp"
 #include "lyra/base/internal_error.hpp"
@@ -76,9 +75,9 @@ struct BuiltinHirTypes {
 struct CompilationUnit {
   // The unit, which is what it publishes and what every referrer names.
   std::string name;
-  // The body of the unit this compiles: the unit's own name where the unit is
-  // compiled to one body, and otherwise that name with the digest of the values
-  // its instances are handed that its code uses.
+  // The body of the unit this compiles: the unit's name with the digest of the
+  // values its instances are handed that its code uses, or the unit's name
+  // alone where that code uses none.
   std::string body_name;
   // The identifier the source declares this unit's design element, package or
   // class under, which is what its author knows it by. Units of one definition
