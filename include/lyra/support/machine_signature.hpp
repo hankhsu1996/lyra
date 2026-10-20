@@ -80,9 +80,10 @@ class MachineSignature {
     return returns_;
   }
 
-  [[nodiscard]] constexpr auto Takes() const -> std::span<const MachineKind> {
+  [[nodiscard]] constexpr auto Takes() const& -> std::span<const MachineKind> {
     return takes_.All();
   }
+  [[nodiscard]] auto Takes() const&& -> std::span<const MachineKind> = delete;
 
  private:
   MachineKind returns_;

@@ -49,9 +49,10 @@ void Add(const CompilationUnit& unit, const Class& cls, HeldByClasses& held) {
 }  // namespace
 
 auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
-  // As for a class: every member of the unit is named here.
-  const auto& [name, body_name, source_name, types, integral_constants, enum_tables, builtins, classes, content, external_classes, callables, named_callables, type_operations, static_variables, named_static_variables, foreign_scope_entries, records, record_methods, external_records, closures, consumed_signatures] =
-      unit;
+  // As for a class: every member of the unit is named here. The layouts kept
+  // on it are answers to questions asked of it, which no unit states, so they
+  // are not counted.
+  const auto& [name, body_name, source_name, types, integral_constants, enum_tables, builtins, classes, content, external_classes, callables, named_callables, type_operations, static_variables, named_static_variables, foreign_scope_entries, records, record_methods, external_records, closures, layouts, consumed_signatures] = unit;
 
   HeldByClasses in_classes;
   for (const Class& cls : classes) {

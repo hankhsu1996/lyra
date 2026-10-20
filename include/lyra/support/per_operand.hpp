@@ -28,9 +28,12 @@ class PerOperand {
     std::ranges::copy(facts, facts_.begin());
   }
 
-  [[nodiscard]] constexpr auto All() const -> std::span<const Fact> {
+  // The facts are held in place, so a list read from a statement that is
+  // about to end would name storage already gone.
+  [[nodiscard]] constexpr auto All() const& -> std::span<const Fact> {
     return std::span<const Fact>(facts_).first(count_);
   }
+  [[nodiscard]] auto All() const&& -> std::span<const Fact> = delete;
 
  private:
   std::array<Fact, kMost> facts_{};

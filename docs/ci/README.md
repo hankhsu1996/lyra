@@ -166,7 +166,10 @@ is read from the statistics as every kind of thing its units hold in each form t
 the check names no kind itself. A kind the design does not name must not follow N, and one it names
 must follow N as named; a count is held exactly, and the difference of the two runs holds nothing
 that does not depend on the size. So a kind of thing the compiler begins to make once per step is
-held from the day it is reported, and a statement in a design cannot outlive what it speaks of.
+held from the day it is reported, and a statement in a design cannot outlive what it speaks of. How
+deep the text a unit writes nests at the deepest is read off that text and held as one more such
+kind, which no design names: every compiler reading the text bounds its depth, and nothing bounds a
+count a design chooses.
 
 Bytes are the one size among the counts. A design that does not name them may leave a quarter more
 at twice the size, since a file can carry the size it was compiled at; one that names them must

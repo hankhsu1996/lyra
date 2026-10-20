@@ -16,6 +16,7 @@
 #include "lyra/hir/case_keyword.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/lowering/hir_to_mir/arm_chain.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/inside_predicate.hpp"
@@ -36,58 +37,6 @@
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
-
-// What one arm of a branching statement contributes, lowered into the frame it
-// is handed: whether the arm is taken, and the statement it runs.
-using ArmTest =
-    std::function<diag::Result<mir::ExprId>(const WalkFrame&, std::size_t)>;
-using ArmBody =
-    std::function<diag::Result<mir::Block>(const WalkFrame&, std::size_t)>;
-
-// A series of arms tried in order, the first whose test holds ending it and
-// `fall_through` running where none does:
-//
-//   if (test 0) body 0 else { if (test 1) body 1 else { ... fall_through } }
-//
-// Each arm is the `else` of the one before it, and an `else` holds its `if` and
-// nothing beside it, so a series of any length is one flat run. An arm's test
-// is lowered before its statement, since a test may introduce what the
-// statement names. Answers with the first arm, which stands in `frame`'s block.
-auto BuildArmChain(
-    const mir::CompilationUnit& unit, const WalkFrame& frame,
-    std::size_t arm_count, const ArmTest& test_of, const ArmBody& body_of,
-    std::optional<mir::Block> fall_through) -> diag::Result<mir::IfStmt> {
-  if (arm_count == 0) {
-    throw InternalError("BuildArmChain: a series has no arms");
-  }
-  const auto arm_at =
-      [&](const WalkFrame& at, std::size_t arm,
-          std::optional<mir::Block> otherwise) -> diag::Result<mir::IfStmt> {
-    mir::Block& block = *at.current_block;
-    auto held_or = test_of(at, arm);
-    if (!held_or) return std::unexpected(std::move(held_or.error()));
-    auto body_or = body_of(at, arm);
-    if (!body_or) return std::unexpected(std::move(body_or.error()));
-    std::optional<mir::BlockId> else_scope;
-    if (otherwise.has_value()) {
-      else_scope = block.child_scopes.Add(*std::move(otherwise));
-    }
-    return mir::IfStmt{
-        .condition = ReduceToCondition(unit, block, *held_or),
-        .then_scope = block.child_scopes.Add(std::move(*body_or)),
-        .else_scope = else_scope};
-  };
-
-  std::optional<mir::Block> tail = std::move(fall_through);
-  for (std::size_t arm = arm_count; arm-- > 1;) {
-    mir::Block level;
-    auto arm_or = arm_at(frame.WithBlock(&level), arm, std::move(tail));
-    if (!arm_or) return std::unexpected(std::move(arm_or.error()));
-    level.AppendStmt(*std::move(arm_or));
-    tail = std::move(level);
-  }
-  return arm_at(frame, 0, std::move(tail));
-}
 
 // A statement or nothing, lowered as the arm a branching statement runs when
 // none of its own held: an `else`, a `default`.
@@ -146,19 +95,11 @@ auto BuildWrappedBranching(
     };
   }
 
-  // No arms is the ordinary shape of `case (x) default: ...`, whose only arm
-  // the front end reports apart from the items.
-  if (arm_count > 0) {
-    auto chain_or = BuildArmChain(
-        unit, wrapper_frame, arm_count, test_of, body_of,
-        std::move(fall_through));
-    if (!chain_or) return std::unexpected(std::move(chain_or.error()));
-    wrapper.AppendStmt(*std::move(chain_or));
-  } else if (fall_through.has_value()) {
-    wrapper.AppendStmt(
-        mir::BlockStmt{
-            .scope = wrapper.child_scopes.Add(*std::move(fall_through))});
-  }
+  auto chain_or = BuildArmChain(
+      unit, wrapper_frame, arm_count, test_of, body_of,
+      std::move(fall_through));
+  if (!chain_or) return std::unexpected(std::move(chain_or.error()));
+  wrapper.AppendStmt(*std::move(chain_or));
   return mir::Stmt{
       .label = std::move(label),
       .data = mir::BlockStmt{

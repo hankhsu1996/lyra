@@ -9,7 +9,7 @@
 # how many bits an element of an array streams as: a unit keeps one constant
 # per distinct value, so a coincidence at one size and not the other reads as
 # a constant the size added.
-array_pattern_elements: 256
+array_pattern_elements: 512
 call_arguments: 256
 chain_over_wide_values: 128
 concatenation_operands: 256
@@ -36,8 +36,8 @@ packed_value_width: 4194304
 port_connections: 256
 record_members: 160
 record_members_owning_storage: 160
-scan_outputs: 256
+scan_outputs: 512
 tagged_union_members: 256
-task_outputs: 256
+task_outputs: 512
 union_members: 256
 unread_parameter_width: 16384

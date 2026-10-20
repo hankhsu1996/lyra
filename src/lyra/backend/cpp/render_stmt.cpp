@@ -132,9 +132,11 @@ void RenderIfStmt(
     return;
   }
   // An `else` holding one statement is written without braces, so an `else
-  // if` chain stays flat. With braces, an if-else-if or the items of a case
-  // would nest one level per link, and a long enough chain exceeds the nesting
-  // a C++ compiler accepts.
+  // if` chain opens no brace per link. With braces, an if-else-if or the items
+  // of a case would nest a brace per link, and a chain of a few hundred
+  // exceeds the brackets a C++ compiler accepts; each link is still a
+  // selection statement inside the one before, which a compiler's parser
+  // recurses on.
   const auto& else_scope = view.Block().child_scopes.Get(*s.else_scope);
   if (else_scope.root_stmts.size() == 1) {
     out += " else ";
