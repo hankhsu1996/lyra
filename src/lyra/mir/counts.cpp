@@ -34,7 +34,7 @@ auto IsCoroutine(const CompilationUnit& unit, const CallableCode& code)
 // does not compile here until it is said what kind of thing it is, or that it
 // is none.
 void Add(const CompilationUnit& unit, const Class& cls, HeldByClasses& held) {
-  const auto& [path, base, implements, conforming, is_final, is_interface_class, self_pointer_type, time_resolution, execution, fields, named_fields, constructor, contained, callables, static_properties, named_static_properties, named_callables, constants, object_definition_initializer] =
+  const auto& [path, base, implements, conforming, is_final, is_interface_class, self_pointer_type, time_resolution, execution, dumped_as, fields, named_fields, constructor, contained, callables, static_properties, named_static_properties, named_callables, constants, object_definition_initializer] =
       cls;
   held.fields += fields.size();
   held.constructors += constructor.has_value() ? 1 : 0;

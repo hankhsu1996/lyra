@@ -283,6 +283,30 @@ struct ValueChangeSystemSubroutineInfo {
 // absent one is the 1 the standard defaults it to.
 struct PastValueSystemSubroutineInfo {};
 
+// LRM 21.7.1 value change dump tasks, each acting on the run's one dump, and
+// LRM 21.7.3 extended ones, each acting on the dump of ports one file holds or
+// on every such dump: the task the call is, since what each does with its
+// arguments is its own.
+enum class ValueDumpTask : std::uint8_t {
+  kDumpFile,
+  kDumpVars,
+  kDumpOff,
+  kDumpOn,
+  kDumpAll,
+  kDumpLimit,
+  kDumpFlush,
+  kDumpPorts,
+  kDumpPortsOff,
+  kDumpPortsOn,
+  kDumpPortsAll,
+  kDumpPortsLimit,
+  kDumpPortsFlush,
+};
+
+struct ValueDumpSystemSubroutineInfo {
+  ValueDumpTask task;
+};
+
 using SystemSubroutineSemantic = std::variant<
     PrintSystemSubroutineInfo, TerminationSystemSubroutineInfo,
     ProgramControlSystemSubroutineInfo, DiagnosticSystemSubroutineInfo,
@@ -293,7 +317,7 @@ using SystemSubroutineSemantic = std::variant<
     BitVectorSystemSubroutineInfo, HostCommandSystemSubroutineInfo,
     RandomSystemSubroutineInfo, DistributionSystemSubroutineInfo,
     SampledValueSystemSubroutineInfo, ValueChangeSystemSubroutineInfo,
-    PastValueSystemSubroutineInfo>;
+    PastValueSystemSubroutineInfo, ValueDumpSystemSubroutineInfo>;
 
 struct SystemSubroutineDesc {
   SystemSubroutineId id;
@@ -1111,6 +1135,117 @@ inline constexpr std::array kSystemSubroutines = {
         .kind = SystemSubroutineKind::kFunction,
         .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 4},
         .semantic = PastValueSystemSubroutineInfo{},
+    },
+    // LRM 21.7.1: `$dumpfile` names the file, optionally; `$dumpvars` takes
+    // nothing, or the levels and then any number of instances and variables.
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{84},
+        .name = "$dumpfile",
+        .kind = SystemSubroutineKind::kTask,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 1},
+        .semantic =
+            ValueDumpSystemSubroutineInfo{.task = ValueDumpTask::kDumpFile},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{85},
+        .name = "$dumpvars",
+        .kind = SystemSubroutineKind::kTask,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
+        .semantic =
+            ValueDumpSystemSubroutineInfo{.task = ValueDumpTask::kDumpVars},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{86},
+        .name = "$dumpoff",
+        .kind = SystemSubroutineKind::kTask,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 0},
+        .semantic =
+            ValueDumpSystemSubroutineInfo{.task = ValueDumpTask::kDumpOff},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{87},
+        .name = "$dumpon",
+        .kind = SystemSubroutineKind::kTask,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 0},
+        .semantic =
+            ValueDumpSystemSubroutineInfo{.task = ValueDumpTask::kDumpOn},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{88},
+        .name = "$dumpall",
+        .kind = SystemSubroutineKind::kTask,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 0},
+        .semantic =
+            ValueDumpSystemSubroutineInfo{.task = ValueDumpTask::kDumpAll},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{89},
+        .name = "$dumplimit",
+        .kind = SystemSubroutineKind::kTask,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 1},
+        .semantic =
+            ValueDumpSystemSubroutineInfo{.task = ValueDumpTask::kDumpLimit},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{90},
+        .name = "$dumpflush",
+        .kind = SystemSubroutineKind::kTask,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 0},
+        .semantic =
+            ValueDumpSystemSubroutineInfo{.task = ValueDumpTask::kDumpFlush},
+    },
+    // LRM 21.7.3: `$dumpports` takes instances and then a file, each
+    // optional; every other task an optional file, `$dumpportslimit` a size
+    // before it.
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{91},
+        .name = "$dumpports",
+        .kind = SystemSubroutineKind::kTask,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
+        .semantic =
+            ValueDumpSystemSubroutineInfo{.task = ValueDumpTask::kDumpPorts},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{92},
+        .name = "$dumpportsoff",
+        .kind = SystemSubroutineKind::kTask,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 1},
+        .semantic =
+            ValueDumpSystemSubroutineInfo{.task = ValueDumpTask::kDumpPortsOff},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{93},
+        .name = "$dumpportson",
+        .kind = SystemSubroutineKind::kTask,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 1},
+        .semantic =
+            ValueDumpSystemSubroutineInfo{.task = ValueDumpTask::kDumpPortsOn},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{94},
+        .name = "$dumpportsall",
+        .kind = SystemSubroutineKind::kTask,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 1},
+        .semantic =
+            ValueDumpSystemSubroutineInfo{.task = ValueDumpTask::kDumpPortsAll},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{95},
+        .name = "$dumpportslimit",
+        .kind = SystemSubroutineKind::kTask,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 2},
+        .semantic =
+            ValueDumpSystemSubroutineInfo{
+                .task = ValueDumpTask::kDumpPortsLimit},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{96},
+        .name = "$dumpportsflush",
+        .kind = SystemSubroutineKind::kTask,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 1},
+        .semantic =
+            ValueDumpSystemSubroutineInfo{
+                .task = ValueDumpTask::kDumpPortsFlush},
     },
 };
 

@@ -778,6 +778,8 @@ auto CallArranger::ConstructionOf(
               case lir::RuntimeLibraryKind::kScopeCallable:
               case lir::RuntimeLibraryKind::kConstructionTable:
               case lir::RuntimeLibraryKind::kInstantiation:
+              case lir::RuntimeLibraryKind::kDumpEntry:
+              case lir::RuntimeLibraryKind::kDumpBlock:
                 return no_construct();
             }
             throw InternalError("llvm codegen: unknown runtime library kind");

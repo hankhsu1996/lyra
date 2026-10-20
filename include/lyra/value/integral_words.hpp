@@ -294,6 +294,13 @@ constexpr void SetWord(
           1U) != 0U;
 }
 
+// The scalar one position of a value holds.
+[[nodiscard]] constexpr auto ScalarAt(
+    AnyConstIntegralView auto bits, std::uint64_t position) -> FourStateBit {
+  return FourStateBitOf(
+      BitAt(bits.value, position), BitAt(bits.unknown, position));
+}
+
 // Every position of a plane at or above `width` cleared, which is the form a
 // plane is held in.
 constexpr void ClearAboveWidth(WordSpan auto words, std::uint64_t width) {
@@ -823,9 +830,7 @@ constexpr void FromInt(
 // Bit 0's scalar, which is the bit an edge is detected on (LRM 9.4.2).
 [[nodiscard]] constexpr auto LeastSignificantBit(AnyConstIntegralView auto a)
     -> FourStateBit {
-  return FourStateBitOf(
-      (WordOrZero(a.value, 0) & 1U) != 0U,
-      (WordOrZero(a.unknown, 0) & 1U) != 0U);
+  return ScalarAt(a, 0);
 }
 
 // LRM 11.4.3: x or z anywhere in either operand makes the whole result x.

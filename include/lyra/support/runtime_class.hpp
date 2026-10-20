@@ -30,12 +30,14 @@ auto RuntimeClassName(RuntimeClass klass) -> std::string_view;
 // override: the three phases the runtime drives every scope through, in the
 // order it enters them -- every route and alias is bound, then every cell takes
 // the value its declaration gives it (LRM 10.5), then every process is created
-// (LRM 9.2). Listed in the order the class declares them, which is the order
+// (LRM 9.2) -- and what an instance describes to a value dump starting (LRM
+// 21.7.1.2). Listed in the order the class declares them, which is the order
 // they take in its table.
 enum class LibraryVirtual : std::uint8_t {
   kScopeResolve,
   kScopeInitialize,
   kScopeCreateProcesses,
+  kScopeDescribe,
 };
 
 // The class declaring it.

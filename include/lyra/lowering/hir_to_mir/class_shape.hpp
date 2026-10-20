@@ -24,6 +24,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/dump_kind.hpp"
 #include "lyra/support/scope_execution.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -106,6 +107,7 @@ struct ClassShape {
   std::optional<DeclaringInstance> declaring_instance;
   TimeResolution time_resolution;
   support::ScopeExecution execution = support::ScopeExecution::kDesign;
+  support::DumpScopeKind dumped_as = support::DumpScopeKind::kModule;
   base::Arena<mir::ParamDecl, mir::ParamId> ctor_prefix_params;
   base::Arena<mir::FieldDecl, mir::FieldId> fields;
   std::vector<mir::NamedField> named_fields;

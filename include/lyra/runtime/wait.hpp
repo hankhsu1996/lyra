@@ -49,6 +49,7 @@ struct AtTime {
 using Resumption =
     std::variant<WithoutStopping, OnAnOccurrence, LaterInThisTimeStep, AtTime>;
 
+class DumpWatch;
 class ProgramThreads;
 class PropertyEvaluation;
 class SampledValue;
@@ -59,12 +60,13 @@ class SourceFollower;
 // value, which wakes nothing; what keeps forced storage showing its source,
 // which wakes nothing either; a program, told as each of its initial
 // procedures ends, which ends the rest of its threads at once once they all
-// have (LRM 24.3); or an expect statement's evaluation, told of each tick of
-// its clock and each change its disable condition reads, which wakes nothing
-// either (LRM 16.17).
+// have (LRM 24.3); an expect statement's evaluation, told of each tick of its
+// clock and each change its disable condition reads, which wakes nothing
+// either (LRM 16.17); or a value dump recording the place, which wakes nothing
+// and records the change at the end of the time step (LRM 21.7.1.4).
 using Observer = std::variant<
     Awaiter*, SampledValue*, SourceFollower*, ProgramThreads*,
-    PropertyEvaluation*>;
+    PropertyEvaluation*, DumpWatch*>;
 
 // One place an observer watches: an observable, a named event, a join, a `wait
 // fork` condition, a process's termination. It stands for as long as the
@@ -93,6 +95,13 @@ struct WaitMembership : IntrusiveListNode<WaitMembership> {
   // as long as anything watching for that wait does.
   Observation observation;
 };
+
+// Links `membership`, for `observer`, on the place `watched` names: reached
+// through what the place was reached through, reading the bits it reads, and
+// an event where what decides it for `watched` says so. Storage that belongs
+// to nothing has no place to link it on.
+void EnrolOnPlace(
+    WaitMembership& membership, Observer observer, const Trigger& watched);
 
 // How one kind of timing control waits: what it watches, and what it answers
 // when the execution stops at it and when a stopped execution is started again
@@ -173,12 +182,8 @@ class Awaiter {
   // in step in one place, the activation's own parking and withdrawing.
   friend struct Activation;
 
-  // Makes one membership, whole, and links it on `target`: which bits of the
-  // place it reads, a width of zero being all of it, and what decides whether
-  // reaching it is an event, which holds nothing where being reached is.
-  void Enrol(
-      IntrusiveList<WaitMembership>& target, const ErasedReference* through,
-      value::BitPositions reads, Observation observation);
+  // The next of its memberships, unlinked until it is enrolled.
+  [[nodiscard]] auto NextMembership() -> WaitMembership&;
 
   // Whether what this waits for holds now, asked once an occurrence that is an
   // event for it reached it while an activation is parked. A wait for a state

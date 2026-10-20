@@ -278,6 +278,8 @@ auto IsReachedByAddress(RuntimeLibraryKind kind) -> bool {
     case RuntimeLibraryKind::kScopeCallable:
     case RuntimeLibraryKind::kConstructionTable:
     case RuntimeLibraryKind::kInstantiation:
+    case RuntimeLibraryKind::kDumpEntry:
+    case RuntimeLibraryKind::kDumpBlock:
       return false;
   }
   throw InternalError("mir: unknown runtime library kind");

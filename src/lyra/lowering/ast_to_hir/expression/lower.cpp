@@ -355,7 +355,7 @@ auto LowerExprImpl(
           "a data type in an expression position is not yet supported");
 
     case slang::ast::ExpressionKind::ArbitrarySymbol:
-      return LowerInterfaceInstanceValue(
+      return LowerArbitrarySymbol(
           lowerer.Owner(), frame,
           expr.as<slang::ast::ArbitrarySymbolExpression>(), span);
 

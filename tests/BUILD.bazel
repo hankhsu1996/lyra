@@ -389,6 +389,19 @@ cc_test(
 )
 
 cc_test(
+    name = "runtime_dump_writer_test",
+    srcs = ["runtime/dump_writer_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:runtime",
+        "//:support",
+        "//:value",
+        "@googletest//:gtest_main",
+        "@libfst",
+    ],
+)
+
+cc_test(
     name = "runtime_class_definition_test",
     srcs = ["runtime/class_definition_test.cpp"],
     copts = LYRA_COPTS,
@@ -452,7 +465,7 @@ cc_test(
         "paths/*.growth.yaml",
     ]),
     env = {"LYRA_GROWTH_PATHS": "cpp,llvm"},
-    shard_count = 4,
+    shard_count = 8,
     tags = ["cost"],
     deps = [
         ":framework",

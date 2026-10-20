@@ -27,15 +27,16 @@ auto DeclaringClassOf(LibraryVirtual function) -> RuntimeClass {
     case LibraryVirtual::kScopeResolve:
     case LibraryVirtual::kScopeInitialize:
     case LibraryVirtual::kScopeCreateProcesses:
+    case LibraryVirtual::kScopeDescribe:
       return RuntimeClass::kScope;
   }
   throw InternalError("DeclaringClassOf: unknown library virtual");
 }
 
 auto VirtualsDeclaredBy(RuntimeClass klass) -> std::span<const LibraryVirtual> {
-  static constexpr std::array<LibraryVirtual, 3> kScopeVirtuals{
+  static constexpr std::array<LibraryVirtual, 4> kScopeVirtuals{
       LibraryVirtual::kScopeResolve, LibraryVirtual::kScopeInitialize,
-      LibraryVirtual::kScopeCreateProcesses};
+      LibraryVirtual::kScopeCreateProcesses, LibraryVirtual::kScopeDescribe};
   switch (klass) {
     case RuntimeClass::kScope:
       return kScopeVirtuals;
@@ -65,6 +66,8 @@ auto OrdinalOf(LibraryVirtual function) -> std::uint32_t {
       return 1;
     case LibraryVirtual::kScopeCreateProcesses:
       return 2;
+    case LibraryVirtual::kScopeDescribe:
+      return 3;
   }
   throw InternalError("OrdinalOf: unknown library virtual");
 }
@@ -77,6 +80,8 @@ auto LibraryVirtualName(LibraryVirtual function) -> std::string_view {
       return "sv_initialize";
     case LibraryVirtual::kScopeCreateProcesses:
       return "sv_create_processes";
+    case LibraryVirtual::kScopeDescribe:
+      return "sv_describe";
   }
   throw InternalError("LibraryVirtualName: unknown library virtual");
 }

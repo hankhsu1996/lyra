@@ -4,6 +4,7 @@
 #include <span>
 #include <string_view>
 
+#include "lyra/support/dump_kind.hpp"
 #include "lyra/support/scope_execution.hpp"
 
 namespace lyra::runtime {
@@ -32,16 +33,22 @@ inline constexpr std::int8_t kUnspecifiedTimePower = 127;
 // A scope's immutable constant properties, known when its class is declared
 // and never computed by running generated code: its effective time unit and
 // precision as powers of ten (LRM Table 20-2), each the scope's own timescale
-// or the one it inherits (LRM 3.14.2.3), and how what an instance starts is
-// run (LRM 24.3.1), held as the number a constant record writes.
+// or the one it inherits (LRM 3.14.2.3), how what an instance starts is run
+// (LRM 24.3.1), and the kind of scope a value dump records it as (LRM
+// 21.7.2.1 `scope_type`), each held as the number a constant record writes.
 struct ScopeMetadata {
   std::int8_t time_unit_power = kUnspecifiedTimePower;
   std::int8_t time_precision_power = kUnspecifiedTimePower;
   std::uint8_t execution =
       static_cast<std::uint8_t>(support::ScopeExecution::kDesign);
+  std::uint8_t dumped_as =
+      static_cast<std::uint8_t>(support::DumpScopeKind::kModule);
 
   [[nodiscard]] auto Execution() const -> support::ScopeExecution {
     return static_cast<support::ScopeExecution>(execution);
+  }
+  [[nodiscard]] auto DumpedAs() const -> support::DumpScopeKind {
+    return static_cast<support::DumpScopeKind>(dumped_as);
   }
 };
 

@@ -64,6 +64,7 @@ Runtime::Runtime() : Runtime(DefaultRuntimeOptions()) {
 Runtime::Runtime(RuntimeOptions options)
     : stream_(std::move(options.stream_sink)),
       diagnostic_(std::move(options.diagnostic_sink)),
+      dumps_(options.plusargs),
       plusargs_(std::move(options.plusargs)) {
   diagnostic_.SetContextSource([this] { return ReportContext(); });
 }
@@ -111,7 +112,11 @@ void Runtime::WalkActivate(Scope& scope) {
 auto Runtime::Run() -> int {
   EnsureReadyToRun();
   ResolveGlobalTimePrecision();
+  dumps_.Begin(*this, design_->Root(), global_precision_power_);
   RunSimulation();
+  // The dump file is complete once the run is: what it recorded is written
+  // and the file ended, a failure to write it reported as the design's own.
+  RunAsLanding(*this, [this] { dumps_.End(); });
   // Owed because the run is over, whichever way it ended: LRM 16.3 asks a tool
   // with no assertion API to report immediate cover results at the end of
   // simulation, and a record the design left open is written out rather than

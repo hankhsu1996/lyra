@@ -381,6 +381,13 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // states, which the library reads.
   kConstructionTable,
   kInstantiation,
+  // What a class of the design hierarchy states of each thing a value dump may
+  // record of an instance, and of each named block, task or function around
+  // such things (LRM 21.7.1.2): `lyra::runtime::DumpEntry` and `DumpBlock`,
+  // constants the class's unit states, which an instance describing itself
+  // names.
+  kDumpEntry,
+  kDumpBlock,
 };
 
 struct RuntimeLibraryType {

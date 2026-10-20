@@ -122,11 +122,14 @@ auto LowerNamedValueStructural(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::NamedValueExpression& named) -> diag::Result<hir::Expr>;
 
-// An interface instance named where a value is expected (LRM 25.9): the name
-// stands for the instance itself, which is what a virtual interface is assigned
-// and compared against. The instance is reached the way a call on it reaches
-// it, and the value is the object that reach ends at.
-auto LowerInterfaceInstanceValue(
+// A name standing for the thing it names rather than for a value read from
+// it: an interface instance where a value is expected (LRM 25.9), which is
+// what a virtual interface is assigned and compared against, and a module
+// instance or a variable or net named where a task takes a scope or an item
+// (LRM 21.7.1.2 `$dumpvars`). An instance is reached the way a call on it
+// reaches it, and stands for the object that reach ends at; a variable or net
+// is reached as a hierarchical reference to it is.
+auto LowerArbitrarySymbol(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::ArbitrarySymbolExpression& named, diag::SourceSpan span)
     -> diag::Result<hir::Expr>;

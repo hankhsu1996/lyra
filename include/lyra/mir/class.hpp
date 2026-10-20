@@ -23,6 +23,7 @@
 #include "lyra/mir/type_id.hpp"
 #include "lyra/mir/value_build.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/dump_kind.hpp"
 #include "lyra/support/scope_execution.hpp"
 
 namespace lyra::mir {
@@ -131,6 +132,10 @@ struct Class {
   // How the runtime runs what an instance of a class standing in the design
   // hierarchy starts (LRM 24.3.1), told where its timescale is.
   support::ScopeExecution execution = support::ScopeExecution::kDesign;
+  // The kind of scope a value dump records an instance of a class standing in
+  // the design hierarchy as (LRM 21.7.2.1): a unit's instance is a module, and
+  // a block a scope holds is a begin.
+  support::DumpScopeKind dumped_as = support::DumpScopeKind::kModule;
   base::Arena<FieldDecl, FieldId> fields;
   // The identifiers the source wrote for storage this class holds, each paired
   // with the field it reaches. A declared variable, an instance and a signal a

@@ -164,6 +164,7 @@ cc_library(
         ":support",
         ":value",
         "@boost.context//:boost.context",
+        "@libfst",
     ],
 )
 

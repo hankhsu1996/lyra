@@ -1,0 +1,3 @@
+# The build of zlib, which `MODULE.bazel` fetches.
+
+exports_files(["zlib.BUILD"])

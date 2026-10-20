@@ -11,6 +11,7 @@
 #include <optional>
 #include <set>
 #include <span>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -236,15 +237,21 @@ if [ -n "$LTO" ]; then
     PIDS=""
     LIVE=0
     n=0
-    for src in $(cat "$RT/@RTLIST@"); do
+    # Each line is a source and the macros its own library defines for it.
+    while read -r src defs; do
       n=$((n + 1))
       RT_OBJS="$RT_OBJS @OBJDIR@/runtime/$n.o"
-      "$CXX" @DESIGN_FLAGS@ $RT_FLAGS $LTO -c "$RT/$src" -o "@OBJDIR@/runtime/$n.o" \
-        >>"$LOG" 2>&1 &
+      case "$src" in
+        *.c) SRC_FLAGS="@C_FLAGS@" ;;
+        *) SRC_FLAGS="@DESIGN_FLAGS@" ;;
+      esac
+      for name in $defs; do SRC_FLAGS="$SRC_FLAGS -D$name"; done
+      "$CXX" $SRC_FLAGS $RT_FLAGS $LTO -c "$RT/$src" -o "@OBJDIR@/runtime/$n.o" \
+        </dev/null >>"$LOG" 2>&1 &
       PIDS="$PIDS $!"
       LIVE=$((LIVE + 1))
       if [ "$LIVE" -ge "$JOBS" ]; then reap; fi
-    done
+    done < "$RT/@RTLIST@"
     reap
   fi
   if [ "$STATUS" -eq 0 ]; then
@@ -354,6 +361,7 @@ auto RenderBuildScript(
   // separate two builds clang will refuse to share.
   const std::string_view optimization_tag = optimization_flag.substr(1);
   const std::string design_flags = JoinWords(DesignCompileFlags(optimization));
+  const std::string c_flags = JoinWords(RuntimeCCompileFlags(optimization));
   // Whether the project optimizes the design together with the runtime.
   const std::string_view lto = [&] {
     switch (link_time) {
@@ -365,13 +373,14 @@ auto RenderBuildScript(
     std::unreachable();
   }();
   const std::string link_time_forms = RenderLinkTimeForms();
-  const std::array<std::pair<std::string_view, std::string_view>, 22> bindings =
+  const std::array<std::pair<std::string_view, std::string_view>, 23> bindings =
       {{
           {"@INCLUDE@", kRuntimeIncludeDir},
           {"@PRELUDE@", support::kRuntimePreludeHeader},
           {"@CACHE@", kRuntimeCacheDir},
           {"@OBJDIR@", kObjectDir},
           {"@DESIGN_FLAGS@", design_flags},
+          {"@C_FLAGS@", c_flags},
           {"@VALIDATE@", kPchContentValidationFlag},
           {"@PREPARE@", kPchInstantiateTemplatesFlag},
           {"@OPTTAG@", optimization_tag},
@@ -558,10 +567,17 @@ auto CompileEach(std::size_t count, std::size_t width, Compile compile)
   return compiled;
 }
 
+// One source the runtime carries, and what its own library's build adds to
+// every compile of it.
+struct RuntimeSource {
+  std::filesystem::path path;
+  std::vector<std::string> flags;
+};
+
 // The runtime's own sources and what the runtime's build states each compile
 // is told, read from the lists staged beside them, each path made absolute.
 struct RuntimeSources {
-  std::vector<std::filesystem::path> translation_units;
+  std::vector<RuntimeSource> translation_units;
   std::vector<std::string> flags;
 };
 
@@ -596,8 +612,16 @@ auto ReadRuntimeSources(const std::filesystem::path& root)
     return std::unexpected(std::move(defines.error()));
   }
   RuntimeSources read;
-  for (const std::string& source : *sources) {
-    read.translation_units.push_back(root / source);
+  for (const std::string& line : *sources) {
+    // Each line is a path and the macros its library defines for it alone.
+    std::istringstream words(line);
+    std::string path;
+    words >> path;
+    RuntimeSource source{.path = root / path, .flags = {}};
+    for (std::string define; words >> define;) {
+      source.flags.push_back("-D" + define);
+    }
+    read.translation_units.push_back(std::move(source));
   }
   for (const std::string& line : *include_dirs) {
     // Each line is a flag and the directory it names.
@@ -738,9 +762,6 @@ auto CompileRuntimeSources(
   if (!sources) {
     return std::unexpected(std::move(sources.error()));
   }
-  std::vector<std::string> flags = DesignCompileFlags(host.optimization);
-  flags.insert(flags.end(), sources->flags.begin(), sources->flags.end());
-  flags.emplace_back(link_time);
   const stable_hash::Fingerprint tree = DigestOfTree(runtime.sources_root);
 
   const status::Phase phase("Compiling the runtime");
@@ -748,7 +769,14 @@ auto CompileRuntimeSources(
   return CompileEach(
       sources->translation_units.size(), host.compile_width,
       [&](std::size_t i) -> diag::Result<ActionResult> {
-        const std::filesystem::path& source = sources->translation_units[i];
+        const RuntimeSource& unit = sources->translation_units[i];
+        const std::filesystem::path& source = unit.path;
+        std::vector<std::string> flags =
+            source.extension() == ".c" ? RuntimeCCompileFlags(host.optimization)
+                                       : DesignCompileFlags(host.optimization);
+        flags.insert(flags.end(), sources->flags.begin(), sources->flags.end());
+        flags.insert(flags.end(), unit.flags.begin(), unit.flags.end());
+        flags.emplace_back(link_time);
         const status::Piece piece(source.filename().string());
         Action action("compile runtime source");
         action.Input(

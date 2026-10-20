@@ -119,6 +119,10 @@ auto RuntimeLibraryKindName(RuntimeLibraryKind kind) -> const char* {
       return "construction table";
     case RuntimeLibraryKind::kInstantiation:
       return "instantiation";
+    case RuntimeLibraryKind::kDumpEntry:
+      return "dump entry";
+    case RuntimeLibraryKind::kDumpBlock:
+      return "dump block";
   }
   throw InternalError("lir::RuntimeLibraryKindName: unknown kind");
 }
@@ -490,6 +494,8 @@ auto Type::IsAddressOnly() const -> bool {
       case RuntimeLibraryKind::kScopeCallable:
       case RuntimeLibraryKind::kConstructionTable:
       case RuntimeLibraryKind::kInstantiation:
+      case RuntimeLibraryKind::kDumpEntry:
+      case RuntimeLibraryKind::kDumpBlock:
         return false;
     }
     throw InternalError("lir: unknown runtime library kind");
@@ -620,6 +626,8 @@ auto Type::HeldAs() const -> std::optional<Holding> {
               case RuntimeLibraryKind::kObjectDefinition:
               case RuntimeLibraryKind::kScopeInfo:
               case RuntimeLibraryKind::kScopeCallable:
+              case RuntimeLibraryKind::kDumpEntry:
+              case RuntimeLibraryKind::kDumpBlock:
                 return std::nullopt;
             }
             throw InternalError("lir: unknown runtime library kind");

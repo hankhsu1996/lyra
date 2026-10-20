@@ -1,0 +1,3 @@
+# The build of GTKWave's FST library, which `MODULE.bazel` fetches.
+
+exports_files(["libfst.BUILD"])

@@ -2267,6 +2267,58 @@ auto LowerGenerateAsStmt(
       gen.counting);
 }
 
+// Describes, as statements of `frame`'s block, what a value dump records of
+// an instance (LRM 21.7.1.2): each declaration, as the member it is with the
+// constant stating it, and each named block, task or function around the
+// static variables of one. A named event is described by an entry of its own,
+// since it is no capability wrapper over a value.
+auto DescribeDumped(
+    const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
+    const hir::DumpedMembers& dumped) -> diag::Result<void> {
+  UnitLowerer& unit_lowerer = lowerer.Owner();
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  mir::Block& block = *frame.current_block;
+  const auto runtime = [&] {
+    return block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+  };
+  const auto append = [&](mir::Expr call) {
+    block.AppendStmt(mir::ExprStmt{.expr = block.exprs.Add(std::move(call))});
+  };
+  for (const hir::DumpedDeclaration& declaration : dumped.declarations) {
+    auto path = lowerer.LowerAccessPath(
+        lowerer.HirScope().exprs.Get(declaration.named), frame);
+    if (!path) return std::unexpected(std::move(path.error()));
+    const mir::ExprId member = OwnerPlace(*path);
+    const support::BuiltinFn entry =
+        unit.types.Get(block.exprs.Get(member).type).Is<mir::EventType>()
+            ? support::BuiltinFn::kDescribeEvent
+            : support::BuiltinFn::kDescribe;
+    append(
+        mir::MakeCallExpr(
+            mir::Direct{.target = entry, .receiver = member},
+            {runtime(), DumpEntryAddress(
+                            unit, block, frame.current_class_id,
+                            *frame.current_class, declaration)},
+            unit.builtins.void_type));
+  }
+  for (const hir::DumpedBlock& inside : dumped.blocks) {
+    append(
+        mir::MakeCallExpr(
+            mir::Direct{.target = support::BuiltinFn::kBeginDescribedBlock},
+            {runtime(), DumpBlockAddress(
+                            unit, block, frame.current_class_id,
+                            *frame.current_class, inside)},
+            unit.builtins.void_type));
+    auto inner = DescribeDumped(lowerer, frame, inside.members);
+    if (!inner) return std::unexpected(std::move(inner.error()));
+    append(
+        mir::MakeCallExpr(
+            mir::Direct{.target = support::BuiltinFn::kEndDescribedBlock},
+            {runtime()}, unit.builtins.void_type));
+  }
+  return {};
+}
+
 }  // namespace
 
 auto BuildExecutionStart(
@@ -2417,6 +2469,8 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   shape.self_pointer_type = self_pointer_type;
   shape.time_resolution = hir_scope.time_resolution;
   shape.execution = unit_lowerer.ScopeExecution();
+  shape.dumped_as = parent_ == nullptr ? support::DumpScopeKind::kModule
+                                       : support::DumpScopeKind::kBegin;
 
   AttachRuntimeScopeCtorPrefix(unit_lowerer.Unit(), shape);
   // What construction supplies is what distinguishes one built scope from
@@ -2658,6 +2712,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
             .ownership = mir::PointerOwnership::kBorrowed}});
     node_shape.time_resolution = hir_scope.time_resolution;
     node_shape.execution = unit_lowerer.ScopeExecution();
+    node_shape.dumped_as = support::DumpScopeKind::kBegin;
     AttachRuntimeScopeCtorPrefix(unit_lowerer.Unit(), node_shape);
     unit_lowerer.DefineClassShape(node_class, std::move(node_shape));
     shape.contained.push_back(node_class);
@@ -2926,6 +2981,12 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   mir::Block& activate_block = activate_code.Body();
   const WalkFrame activate_frame =
       scope_frame.WithBlock(&activate_block).WithBindings(&activate_bindings);
+
+  mir::CallableCode describe_code = mir::CallableCode::Defined();
+  CallableBindings describe_bindings(unit_lowerer.Unit(), describe_code);
+  const mir::LocalId describe_self_id = seed_self(describe_bindings);
+  const WalkFrame describe_frame = scope_frame.WithBlock(&describe_code.Body())
+                                       .WithBindings(&describe_bindings);
   const auto self_object = [&]() -> mir::ExprId {
     return BuildObjectDeref(
         unit_lowerer.Unit(), ctor_block,
@@ -3223,9 +3284,10 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       node_ctor_code.params.push_back(node_ctor_prefix_local_ids.back());
     }
     node_ctor_code.result_type = void_type;
-    // A name node has no work in any phase, which is three bodies with no
-    // statements rather than three phases it does not have -- the same shape a
-    // scope with work carries, so nothing downstream tells the two apart.
+    // A name node has no work in any phase and describes nothing, which is
+    // four bodies with no statements rather than four it does not have -- the
+    // same shape a scope with work carries, so nothing downstream tells the
+    // two apart. What its named block holds the scope around it describes.
     const auto empty_phase = [&](support::LibraryVirtual phase) {
       mir::CallableCode code = mir::CallableCode::Defined();
       CallableBindings bindings(unit_lowerer.Unit(), code);
@@ -3242,6 +3304,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     empty_phase(support::LibraryVirtual::kScopeResolve);
     empty_phase(support::LibraryVirtual::kScopeInitialize);
     empty_phase(support::LibraryVirtual::kScopeCreateProcesses);
+    empty_phase(support::LibraryVirtual::kScopeDescribe);
     StateScopeDefinition(
         unit_lowerer.Unit(), name_node.class_id, node_class, {});
     const mir::ExprId node_definition = BuildDefinitionRead(
@@ -3567,14 +3630,15 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   auto& unit = unit_lowerer.Unit();
 
   // The three bodies the runtime drives this scope through after construction
-  // (LRM 23.3.3.2 / 6.8 / 9.2), each overriding the virtual function of the
-  // library's scope for its phase. `self` is the body's own receiver, typed as
-  // this class. None of them answers to a name of the source, because such a
-  // name would sit in the same name space as the scope's own subroutines and a
-  // method spelled the same way would then share it. A phase with no work is a
-  // body with no statements, not an absent body: whether emitting one is worth
-  // avoiding is a question for the layer that removes dead work, and answering
-  // it here would cost every consumer a case.
+  // (LRM 23.3.3.2 / 6.8 / 9.2), and the one a value dump starting has it
+  // describe itself with (LRM 21.7.1.2), each overriding the virtual function
+  // of the library's scope for its phase. `self` is the body's own receiver,
+  // typed as this class. None of them answers to a name of the source, because
+  // such a name would sit in the same name space as the scope's own subroutines
+  // and a method spelled the same way would then share it. A phase with no work
+  // is a body with no statements, not an absent body: whether emitting one is
+  // worth avoiding is a question for the layer that removes dead work, and
+  // answering it here would cost every consumer a case.
   const auto add_body = [&](mir::CallableCode& code, mir::LocalId self,
                             support::LibraryVirtual phase) {
     code.params = {self};
@@ -3598,6 +3662,10 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   add_body(
       activate_code, activate_self_id,
       support::LibraryVirtual::kScopeCreateProcesses);
+  auto described = DescribeDumped(*this, describe_frame, hir_scope.dumped);
+  if (!described) return std::unexpected(std::move(described.error()));
+  add_body(
+      describe_code, describe_self_id, support::LibraryVirtual::kScopeDescribe);
 
   // The object is of this class, which is the only one that knows it, so its
   // constructor hands the published class the definition the tree is told.

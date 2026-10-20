@@ -1281,6 +1281,12 @@ the detail lives in the entry itself.
 
 ### Runtime execution and scheduling
 
+- [a-dump-is-chosen-when-the-run-starts](a-dump-is-chosen-when-the-run-starts.md) -- every scope
+  class describes what a value dump may record of it, and the run chooses what to record and in
+  which format: the run's plusargs are defaults the design's `$dump*` tasks override, a change is
+  found per write and written once per step on a writer thread of its own, the file's name picks
+  VCD, FST or text, and each `$dumpports` file is a dump of its own. Choosing at build time is
+  rejected.
 - [static-initializer-draws-from-its-container](static-initializer-draws-from-its-container.md) -- a
   randomization call draws from the generator installed for whatever is running, and a static
   initialization installs one just as a process does, seeded from the container the standard names

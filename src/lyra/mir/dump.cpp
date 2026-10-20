@@ -506,6 +506,10 @@ class MirDumper {
                   return "RuntimeLibrary(ScopeInfo)";
                 case RuntimeLibraryKind::kScopeCallable:
                   return "RuntimeLibrary(ScopeCallable)";
+                case RuntimeLibraryKind::kDumpEntry:
+                  return "RuntimeLibrary(DumpEntry)";
+                case RuntimeLibraryKind::kDumpBlock:
+                  return "RuntimeLibrary(DumpBlock)";
               }
               throw InternalError("dump: unknown RuntimeLibraryKind");
             },

@@ -111,7 +111,7 @@ put there.""",
 _RuntimeSourcesInfo = provider(
     doc = "The files a C++ library and every library below it compile.",
     fields = {
-        "sources": "depset of the translation units, assembly included",
+        "sources": "depset of (translation unit, macros its own library defines for it), assembly included",
         "private_headers": "depset of headers listed among sources",
     },
 )
@@ -120,6 +120,7 @@ _TRANSLATION_UNITS = ["c", "cc", "cpp", "S"]
 
 def _runtime_sources_aspect_impl(_target, ctx):
     files = getattr(ctx.rule.files, "srcs", [])
+    local_defines = tuple(getattr(ctx.rule.attr, "local_defines", []))
     below = [
         dep[_RuntimeSourcesInfo]
         for dep in getattr(ctx.rule.attr, "deps", [])
@@ -127,7 +128,7 @@ def _runtime_sources_aspect_impl(_target, ctx):
     ]
     return [_RuntimeSourcesInfo(
         sources = depset(
-            [f for f in files if f.extension in _TRANSLATION_UNITS],
+            [(f, local_defines) for f in files if f.extension in _TRANSLATION_UNITS],
             transitive = [info.sources for info in below],
         ),
         private_headers = depset(
@@ -144,18 +145,21 @@ _runtime_sources_aspect = aspect(
 def _shipped_sources_impl(ctx):
     lib = ctx.attr.lib[0]
     sources = lib[_RuntimeSourcesInfo].sources.to_list()
+    files = [f for f, _ in sources]
     context = lib[CcInfo].compilation_context
     root = ctx.attr.root.rstrip("/") + "/"
 
     staged = []
-    for file in sources + context.headers.to_list() + lib[_RuntimeSourcesInfo].private_headers.to_list():
+    for file in files + context.headers.to_list() + lib[_RuntimeSourcesInfo].private_headers.to_list():
         out = ctx.actions.declare_file(root + file.path)
         ctx.actions.symlink(output = out, target_file = file)
         staged.append(out)
 
     # How every source is compiled, beside the files, so that whoever compiles
     # them reads this build's statement of it rather than restating it. Each
-    # line is a flag and its argument, a path relative to the root.
+    # line of the include list is a flag and its argument, a path relative to
+    # the root; each line of the source list is a path and the macros its own
+    # library defines for it alone.
     # A directory nothing was staged under is a place the build looks for
     # generated headers this library has none of, and is left out.
     staged_dirs = {".": True}
@@ -178,7 +182,7 @@ def _shipped_sources_impl(ctx):
     manifests = {
         "defines.txt": context.defines.to_list(),
         "include_dirs.txt": include_lines,
-        "sources.txt": [f.path for f in sources],
+        "sources.txt": [" ".join([f.path] + list(defines)) for f, defines in sources],
     }
     for name, lines in manifests.items():
         out = ctx.actions.declare_file(root + name)
@@ -193,8 +197,9 @@ holding them and nothing else, with how each is compiled.
 
 A program's own compiler builds the runtime from these where it optimizes the
 program together with it and cannot read the prebuilt library's bitcode. The
-lists beside the files are this build's own: the translation units, the
-include directories, and the macros every compile defines.""",
+lists beside the files are this build's own: the translation units with the
+macros each one's library defines for it, the include directories, and the
+macros every compile defines.""",
     attrs = {
         "lib": attr.label(
             aspects = [_runtime_sources_aspect],

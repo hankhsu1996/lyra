@@ -192,10 +192,7 @@ auto DueAfter(
 auto ScalarPropagationDelay(
     const value::ConstIntegralView& changed_to, SimDuration rise,
     SimDuration fall, SimDuration turn_off) -> SimDuration {
-  switch (value::FourStateBitOf(
-      (value::WordAt(changed_to.value, 0) & 1U) != 0U,
-      changed_to.IsFourState() &&
-          (value::WordAt(changed_to.unknown, 0) & 1U) != 0U)) {
+  switch (value::ScalarAt(changed_to, 0)) {
     case value::FourStateBit::kOne:
       return rise;
     case value::FourStateBit::kZero:

@@ -8,7 +8,6 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/evaluation_attempts.hpp"
-#include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/observation.hpp"
 #include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/region.hpp"
@@ -40,17 +39,7 @@ PropertyEvaluation::PropertyEvaluation(
 }
 
 void PropertyEvaluation::Watch(const Trigger& trigger) {
-  // Storage that belongs to nothing is never told of a write, so there is
-  // nothing to enrol on.
-  if (trigger.observable == nullptr) {
-    return;
-  }
-  WaitMembership& membership = memberships_[watched_++];
-  membership.observer = this;
-  membership.through = trigger.through;
-  membership.reads = trigger.reads;
-  membership.observation = trigger.observation;
-  trigger.observable->MembersAt(trigger.part).PushBack(membership);
+  EnrolOnPlace(memberships_[watched_++], this, trigger);
 }
 
 void PropertyEvaluation::Bind(OwnedCall step, OwnedCall test) {
