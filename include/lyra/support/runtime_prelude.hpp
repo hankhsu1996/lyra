@@ -5,12 +5,13 @@
 namespace lyra::support {
 
 // The runtime umbrella header, spelled the way an emitted translation unit
-// includes it. Emitted code includes exactly this header, and the precompiled
-// header pre-parses exactly this header, so the set the emit pulls in and the
-// set the PCH covers are the same set. Naming it once is what makes that true:
-// were the two sides to spell their own lists, a header reachable from the
-// emit but absent from the PCH would be re-parsed for every compiled design
-// and nothing would report it.
+// includes it. Emitted code reaches the runtime only through this header -- the
+// header the program's entry includes is one this one includes too -- and the
+// precompiled header pre-parses exactly this header, so the set the emit pulls
+// in and the set the PCH covers are the same set. Naming it once is what makes
+// that true: were the two sides to spell their own lists, a header reachable
+// from the emit but absent from the PCH would be re-parsed for every compiled
+// design and nothing would report it.
 inline constexpr std::string_view kRuntimePreludeHeader =
     "lyra/runtime/prelude.hpp";
 

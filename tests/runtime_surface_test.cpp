@@ -192,10 +192,9 @@ auto SymbolNames(std::string_view listing) -> std::vector<std::string> {
 // compiled does not withhold it. Nothing in a header looks wrong in any of
 // these, and no warning names one; the object names every one of them.
 TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
-  auto cxx_or = lyra::test::FindDefaultCxx();
+  auto cxx_or = lyra::test::FindClang();
   if (!cxx_or) {
-    GTEST_SKIP() << "measuring an object requires the compiler a project's "
-                    "build recipe defaults to";
+    GTEST_SKIP() << "measuring an object requires clang";
   }
   auto nm_or = lyra::driver::FindOnPath("nm");
   if (!nm_or) {

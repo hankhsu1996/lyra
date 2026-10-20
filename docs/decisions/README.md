@@ -1035,17 +1035,20 @@ the detail lives in the entry itself.
   faster may not change whether it succeeds or what it produces, so a header compiled in advance is
   offered to a compile and never required by one: a compile that failed with one is run again
   without one before its output counts, and a header that turns out to have been refused is dropped
-  rather than reported. That fallback is the whole guarantee, which leaves content-addressed
-  currency and leaving an unchanged file alone as speed rather than correctness. Disabling the
-  compiler's own validation, making the key cover what it checks, proving the header acceptable
-  before every build, and recognising the compiler's complaint are rejected.
+  rather than reported. The fallback covers refusal, and the name covers staleness: since GCC does
+  not check the files a precompiled header was made from, the header is named by every file the
+  compiler lists as read, the C++ library's and the system's included. Disabling clang's own
+  validation, leaving the system's files to the compiler, proving the header acceptable before every
+  build, and recognising the compiler's complaint are rejected.
 - [a-prepared-header-carries-the-work](a-prepared-header-carries-the-work.md) -- a unit pays for
   what it contains, not for what the library it uses could offer, so the templates the runtime
   surface reaches are instantiated into the header prepared in advance and no unit performs them
   again. Measured: a unit holding the umbrella header and no design code cost 0.63 s, 605 ms of it
   instantiating and 37 ms reading, and 0.11 s after. The header is therefore named by how it was
-  prepared as well as by what it was prepared from. Merging a design's units into one, compiling
-  several at a time to hide the cost, and header modules are rejected.
+  prepared as well as by what it was prepared from. Only clang can be asked, so a build asks the
+  compiler about each such flag alone and never which compiler it is; GCC's prepared header saves
+  the parse alone. Merging a design's units into one, compiling several at a time to hide the cost,
+  and header modules are rejected.
 - [a-published-class-is-emitted-once](a-published-class-is-emitted-once.md) -- a class the runtime
   publishes states at least one virtual function its own source file defines, so the library owns
   that class's dispatch table and whatever its destruction reaches and a unit that builds or catches

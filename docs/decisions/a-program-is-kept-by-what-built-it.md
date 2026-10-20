@@ -74,13 +74,16 @@ while a stale program is simply executed. The cost is that the front half of the
 runs; the saving is the compile and the link, which is where the time goes. A kept program saves the
 link and the kept objects save the compile.
 
-The one input no name here can see is the system the host compiler brings with it -- its standard
-library and its C runtime. The compiler's identity stands in for it, as it does for the prepared
-header, which is the same trade ccache makes by default. That identity is the file the compiler's
-path resolves to, its modification time, and its size -- ccache's default `compiler_check = mtime`,
-which its manual describes as hashing "the compiler's mtime and size, which is fast". Hashing the
-executable's bytes instead would be exact, and Lyra's own executable is some 190 MB, read on every
-build whether the program is then found or not.
+The input no name here sees whole is the system the host compiler brings with it -- its standard
+library and its C runtime. An emitted C++ file's object and the prepared header are named by the
+headers they read, the system's included; a runtime source compiled for a link-time build is named
+by its own tree and not by the system's headers, and the libraries a link reads are listed by
+nothing the link is asked. The compiler's identity stands in for them, which is the same trade
+ccache makes by default. That identity is the file the compiler's path resolves to, its modification
+time, and its size -- ccache's default `compiler_check = mtime`, which its manual describes as
+hashing "the compiler's mtime and size, which is fast". Hashing the executable's bytes instead would
+be exact, and Lyra's own executable is some 190 MB, read on every build whether the program is then
+found or not.
 
 ### D3. A command hands back a private copy
 
@@ -136,9 +139,9 @@ tiered execution engine, if one is wanted, is its own subject and starts from th
 
 The price is that running a design on the LLVM path needs a host C++ driver to link, as the C++ path
 and every foreign source already did. Lyra takes the one named with `--cxx`, and otherwise the first
-of `clang++` -- which alone can use a prepared header -- and `c++`, the name every system with a C++
-compiler answers to. So tests run wherever the machine executing them has either, which is what
-keeps them on remote executors rather than on a developer's machine.
+of `clang++` -- whose prepared header carries the most, so a unit costs least under it -- and `c++`,
+the name every system with a C++ compiler answers to. So tests run wherever the machine executing
+them has either, which is what keeps them on remote executors rather than on a developer's machine.
 
 ### D9. On the LLVM path each unit's object is kept on its own
 
@@ -196,8 +199,8 @@ recipes for one question.
 - The prepared-header cache moves under the same store and the same trimming. `--pch-cache-dir`
   becomes `--cache-dir`, naming the whole store.
 - Every conformance case links a program with whatever C++ compiler the executing machine has, so
-  the corpus, foreign cases included, runs on remote executors as one target per path; only the
-  tests about the prepared header, which is clang's alone, stay where clang is.
+  the corpus, foreign cases included, runs on remote executors as one target per path; only a test
+  about clang itself stays where clang is.
 
 ## Cross-references
 

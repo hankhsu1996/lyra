@@ -1,6 +1,7 @@
 name: Host C++ Tests (Nightly)
 
-# The merge gate excludes one target: the C++ path host-compiles the whole
+# The merge gate excludes the targets that ask whether an emitted C++ project
+# still builds and runs, and at what cost: the C++ path host-compiles the whole
 # corpus, once per case, which no per-PR budget holds. What that leaves out is
 # the whole of the C++ backend's corpus, so without this job the backend every
 # other one is checked against would never run in CI at all. Here it runs on
@@ -32,16 +33,24 @@ jobs:
       - name: Setup Clang
         uses: ./.github/actions/setup-clang
 
-      # Runs on the runner rather than through `--config=rbe`, because this
-      # target spawns a host C++ compiler of its own, found on the PATH of the
+      # Runs on the runner rather than through `--config=rbe`, because these
+      # targets spawn a host C++ compiler of their own, found on the PATH of the
       # machine that runs the test. The remote image has GCC there and no
-      # clang, so remote execution would silently test a different toolchain
-      # from the one installed above, and the precompiled-header path only
-      # engages for clang at all.
+      # clang, so remote execution would test a different toolchain from the
+      # one installed above, and GCC is what a developer's own run of this set
+      # already answers for. Where the key is set the actions still keep their
+      # results in the remote cache, so the runner's four cores compile what
+      # changed since the last such run, and not the whole of Lyra and LLVM.
       #
       # `nightly` is the exact complement of the default set the merge gate
       # runs, so the two together cover every test target once. Both sets are
       # defined in `.bazelrc`, where the tag they are drawn on is named once.
       - name: Test
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         run: |
-          bazel test //... --config=nightly --verbose_failures
+          CACHE_FLAGS=""
+          if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
+            CACHE_FLAGS="--config=ci --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+          fi
+          bazel test //... --config=nightly --verbose_failures $CACHE_FLAGS

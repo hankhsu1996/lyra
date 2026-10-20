@@ -85,11 +85,12 @@ auto SubstituteTokens(
 // build.sh as a raw-string template. `@TOKEN@` placeholders bind to the
 // `project_layout` constants below. Shell `${VAR}` and `$VAR` pass through
 // unchanged. The PCH section gates on three runtime checks: the caller not
-// having asked to skip it, `$CXX` looking like clang (gcc's PCH dialect does
-// not match these flags), and `sha1sum` being available (used to fingerprint
-// the header tree so a header edit produces a different cache file rather
-// than reusing a PCH built against stale-on-disk content). Any failing
-// check falls back to plain compilation; correctness is unaffected.
+// having asked to skip it, `sha1sum` being available (used to name a prepared
+// header by every file it reads, so an edit to any of them produces a
+// different cache file rather than reusing one built against what is no longer
+// on disk), and the compiler preparing an empty header at all.
+// Any failing check falls back to plain compilation; correctness is
+// unaffected.
 //
 // The compile loop waits for a batch rather than replacing each finished job,
 // because `wait -n` is not POSIX and this recipe may not assume a shell richer
@@ -116,7 +117,7 @@ constexpr std::string_view kBuildScriptTemplate = R"sh(#!/bin/sh
 # else is running on the machine.
 #
 # A precompiled header carrying the runtime surface is built on first run and
-# reused on later rebuilds (clang only); --no-pch skips it. It lands inside the
+# reused on later rebuilds; --no-pch skips it. It lands inside the
 # project and serves that project alone: what it holds is bound to the paths of
 # the headers it was prepared from, and every project carries its own copy of
 # those, which is what lets a directory be moved to another machine.
@@ -145,35 +146,74 @@ if [ "$JOBS" = "0" ]; then
   JOBS=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)
 fi
 USE_PCH=0
-if [ "$NO_PCH" = "0" ]; then
-  case "$CXX" in
-    *clang*)
-      if command -v sha1sum >/dev/null 2>&1; then USE_PCH=1; fi
-      ;;
-  esac
+if [ "$NO_PCH" = "0" ] && command -v sha1sum >/dev/null 2>&1; then
+  # Whether this compiler prepares a header, and which of the flags a prepared
+  # header is better for it takes, each asked alone of an empty header: what a
+  # command printed counts against it, so a flag warned of and ignored is not
+  # taken. A flag goes on the command preparing the header, on every compile
+  # against it, or on both, as its line says.
+  P=@OBJDIR@/probe
+  mkdir -p "$P"
+  : > "$P/probe.hpp"
+  takes() {
+    OUT=$("$CXX" @STD@ $1 -xc++-header "$P/probe.hpp" -o "$P/probe.hpp@GCH@" \
+      </dev/null 2>&1) &&
+      [ -z "$OUT" ]
+  }
+  if takes ""; then
+    USE_PCH=1
+    PREPARE=""
+    COMPILE=""
+    while IFS='|' read -r flag reach; do
+      if takes "$flag"; then
+        case "$reach" in prepare|both) PREPARE="$PREPARE $flag" ;; esac
+        case "$reach" in compile|both) COMPILE="$COMPILE $flag" ;; esac
+      fi
+    done <<FLAGS
+@PCHFLAGS@
+FLAGS
+  fi
 fi
 PCH_FLAG=""
 if [ "$USE_PCH" = "1" ]; then
   PRELUDE="@INCLUDE@/@PRELUDE@"
+  PREP="@DESIGN_FLAGS@ $PREPARE"
   # A prepared header is named by everything that decided its contents, and by
-  # nothing else: the headers it was built from, and the command line below that
-  # says what goes into it. Re-emitting into a directory that already holds one
-  # then cannot reuse a header prepared a different way from the same headers.
-  PREP="@DESIGN_FLAGS@ @VALIDATE@ @PREPARE@"
-  FP=$( { find @INCLUDE@ -name '*.hpp' -print0 | sort -z | xargs -0 sha1sum; echo "$PREP"; } | sha1sum | cut -c1-16)
-  PCH="@CACHE@/prelude-${FP}-@OPTTAG@.pch"
-  if [ ! -f "$PCH" ]; then
-    mkdir -p "$(dirname "$PCH")"
-    # Preparing one is an attempt like using one: a build that cannot have the
-    # fast path takes the plain one instead of stopping, and a half-written file
-    # goes so that the next build does not find it and believe it.
-    if ! "$CXX" $PREP -I @INCLUDE@ -xc++-header "$PRELUDE" -o "$PCH" 2>/dev/null; then
-      rm -f "$PCH"
+  # nothing else: every file the prelude reads as this compiler reads it -- the
+  # C++ library's and the system's as much as the runtime's, since a compiler
+  # need not check those for itself -- and the command line below that says
+  # what goes into it. A list that cannot be read whole prepares nothing.
+  if DEPS=$("$CXX" @DESIGN_FLAGS@ -I @INCLUDE@ -M -MT prelude -xc++-header "$PRELUDE" 2>/dev/null) &&
+    SUMS=$(printf '%s\n' "$DEPS" | sed -e 's/\\$//' -e 's/^prelude://' | tr ' ' '\n' |
+      sed '/^$/d' | sort -u | xargs sha1sum 2>/dev/null); then
+    FP=$( { printf '%s\n' "$SUMS"; echo "$PREP"; } | sha1sum | cut -c1-16)
+    PCH="@CACHE@/prelude-${FP}"
+    if [ ! -f "$PCH" ]; then
+      mkdir -p "$(dirname "$PCH")"
+      # Preparing one is an attempt like using one: a build that cannot have
+      # the fast path takes the plain one instead of stopping, and a
+      # half-written file goes so that the next build does not find it and
+      # believe it.
+      if ! "$CXX" $PREP -I @INCLUDE@ -xc++-header "$PRELUDE" -o "$PCH" 2>/dev/null; then
+        rm -f "$PCH"
+        USE_PCH=0
+      fi
+    fi
+  else
+    USE_PCH=0
+  fi
+  # Every compile is told to include a header holding one include of the
+  # prelude, and finds the prepared header beside it under the name a compiler
+  # looks for there; one that cannot use it refuses it, and the build compiles
+  # again without it. Laying this out is an attempt too.
+  if [ "$USE_PCH" = "1" ]; then
+    if mkdir -p "$(dirname @OFFER@)" 2>/dev/null &&
+      printf '#include "%s"\n' "@PRELUDE@" > @OFFER@ 2>/dev/null &&
+      ln -sf "$(pwd)/$PCH" @OFFER@@GCH@ 2>/dev/null; then
+      PCH_FLAG="-include @OFFER@ $COMPILE"
+    else
       USE_PCH=0
     fi
-  fi
-  if [ "$USE_PCH" = "1" ]; then
-    PCH_FLAG="-include-pch $PCH @VALIDATE@"
   fi
 fi
 mkdir -p @OBJDIR@
@@ -230,7 +270,10 @@ if [ -n "$LTO" ]; then
   while read -r flag dir; do RT_FLAGS="$RT_FLAGS $flag $RT/$dir"; done < "$RT/@RTINCS@"
   while read -r name; do RT_FLAGS="$RT_FLAGS -D$name"; done < "$RT/@RTDEFS@"
   compile_all "$PCH_FLAG $LTO"
-  if [ "$STATUS" -ne 0 ] && [ "$USE_PCH" = "1" ]; then compile_all "$LTO"; fi
+  if [ "$STATUS" -ne 0 ] && [ "$USE_PCH" = "1" ]; then
+    compile_all "$LTO"
+    if [ "$STATUS" -eq 0 ]; then rm -f "$PCH"; fi
+  fi
   if [ "$STATUS" -eq 0 ]; then
     mkdir -p @OBJDIR@/runtime
     RT_OBJS=""
@@ -255,7 +298,7 @@ if [ -n "$LTO" ]; then
     reap
   fi
   if [ "$STATUS" -eq 0 ]; then
-@DPICOMPILE@    if "$CXX" -@OPTTAG@ $LTO_LINK$OBJS $RT_OBJS@DPIOBJS@ -o @PROG@ 2>/dev/null; then exit 0; fi
+@DPICOMPILE@    if "$CXX" @OPT@ $LTO_LINK$OBJS $RT_OBJS@DPIOBJS@ -o @PROG@ 2>/dev/null; then exit 0; fi
   fi
 fi
 compile_all "$PCH_FLAG"
@@ -341,6 +384,28 @@ auto RenderLinkTimeForms() -> std::string {
   return lines;
 }
 
+// Each flag a prepared header is better for as a line the recipe reads: the
+// flag, then which command lines it goes on.
+auto RenderOptionalFlags() -> std::string {
+  std::string lines;
+  for (const pch::OptionalFlag& optional : pch::kOptionalFlags) {
+    if (!lines.empty()) lines += "\n";
+    const std::string_view reach = [&] {
+      switch (optional.reach) {
+        case pch::FlagReach::kPreparing:
+          return "prepare";
+        case pch::FlagReach::kCompiling:
+          return "compile";
+        case pch::FlagReach::kPreparingAndCompiling:
+          return "both";
+      }
+      std::unreachable();
+    }();
+    lines += std::format("{}|{}", optional.flag, reach);
+  }
+  return lines;
+}
+
 auto RenderBuildScript(
     const std::filesystem::path& cxx, std::span<const DpiLinkInput> dpi_inputs,
     std::span<const TranslationUnit> translation_units,
@@ -357,9 +422,6 @@ auto RenderBuildScript(
   // Named locals, because the bindings below hold `string_view`s and are read
   // after this statement: a temporary would already have died.
   const std::string cxx_exe = cxx.string();
-  // The recipe keys its own PCH cache by header content, which does not
-  // separate two builds clang will refuse to share.
-  const std::string_view optimization_tag = optimization_flag.substr(1);
   const std::string design_flags = JoinWords(DesignCompileFlags(optimization));
   const std::string c_flags = JoinWords(RuntimeCCompileFlags(optimization));
   // Whether the project optimizes the design together with the runtime.
@@ -373,7 +435,8 @@ auto RenderBuildScript(
     std::unreachable();
   }();
   const std::string link_time_forms = RenderLinkTimeForms();
-  const std::array<std::pair<std::string_view, std::string_view>, 23> bindings =
+  const std::string optional_flags = RenderOptionalFlags();
+  const std::array<std::pair<std::string_view, std::string_view>, 25> bindings =
       {{
           {"@INCLUDE@", kRuntimeIncludeDir},
           {"@PRELUDE@", support::kRuntimePreludeHeader},
@@ -381,9 +444,11 @@ auto RenderBuildScript(
           {"@OBJDIR@", kObjectDir},
           {"@DESIGN_FLAGS@", design_flags},
           {"@C_FLAGS@", c_flags},
-          {"@VALIDATE@", kPchContentValidationFlag},
-          {"@PREPARE@", kPchInstantiateTemplatesFlag},
-          {"@OPTTAG@", optimization_tag},
+          {"@STD@", kCxxStandardFlag},
+          {"@PCHFLAGS@", optional_flags},
+          {"@OFFER@", kPreludeOfferHeader},
+          {"@GCH@", kPreparedHeaderSuffix},
+          {"@OPT@", optimization_flag},
           {"@CXX@", cxx_exe},
           {"@SOURCES@", sources},
           {"@LIBDIR@", kRuntimeLibDir},
@@ -468,7 +533,7 @@ auto CompileFlags(
 // whether it was offered one.
 auto CompileFile(
     const std::filesystem::path& dir, const TranslationUnit& unit,
-    const stable_hash::Fingerprint& runtime_headers,
+    const stable_hash::Fingerprint& prelude_inputs,
     const std::filesystem::path& cxx, std::span<const std::string> flags)
     -> Action {
   Action action("compile C++ file");
@@ -477,7 +542,7 @@ auto CompileFile(
     action.Input("included", included);
     action.InputFile("content", dir / included);
   }
-  action.InputDigest("runtime headers", runtime_headers);
+  action.InputDigest("prelude inputs", prelude_inputs);
   action.InputExecutable("compiler", cxx);
   for (const std::string& flag : flags) {
     action.Input("flag", flag);
@@ -493,14 +558,12 @@ auto CompileFile(
 auto CompileOne(
     const std::filesystem::path& source, const std::filesystem::path& object,
     const std::filesystem::path& cxx, std::span<const std::string> flags,
-    const std::optional<ActionResult>& prelude, const ActionCache& actions)
+    const std::optional<pch::Offer>& prelude, const ActionCache& actions)
     -> diag::Result<void> {
-  const auto run = [&](const ActionResult* prepared) {
+  const auto run = [&](const pch::Offer* offer) {
     std::vector<std::string> args(flags.begin(), flags.end());
-    if (prepared != nullptr) {
-      args.emplace_back("-include-pch");
-      args.push_back(prepared->path.string());
-      args.emplace_back(kPchContentValidationFlag);
+    if (offer != nullptr) {
+      args.insert(args.end(), offer->flags.begin(), offer->flags.end());
     }
     args.emplace_back("-c");
     args.push_back(source.string());
@@ -529,7 +592,7 @@ auto CompileOne(
             .WithNote("{}", plain->stderr_text));
   }
   if (prelude.has_value()) {
-    actions.Evict(*prelude);
+    actions.Evict(prelude->prepared);
   }
   return {};
 }
@@ -639,7 +702,77 @@ auto ReadRuntimeSources(const std::filesystem::path& root)
   return read;
 }
 
+// The files a make rule names after its target's colon, as a compiler asked
+// for its dependencies writes one: separated by blanks, continued over lines
+// by a backslash ending one, with a blank inside a name escaped by a backslash
+// and a dollar sign doubled.
+auto PrerequisitesOf(std::string_view rule)
+    -> std::vector<std::filesystem::path> {
+  const std::size_t colon = rule.find(':');
+  std::vector<std::filesystem::path> files;
+  if (colon == std::string_view::npos) {
+    return files;
+  }
+  std::string name;
+  const auto close = [&] {
+    if (!name.empty()) {
+      files.emplace_back(std::move(name));
+      name.clear();
+    }
+  };
+  for (std::size_t i = colon + 1; i < rule.size(); ++i) {
+    const char c = rule[i];
+    const char next = i + 1 < rule.size() ? rule[i + 1] : '\0';
+    if (c == '\\' && (next == '\n' || next == '\r')) {
+      close();
+      ++i;
+    } else if (c == '\\' && next == ' ') {
+      name += ' ';
+      ++i;
+    } else if (c == '$' && next == '$') {
+      name += '$';
+      ++i;
+    } else if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+      close();
+    } else {
+      name += c;
+    }
+  }
+  close();
+  return files;
+}
+
 }  // namespace
+
+auto FindUsualCompiler() -> std::optional<std::filesystem::path> {
+  for (const std::string_view usual : {"clang++", "c++"}) {
+    if (auto found = FindOnPath(usual)) {
+      return *std::move(found);
+    }
+  }
+  return std::nullopt;
+}
+
+auto DigestOfPreludeInputs(
+    const std::filesystem::path& cxx, const std::filesystem::path& include_root,
+    OptimizationLevel optimization) -> diag::Result<stable_hash::Fingerprint> {
+  std::vector<std::string> args = CompileFlags(include_root, optimization);
+  args.insert(
+      args.end(), {"-M", "-MT", "prelude", "-xc++-header",
+                   (include_root / support::kRuntimePreludeHeader).string()});
+  auto listed = RunProcessCaptured(cxx, args);
+  if (!listed) {
+    return diag::Fail(diag::DiagCode::kHostIoError, std::move(listed.error()));
+  }
+  if (listed->exit_code != 0) {
+    return std::unexpected(
+        diag::Make(
+            diag::DiagCode::kHostBuildFailed,
+            "the runtime's headers do not compile with '{}'", cxx.string())
+            .WithNote("{}", listed->stderr_text));
+  }
+  return DigestOfFiles(include_root, PrerequisitesOf(listed->stdout_text));
+}
 
 auto CompileTranslationUnits(
     const std::filesystem::path& dir,
@@ -647,8 +780,11 @@ auto CompileTranslationUnits(
     const RuntimeLocation& runtime, const HostBuild& host,
     std::optional<std::string_view> link_time, ActionCache& actions)
     -> diag::Result<std::vector<ActionResult>> {
-  const stable_hash::Fingerprint runtime_headers =
-      DigestOfTree(runtime.include_root);
+  const auto prelude_inputs =
+      DigestOfPreludeInputs(host.cxx, runtime.include_root, host.optimization);
+  if (!prelude_inputs) {
+    return std::unexpected(prelude_inputs.error());
+  }
   std::vector<std::string> flags =
       CompileFlags(runtime.include_root, host.optimization);
   if (link_time) {
@@ -656,9 +792,9 @@ auto CompileTranslationUnits(
   }
   // The prelude is compiled before anything reads it, so several compiles
   // cannot each find it missing and race to build the same file.
-  const std::optional<ActionResult> prelude = pch::EnsureCached(
-      host.cxx, runtime.include_root, runtime_headers, host.pch, actions,
-      host.optimization);
+  const std::optional<pch::Offer> prelude = pch::OfferPrelude(
+      host.cxx, runtime.include_root, *prelude_inputs, host.pch, actions,
+      host.optimization, dir);
 
   const status::Phase phase("Compiling C++");
   status::Pieces(translation_units.size());
@@ -668,7 +804,7 @@ auto CompileTranslationUnits(
         const TranslationUnit& unit = translation_units[i];
         const status::Piece piece(unit.source_name);
         return actions.Execute(
-            CompileFile(dir, unit, runtime_headers, host.cxx, flags),
+            CompileFile(dir, unit, *prelude_inputs, host.cxx, flags),
             [&](const std::filesystem::path& object) {
               return CompileOne(
                   dir / unit.relpath, object, host.cxx, flags, prelude,
@@ -736,7 +872,7 @@ auto AcceptedLinkTimeForm(const HostBuild& host, ActionCache& actions)
         };
         std::string accepted;
         for (std::size_t i = 0; i < kLinkTimeForms.size(); ++i) {
-          if (accepts(kLinkTimeForms[i])) {
+          if (accepts(kLinkTimeForms.at(i))) {
             accepted = std::format("{}", i);
             break;
           }

@@ -23,6 +23,13 @@
 
 namespace lyra::driver {
 
+// The compiler a build takes when none was named: the first of `clang++` and
+// `c++` on PATH. Clang comes first because the header it prepares carries the
+// runtime's instantiations as well as its declarations, so each unit costs
+// least under it; `c++` is the name every system with a C++ compiler answers
+// to. Nothing where neither is found.
+auto FindUsualCompiler() -> std::optional<std::filesystem::path>;
+
 // How this host turns emitted C++ into a program: which compiler to invoke,
 // what to do about the precompiled header, how hard to optimize and whether
 // with the runtime, and how much of the machine to take while doing it.
@@ -165,13 +172,25 @@ auto AssembleProject(
     const std::filesystem::path& dir, const HostBuild& host,
     std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<void>;
 
+// The digest of the prelude's input files as `cxx` reads them at
+// `optimization`: every file the compiler lists as the prelude's dependencies,
+// the C++ library's and the system's among them, by their content. What an
+// emitted file includes of the runtime is the prelude or a header the prelude
+// reaches, so this is everything such a compile reads beyond the project's own
+// files. A compiler that cannot compile the prelude can compile nothing a
+// design emits, and is reported here in its own words.
+auto DigestOfPreludeInputs(
+    const std::filesystem::path& cxx, const std::filesystem::path& include_root,
+    OptimizationLevel optimization) -> diag::Result<stable_hash::Fingerprint>;
+
 // Compiles each emitted translation unit in `dir` to its object, as many at
 // once as `host` was told to take, in the order given, and reports every one
 // that failed rather than the first; a non-zero compiler exit surfaces its
 // stderr. Each compile is an action whose inputs are what the compiler reads
 // of the project -- the file and every file of the project it includes -- and
-// the runtime's headers, the compiler and the level, so a file whose text and
-// whose includes are unchanged is compiled once, in this build or any other.
+// what it reads of the runtime and the system, the compiler and the level, so
+// a file whose text and whose includes are unchanged is compiled once, in this
+// build or any other, until something it reads changes.
 //
 // The compiler is invoked directly rather than through the recipe an emitted
 // project ships. The two are not interchangeable: the recipe compiles against

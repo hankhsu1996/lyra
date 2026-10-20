@@ -7,6 +7,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string_view>
 
 #include "lyra/diag/diagnostic.hpp"
@@ -42,10 +43,19 @@ class Action {
   stable_hash::StableHasher hasher_;
 };
 
-// The digest of every regular file under `root`, each under its path relative
-// to it, in a fixed order -- so adding, removing, renaming, or editing any file
-// there changes it. Reading a tree costs every byte in it, so a build reads one
-// once and hands the digest to every action that reads the tree.
+// The digest of every file in `files`, each under its path -- relative to
+// `root` where it lies under it, so a tree moved whole digests the same, and
+// as given otherwise -- in a fixed order, so naming another file or editing
+// one changes it. For a set no one tree holds, such as what a compiler reports
+// having read.
+auto DigestOfFiles(
+    const std::filesystem::path& root,
+    std::span<const std::filesystem::path> files) -> stable_hash::Fingerprint;
+
+// `DigestOfFiles` of every regular file under `root`, so adding, removing,
+// renaming, or editing any file there changes it. Reading a tree costs every
+// byte in it, so a build reads one once and hands the digest to every action
+// that reads the tree.
 auto DigestOfTree(const std::filesystem::path& root)
     -> stable_hash::Fingerprint;
 

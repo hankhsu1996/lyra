@@ -18,19 +18,18 @@ package(features = ["parse_headers"])
 # compiler spawns something that is not a Bazel action, so it runs on whatever
 # machine executes it and finds that machine's compiler on PATH. The remote
 # image has the platform's own C++ compiler and no clang, so a test runs
-# remotely unless what it asserts is about clang itself -- a precompiled header
-# is clang's alone -- and the tag holds that one on a machine that has clang.
+# remotely unless what it asserts is about clang itself, or about clang and GCC
+# side by side, and the tag holds that one on a machine that has clang.
 #
 # `nightly` says when its cost is paid, and what it draws is one subject rather
 # than one price: whether an emitted C++ project still builds and runs. Two
 # targets carry it -- the whole corpus through that path, and the cases that
 # assert what a project does once built. Both spend most of their time in the
-# host compiler with no prepared header to lean on: an emitted project carries
-# its own copy of the runtime headers, which a prepared header cannot be shared
-# across because it is bound to the paths it was made from, and the corpus runs
-# where the compiler is not clang, which is the only one that reads one. Both
-# are therefore excluded for their own reason and not for a neighbour's, which
-# is the test a removal here has to pass.
+# host compiler: the corpus compiles every unit of every case, and an emitted
+# project carries its own copy of the runtime headers, which a prepared header
+# cannot be shared across because it is bound to the paths it was made from.
+# Both are therefore excluded for their own reason and not for a neighbour's,
+# which is the test a removal here has to pass.
 #
 # Everything about the command line itself gates, and costs seconds, because
 # what a design declares and how a failure is reported are not statements about
@@ -610,17 +609,15 @@ cc_test(
     # Each case builds an emitted project with the host compiler, several of
     # them more than once, and no two can share the header one prepared.
     # Declaring that cost is what keeps a loaded machine from reporting a
-    # timeout as a test failure. Several of them are about the prepared header,
-    # which only clang makes, so they stay where clang is.
+    # timeout as a test failure. The costliest cases each compile the whole
+    # runtime for link-time optimization, so there are enough shards that no
+    # two of them need meet in one.
     size = "large",
     srcs = ["emitted_project_test.cpp"],
     copts = LYRA_COPTS,
     data = ["//:lyra"],
-    shard_count = 4,
-    tags = [
-        "nightly",
-        "no-remote-exec",
-    ],
+    shard_count = 8,
+    tags = ["nightly"],
     deps = [
         ":framework",
         "//:driver",
@@ -629,18 +626,18 @@ cc_test(
 )
 
 cc_test(
-    name = "pch_audit_test",
-    srcs = ["pch_audit_test.cpp"],
+    name = "prepared_header_test",
+    srcs = ["prepared_header_test.cpp"],
     copts = LYRA_COPTS,
     data = ["//:lyra"],
-    # Spawns the host C++ compiler with `-H` to enumerate every header opened
-    # while building the prelude PCH.
+    # Each case runs under clang and under GCC, since what a compiler checks of
+    # a prepared header and which flags it takes are its own, and the remote
+    # image has only GCC.
     tags = ["no-remote-exec"],
     deps = [
         ":framework",
         "//:driver",
         "//:support",
-        "@fmt",
         "@googletest//:gtest_main",
     ],
 )
@@ -683,8 +680,9 @@ cc_test(
     # Each case builds emitted C++ with the host compiler, so a shard's cost is
     # dominated by compilation rather than by simulation. Declaring that cost is
     # what keeps a loaded machine from reporting a timeout as a test failure.
-    # Remotely the compiler has no prepared header, so the corpus is cut into
-    # enough shards that the slowest stays well inside that declared cost.
+    # A case compiles its units one after another, so the slowest case bounds
+    # its shard whatever the count; the corpus is cut into enough shards that
+    # the rest of a shard's cases add little beside it.
     size = "large",
     srcs = ["conformance_test.cpp"],
     args = [

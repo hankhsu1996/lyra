@@ -31,11 +31,10 @@ auto RunLyraFrom(
     std::string_view args,
     std::chrono::seconds timeout = std::chrono::seconds{60}) -> ProcessOutcome;
 
-// The host compiler an emitted project's own recipe defaults to, where this
-// host has one. What such a build costs is a fact about that compiler, so a
-// test measuring one asks for it by name rather than for whatever this machine
-// happens to call a C++ compiler.
-auto FindDefaultCxx() -> std::optional<std::filesystem::path>;
+// Clang, where this host has it. What a build costs is a fact about the
+// compiler that ran it, so a test measuring one asks for that compiler by name
+// rather than for whatever this machine happens to call a C++ compiler.
+auto FindClang() -> std::optional<std::filesystem::path>;
 
 // The smallest design that produces observable output. What the cases using it
 // are about is what surrounds a design, so the design itself carries no weight

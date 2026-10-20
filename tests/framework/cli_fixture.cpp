@@ -69,13 +69,10 @@ auto RunLyraFrom(
   return RunChildProcess(*sh_or, argv, timeout);
 }
 
-auto FindDefaultCxx() -> std::optional<std::filesystem::path> {
+auto FindClang() -> std::optional<std::filesystem::path> {
   auto cxx_or = lyra::driver::FindOnPath("clang++");
   if (!cxx_or) return std::nullopt;
-  if (cxx_or->filename().string().find("clang") == std::string::npos) {
-    return std::nullopt;
-  }
-  return *cxx_or;
+  return *std::move(cxx_or);
 }
 
 auto WriteTrivialSource(const std::filesystem::path& path) -> void {

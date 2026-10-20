@@ -44,7 +44,8 @@ Either one compiles against the libstdc++ of the machine running the actions, be
 builds is linked by the user's compiler against the runtime library built here. Every warning is
 fatal and each compiler warns of things the other does not, so the merge gate builds under both. A
 test that drives the host C++ compiler finds whichever one the machine executing it has on its PATH;
-the remote image has GCC and no clang, so only a test about clang itself is tagged to stay local.
+the remote image has GCC and no clang, so only a test about clang itself, or about clang and GCC
+side by side, is tagged to stay local.
 
 **The runtime library a program links is compiled by the clang of the LLVM release Lyra links,
 whichever compiler builds Lyra**, and one number in `MODULE.bazel` names both. A build asked for

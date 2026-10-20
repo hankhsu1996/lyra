@@ -150,23 +150,14 @@ inline constexpr std::array<std::string_view, 2> kDesignCompileFlags{
     -> std::vector<std::string> {
   return {"-x", "c", std::string(OptimizationFlag(optimization))};
 }
-// A precompiled header stays usable only while the headers it was built from
-// are unchanged, and the compiler decides that by timestamp unless asked to
-// read the bytes. Not every one of those headers is ours to leave alone -- a
-// checkout restores one byte for byte under a new timestamp -- so the question
-// has to be asked of the content. The answer is recorded when the header is
-// prepared and consulted when it is loaded, so both command lines carry this.
-inline constexpr std::string_view kPchContentValidationFlag =
-    "-fpch-validate-input-files-content";
-// Including a header does not only parse it: a template the header uses is
-// instantiated again in every translation unit that reaches it, and for these
-// headers that work dwarfs the parse a prepared header already saves. So the
-// instantiations go into the prepared header too, and a unit including it does
-// none of them. Only the command preparing one carries this -- it decides what
-// the artifact holds, not how a unit reads it -- and it asks that every header
-// named compile on its own, which is what an umbrella header is.
-inline constexpr std::string_view kPchInstantiateTemplatesFlag =
-    "-fpch-instantiate-templates";
+
+// Where a compile is offered the prepared prelude: a header holding one include
+// of the prelude, which every compile is told to include first, and the
+// prepared header beside it under its name and `kPreparedHeaderSuffix`. That is
+// the one spelling GCC reads and clang reads too, so a compile is offered a
+// prepared header the same way whichever compiler it runs.
+inline constexpr std::string_view kPreludeOfferHeader = "pch/prelude.hpp";
+inline constexpr std::string_view kPreparedHeaderSuffix = ".gch";
 // The DPI-C boundary surface a user's foreign sources compile against (LRM 35):
 // the generated prototypes plus the standard header they are spelled in. Both
 // sit at the project root so one include path reaches them.
