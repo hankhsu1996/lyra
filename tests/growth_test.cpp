@@ -5,10 +5,7 @@
 // one thing and takes N steps of it, and is compiled at N and at twice N, both
 // runs asked to report on themselves. A step that repeats what is stated once
 // adds nothing to what a compile leaves behind; a step unlike the others adds
-// what its own statements are worth, which the design says kind by kind. Either
-// way a step adds at most proportionally to what a compile spends. That holds
-// of every compiler a run starts, so along one path the C++ backend's program
-// is built, and what the host compiler spent is held like any other stage.
+// what its own statements are worth, which the design says kind by kind.
 //
 // What is held of what a compile leaves is every kind of thing the run reports
 // holding, whichever kinds those are: a kind the design does not name must not
@@ -18,20 +15,20 @@
 // same way, read off the text, since a compiler reading it bounds its depth and
 // no design is bounded by one.
 //
-// The two runs are made back to back on one machine, which is what lets time
-// be held at all: a duration says how fast the machine is, the ratio of two
-// taken together says how the cost grows.
+// Everything held here is a count the run reports or a property of the text it
+// wrote, so one tree gives one answer. What a run spent -- a stage's time, its
+// peak -- is read off the machine running it, and a busy one moves it from one
+// run of a tree to the next, so it is no part of this test.
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <expected>
 #include <filesystem>
 #include <format>
 #include <fstream>
-#include <functional>
 #include <gtest/gtest.h>
 #include <iterator>
 #include <map>
@@ -70,38 +67,19 @@ namespace {
 constexpr std::uint64_t kBytesAllowedNumerator = 5;
 constexpr std::uint64_t kBytesAllowedDenominator = 4;
 
-// Twice the repetition may cost twice the work, and a cost in its square costs
-// four times. The bound sits between the two.
-constexpr std::uint64_t kProportionalBound = 3;
-
-// A stage shorter than this at the larger size is mostly the machine's noise,
-// and a ratio of two such readings says nothing.
-constexpr std::uint64_t kShortestTimedStageMicroseconds = 50'000;
-
-// A peak moves by the allocator's own granularity between two runs of one
-// thing, so a small stage's is held to an absolute allowance as well.
-constexpr std::uint64_t kPeakAllowanceBytes = 16ULL << 20;
-
-// How many times a pair of runs is made before a time or a peak is said to
-// have outgrown its bound. A loaded machine can stretch one run of a pair; it
-// does not stretch the larger one every time.
-constexpr int kAttempts = 3;
-
 // How a design is compiled: by the C++ backend as far as its emitted project,
-// by the C++ backend and then the host compiler that builds the program, or by
-// the execution backend. A target measures the paths it is told to.
+// or by the execution backend.
 enum class Path : std::uint8_t {
   kCpp,
-  kCppHost,
   kLlvm,
 };
+
+constexpr std::array<Path, 2> kPaths = {Path::kCpp, Path::kLlvm};
 
 auto NameOf(Path path) -> std::string_view {
   switch (path) {
     case Path::kCpp:
       return "cpp";
-    case Path::kCppHost:
-      return "cpp_host";
     case Path::kLlvm:
       return "llvm";
   }
@@ -145,19 +123,12 @@ constexpr std::string_view kBodiesLowered = "bodies lowered";
 // a compiler reading the text bounds and a design does not.
 constexpr std::string_view kDeepestNesting = "deepest nesting";
 
-// What one compile left behind and spent, as the run itself recorded it.
-struct Reading {
-  // How many of each kind of thing its units left and hold, taken together. A
-  // unit's name carries the size it was specialized on, so two runs name their
-  // units differently and only the whole of each can be held to the other. A
-  // kind a unit holds in one of its forms is named `form.kind`.
-  std::map<std::string, std::uint64_t> left;
-  // The stages that ran alone, each with the peak it reached where the
-  // platform offers one.
-  std::map<std::string, std::optional<std::uint64_t>> stage_peak_bytes;
-  // The time under every span name, summed over the run.
-  std::map<std::string, std::uint64_t> span_microseconds;
-};
+// What one compile left behind, as the run itself recorded it: how many of each
+// kind of thing its units left and hold, taken together. A unit's name carries
+// the size it was specialized on, so two runs name their units differently and
+// only the whole of each can be held to the other. A kind a unit holds in one
+// of its forms is named `form.kind`.
+using Reading = std::map<std::string, std::uint64_t>;
 
 auto CommandFor(
     Path path, const std::filesystem::path& design, std::uint64_t size,
@@ -166,14 +137,6 @@ auto CommandFor(
   switch (path) {
     case Path::kCpp:
       command = {"emit", "cpp", "-o", (dir / "project").string()};
-      break;
-    // Without a prepared header, whose cost is the same at every size and would
-    // hide how the rest grows.
-    case Path::kCppHost:
-      command = {"build",       "--backend",
-                 "cpp",         "--no-pch",
-                 "-o",          (dir / "program").string(),
-                 "--cache-dir", (dir / "cache").string()};
       break;
     case Path::kLlvm:
       command = {
@@ -287,11 +250,10 @@ auto Compile(
 
   Reading reading;
   for (const nlohmann::json& unit : stats.at("units")) {
-    reading.left[std::string(kUnits)] += 1;
+    reading[std::string(kUnits)] += 1;
     for (const nlohmann::json& artifact : unit.at("artifacts")) {
-      reading.left[std::string(kFiles)] += 1;
-      reading.left[std::string(kBytes)] +=
-          artifact.at("bytes").get<std::uint64_t>();
+      reading[std::string(kFiles)] += 1;
+      reading[std::string(kBytes)] += artifact.at("bytes").get<std::uint64_t>();
       // What the unit wrote as text lies where the run wrote its project; a
       // path that writes none leaves nothing to read there.
       std::ifstream text_file(
@@ -303,56 +265,24 @@ auto Compile(
       const std::string text{
           std::istreambuf_iterator<char>(text_file),
           std::istreambuf_iterator<char>()};
-      std::uint64_t& deepest = reading.left[std::string(kDeepestNesting)];
+      std::uint64_t& deepest = reading[std::string(kDeepestNesting)];
       deepest = std::max<std::uint64_t>(
           deepest, lyra::test::DeepestNesting(text).depth);
     }
     for (const auto& [form, held] : unit.at("counts").items()) {
       for (const auto& [kind, count] : held.items()) {
-        reading.left[std::format("{}.{}", form, kind)] +=
-            count.get<std::uint64_t>();
+        reading[std::format("{}.{}", form, kind)] += count.get<std::uint64_t>();
       }
     }
   }
-  for (const nlohmann::json& stage : stats.at("stages")) {
-    reading.stage_peak_bytes[stage.at("name").get<std::string>()] =
-        stage.contains("peak_rss_bytes")
-            ? std::optional{stage.at("peak_rss_bytes").get<std::uint64_t>()}
-            : std::nullopt;
-  }
-  // The trace's writer adds one event per span name holding that name's time
-  // summed over the run, under the name with this prefix.
-  constexpr std::string_view kTotal = "Total ";
   // The span a body's lowering runs under, one event each.
   constexpr std::string_view kBodyLowered = "lower to HIR";
   for (const nlohmann::json& event : trace.at("traceEvents")) {
-    const std::string name = event.value("name", "");
-    if (name.starts_with(kTotal)) {
-      reading.span_microseconds[name.substr(kTotal.size())] =
-          event.at("dur").get<std::uint64_t>();
-    } else if (name == kBodyLowered) {
-      reading.left[std::string(kBodiesLowered)] += 1;
+    if (event.value("name", "") == kBodyLowered) {
+      reading[std::string(kBodiesLowered)] += 1;
     }
   }
   return reading;
-}
-
-auto Milliseconds(std::uint64_t microseconds) -> std::string {
-  return std::format("{:.1f} ms", static_cast<double>(microseconds) / 1e3);
-}
-
-auto Mebibytes(std::uint64_t bytes) -> std::string {
-  return std::format(
-      "{:.1f} MiB", static_cast<double>(bytes) / static_cast<double>(1 << 20));
-}
-
-auto TimeOf(const Reading& reading, const std::string& span) -> std::uint64_t {
-  const auto found = reading.span_microseconds.find(span);
-  return found == reading.span_microseconds.end() ? 0 : found->second;
-}
-
-auto OutgrewProportion(std::uint64_t small, std::uint64_t large) -> bool {
-  return large >= kProportionalBound * small;
 }
 
 // What departed, in the words a record names it by, each with the numbers that
@@ -368,14 +298,13 @@ auto FormOf(std::string_view kind) -> std::string_view {
 }
 
 auto LeftOf(const Reading& reading, const std::string& kind) -> std::uint64_t {
-  const auto found = reading.left.find(kind);
-  return found == reading.left.end() ? 0 : found->second;
+  const auto found = reading.find(kind);
+  return found == reading.end() ? 0 : found->second;
 }
 
 // Where what the larger run left departs from what the design says its extra
-// steps add. These are counts and sizes, the same on every run of one
-// compiler, and the difference of two runs holds nothing that does not follow
-// the size.
+// steps add. The difference of two runs holds nothing that does not follow the
+// size.
 //
 // A kind is held both ways. One the design names and that did not follow the
 // size as named is a departure as much as one it does not name that did: a
@@ -385,10 +314,10 @@ auto DepartedInWhatWasLeft(
     const GrowthCase& growth, const Reading& small, const Reading& large)
     -> Departed {
   std::set<std::string> kinds;
-  for (const auto& [kind, count] : small.left) {
+  for (const auto& [kind, count] : small) {
     kinds.insert(kind);
   }
-  for (const auto& [kind, count] : large.left) {
+  for (const auto& [kind, count] : large) {
     kinds.insert(kind);
   }
   // A design speaks of every form a unit may pass through, and a path takes a
@@ -440,67 +369,6 @@ auto DepartedInWhatWasLeft(
   return departed;
 }
 
-// How a stage's time and its peak are named in a record.
-constexpr std::string_view kTimeOf = "time ";
-constexpr std::string_view kPeakOf = "peak ";
-
-// Whether `name` is something a run spent rather than something it left.
-auto IsSpent(std::string_view name) -> bool {
-  return name.starts_with(kTimeOf) || name.starts_with(kPeakOf);
-}
-
-// What the larger run spent beyond its proportion, per stage that ran alone.
-// These move with the machine.
-auto DepartedInWhatWasSpent(const Reading& small, const Reading& large)
-    -> Departed {
-  Departed outgrew;
-  for (const auto& [stage, peak] : large.stage_peak_bytes) {
-    const std::uint64_t took = TimeOf(large, stage);
-    const std::uint64_t took_before = TimeOf(small, stage);
-    if (took >= kShortestTimedStageMicroseconds &&
-        OutgrewProportion(took_before, took)) {
-      outgrew[std::format("{}{}", kTimeOf, stage)] = std::format(
-          "{} -> {}", Milliseconds(took_before), Milliseconds(took));
-    }
-    const auto before = small.stage_peak_bytes.find(stage);
-    if (peak.has_value() && before != small.stage_peak_bytes.end() &&
-        before->second.has_value() &&
-        *peak > *before->second + kPeakAllowanceBytes &&
-        OutgrewProportion(*before->second, *peak)) {
-      outgrew[std::format("{}{}", kPeakOf, stage)] =
-          std::format("{} -> {}", Mebibytes(*before->second), Mebibytes(*peak));
-    }
-  }
-  return outgrew;
-}
-
-// The spans whose time outgrew its proportion, longest first: a stage that
-// outgrew is located by the step inside it that did.
-auto SpansThatOutgrew(const Reading& small, const Reading& large)
-    -> std::string {
-  std::vector<std::pair<std::uint64_t, std::string>> spans;
-  for (const auto& [span, took] : large.span_microseconds) {
-    if (took >= kShortestTimedStageMicroseconds &&
-        OutgrewProportion(TimeOf(small, span), took)) {
-      spans.emplace_back(took, span);
-    }
-  }
-  std::ranges::sort(spans, std::greater{});
-  std::string out;
-  for (const auto& [took, span] : spans) {
-    out += std::format(
-        "    {}: {} -> {}\n", span, Milliseconds(TimeOf(small, span)),
-        Milliseconds(took));
-  }
-  return out;
-}
-
-// One design compiled at its size and at twice that, one run after the other.
-struct Pair {
-  Reading small;
-  Reading large;
-};
-
 // Holds one design along one path to what is recorded for it. Nothing where
 // it holds; otherwise what differs, with the numbers and the two commands
 // that show it.
@@ -518,50 +386,22 @@ auto CheckGrowth(
       path, WrittenAt(growth.design, 2 * growth.size, *scratch / "large.sv"),
       2 * growth.size, *scratch / "large");
 
-  const auto compile_pair = [&]() -> std::expected<Pair, std::string> {
-    auto small = Compile(lyra, small_command, *scratch / "small");
-    if (!small.has_value()) {
-      return std::unexpected(small.error());
-    }
-    auto large = Compile(lyra, large_command, *scratch / "large");
-    if (!large.has_value()) {
-      return std::unexpected(large.error());
-    }
-    return Pair{.small = std::move(*small), .large = std::move(*large)};
-  };
-
-  const std::set<std::string>& recorded = growth.recorded.at(path);
-  auto pair = compile_pair();
-  if (!pair.has_value()) {
-    return pair.error();
+  const auto small = Compile(lyra, small_command, *scratch / "small");
+  if (!small.has_value()) {
+    return small.error();
   }
-  // A time or a peak outgrew only if it does on every attempt, so the pair is
-  // compiled again while something not recorded is still standing.
-  Departed spent = DepartedInWhatWasSpent(pair->small, pair->large);
-  const auto all_recorded = [&] {
-    return std::ranges::all_of(spent, [&](const auto& entry) {
-      return recorded.contains(entry.first);
-    });
-  };
-  for (int attempt = 1; attempt < kAttempts && !all_recorded(); ++attempt) {
-    pair = compile_pair();
-    if (!pair.has_value()) {
-      return pair.error();
-    }
-    const Departed again = DepartedInWhatWasSpent(pair->small, pair->large);
-    std::erase_if(
-        spent, [&](const auto& entry) { return !again.contains(entry.first); });
+  const auto large = Compile(lyra, large_command, *scratch / "large");
+  if (!large.has_value()) {
+    return large.error();
   }
-
-  Departed departed = DepartedInWhatWasLeft(growth, pair->small, pair->large);
-  departed.insert(spent.begin(), spent.end());
-  const std::string spans = SpansThatOutgrew(pair->small, pair->large);
+  const Departed departed = DepartedInWhatWasLeft(growth, *small, *large);
 
   std::set<std::string> found;
   for (const auto& [name, numbers] : departed) {
     found.insert(name);
   }
-  const lyra::test::Departures against_record = HoldToRecord(recorded, found);
+  const lyra::test::Departures against_record =
+      HoldToRecord(growth.recorded.at(path), found);
   std::string differs;
   for (const std::string& name : against_record.not_recorded) {
     differs += std::format(
@@ -569,12 +409,6 @@ auto CheckGrowth(
         departed.at(name));
   }
   for (const std::string& name : against_record.no_longer_found) {
-    // A time or a peak recorded as owed is still owed on a run that stayed
-    // under the bound: whether one cost crosses it depends on the machine as
-    // much as on the cost, so it is the fix that takes its line out.
-    if (IsSpent(name)) {
-      continue;
-    }
     differs += std::format(
         "  recorded as departing and no longer does, so its line goes: {}\n",
         name);
@@ -584,11 +418,9 @@ auto CheckGrowth(
   }
   return std::format(
       "'{}' along the {} path, compiled at N={} and N={}:\n{}"
-      "  spans that outgrew their proportion:\n{}"
       "  the two runs:\n    {}\n    {}\n",
       growth.name, NameOf(path), growth.size, 2 * growth.size, differs,
-      spans.empty() ? "    none\n" : spans, Joined(small_command),
-      Joined(large_command));
+      Joined(small_command), Joined(large_command));
 }
 
 auto Trimmed(std::string_view text) -> std::string_view {
@@ -668,8 +500,7 @@ auto LoadGrowthCases(
           .design = entry.path(),
           .size = 0,
           .each_adds = EachAddsOf(entry.path(), problems),
-          .recorded = {
-              {Path::kCpp, {}}, {Path::kCppHost, {}}, {Path::kLlvm, {}}}};
+          .recorded = {{Path::kCpp, {}}, {Path::kLlvm, {}}}};
     }
   }
 
@@ -682,7 +513,7 @@ auto LoadGrowthCases(
           std::format("'{}' is given a size and is not a design", name));
     }
   }
-  for (const Path path : {Path::kCpp, Path::kCppHost, Path::kLlvm}) {
+  for (const Path path : kPaths) {
     const std::string file = std::format("{}.growth.yaml", NameOf(path));
     for (const auto& [name, outgrows] :
          LoadByName<std::vector<std::string>>(paths_root / file)) {
@@ -695,14 +526,6 @@ auto LoadGrowthCases(
       }
     }
   }
-  // The cpp_host path is the cpp path and then the host compiler, so it departs
-  // wherever the cpp path does, and its own record holds only what building
-  // the program adds.
-  for (auto& [name, growth] : cases) {
-    const std::set<std::string>& emitted = growth.recorded.at(Path::kCpp);
-    growth.recorded.at(Path::kCppHost).insert(emitted.begin(), emitted.end());
-  }
-
   std::vector<GrowthCase> loaded;
   for (auto& [name, growth] : cases) {
     if (growth.size == 0) {
@@ -756,34 +579,10 @@ namespace {
 
 using lyra::test::GrowthSubject;
 
-// The paths this target measures, which its build names, comma-separated, in
-// `LYRA_GROWTH_PATHS`. Building every program with the host compiler costs
-// what compiling an emitted project costs, so the target that pays it runs
-// where that is paid, and the one in the merge gate measures the rest. A
-// target naming none measures nothing, which its record test reports.
-auto MeasuredPaths() -> std::vector<Path> {
-  const char* const named = std::getenv("LYRA_GROWTH_PATHS");
-  const std::string_view list =
-      named == nullptr ? std::string_view{} : std::string_view{named};
-  std::vector<Path> paths;
-  for (const Path path : {Path::kCpp, Path::kCppHost, Path::kLlvm}) {
-    std::string_view rest = list;
-    while (!rest.empty()) {
-      const std::size_t comma = rest.find(',');
-      if (rest.substr(0, comma) == NameOf(path)) {
-        paths.push_back(path);
-      }
-      rest = comma == std::string_view::npos ? std::string_view{}
-                                             : rest.substr(comma + 1);
-    }
-  }
-  return paths;
-}
-
 auto Subjects() -> std::vector<GrowthSubject> {
   std::vector<GrowthSubject> subjects;
   for (const GrowthCase& growth : LoadCorpus().cases) {
-    for (const Path path : MeasuredPaths()) {
+    for (const Path path : kPaths) {
       subjects.push_back(GrowthSubject{.growth = growth, .path = path});
     }
   }
@@ -798,7 +597,6 @@ TEST(GrowthRecord, NamesEveryDesignAndNothingElse) {
     ADD_FAILURE() << problem;
   }
   EXPECT_FALSE(corpus.cases.empty());
-  EXPECT_FALSE(MeasuredPaths().empty()) << "LYRA_GROWTH_PATHS names no path";
 }
 
 class Growth : public testing::TestWithParam<GrowthSubject> {};

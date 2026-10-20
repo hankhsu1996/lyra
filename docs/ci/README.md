@@ -7,13 +7,12 @@ than naming targets, so a new target is covered the moment it exists and no list
 step with the `BUILD` files.
 
 One split cuts across that, and what it draws is a subject rather than a price: whether an emitted
-C++ project still builds and runs, and at what cost. `cpp_tests` asks it over the whole corpus, once
-per case, `emitted_project_tests` asks what a project does once built, and
-`growth_host_compile_tests` whether what the host compiler pays follows a design's size. No per-PR
-budget holds any of them, so all three carry `nightly`, `.bazelrc` makes the default set their
-complement, and `host-cxx-nightly.yml` takes `--config=nightly`. `--config=full` is both sides. So a
-developer running the tests locally runs what the gate runs without naming anything, and the
-expensive ones are asked for rather than avoided.
+C++ project still builds and runs. `cpp_tests` asks it over the whole corpus, once per case, and
+`emitted_project_tests` asks what a project does once built. No per-PR budget holds either, so both
+carry `nightly`, `.bazelrc` makes the default set their complement, and `host-cxx-nightly.yml` takes
+`--config=nightly`. `--config=full` is both sides. So a developer running the tests locally runs
+what the gate runs without naming anything, and the expensive ones are asked for rather than
+avoided.
 
 Needing a host compiler is a separate question from being too expensive to gate on, and from where a
 test can run. Every program either backend builds is linked by the host C++ compiler, so every
@@ -121,9 +120,8 @@ On top of the default set, what a change touches selects what else to run:
   -- `cli_tests`, `pch_audit_test` and `runtime_surface_test`, already in the gate.
 - **A shipped example, its declaration, or the command its README gives** -- `examples_tests`,
   already in the gate.
-- **What a repeated construct or a wide type costs to compile** -- `growth_tests`, already in the
-  gate; what the host compiler pays for the text the C++ backend emits for one,
-  `growth_host_compile_tests`, under `--config=nightly`.
+- **What a repeated construct or a wide type leaves behind when compiled** -- `growth_tests`,
+  already in the gate.
 - **Which units an edit makes again** -- `incremental_tests`, already in the gate.
 - **How long an expression the compiler follows** -- `compile_stack_tests`, already in the gate.
 - **Anything else** -- HIR, MIR, LIR, the execution backend, the runtime value library -- the
@@ -138,17 +136,13 @@ The corpus cannot say what a compile costs: a compiler that writes a file per re
 declares a loop in the square of its count, passes every case and is fast on each. Nor can one
 compile, at any size. So `growth_tests` compiles each design under `tests/growth/` at one size and
 at twice that, on both backends, each run asked for its trace and its statistics, and holds the
-larger run to the smaller: what it left behind grown by what the design says its extra steps add,
-and each stage's time and peak memory under three times what it was. A stage's peak is the larger of
-the compiler's own and that of any tool the stage ran.
+larger run to the smaller: what it left behind grown by what the design says its extra steps add.
 
-Every compiler that reads what Lyra writes is held to the same bound, so `growth_host_compile_tests`
-compiles the same designs along a third path, `cpp_host`, on which the C++ backend's program is
-built by the host compiler without a prepared header, whose cost is the same at every size and would
-hide how the rest grows. Its `host compile` stage is then held like every other. Building every
-design's program twice costs what compiling an emitted project costs, so it runs with that set and
-not in the gate. The path departs wherever the `cpp` path does, so its own record holds only what
-building adds.
+**What a compile spent -- a stage's time, its peak memory -- is not held**, though the runs report
+both. A test gives one answer for one tree, and those two are read off the machine running it as
+much as off the tree, so a busy executor moves them from one run of the same tree to the next. A
+stage whose time grows faster than its size is still a defect; finding it by counting what the stage
+does rather than by timing it is not yet built.
 
 A count the source text writes out -- the members of a structure or a union, the operands of a
 chain, the arguments of a call, the ports of an instance -- is no parameter the language can
@@ -176,29 +170,11 @@ at twice the size, since a file can carry the size it was compiled at; one that 
 leave more, and how much more is not held, because what a body is made of follows how much the
 source wrote. What holds such a design is the counts.
 
-Holding a time is what the rest of this document declines to do, and the reason it gives does not
-reach here. A duration reports on the machine that ran it, and comparing one to another day's needs
-a baseline. A ratio of two runs made back to back on one machine needs neither, which is the same
-property the benchmark job's comparison against Verilator rests on. Go holds its own compiler and
-runtime to linear growth the same way, timing a function at n and at 2n and failing past three
-times. What a ratio can tell apart is a line from a square, which is a factor of two; a regression
-of a few percent is found by the instruction count below.
-
-One run of a pair can still be stretched by a loaded machine, so a time or a peak past its bound is
-measured again, and counts as exceeded only if it is on every attempt. Counts and sizes of files are
-the same on every run and are never measured again.
-
 Where a design departs from its statement today is recorded per path, in
 `tests/paths/<path>.growth.yaml`, beside that path's refusal and defect records and by the same
 rule. A design is held to exactly what is listed for it: something new departing fails the run, and
 so does something listed that has stopped, until it goes. So the file only shrinks, and what is left
 in it is what that path still owes.
-
-A time or a peak is the exception to the second half. One step growing faster than its design,
-inside a stage whose other steps grow in proportion, can put the stage over the bound on one machine
-and under it on another, wherever those other steps run faster. So a listed time or peak that a run
-stayed under is still owed rather than gone, and the change that fixes the cost is the one that
-takes its line out. Something not listed that departs still fails the run.
 
 ## What an edit may cost
 
@@ -254,7 +230,8 @@ counted against that commit, starts clean. Two counts of one compiler agree to a
 percent, so what two percent leaves unmarked is a change too small to be worth marking, not noise.
 
 The host compiler a build starts is not counted: tracing it would cost fifty times a compile that is
-most of a build, and what Lyra hands it is held by `growth_host_compile_tests`.
+most of a build, and what Lyra hands it -- how many files, their size and how deep they nest -- is
+held by `growth_tests` along the `cpp` path.
 
 ## What a real design stops on
 

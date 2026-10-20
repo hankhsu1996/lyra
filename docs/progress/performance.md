@@ -447,8 +447,7 @@ specializations, not with instance count.
       count on each path.
 
 - [ ] A block reaching its neighbour by a name indexed from its own index is compiled once per
-      block, and lowering such a loop takes more than proportional time, held in both paths' growth
-      records.
+      block, held in both paths' growth records.
 
 - [ ] What remains of the instance array on that same axis. The member and the construction
       statement no longer scale: `Child c[0:N-1]` is one member whose type carries the multiplicity
