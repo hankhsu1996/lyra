@@ -89,10 +89,8 @@ published standard, and everything below follows from that.
     a second way of excusing a failure -- a skipped test, a tolerance widened to pass, an
     expectation edited to match.
 
-    The second half holds of what the code alone decides. A time or a peak memory depends on the
-    machine as well, so one machine can stay under a bound another crosses for the same cost; a
-    listed one that a run stayed under is still owed, and it is the change fixing the cost that
-    takes its line out. The bound is not widened, and one not listed that crosses it still fails.
+    A record holds only what one tree answers the same on every run. A time or a peak memory is read
+    off the machine as much as off the tree, so no body of tests holds one.
 
 13. **What a design written elsewhere checks of itself is evidence, never the oracle.** Its
     testbench and its check were validated on the simulator its authors ran. A check that passes
@@ -122,6 +120,9 @@ published standard, and everything below follows from that.
   from an omission.
 - An expectation derived by recording a run, which freezes present behavior as the specification.
 - A case that reports success without having run its checks.
+- A check whose answer depends on the machine running it -- a duration, a peak memory, a ratio of
+  two -- held as pass or fail. One tree would pass on one run and fail on the next, and a red gate
+  would no longer say the tree is wrong.
 - A check commented out to hold a known defect. It stops running, so it cannot report that the
   behavior became right, and the defect survives only as long as someone remembers it.
 - A C++ test that constructs compiler objects and asserts on their fields to establish a

@@ -130,8 +130,8 @@ D13. A case can also be counted rather than timed: the instructions one unit of 
      differences two timings. A simulation's amount is chosen as D3 chooses one, against a far
      shorter target, since a count is exact at any amount; two compilers being compared are counted
      at the same amounts, taken from the first one's result file. A build is counted at one design
-     size and twice it, the same for every case and backend: how a build's cost grows with its
-     design is what the growth tests hold, and a search for a duration follows a cost that barely
+     size and twice it, the same for every case and backend: how what a build leaves grows with
+     its design is what the growth tests hold, and a search for a duration follows a cost that barely
      grows out to a design that takes minutes to build under callgrind -- on one backend sooner than
      the other, so the two would not count the same design. The size is large enough that the units
      between the two add far more than a build's fixed part varies by between runs, and small
