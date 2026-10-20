@@ -19,7 +19,7 @@ one of those rarer is tuning a probability where the requirement is absolute.
 
 ## What was wrong
 
-The cache names its entries by content: the compiler's identity, the include root's path, the bytes
+The cache named its entries by content: the compiler's identity, the include root's path, the bytes
 of every header under it, and the optimization the header is prepared at. Two entries with the same
 name are equivalent by construction, so a name match is a content match and no staleness check is
 needed to decide which entry to offer.
@@ -46,29 +46,44 @@ checks it is prepared to relax as configuration rather than letting any of them 
 plain path is what makes that possible, and a build here has the same plain path available: compile
 without a precompiled header.
 
-**The fallback is the whole guarantee, so nothing else has to be exact.** The cache key does not
-have to cover the system headers no fingerprint of ours can see. The compiler's rule for accepting a
-header does not have to be known, predicted, or kept in step with. A precompiled header that turns
-out to be unusable for any reason at all, including reasons that do not exist yet, costs one
-recompile and no correctness.
+**The fallback covers refusal, and the name covers staleness.** The compiler's rule for accepting a
+header does not have to be known, predicted, or kept in step with: a precompiled header it turns
+down for any reason at all, including reasons that do not exist yet, costs one recompile and no
+correctness. A refusal has to be one the build can see: GCC passes over a precompiled header it
+cannot use and reads the header itself, saying so only as a warning, so it is asked to make that
+warning an error, and its refusal takes the same path as clang's. But a refusal is only as good as
+the check behind it, and not every compiler checks. GCC loads a precompiled header after a header it
+was made from has changed, and compiles against what the header used to say: measured 2026-10-19
+with GCC 13, a header given `static_assert(false)` after the precompiled one was made compiled
+cleanly. So **a precompiled header is named by every file it was made from** -- the list the
+compiler itself gives of what the prelude reads, the C++ library's and the system's headers among
+them, each by its content -- and a header that does not match what is on the machine is never found,
+whatever the compiler would have said of it. Asking for that list costs one preprocessing of the
+prelude per build, some 50 to 80 ms.
 
-**Two measures keep the fast path fast, and neither is load-bearing.** The compiler is asked to
-decide currency by content rather than by timestamp, on both the command line that prepares the
-header and every command line that loads one, so that a moved timestamp over unchanged bytes stays
-on the fast path. And whatever writes a file leaves it alone when it already holds those bytes, so a
-re-emit does not move a timestamp at all. Either one failing costs speed.
+**Two measures keep the fast path fast, and neither is load-bearing.** Where the compiler checks a
+header's inputs as it loads it, it is asked to decide by content rather than by timestamp, on both
+the command line that prepares the header and every command line that loads one, so that a moved
+timestamp over unchanged bytes stays on the fast path. And whatever writes a file leaves it alone
+when it already holds those bytes, so a re-emit does not move a timestamp at all. Either one failing
+costs speed.
 
 ## What was rejected
 
-**Disabling the compiler's own validation.** The compiler offers this, and it would end the
-disagreement by removing one of the two authorities. It is refused by the second half of the
-requirement: a genuinely stale header would then be used, and the build would produce something
-other than what the sources say. An accelerator may not change the answer.
+**Disabling the compiler's own validation.** Clang offers this, and it would end the disagreement by
+removing one of the two authorities. With the name covering every file the header was made from, a
+stale header is not found to be offered, so the check guards nothing the name misses today. It is
+kept all the same: once it reads content it costs nothing on the fast path, and it is what stands
+behind the name the day the list of files misses one.
 
-**Making the key cover everything the compiler checks.** The dependency list of a precompiled header
-can be recovered and every file in it fingerprinted, which would make the key exact and the
-compiler's check redundant. This is a great deal of machinery to reach a guarantee the fallback
-already gives for nothing, and it would still be a second authority, merely a better-informed one.
+**Leaving the files outside the runtime tree to the compiler's own check.** This stood here as the
+decision until 2026-10-19, when the key covered only the runtime's headers and an exact key was
+rejected as machinery for a guarantee the fallback already gave. It gave it only while the compiler
+was clang, which re-reads every input as it loads a header; the first compiler offered one that does
+not, GCC, would have used a stale header in silence. The field follows the whole dependency list
+too: CMake asks GCC for `-MD`, whose depfile lists the system headers a compile read beside the
+project's, and ccache checks system headers as it checks any other unless its `system_headers`
+sloppiness is set.
 
 **Proving the precompiled header acceptable before use.** Compiling the preamble alone against it
 answers the question exactly, before any compile of the design, which is where the field puts the
@@ -96,7 +111,10 @@ prepared afresh on the next build.
 
 Two things build an emitted project and they are separate implementations: the in-process build
 behind `build` and `run`, and the `build.sh` a project ships, which may assume nothing beyond POSIX
-sh. Both prepare a header, both cache it, and both therefore owe this. The shipped recipe compiles
-everything again rather than only what failed, because tracking which jobs failed costs more shell
-than the rare path is worth; it also holds back what the compiler said until the build is known to
-have failed, so a retried build that succeeded says nothing.
+sh. Both prepare a header, both name it by what it was made from, and both therefore owe this. Both
+offer it the same way, whichever compiler runs: every compile is told to include a header holding
+one include of the prelude, and the precompiled header sits beside that one under its name and
+`.gch`, which GCC looks for there and clang's driver looks for too, for GCC's sake. The shipped
+recipe compiles everything again rather than only what failed, because tracking which jobs failed
+costs more shell than the rare path is worth; it also holds back what the compiler said until the
+build is known to have failed, so a retried build that succeeded says nothing.

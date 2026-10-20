@@ -1,6 +1,5 @@
 #include "lyra/cli/commands.hpp"
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -74,13 +73,8 @@ auto ResolveRuntime(const CommandContext& ctx)
   return *std::move(loc_or);
 }
 
-// The compilers looked for when none was named, in order: clang first, because
-// only it can use a precompiled header, and then the platform's own C++
-// compiler, which is the name every system with one answers to.
-constexpr std::array<std::string_view, 2> kUsualCompilers = {"clang++", "c++"};
-
-// The compiler named with `--cxx`, or the first of the usual ones found on
-// PATH.
+// The compiler named with `--cxx`, or the one a build takes when none is
+// named.
 auto ResolveCompiler(const CommandContext& ctx)
     -> std::optional<std::filesystem::path> {
   if (ctx.args->cxx) {
@@ -92,10 +86,8 @@ auto ResolveCompiler(const CommandContext& ctx)
     }
     return *std::move(named);
   }
-  for (const std::string_view usual : kUsualCompilers) {
-    if (auto found = driver::FindOnPath(usual)) {
-      return *std::move(found);
-    }
+  if (auto found = driver::FindUsualCompiler()) {
+    return found;
   }
   ctx.sink->Report(
       diag::Make(

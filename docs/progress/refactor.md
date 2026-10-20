@@ -2265,20 +2265,13 @@ enough to warrant its own focused review.
       A unit names another unit's class by the symbol of that constant, and nothing is declared to
       the runtime while the program runs.
 
-- [ ] R142 -- A prepared header is prepared only for clang, so a build under any other compiler pays
-      the runtime headers in full in every unit. That was a cost on a developer's machine and is now
-      the main cost of the C++ corpus, which runs on remote executors whose compiler is the
-      platform's own GCC: a case there took 20 to 30 seconds where the same case with a prepared
-      header takes 2 to 5, and the whole corpus took 280 seconds across 48 shards where it took
-      about 135 across 16 locally.
-
-      Target: prepare the header in the form the compiler in hand reads -- GCC reads its own,
-      found beside the header it stands for -- under the same rule that a prepared header is
-      offered and never required. What decides the shape is that the two compilers look the header
-      up differently, so the name it is kept under and how a compile is pointed at it both belong
-      to the compiler, not to the store.
-
-      Not blocked. Found when the C++ corpus moved to remote executors.
+- [x] R142 -- A prepared header is prepared for whichever compiler builds the program. It used to be
+      prepared only for clang, so a build under any other compiler paid the runtime headers in full
+      in every unit, and that was the main cost of the C++ corpus on remote executors, whose
+      compiler is GCC. Now a build asks the compiler about each flag a prepared header is better
+      for, one at a time, takes those it accepts, and offers the result the one way both compilers
+      read. Since GCC does not check the files a prepared header was made from, the header is named
+      by every file the prelude reads, the C++ library's and the system's included.
 
 - [ ] R143 -- An expression the source itself nests deeper than the C++ compiler accepts reaches the
       source backend's output nested just as deep, and the unit is refused. The render now encloses
@@ -3092,6 +3085,17 @@ enough to warrant its own focused review.
       unchanged. Not blocked; it is a trade of run time against build time, and the measurement that
       would select it -- a design whose time goes into calls through a type's table -- has not been
       taken.
+
+- [ ] R247 -- A runtime source a build optimizing at the link compiles itself is kept by its own
+      source tree, the compiler and its flags, and not by the C++ library's and the system's headers
+      it reads, so an upgrade of those headers that leaves the compiler alone reuses an object
+      compiled against the old ones. A compile of emitted C++ and the prepared header are named by
+      every file the prelude reads, which one listing per build covers because every emitted unit
+      reads only that; the runtime's sources each read their own, and listing each one per build
+      would cost a preprocessing of every source on every build. Target: what a compile read is
+      recorded as it runs and checked when its result is next asked for, as ccache's direct mode and
+      a build tool's depfile do, which the store does not yet carry. Found by reading the code while
+      naming the prepared header by what it reads.
 
 The entries from R221 on come from one audit of the lowering against the front end: places where
 this compiler works out again, or steps around, something the front end already knows or could keep.

@@ -133,9 +133,10 @@ layer directly.
 
 - [ ] D13 -- What a build keeps between runs is bounded without anyone having to remember it. The
       precompiled header is cached under one directory shared by every checkout on the machine,
-      keyed so that each distinct compiler, header tree and optimization gets an entry of its own,
-      and nothing ever removes one. Measured 2026-09-16: forty megabytes an entry, six entries and
-      two hundred and thirty-eight megabytes after a single day's work, and one more the moment any
+      keyed so that each distinct compiler, set of headers the prelude reads and preparing command
+      line gets an entry of its own, an entry GCC prepares several times the size of clang's, and
+      nothing ever removes one. Measured 2026-09-16: forty megabytes an entry, six entries and two
+      hundred and thirty-eight megabytes after a single day's work, and one more the moment any
       header's content changes. A command exists that empties it, which means the bound today is
       that somebody notices and asks.
 
@@ -162,17 +163,13 @@ layer directly.
       waiting rather than the work, and reusing an object skips a unit rather than making one
       cheaper. `decisions/a-prepared-header-carries-the-work.md` settles the shape.
 
-- [ ] D15 -- A project built by a compiler other than the one that produced it gets the same
-      treatment. The recipe prepares a header for clang and for nothing else, so anyone building an
-      emitted project with GCC compiles the runtime surface from source in every unit: measured
-      2026-09-22 on one unit, 2.70 s against 1.11 s once GCC is given a prepared header of its own,
-      which is the same shape the other compiler shows.
-
-      What makes this open rather than done is that the trade inverts at this size. Preparing one
-      costs 5.43 s and takes 211 MB, so a project of three units is better off without it and the
-      break-even is around four; a real design is far past that and a conformance case never will
-      be. So the gain is a user's rather than this repository's, which is why it waits -- and the
-      figure to re-take before acting is the break-even, not the per-unit one.
+- [x] D15 -- A project built by a compiler other than clang gets the same treatment. Both the build
+      Lyra drives and the recipe a project ships prepare a header for whichever compiler builds it,
+      with whichever of the flags a prepared header is better for the compiler accepts. Under GCC
+      the prepared header saves the parse and not the template instantiations, so a unit costs more
+      than under clang and still a fraction of what it costs with none. Preparing one is paid once
+      per store, or once per project for the recipe, so a design of a few units pays more on its
+      first build than it saves and wins on every build after.
 
 - [x] D16 -- A translation unit of an emitted design hands the linker its own classes and a set of
       calls, rather than a copy of what the library it links already holds. It used to hand over

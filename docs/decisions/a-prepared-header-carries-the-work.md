@@ -41,6 +41,25 @@ Across ten conformance cases end to end -- emit, build and run -- a case went fr
 A unit that includes the result performs none of them. Only the preparing command carries this: it
 decides what the artifact holds, where the including command decides how the artifact is read.
 
+Only clang can be asked. GCC has no such request and refuses the flag, so its prepared header saves
+the parse and not the instantiations. Measured 2026-10-19 on the 28 units of one conformance case,
+GCC 13 took 74 s plain and 29 s with a prepared header, clang 20 101 s and 17 s.
+
+**So a build asks the compiler in hand about each such flag, one at a time, and never which compiler
+it is.** How a prepared header is offered is the same under both, so nothing about the shape depends
+on the compiler; what does is a flag the header is better for and can do without, and those are
+independent of each other. An empty header is prepared with each flag alone, and the flag is taken
+where the command succeeds and prints nothing, since a compiler may warn of a flag and ignore it.
+The answer is kept per compiler. This is how the tools that drive a compiler someone else chose
+treat an optional flag: cc-rs, which every Rust build script uses, offers `flag_if_supported`, which
+compiles a trivial file with the flag alone and takes it only on success with nothing on stderr, and
+caches the answer per compiler; Bazel's own configuration of a host compiler adds each optional flag
+through `_add_compiler_option_if_supported`, one at a time. Both tell compilers apart only where the
+shape differs -- cc-rs between GCC-like and MSVC-like argument syntax, Bazel for its dependency
+scanner and linker -- which is not the case here. A table of flags per named compiler, as CMake
+keeps, would be a list to maintain for every compiler and release, and would still be wrong for one
+it did not name.
+
 It asks that every header named compile on its own, which is what an umbrella header is, and is
 already checked -- a header reachable from the emit but absent from the umbrella would be re-parsed
 per design and nothing would report it, so the two sets are one set by construction.
@@ -51,15 +70,17 @@ optimization; the last of those was standing in for the whole command line, and 
 entries with the same name stay equivalent by construction, which is what lets a name match count as
 a content match.
 
-**The header bytes it is named by are the surface's and nothing else's**, which is what keeps an
-entry from being renamed by an edit no design can observe. A compiler is built from far more headers
-than it hands out, and those it hands out are gathered where nothing else is; without that, every
-edit to a lowering or an IR node would rename every entry and the next build of any design would
-prepare one again.
+**The files it is named by are the ones the prelude reads and nothing else**, as the compiler lists
+them, which is what keeps an entry from being renamed by an edit no design can observe. A compiler
+is built from far more headers than it hands out, and those it hands out are gathered where nothing
+else is; without that, every edit to a lowering or an IR node would rename every entry and the next
+build of any design would prepare one again. The list reaches past the surface to the C++ library
+and the system, because a compiler need not check those itself
+([a-precompiled-header-is-an-attempt](a-precompiled-header-is-an-attempt.md)).
 
 Both things that build an emitted project owe this -- the build the compiler drives and the recipe a
-project ships -- and the shipped recipe names its cache entry by its own bytes, since the recipe is
-what decides the contents.
+project ships -- and the shipped recipe names its cache entry by the files the prelude reads and the
+command line it prepares with, since the recipe is what decides the contents.
 
 ## What was rejected
 

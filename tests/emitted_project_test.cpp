@@ -11,6 +11,8 @@
 // schedule that answers everything else about that path. Cases about the
 // command line itself belong beside it in `cli_test.cpp`, which gates.
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <filesystem>
 #include <format>
@@ -18,6 +20,7 @@
 #include <gtest/gtest.h>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -118,8 +121,9 @@ TEST(LyraEmittedProject, ProducesPortableBuildableProject) {
 }
 
 // Re-emitting one directory at the other optimization must rebuild. The recipe
-// caches a precompiled header beside the project, and clang refuses one built
-// under different options, so the two builds need separate cache entries.
+// caches a precompiled header beside the project, and a compiler refuses one
+// built under different options, so the two builds need separate cache
+// entries.
 TEST(LyraEmittedProject, RebuildsAfterSwitchingOptimization) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -154,6 +158,52 @@ TEST(LyraEmittedProject, RebuildsAfterSwitchingOptimization) {
   }
 }
 
+// A wrapper leaves a file behind each time the step it watches runs, so a build
+// that never attempted the optimization cannot pass, and one that refuses
+// nothing leaves another wherever a link takes the prebuilt runtime, which is
+// the plain build. A compile names `-c`; a link does not, and the probe's link
+// writes a file named `probe`.
+namespace {
+
+struct LinkTimeRefusal {
+  std::string_view name;
+  std::string_view watched;
+  bool refuses = true;
+};
+
+constexpr std::array<LinkTimeRefusal, 4> kLinkTimeRefusals{{
+    {.name = "refuses-compile", .watched = R"x(*" -flto"*" -c "*)x"},
+    {.name = "refuses-link", .watched = R"x(*" -c "*) ;; *" -flto"*)x"},
+    {.name = "refuses-the-program",
+     .watched = R"x(*" -c "*|*"/probe "*) ;; *" -flto"*)x"},
+    {.name = "refuses-nothing",
+     .watched = R"x(*" -c "*|*"/probe "*) ;; *" -flto"*)x",
+     .refuses = false},
+}};
+
+// A compiler a case runs under: what the case is called, and the name the
+// compiler is found by.
+struct HostCompiler {
+  std::string_view name;
+  std::string_view executable;
+};
+
+class LinkTimeOptimizationRefused
+    : public testing::TestWithParam<std::tuple<HostCompiler, std::size_t>> {};
+
+// What a case is called: the compiler, then what its wrapper refuses.
+auto LinkTimeRefusalName(
+    const testing::TestParamInfo<LinkTimeOptimizationRefused::ParamType>& info)
+    -> std::string {
+  const auto& [compiler, refusal] = info.param;
+  std::string name =
+      std::format("{}_{}", compiler.name, kLinkTimeRefusals.at(refusal).name);
+  std::ranges::replace(name, '-', '_');
+  return name;
+}
+
+}  // namespace
+
 // A build under --lto optimizes the design together with the runtime in the
 // first way the host compiler and the linker it drives accept, which is theirs
 // to say, so whether one is accepted decides how long a build takes and never
@@ -162,10 +212,16 @@ TEST(LyraEmittedProject, RebuildsAfterSwitchingOptimization) {
 // program each still leave a program, from the project's recipe and from the
 // build Lyra runs itself; a toolchain refusing nothing links the program
 // optimized and never falls back. Each is a wrapper around the compiler that
-// watches, and where it refuses fails, exactly that step.
-TEST(
-    LyraEmittedProject,
-    ABuildUnderLtoBuildsWhereLinkTimeOptimizationIsRefused) {
+// watches, and where it refuses fails, exactly that step. Every one compiles
+// the runtime whole, twice, so each is a case of its own, which is what lets a
+// sharded run take them side by side.
+TEST_P(LinkTimeOptimizationRefused, StillBuildsAProgram) {
+  const auto [compiler, refusal] = GetParam();
+  const LinkTimeRefusal& watching = kLinkTimeRefusals.at(refusal);
+  auto real = lyra::driver::FindOnPath(compiler.executable);
+  if (!real) {
+    GTEST_SKIP() << compiler.executable << " is not on the PATH";
+  }
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
   auto sh_or = lyra::driver::FindOnPath("sh");
@@ -176,114 +232,87 @@ TEST(
   const auto src = *tmp_or / "test.sv";
   WriteTrivialSource(src);
 
-  // A wrapper leaves a file behind each time the step it watches runs, so a
-  // build that never attempted the optimization cannot pass, and one that
-  // refuses nothing leaves another wherever a link takes the prebuilt runtime,
-  // which is the plain build. A compile names `-c`; a link does not, and the
-  // probe's link writes a file named `probe`.
-  struct Wrapper {
-    std::string name;
-    std::string watched;
-    bool refuses = true;
-  };
-  std::vector<std::pair<std::filesystem::path, Wrapper>> cases;
-  for (const std::string_view compiler : {"clang++", "g++"}) {
-    auto real = lyra::driver::FindOnPath(compiler);
-    if (!real) continue;
-    cases.push_back(
-        {*real,
-         {.name = std::format("{}-refuses-compile", compiler),
-          .watched = "*\" -flto\"*\" -c \"*"}});
-    cases.push_back(
-        {*real,
-         {.name = std::format("{}-refuses-link", compiler),
-          .watched = "*\" -c \"*) ;; *\" -flto\"*"}});
-    cases.push_back(
-        {*real,
-         {.name = std::format("{}-refuses-the-program", compiler),
-          .watched = "*\" -c \"*|*\"/probe \"*) ;; *\" -flto\"*"}});
-    cases.push_back(
-        {*real,
-         {.name = std::format("{}-refuses-nothing", compiler),
-          .watched = "*\" -c \"*|*\"/probe \"*) ;; *\" -flto\"*",
-          .refuses = false}});
-  }
-  ASSERT_FALSE(cases.empty()) << "neither clang++ nor g++ is on the PATH";
+  const std::string label = std::format("{}-{}", compiler.name, watching.name);
+  const auto wrapper = *tmp_or / label;
+  const auto attempted_marker = *tmp_or / (label + ".attempted");
+  const auto plain_marker = *tmp_or / (label + ".plain");
+  std::ofstream(wrapper) << "#!/bin/sh\n"
+                         << "case \" $* \" in " << watching.watched
+                         << ") touch '" << attempted_marker.string() << "'"
+                         << (watching.refuses ? "; exit 1" : "")
+                         << " ;; *libcpp_runtime.a*) touch '"
+                         << plain_marker.string() << "' ;; esac\n"
+                         << "exec '" << real->string() << "' \"$@\"\n";
+  std::filesystem::permissions(
+      wrapper, std::filesystem::perms::owner_all,
+      std::filesystem::perm_options::add);
 
-  for (const auto& [real, watching] : cases) {
-    const std::string& label = watching.name;
-    const auto wrapper = *tmp_or / label;
-    const auto attempted_marker = *tmp_or / (label + ".attempted");
-    const auto plain_marker = *tmp_or / (label + ".plain");
-    std::ofstream(wrapper) << "#!/bin/sh\n"
-                           << "case \" $* \" in " << watching.watched
-                           << ") touch '" << attempted_marker.string() << "'"
-                           << (watching.refuses ? "; exit 1" : "")
-                           << " ;; *libcpp_runtime.a*) touch '"
-                           << plain_marker.string() << "' ;; esac\n"
-                           << "exec '" << real.string() << "' \"$@\"\n";
-    std::filesystem::permissions(
-        wrapper, std::filesystem::perms::owner_all,
-        std::filesystem::perm_options::add);
+  const auto out_dir = *tmp_or / "out";
+  const std::vector<std::string> emit = {"emit",      "cpp",
+                                         "-O2",       "--lto",
+                                         "--top",     "Test",
+                                         "--cxx",     wrapper.string(),
+                                         "-o",        out_dir.string(),
+                                         src.string()};
+  const auto emitted = RunChildProcess(lyra, emit, 120s);
+  ASSERT_EQ(emitted.exit_code, 0) << emitted.stderr_text;
+  const std::vector<std::string> recipe = {
+      "-c", "cd '" + out_dir.string() + "' && sh build.sh -j 0"};
+  const auto built = RunChildProcess(*sh_or, recipe, 600s);
+  ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
+  EXPECT_TRUE(std::filesystem::exists(attempted_marker))
+      << "the recipe never attempted link-time optimization";
+  EXPECT_EQ(std::filesystem::exists(plain_marker), watching.refuses)
+      << "the recipe's fallback to the plain build";
+  const auto ran = RunChildProcess(out_dir / "program", {}, 30s);
+  EXPECT_NE(ran.stdout_text.find("ran 42"), std::string::npos)
+      << "recipe stdout: " << ran.stdout_text;
 
-    const auto out_dir = *tmp_or / ("out-" + label);
-    const std::vector<std::string> emit = {"emit",      "cpp",
-                                           "-O2",       "--lto",
-                                           "--top",     "Test",
-                                           "--cxx",     wrapper.string(),
-                                           "-o",        out_dir.string(),
-                                           src.string()};
-    const auto emitted = RunChildProcess(lyra, emit, 120s);
-    ASSERT_EQ(emitted.exit_code, 0) << label << ": " << emitted.stderr_text;
-    const std::vector<std::string> recipe = {
-        "-c", "cd '" + out_dir.string() + "' && sh build.sh -j 0"};
-    const auto built = RunChildProcess(*sh_or, recipe, 600s);
-    ASSERT_EQ(built.exit_code, 0) << label << ": " << built.stderr_text;
-    EXPECT_TRUE(std::filesystem::exists(attempted_marker))
-        << label << ": the recipe never attempted link-time optimization";
-    EXPECT_EQ(std::filesystem::exists(plain_marker), watching.refuses)
-        << label << ": the recipe's fallback to the plain build";
-    const auto ran = RunChildProcess(out_dir / "program", {}, 30s);
-    EXPECT_NE(ran.stdout_text.find("ran 42"), std::string::npos)
-        << label << " recipe stdout: " << ran.stdout_text;
-
-    std::filesystem::remove(attempted_marker);
-    std::filesystem::remove(plain_marker);
-    const auto program = *tmp_or / ("program-" + label);
-    const std::vector<std::string> build = {
-        "build",
-        "--backend",
-        "cpp",
-        "-O2",
-        "--lto",
-        "-j",
-        "0",
-        "--top",
-        "Test",
-        "--cxx",
-        wrapper.string(),
-        "--cache-dir",
-        (*tmp_or / "cache").string(),
-        "-o",
-        program.string(),
-        src.string()};
-    const auto in_process = RunChildProcess(lyra, build, 600s);
-    ASSERT_EQ(in_process.exit_code, 0)
-        << label << ": " << in_process.stderr_text;
-    EXPECT_TRUE(std::filesystem::exists(attempted_marker))
-        << label << ": the build never attempted link-time optimization";
-    EXPECT_EQ(std::filesystem::exists(plain_marker), watching.refuses)
-        << label << ": the build's fallback to the plain build";
-    const auto ran_in_process = RunChildProcess(program, {}, 30s);
-    EXPECT_NE(ran_in_process.stdout_text.find("ran 42"), std::string::npos)
-        << label << " in-process stdout: " << ran_in_process.stdout_text;
-  }
+  std::filesystem::remove(attempted_marker);
+  std::filesystem::remove(plain_marker);
+  const auto program = *tmp_or / "program";
+  const std::vector<std::string> build = {
+      "build",
+      "--backend",
+      "cpp",
+      "-O2",
+      "--lto",
+      "-j",
+      "0",
+      "--top",
+      "Test",
+      "--cxx",
+      wrapper.string(),
+      "--cache-dir",
+      (*tmp_or / "cache").string(),
+      "-o",
+      program.string(),
+      src.string()};
+  const auto in_process = RunChildProcess(lyra, build, 600s);
+  ASSERT_EQ(in_process.exit_code, 0) << in_process.stderr_text;
+  EXPECT_TRUE(std::filesystem::exists(attempted_marker))
+      << "the build never attempted link-time optimization";
+  EXPECT_EQ(std::filesystem::exists(plain_marker), watching.refuses)
+      << "the build's fallback to the plain build";
+  const auto ran_in_process = RunChildProcess(program, {}, 30s);
+  EXPECT_NE(ran_in_process.stdout_text.find("ran 42"), std::string::npos)
+      << "in-process stdout: " << ran_in_process.stdout_text;
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    LyraEmittedProject, LinkTimeOptimizationRefused,
+    testing::Combine(
+        testing::Values(
+            HostCompiler{.name = "clang", .executable = "clang++"},
+            HostCompiler{.name = "gcc", .executable = "g++"}),
+        testing::Range<std::size_t>(0, kLinkTimeRefusals.size())),
+    LinkTimeRefusalName);
 
 // Nothing compiled in advance decides whether a build succeeds, at either thing
 // that builds a design. The project's recipe prepares a header, and is handed
 // it back after every header's timestamp has moved under it, which is what a
-// checkout leaves and what the compiler refuses to accept. The in-process build
+// checkout leaves, and what a compiler judging by timestamps would refuse. The
+// in-process build
 // is handed back a prepared header that is not one at all. Both still owe a
 // program. The timestamps are moved here by hand because Lyra no longer moves
 // them itself and a checkout is not something a test can stage.
@@ -343,14 +372,16 @@ TEST(LyraEmittedProject, BuildsEvenWhenThePrecompiledHeaderIsRefused) {
   const auto prepared = RunChildProcess(lyra, build(src), 120s);
   ASSERT_EQ(prepared.exit_code, 0) << prepared.stderr_text;
   // A kept result is named by its digest alone, so the prepared header is
-  // found by what clang writes at the start of one.
-  constexpr std::string_view kPreparedHeaderMagic = "CPCH";
+  // found by what the compiler writes at the start of one: clang's mark, or
+  // GCC's.
+  constexpr std::array<std::string_view, 2> kPreparedHeaderMagic = {
+      "CPCH", "gpch"};
   std::size_t spoiled = 0;
   for (const auto& entry : std::filesystem::directory_iterator(store / "cas")) {
-    std::string magic(kPreparedHeaderMagic.size(), '\0');
+    std::string magic(kPreparedHeaderMagic.front().size(), '\0');
     std::ifstream(entry.path(), std::ios::binary)
         .read(magic.data(), static_cast<std::streamsize>(magic.size()));
-    if (magic == kPreparedHeaderMagic) {
+    if (std::ranges::contains(kPreparedHeaderMagic, magic)) {
       std::ofstream(entry.path(), std::ios::trunc) << "not a prepared header";
       ++spoiled;
     }
@@ -428,11 +459,10 @@ TEST(LyraEmittedProject, TakesTheWidthItIsGiven) {
 }
 
 // Emitting and building twice into one directory, with nothing about the design
-// changed. The second emit rewrites the same runtime headers, and the
-// precompiled header the recipe kept is validated by their modification times
-// rather than by the content its cache key is built from -- so a generator that
-// rewrote an unchanged file would make the build reject a header it had just
-// produced.
+// changed. The second emit rewrites the same runtime headers, and clang checks
+// the precompiled header the recipe kept against them as it loads it -- so a
+// generator that rewrote an unchanged file, under a check reading timestamps,
+// would make the build reject a header it had just produced.
 TEST(LyraEmittedProject, BuildsTwiceIntoOneDirectory) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();

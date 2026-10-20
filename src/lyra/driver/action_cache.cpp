@@ -270,6 +270,29 @@ auto Action::Digest() const -> stable_hash::Fingerprint {
   return hasher_.Finish();
 }
 
+auto DigestOfFiles(
+    const std::filesystem::path& root,
+    std::span<const std::filesystem::path> files) -> stable_hash::Fingerprint {
+  std::vector<std::pair<std::string, std::filesystem::path>> named;
+  named.reserve(files.size());
+  for (const auto& file : files) {
+    const auto normal = file.lexically_normal();
+    const auto relative = normal.lexically_relative(root.lexically_normal());
+    const bool under = !relative.empty() && relative.begin()->string() != "..";
+    named.emplace_back((under ? relative : normal).generic_string(), normal);
+  }
+  std::ranges::sort(named);
+  const auto [first, last] = std::ranges::unique(named);
+  named.erase(first, last);
+  stable_hash::StableHasher hasher;
+  hasher.AddNumber(named.size());
+  for (const auto& [name, file] : named) {
+    hasher.AddText(name);
+    hasher.AddText(ReadWholeFile(file));
+  }
+  return hasher.Finish();
+}
+
 auto DigestOfTree(const std::filesystem::path& root)
     -> stable_hash::Fingerprint {
   std::vector<std::filesystem::path> files;
@@ -281,14 +304,7 @@ auto DigestOfTree(const std::filesystem::path& root)
       files.push_back(entry.path());
     }
   }
-  std::ranges::sort(files);
-  stable_hash::StableHasher hasher;
-  hasher.AddNumber(files.size());
-  for (const auto& file : files) {
-    hasher.AddText(file.lexically_relative(root).generic_string());
-    hasher.AddText(ReadWholeFile(file));
-  }
-  return hasher.Finish();
+  return DigestOfFiles(root, files);
 }
 
 // A thread's claim on performing one action. Settling it hands what the

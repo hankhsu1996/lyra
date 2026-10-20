@@ -19,11 +19,13 @@ test can run. Every program either backend builds is linked by the host C++ comp
 target that runs a design needs one, and a compiler spawned from inside a test is not a Bazel
 action: it is whatever the executing machine has on its PATH. The remote image has the platform's
 own C++ compiler and no clang, and Lyra takes whichever of the two it finds, so a test runs remotely
-unless what it asserts is about clang itself. Three are: `emitted_project_tests` and
-`pch_audit_test` both check the precompiled header, which only clang makes, and
-`runtime_surface_test` measures the objects clang produces from an emitted unit and skips where
-there is no clang. They carry `no-remote-exec`. A target kept out of the gate should be kept out for
-its own reason, never for a neighbour's.
+unless what it asserts is about clang itself, and such a test carries `no-remote-exec`.
+`runtime_surface_test` is one, since it measures the objects clang produces from an emitted unit and
+skips where there is no clang. The precompiled header is not such a subject, because either compiler
+prepares and reads one; `prepared_header_test` asks the same questions of clang and of GCC side by
+side, so it carries the tag for the machine that has both, and `emitted_project_tests` runs under
+GCC remotely and under clang on the nightly's runner. A target kept out of the gate should be kept
+out for its own reason, never for a neighbour's.
 
 **What the CLI suite cost was once "a fraction of a minute", and by 2026-09-22 it was 117 s of
 processor time and the longest target in the gate -- about four times the corpus run beside it.**
@@ -117,7 +119,7 @@ On top of the default set, what a change touches selects what else to run:
   `emitted_project_tests` beside the corpus. This is the same selection as the line above it, seen
   from the build rather than from the text.
 - **The command line, the prelude PCH, or what the shipped runtime headers oblige a unit to emit**
-  -- `cli_tests`, `pch_audit_test` and `runtime_surface_test`, already in the gate.
+  -- `cli_tests`, `prepared_header_test` and `runtime_surface_test`, already in the gate.
 - **A shipped example, its declaration, or the command its README gives** -- `examples_tests`,
   already in the gate.
 - **What a repeated construct or a wide type leaves behind when compiled** -- `growth_tests`,
@@ -358,7 +360,10 @@ subject at two cadences, which is a reason to reconsider the split rather than t
 gates**, so its findings are a backlog to pay down and a red run is not an alarm.
 
 `host-cxx-nightly.yml` runs the `nightly` target. It **gates its own run**: a corpus case that stops
-passing is a regression, and a red nightly is the thing to act on that day.
+passing is a regression, and a red nightly is the thing to act on that day. Its actions run on the
+runner, under the clang installed there, because a developer's own run of the set already answers
+for the remote image's GCC; they keep their results in the shared cache where the key is set, so a
+night compiles what changed rather than the whole of Lyra and LLVM on four cores.
 
 `asan-nightly.yml` runs the merge gate's own set under the address sanitizer -- the gate's set and
 not the `nightly` complement, because the compiler it is watching is exercised there rather than in
