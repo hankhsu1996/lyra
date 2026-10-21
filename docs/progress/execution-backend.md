@@ -210,10 +210,9 @@ ownership, or native in-frame layout) for every value.
 - [x] **An unpacked concatenation** (LRM 10.10) -- realized on the execution backend: a queue is
       built from its parts, each contributing itself as one element or, spread, its own elements in
       order, so a queue grown or spliced through `{q, ...}` and one whose declared bound trims an
-      over-long result both run here. No entry composes a part list of arbitrary length, so the
-      concatenation is the left-to-right chain of two-operand appends it stands for, folded where it
-      is built; a spread part crosses erased, its own container domain being no concern of the entry
-      that appends its elements.
+      over-long result both run here. The concatenation is steps that append each part in turn to a
+      queue the steps hold, every element of a spread part walked in order, so it is as flat for any
+      number of parts.
 - [x] **The union domains** (LRM 7.3 untagged, 7.3.2 tagged) -- realized on the execution backend,
       laid out by the union's type as on the C++ backend. An untagged union is one storage its
       members overlay, so a member is written and read where it lies and a read through another

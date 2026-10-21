@@ -296,17 +296,18 @@ auto BuildDecidedSearch(
   return BuildDecidedSelection(unit, frame, arms, last_truth, type);
 }
 
-// The search where a term can be unknown. The answer starts as the first
-// term's truth, and each later term is a step that runs only while the answer
-// is open and folds its own truth in:
+// The search as steps beside each other, however many terms there are. The
+// answer starts as the first term's truth, and each later term is a step that
+// runs only while the answer is open and folds its own truth in:
 //
 //   answer = truth(first)
 //   if (answer is open) answer = answer folded with truth(next)
 //   ...
 //
 // Folding by the operator's own table is what makes an unknown term leave the
-// answer to the ones after it: x || 1 is 1 and x && 0 is 0 (LRM 11.4.7).
-auto BuildOpenSearch(
+// answer to the ones after it: x || 1 is 1 and x && 0 is 0 (LRM 11.4.7). Where
+// no term can be unknown, the answer is open exactly until a term settles it.
+auto BuildSearchSteps(
     const mir::CompilationUnit& unit, const WalkFrame& frame, SettledBy rule,
     std::span<const Predicate> terms, mir::TypeId type)
     -> diag::Result<mir::ExprId> {
@@ -326,7 +327,7 @@ auto BuildOpenSearch(
       case SettledBy::kTermNotTrue:
         return BuildIsKnownTrue(unit, body, answer);
     }
-    throw InternalError("BuildOpenSearch: unknown SettledBy");
+    throw InternalError("BuildSearchSteps: unknown SettledBy");
   };
   const auto folded = [&](mir::Block& block, mir::ExprId answer,
                           mir::ExprId term) {
@@ -340,7 +341,7 @@ auto BuildOpenSearch(
       case SettledBy::kTermNotTrue:
         return term;
     }
-    throw InternalError("BuildOpenSearch: unknown SettledBy");
+    throw InternalError("BuildSearchSteps: unknown SettledBy");
   };
 
   auto first_or = terms.front().evaluate(steps.Frame());
@@ -359,7 +360,42 @@ auto BuildOpenSearch(
       steps.Build(body.ReadLocal(answer, type)));
 }
 
+// Assigns `held` the answer the conditions settle, one step per condition, each
+// step run only while `held` still reads as the answer no condition has settled
+// yet: false where a condition that holds settles it, true where one that fails
+// does.
+auto AssignInOrder(
+    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::LocalId held,
+    std::span<const Evaluation> conditions, bool holding_settles)
+    -> diag::Result<void> {
+  mir::Block& block = *frame.current_block;
+  const mir::TypeId boolean = unit.builtins.machine_bool;
+  for (const Evaluation& condition : conditions) {
+    mir::Block tried;
+    auto tested = condition(frame.WithBlock(&tried));
+    if (!tested) return std::unexpected(std::move(tested.error()));
+    AssignLocal(unit, tried, held, ReduceToCondition(unit, tried, *tested));
+    const mir::ExprId read = block.ReadLocal(held, boolean);
+    block.AppendIfThen(
+        holding_settles ? BuildConditionNot(unit, block, read) : read,
+        std::move(tried));
+  }
+  return {};
+}
+
 }  // namespace
+
+auto AssignAnyHoldsInOrder(
+    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::LocalId held,
+    std::span<const Evaluation> conditions) -> diag::Result<void> {
+  return AssignInOrder(unit, frame, held, conditions, true);
+}
+
+auto AssignAllHoldInOrder(
+    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::LocalId held,
+    std::span<const Evaluation> conditions) -> diag::Result<void> {
+  return AssignInOrder(unit, frame, held, conditions, false);
+}
 
 auto BuildSearch(
     const mir::CompilationUnit& unit, const WalkFrame& frame, SettledBy rule,
@@ -369,7 +405,7 @@ auto BuildSearch(
     throw InternalError("BuildSearch: a search has fewer than two terms");
   }
   if (CarriesUnknowns(unit, type)) {
-    return BuildOpenSearch(unit, frame, rule, terms, type);
+    return BuildSearchSteps(unit, frame, rule, terms, type);
   }
   return BuildDecidedSearch(unit, frame, rule, terms, type);
 }
@@ -457,7 +493,7 @@ auto SeriesPredicate(
       .type = type,
       .evaluate = [&unit, type, terms = std::move(terms)](
                       const WalkFrame& at) -> diag::Result<mir::ExprId> {
-        return BuildSearch(unit, at, SettledBy::kTermNotTrue, terms, type);
+        return BuildSearchSteps(unit, at, SettledBy::kTermNotTrue, terms, type);
       }};
 }
 

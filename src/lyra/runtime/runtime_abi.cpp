@@ -1,7 +1,6 @@
 #include "lyra/runtime/runtime_abi.hpp"
 
 #include <algorithm>
-#include <array>
 #include <coroutine>
 #include <cstddef>
 #include <cstdint>
@@ -4242,9 +4241,13 @@ auto lyra_rt_string_substr(
                Read<lyra::value::Position>(last)));
 }
 
-auto lyra_rt_string_concat(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(out, Read<String>(lhs).Concat(Read<String>(rhs)));
+auto lyra_rt_string_concat(LyraSpan parts, void* out) -> void* {
+  const std::span<const void* const> handles(
+      static_cast<const void* const*>(parts.data), parts.count);
+  return Emplace(
+      out, String::Concat(handles.size(), [&](std::size_t i) -> const String& {
+        return Read<String>(handles[i]);
+      }));
 }
 
 auto lyra_rt_replicate_string(
@@ -5021,20 +5024,6 @@ auto lyra_rt_dynarray_element_mut(void* array, const void* position) -> void* {
       PositionNamedAt(position), formed);
 }
 
-auto lyra_rt_dynarray_concat_element(
-    const void* array, const void* item, void* out) -> void* {
-  const std::array<const void*, 1> items{item};
-  return Emplace(out, Read<RuntimeDynamicArray>(array).Concat(items));
-}
-
-auto lyra_rt_dynarray_concat_spread(
-    const void* array, const void* part, const void* part_type, void* out)
-    -> void* {
-  return Emplace(
-      out, Read<RuntimeDynamicArray>(array).Concat(
-               lyra::runtime::ElementHandles(part, part_type)));
-}
-
 // LRM 7.5.3 `delete`, which empties the array where it lies.
 void lyra_rt_dynarray_delete(void* array) {
   static_cast<RuntimeDynamicArray*>(array)->Delete();
@@ -5140,24 +5129,6 @@ auto lyra_rt_laidout_from_elements(
     type.ElementType().Type().Copy(handles[i % handles.size()], built);
   });
   return out;
-}
-
-// LRM 10.10: adopt an unpacked concatenation's parts, accumulated into a
-// dynamic array, into a fixed-size target. A count the front end could not
-// verify -- because a spread part is sized at run time -- is checked here, a
-// mismatch being the design's own failure.
-auto lyra_rt_laidout_conform_size(
-    const void* parts, const void* answer_type, void* out) -> void* {
-  const auto& source = Read<RuntimeDynamicArray>(parts);
-  const lyra::value::FixedArrayType& target = ArrayTypeAt(answer_type);
-  if (source.Count() != target.Count()) {
-    throw lyra::SimulationError(
-        "an unpacked array concatenation yields {} elements, while the "
-        "fixed-size target has {}",
-        source.Count(), target.Count());
-  }
-  return Emplace(
-      out, ArrayFromElements(target, lyra::runtime::ElementHandles(source)));
 }
 
 auto lyra_rt_dynarray_unpacked_array_from_array(
@@ -5572,20 +5543,6 @@ void lyra_rt_queue_push_back(void* queue, const void* item) {
 
 void lyra_rt_queue_push_front(void* queue, const void* item) {
   static_cast<RuntimeQueue*>(queue)->PushFront(item);
-}
-
-auto lyra_rt_queue_concat_element(
-    const void* queue, const void* item, void* out) -> void* {
-  const std::array<const void*, 1> items{item};
-  return Emplace(out, Read<RuntimeQueue>(queue).Concat(items));
-}
-
-auto lyra_rt_queue_concat_spread(
-    const void* queue, const void* part, const void* part_type, void* out)
-    -> void* {
-  return Emplace(
-      out, Read<RuntimeQueue>(queue).Concat(
-               lyra::runtime::ElementHandles(part, part_type)));
 }
 
 void lyra_rt_queue_insert(void* queue, const void* position, const void* item) {

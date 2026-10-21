@@ -62,8 +62,7 @@ enum class IntegralOp : std::uint8_t {
   kShiftLeft,
   kLogicalShiftRight,
   kArithmeticShiftRight,
-  // LRM 11.4.12, 11.4.12.1.
-  kConcat,
+  // LRM 11.4.12.1.
   kReplicate,
   // LRM 11.5.1: the bits a position names, and a value with those bits
   // replaced.
@@ -178,9 +177,6 @@ enum class IntegralAnswer : std::uint8_t {
   kOneBit,
   // One bit that is never x (LRM 11.4.5 `===`, 20.9).
   kTwoStateBit,
-  // As wide as both operands together, able to hold x where either can (LRM
-  // 11.4.12).
-  kJoined,
   // The `int`, `integer` and position types the language or the library fixes
   // for the answer.
   kInt,
@@ -414,11 +410,6 @@ inline constexpr std::array kIntegralOperations = {
         .name = "arithmetic_shift_right",
         .operands = {kNumber, kBits},
         .answer = IntegralAnswer::kOfFirstOperand},
-    IntegralOperation{
-        .op = IntegralOp::kConcat,
-        .name = "concat",
-        .operands = {kBits, kBits},
-        .answer = IntegralAnswer::kJoined},
     IntegralOperation{
         .op = IntegralOp::kReplicate,
         .name = "replicate",

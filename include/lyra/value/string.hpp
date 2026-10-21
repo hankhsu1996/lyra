@@ -115,12 +115,29 @@ class String {
 
   // LRM 11.4.12 over string operands, Table 6-9: the parts join contents in the
   // order written, and the result grows to hold them rather than truncating.
-  [[nodiscard]] auto Concat(const String& o) const -> String {
-    return String{impl_ + o.impl_};
+  // It is sized once, and each part is copied into it once.
+  [[nodiscard]] static auto Concat(std::span<const String> parts) -> String {
+    return Concat(
+        parts.size(), [&](std::size_t i) -> const String& { return parts[i]; });
+  }
+
+  // The same join over the `count` parts `part(i)` answers.
+  [[nodiscard]] static auto Concat(std::size_t count, const auto& part)
+      -> String {
+    std::size_t size = 0;
+    for (std::size_t i = 0; i < count; ++i) {
+      size += part(i).impl_.size();
+    }
+    std::string out;
+    out.reserve(size);
+    for (std::size_t i = 0; i < count; ++i) {
+      out.append(part(i).impl_);
+    }
+    return String{std::move(out)};
   }
 
   [[nodiscard]] auto operator+(const String& o) const -> String {
-    return Concat(o);
+    return String{impl_ + o.impl_};
   }
 
   // LRM 11.4.12.2: when at least one inner operand is string-typed or the

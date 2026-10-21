@@ -84,7 +84,6 @@ class IntegralEntryArguments {
     case support::IntegralAnswer::kOfFirstOperand:
     case support::IntegralAnswer::kOneBit:
     case support::IntegralAnswer::kTwoStateBit:
-    case support::IntegralAnswer::kJoined:
     case support::IntegralAnswer::kInt:
     case support::IntegralAnswer::kInteger:
     case support::IntegralAnswer::kPosition:
@@ -148,7 +147,6 @@ class IntegralEntryArguments {
     case support::IntegralAnswer::kOfFirstOperand:
     case support::IntegralAnswer::kOneBit:
     case support::IntegralAnswer::kTwoStateBit:
-    case support::IntegralAnswer::kJoined:
     case support::IntegralAnswer::kInt:
     case support::IntegralAnswer::kInteger:
     case support::IntegralAnswer::kPosition:

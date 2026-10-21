@@ -18,6 +18,7 @@
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
+#include "lyra/lowering/hir_to_mir/predicate.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -386,19 +387,31 @@ auto LowerTick(
     mir::Block reached;
     const WalkFrame sampled =
         frame.WithBlock(&reached).WithReadsAsOf(ReadsAsOf::kPreponed);
-    std::vector<mir::ExprId> conjuncts;
+    // Each conjunct is a step that runs while the ones before it held, so the
+    // steps stand beside each other however many conjuncts a position has.
+    std::vector<Evaluation> conjuncts;
     for (const hir::ExprId conjunct : automaton.positions[position].conjuncts) {
-      auto lowered =
-          action.LowerExpr(action.HirBody().exprs.Get(conjunct), sampled);
-      if (!lowered) return std::unexpected(std::move(lowered.error()));
-      conjuncts.push_back(reached.exprs.Add(*std::move(lowered)));
+      conjuncts.emplace_back(
+          [&action,
+           conjunct](const WalkFrame& tried) -> diag::Result<mir::ExprId> {
+            auto lowered =
+                action.LowerExpr(action.HirBody().exprs.Get(conjunct), tried);
+            if (!lowered) return std::unexpected(std::move(lowered.error()));
+            return tried.current_block->exprs.Add(*std::move(lowered));
+          });
     }
+    const mir::LocalId all_hold =
+        DeclareLocal(sampled, BuildMachineBool(unit, reached, true));
+    auto assigned = AssignAllHoldInOrder(unit, sampled, all_hold, conjuncts);
+    if (!assigned) return std::unexpected(std::move(assigned.error()));
     // A position with no conjunct is a tick a delay measures across, which
     // matches whatever the design does there, so its bit is set whenever it is
     // reached.
     mir::Block held;
     OrInto(unit, held, word_type, hold, at);
-    AppendIf(reached, AllHold(unit, reached, conjuncts), std::move(held));
+    AppendIf(
+        reached, reached.ReadLocal(all_hold, unit.builtins.machine_bool),
+        std::move(held));
     AppendIf(body, AnyOf(body, unit, need, at), std::move(reached));
   }
 

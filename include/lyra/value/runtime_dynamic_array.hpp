@@ -84,10 +84,6 @@ class RuntimeDynamicArray {
       std::optional<std::int64_t> start, std::int64_t count,
       std::span<const void* const> replacement) -> bool;
 
-  // LRM 10.10: a copy of this array with copies of `items` appended in order.
-  [[nodiscard]] auto Concat(std::span<const void* const> items) const
-      -> RuntimeDynamicArray;
-
   // LRM 7.12.2: puts the value that was at `order[k]` at index `k`.
   void Permute(std::span<const std::size_t> order);
 

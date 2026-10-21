@@ -148,8 +148,8 @@ is a way to name bits whose number the program fixes, and nothing else.
 
 - `../architecture/mir.md` -- a conversion that reshapes a value is a library call; MIR's vocabulary
   is the generic-language one and the source language does not shape it.
-- [concatenation-realization](concatenation-realization.md) -- a join is a call against the entry
-  that performs it, folded to the arity that entry takes; the same reasoning one operator over.
+- [concatenation-realization](concatenation-realization.md) -- a join is stated as what it is over
+  its operand family, never as a node of its own; the same reasoning one operator over.
 - [cast-is-a-pair-of-types](cast-is-a-pair-of-types.md) -- what a cast node is for, and why a
   reshape is not one.
 - [builtin-call-identity](builtin-call-identity.md) -- one flat entry per runtime function, with

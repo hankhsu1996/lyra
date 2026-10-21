@@ -17,9 +17,9 @@
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/bitstream.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/concatenation.hpp"
 #include "lyra/lowering/hir_to_mir/expression/aggregates.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
-#include "lyra/lowering/hir_to_mir/packed_concat.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
@@ -361,8 +361,7 @@ auto ReadThenWrite(
       Overloaded{
           [&](const PackedJoin&) -> mir::ExprId {
             return ConvertToType(
-                unit, block, BuildPackedConcat(unit, block, incoming),
-                lvalue.type);
+                unit, block, BuildBitsJoin(unit, frame, incoming), lvalue.type);
           },
           [&](const UnpackedJoin&) -> mir::ExprId {
             for (std::size_t i = 0; i < incoming.size(); ++i) {
@@ -374,7 +373,7 @@ auto ReadThenWrite(
               }
             }
             return block.exprs.Add(BuildPositionalAggregate(
-                unit, block, lvalue.type, std::move(incoming)));
+                unit, frame, lvalue.type, std::move(incoming)));
           },
           [](const StreamedJoin&) -> mir::ExprId {
             throw InternalError(

@@ -609,9 +609,9 @@ TEST(IntegralTest, ShiftsMoveBitsByTheNumberTheAmountHolds) {
 }
 
 // Conversion widens by the source's signedness and makes x or z 0 in a
-// two-state result; concatenation and replication place their operands from
-// the least significant end up.
-TEST(IntegralTest, ConversionAndJoinsPlaceBits) {
+// two-state result; replication places its copies from the least significant
+// end up.
+TEST(IntegralTest, ConversionAndReplicationPlaceBits) {
   EXPECT_EQ(Convert<Int>(Byte8::FromInt(-3)).ToInt64(), -3);
   EXPECT_EQ(Convert<IntUnsigned>(Logic8::FromInt(0xf0)).ToInt64(), 0xf0);
   EXPECT_EQ(
@@ -620,16 +620,6 @@ TEST(IntegralTest, ConversionAndJoinsPlaceBits) {
       0xff);
   EXPECT_FALSE(Convert<Int>(Logic8{}).HasUnknown());
   EXPECT_TRUE(Convert<Integer>(Logic8{}).HasUnknown());
-  const auto joined = Logic8::FromInt(0xab).Concat(Byte8::FromInt(0x12));
-  static_assert(std::is_same_v<decltype(joined), const LogicVector<16>>);
-  EXPECT_EQ(joined.ToInt64(), 0xab12);
-  const auto wide = Signed100::FromInt(-1).Concat(Bits4::FromInt(0x5));
-  static_assert(std::is_same_v<decltype(wide), const BitVector<104>>);
-  EXPECT_EQ(ExtractBits<Bits8>(wide, 0).ToInt64(), 0xf5);
-  EXPECT_EQ(ExtractBits<Bits8>(wide, 96).ToInt64(), 0xff);
-  const auto with_unknown = Bits4::FromInt(0x9).Concat(Logic8{});
-  EXPECT_EQ(ValueBits(with_unknown), 0x9FFU);
-  EXPECT_EQ(UnknownBits(with_unknown), 0x0FFU);
   EXPECT_EQ(Replicate<BitVector<12>>(Bits4::FromInt(0x5)).ToInt64(), 0x555);
   const auto copies = Replicate<BitVector<100>>(Bits4::FromInt(0x9));
   EXPECT_EQ(ExtractBits<Bits8>(copies, 60).ToInt64(), 0x99);

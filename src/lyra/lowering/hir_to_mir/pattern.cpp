@@ -26,6 +26,7 @@
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
+#include "lyra/lowering/hir_to_mir/predicate.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -81,16 +82,18 @@ auto SubjectMember(
 
 // The value a level of a pattern is matched against: what the construct matches
 // as a whole, and the members stepped into from it. A level is read wherever
-// its pattern tests it and again wherever it binds, so it is stated as how to
-// reach it and read afresh at each use: `whole` names the storage the value is
-// held in and evaluates nothing, and a step is one member reached.
+// its pattern tests it and again wherever it binds, each in a block of its
+// own, so it is stated as how to reach it and read afresh at each use: `whole`
+// is the local the value is held in, of `whole_type`, and a step is one member
+// reached.
 struct Subject {
   struct Step {
     hir::TypeId of;
     base::ComponentIndex member;
   };
 
-  mir::ExprId whole;
+  mir::LocalId whole;
+  mir::TypeId whole_type;
   std::vector<Step> steps;
 };
 
@@ -102,76 +105,84 @@ auto MemberOf(Subject subject, hir::TypeId of, base::ComponentIndex member)
 
 auto Read(UnitLowerer& owner, mir::Block& block, const Subject& subject)
     -> mir::ExprId {
-  mir::ExprId reached = subject.whole;
+  mir::ExprId reached = block.LocalPlace(subject.whole, subject.whole_type);
   for (const Subject::Step& step : subject.steps) {
     reached = SubjectMember(owner, block, reached, step.of, step.member);
   }
   return block.AsValue(owner.Unit().types, reached);
 }
 
-// Adds to `tests` the conditions a pattern imposes on `subject`, the expression
-// reaching the value it is matched against, in the order they have to be tried:
-// the pattern matches where every one holds, and a later one may only be
-// evaluated once the ones before it held, since a tagged member is read only
-// under its tag (LRM 11.9). A pattern that matches unconditionally -- a
-// wildcard, a bare identifier, a structure of those -- adds nothing. Descending
-// is one expression deep: how a level comes apart is read from that level's
-// pattern node, which carries the type of what it matches.
+// Adds to `tests` the conditions a pattern imposes on `subject`, the value it
+// is matched against, in the order they have to be tried: the pattern matches
+// where every one holds, and a later one may only be evaluated once the ones
+// before it held, since a tagged member is read only under its tag (LRM 11.9).
+// Each is lowered where it is tried, so the tests stand beside each other
+// however many members the pattern reaches. A pattern that matches
+// unconditionally -- a wildcard, a bare identifier, a structure of those --
+// adds nothing. How a level comes apart is read from that level's pattern
+// node, which carries the type of what it matches.
 template <ExprLowerer Lowerer>
-auto CollectPatternTests(
-    Lowerer& lowerer, WalkFrame frame, const Subject& subject,
-    hir::PatternId pattern_id, hir::CaseKeyword keyword,
-    std::vector<mir::ExprId>& tests) -> diag::Result<void> {
-  auto& owner = lowerer.Owner();
-  auto& unit = owner.Unit();
+void CollectPatternTests(
+    Lowerer& lowerer, const Subject& subject, hir::PatternId pattern_id,
+    hir::CaseKeyword keyword, std::vector<Evaluation>& tests) {
   const hir::Pattern& pattern = lowerer.HirPatterns().Get(pattern_id);
-  auto& block = *frame.current_block;
-  return std::visit(
+  std::visit(
       Overloaded{
-          [&](const hir::WildcardPattern&) -> diag::Result<void> { return {}; },
-          [&](const hir::VariablePattern&) -> diag::Result<void> { return {}; },
+          [](const hir::WildcardPattern&) {},
+          [](const hir::VariablePattern&) {},
           // The front end gives a constant the four-state form of its
           // position's type, so that it can hold the x and z bits a wildcard
           // form skips; the value is brought to that type, which loses none
           // of its bits.
-          [&](const hir::ConstantPattern& c) -> diag::Result<void> {
-            auto constant_or =
-                lowerer.LowerExpr(lowerer.HirExprs().Get(c.value), frame);
-            if (!constant_or) {
-              return std::unexpected(std::move(constant_or.error()));
-            }
-            const mir::ExprId constant =
-                block.exprs.Add(*std::move(constant_or));
-            tests.push_back(BuildCaseComparison(
-                unit, block, keyword,
-                AtType(
-                    unit, block, Read(owner, block, subject),
-                    block.exprs.Get(constant).type),
-                constant));
-            return {};
+          [&](const hir::ConstantPattern& c) {
+            tests.emplace_back(
+                [&lowerer, subject, keyword, value = c.value](
+                    const WalkFrame& at) -> diag::Result<mir::ExprId> {
+                  auto& owner = lowerer.Owner();
+                  auto& unit = owner.Unit();
+                  mir::Block& block = *at.current_block;
+                  auto constant_or =
+                      lowerer.LowerExpr(lowerer.HirExprs().Get(value), at);
+                  if (!constant_or) {
+                    return std::unexpected(std::move(constant_or.error()));
+                  }
+                  const mir::ExprId constant =
+                      block.exprs.Add(*std::move(constant_or));
+                  return BuildCaseComparison(
+                      unit, block, keyword,
+                      AtType(
+                          unit, block, Read(owner, block, subject),
+                          block.exprs.Get(constant).type),
+                      constant);
+                });
           },
-          [&](const hir::TaggedPattern& tagged) -> diag::Result<void> {
-            tests.push_back(BuildHoldsMember(
-                owner, block, Read(owner, block, subject), pattern.subject_type,
-                tagged.member_index, keyword));
-            if (!tagged.value_pattern.has_value()) return {};
-            return CollectPatternTests(
-                lowerer, frame,
+          [&](const hir::TaggedPattern& tagged) {
+            tests.emplace_back(
+                [&lowerer, subject, keyword, of = pattern.subject_type,
+                 member = tagged.member_index](
+                    const WalkFrame& at) -> diag::Result<mir::ExprId> {
+                  auto& owner = lowerer.Owner();
+                  mir::Block& block = *at.current_block;
+                  return BuildHoldsMember(
+                      owner, block, Read(owner, block, subject), of, member,
+                      keyword);
+                });
+            if (!tagged.value_pattern.has_value()) return;
+            CollectPatternTests(
+                lowerer,
                 MemberOf(subject, pattern.subject_type, tagged.member_index),
                 *tagged.value_pattern, keyword, tests);
           },
-          [&](const hir::StructurePattern& structure) -> diag::Result<void> {
+          [&](const hir::StructurePattern& structure) {
             for (const auto& [field, field_pattern] :
                  structure.field_patterns) {
-              auto collected = CollectPatternTests(
-                  lowerer, frame,
+              CollectPatternTests(
+                  lowerer,
                   MemberOf(
                       subject, pattern.subject_type,
                       base::ComponentIndex{static_cast<std::uint32_t>(field)}),
                   field_pattern, keyword, tests);
-              if (!collected) return collected;
             }
-            return {};
           },
       },
       pattern.data);
@@ -236,7 +247,10 @@ void BindPatternIdentifiers(
 
 // The match as steps:
 //
-//   m = every test of the pattern holds for the subject
+//   m = true
+//   if (m) m = test 0 of the pattern
+//   if (m) m = test 1 of the pattern
+//   ...
 //   if (m) assign the pattern's identifiers from the subject
 //   m
 //
@@ -251,35 +265,32 @@ auto PatternPredicate(
   return Predicate{
       .type = bit,
       .evaluate = [&lowerer, declared_in, subject, subject_type, pattern,
-                   keyword,
-                   bit](const WalkFrame& at) -> diag::Result<mir::ExprId> {
+                   keyword](const WalkFrame& at) -> diag::Result<mir::ExprId> {
         const mir::CompilationUnit& unit = lowerer.Owner().Unit();
         BlockBuilder steps(at);
         mir::Block& body = steps.Body();
-        const auto subject_place = [&](mir::Block& block) {
-          return block.LocalPlace(subject, subject_type);
-        };
+        const Subject whole{
+            .whole = subject, .whole_type = subject_type, .steps = {}};
 
-        std::vector<mir::ExprId> tests;
-        auto collected = CollectPatternTests(
-            lowerer, steps.Frame(),
-            Subject{.whole = subject_place(body), .steps = {}}, pattern,
-            keyword, tests);
-        if (!collected) return std::unexpected(std::move(collected.error()));
-        const mir::LocalId matched = steps.DeclareLocal(
-            bit, ConditionAsBit(unit, body, AllHold(unit, body, tests)));
-        const auto read_matched = [&] { return body.ReadLocal(matched, bit); };
+        std::vector<Evaluation> tests;
+        CollectPatternTests(lowerer, whole, pattern, keyword, tests);
+        const mir::TypeId boolean = unit.builtins.machine_bool;
+        const mir::LocalId matched =
+            steps.DeclareLocal(boolean, BuildMachineBool(unit, body, true));
+        auto assigned =
+            AssignAllHoldInOrder(unit, steps.Frame(), matched, tests);
+        if (!assigned) return std::unexpected(std::move(assigned.error()));
+        const auto read_matched = [&] {
+          return body.ReadLocal(matched, boolean);
+        };
 
         mir::Block bound;
         BindPatternIdentifiers(
-            lowerer, declared_in, steps.Frame().WithBlock(&bound),
-            Subject{.whole = subject_place(bound), .steps = {}}, pattern);
-        body.AppendStmt(
-            mir::IfStmt{
-                .condition = ReduceToCondition(unit, body, read_matched()),
-                .then_scope = body.child_scopes.Add(std::move(bound)),
-                .else_scope = std::nullopt});
-        return at.current_block->exprs.Add(steps.Build(read_matched()));
+            lowerer, declared_in, steps.Frame().WithBlock(&bound), whole,
+            pattern);
+        body.AppendIfThen(read_matched(), std::move(bound));
+        return at.current_block->exprs.Add(
+            steps.Build(ConditionAsBit(unit, body, read_matched())));
       }};
 }
 

@@ -56,12 +56,13 @@ struct SelectedValue {
 
 // Whether every one of `conditions` holds, and whether any does, tested in
 // order and each only when the ones before it have not already settled the
-// answer: the search a pattern makes through its members (LRM 12.6). Each
-// is read as a condition is read, and is tested only where it is reached; a
-// condition whose evaluation takes steps of its own -- one the source wrote --
-// arrives with them in a block of its own, so they run only where it is tested.
-// Nothing to test is the empty search, whose answer is the identity of the
-// question.
+// answer. Each is read as a condition is read, and is tested only where it is
+// reached; a condition whose evaluation takes steps of its own arrives with
+// them in a block of its own, so they run only where it is tested. Nothing to
+// test is the empty search, whose answer is the identity of the question.
+// Each condition after the first stands as an operand of the one before it, so
+// this is for the few conditions one construct composes; a list as long as
+// the source makes it is a run of steps, each assigning the answer in turn.
 [[nodiscard]] auto AllHold(
     const mir::CompilationUnit& unit, mir::Block& block,
     std::span<const mir::ExprId> conditions) -> mir::ExprId;

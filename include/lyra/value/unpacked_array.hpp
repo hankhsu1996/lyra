@@ -168,23 +168,6 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
     return OfBytes(BytesOf(bits.AsWords().View()));
   }
 
-  // LRM 10.10: adopt an unpacked concatenation's parts, accumulated into a
-  // growable array by the concatenation chain, into this fixed-size type. The
-  // element counts must agree; a mismatch the front end could not rule out --
-  // because a spread part is sized at run time -- is a run-time error.
-  // Templated on the accumulator so the fixed-size type needs no dependency on
-  // the growable one that feeds it.
-  template <typename C>
-  [[nodiscard]] static auto ConformSize(const C& parts) -> UnpackedArray {
-    if (parts.RawSize() != N) {
-      throw SimulationError(
-          "an unpacked array concatenation yields {} elements, while the "
-          "fixed-size target has {}",
-          parts.RawSize(), N);
-    }
-    return Of(parts);
-  }
-
   // LRM 7.6: a fixed-size unpacked array assigned an array of another unpacked
   // kind takes its elements in left-to-right order, and how many elements it
   // has is a declared property of the variable being written rather than

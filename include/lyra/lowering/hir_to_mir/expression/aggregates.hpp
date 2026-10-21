@@ -14,7 +14,6 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
-#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -37,7 +36,7 @@ auto LowerHirStreamingConcatExpr(
 // them into its one vector, an array takes them as its element list, and a
 // structure is those members and nothing more.
 [[nodiscard]] auto BuildPositionalAggregate(
-    mir::CompilationUnit& unit, mir::Block& block, mir::TypeId result_type,
+    mir::CompilationUnit& unit, const WalkFrame& frame, mir::TypeId result_type,
     std::vector<mir::ExprId> elements) -> mir::Expr;
 
 template <ExprLowerer Lowerer>

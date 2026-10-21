@@ -99,11 +99,6 @@ class RuntimeQueue {
   void PushBack(const void* item);
   void Insert(std::optional<std::int64_t> index, const void* item);
 
-  // LRM 10.10: a copy of this queue with copies of `items` appended in order,
-  // held to the bound.
-  [[nodiscard]] auto Concat(std::span<const void* const> items) const
-      -> RuntimeQueue;
-
   // LRM 7.6: copies of `items`, in order, as a queue of `type`, held to its
   // bound.
   [[nodiscard]] static auto FromElements(

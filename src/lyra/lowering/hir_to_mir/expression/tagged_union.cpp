@@ -10,8 +10,8 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/concatenation.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
-#include "lyra/lowering/hir_to_mir/packed_concat.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -68,7 +68,7 @@ auto BuildPackedTaggedValue(
   }
 
   return BuildValueConversion(
-      unit, block, BuildPackedConcat(unit, block, regions), result_type);
+      unit, block, BuildBitsJoin(unit, frame, regions), result_type);
 }
 
 }  // namespace

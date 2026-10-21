@@ -7,6 +7,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/inside_predicate.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -47,8 +48,9 @@ auto LowerHirInsideExpr(
     if (!pred_or) return std::unexpected(std::move(pred_or.error()));
     tests.push_back(*pred_or);
   }
-  return steps.Build(
-      BuildMirLogicalOr(lowerer.Owner().Unit(), body, result_type, tests));
+  return steps.Build(AccumulateMirLogicalOr(
+      lowerer.Owner().Unit(), body,
+      steps.Bindings().DeclareAnonymous(result_type), result_type, tests));
 }
 
 template auto LowerHirInsideExpr(

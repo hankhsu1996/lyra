@@ -204,18 +204,6 @@ class BasicQueue {
     EnforceBound();
   }
 
-  // LRM 10.10 unpacked concatenation, as the steps a join folds to: a copy of
-  // this queue with `items` appended in order, held to the bound as they land.
-  [[nodiscard]] auto Concat(std::span<const void* const> items) const
-      -> BasicQueue {
-    BasicQueue out = *this;
-    for (const void* item : items) {
-      out.InsertCopy(out.count_, item);
-    }
-    out.EnforceBound();
-    return out;
-  }
-
   // LRM 7.6: the elements `items` names, in order, held to the bound.
   void Assign(std::span<const void* const> items) {
     Truncate(0);

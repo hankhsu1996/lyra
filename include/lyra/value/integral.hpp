@@ -746,20 +746,6 @@ class Integral {
     return Reduced(ReductionOp::kXnor);
   }
 
-  // LRM 11.4.12: `{a, b}`, this value in the most significant positions. The
-  // answer is unsigned and can hold x or z where either operand can.
-  template <IntegralValue B>
-  [[nodiscard]] constexpr auto Concat(const B& b) const -> Integral<
-      kWidth + B::kWidth, Signedness::kUnsigned,
-      detail::CombinedDomain(kDomain, B::kDomain)> {
-    using Result = Integral<
-        kWidth + B::kWidth, Signedness::kUnsigned,
-        detail::CombinedDomain(kDomain, B::kDomain)>;
-    Result out = Result::Zero();
-    lyra::value::Concat(out.MutableView(), View(), b.View());
-    return out;
-  }
-
   // LRM 11.4.3 power.
   template <IntegralValue Exponent>
   [[nodiscard]] auto Pow(const Exponent& exponent) const -> Integral {

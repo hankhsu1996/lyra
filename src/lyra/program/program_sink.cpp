@@ -888,8 +888,6 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_queue_dynamic_array_from_array",
       &lyra_rt_queue_dynamic_array_from_array);
   add("lyra_rt_dynarray_element", &lyra_rt_dynarray_element);
-  add("lyra_rt_dynarray_concat_element", &lyra_rt_dynarray_concat_element);
-  add("lyra_rt_dynarray_concat_spread", &lyra_rt_dynarray_concat_spread);
   add("lyra_rt_dynarray_element_mut", &lyra_rt_dynarray_element_mut);
   add("lyra_rt_dynarray_delete", &lyra_rt_dynarray_delete);
   add("lyra_rt_dynarray_element_slice", &lyra_rt_dynarray_element_slice);
@@ -912,7 +910,6 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_dynarray_value_cell_load", &lyra_rt_dynarray_value_cell_load);
   add("lyra_rt_dynarray_count_bits", &lyra_rt_dynarray_count_bits);
   add("lyra_rt_laidout_from_elements", &lyra_rt_laidout_from_elements);
-  add("lyra_rt_laidout_conform_size", &lyra_rt_laidout_conform_size);
   add("lyra_rt_dynarray_unpacked_array_from_array",
       &lyra_rt_dynarray_unpacked_array_from_array);
   add("lyra_rt_queue_unpacked_array_from_array",
@@ -930,8 +927,6 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_queue_size", &lyra_rt_queue_size);
   add("lyra_rt_queue_push_back", &lyra_rt_queue_push_back);
   add("lyra_rt_queue_push_front", &lyra_rt_queue_push_front);
-  add("lyra_rt_queue_concat_element", &lyra_rt_queue_concat_element);
-  add("lyra_rt_queue_concat_spread", &lyra_rt_queue_concat_spread);
   add("lyra_rt_queue_insert", &lyra_rt_queue_insert);
   add("lyra_rt_queue_pop_front", &lyra_rt_queue_pop_front);
   add("lyra_rt_queue_pop_back", &lyra_rt_queue_pop_back);

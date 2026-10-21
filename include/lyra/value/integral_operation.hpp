@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -78,13 +77,6 @@ template <support::IntegralOp op>
       return IntegralExtent{.width = 1, .domain = any_four_state()};
     case support::IntegralAnswer::kTwoStateBit:
       return ExtentOf(kShapeOf<Bit>);
-    case support::IntegralAnswer::kJoined: {
-      std::uint64_t width = 0;
-      for (const IntegralExtent& operand : operands) {
-        width += operand.width;
-      }
-      return IntegralExtent{.width = width, .domain = any_four_state()};
-    }
     case support::IntegralAnswer::kInt:
       return ExtentOf(kShapeOf<Int>);
     case support::IntegralAnswer::kInteger:
@@ -241,9 +233,6 @@ auto ApplyIntegralOperation(const Operands& to, const IntegralView& answer)
       return {};
     case IntegralOp::kArithmeticShiftRight:
       ArithmeticShiftRight(answer, to.At(0), to.At(1));
-      return {};
-    case IntegralOp::kConcat:
-      Concat(answer, to.At(0), to.At(1));
       return {};
     case IntegralOp::kReplicate:
       Replicate(answer, to.At(0));

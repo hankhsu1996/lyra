@@ -124,11 +124,6 @@ auto RuntimeDynamicArray::AssignSlice(
   return Core().AssignSlice(start, SliceCount(count), replacement);
 }
 
-auto RuntimeDynamicArray::Concat(std::span<const void* const> items) const
-    -> RuntimeDynamicArray {
-  return RuntimeDynamicArray(Core().Extended(items));
-}
-
 void RuntimeDynamicArray::Permute(std::span<const std::size_t> order) {
   Core().Permute(order);
 }

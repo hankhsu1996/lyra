@@ -117,38 +117,31 @@ class EntryOperands {
 
   template <typename T>
   [[nodiscard]] auto MachineAt(std::size_t at) const -> T {
-    return Machine(handed_->operands.at(at), std::type_identity<T>{});
+    T machine{};
+    Receive(handed_->operands.at(at), machine);
+    return machine;
   }
 
  private:
-  static auto Machine(
-      const HandedOperand& operand, std::type_identity<std::int64_t>)
-      -> std::int64_t {
-    return operand.number;
+  static void Receive(const HandedOperand& operand, std::int64_t& number) {
+    number = operand.number;
   }
-  static auto Machine(const HandedOperand& operand, std::type_identity<bool>)
-      -> bool {
-    return operand.predicate;
+  static void Receive(const HandedOperand& operand, bool& predicate) {
+    predicate = operand.predicate;
   }
-  static auto Machine(
-      const HandedOperand& operand, std::type_identity<std::uint8_t>)
-      -> std::uint8_t {
-    return operand.scalar;
+  static void Receive(const HandedOperand& operand, std::uint8_t& scalar) {
+    scalar = operand.scalar;
   }
-  static auto Machine(
-      const HandedOperand& operand, std::type_identity<std::string_view>)
-      -> std::string_view {
-    return static_cast<const value::String*>(operand.address)->View();
+  static void Receive(const HandedOperand& operand, std::string_view& text) {
+    text = static_cast<const value::String*>(operand.address)->View();
   }
-  static auto Machine(
-      const HandedOperand& operand, std::type_identity<const svBitVecVal*>)
-      -> const svBitVecVal* {
-    return static_cast<const svBitVecVal*>(operand.address);
+  static void Receive(
+      const HandedOperand& operand, const svBitVecVal*& vector) {
+    vector = static_cast<const svBitVecVal*>(operand.address);
   }
-  static auto Machine(
-      const HandedOperand& operand, std::type_identity<const svLogicVecVal*>)
-      -> const svLogicVecVal* {
-    return static_cast<const svLogicVecVal*>(operand.address);
+  static void Receive(
+      const HandedOperand& operand, const svLogicVecVal*& vector) {
+    vector = static_cast<const svLogicVecVal*>(operand.address);
   }
 
   const Handed* handed_;
@@ -193,10 +186,6 @@ struct ReturnCppTypeOf<support::IntegralAnswer::kOneBit> {
 };
 template <>
 struct ReturnCppTypeOf<support::IntegralAnswer::kTwoStateBit> {
-  using Type = void;
-};
-template <>
-struct ReturnCppTypeOf<support::IntegralAnswer::kJoined> {
   using Type = void;
 };
 template <>
@@ -272,10 +261,6 @@ void Take(Handed& handed, ArgumentCppType<row, at> argument) {
   }
 }
 
-template <std::size_t row, std::size_t at>
-inline constexpr IntegralOperandKind kOperandKindAt =
-    support::IntegralOperations()[row].operands.Kinds()[at];
-
 // What laying the integral operands of one call out leaves: the words each
 // one's bytes hold, and their extents in operand order.
 struct LoadedOperands {
@@ -284,11 +269,11 @@ struct LoadedOperands {
   std::size_t count = 0;
 };
 
-// Loads operand `at` of the entry at `row` where it is an integral value, at
-// the type the entry was told for it.
-template <std::size_t row, std::size_t at>
+// Loads operand `at`, of the kind `kind`, where it is an integral value, at the
+// type the entry was told for it.
 void Load(
-    const Handed& handed, LoadedOperands& loaded, EntryOperands& operands) {
+    IntegralOperandKind kind, const Handed& handed, std::size_t at,
+    LoadedOperands& loaded, EntryOperands& operands) {
   const auto load = [&](const ToldType& type) {
     loaded.extents.at(loaded.count++) = type.extent;
     loaded.words.at(at) = value::LoadedWords::Load(
@@ -298,7 +283,7 @@ void Load(
                                             .domain = type.extent.domain});
     operands.View(at, loaded.words.at(at)->View());
   };
-  switch (kOperandKindAt<row, at>) {
+  switch (kind) {
     case IntegralOperandKind::kBits:
     case IntegralOperandKind::kNumber:
       load(handed.told.at(at));
@@ -319,12 +304,15 @@ void Load(
 // Carries the operation at `row` out over what its entry was handed: loads the
 // words the integral operands' bytes hold, applies the operation, and lays an
 // integral answer out in the storage given for it.
-template <std::size_t row, std::size_t... operand>
-auto CarryOut(const Handed& handed, std::index_sequence<operand...>)
-    -> value::MachineAnswer {
+template <std::size_t row>
+auto CarryOut(const Handed& handed) -> value::MachineAnswer {
+  const std::span<const IntegralOperandKind> kinds =
+      support::IntegralOperations()[row].operands.Kinds();
   LoadedOperands loaded;
   EntryOperands operands(handed);
-  (Load<row, operand>(handed, loaded, operands), ...);
+  for (std::size_t at = 0; at < kinds.size(); ++at) {
+    Load(kinds[at], handed, at, loaded, operands);
+  }
 
   // The extent an integral answer is laid out at, or none where the operation
   // answers a machine value.
@@ -358,10 +346,6 @@ auto CarryOut(const Handed& handed, std::index_sequence<operand...>)
   return machine;
 }
 
-template <std::size_t row>
-using OperandsAt = std::make_index_sequence<
-    support::IntegralOperations()[row].operands.Kinds().size()>;
-
 // The entry carrying out the operation at `row`, whose parameters are the
 // arguments the operation's declaration gives it, each of the machine type it
 // crosses as. Which argument is which, and what each operand is, are settled
@@ -378,10 +362,9 @@ struct Entry<row, std::index_sequence<at...>> {
     Handed handed;
     (Take<row, at>(handed, arguments), ...);
     if constexpr (std::is_void_v<ReturnCppType<row>>) {
-      CarryOut<row>(handed, OperandsAt<row>{});
+      CarryOut<row>(handed);
     } else {
-      const value::MachineAnswer answer =
-          CarryOut<row>(handed, OperandsAt<row>{});
+      const value::MachineAnswer answer = CarryOut<row>(handed);
       const auto* machine = std::get_if<ReturnCppType<row>>(&answer);
       if (machine == nullptr) {
         throw InternalError(

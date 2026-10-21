@@ -2994,13 +2994,8 @@ enough to warrant its own focused review.
       is handed and reads them out of one, as an array does, and the value form is that written into
       a fresh value. Not blocked.
 
-- [ ] R218 -- A concatenation of several operands is carried out two at a time, each step making a
-      value as wide as everything joined so far, so joining N operands of W bits in all costs about
-      N times W where it should cost W. That holds of a concatenation a design writes and of a
-      structure's stream, which is the concatenation of its members' streams. It is paid on the
-      execution backend, where each step is a call; on the C++ backend the same concatenation runs
-      about fifty times faster. Target: a concatenation states all its operands and writes each into
-      its answer once. Not blocked.
+- [x] R218 -- A concatenation of several operands, one a design writes and a structure's stream
+      alike, writes each operand into its answer once.
 
 - [x] R219 -- A unit's name says which unit a parent means, and it is decided before any unit
       lowers: from its definition, the values its declarations and code rely on, and the generate

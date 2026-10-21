@@ -19,6 +19,7 @@
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/predicate.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -26,6 +27,8 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
+#include "lyra/mir/local.hpp"
+#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/mir/unary_op.hpp"
@@ -200,6 +203,41 @@ auto BuildMirLogicalOr(
     std::span<const mir::ExprId> tests) -> mir::ExprId {
   return BuildLogicalFold(
       unit, block, mir::BinaryOp::kLogicalOr, false, type, tests);
+}
+
+auto AccumulateMirBinary(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::BinaryOp op,
+    mir::ExprId identity, mir::LocalId held, mir::TypeId type,
+    std::span<const mir::ExprId> terms) -> mir::ExprId {
+  block.AppendStmt(mir::LocalDeclStmt{.target = held, .init = identity});
+  for (const mir::ExprId term : terms) {
+    AssignLocal(
+        unit, block, held,
+        block.exprs.Add(
+            mir::MakeBinary(
+                unit, block, op, block.ReadLocal(held, type), term, type)));
+  }
+  return block.ReadLocal(held, type);
+}
+
+auto AccumulateMirLogicalAnd(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId held,
+    mir::TypeId type, std::span<const mir::ExprId> tests) -> mir::ExprId {
+  return AccumulateMirBinary(
+      unit, block, mir::BinaryOp::kLogicalAnd,
+      ConvertToType(
+          unit, block, mir::BuildBit1Literal(unit, block, true), type),
+      held, type, tests);
+}
+
+auto AccumulateMirLogicalOr(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId held,
+    mir::TypeId type, std::span<const mir::ExprId> tests) -> mir::ExprId {
+  return AccumulateMirBinary(
+      unit, block, mir::BinaryOp::kLogicalOr,
+      ConvertToType(
+          unit, block, mir::BuildBit1Literal(unit, block, false), type),
+      held, type, tests);
 }
 
 auto BuildMirBinaryExpr(

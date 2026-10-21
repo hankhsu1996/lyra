@@ -54,7 +54,7 @@ the whole foreach is modeled as a labeled break -- the universal multi-level-exi
    Revised 2026-10-20: every `break` the source wrote now names the loop it leaves, not the one in a
    `foreach` alone, because a case's items may stand in a switch, which C++'s own `break` would
    leave
-   ([a-choice-the-source-lists-stands-side-by-side](a-choice-the-source-lists-stands-side-by-side.md)
+   ([a-list-the-source-writes-stands-side-by-side](a-list-the-source-writes-stands-side-by-side.md)
    D2).
 
 3. **Each backend renders the primitive its own way.** The C++ backend, lacking labeled break, emits
