@@ -361,8 +361,7 @@ auto ReadThenWrite(
       Overloaded{
           [&](const PackedJoin&) -> mir::ExprId {
             return ConvertToType(
-                unit, block, BuildBitsJoin(unit, frame, incoming),
-                lvalue.type);
+                unit, block, BuildBitsJoin(unit, frame, incoming), lvalue.type);
           },
           [&](const UnpackedJoin&) -> mir::ExprId {
             for (std::size_t i = 0; i < incoming.size(); ++i) {

@@ -36,8 +36,8 @@ auto LowerHirStreamingConcatExpr(
 // them into its one vector, an array takes them as its element list, and a
 // structure is those members and nothing more.
 [[nodiscard]] auto BuildPositionalAggregate(
-    mir::CompilationUnit& unit, const WalkFrame& frame,
-    mir::TypeId result_type, std::vector<mir::ExprId> elements) -> mir::Expr;
+    mir::CompilationUnit& unit, const WalkFrame& frame, mir::TypeId result_type,
+    std::vector<mir::ExprId> elements) -> mir::Expr;
 
 template <ExprLowerer Lowerer>
 auto LowerHirAssignmentPatternExpr(
