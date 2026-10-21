@@ -3,7 +3,9 @@
 Date: 2026-10-15 Status: accepted. How the box comes into existence is
 [a-new-expression-allocates-then-initializes](a-new-expression-allocates-then-initializes.md); how a
 holder keeps such a value is
-[a-holder-lays-out-the-value-it-keeps](a-holder-lays-out-the-value-it-keeps.md).
+[a-holder-lays-out-the-value-it-keeps](a-holder-lays-out-the-value-it-keeps.md). Revised 2026-10-21:
+a value a borrow refers to is made in a temporary of the evaluation too, where it used to be left
+inside whichever step formed the borrow and ended with it.
 
 ## Context
 
@@ -46,16 +48,22 @@ before, which a target compiler bounds. An evaluation is a statement's expressio
 choice, or the value a block expression ends with, and its steps run in the order the evaluation
 reads its operands: an operand read or handed to a body before one that takes a step, and that
 computes something, is taken into a temporary of its own first, so holding a value off the stack
-moves no value read ahead of another. What is bound where it lies is formed where it is used -- a
-place keeps its own operands there, and the object a call is entered on may be a reference to part
-of a value, which exists only where it is taken -- so a later operand's step can run before it, an
-order the standard does not fix: it states none for an operator's operands, which it requires only
-to be evaluated (LRM 11.3.5), and leaves a call's arguments' undefined (LRM 13.5). The steps run in
-a block expression whose value is made where the evaluation's value is; an execution's answer has no
-such place, being read and stored into its completion, so its steps run in a scope around the
-return, which reads the temporary where it lies. The call a suspension waits on stands under it as
-it is, so each of its arguments is an evaluation of its own. A box handed to a body is built where
-it is handed, since the body owns it from there and nothing reads it here.
+moves no value read ahead of another. A step is a statement, and ends what it makes, so a value a
+borrow refers to that the evaluation makes is made in a temporary of the evaluation as well,
+whatever its size -- a place inside such a value held as the value read from it -- since the
+reference may be carried into a temporary a step declares and read after: rustc makes a borrowed
+value a local living to the end of its statement (`builder/expr/as_temp.rs`), and clang keeps one to
+the end of the full-expression. Go's `order` pass needs no such rule only because what a Go
+temporary refers to is collected rather than ended. What is bound where it lies is formed where it
+is used -- a place keeps its own operands there, and the object a call is entered on may be a
+reference to part of a value, which exists only where it is taken -- so a later operand's step can
+run before it, an order the standard does not fix: it states none for an operator's operands, which
+it requires only to be evaluated (LRM 11.3.5), and leaves a call's arguments' undefined (LRM 13.5).
+The steps run in a block expression whose value is made where the evaluation's value is; an
+execution's answer has no such place, being read and stored into its completion, so its steps run in
+a scope around the return, which reads the temporary where it lies. The call a suspension waits on
+stands under it as it is, so each of its arguments is an evaluation of its own. A box handed to a
+body is built where it is handed, since the body owns it from there and nothing reads it here.
 
 **D3. The box is written by two rewrites of the MIR-to-MIR stage, one job each**, after HIR-to-MIR
 has stated every value plainly, and both backends read the rewritten unit. The first makes every

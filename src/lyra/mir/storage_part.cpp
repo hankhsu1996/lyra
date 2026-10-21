@@ -103,6 +103,38 @@ auto KindDesignated(
       KindOfAPart(unit, designated->value));
 }
 
+// What `deref` opens part of: the receiver of the call it dereferences, where
+// that call answers a reference into its receiver, and nothing otherwise.
+auto WholeAnsweredInto(const Block& block, const DerefExpr& deref)
+    -> std::optional<ExprId> {
+  const auto* call =
+      std::get_if<CallExpr>(&block.exprs.Get(deref.pointer).data);
+  if (call == nullptr || !AnswersReferenceIntoReceiver(*call)) {
+    return std::nullopt;
+  }
+  const std::optional<ExprId> whole = CalleeReceiver(call->callee);
+  if (!whole.has_value()) {
+    throw InternalError(
+        "mir: a reference into a receiver is taken on one, and this call "
+        "names none -- please report this as a bug");
+  }
+  return whole;
+}
+
+// The node whose value `id` is part of; any other node is its own.
+auto CompleteObjectOf(const Block& block, ExprId id) -> ExprId {
+  const ExprData& data = block.exprs.Get(id).data;
+  if (const auto* field = std::get_if<FieldAccessExpr>(&data)) {
+    return CompleteObjectOf(block, field->receiver);
+  }
+  if (const auto* deref = std::get_if<DerefExpr>(&data)) {
+    if (const std::optional<ExprId> whole = WholeAnsweredInto(block, *deref)) {
+      return CompleteObjectOf(block, *whole);
+    }
+  }
+  return id;
+}
+
 }  // namespace
 
 auto KindOfPlace(const CompilationUnit& unit, const Block& block, ExprId place)
@@ -119,18 +151,9 @@ auto KindOfPlace(const CompilationUnit& unit, const Block& block, ExprId place)
     if (pointer.Is<DesignationType>()) {
       return KindDesignated(unit, block, deref->pointer);
     }
-    const auto* call =
-        std::get_if<CallExpr>(&block.exprs.Get(deref->pointer).data);
-    if (call == nullptr || !AnswersReferenceIntoReceiver(*call)) {
-      return PlaceKind::kOrdinary;
-    }
-    const std::optional<ExprId> whole = CalleeReceiver(call->callee);
-    if (!whole.has_value()) {
-      throw InternalError(
-          "mir: a reference into a receiver is taken on one, and this call "
-          "names none -- please report this as a bug");
-    }
-    return KindOfPlace(unit, block, *whole);
+    const std::optional<ExprId> whole = WholeAnsweredInto(block, *deref);
+    return whole.has_value() ? KindOfPlace(unit, block, *whole)
+                             : PlaceKind::kOrdinary;
   }
   return PlaceKind::kOrdinary;
 }
@@ -144,6 +167,24 @@ auto ReadIfOverlaid(const CompilationUnit& unit, Block& block, ExprId object)
   return block.Read(object);
 }
 
+auto Borrow(const CompilationUnit& unit, Block& block, ExprId operand)
+    -> ExprId {
+  ExprId object = operand;
+  if (const auto* read = std::get_if<CopyExpr>(&block.exprs.Get(operand).data);
+      read != nullptr &&
+      KindOfPlace(unit, block, read->place) != PlaceKind::kOverlaid) {
+    object = read->place;
+  }
+  object = ReadIfOverlaid(unit, block, object);
+  return block.exprs.Add(
+      Expr{
+          .data = BorrowExpr{.operand = object},
+          .type = unit.types.Intern(
+              Type{ReferenceType{
+                  .referent = block.exprs.Get(object).type,
+                  .mutability = Mutability::kReadOnly}})});
+}
+
 auto ValueLiesInStorage(
     const CompilationUnit& unit, const Block& block, ExprId id) -> bool {
   const ExprData& data = block.exprs.Get(id).data;
@@ -151,6 +192,11 @@ auto ValueLiesInStorage(
     return KindOfPlace(unit, block, read->place) != PlaceKind::kOverlaid;
   }
   return IsPlace(data) || std::holds_alternative<AwaitExpr>(data);
+}
+
+auto WholeLiesInStorage(
+    const CompilationUnit& unit, const Block& block, ExprId id) -> bool {
+  return ValueLiesInStorage(unit, block, CompleteObjectOf(block, id));
 }
 
 }  // namespace lyra::mir

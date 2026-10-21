@@ -426,7 +426,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const ClosureType&) -> Element { return std::nullopt; },
           [](const ErasedCallableType&) -> Element { return std::nullopt; },
 
-          // A handle to a runtime facility, and an inert payload the library
+          // A handle to a runtime facility, and a payload the library
           // owns the shape of.
           [](const RuntimeEffectsType&) -> Element { return std::nullopt; },
           [](const FilesType&) -> Element { return std::nullopt; },

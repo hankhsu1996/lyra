@@ -138,6 +138,29 @@ auto PassModeOf(support::OperandReading reading, lir::TypeId operand)
 
 namespace {
 
+// How `operand`, read as `reading`, crosses, told of the value it carries. An
+// integral value crosses as the address of its bytes, so a reference to one
+// read as bits or as a number crosses as that value does, told of it.
+auto CrossingModeOf(
+    const lir::TypePool& types, support::OperandReading reading,
+    lir::TypeId operand) -> PassMode {
+  switch (reading) {
+    case support::OperandReading::kBits:
+    case support::OperandReading::kNumber:
+      if (types.Get(operand).Is<lir::PointerType>()) {
+        return PassModeOf(reading, *types.Get(operand).Pointee());
+      }
+      return PassModeOf(reading, operand);
+    case support::OperandReading::kHeld:
+    case support::OperandReading::kPosition:
+    case support::OperandReading::kMachine:
+    case support::OperandReading::kTyped:
+    case support::OperandReading::kKey:
+      return PassModeOf(reading, operand);
+  }
+  throw InternalError("llvm codegen: unknown operand reading");
+}
+
 // What `operand` is held to by being read as `reading`.
 void RequireReadAs(
     const CodeGenTypes& types, support::OperandReading reading,
@@ -402,10 +425,12 @@ auto ArrangeCall(
                   RequireReadAs(module.Types(), reading, value.type);
                   return ArgAbi{
                       .type = module.Types().Map(value.type),
-                      .mode = ToldModeOf(
-                                  realization, i, reading, value.type,
-                                  module.Unit().types)
-                                  .value_or(PassModeOf(reading, value.type))};
+                      .mode =
+                          ToldModeOf(
+                              realization, i, reading, value.type,
+                              module.Unit().types)
+                              .value_or(CrossingModeOf(
+                                  module.Unit().types, reading, value.type))};
                 },
                 // A machine value is of no type whose facts could cross with
                 // it, so it is only ever read as the machine value it is.
@@ -455,7 +480,7 @@ auto CallArranger::ArgOf(
   RequireReadAs(module_->Types(), reading, operand);
   return ArgAbi{
       .type = module_->Types().Map(operand),
-      .mode = llvm_backend::PassModeOf(reading, operand)};
+      .mode = CrossingModeOf(module_->Unit().types, reading, operand)};
 }
 
 auto CallArranger::Stated(const lir::CallInstr& call) const
@@ -626,11 +651,20 @@ auto CallArranger::ConstructionOf(
         types.Get(result).KindName());
   };
   // An entry named by the representation of the value the construction is built
-  // over, which is the call's first operand. An integral value has one entry
-  // serving every integral type, where every other value has its domain's.
+  // over, which the call's first operand refers to. An integral value has one
+  // entry serving every integral type, where every other value has its
+  // domain's.
   const auto over_operand = [&](RuntimeOp of_a_domain,
                                 RuntimeOp of_an_integral) -> Built {
-    const lir::TypeId operand = OperandType(call.args.at(0));
+    const std::optional<lir::TypeId> referred =
+        types.Get(OperandType(call.args.at(0))).Pointee();
+    if (!referred.has_value()) {
+      throw InternalError(
+          "llvm codegen: a print item or a format operand is built over a "
+          "value rather than a reference to it -- please report this as a "
+          "bug");
+    }
+    const lir::TypeId operand = *referred;
     if (module_->Types().IntegralShapeOf(operand).has_value()) {
       return entry(of_an_integral);
     }
@@ -723,9 +757,7 @@ auto CallArranger::ConstructionOf(
                 return entry(RuntimeOp::kMakeFormatSpec);
               // What a value formats as is the value's own answer, so both of
               // these are named by the representation of what they are built
-              // over. Each borrows that value rather than copying it, which
-              // holds because the value it borrows belongs to the same
-              // full-expression as the print, and ends only after it.
+              // over, which each is handed a reference to.
               case lir::RuntimeLibraryKind::kPrintValueItem:
                 return over_operand(
                     RuntimeOp::kMakePrintValueItem,

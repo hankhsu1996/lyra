@@ -275,7 +275,9 @@ struct DiagnosticType {
 // decision on its contents. The branch selects which library type, and the
 // backend maps the branch to the concrete library name. An object-model handle
 // is a different thing -- receiver semantics reason about one -- while these
-// are inert payloads.
+// are payloads. One that reads a value where it lies -- a print item, a format
+// operand -- is built over a reference to that value, so the program states
+// what it refers to.
 enum class RuntimeLibraryKind : std::uint8_t {
   // The members an enumeration declares, each its whole value at the base type
   // and its name, in declared order: what the questions asked of a value

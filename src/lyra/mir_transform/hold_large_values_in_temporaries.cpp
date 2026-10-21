@@ -35,8 +35,9 @@ enum class TakenAs : std::uint8_t {
   // Read as a value, which one made of a large type is made in a temporary
   // for.
   kValue,
-  // Bound where it lies, which such a one is likewise made in a temporary
-  // for.
+  // Bound where it lies for the node's own use -- what a write lands in or an
+  // address-of takes, the object a field or a call is reached on -- which such
+  // a one is likewise made in a temporary for.
   kInPlace,
   // Built into storage the node or its callee owns -- what a new-expression
   // allocates, a capture, an argument of a body this program compiles, which
@@ -55,6 +56,12 @@ enum class TakenAs : std::uint8_t {
   kSuspendedOn,
   // An arm of a choice, which begins an evaluation of its own.
   kApart,
+  // What a borrow refers to. The reference may be carried past the step that
+  // forms it -- into a temporary a step declares, which a later step or the
+  // evaluation's value then reads -- so what it refers to has to last as long
+  // as the evaluation, as rustc makes a borrowed value a local of its
+  // statement and clang keeps it to the end of the full-expression.
+  kReferredTo,
 };
 
 // How the rewrite takes `operand` of `node`, which `node` takes as `use`.
@@ -67,6 +74,9 @@ auto Taking(
   }
   if (const auto* chosen = std::get_if<mir::ConditionalExpr>(&node.data)) {
     return operand == chosen->condition ? TakenAs::kValue : TakenAs::kApart;
+  }
+  if (std::holds_alternative<mir::BorrowExpr>(node.data)) {
+    return TakenAs::kReferredTo;
   }
   if (std::holds_alternative<mir::NewExpr>(node.data) ||
       std::holds_alternative<mir::ClosureExpr>(node.data)) {
@@ -177,6 +187,13 @@ class BodyTemporaries {
            !mir::ValueLiesInStorage(*unit_, block, operand);
   }
 
+  // Whether `operand`, a node of `block` a borrow refers to, is part of a value
+  // made here rather than of storage that is already there.
+  [[nodiscard]] auto PartOfAValueMadeHere(
+      const mir::Block& block, mir::ExprId operand) const -> bool {
+    return !mir::WholeLiesInStorage(*unit_, block, operand);
+  }
+
   // Whether taking `operand`, a node of `block`, as `taken` takes a step of
   // the evaluation it belongs to: it is made in a temporary, or one of its own
   // operands is.
@@ -186,6 +203,11 @@ class BodyTemporaries {
       case TakenAs::kValue:
       case TakenAs::kInPlace:
         if (MakesALargeValue(block, operand)) {
+          return true;
+        }
+        break;
+      case TakenAs::kReferredTo:
+        if (PartOfAValueMadeHere(block, operand)) {
           return true;
         }
         break;
@@ -304,6 +326,24 @@ class BodyTemporaries {
     return Temporary(rebuild, rebuild.From().exprs.Get(operand).type, carried);
   }
 
+  // `operand`, a node of the block `rebuild` builds from that a borrow refers
+  // to, carried over where it lasts as long as the evaluation: a value made
+  // here is made in a temporary of the evaluation, and a place inside one is
+  // held as the value read from it, since nothing else refers into a value the
+  // evaluation makes.
+  auto Referred(BlockRebuild& rebuild, mir::ExprId operand) -> mir::ExprId {
+    const mir::ExprId carried = rebuild.Expr(operand);
+    if (!PartOfAValueMadeHere(rebuild.From(), operand)) {
+      return carried;
+    }
+    const mir::Expr& referent = rebuild.From().exprs.Get(operand);
+    return Temporary(
+        rebuild, referent.type,
+        mir::IsPlace(referent.data)
+            ? rebuild.Add(mir::MakeCopyExpr(carried, referent.type))
+            : carried);
+  }
+
   // `operand` carried over as a value read: one made in a temporary is read
   // out of it where it lies.
   auto Value(BlockRebuild& rebuild, mir::ExprId operand) -> mir::ExprId {
@@ -351,6 +391,8 @@ class BodyTemporaries {
       // taken -- so only a large value made for it is held in a temporary.
       case TakenAs::kInPlace:
         return Held(rebuild, operand);
+      case TakenAs::kReferredTo:
+        return Referred(rebuild, operand);
       case TakenAs::kAsItIs:
         return rebuild.Expr(operand);
       case TakenAs::kSuspendedOn:
@@ -400,6 +442,7 @@ class BodyTemporaries {
                 return Operand(in, taken, operand, false);
               });
             case TakenAs::kInPlace:
+            case TakenAs::kReferredTo:
             case TakenAs::kAsItIs:
             case TakenAs::kSuspendedOn:
             case TakenAs::kApart:

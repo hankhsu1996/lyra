@@ -61,12 +61,27 @@ auto KindOfPlace(const CompilationUnit& unit, const Block& block, ExprId place)
 auto ReadIfOverlaid(const CompilationUnit& unit, Block& block, ExprId object)
     -> ExprId;
 
+// A read-only reference to `operand` where it lies: to the storage it names, or
+// reads where a borrow may bind that storage, and otherwise to its value, held
+// to the end of the full-expression -- as a C++ `const T&` binds an lvalue
+// where it lies and a prvalue in a temporary.
+auto Borrow(const CompilationUnit& unit, Block& block, ExprId operand)
+    -> ExprId;
+
 // Whether the value the node `id` of `block` stands for already lies in
 // storage -- a place, a read of one that takes the value as it lies, or what
 // an execution completed with in the storage its awaiter handed it -- rather
 // than being made here. A read of overlaid storage makes the value its type
 // holds out of the bits there.
 auto ValueLiesInStorage(
+    const CompilationUnit& unit, const Block& block, ExprId id) -> bool;
+
+// Whether the node `id` of `block` lies in storage or is part of a value that
+// does, rather than being or being part of a value made here: a field step is
+// part of what it is taken on, and a dereference of a reference a call answers
+// into its receiver part of that receiver, as a C++ subobject is part of its
+// complete object.
+auto WholeLiesInStorage(
     const CompilationUnit& unit, const Block& block, ExprId id) -> bool;
 
 }  // namespace lyra::mir
