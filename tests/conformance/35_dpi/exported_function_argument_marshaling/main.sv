@@ -4,7 +4,9 @@
 // register type, a packed value through a pointer to a canonical buffer, and a
 // result restricted to a small value (LRM 35.5.5, 35.5.6, 35.7, Annex H.8.3,
 // H.8.4, H.8.8, H.8.9). The foreign caller allocates whatever an argument
-// passed by reference needs (LRM Annex H.8.5).
+// passed by reference needs (LRM Annex H.8.5). An inout the function changes
+// comes back changed even where the new value compares equal to the old, as a
+// real's negated zero does.
 module Top;
   import "DPI-C" context function int drive();
 
@@ -15,6 +17,7 @@ module Top;
   export "DPI-C" function make_pattern;
   export "DPI-C" function classify;
   export "DPI-C" function step_logic;
+  export "DPI-C" function negate;
 
   function void scale_pair(input int seed, output int lo, output int hi);
     lo = seed * 2;
@@ -63,6 +66,10 @@ module Top;
     else b = 1'b0;
   endfunction
 
+  function void negate(inout real r);
+    r = -r;
+  endfunction
+
   int verdict;
 
   initial verdict = drive();
@@ -70,8 +77,8 @@ module Top;
   final begin
     // One bit per crossing the foreign side checked, so a failure names the
     // argument shape that did not survive.
-    if (verdict !== 511)
-      $fatal(1, "the foreign side reported %0d of 511 crossings", verdict);
+    if (verdict !== 1023)
+      $fatal(1, "the foreign side reported %0d of 1023 crossings", verdict);
     $display("All checks passed");
   end
 endmodule

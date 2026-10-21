@@ -15,6 +15,7 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/foreign_export.hpp"
 #include "lyra/hir/foreign_import.hpp"
+#include "lyra/hir/subroutine_kind.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -83,6 +84,10 @@ struct ForeignExportEntry {
   mir::CallableCode code;
   mir::ForeignLinkage linkage;
   mir::TypeId signature;
+  // What the name answers a foreign caller where the call reached nothing of
+  // the design: the kind of subroutine it is, and what its result crosses as.
+  hir::SubroutineKind kind = hir::SubroutineKind::kFunction;
+  support::DpiScalarAbi ret_abi = support::DpiScalarAbi::kVoid;
 };
 
 // Builds that adaptation: C-ABI parameters marshal to the exported subroutine's
@@ -104,12 +109,13 @@ auto SynthesizeForeignExportEntry(
 // calls. Those entries are compiled once per specialization of the scope, so
 // the symbol cannot call any one of them -- it resolves the entry against the
 // scope the foreign call chain established, restores it to the prototype it was
-// generated with, and calls it. The body is a function of the name and the
-// prototype alone, which is why every unit declaring a scope that exports the
-// name can define it identically and leave keeping one to whoever assembles the
-// program (LRM 35.4). States nothing where `unit` already states that name.
+// generated with, and calls it, inside the same region an entry stands in. The
+// body is a function of the name -- its prototype, and what it answers where
+// the call reached nothing -- alone, which is why every unit declaring a scope
+// that exports the name can define it identically and leave keeping one to
+// whoever assembles the program (LRM 35.4). States nothing where the unit
+// already states that name.
 void PublishForeignScopeName(
-    mir::CompilationUnit& unit, const mir::ForeignLinkage& linkage,
-    mir::TypeId signature);
+    UnitLowerer& module, const ForeignExportEntry& exported);
 
 }  // namespace lyra::lowering::hir_to_mir

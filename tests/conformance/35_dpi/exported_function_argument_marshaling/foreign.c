@@ -2,6 +2,8 @@
    reporting the results as one bit each. Every actual starts at a value the
    call it is passed to does not answer with, so an argument that was never
    written reads as that rather than as an answer. */
+#include <math.h>
+
 #include "dpi.h"
 
 int32_t drive(void) {
@@ -68,6 +70,14 @@ int32_t drive(void) {
   }
   if (stepped_from_one == sv_z) {
     verdict |= 256;
+  }
+
+  /* An inout real whose sign the export flips at zero. The two values compare
+     equal, and only their bits show the write-back that it changed. */
+  double zero = 0.0;
+  negate(&zero);
+  if (signbit(zero)) {
+    verdict |= 512;
   }
 
   return verdict;

@@ -39,38 +39,51 @@ the departure  is not carried across. Whether one is due is derived where contro
 The third is what makes the first two sufficient. Membership of a disable target and the generation
 captured on entry live on the running execution, and a termination is recorded there too, so the
 question has the same answer before the foreign call and after it -- and the execution leaves at the
-first point of its own that it reaches.
+first point of its own that asks.
 
 ## The decisions
 
 ```text
-D1. No departure crosses a frame this compiler did not emit. An exported subroutine's entry is a
-    region that lands whatever no region of its body claimed, because past it there is no frame of
-    ours for a departure to travel through. That includes a run-time error of the design and a
-    failure of the tool: a region receives whatever unwinds into it, and receiving an error settles
-    it into the departure no region may claim, so nothing thrown reaches the foreign frame -- not
-    even into a foreign handler that would catch anything.
+D1. No departure crosses a frame this compiler did not emit. Every function this compiler defines
+    for foreign code to call is a region that lands whatever no region inside it claimed, because
+    past it there is no frame of ours for a departure to travel through. That includes a run-time
+    error of the design and a failure of the tool: a region receives whatever unwinds into it, and
+    receiving an error settles it into the departure no region may claim, so nothing thrown reaches
+    the foreign frame -- not even into a foreign handler that would catch anything. Such a function
+    is an exported subroutine's entry, and also the program-global symbol in front of a module's
+    entry, because resolving which entry it calls is the design's own work and can fail as the
+    design's error. Rust puts the same guard on every function it defines with a non-unwinding ABI
+    such as `extern "C"`, and aborts there; here the foreign side regains control instead, as the
+    rest of this record requires.
 
-D2. What the entry hands back in its place is the standard's own answer. An exported task returns
-    the disable-active int (LRM 35.8) whichever way its boundary ended, so its two paths meet at one
-    return. An exported function has no such value, so it answers with its declared result type's
-    default and the foreign side is required not to read it.
+D2. What each such function hands back in its place is the standard's own answer where it gives
+    one, and it is stated from the exported name alone, so a module's symbol and its entry answer
+    alike. An exported task returns the disable-active int (LRM 35.8) whichever way its boundary
+    ended, so its two paths meet at one return. LRM 35.9 gives an exported function no such value,
+    so it answers with the zero of its result's C type, which for a string keeps no storage.
 
 D3. The simulator's half of the protocol is implemented, and the foreign side's half is checked.
     Item a is D2. Items b, c and d are obligations on the foreign programmer that LRM 35.9 also
     obliges a simulator to verify, each checked where its evidence is: what an imported task
     returned, whether an imported function acknowledged, and whether an exported subroutine was
-    reached at all once the state was entered.
+    reached at all once the state was entered. Beside them, an exported subroutine reached from
+    outside the call of a `context` import is refused where it is reached, as the call LRM 35.5.3
+    makes an error.
 
-D4. A check reports and ends the run; it never departs. The frame each one stands in was reached
-    from foreign code, so the composition a fatal makes is taken apart: the report and the stop
-    happen there, and the departure happens at the boundary where control comes back.
+D4. No check departs across a foreign frame. Items b, c and d hold only once the execution has been
+    told to stop, so a breach of any of them is reported and ends the run, and the departure, which
+    is already due, is taken at the boundary where control comes back; the composition a fatal
+    makes is taken apart that way. The refusal of LRM 35.5.3 finds the execution told nothing, so it
+    raises the error, inside the region of the function foreign code called, which lands it, reports
+    it and stops the execution for it, so it crosses nothing either.
 
 D5. The boundary is where the execution leaves. Every other point at which an execution regains
     control is a resumption, which each backend already gates its own way; a foreign call that
     consumed no simulation time suspended nothing, so this is the one such point a body states for
-    itself. Only a `context` import can reach an exported subroutine (LRM 35.5.3), so only its
-    boundary carries any of this.
+    itself. Only a `context` import may reach an exported subroutine (LRM 35.5.3), so only its
+    boundary carries any of this. A plain import that reaches one anyway is refused at the export,
+    and its own boundary still carries nothing, since the standard keeps a non-context call free of
+    instrumentation; the statements after that call run until the execution next suspends.
 
 D6. Terminating an execution that holds an unreturned foreign call is a request, not a settlement.
     It is asked to stop and handed control once more; it leaves at its own gate, its foreign frames
@@ -108,10 +121,12 @@ D8. When the run itself ends, nothing is handed control. A foreign call that nev
   the answer again needs none of the three, and the state that answers it is already kept for every
   other resumption.
 
-- **Check the protocol by refusing the call rather than reporting it.** An entry reached in the
-  disabled state cannot refuse: it has no way to tell its caller anything except through the value
-  it returns, which is the channel the protocol already spends. Reporting and ending the run is what
-  the standard asks for, and it is the only thing that reaches the user.
+- **Check the protocol by answering the caller a refusal rather than reporting it.** An entry
+  reached in the disabled state cannot refuse: it has no way to tell its caller anything except
+  through the value it returns, which is the channel the protocol already spends. Reporting and
+  ending the run is what the standard asks for, and it is the only thing that reaches the user.
+  Where D3 says the call LRM 35.5.3 makes an error is refused, it means exactly that report, with
+  nothing of the design run, and that caller is answered as D2 says.
 
 - **Give the boundary its own departure state instead of widening the gate.** It would answer the
   same question in a second place, kept in step with the first by nothing, and it would leave a
@@ -131,6 +146,8 @@ D8. When the run itself ends, nothing is handed control. A foreign call that nev
   execution still suspended when the run ends has its frame released where it stands. Without that,
   `$finish` aborted the simulator for any design with a task enable suspended at the time -- which
   needed no foreign code at all.
+- An exported subroutine called from outside a `context` import's call, which used to run, is now
+  reported as the error LRM 35.5.3 makes it, and runs nothing of the design.
 
 ## Cross-references
 
@@ -146,5 +163,5 @@ D8. When the run itself ends, nothing is handed control. A foreign call that nev
 - `../architecture/activation.md` -- the two-step termination for an execution that cannot be torn
   down where it stands.
 - IEEE 1800-2023: 35.8 (an exported task's return value), 35.9 (the disable protocol, its four
-  items, and the checks a simulator owes), 35.5.3 (only a context import reaches an export), 9.6.2
+  items, and the checks a simulator owes), 35.5.3 (only a context import may reach an export), 9.6.2
   and 9.6.3 (`disable`, `disable fork`), 9.7 (`kill`), 20.2 (`$finish`).

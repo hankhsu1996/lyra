@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/ambient_run_context.hpp"
 #include "lyra/runtime/dpi_scope_registry.hpp"
 #include "lyra/runtime/running_state.hpp"
@@ -36,6 +37,11 @@ auto ReplaceDpiScope(Scope* scope) -> Scope* {
   RunningState* running = AmbientRunContext::Current().Effects().TryRunning();
   return running == nullptr ? nullptr
                             : running->import_calls.ReplaceScope(scope);
+}
+
+auto HandStringToForeignCaller(
+    RuntimeEffects& effects, const value::String& text) -> const char* {
+  return effects.Running().import_calls.HandToForeignCaller(text);
 }
 
 namespace {
@@ -89,6 +95,7 @@ void CheckImportFunctionAcknowledged(RuntimeEffects& effects) {
 
 void CheckExportReachable(RuntimeEffects& effects) {
   if (!IsDisabled(effects)) {
+    RequireAContextImportCall(effects);
     return;
   }
   // LRM 35.9 item d.
@@ -96,6 +103,16 @@ void CheckExportReachable(RuntimeEffects& effects) {
       base::DiagMessage(
           "foreign code called an exported subroutine after its execution "
           "thread entered the disabled state"));
+}
+
+void RequireAContextImportCall(RuntimeEffects& effects) {
+  if (const RunningState* running = effects.TryRunning();
+      running != nullptr && running->import_calls.InsideACall()) {
+    return;
+  }
+  throw SimulationError(
+      "foreign code called an exported subroutine from an imported "
+      "subroutine that is not declared 'context'");
 }
 
 }  // namespace lyra::runtime

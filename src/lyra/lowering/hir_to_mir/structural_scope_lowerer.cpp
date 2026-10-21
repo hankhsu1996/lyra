@@ -3413,8 +3413,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     // states of that name is the same either way, so it is stated once. Each
     // scope still publishes an entry of its own, because which subroutine the
     // symbol reaches is the scope's and only the name is the unit's.
-    PublishForeignScopeName(
-        unit_lowerer.Unit(), entry.linkage, entry.signature);
+    PublishForeignScopeName(unit_lowerer, entry);
     const mir::CallableId entry_id = mir_class.callables.Add(
         mir::CallableDecl{
             .code = std::move(entry.code),

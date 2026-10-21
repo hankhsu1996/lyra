@@ -3346,6 +3346,12 @@ void lyra_rt_check_export_reachable(void* runtime) {
   CheckExportReachable(*static_cast<RuntimeEffects*>(runtime));
 }
 
+auto lyra_rt_hand_string_to_foreign_caller(void* runtime, const void* text)
+    -> const char* {
+  return HandStringToForeignCaller(
+      *static_cast<RuntimeEffects*>(runtime), Read<String>(text));
+}
+
 auto lyra_rt_claim_namespace_initialize(void* runtime, const char* name)
     -> std::int64_t {
   return ClaimNamespaceInitialization(

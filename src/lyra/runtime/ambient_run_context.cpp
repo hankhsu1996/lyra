@@ -41,6 +41,7 @@ auto AmbientRunContext::Current() -> AmbientRunContext& {
 }
 
 auto CurrentExportScope() -> Scope* {
+  RequireAContextImportCall(AmbientRunContext::Current().Effects());
   Scope* scope = CurrentDpiScope();
   if (scope == nullptr) {
     // The foreign side reached an instance-bound export with no scope
