@@ -11,11 +11,9 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/block_id.hpp"
 #include "lyra/mir/callable_code.hpp"
-#include "lyra/mir/closure.hpp"
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
-#include "lyra/mir/field.hpp"
 #include "lyra/mir/operand_use.hpp"
 #include "lyra/mir/stmt.hpp"
 
@@ -191,6 +189,16 @@ auto BlockRebuild::WithOperandsCarried(const mir::StmtData& data)
             s.then_scope = Child(s.then_scope);
             if (s.else_scope.has_value()) {
               s.else_scope = Child(*s.else_scope);
+            }
+            return s;
+          },
+          [&](mir::SwitchStmt s) -> mir::StmtData {
+            s.discriminant = Evaluation(s.discriminant);
+            for (mir::SwitchCase& selected : s.cases) {
+              selected.body = Child(selected.body);
+            }
+            if (s.default_body.has_value()) {
+              s.default_body = Child(*s.default_body);
             }
             return s;
           },

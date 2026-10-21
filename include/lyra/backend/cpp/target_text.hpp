@@ -115,6 +115,11 @@ class TargetText {
 void WriteNumber(TargetText& out, std::uint64_t value, int base);
 void WriteNumber(TargetText& out, std::int64_t value, int base);
 
+// Writes `value` as a `long long` constant. The most negative one has no
+// literal of its own, since its magnitude is no `long long`, so it is written
+// as the difference that makes it.
+void WriteInt64Constant(TargetText& out, std::int64_t value);
+
 // An integer `Write` writes as decimal digits. `char` and `bool` are left out:
 // a piece of syntax never means either one as a number.
 template <typename T>

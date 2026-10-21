@@ -782,6 +782,21 @@ struct CondBranchTerm {
   BlockId if_false;
 };
 
+// One value a switch transfers on, and where it transfers.
+struct SwitchTarget {
+  std::int64_t value = 0;
+  BlockId target;
+};
+
+// Transfers to the target of the value the machine integer `discriminant`
+// holds, or to `otherwise` where no target names it, as rustc's `SwitchInt`
+// and LLVM's `switch` do. No value appears twice.
+struct SwitchTerm {
+  Operand discriminant;
+  std::vector<SwitchTarget> targets;
+  BlockId otherwise;
+};
+
 // Hands control back to the scheduler and names both ways control can leave.
 // It schedules nothing and names no wakeup source: the source is registered by
 // the runtime calls that precede this terminator, so a delay, an event
@@ -839,8 +854,8 @@ struct DepartingCallInstr {
 };
 
 using TerminatorData = std::variant<
-    ReturnTerm, BranchTerm, CondBranchTerm, SuspendTerm, AbandonTerm,
-    DepartTerm, UnreachableTerm, DepartingCallInstr>;
+    ReturnTerm, BranchTerm, CondBranchTerm, SwitchTerm, SuspendTerm,
+    AbandonTerm, DepartTerm, UnreachableTerm, DepartingCallInstr>;
 
 struct Terminator {
   TerminatorData data;

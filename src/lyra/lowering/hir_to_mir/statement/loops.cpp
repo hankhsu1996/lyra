@@ -78,12 +78,11 @@ auto LowerLoopStep(
 }
 
 // The body of a loop built as one loop, which a `break` written in it leaves
-// by standing inside it (LRM 12.8).
+// by naming `leaves`, the loop itself (LRM 12.8).
 auto LowerLoopBody(
-    ProcessLowerer& process, const WalkFrame& frame, hir::StmtId body)
-    -> diag::Result<mir::Block> {
-  return LowerStmtIntoChildScope(
-      process, frame.WithBreakLeaving(std::nullopt), body);
+    ProcessLowerer& process, const WalkFrame& frame, hir::StmtId body,
+    BreakTarget& leaves) -> diag::Result<mir::Block> {
+  return LowerStmtIntoChildScope(process, frame.WithBreakLeaving(leaves), body);
 }
 
 }  // namespace
@@ -122,7 +121,8 @@ auto LowerForStmt(
     step_ids.push_back(block.exprs.Add(*std::move(step_or)));
   }
 
-  auto body_or = LowerLoopBody(process, frame, f.body);
+  BreakTarget leaves(*frame.bindings);
+  auto body_or = LowerLoopBody(process, frame, f.body, leaves);
   if (!body_or) {
     return std::unexpected(std::move(body_or.error()));
   }
@@ -136,7 +136,8 @@ auto LowerForStmt(
           .init = std::move(mir_init),
           .condition = cond_id,
           .step = std::move(step_ids),
-          .scope = body_scope_id}};
+          .scope = body_scope_id,
+          .break_label = leaves.Label()}};
 }
 
 auto LowerWhileStmt(
@@ -149,7 +150,8 @@ auto LowerWhileStmt(
   const mir::ExprId cond_id =
       frame.current_block->exprs.Add(*std::move(cond_or));
 
-  auto body_or = LowerLoopBody(process, frame, w.body);
+  BreakTarget leaves(*frame.bindings);
+  auto body_or = LowerLoopBody(process, frame, w.body, leaves);
   if (!body_or) {
     return std::unexpected(std::move(body_or.error()));
   }
@@ -159,13 +161,17 @@ auto LowerWhileStmt(
 
   return mir::Stmt{
       .label = std::move(label),
-      .data = mir::WhileStmt{.condition = cond_id, .scope = body_scope_id}};
+      .data = mir::WhileStmt{
+          .condition = cond_id,
+          .scope = body_scope_id,
+          .break_label = leaves.Label()}};
 }
 
 auto LowerDoWhileStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::DoWhileStmt& d) -> diag::Result<mir::Stmt> {
-  auto body_or = LowerLoopBody(process, frame, d.body);
+  BreakTarget leaves(*frame.bindings);
+  auto body_or = LowerLoopBody(process, frame, d.body, leaves);
   if (!body_or) {
     return std::unexpected(std::move(body_or.error()));
   }
@@ -182,7 +188,10 @@ auto LowerDoWhileStmt(
 
   return mir::Stmt{
       .label = std::move(label),
-      .data = mir::DoWhileStmt{.condition = cond_id, .scope = body_scope_id}};
+      .data = mir::DoWhileStmt{
+          .condition = cond_id,
+          .scope = body_scope_id,
+          .break_label = leaves.Label()}};
 }
 
 namespace {
@@ -197,7 +206,7 @@ auto BuildIndexLoopStmt(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ForInit init,
     const Read& read, const Write& write, mir::BinaryOp goes_on_while,
     mir::ExprId bound, mir::BinaryOp advance, mir::BlockId body_scope,
-    std::optional<mir::LoopLabelId> break_label) -> mir::Stmt {
+    std::optional<mir::LabelId> break_label) -> mir::Stmt {
   const mir::ExprId goes_on = block.exprs.Add(
       mir::MakeBinary(
           unit, block, goes_on_while, read(), bound, unit.builtins.bit1));
@@ -226,7 +235,7 @@ auto BuildStoredIndexLoopStmt(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& index,
     mir::ExprId first, mir::BinaryOp goes_on_while, mir::ExprId bound,
     mir::BinaryOp advance, mir::BlockId body_scope,
-    std::optional<mir::LoopLabelId> break_label) -> mir::Stmt {
+    std::optional<mir::LabelId> break_label) -> mir::Stmt {
   const auto read = [&] { return PathValue(unit, block, index); };
   const auto write = [&](mir::ExprId value) {
     return block.exprs.Add(BuildStoreExpr(unit, block, index, value));
@@ -256,7 +265,7 @@ auto BuildDeclaredIndexLoopStmt(
     const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId position,
     mir::ExprId first, mir::BinaryOp goes_on_while, mir::ExprId bound,
     mir::BinaryOp advance, mir::BlockId body_scope,
-    std::optional<mir::LoopLabelId> break_label) -> mir::Stmt {
+    std::optional<mir::LabelId> break_label) -> mir::Stmt {
   const mir::TypeId int_type = unit.builtins.int_type;
   const auto read = [&] { return block.ReadLocal(position, int_type); };
   const auto write = [&](mir::ExprId value) {
@@ -275,7 +284,7 @@ auto BuildDeclaredIndexLoopStmt(
 auto BuildCountingLoopStmt(
     const mir::CompilationUnit& unit, WalkFrame frame, mir::Block& block,
     mir::ExprId count, mir::LocalId position, mir::BlockId body_scope,
-    std::optional<mir::LoopLabelId> break_label) -> mir::Stmt {
+    std::optional<mir::LabelId> break_label) -> mir::Stmt {
   const mir::ExprId bound = SampledCount(unit, frame, block, count);
   return BuildDeclaredIndexLoopStmt(
       unit, block, position, mir::BuildIntLiteral(unit, block, 0),
@@ -286,11 +295,12 @@ auto BuildCountingLoopStmt(
 auto BuildPositionWalkStmt(
     const mir::CompilationUnit& unit, WalkFrame frame, mir::Block& block,
     mir::ExprId count, mir::LocalId position, WalkOrder order,
-    mir::BlockId body_scope) -> mir::Stmt {
+    mir::BlockId body_scope, std::optional<mir::LabelId> break_label)
+    -> mir::Stmt {
   switch (order) {
     case WalkOrder::kFromFirst:
       return BuildCountingLoopStmt(
-          unit, frame, block, count, position, body_scope);
+          unit, frame, block, count, position, body_scope, break_label);
     case WalkOrder::kFromLast: {
       const mir::ExprId last = block.exprs.Add(
           mir::MakeBinary(
@@ -300,7 +310,7 @@ auto BuildPositionWalkStmt(
       return BuildDeclaredIndexLoopStmt(
           unit, block, position, last, mir::BinaryOp::kGreaterEqual,
           mir::BuildIntLiteral(unit, block, 0), mir::BinaryOp::kSub, body_scope,
-          std::nullopt);
+          break_label);
     }
   }
   throw InternalError("BuildPositionWalkStmt: unknown WalkOrder");
@@ -309,7 +319,7 @@ auto BuildPositionWalkStmt(
 auto BuildCountingLoopStmt(
     mir::CompilationUnit& unit, WalkFrame frame, mir::Block& block,
     mir::ExprId count, const AccessPath& position, mir::BlockId body_scope,
-    std::optional<mir::LoopLabelId> break_label) -> mir::Stmt {
+    std::optional<mir::LabelId> break_label) -> mir::Stmt {
   const mir::ExprId bound = SampledCount(unit, frame, block, count);
   return BuildStoredIndexLoopStmt(
       unit, block, position, mir::BuildIntLiteral(unit, block, 0),
@@ -320,7 +330,7 @@ auto BuildCountingLoopStmt(
 auto BuildRangeLoopStmt(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& index,
     std::int64_t left, std::int64_t right, mir::BlockId body_scope,
-    std::optional<mir::LoopLabelId> break_label) -> mir::Stmt {
+    std::optional<mir::LabelId> break_label) -> mir::Stmt {
   const bool ascending = left <= right;
   return BuildStoredIndexLoopStmt(
       unit, block, index, mir::BuildIntLiteral(unit, block, left),
@@ -332,10 +342,12 @@ auto BuildRangeLoopStmt(
 
 auto BuildRepeatLoopStmt(
     const mir::CompilationUnit& unit, WalkFrame frame, mir::Block& block,
-    mir::ExprId count, mir::BlockId body_scope) -> mir::Stmt {
+    mir::ExprId count, mir::BlockId body_scope,
+    std::optional<mir::LabelId> break_label) -> mir::Stmt {
   const mir::LocalId position =
       frame.bindings->DeclareAnonymous(unit.builtins.int_type);
-  return BuildCountingLoopStmt(unit, frame, block, count, position, body_scope);
+  return BuildCountingLoopStmt(
+      unit, frame, block, count, position, body_scope, break_label);
 }
 
 namespace {
@@ -368,7 +380,7 @@ auto BuildKeyLoopStmt(
     const std::function<mir::ExprId(const WalkFrame&)>& array,
     const std::function<AccessPath(const WalkFrame&)>& key,
     mir::TypeId key_type, WalkOrder order, mir::BlockId body_scope,
-    std::optional<mir::LoopLabelId> break_label) -> mir::Stmt {
+    std::optional<mir::LabelId> break_label) -> mir::Stmt {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& block = *frame.current_block;
   const mir::TypeId int_type = unit.builtins.int_type;
@@ -415,15 +427,16 @@ auto LowerRepeatStmt(
   }
   const mir::ExprId count_id = wrapper.exprs.Add(*std::move(count_or));
 
-  auto body_or = LowerLoopBody(process, wrapper_frame, r.body);
+  BreakTarget leaves(*frame.bindings);
+  auto body_or = LowerLoopBody(process, wrapper_frame, r.body, leaves);
   if (!body_or) {
     return std::unexpected(std::move(body_or.error()));
   }
   const mir::BlockId body_scope_id =
       wrapper.child_scopes.Add(std::move(*body_or));
 
-  wrapper.AppendStmt(
-      BuildRepeatLoopStmt(unit, frame, wrapper, count_id, body_scope_id));
+  wrapper.AppendStmt(BuildRepeatLoopStmt(
+      unit, frame, wrapper, count_id, body_scope_id, leaves.Label()));
 
   const mir::BlockId wrapper_scope_id =
       frame.current_block->child_scopes.Add(std::move(wrapper));
@@ -436,7 +449,8 @@ auto LowerRepeatStmt(
 auto LowerForeverStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::ForeverStmt& f) -> diag::Result<mir::Stmt> {
-  auto body_or = LowerLoopBody(process, frame, f.body);
+  BreakTarget leaves(*frame.bindings);
+  auto body_or = LowerLoopBody(process, frame, f.body, leaves);
   if (!body_or) {
     return std::unexpected(std::move(body_or.error()));
   }
@@ -450,7 +464,8 @@ auto LowerForeverStmt(
           .init = {},
           .condition = std::nullopt,
           .step = {},
-          .scope = body_scope_id}};
+          .scope = body_scope_id,
+          .break_label = leaves.Label()}};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -85,7 +85,7 @@ struct VisitedEntry {
     mir::TypeId part_type) -> DescentStep;
 
 // What runs at each entry, lowered into the block the frame names. A `break`
-// appended there ends the walk.
+// naming the loop the frame says a break leaves ends the walk.
 using EntryVisit = std::function<diag::Result<void>(
     const WalkFrame& at, const VisitedEntry& entry)>;
 

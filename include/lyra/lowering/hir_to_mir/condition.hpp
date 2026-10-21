@@ -49,16 +49,14 @@ struct SelectedValue {
 
 // `s0 ? v0 : s1 ? v1 : ... : otherwise`, at `type`, appended to `block`. Each
 // selection after the first stands as the third operand of the one before it,
-// so a chain of any length is as deep as one of a single arm, and one of no
-// arms is `otherwise`.
+// so the chain is as deep as it has arms, and one of no arms is `otherwise`.
 [[nodiscard]] auto BuildSelectionChain(
     mir::Block& block, std::span<const SelectedValue> arms,
     mir::ExprId otherwise, mir::TypeId type) -> mir::ExprId;
 
 // Whether every one of `conditions` holds, and whether any does, tested in
 // order and each only when the ones before it have not already settled the
-// answer: the search a case statement makes through an item's expressions
-// (LRM 12.5) and the one a pattern makes through its members (LRM 12.6). Each
+// answer: the search a pattern makes through its members (LRM 12.6). Each
 // is read as a condition is read, and is tested only where it is reached; a
 // condition whose evaluation takes steps of its own -- one the source wrote --
 // arrives with them in a block of its own, so they run only where it is tested.

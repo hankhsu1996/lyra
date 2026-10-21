@@ -75,6 +75,10 @@ auto FormatIntegralConstant(const IntegralConstantDecl& decl) -> std::string {
   return std::format("Type[{}] {}", decl.type.value, FormatBits(decl.value));
 }
 
+auto BreakLabelSuffix(std::optional<LabelId> label) -> std::string {
+  return label.has_value() ? std::format(" break_label={}", label->value) : "";
+}
+
 auto FormatExprList(std::span<const ExprId> ids) -> std::string {
   std::string text;
   for (const ExprId id : ids) {
@@ -1291,16 +1295,15 @@ class MirDumper {
             [&](const RaiseStmt& s) { DumpRaiseStmt(enclosing, s, id); },
             [&](const FinallyStmt& s) { DumpFinallyStmt(enclosing, s, id); },
             [&](const IfStmt& s) { DumpIfStmt(enclosing, s, id); },
+            [&](const SwitchStmt& s) { DumpSwitchStmt(enclosing, s, id); },
             [&](const ForStmt& s) { DumpForStmt(enclosing, s, id); },
             [&](const WhileStmt& s) { DumpWhileStmt(enclosing, s, id); },
             [&](const DoWhileStmt& s) { DumpDoWhileStmt(enclosing, s, id); },
             [&](const BreakStmt& s) {
               Line(
                   std::format(
-                      "Stmt[{}] BreakStmt{}", id.value,
-                      s.target.has_value()
-                          ? std::format(" -> label {}", s.target->value)
-                          : ""));
+                      "Stmt[{}] BreakStmt -> label {}", id.value,
+                      s.target.value));
             },
             [&](const ContinueStmt&) {
               Line(std::format("Stmt[{}] ContinueStmt", id.value));
@@ -1326,7 +1329,9 @@ class MirDumper {
   }
 
   void DumpWhileStmt(const Block& enclosing, const WhileStmt& s, StmtId id) {
-    Line(std::format("Stmt[{}] WhileStmt", id.value));
+    Line(
+        std::format(
+            "Stmt[{}] WhileStmt{}", id.value, BreakLabelSuffix(s.break_label)));
     Indent();
     Line(
         std::format(
@@ -1341,7 +1346,10 @@ class MirDumper {
 
   void DumpDoWhileStmt(
       const Block& enclosing, const DoWhileStmt& s, StmtId id) {
-    Line(std::format("Stmt[{}] DoWhileStmt", id.value));
+    Line(
+        std::format(
+            "Stmt[{}] DoWhileStmt{}", id.value,
+            BreakLabelSuffix(s.break_label)));
     Indent();
     Line(
         std::format(
@@ -1465,10 +1473,7 @@ class MirDumper {
   void DumpForStmt(const Block& enclosing, const ForStmt& s, StmtId id) {
     Line(
         std::format(
-            "Stmt[{}] ForStmt{}", id.value,
-            s.break_label.has_value()
-                ? std::format(" break_label={}", s.break_label->value)
-                : ""));
+            "Stmt[{}] ForStmt{}", id.value, BreakLabelSuffix(s.break_label)));
     Indent();
     Line("init:");
     Indent();
@@ -1524,7 +1529,8 @@ class MirDumper {
   void DumpBlockStmt(const Block& enclosing, const BlockStmt& s, StmtId id) {
     Line(
         std::format(
-            "Stmt[{}] BlockStmt scope=BlockId{{{}}}", id.value, s.scope.value));
+            "Stmt[{}] BlockStmt scope=BlockId{{{}}}{}", id.value, s.scope.value,
+            BreakLabelSuffix(s.break_label)));
     Indent();
     DumpBlock(enclosing.child_scopes.Get(s.scope));
     Dedent();
@@ -1592,6 +1598,33 @@ class MirDumper {
       Dedent();
     } else {
       Line("else_scope: <none>");
+    }
+    Dedent();
+  }
+
+  void DumpSwitchStmt(const Block& enclosing, const SwitchStmt& s, StmtId id) {
+    Line(
+        std::format(
+            "Stmt[{}] SwitchStmt discriminant=Expr[{}] {}", id.value,
+            s.discriminant.value, FormatExpr(enclosing, s.discriminant)));
+    Indent();
+    for (const SwitchCase& selected : s.cases) {
+      std::string values;
+      for (const std::int64_t value : selected.values) {
+        values += std::format("{}{}", values.empty() ? "" : ", ", value);
+      }
+      Line(std::format("case {} (BlockId={}):", values, selected.body.value));
+      Indent();
+      DumpBlock(enclosing.child_scopes.Get(selected.body));
+      Dedent();
+    }
+    if (s.default_body.has_value()) {
+      Line(std::format("default_body (BlockId={}):", s.default_body->value));
+      Indent();
+      DumpBlock(enclosing.child_scopes.Get(*s.default_body));
+      Dedent();
+    } else {
+      Line("default_body: <none>");
     }
     Dedent();
   }

@@ -1,13 +1,19 @@
 #include "lyra/mir/counts.hpp"
 
+#include <algorithm>
 #include <cstdint>
+#include <span>
+#include <utility>
 #include <vector>
 
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/closure_decl.hpp"
+#include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/statistics.hpp"
 
@@ -44,6 +50,22 @@ void Add(const CompilationUnit& unit, const Class& cls, HeldByClasses& held) {
   }
   held.static_properties += static_properties.size();
   held.constants += constants.size();
+}
+
+// How deep blocks nest in `body`, the body itself one level. Walked without
+// recursion, so a body nested deeper than a stack allows is still measured.
+auto NestingDepth(const Block& body) -> std::uint64_t {
+  std::uint64_t deepest = 0;
+  std::vector<std::pair<const Block*, std::uint64_t>> unvisited{{&body, 1}};
+  while (!unvisited.empty()) {
+    const auto [block, depth] = unvisited.back();
+    unvisited.pop_back();
+    deepest = std::max(deepest, depth);
+    for (const Block& child : block->child_scopes) {
+      unvisited.emplace_back(&child, depth + 1);
+    }
+  }
+  return deepest;
 }
 
 }  // namespace
@@ -95,6 +117,18 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
       {.kind = "external records", .held = external_records.size()},
       {.kind = "consumed signatures", .held = consumed_signatures.size()},
   };
+}
+
+auto NestingDepthOf(const CompilationUnit& unit) -> std::uint64_t {
+  std::uint64_t deepest = 0;
+  ForEachCode(
+      unit, [&](const CodeSource&, const CallableCode& code,
+                std::span<const ExprId>) {
+        if (code.body.has_value()) {
+          deepest = std::max(deepest, NestingDepth(*code.body));
+        }
+      });
+  return deepest;
 }
 
 }  // namespace lyra::mir

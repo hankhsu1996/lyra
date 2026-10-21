@@ -5,6 +5,7 @@
 #include <string>
 #include <utility>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/stmt.hpp"
@@ -146,9 +147,14 @@ auto LowerReturnStmt(
 
 auto LowerBreakStmt(std::optional<std::string> label, const WalkFrame& frame)
     -> diag::Result<mir::Stmt> {
+  if (frame.break_leaves == nullptr) {
+    throw InternalError(
+        "LowerBreakStmt: a break stands in no loop of its body, which the "
+        "front end rejects (LRM 12.8)");
+  }
   return mir::Stmt{
       .label = std::move(label),
-      .data = mir::BreakStmt{.target = frame.break_leaves}};
+      .data = mir::BreakStmt{.target = frame.break_leaves->Name()}};
 }
 
 auto LowerContinueStmt(std::optional<std::string> label)

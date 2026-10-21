@@ -247,6 +247,11 @@ the detail lives in the entry itself.
   dropped silently.
 - [lowering-organization](lowering-organization.md) -- how lowering passes organize their internal
   objects (facts, registries, builders, walk frame).
+- [a-choice-the-source-lists-stands-side-by-side](a-choice-the-source-lists-stands-side-by-side.md)
+  -- a case's items stand side by side: a switch over the subject's value (clang's `SwitchStmt`,
+  rustc's `SwitchInt`) where every label is a value known before the run, otherwise arms tried one
+  after another in a block a selected arm leaves by a labeled break; every `break` names what it
+  leaves; an if-else-if stays nested as the source wrote it, except under a uniqueness qualifier.
 - [storage-access-as-place-formation](storage-access-as-place-formation.md) -- a dereference of a
   capability wrapper's place names the storage it represents, and each backend supplies the protocol
   from the place's type; naming it that way is never a call, while reading it and replacing the

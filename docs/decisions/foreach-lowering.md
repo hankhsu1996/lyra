@@ -45,14 +45,17 @@ the whole foreach is modeled as a labeled break -- the universal multi-level-exi
    once, ahead of every loop, and each dimension that reads the array while the program runs reads
    that one evaluation.
 
-2. **Labeled break.** MIR carries a `LoopLabelId`: a loop may be a break target, and a `break` may
-   name the loop it exits. HIR states the `foreach` as one loop, so a `break` in it is a `break`
-   like any other. HIR-to-MIR, which builds the nested loops, names the outermost one for a `break`
-   whose innermost SystemVerilog loop is the foreach, and clears that on entering any other loop, so
-   a break binds to the nearest enclosing loop exactly as SystemVerilog requires; an ordinary
-   innermost break carries no label. `continue` and `return` stay plain: a plain innermost
-   `continue` already advances to the next tuple, and a plain `return` already exits the enclosing
-   subroutine.
+2. **Labeled break.** MIR carries a `LabelId`: a loop or a block may be a break target, and a
+   `break` names the statement it leaves. HIR states the `foreach` as one loop, so a `break` in it
+   is a `break` like any other. HIR-to-MIR, which builds the nested loops, gives the outermost the
+   label a `break` in the foreach body names, so a break binds to the nearest enclosing loop exactly
+   as SystemVerilog requires. `continue` and `return` stay plain: a plain innermost `continue`
+   already advances to the next tuple, and a plain `return` already exits the enclosing subroutine.
+   Revised 2026-10-20: every `break` the source wrote now names the loop it leaves, not the one in a
+   `foreach` alone, because a case's items may stand in a switch, which C++'s own `break` would
+   leave
+   ([a-choice-the-source-lists-stands-side-by-side](a-choice-the-source-lists-stands-side-by-side.md)
+   D2).
 
 3. **Each backend renders the primitive its own way.** The C++ backend, lacking labeled break, emits
    a `goto` to a label placed after the outermost loop -- the canonical C idiom for leaving a loop

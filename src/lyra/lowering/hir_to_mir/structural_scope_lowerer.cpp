@@ -30,7 +30,6 @@
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
-#include "lyra/lowering/hir_to_mir/arm_chain.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
@@ -55,6 +54,7 @@
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/loops.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
+#include "lyra/lowering/hir_to_mir/switch_stmt.hpp"
 #include "lyra/lowering/hir_to_mir/unit_object_access.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -1937,8 +1937,7 @@ void AppendLoopBlockConstruction(
 // expressions read and write it the way any name reaches a declaration, and
 // each block is built with the index it stands at, as the body that stands
 // there: each body but the last where the index is one of the values it
-// stands at, and the last wherever none before it does, so a loop of one body
-// asks nothing.
+// stands at, and the last wherever none before it does.
 auto LowerRepeatedGenerate(
     StructuralScopeLowerer& lowerer, WalkFrame frame,
     const hir::BlocksRepeat& repeat, const GenerateBinding& gen_binding)
@@ -2001,51 +2000,35 @@ auto LowerRepeatedGenerate(
               AccessPath{.owner = index_place(body), .descent = {}},
               body.exprs.Add(*std::move(initial_or))))});
 
-  // Which body is built is chosen as a case statement chooses an item: each
-  // arm tests the values its own body stands at, the last standing at every
-  // value the others do not. A test reads the index in its condition rather
-  // than ahead of the arms, since reading it changes nothing, so an arm's
-  // `else` holds its `if` alone, and a loop of one body reads nothing.
-  mir::Block chosen;
-  const WalkFrame chosen_frame = body_frame.WithBlock(&chosen);
+  // Which body is built is a switch over the index: each body is taken at the
+  // values it stands at, and the last at every value the others do not.
+  mir::Block loop_body;
+  const WalkFrame loop_frame = body_frame.WithBlock(&loop_body);
   const std::span<const hir::LoopBody> tested =
       std::span{repeat.bodies}.first(repeat.bodies.size() - 1);
   mir::Block last;
   if (auto built = build_into(last, repeat.bodies.back()); !built) {
     return std::unexpected(std::move(built.error()));
   }
-  auto choice_or = BuildArmChain(
-      unit, chosen_frame, tested.size(),
-      [&](const WalkFrame& arm_frame,
-          std::size_t arm) -> diag::Result<mir::ExprId> {
-        mir::Block& in = *arm_frame.current_block;
-        std::vector<mir::ExprId> at_one_of_them;
-        at_one_of_them.reserve(tested[arm].indices.size());
-        for (const std::int64_t value : tested[arm].indices) {
-          at_one_of_them.push_back(in.exprs.Add(
-              mir::MakeBinary(
-                  unit, in, mir::BinaryOp::kEquality,
-                  BuildToInt64Call(unit, in, index_read(in)),
-                  mir::BuildMachineIntLiteral(unit, in, value),
-                  unit.builtins.machine_bool)));
-        }
-        return AnyHolds(unit, in, at_one_of_them);
-      },
-      [&](const WalkFrame&, std::size_t arm) -> diag::Result<mir::Block> {
-        mir::Block stands;
-        if (auto built = build_into(stands, tested[arm]); !built) {
-          return std::unexpected(std::move(built.error()));
-        }
-        return stands;
-      },
-      std::move(last));
+  std::vector<ValueArm> bodies;
+  bodies.reserve(tested.size());
+  for (const hir::LoopBody& stood : tested) {
+    bodies.push_back(
+        ValueArm{
+            .values = stood.indices,
+            .body = [&](const WalkFrame&) -> diag::Result<mir::Block> {
+              mir::Block stands;
+              if (auto built = build_into(stands, stood); !built) {
+                return std::unexpected(std::move(built.error()));
+              }
+              return stands;
+            }});
+  }
+  auto choice_or = BuildValueSwitch(
+      loop_frame, BuildToInt64Call(unit, loop_body, index_read(loop_body)),
+      bodies, std::move(last));
   if (!choice_or) return std::unexpected(std::move(choice_or.error()));
-  chosen.AppendStmt(*std::move(choice_or));
-
-  mir::Block loop_body;
-  const WalkFrame loop_frame = body_frame.WithBlock(&loop_body);
-  loop_body.AppendStmt(
-      mir::BlockStmt{.scope = loop_body.child_scopes.Add(std::move(chosen))});
+  loop_body.AppendStmt(*std::move(choice_or));
   // The step is the expression the source wrote, and it reaches the next
   // index by writing the loop's own, so it is placed for its effect and its
   // value is dropped -- every form LRM 27.4 admits for it says where the index
@@ -2103,42 +2086,19 @@ auto LowerSelectionBranchInto(
       branch);
 }
 
-// One alternative of a `case` is reached where the selector matches one of its
-// own labels. LRM 12.5 fixes that comparison: it succeeds only where every bit
-// matches exactly, `x` and `z` included, so the selector is read against each
-// label rather than reduced to a value first. `selector` stands under every
-// one of those comparisons, so it is a place that evaluates nothing, which
-// each comparison reads or borrows as it takes its operands.
-auto MatchesAnyLabel(
-    StructuralScopeLowerer& lowerer, WalkFrame frame, mir::ExprId selector,
-    const std::vector<hir::ExprId>& labels) -> diag::Result<mir::ExprId> {
-  mir::Block& block = *frame.current_block;
-  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  const hir::StructuralScope& hir_scope = lowerer.HirScope();
-
-  std::vector<mir::ExprId> matches;
-  matches.reserve(labels.size());
-  for (const hir::ExprId label : labels) {
-    auto lowered = lowerer.LowerAsPlace(hir_scope.exprs.Get(label), frame);
-    if (!lowered) return std::unexpected(std::move(lowered.error()));
-    matches.push_back(BuildCaseEquality(
-        unit, block, selector, block.exprs.Add(*std::move(lowered))));
-  }
-  // An item the source gave no label matches nothing of its own, which is what
-  // a `default` is; it is reached by the search running out instead.
-  return AnyHolds(unit, block, matches);
-}
-
 // A `case` searches its items in the order the source wrote them and stops at
 // the first match, taking the `default` only once every one of them has failed
-// (LRM 12.5). That search is a chain of conditions over one selector, built
-// from what stands after every item has failed outwards, so an item states its
-// own labels and nothing about the items before it.
+// (LRM 12.5). An item is reached where the selector matches one of its own
+// labels, and LRM 12.5 fixes that comparison: it succeeds only where every bit
+// matches exactly, `x` and `z` included. Where every label is a value of the
+// selector's type known before the run, that is a switch over the selector's
+// value; otherwise the selector is read against each label in turn.
 auto LowerLabelledChoiceInto(
     StructuralScopeLowerer& lowerer, WalkFrame frame,
     const hir::BlocksChoose& chosen, const hir::ChoiceOnLabel& on,
     const GenerateBinding& gen_binding) -> diag::Result<void> {
   mir::Block& block = *frame.current_block;
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
 
   // The source wrote the selector once and every item is read against it, so
@@ -2150,32 +2110,74 @@ auto LowerLabelledChoiceInto(
       lowerer.Owner(), frame, block, selector_type,
       block.exprs.Add(*std::move(selector)));
 
-  mir::Block tail;
-  auto otherwise = LowerSelectionBranchInto(
-      lowerer, frame.WithBlock(&tail), chosen, on.otherwise, gen_binding);
-  if (!otherwise) return std::unexpected(std::move(otherwise.error()));
-
-  for (std::size_t back = on.items.size(); back > 0; --back) {
-    const hir::LabeledItem& item = on.items[back - 1];
+  const auto branch_into =
+      [&](const hir::SelectionBranch& branch) -> diag::Result<mir::Block> {
     mir::Block stands;
-    auto body = LowerSelectionBranchInto(
-        lowerer, frame.WithBlock(&stands), chosen, item.stands, gen_binding);
-    if (!body) return std::unexpected(std::move(body.error()));
+    auto built = LowerSelectionBranchInto(
+        lowerer, frame.WithBlock(&stands), chosen, branch, gen_binding);
+    if (!built) return std::unexpected(std::move(built.error()));
+    return stands;
+  };
 
-    mir::Block step;
-    auto test = MatchesAnyLabel(
-        lowerer, frame.WithBlock(&step), step.LocalPlace(held, selector_type),
-        item.labels);
-    if (!test) return std::unexpected(std::move(test.error()));
-    step.AppendStmt(
-        mir::IfStmt{
-            .condition = *test,
-            .then_scope = step.child_scopes.Add(std::move(stands)),
-            .else_scope = step.child_scopes.Add(std::move(tail))});
-    tail = std::move(step);
+  const auto label_of = [&](hir::ExprId label) -> Evaluation {
+    return [&, label](const WalkFrame& at) -> diag::Result<mir::ExprId> {
+      auto written = lowerer.LowerAsPlace(hir_scope.exprs.Get(label), at);
+      if (!written) return std::unexpected(std::move(written.error()));
+      return at.current_block->exprs.Add(*std::move(written));
+    };
+  };
+
+  std::vector<std::vector<Evaluation>> labels;
+  labels.reserve(on.items.size());
+  for (const hir::LabeledItem& item : on.items) {
+    std::vector<Evaluation>& of_item = labels.emplace_back();
+    of_item.reserve(item.labels.size());
+    for (const hir::ExprId label : item.labels) {
+      of_item.push_back(label_of(label));
+    }
   }
-  block.AppendStmt(
-      mir::BlockStmt{.scope = block.child_scopes.Add(std::move(tail))});
+  auto values = ValuesOfItems(unit, frame, labels, selector_type);
+  if (!values) return std::unexpected(std::move(values.error()));
+
+  auto otherwise = branch_into(on.otherwise);
+  if (!otherwise) return std::unexpected(std::move(otherwise.error()));
+  if (values->has_value()) {
+    std::vector<ValueArm> items;
+    items.reserve(on.items.size());
+    for (std::size_t i = 0; i < on.items.size(); ++i) {
+      items.push_back(
+          ValueArm{.values = (**values)[i], .body = [&, i](const WalkFrame&) {
+                     return branch_into(on.items[i].stands);
+                   }});
+    }
+    auto choice = BuildCaseOverValues(
+        unit, frame, held, selector_type, items, *std::move(otherwise));
+    if (!choice) return std::unexpected(std::move(choice.error()));
+    block.AppendStmt(*std::move(choice));
+    return {};
+  }
+
+  std::vector<SearchedArm> items;
+  items.reserve(on.items.size());
+  for (std::size_t i = 0; i < on.items.size(); ++i) {
+    SearchedArm lowering{.conditions = {}, .body = [&, i](const WalkFrame&) {
+                           return branch_into(on.items[i].stands);
+                         }};
+    for (const Evaluation& written : labels[i]) {
+      lowering.conditions.emplace_back(
+          [&, written](const WalkFrame& at) -> diag::Result<mir::ExprId> {
+            mir::Block& in = *at.current_block;
+            auto lowered = written(at);
+            if (!lowered) return lowered;
+            return BuildCaseEquality(
+                unit, in, in.LocalPlace(held, selector_type), *lowered);
+          });
+    }
+    items.push_back(std::move(lowering));
+  }
+  auto choice = BuildArmSearch(unit, frame, items, *std::move(otherwise));
+  if (!choice) return std::unexpected(std::move(choice.error()));
+  block.AppendStmt(*std::move(choice));
   return {};
 }
 

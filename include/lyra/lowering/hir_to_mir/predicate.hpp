@@ -90,9 +90,11 @@ enum class SettledBy : std::uint8_t {
 
 // The truth, at `type`, of `terms` searched in order: a term is evaluated only
 // where the ones before it left the answer open (LRM 11.3.5), and the answer is
-// what the operator's table makes of the terms that were. A search of any
-// length is a run of steps one after another, never a step inside the one
-// before it. At least two terms: a search of one settles nothing.
+// what the operator's table makes of the terms that were. Where a term can be
+// unknown the search is a run of steps one after another; where none can it is
+// a conditional whose third operand searches the terms after it, as deep as
+// the chain of operators the source nests. At least two terms: a search of one
+// settles nothing.
 [[nodiscard]] auto BuildSearch(
     const mir::CompilationUnit& unit, const WalkFrame& frame, SettledBy rule,
     std::span<const Predicate> terms, mir::TypeId type)
@@ -128,8 +130,9 @@ struct SelectionArm {
 // goes on, and its arm's value is combined with whatever the rest answers, the
 // way two values of the result type combine. Only a predicate whose type can
 // hold an unknown has that outcome.
-// A selection of any number of arms is as deep as one of a single arm. At
-// least one arm.
+// Where an arm's predicate can be unknown the arms are steps one after
+// another; where none can, each arm's conditional holds the next as its third
+// operand, as deep as the conditionals the source nests. At least one arm.
 [[nodiscard]] auto BuildSelection(
     const mir::CompilationUnit& unit, const WalkFrame& frame,
     std::span<const SelectionArm> arms, const Evaluation& otherwise,

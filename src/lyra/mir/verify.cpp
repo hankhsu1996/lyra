@@ -100,6 +100,7 @@ void ForEachExpr(const StmtData& data, const auto& reach) {
           [](const TryStmt&) {}, [&](const RaiseStmt& s) { reach(s.effect); },
           [](const FinallyStmt&) {},
           [&](const IfStmt& s) { reach(s.condition); },
+          [&](const SwitchStmt& s) { reach(s.discriminant); },
           [&](const ForStmt& s) {
             for (const ForInit& init : s.init) {
               std::visit(
@@ -1541,6 +1542,95 @@ void VerifyFramesHoldNoLargeValue(
   }
 }
 
+// A label names one statement of the body, so a break naming it leaves that
+// statement and no other, and a break stands inside the statement it names. A
+// switch takes each value at one case at most, so the order of its cases means
+// nothing. `around` holds the labels of the statements `block` stands inside,
+// and `carried` every label met so far in the body; a block expression is left
+// by no break, so the steps of one stand inside none.
+void VerifyBreaksAndSwitches(
+    const Block& block, std::vector<LabelId>& around,
+    std::set<LabelId>& carried, const auto& describe) {
+  const auto inside = [&](BlockId id, std::optional<LabelId> label) {
+    if (label.has_value()) {
+      if (!carried.insert(*label).second) {
+        throw InternalError(
+            std::format(
+                "mir verify: {} gives label {} to two statements -- please "
+                "report this as a bug",
+                describe(), label->value));
+      }
+      around.push_back(*label);
+    }
+    VerifyBreaksAndSwitches(
+        block.child_scopes.Get(id), around, carried, describe);
+    if (label.has_value()) {
+      around.pop_back();
+    }
+  };
+  for (const Expr& expr : block.exprs) {
+    if (const auto* steps = std::get_if<BlockExpr>(&expr.data)) {
+      std::vector<LabelId> none;
+      VerifyBreaksAndSwitches(
+          block.child_scopes.Get(steps->scope), none, carried, describe);
+    }
+  }
+  for (const StmtId id : block.root_stmts) {
+    std::visit(
+        Overloaded{
+            [](const EmptyStmt&) {}, [](const LocalDeclStmt&) {},
+            [](const ExprStmt&) {}, [](const RaiseStmt&) {},
+            [](const ContinueStmt&) {}, [](const ReturnStmt&) {},
+            [&](const BlockStmt& s) { inside(s.scope, s.break_label); },
+            [&](const TryStmt& s) {
+              inside(s.body, std::nullopt);
+              inside(s.handler, std::nullopt);
+            },
+            [&](const FinallyStmt& s) {
+              inside(s.body, std::nullopt);
+              inside(s.cleanup, std::nullopt);
+            },
+            [&](const IfStmt& s) {
+              inside(s.then_scope, std::nullopt);
+              if (s.else_scope.has_value()) {
+                inside(*s.else_scope, std::nullopt);
+              }
+            },
+            [&](const SwitchStmt& s) {
+              std::set<std::int64_t> taken;
+              for (const SwitchCase& selected : s.cases) {
+                for (const std::int64_t value : selected.values) {
+                  if (!taken.insert(value).second) {
+                    throw InternalError(
+                        std::format(
+                            "mir verify: {} switches to two cases at {} -- "
+                            "please report this as a bug",
+                            describe(), value));
+                  }
+                }
+                inside(selected.body, std::nullopt);
+              }
+              if (s.default_body.has_value()) {
+                inside(*s.default_body, std::nullopt);
+              }
+            },
+            [&](const ForStmt& s) { inside(s.scope, s.break_label); },
+            [&](const WhileStmt& s) { inside(s.scope, s.break_label); },
+            [&](const DoWhileStmt& s) { inside(s.scope, s.break_label); },
+            [&](const BreakStmt& s) {
+              if (!std::ranges::contains(around, s.target)) {
+                throw InternalError(
+                    std::format(
+                        "mir verify: {} breaks out of label {}, which stands "
+                        "around no statement holding it -- please report "
+                        "this as a bug",
+                        describe(), s.target.value));
+              }
+            }},
+        block.stmts.Get(id).data);
+  }
+}
+
 // `describe` names the body, and is asked only once there is something to
 // report: the check runs over every body of every unit, and composing a name
 // for each one costs more than the check itself.
@@ -1572,6 +1662,9 @@ void VerifyCode(
   VerifyConstantsAreFolded(unit, *code.body, describe);
   VerifyAllocations(unit, *code.body, describe);
   VerifyErasures(unit, *code.body, describe);
+  std::vector<LabelId> around;
+  std::set<LabelId> carried;
+  VerifyBreaksAndSwitches(*code.body, around, carried, describe);
   if (!Suspends(unit, *code.body, describe) ||
       unit.types.Get(code.result_type).Is<CoroutineType>()) {
     return;

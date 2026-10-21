@@ -49,13 +49,15 @@ class FunctionLowerer {
   auto Run() -> diag::Result<lir::Function>;
 
  private:
-  // The branch targets a `break` and a `continue` inside one loop transfer to.
-  // A labeled loop is also the target of a labeled break from a nested loop.
-  // `scope_depth` is how many scopes were open where the loop began, so a
-  // branch out of it runs the cleanups of exactly the ones it leaves.
-  struct LoopTargets {
-    std::optional<mir::LoopLabelId> label;
-    lir::BlockId continue_target{};
+  // The branch targets of one statement a `break` leaves: a loop, which a
+  // `continue` inside it also transfers to the next pass of, or a labeled
+  // block, which it does not. A labeled statement is the target of a break
+  // naming it from any depth. `scope_depth` is how many scopes were open where
+  // the statement began, so a branch out of it runs the cleanups of exactly the
+  // ones it leaves.
+  struct BreakableScope {
+    std::optional<mir::LabelId> label;
+    std::optional<lir::BlockId> continue_target;
     lir::BlockId break_target{};
     std::size_t scope_depth{};
   };
@@ -211,6 +213,10 @@ class FunctionLowerer {
   void EmitScopeDrop(const SlotEnd& end);
   void EmitScopeDrop(const StorageRelease& release);
   auto LowerIfInto(const mir::Block& block, const mir::IfStmt& stmt)
+      -> diag::Result<void>;
+  auto LowerSwitchInto(const mir::Block& block, const mir::SwitchStmt& stmt)
+      -> diag::Result<void>;
+  auto LowerBlockStmtInto(const mir::Block& block, const mir::BlockStmt& stmt)
       -> diag::Result<void>;
   auto LowerForInto(const mir::Block& block, const mir::ForStmt& stmt)
       -> diag::Result<void>;
@@ -657,7 +663,7 @@ class FunctionLowerer {
 
   std::vector<OpenBlock> blocks_;
   lir::BlockId current_{};
-  std::vector<LoopTargets> loops_;
+  std::vector<BreakableScope> breakable_scopes_;
   std::vector<UnwindScope> scopes_;
   // Where a departure goes once it has passed every scope, built the first
   // time one is needed.

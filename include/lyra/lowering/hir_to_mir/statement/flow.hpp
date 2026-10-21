@@ -52,8 +52,9 @@ auto LowerReturnStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::ReturnStmt& r) -> diag::Result<mir::Stmt>;
 
-// A `break` leaves the innermost loop the source wrote around it (LRM 12.8).
-// Where that loop is built as a nest the frame says which loop of it to name.
+// A `break` leaves the innermost loop the source wrote around it (LRM 12.8),
+// and names the loop the frame says that is: for a `foreach`, the outermost
+// loop of the nest it is built as.
 auto LowerBreakStmt(std::optional<std::string> label, const WalkFrame& frame)
     -> diag::Result<mir::Stmt>;
 

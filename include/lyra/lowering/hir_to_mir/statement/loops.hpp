@@ -36,7 +36,7 @@ namespace lyra::lowering::hir_to_mir {
 auto BuildCountingLoopStmt(
     const mir::CompilationUnit& unit, WalkFrame frame, mir::Block& block,
     mir::ExprId count, mir::LocalId position, mir::BlockId body_scope,
-    std::optional<mir::LoopLabelId> break_label = std::nullopt) -> mir::Stmt;
+    std::optional<mir::LabelId> break_label = std::nullopt) -> mir::Stmt;
 
 // The same loop over a position that stands in storage of its own, which
 // outlives the loop where something still reads it afterwards: `position` is
@@ -44,18 +44,20 @@ auto BuildCountingLoopStmt(
 auto BuildCountingLoopStmt(
     mir::CompilationUnit& unit, WalkFrame frame, mir::Block& block,
     mir::ExprId count, const AccessPath& position, mir::BlockId body_scope,
-    std::optional<mir::LoopLabelId> break_label) -> mir::Stmt;
+    std::optional<mir::LabelId> break_label) -> mir::Stmt;
 
 // Which end of a container a loop over its entries starts from.
 enum class WalkOrder : std::uint8_t { kFromFirst, kFromLast };
 
 // The loop over the positions below `count`, from 0 up or from the last down
 // to 0 as `order` says -- a search for the last entry that satisfies something
-// walks from the last, so it stops at the first one it meets.
+// walks from the last, so it stops at the first one it meets. `break_label` is
+// as a counting loop's is.
 auto BuildPositionWalkStmt(
     const mir::CompilationUnit& unit, WalkFrame frame, mir::Block& block,
     mir::ExprId count, mir::LocalId position, WalkOrder order,
-    mir::BlockId body_scope) -> mir::Stmt;
+    mir::BlockId body_scope, std::optional<mir::LabelId> break_label)
+    -> mir::Stmt;
 
 // The loop over an associative array's keys (LRM 7.9.4 -- 7.9.7): a `for`
 // whose counter holds what `first` and then `next` answer -- `last` and then
@@ -71,7 +73,7 @@ auto BuildKeyLoopStmt(
     const std::function<mir::ExprId(const WalkFrame&)>& array,
     const std::function<AccessPath(const WalkFrame&)>& key,
     mir::TypeId key_type, WalkOrder order, mir::BlockId body_scope,
-    std::optional<mir::LoopLabelId> break_label) -> mir::Stmt;
+    std::optional<mir::LabelId> break_label) -> mir::Stmt;
 
 // A loop over a declared range (LRM 7.4): the variable `index` reaches takes
 // each index in turn, from `left` through `right` in the direction the range
@@ -80,13 +82,15 @@ auto BuildKeyLoopStmt(
 auto BuildRangeLoopStmt(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& index,
     std::int64_t left, std::int64_t right, mir::BlockId body_scope,
-    std::optional<mir::LoopLabelId> break_label) -> mir::Stmt;
+    std::optional<mir::LabelId> break_label) -> mir::Stmt;
 
 // The same loop for a body that runs a number of times and never asks which
 // time this is (LRM 12.7.3, and the repeat event control of LRM 9.4.5).
+// `break_label` is as a counting loop's is.
 auto BuildRepeatLoopStmt(
     const mir::CompilationUnit& unit, WalkFrame frame, mir::Block& block,
-    mir::ExprId count, mir::BlockId body_scope) -> mir::Stmt;
+    mir::ExprId count, mir::BlockId body_scope,
+    std::optional<mir::LabelId> break_label = std::nullopt) -> mir::Stmt;
 
 auto LowerForStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,

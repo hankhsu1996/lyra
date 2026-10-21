@@ -4,6 +4,7 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string_view>
 #include <system_error>
 
@@ -82,6 +83,15 @@ void WriteNumber(TargetText& out, std::uint64_t value, int base) {
 
 void WriteNumber(TargetText& out, std::int64_t value, int base) {
   AppendNumber(out, value, base);
+}
+
+void WriteInt64Constant(TargetText& out, std::int64_t value) {
+  if (value == std::numeric_limits<std::int64_t>::min()) {
+    out += "(-9223372036854775807LL - 1)";
+    return;
+  }
+  WriteNumber(out, value, 10);
+  out += "LL";
 }
 
 }  // namespace lyra::backend::cpp

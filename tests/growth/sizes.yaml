@@ -11,6 +11,7 @@
 # a constant the size added.
 array_pattern_elements: 512
 call_arguments: 256
+case_items: 256
 chain_over_wide_values: 128
 concatenation_operands: 256
 enum_members: 256

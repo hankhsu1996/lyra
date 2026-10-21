@@ -195,7 +195,7 @@ identity is the suspect, not the analysis.
 ## Boundary to Adjacent Layers
 
 - Consumes MIR. MIR-to-LIR is the layer where the generic programming language becomes a
-  machine-execution model: structured control flow (`if`, loop, break, continue, return) is
+  machine-execution model: structured control flow (`if`, switch, loop, break, continue, return) is
   flattened into basic blocks and terminators, member access becomes a place projection, expression
   trees become instruction streams, callable invocation becomes a call instruction, and suspension
   (an await, a sensitivity wait) becomes suspend/resume edges with scheduler calls. Every MIR type
@@ -264,11 +264,12 @@ point as an edge it can reason about (does it post-dominate any node, what value
 rather than as a convention buried inside a node's semantics.
 
 A structured `if` with then and else blocks becomes a conditional branch to two basic blocks that
-rejoin at a merge block; a loop becomes a header, a body, and a back edge; `break` and `continue`
-become branches to the loop's exit and header. The structured nesting MIR carried is gone; the CFG
-is the only control structure LIR has. This flattening is the core of MIR-to-LIR -- a backend that
-targets a structured language (the C++ backend) never performs it, so it is work LIR introduces from
-scratch.
+rejoin at a merge block; a switch becomes one terminator naming the block for each value and the
+block where none is named; a loop becomes a header, a body, and a back edge; a `break` becomes a
+branch to the block after the statement it names, and a `continue` a branch to its loop's header.
+The structured nesting MIR carried is gone; the CFG is the only control structure LIR has. This
+flattening is the core of MIR-to-LIR -- a backend that targets a structured language (the C++
+backend) never performs it, so it is work LIR introduces from scratch.
 
 A callable's function-local set is small: the receiver `self` and the compiler temporaries the
 lowering introduces. A source-level variable with static lifetime is not a function local; it is a

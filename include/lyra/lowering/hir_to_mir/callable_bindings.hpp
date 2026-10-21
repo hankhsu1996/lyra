@@ -16,6 +16,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/local.hpp"
+#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/callable_bounds.hpp"
 
@@ -161,6 +162,11 @@ class CallableBindings {
   // body may reach, which is what an origin is for.
   auto DeclareAnonymous(mir::TypeId type) -> mir::LocalId;
 
+  // A label no other statement of this body carries.
+  [[nodiscard]] auto NextLabel() -> mir::LabelId {
+    return mir::LabelId{label_count_++};
+  }
+
   // Make `origin` available as a body binding here, forwarding it through the
   // lexical parent one boundary at a time and recording the canonical carrier.
   // A second call for the same origin returns the same binding.
@@ -205,6 +211,33 @@ class CallableBindings {
   mir::TypeId self_ptr_type_{};
   base::SymbolTable<mir::FieldId, CaptureEntry> captures_;
   std::map<BindingOriginId, BodyBindingRef> available_;
+  std::uint32_t label_count_ = 0;
+};
+
+// A statement of one body that a break may leave. It is labeled only once a
+// break asks for it, so a statement nothing leaves early carries no label.
+class BreakTarget {
+ public:
+  explicit BreakTarget(CallableBindings& bindings) : bindings_(&bindings) {
+  }
+
+  // The label a break leaving this statement names.
+  [[nodiscard]] auto Name() -> mir::LabelId {
+    if (!label_.has_value()) {
+      label_ = bindings_->NextLabel();
+    }
+    return *label_;
+  }
+
+  // The label this statement carries, read once everything inside it is
+  // lowered.
+  [[nodiscard]] auto Label() const -> std::optional<mir::LabelId> {
+    return label_;
+  }
+
+ private:
+  CallableBindings* bindings_;
+  std::optional<mir::LabelId> label_;
 };
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -37,10 +37,16 @@ struct FormCounts {
   std::vector<Count> counts;
 };
 
+struct FormDepth {
+  std::string form;
+  std::uint64_t depth = 0;
+};
+
 struct UnitRecord {
   std::vector<Artifact> artifacts;
   // In the order the unit passed through its forms.
   std::vector<FormCounts> forms;
+  std::vector<FormDepth> depths;
 };
 
 struct ChildRecord {
@@ -195,6 +201,17 @@ void RecordCounts(
           FormCounts{.form = std::string(form), .counts = std::move(counts)});
 }
 
+void RecordNestingDepth(
+    std::string_view unit, std::string_view form, std::uint64_t depth) {
+  if (!RecordsStatistics()) {
+    return;
+  }
+  Statistics& statistics = TheStatistics();
+  const std::scoped_lock lock(statistics.lock);
+  UnitNamed(statistics, unit)
+      .depths.push_back(FormDepth{.form = std::string(form), .depth = depth});
+}
+
 void RecordChild(std::string command, ChildUsage usage) {
   if (!RecordsStatistics()) {
     return;
@@ -238,10 +255,15 @@ auto WriteStatistics(const std::filesystem::path& path)
       }
       counts[form.form] = std::move(held);
     }
+    nlohmann::ordered_json nesting_depth = nlohmann::ordered_json::object();
+    for (const FormDepth& depth : unit.depths) {
+      nesting_depth[depth.form] = depth.depth;
+    }
     units.push_back(
         {{"name", name},
          {"artifacts", std::move(artifacts)},
-         {"counts", std::move(counts)}});
+         {"counts", std::move(counts)},
+         {"nesting_depth", std::move(nesting_depth)}});
   }
   nlohmann::ordered_json children = nlohmann::ordered_json::array();
   for (const ChildRecord& child : statistics.children) {

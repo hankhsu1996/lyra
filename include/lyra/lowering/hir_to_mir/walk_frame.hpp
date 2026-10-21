@@ -21,6 +21,7 @@ struct Block;
 
 namespace lyra::lowering::hir_to_mir {
 
+class BreakTarget;
 class CallableBindings;
 struct SettledPath;
 struct WalkFrame;
@@ -174,11 +175,14 @@ struct WalkFrame {
   // queue its own select is taken from. Null outside such a subtree.
   const SettledPath* selected_queue = nullptr;
 
-  // The loop a `break` names, where the innermost loop the source wrote around
-  // it is built as a nest: a `break` there leaves every loop of the nest (LRM
-  // 12.8), so it names the outermost by the label that loop carries. Absent
-  // under a loop built as one loop, which a `break` leaves by being inside it.
-  std::optional<mir::LoopLabelId> break_leaves;
+  // The loop a `break` lowered here leaves: the innermost loop the source
+  // wrote around it (LRM 12.8), the outermost of the nest a `foreach` is built
+  // as, or a walk over an array's entries that a visit may end early. The
+  // break names it rather than leaving the innermost loop, because what the
+  // break stands in -- a case's items, built as a switch or a block left by a
+  // break of its own -- is not that loop. The loop lowering owns it on its
+  // stack, and it is null outside any loop of this body.
+  BreakTarget* break_leaves = nullptr;
 
   // How this body reaches the instance of the structural scope its outward
   // references count from. Settled once where the body's frame is built, so
@@ -305,12 +309,10 @@ struct WalkFrame {
     return next;
   }
 
-  // Enters the body of a loop: `loop` is the label a `break` there names,
-  // absent where the loop is left without naming it.
-  [[nodiscard]] auto WithBreakLeaving(
-      std::optional<mir::LoopLabelId> loop) const -> WalkFrame {
+  // Enters the body of `loop`, which a `break` there leaves by naming it.
+  [[nodiscard]] auto WithBreakLeaving(BreakTarget& loop) const -> WalkFrame {
     WalkFrame next = *this;
-    next.break_leaves = loop;
+    next.break_leaves = &loop;
     return next;
   }
 
@@ -318,6 +320,9 @@ struct WalkFrame {
       -> WalkFrame {
     WalkFrame next = *this;
     next.bindings = callable_bindings;
+    // A label is one body's, so no break of another body leaves a loop of
+    // this one, which LRM 12.8 forbids across a fork-join block as well.
+    next.break_leaves = nullptr;
     return next;
   }
 

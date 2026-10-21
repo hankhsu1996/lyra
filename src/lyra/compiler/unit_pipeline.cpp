@@ -19,6 +19,8 @@ namespace lyra::compiler {
 void RecordSemanticForm(const mir::CompilationUnit& unit) {
   if (support::RecordsStatistics()) {
     support::RecordCounts(unit.body_name, "mir", mir::CountsOf(unit));
+    support::RecordNestingDepth(
+        unit.body_name, "mir", mir::NestingDepthOf(unit));
   }
 }
 

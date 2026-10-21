@@ -1,5 +1,7 @@
 #include "lyra/backend/cpp/render_stmt.hpp"
 
+#include <cstdint>
+#include <optional>
 #include <string_view>
 #include <variant>
 
@@ -64,10 +66,29 @@ void RenderExprStmt(
   Write(view, out, s.expr, ";\n");
 }
 
+// C++ has no labeled break, and its `break` leaves a `switch` as well as a
+// loop, so a break naming a statement is `goto __lyra_break_<n>;`, aimed at a
+// label after that statement. The label and the jump both take the name from
+// here.
+void WriteBreakLandingLabel(mir::LabelId label, TargetText& out) {
+  Write(out, "__lyra_break_", label.value);
+}
+
+// The label after a statement a break may name, on a line of its own.
+void WriteBreakLanding(std::optional<mir::LabelId> label, TargetText& out) {
+  if (!label.has_value()) {
+    return;
+  }
+  out.OpenLine();
+  WriteBreakLandingLabel(*label, out);
+  out += ":;\n";
+}
+
 void RenderBlockStmt(
     const ScopeView& view, const mir::BlockStmt& s, TargetText& out) {
   WriteBracedBlock(view, view.Block().child_scopes.Get(s.scope), out);
   out += "\n";
+  WriteBreakLanding(s.break_label, out);
 }
 
 // The region catches whatever unwinds into it, and binds what it caught as the
@@ -131,12 +152,9 @@ void RenderIfStmt(
     out += "\n";
     return;
   }
-  // An `else` holding one statement is written without braces, so an `else
-  // if` chain opens no brace per link. With braces, an if-else-if or the items
-  // of a case would nest a brace per link, and a chain of a few hundred
-  // exceeds the brackets a C++ compiler accepts; each link is still a
-  // selection statement inside the one before, which a compiler's parser
-  // recurses on.
+  // An `else` holding one statement is written without braces, so an `if` the
+  // source nested in the `else` of another opens no brace per link, where a
+  // brace per link would soon exceed the brackets a C++ compiler accepts.
   const auto& else_scope = view.Block().child_scopes.Get(*s.else_scope);
   if (else_scope.root_stmts.size() == 1) {
     out += " else ";
@@ -150,11 +168,32 @@ void RenderIfStmt(
   out += "\n";
 }
 
-// C++ has no labeled break, so a `foreach` break that leaves every nested
-// dimension is `goto __lyra_break_<n>;`, aimed at a label after the outermost
-// loop. The label and the jump both take the name from here.
-void WriteBreakLandingLabel(mir::LoopLabelId label, TargetText& out) {
-  Write(out, "__lyra_break_", label.value);
+// Each case's statements are a compound statement of their own, so entering
+// one jumps over no declaration of another ([stmt.dcl]), and end in `break`,
+// since a case never runs on into the next.
+void RenderSwitchStmt(
+    const ScopeView& view, const mir::SwitchStmt& s, TargetText& out) {
+  Write(view, out, "switch (", s.discriminant, ") {\n");
+  out.Indent();
+  for (const mir::SwitchCase& selected : s.cases) {
+    out.OpenLine();
+    for (const std::int64_t value : selected.values) {
+      out += "case ";
+      WriteInt64Constant(out, value);
+      out += ": ";
+    }
+    WriteBracedBlock(view, view.Block().child_scopes.Get(selected.body), out);
+    out += " break;\n";
+  }
+  if (s.default_body.has_value()) {
+    out.OpenLine();
+    out += "default: ";
+    WriteBracedBlock(view, view.Block().child_scopes.Get(*s.default_body), out);
+    out += " break;\n";
+  }
+  out.Outdent();
+  out.OpenLine();
+  out += "}\n";
 }
 
 void RenderForStmt(
@@ -172,11 +211,7 @@ void RenderForStmt(
   out += ") ";
   WriteBracedBlock(view, view.Block().child_scopes.Get(s.scope), out);
   out += "\n";
-  if (s.break_label.has_value()) {
-    out.OpenLine();
-    WriteBreakLandingLabel(*s.break_label, out);
-    out += ":;\n";
-  }
+  WriteBreakLanding(s.break_label, out);
 }
 
 void RenderWhileStmt(
@@ -184,6 +219,7 @@ void RenderWhileStmt(
   Write(view, out, "while (", s.condition, ") ");
   WriteBracedBlock(view, view.Block().child_scopes.Get(s.scope), out);
   out += "\n";
+  WriteBreakLanding(s.break_label, out);
 }
 
 void RenderDoWhileStmt(
@@ -191,6 +227,7 @@ void RenderDoWhileStmt(
   out += "do ";
   WriteBracedBlock(view, view.Block().child_scopes.Get(s.scope), out);
   Write(view, out, " while (", s.condition, ");\n");
+  WriteBreakLanding(s.break_label, out);
 }
 
 // A statement written from the current position without starting a line:
@@ -213,17 +250,14 @@ void RenderStmtInPlace(
           [&](const mir::RaiseStmt& s) { RenderRaiseStmt(view, s, out); },
           [&](const mir::FinallyStmt& s) { RenderFinallyStmt(view, s, out); },
           [&](const mir::IfStmt& s) { RenderIfStmt(view, s, out); },
+          [&](const mir::SwitchStmt& s) { RenderSwitchStmt(view, s, out); },
           [&](const mir::ForStmt& s) { RenderForStmt(view, s, out); },
           [&](const mir::WhileStmt& s) { RenderWhileStmt(view, s, out); },
           [&](const mir::DoWhileStmt& s) { RenderDoWhileStmt(view, s, out); },
           [&](const mir::BreakStmt& s) {
-            if (s.target.has_value()) {
-              out += "goto ";
-              WriteBreakLandingLabel(*s.target, out);
-              out += ";\n";
-              return;
-            }
-            out += "break;\n";
+            out += "goto ";
+            WriteBreakLandingLabel(s.target, out);
+            out += ";\n";
           },
           [&](const mir::ContinueStmt&) { out += "continue;\n"; },
           [&](const mir::ReturnStmt& s) {

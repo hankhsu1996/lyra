@@ -7,6 +7,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
@@ -67,7 +68,8 @@ auto BuildPositionLoopStmt(
   const mir::LocalId position = frame.bindings->DeclareAnonymous(int_type);
 
   mir::Block body;
-  const WalkFrame at = frame.WithBlock(&body);
+  BreakTarget walk(*frame.bindings);
+  const WalkFrame at = frame.WithBlock(&body).WithBreakLeaving(walk);
   const mir::LocalId index = IndexLocal(at, index_origin, int_type);
   body.AppendStmt(
       mir::LocalDeclStmt{
@@ -88,7 +90,7 @@ auto BuildPositionLoopStmt(
 
   const mir::BlockId body_scope = block.child_scopes.Add(std::move(body));
   return BuildPositionWalkStmt(
-      unit, frame, block, count, position, order, body_scope);
+      unit, frame, block, count, position, order, body_scope, walk.Label());
 }
 
 // The loop over an associative array, by its keys, which the index variable
@@ -110,7 +112,8 @@ auto BuildKeyedLoopStmt(
               block.exprs.Add(BuildDefaultValueExpr(unit, block, key_type))});
 
   mir::Block body;
-  const WalkFrame at = frame.WithBlock(&body);
+  BreakTarget walk(*frame.bindings);
+  const WalkFrame at = frame.WithBlock(&body).WithBreakLeaving(walk);
   const EntryPlace place{
       .index = key, .index_type = key_type, .position = std::nullopt};
   auto ran = visit(
@@ -135,7 +138,7 @@ auto BuildKeyedLoopStmt(
             .owner = in.current_block->LocalPlace(key, key_type),
             .descent = {}};
       },
-      key_type, order, body_scope, std::nullopt);
+      key_type, order, body_scope, walk.Label());
 }
 
 }  // namespace
