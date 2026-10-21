@@ -281,7 +281,7 @@ auto Compile(
     // over every unit, as for the text it wrote.
     for (const auto& [form, depth] : unit.at("nesting_depth").items()) {
       std::uint64_t& deepest =
-          reading.left[std::format("{}.{}", form, kNestingDepth)];
+          reading[std::format("{}.{}", form, kNestingDepth)];
       deepest = std::max<std::uint64_t>(deepest, depth.get<std::uint64_t>());
     }
   }
