@@ -50,7 +50,7 @@ module Top;
       $fatal(1, "an unset time with a suffix was '%t'", unset);
     if ($sformatf("[%t]", 64'd2) != "[    2.000 ns]")
       $fatal(1, "a count with fraction digits was '%t'", 64'd2);
-    if ($sformatf("%t", negative) != "-5.000 ns")
+    if ($sformatf("[%t]", negative) != "[   -5.000 ns]")
       $fatal(1, "a negative count in its unit was '%t'", negative);
     $display("All checks passed");
   end
