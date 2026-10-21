@@ -39,8 +39,9 @@ So they are not in the gate, and the reason is their subject rather than their p
 the headers and still links the runtime the first one compiled, that a build whose prepared header
 is refused still produces a program -- is the same question `cpp_tests` asks, so they are answered
 on the same schedule, as `emitted_project_tests`. A change that could break any of it already owes
-that schedule before it commits. What remains in `cli_tests` is the command line itself; the designs
-it runs are built on the backend that compiles no C++, so it costs seconds, and remotely.
+that schedule before it commits. What remains in `cli_tests` is the command line itself, each case a
+few builds of a small design, mostly on the backend that compiles no C++; the target is cut into
+more shards than it has cases, so it costs its slowest case, and remotely.
 
 The two sides of `nightly` are complements, so every test target is covered once and none twice.
 That is the property to preserve: a new target joins whichever side its tag puts it on, and neither

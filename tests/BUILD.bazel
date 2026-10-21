@@ -31,9 +31,9 @@ package(features = ["parse_headers"])
 # Both are therefore excluded for their own reason and not for a neighbour's,
 # which is the test a removal here has to pass.
 #
-# Everything about the command line itself gates, and costs seconds, because
-# what a design declares and how a failure is reported are not statements about
-# a backend and need no compiler to answer.
+# Everything about the command line itself gates, because what a design
+# declares and how a failure is reported are not statements about what a
+# backend emits, so each case is a few builds of a small design.
 #
 # The two sides of `nightly` are complements, so every target is covered once
 # and none twice, and a new one joins whichever side its tag puts it on.
@@ -435,12 +435,17 @@ cc_test(
 # renamed on one side and not the other reports a green that measured nothing.
 # A file cannot be spelled wrong that way, and which file a case is written in
 # is the same decision as when its cost is paid.
+#
+# Each case runs a few small builds and none shares anything with another, so
+# the target takes more shards than it has cases and its wait is its slowest
+# case rather than the sum of them; a shard with nothing to run ends at once.
 cc_test(
     name = "cli_tests",
     size = "medium",
     srcs = ["cli_test.cpp"],
     copts = LYRA_COPTS,
     data = ["//:lyra"],
+    shard_count = 50,
     deps = [
         ":framework",
         "//:driver",
