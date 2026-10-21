@@ -38,6 +38,7 @@
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/ast_to_hir/name_in_a_path.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
+#include "lyra/lowering/ast_to_hir/std_classes.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
@@ -199,10 +200,11 @@ auto CollectUnits(
 
 auto CollectPackages(const LowerCompilationFacts& facts)
     -> std::vector<const slang::ast::PackageSymbol*> {
-  // `getPackages` includes the built-in `std` package (LRM 6.7.1); the runtime
-  // provides its contents, so the compiler never lowers or emits it. `std` is a
-  // reserved package name, so matching it excludes exactly the built-in. Only
-  // user-declared packages are compiled.
+  // `getPackages` includes the built-in `std` package (LRM 26.7), which the
+  // front end declares with no body; what its classes do is either the
+  // runtime's or Lyra's own definitions compiled in its name, so the built-in
+  // is never lowered. `std` can not be declared in source, so matching the
+  // name excludes exactly the built-in.
   std::vector<const slang::ast::PackageSymbol*> packages;
   for (const auto* package : facts.Compilation().getPackages()) {
     if (package->name != "std") {
@@ -265,12 +267,6 @@ auto CollectCompilationUnits(const LowerCompilationFacts& facts)
 // declaring the generic fixes none of them and holds none of its
 // specializations: one specialized on a type an instance replicates is held by
 // that instance's design element, and every other one is a unit of its own.
-//
-// The front end makes a specialization where an expression naming it is first
-// bound, and an instance body it judged a duplicate of another is bound only
-// when something reads it. So every body a unit is lowered from is bound
-// first; otherwise a specialization appears only once its unit is already
-// lowering, after the scope replicating it has settled what it holds.
 struct SpecializationHomes {
   std::vector<const slang::ast::ClassType*> own_units;
   PlacedSpecializations placed;
@@ -287,15 +283,23 @@ struct BindsEveryExpression
   }
 };
 
-auto CollectSpecializationHomes(
-    const LowerCompilationFacts& facts, const Collected& collected,
-    const SpecializationPolicy& policy) -> SpecializationHomes {
+// The front end makes a specialization where an expression naming it is first
+// bound, and an instance body it judged a duplicate of another is bound only
+// when something reads it. So every body a unit is lowered from is bound before
+// specializations are collected; otherwise one appears only once its unit is
+// already lowering, after the scope replicating it has settled what it holds.
+void BindEveryBody(const Collected& collected) {
   BindsEveryExpression binder;
   for (const auto* bodies : {&collected.units, &collected.repeats}) {
     for (const CollectedUnit& unit : *bodies) {
       unit.elaborated->visit(binder);
     }
   }
+}
+
+auto CollectSpecializationHomes(
+    const LowerCompilationFacts& facts, const SpecializationPolicy& policy)
+    -> SpecializationHomes {
   SpecializationHomes homes;
   const auto visit = [&](const slang::ast::Symbol& member) {
     const auto* cls = member.as_if<slang::ast::ClassType>();
@@ -431,6 +435,7 @@ struct DeclaredDesign::Units {
   std::unique_ptr<slang::ast::Compilation> front_end;
   SensitivityAnalyzer sensitivity;
   SpecializationPolicy specialization;
+  StdDefinitions std_classes;
   SpecializationHomes specialization_homes;
   LoweringFacts facts;
   std::vector<TopLevelUnit> tops;
@@ -445,7 +450,7 @@ struct DeclaredDesign::Units {
       : front_end(std::move(elaborated)),
         facts(
             sensitivity, assertion_policy, specialization,
-            specialization_homes.placed) {
+            specialization_homes.placed, std_classes) {
   }
 
   // The lowerer of one body of a design element's unit, over the instance it
@@ -547,8 +552,10 @@ auto DeclaredDesign::Declare(
     return std::nullopt;
   }
   const Collected collected = CollectUnits(facts, units->specialization);
+  BindEveryBody(collected);
+  units->std_classes = DefineStdClasses(facts.Compilation());
   units->specialization_homes =
-      CollectSpecializationHomes(facts, collected, units->specialization);
+      CollectSpecializationHomes(facts, units->specialization);
   units->DeclareEveryUnit(facts, collected, CheckedAgainstOf(collected), sink);
   if (sink.HasErrors()) {
     return std::nullopt;

@@ -42,6 +42,7 @@
 #include "lyra/lowering/ast_to_hir/declaration_scopes.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
+#include "lyra/lowering/ast_to_hir/std_classes.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 #include "lyra/support/assertion_policy.hpp"
@@ -510,22 +511,24 @@ using PlacedSpecializations = std::unordered_map<
 // What every unit's lowering reads and none of them changes: the shared
 // sensitivity analysis (one cache across the design), whether assertions are
 // elided rather than rejected, what decides the name of every unit, which
-// every party naming one reads, and the specializations placed in a unit from
-// a generic declared elsewhere, which only the design as a whole lists. The
-// slang compilation itself is deliberately absent: walking top instances is
-// the driver's job, and a unit lowering that could reach it would be able to
-// read another unit.
+// every party naming one reads, the specializations placed in a unit from a
+// generic declared elsewhere, which only the design as a whole lists, and the
+// class defining each class of `std` a design names, which only the design as
+// a whole can make. The slang compilation itself is deliberately absent:
+// walking top instances is the driver's job, and a unit lowering that could
+// reach it would be able to read another unit.
 class LoweringFacts {
  public:
   LoweringFacts(
       SensitivityAnalyzer& sensitivity_analyzer,
       support::AssertionPolicy assertion_policy,
       const SpecializationPolicy& specialization,
-      const PlacedSpecializations& placed)
+      const PlacedSpecializations& placed, const StdDefinitions& std_classes)
       : sensitivity_analyzer_(&sensitivity_analyzer),
         assertion_policy_(assertion_policy),
         specialization_(&specialization),
-        placed_(&placed) {
+        placed_(&placed),
+        std_classes_(&std_classes) {
   }
 
   // The specializations placed in the unit `home` is the body of.
@@ -534,6 +537,14 @@ class LoweringFacts {
     const auto it = placed_->find(&home);
     if (it == placed_->end()) return {};
     return it->second;
+  }
+
+  // The class Lyra defines for `cls`, a class `std` declares, or nothing where
+  // Lyra defines none.
+  [[nodiscard]] auto StdDefinitionOf(const slang::ast::ClassType& cls) const
+      -> const slang::ast::ClassType* {
+    const auto it = std_classes_->find(&cls);
+    return it == std_classes_->end() ? nullptr : it->second;
   }
 
   [[nodiscard]] auto Sensitivity() const -> SensitivityAnalyzer& {
@@ -553,6 +564,7 @@ class LoweringFacts {
   support::AssertionPolicy assertion_policy_;
   const SpecializationPolicy* specialization_;
   const PlacedSpecializations* placed_;
+  const StdDefinitions* std_classes_;
 };
 
 // Per-unit lowerer, over a module instance body or a package. It holds the
@@ -789,6 +801,13 @@ class UnitLowerer {
   // regardless of which route saw the class first.
   auto ResolveClassRef(const slang::ast::ClassType& cls, diag::SourceSpan span)
       -> diag::Result<hir::ClassRef>;
+
+  // What a class `std` declares, or one of its methods, stands for: Lyra's
+  // definition of it. Any other class or method stands for itself.
+  [[nodiscard]] auto Defining(const slang::ast::ClassType& cls) const
+      -> const slang::ast::ClassType&;
+  [[nodiscard]] auto Defining(const slang::ast::SubroutineSymbol& method) const
+      -> const slang::ast::SubroutineSymbol&;
 
   // Builds a class-method target from a class reference and the resolved
   // callee symbol. Local when the class was interned by this unit -- the

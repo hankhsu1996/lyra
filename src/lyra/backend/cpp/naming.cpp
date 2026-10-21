@@ -20,6 +20,19 @@ namespace {
 
 constexpr std::string_view kHexDigits = "0123456789abcdef";
 
+// The namespaces a program may not declare at the global scope, where a unit's
+// namespace is: `std`, `std` followed by digits and `posix` ([namespace.std],
+// [namespace.future], [namespace.posix]), and `lyra`, the namespace of the
+// runtime library the program links. A name is spelled alike wherever it
+// stands, so one of these is escaped everywhere.
+auto IsTakenNamespace(std::string_view name) -> bool {
+  if (name == "posix" || name == "lyra") return true;
+  return name.starts_with("std") &&
+         std::ranges::all_of(name.substr(3), [](char c) {
+           return std::isdigit(static_cast<unsigned char>(c)) != 0;
+         });
+}
+
 auto IsPlainCppName(std::string_view name) -> bool {
   const auto is_word = [](char c) {
     return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_';
@@ -28,7 +41,8 @@ auto IsPlainCppName(std::string_view name) -> bool {
          std::isdigit(static_cast<unsigned char>(name[0])) == 0 &&
          !name.starts_with(kMintedPrefix) &&
          std::ranges::all_of(name, is_word) &&
-         !std::ranges::contains(kCppReservedWords, name);
+         !std::ranges::contains(kCppReservedWords, name) &&
+         !IsTakenNamespace(name);
 }
 
 }  // namespace

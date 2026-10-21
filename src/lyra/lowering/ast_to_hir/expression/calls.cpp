@@ -46,6 +46,7 @@
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/sampled_reads.hpp"
 #include "lyra/lowering/ast_to_hir/statement/timing.hpp"
+#include "lyra/lowering/ast_to_hir/std_classes.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
@@ -914,9 +915,11 @@ auto LowerSubroutineCall(
   // declaration of this unit for the call to name. Every class has such
   // methods for its generator and its constraints (LRM 18.6, 18.8, 18.9,
   // 18.13.3 -- 18.13.5); those of a library class the runtime carries out were
-  // routed above.
-  if (sym->flags.has(slang::ast::MethodFlags::BuiltIn) &&
-      DeclaringClassOf(*sym) != nullptr) {
+  // routed above, and those of a `std` class Lyra defines are that
+  // definition's methods, called as any other class's.
+  if (const slang::ast::ClassType* declaring = DeclaringClassOf(*sym);
+      sym->flags.has(slang::ast::MethodFlags::BuiltIn) &&
+      declaring != nullptr && &unit_lowerer.Defining(*declaring) == declaring) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "the built-in class method '{}' is not yet supported", sym->name);

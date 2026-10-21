@@ -822,7 +822,7 @@ auto UnitLowerer::TakesDeclaringInstance(
   return std::visit(
       Overloaded{
           [&](const hir::LocalClassRef&) {
-            const auto own = own_class_signatures_.find(&cls);
+            const auto own = own_class_signatures_.find(&Defining(cls));
             if (own == own_class_signatures_.end()) {
               throw InternalError(
                   "UnitLowerer::TakesDeclaringInstance: a class this unit "

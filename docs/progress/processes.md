@@ -298,6 +298,17 @@ under each item, and the conformance gaps at the end.
       reads. The "skip suspend if cond is already true" semantic falls out of the lowering.
       `wait fork;` (LRM 9.6.1) is a distinct process-control construct belonging to the fork
       surface; `wait_order(...)` (LRM 15.5.4) is out of scope.
+- [x] P21 -- `semaphore` and `mailbox #(T)` (LRM 15.3, 15.4): every method, on both backends, and a
+      class may extend either (LRM 15.2). A process that has to wait is served in the order it
+      arrived, so a request for more keys at the head holds back a later one for fewer, a waiter
+      that stops waiting -- killed, or its call left as a block around it is disabled -- holds back
+      nobody, and a `try_` form succeeds only where its waiting form would not wait. A negative key
+      count is reported as an error and changes nothing; a negative mailbox bound is warned of and
+      holds any number of messages. A message may be of any type, a class handle or a type a design
+      element declares included.
+  - [ ] A `mailbox` with no type given for its messages (LRM 15.4.9), whose messages are of any type
+        and checked against the variable each is read into at run time. Refused wherever it is
+        named, a class extending one included.
 
 ### Concurrency
 

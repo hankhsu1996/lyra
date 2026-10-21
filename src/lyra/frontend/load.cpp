@@ -8,8 +8,11 @@
 #include <slang/ast/Compilation.h>
 #include <slang/diagnostics/TextDiagnosticClient.h>
 #include <slang/driver/Driver.h>
+#include <slang/syntax/SyntaxTree.h>
 
 #include "lyra/frontend/slang_source_manager.hpp"
+#include "lyra/frontend/std_definitions.hpp"
+#include "lyra/frontend/std_definitions_text.hpp"
 
 namespace lyra::frontend {
 
@@ -43,6 +46,12 @@ auto Elaborate(slang::driver::Driver& driver) -> std::optional<ParseResult> {
   if (!driver.processOptions() || !driver.parseAllSources()) {
     return std::nullopt;
   }
+  // Every design reads the definitions of `std`'s classes beside its own
+  // sources, as a C++ program reads its standard library's headers.
+  driver.syntaxTrees.push_back(
+      slang::syntax::SyntaxTree::fromText(
+          kStdDefinitionsText, driver.sourceManager, "",
+          kStdDefinitionsBufferName, driver.createParseOptionBag()));
 
   return ParseResult{
       .compilation = driver.createCompilation(),

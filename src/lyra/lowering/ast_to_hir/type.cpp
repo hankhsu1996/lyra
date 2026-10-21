@@ -43,6 +43,7 @@
 #include "lyra/lowering/ast_to_hir/name_in_a_path.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/reads.hpp"
+#include "lyra/lowering/ast_to_hir/std_classes.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
@@ -936,7 +937,7 @@ auto UnitLowerer::MakeClassMethodTarget(
     -> hir::ClassMethodTarget {
   if (const auto* local = std::get_if<hir::LocalClassRef>(&class_ref)) {
     return hir::LocalClassMethodTarget{
-        .owner = local->class_id, .method = LookupMethodId(method)};
+        .owner = local->class_id, .method = LookupMethodId(Defining(method))};
   }
   const auto& ext = std::get<hir::ExternalClassRef>(class_ref);
   return hir::ExternalClassMethodTarget{
@@ -1402,6 +1403,18 @@ auto UnitLowerer::MakeClassPropertyTarget(
 auto UnitLowerer::ResolveClassRef(
     const slang::ast::ClassType& cls, diag::SourceSpan span)
     -> diag::Result<hir::ClassRef> {
+  // A class `std` declares is the class Lyra's definition of it is, wherever
+  // it is named. A `mailbox` of no stated type has none: its messages are
+  // checked against their reader only at run time (LRM 15.4.9).
+  if (IsMailboxOfAnyType(cls)) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedTypeKind,
+        "a 'mailbox' with no type given for its messages is not yet "
+        "supported");
+  }
+  if (const slang::ast::ClassType* definition = facts_.StdDefinitionOf(cls)) {
+    return ResolveClassRef(*definition, span);
+  }
   // A class this unit has already classified reads its `ClassRef` straight
   // from the cache. Only the first reference to a class runs the boundary
   // walk that answers "which CU declares it?" and stores the result.
@@ -1423,6 +1436,19 @@ auto UnitLowerer::ResolveClassRef(
   auto id_or = InternLocalClass(cls, span);
   if (!id_or) return std::unexpected(std::move(id_or.error()));
   return hir::ClassRef{hir::LocalClassRef{.class_id = *id_or}};
+}
+
+auto UnitLowerer::Defining(const slang::ast::ClassType& cls) const
+    -> const slang::ast::ClassType& {
+  const slang::ast::ClassType* definition = facts_.StdDefinitionOf(cls);
+  return definition == nullptr ? cls : *definition;
+}
+
+auto UnitLowerer::Defining(const slang::ast::SubroutineSymbol& method) const
+    -> const slang::ast::SubroutineSymbol& {
+  const auto& declaring = DeclaringClassOf(method);
+  const slang::ast::ClassType* definition = facts_.StdDefinitionOf(declaring);
+  return definition == nullptr ? method : DefiningMethod(*definition, method);
 }
 
 auto UnitLowerer::InternLocalClass(

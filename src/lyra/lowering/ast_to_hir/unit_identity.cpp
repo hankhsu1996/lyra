@@ -40,6 +40,7 @@
 #include "lyra/lowering/ast_to_hir/hierarchy_override.hpp"
 #include "lyra/lowering/ast_to_hir/instance_context.hpp"
 #include "lyra/lowering/ast_to_hir/library_cell.hpp"
+#include "lyra/lowering/ast_to_hir/std_classes.hpp"
 #include "lyra/stable_hash/fingerprint.hpp"
 #include "lyra/support/def_path.hpp"
 
@@ -1172,6 +1173,11 @@ auto CompilationUnitName(
     // itself carries no source location, but every member of one input shares
     // its buffer, so the first located member names it.
     const auto& cu = unit.as<slang::ast::CompilationUnitSymbol>();
+    // Lyra's definitions of `std`'s classes are compiled in the name of the
+    // package declaring them, the unit a name of one reaches.
+    if (IsStdDefinitions(cu)) {
+      return std::string(cu.getCompilation().getStdPackage().name);
+    }
     const slang::SourceManager* sources =
         cu.getCompilation().getSourceManager();
     if (sources == nullptr) {
