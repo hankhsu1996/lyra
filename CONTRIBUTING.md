@@ -11,11 +11,14 @@
 | [buildifier](https://github.com/bazelbuild/buildtools)       | Bazel file formatting | `go install github.com/bazelbuild/buildtools/buildifier@latest` |
 | [Node.js](https://nodejs.org/)                               | For prettier          | `nvm install --lts`                                             |
 
-### The C++ library
+### What a machine needs
 
-Lyra and every program it builds use the machine's own libstdc++, which has to be the one of GCC 13
-or newer. A program is compiled and linked by the first `clang++` or `c++` on `PATH`, or by the
-compiler `--cxx` names.
+Beyond the tools above, building Lyra needs only an x86-64 Linux with glibc 2.34 or newer. The build
+fetches its own compiler and C++ library, and `lyra` carries that library inside it.
+
+A design is compiled and linked by the first `clang++` or `c++` on `PATH`, or by the compiler
+`--cxx` names, and that compiler's libstdc++ has to be 13 or newer. The program it builds runs on
+the system's own library.
 
 ### Build and Test
 

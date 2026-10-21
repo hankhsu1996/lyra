@@ -10,7 +10,8 @@ Accepted. Says how a build optimizes the design's code together with the runtime
 user asks for that apart from how hard the design is optimized; corrects the reason
 [a-packed-value-is-its-words](a-packed-value-is-its-words.md) gave for rejecting runtime bitcode.
 Revised 2026-10-20: under D4 a way the probe accepted and the build then refused is the build's
-failure, where it used to be built again the plain way.
+failure, where it used to be built again the plain way. Revised 2026-10-20 as well: the compiler
+that builds Lyra is by default this clang too, so D1 no longer keeps the two apart.
 
 ## Why this decision matters
 
@@ -87,10 +88,9 @@ property of the artifact.
 Each of its objects is a fat LTO object, so a build without `--lto` links it as machine code and one
 with it reads its bitcode, from one library.
 
-The compiler that builds Lyra itself stays a setting of its own. It reads none of this bitcode, and
-the official LLVM 23 release's linker loads the ICU of the machine it was built on, which the remote
-image does not have; a static library is archived and never linked, so the runtime's clang never
-runs its linker.
+The compiler that builds Lyra itself stays a setting of its own, since it reads none of this
+bitcode. By default it is this same clang
+([a-build-compiles-for-the-oldest-platform-it-supports](a-build-compiles-for-the-oldest-platform-it-supports.md)).
 
 ### D2. The execution backend's link under `--lto` is ThinLTO, run by Lyra
 

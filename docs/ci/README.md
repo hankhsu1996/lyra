@@ -450,16 +450,16 @@ configuration already reserves for one checkout's own key. Two command lines can
 file cannot, and flags that differ between the two invocations would throw away the analysis that
 keeping them in one job exists to share.
 
-The pinned clang builds Lyra remotely and locally alike. The standard library is the executing
-machine's, so a remote build and a local one can still differ there, and `CLAUDE.md` states why it
-is the machine's.
+The pinned clang builds Lyra remotely and locally alike, and so do the C library and the C++ library
+it compiles against, which the build makes from source at the versions the target platform names. So
+a remote build and a local one compile the same thing, whatever either machine has installed
+(`docs/decisions/a-build-compiles-for-the-oldest-platform-it-supports.md`).
 
 Every runner that runs Bazel holds that compiler's files, even when no action runs there, because
 each action's key hashes its inputs on the machine running Bazel. So it is a fixed cost of every job
-that builds with clang, and on Linux x86-64 the build fetches only the files the toolchain reads,
-cut from the official release by the script in `hankhsu1996/lyra-toolchain` and published there; the
-official archive unpacks to 11 GB, which took about four minutes of every such job. Moving the pin
-is a new release there and its URL and digest in `MODULE.bazel`.
+that builds with clang; the module that provides it publishes a minimal archive of the files its
+toolchain reads, rather than the official release, which unpacks to 11 GB. Moving the pin is the
+LLVM release in `MODULE.bazel`, which names that archive too.
 
 ## LLVM toolchain
 
