@@ -17,8 +17,10 @@ Beyond the tools above, building Lyra needs only an x86-64 Linux with glibc 2.34
 fetches its own compiler and C++ library, and `lyra` carries that library inside it.
 
 A design is compiled and linked by the first `clang++` or `c++` on `PATH`, or by the compiler
-`--cxx` names, and that compiler's libstdc++ has to be 13 or newer. The program it builds runs on
-the system's own library.
+`--cxx` names, and that compiler's libstdc++ has to be 13.2 or newer. The program it builds needs
+the libstdc++ any program of that compiler needs, which is the compiler's own or a newer one, or
+only the system's where the compiler links the library's newer parts into the program, as GCC
+Toolset does.
 
 ### Build and Test
 
