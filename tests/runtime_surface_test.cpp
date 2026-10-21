@@ -191,10 +191,8 @@ TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
   if (!cxx_or) {
     GTEST_SKIP() << "measuring an object requires clang";
   }
-  auto nm_or = lyra::driver::FindOnPath("nm");
-  if (!nm_or) {
-    GTEST_SKIP() << "reading what an object defines requires nm";
-  }
+  const auto nm = lyra::test::ResolveLlvmNm();
+  ASSERT_FALSE(nm.empty());
   const auto lyra_exe = lyra::test::ResolveLyra();
   ASSERT_FALSE(lyra_exe.empty());
   auto dir_or = lyra::test::MakeScratchDir();
@@ -247,9 +245,8 @@ TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
     const std::vector<std::string> demangled_args = {
         "--defined-only", "--format=just-symbols", "--demangle",
         object.string()};
-    auto mangled_or = lyra::driver::RunProcessCaptured(*nm_or, mangled_args);
-    auto demangled_or =
-        lyra::driver::RunProcessCaptured(*nm_or, demangled_args);
+    auto mangled_or = lyra::driver::RunProcessCaptured(nm, mangled_args);
+    auto demangled_or = lyra::driver::RunProcessCaptured(nm, demangled_args);
     ASSERT_TRUE(mangled_or) << mangled_or.error().Text();
     ASSERT_TRUE(demangled_or) << demangled_or.error().Text();
     const std::vector<std::string> mangled =
@@ -287,10 +284,8 @@ TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
 // an older library, whose streams were never initialized, and dies at its first
 // print.
 TEST(RuntimeSurface, TheLibraryAsksForTheStreamsItWritesTo) {
-  auto nm_or = lyra::driver::FindOnPath("nm");
-  if (!nm_or) {
-    GTEST_SKIP() << "reading what an archive asks for requires nm";
-  }
+  const auto nm = lyra::test::ResolveLlvmNm();
+  ASSERT_FALSE(nm.empty());
   const auto lyra_exe = lyra::test::ResolveLyra();
   ASSERT_FALSE(lyra_exe.empty());
   auto runtime_or = lyra::driver::ResolveRuntimeLocation(lyra_exe.string());
@@ -298,7 +293,7 @@ TEST(RuntimeSurface, TheLibraryAsksForTheStreamsItWritesTo) {
 
   const std::vector<std::string> args = {
       "--undefined-only", "--format=just-symbols", runtime_or->lib.string()};
-  auto listed_or = lyra::driver::RunProcessCaptured(*nm_or, args);
+  auto listed_or = lyra::driver::RunProcessCaptured(nm, args);
   ASSERT_TRUE(listed_or) << listed_or.error().Text();
   ASSERT_EQ(listed_or->exit_code, 0) << listed_or->stderr_text;
   const std::vector<std::string> asked = SymbolNames(listed_or->stdout_text);

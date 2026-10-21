@@ -693,7 +693,11 @@ cc_test(
     name = "runtime_surface_test",
     srcs = ["runtime_surface_test.cpp"],
     copts = LYRA_COPTS,
-    data = ["//:lyra"],
+    data = [
+        "//:lyra",
+        "@llvm//tools:llvm-nm",
+    ],
+    env = {"LLVM_NM": "$(rlocationpath @llvm//tools:llvm-nm)"},
     # Emits a design, compiles its units against the shipped headers and reads
     # what each object defines, which needs the host C++ compiler.
     tags = ["no-remote-exec"],
