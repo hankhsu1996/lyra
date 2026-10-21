@@ -13,10 +13,16 @@
 #include <version>  // IWYU pragma: keep
 
 // Checked first, so a compiler whose library predates what the runtime uses
-// stops on this rather than on the first header it lacks. 13 is the release
-// that brought <format>.
-#if defined(__GLIBCXX__) && _GLIBCXX_RELEASE < 13
-#error "a program Lyra builds needs libstdc++ 13 or newer"
+// stops on this rather than on the first header it lacks, or on a link naming
+// a symbol it lacks. 13 is the release that brought <format>, and 13.2 the
+// first whose library defines the stream initializer the runtime names.
+// `__GLIBCXX__` is the date of the library's sources, so within release 13 it
+// admits 13.2 and a snapshot of the 13 branch taken the day after GCC's fix for
+// PR libstdc++/108969 entered it (2023-05-04), and refuses 13.1.0.
+#if defined(__GLIBCXX__) &&   \
+    (_GLIBCXX_RELEASE < 13 || \
+     (_GLIBCXX_RELEASE == 13 && __GLIBCXX__ < 20230505))
+#error "a program Lyra builds needs libstdc++ 13.2 or newer"
 #endif
 
 #include <array>       // IWYU pragma: keep

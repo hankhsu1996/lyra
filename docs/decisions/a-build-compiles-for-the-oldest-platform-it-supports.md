@@ -43,23 +43,29 @@ need nothing of the machine they run on.
 
 ## Decisions
 
-### D1. The floor is two versions, glibc 2.34 and libstdc++ 13
+### D1. The floor is two versions, glibc 2.34 and libstdc++ 13.2
 
 Building Lyra needs a Linux with glibc 2.34 or newer. Compiling a design needs a C++ compiler whose
-libstdc++ is 13 or newer, the release that brought `<format>`, which the runtime's headers use.
-Running a built program needs the system's own library. The floor is stated as versions, as
-manylinux states its own, and not as any distribution: which systems it covers follows from the
-number. The glibc number is a choice of how far back to reach, and under D2 moving it is one
-constant of the build; the libstdc++ number is what the runtime's code uses.
+libstdc++ is 13.2 or newer. 13 brought `<format>`, which the runtime's headers use, and 13.2 is the
+first release whose headers name the standard streams' initializer (D2). A built program needs what
+any program of that compiler needs, its libstdc++ or a newer one, or only the system's where the
+compiler links the library's newer parts statically, as GCC Toolset does. The floor is stated as
+versions, as manylinux states its own, and not as any distribution: which systems it covers follows
+from the number. The glibc number is a choice of how far back to reach, and under D2 moving it is
+one constant of the build; the libstdc++ number is what the runtime's code uses.
 
 ### D2. Everything the build compiles is compiled for that platform, by a compiler that needs nothing of the machine
 
-The build's target platform is glibc 2.34 and libstdc++ 13.1, the first release of the oldest
-library promised, since headers of a later release may name symbols an earlier one lacks. The
-compiler is the static clang of the LLVM release Lyra links, from the module that builds the two
-libraries at those versions; the machine's own compilers and headers are read by nothing. So a build
-on any machine compiles the same thing, and the runtime library it ships links into a program built
-by any compiler at or above the floor.
+The build's target platform is glibc 2.34 and libstdc++ 13.2, the oldest release promised, since
+headers of a later release may name symbols an earlier one lacks, and 13.1's leave one out that the
+program needs. From 13.1 the library initializes the standard streams itself, and only from 13.2
+does a unit writing to them name that initializer (`_ZSt21ios_base_library_initv`, GCC's fix for PR
+libstdc++/108969). A runtime compiled against 13.1's headers names nothing, so a split-linking
+compiler never brings the initializer into the program, which then loads an older system library and
+dies at its first print. The compiler is the static clang of the LLVM release Lyra links, from the
+module that builds the two libraries at those versions; the machine's own compilers and headers are
+read by nothing. So a build on any machine compiles the same thing, and the runtime library it ships
+links into a program built by any compiler at or above the floor.
 
 ### D3. Every program the build links carries its C++ library inside it
 

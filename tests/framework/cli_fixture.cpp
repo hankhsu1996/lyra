@@ -2,6 +2,7 @@
 
 #include <cerrno>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <expected>
 #include <filesystem>
@@ -55,6 +56,16 @@ auto ResolveLyra() -> std::filesystem::path {
 
 auto ResolveShippedExamples() -> std::filesystem::path {
   return ResolveDeclaredInput("examples");
+}
+
+auto ResolveLlvmNm() -> std::filesystem::path {
+  std::string err;
+  std::unique_ptr<Runfiles> runfiles{Runfiles::CreateForTest(&err)};
+  EXPECT_TRUE(runfiles) << err;
+  const char* location = std::getenv("LLVM_NM");
+  EXPECT_NE(location, nullptr) << "the test declares no LLVM_NM";
+  if (!runfiles || location == nullptr) return {};
+  return runfiles->Rlocation(location);
 }
 
 auto RunLyraFrom(

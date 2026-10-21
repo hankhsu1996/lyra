@@ -5,6 +5,7 @@
 #include <format>
 #include <fstream>
 #include <gtest/gtest.h>
+#include <ranges>
 #include <regex>
 #include <span>
 #include <string>
@@ -13,6 +14,7 @@
 #include <vector>
 
 #include "lyra/driver/project_layout.hpp"
+#include "lyra/driver/runtime_export.hpp"
 #include "lyra/driver/subprocess.hpp"
 #include "tests/framework/cli_fixture.hpp"
 
@@ -156,20 +158,13 @@ auto IsRuntimeEntity(std::string_view mangled) -> bool {
   });
 }
 
-// The name field of each line `nm` prints, in order.
+// The names `nm --format=just-symbols` prints, one per line, in order.
 auto SymbolNames(std::string_view listing) -> std::vector<std::string> {
   std::vector<std::string> names;
-  std::size_t at = 0;
-  while (at < listing.size()) {
-    const std::size_t end = std::min(listing.find('\n', at), listing.size());
-    const std::string_view line = listing.substr(at, end - at);
-    at = end + 1;
-    // An address, a one-letter kind, and the name, each separated by a space.
-    const std::size_t kind = line.find(' ');
-    if (kind == std::string_view::npos || kind + 3 > line.size()) {
-      continue;
+  for (const auto line : std::views::split(listing, '\n')) {
+    if (!line.empty()) {
+      names.emplace_back(std::string_view(line));
     }
-    names.emplace_back(line.substr(kind + 3));
   }
   return names;
 }
@@ -196,10 +191,8 @@ TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
   if (!cxx_or) {
     GTEST_SKIP() << "measuring an object requires clang";
   }
-  auto nm_or = lyra::driver::FindOnPath("nm");
-  if (!nm_or) {
-    GTEST_SKIP() << "reading what an object defines requires nm";
-  }
+  const auto nm = lyra::test::ResolveLlvmNm();
+  ASSERT_FALSE(nm.empty());
   const auto lyra_exe = lyra::test::ResolveLyra();
   ASSERT_FALSE(lyra_exe.empty());
   auto dir_or = lyra::test::MakeScratchDir();
@@ -248,12 +241,12 @@ TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
   std::string carried;
   for (const auto& object : objects) {
     const std::vector<std::string> mangled_args = {
-        "--defined-only", object.string()};
+        "--defined-only", "--format=just-symbols", object.string()};
     const std::vector<std::string> demangled_args = {
-        "--defined-only", "--demangle", object.string()};
-    auto mangled_or = lyra::driver::RunProcessCaptured(*nm_or, mangled_args);
-    auto demangled_or =
-        lyra::driver::RunProcessCaptured(*nm_or, demangled_args);
+        "--defined-only", "--format=just-symbols", "--demangle",
+        object.string()};
+    auto mangled_or = lyra::driver::RunProcessCaptured(nm, mangled_args);
+    auto demangled_or = lyra::driver::RunProcessCaptured(nm, demangled_args);
     ASSERT_TRUE(mangled_or) << mangled_or.error().Text();
     ASSERT_TRUE(demangled_or) << demangled_or.error().Text();
     const std::vector<std::string> mangled =
@@ -279,4 +272,37 @@ TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
       "constructor and destructor defaulted outside the class so that the "
       "statement reaches them too.",
       carried);
+}
+
+// A program linked against the shipped library needs of the C++ library what a
+// program its compiler builds alone needs. libstdc++ from 13 initializes the
+// standard streams in the library, and from 13.2 a unit writing to them names
+// that initializer, so a compiler linking the library's newer parts statically
+// (GCC Toolset's split) brings it into a program that then runs on an older
+// system library, and a plain older library refuses to load the program. A
+// library compiled against 13.1's headers names nothing, so the program loads
+// an older library, whose streams were never initialized, and dies at its first
+// print.
+TEST(RuntimeSurface, TheLibraryAsksForTheStreamsItWritesTo) {
+  const auto nm = lyra::test::ResolveLlvmNm();
+  ASSERT_FALSE(nm.empty());
+  const auto lyra_exe = lyra::test::ResolveLyra();
+  ASSERT_FALSE(lyra_exe.empty());
+  auto runtime_or = lyra::driver::ResolveRuntimeLocation(lyra_exe.string());
+  ASSERT_TRUE(runtime_or) << runtime_or.error().primary.message;
+
+  const std::vector<std::string> args = {
+      "--undefined-only", "--format=just-symbols", runtime_or->lib.string()};
+  auto listed_or = lyra::driver::RunProcessCaptured(nm, args);
+  ASSERT_TRUE(listed_or) << listed_or.error().Text();
+  ASSERT_EQ(listed_or->exit_code, 0) << listed_or->stderr_text;
+  const std::vector<std::string> asked = SymbolNames(listed_or->stdout_text);
+
+  ASSERT_TRUE(std::ranges::contains(asked, "_ZSt4cout"))
+      << "the library no longer writes to std::cout, so this has nothing left "
+         "to ask of it";
+  EXPECT_TRUE(std::ranges::contains(asked, "_ZSt21ios_base_library_initv"))
+      << "the library writes to the standard streams without naming their "
+         "initializer, so it was compiled against libstdc++ headers older than "
+         "13.2";
 }

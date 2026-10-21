@@ -24,6 +24,12 @@ auto ResolveLyra() -> std::filesystem::path;
 // Where the examples a reader is handed are, as this run was given them.
 auto ResolveShippedExamples() -> std::filesystem::path;
 
+// The symbol lister of the LLVM release Lyra links, as this run was given it.
+// The shipped runtime carries that release's bitcode beside its machine code,
+// and a host's `nm` may read it through whatever release's plugin the host has,
+// listing nothing for an object it cannot read and still exiting 0.
+auto ResolveLlvmNm() -> std::filesystem::path;
+
 // Runs lyra from `dir`, which is what a declaration search reads and what no
 // argument can express.
 auto RunLyraFrom(
