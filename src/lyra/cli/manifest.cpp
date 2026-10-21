@@ -44,11 +44,12 @@ struct InvocationKey {
   std::string_view option;
 };
 
-constexpr std::array<InvocationKey, 15> kInvocationKeys = {{
+constexpr std::array<InvocationKey, 16> kInvocationKeys = {{
     {.key = "out", .option = "--out"},
     {.key = "backend", .option = "--backend"},
     {.key = "optimization", .option = "-O"},
     {.key = "lto", .option = "--lto"},
+    {.key = "sanitize", .option = "--sanitize"},
     {.key = "cxx", .option = "--cxx"},
     {.key = "format", .option = "--format"},
     {.key = "no_pch", .option = "--no-pch"},

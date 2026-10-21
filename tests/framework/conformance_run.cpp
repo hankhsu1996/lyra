@@ -227,6 +227,12 @@ auto CaseRecord::UnmatchedIds(const std::vector<ConformanceCase>& cases) const
   return unmatched;
 }
 
+auto CaseRecord::Joined(const CaseRecord& other) const -> CaseRecord {
+  CaseRecord joined = *this;
+  joined.entries_.insert(other.entries_.begin(), other.entries_.end());
+  return joined;
+}
+
 auto CaseRecord::SharedIds(const CaseRecord& other) const
     -> std::vector<std::string> {
   std::vector<std::string> shared;

@@ -98,6 +98,20 @@ auto ResolveCompiler(const CommandContext& ctx)
   return std::nullopt;
 }
 
+// What the host compiler checks what it compiles for. On the C++ backend it
+// compiles the design and the runtime, so the program's sanitizer is its own;
+// the execution backend instruments the design's code itself and links the
+// sanitizer's runtime of its own release, which the host's would not pair with.
+auto HostSanitizer(const CommandContext& ctx) -> support::Sanitizer {
+  switch (ctx.args->backend) {
+    case Backend::kCpp:
+      return ctx.args->sanitizer;
+    case Backend::kLlvm:
+      return support::Sanitizer::kNone;
+  }
+  std::unreachable();
+}
+
 // Resolved here rather than up front because `dump` must keep working on a
 // machine with no C++ compiler installed: a missing compiler is fatal only to
 // the commands that would invoke one.
@@ -112,6 +126,7 @@ auto ResolveHostBuild(const CommandContext& ctx)
       .pch = ctx.args->pch,
       .optimization = ctx.args->optimization,
       .link_time = ctx.args->link_time,
+      .sanitizer = HostSanitizer(ctx),
       .compile_width = ctx.args->compile_width};
 }
 
@@ -349,7 +364,8 @@ auto BuildDpiObjects(
     return std::nullopt;
   }
   auto built = driver::CompileDpiObjects(
-      ctx.dpi_inputs, host.cxx, host.optimization, host.compile_width, dir,
+      ctx.dpi_inputs, host.cxx, host.optimization, host.sanitizer,
+      host.compile_width, dir,
       dir / driver::kObjectDir / driver::kDpiSourceDir);
   if (!built) {
     ctx.sink->Report(std::move(built.error()));
@@ -372,29 +388,59 @@ struct ProgramRecipe {
 auto LinkRecipe(
     std::span<const driver::ActionResult> objects,
     std::span<const std::filesystem::path> foreign,
-    const driver::RuntimeLocation& runtime, const driver::HostBuild& host)
+    const driver::LinkedRuntime& runtime, const driver::HostBuild& host)
     -> ProgramRecipe {
   driver::Action action("link");
   std::vector<std::filesystem::path> linked;
-  linked.reserve(objects.size() + foreign.size() + 1);
+  linked.reserve(objects.size() + foreign.size() + runtime.files.size());
   for (const driver::ActionResult& object : objects) {
     action.InputDigest("object", object.digest);
     linked.push_back(object.path);
   }
-  action.InputFile("runtime library", runtime.lib);
+  for (const std::filesystem::path& file : runtime.files) {
+    action.InputFile("runtime", file);
+  }
+  for (const std::string& flag : runtime.flags) {
+    action.Input("runtime flag", flag);
+  }
   action.InputExecutable("linker", host.cxx);
   for (const std::filesystem::path& object : foreign) {
     action.InputFile("foreign object", object);
     linked.push_back(object);
   }
-  linked.push_back(runtime.lib);
+  linked.insert(linked.end(), runtime.files.begin(), runtime.files.end());
   return ProgramRecipe{
       .action = std::move(action),
-      .build = [linked = std::move(linked),
+      .build = [linked = std::move(linked), flags = runtime.flags,
                 cxx = host.cxx](const std::filesystem::path& program) {
         const profiling::StageScope stage("link");
-        return driver::LinkProgram(linked, {}, program, cxx);
+        return driver::LinkProgram(linked, flags, program, cxx);
       }};
+}
+
+// What a C++ backend program links of the runtime: the prebuilt library, or,
+// where its compiler checks it for a sanitizer, the runtime compiled from its
+// sources by that compiler, which links its own sanitizer's runtime.
+auto CppRuntime(
+    const driver::RuntimeLocation& runtime, const driver::HostBuild& host,
+    driver::ActionCache& actions) -> diag::Result<driver::LinkedRuntime> {
+  switch (host.sanitizer) {
+    case support::Sanitizer::kNone:
+      return driver::LinkedRuntime{.files = {runtime.lib}, .flags = {}};
+    case support::Sanitizer::kAddress:
+      break;
+  }
+  auto objects =
+      driver::CompileRuntimeSources(runtime, host, std::nullopt, actions);
+  if (!objects) {
+    return std::unexpected(std::move(objects.error()));
+  }
+  driver::LinkedRuntime linked{
+      .files = {}, .flags = driver::SanitizerLinkFlags(host.sanitizer)};
+  for (const driver::ActionResult& object : *objects) {
+    linked.files.push_back(object.path);
+  }
+  return linked;
 }
 
 // Where a link optimizing the whole program keeps what it compiled per module,
@@ -408,7 +454,7 @@ auto LinkTimeCacheDir(const CommandContext& ctx, driver::LinkTimeCache layout)
 }
 
 // The C++ backend's program built the plain way: each emitted file compiled
-// at the build's level, and linked with the prebuilt runtime.
+// at the build's level, and linked with the runtime the build checks for.
 auto PlainCppRecipe(
     std::span<const driver::TranslationUnit> translation_units,
     std::span<const std::filesystem::path> foreign,
@@ -423,7 +469,11 @@ auto PlainCppRecipe(
   if (!objects) {
     return std::unexpected(std::move(objects.error()));
   }
-  return LinkRecipe(*objects, foreign, runtime, host);
+  auto linked = CppRuntime(runtime, host, actions);
+  if (!linked) {
+    return std::unexpected(std::move(linked.error()));
+  }
+  return LinkRecipe(*objects, foreign, *linked, host);
 }
 
 // The C++ backend's program optimized whole by its host compiler at the link,
@@ -467,6 +517,10 @@ auto LinkTimeOptimizedCppRecipe(
   std::vector<std::string> link_time = driver::LinkFlagsFor(
       form, host.optimization,
       form.cache ? LinkTimeCacheDir(ctx, form.cache->layout) : std::nullopt);
+  for (std::string& flag : driver::SanitizerLinkFlags(host.sanitizer)) {
+    action.Input("runtime flag", flag);
+    link_time.push_back(std::move(flag));
+  }
   return ProgramRecipe{
       .action = std::move(action),
       .build = [linked = std::move(linked), link_time = std::move(link_time),
@@ -478,9 +532,10 @@ auto LinkTimeOptimizedCppRecipe(
 
 // The C++ backend's program. Each emitted file is compiled by an action
 // reading what the host compiler reads of the project, and the program is
-// linked from what they produced -- with the prebuilt runtime, or where the
-// build optimizes at the link, optimized whole with the runtime compiled beside
-// it where the host compiler accepts a way to.
+// linked from what they produced -- with the prebuilt runtime, or the runtime
+// compiled beside it where the build checks the program for a sanitizer, or
+// where the build optimizes at the link, optimized whole with the runtime
+// compiled beside it where the host compiler accepts a way to.
 auto CppProgramRecipe(
     const CommandContext& ctx, const driver::HostBuild& host,
     const driver::RuntimeLocation& runtime,
@@ -545,7 +600,16 @@ auto LinkTimeOptimizedLlvmRecipe(
     action.InputDigest("module", module.digest);
     module_paths.push_back(module.path);
   }
-  action.InputFile("runtime library", runtime.lib);
+  driver::LinkedRuntime linked_runtime =
+      driver::ExecutionBackendRuntime(runtime, ctx.args->sanitizer);
+  const std::filesystem::path& runtime_lib =
+      driver::ExecutionBackendLibrary(runtime, ctx.args->sanitizer);
+  for (const std::filesystem::path& file : linked_runtime.files) {
+    action.InputFile("runtime", file);
+  }
+  for (const std::string& flag : linked_runtime.flags) {
+    action.Input("runtime flag", flag);
+  }
   action.InputExecutable("linker", host.cxx);
   action.InputExecutable("code generator", ThisCompiler(ctx));
   action.Input("level", driver::OptimizationFlag(host.optimization));
@@ -560,8 +624,8 @@ auto LinkTimeOptimizedLlvmRecipe(
   return ProgramRecipe{
       .action = std::move(action),
       .build = [module_paths = std::move(module_paths),
-                foreign_paths = std::move(foreign_paths),
-                runtime_lib = runtime.lib, cxx = host.cxx,
+                foreign_paths = std::move(foreign_paths), runtime_lib,
+                linked_runtime = std::move(linked_runtime), cxx = host.cxx,
                 level = program::LlvmLevelOf(host.optimization),
                 width = host.compile_width, cache = std::move(cache)](
                    const std::filesystem::path& program) -> diag::Result<void> {
@@ -580,9 +644,11 @@ auto LinkTimeOptimizedLlvmRecipe(
         }
         std::vector<std::filesystem::path> linked = *std::move(optimized);
         linked.insert(linked.end(), foreign_paths.begin(), foreign_paths.end());
-        linked.push_back(runtime_lib);
+        linked.insert(
+            linked.end(), linked_runtime.files.begin(),
+            linked_runtime.files.end());
         const profiling::StageScope stage("link");
-        return driver::LinkProgram(linked, {}, program, cxx);
+        return driver::LinkProgram(linked, linked_runtime.flags, program, cxx);
       }};
 }
 
@@ -602,6 +668,7 @@ auto LlvmProgramRecipe(
   const program::ObjectBuild objects{
       .optimization = ctx.args->optimization,
       .link_time = ctx.args->link_time,
+      .sanitizer = ctx.args->sanitizer,
       .code_generator = ThisCompiler(ctx)};
   program::ProgramSink sink;
   const status::Phase phase("Compiling");
@@ -630,7 +697,9 @@ auto LlvmProgramRecipe(
   }
   switch (host.link_time) {
     case driver::LinkTimeOptimization::kNone:
-      return LinkRecipe(built->objects, *foreign, runtime, host);
+      return LinkRecipe(
+          built->objects, *foreign,
+          driver::ExecutionBackendRuntime(runtime, ctx.args->sanitizer), host);
     case driver::LinkTimeOptimization::kThin:
       return LinkTimeOptimizedLlvmRecipe(
           ctx, built->objects, *foreign, runtime, host);

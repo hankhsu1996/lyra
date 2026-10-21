@@ -227,8 +227,8 @@ TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
     unit_namespaces.push_back(entry.path().stem().string());
     std::filesystem::path object = entry.path();
     object.replace_extension(".o");
-    std::vector<std::string> args =
-        lyra::driver::DesignCompileFlags(lyra::driver::OptimizationLevel::kO0);
+    std::vector<std::string> args = lyra::driver::DesignCompileFlags(
+        lyra::driver::OptimizationLevel::kO0, lyra::support::Sanitizer::kNone);
     args.insert(
         args.end(),
         {"-I", (project / "runtime" / "include").string(), "-I",

@@ -20,6 +20,7 @@
 
 #include <cstddef>
 #include <gtest/gtest.h>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -162,8 +163,7 @@ TEST(RepeatableLowering, ADesignWrittenToShowAnOrderingStatesOneThing) {
 auto main(int argc, char** argv) -> int {
   return lyra::test::RunOverCorpus(
       argc, argv, "a lowered form",
-      [](const ConformanceCase& test_case) -> testing::Test* {
-        // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
-        return new RepeatableLoweringTest(test_case);
+      [](const ConformanceCase& test_case) -> std::unique_ptr<testing::Test> {
+        return std::make_unique<RepeatableLoweringTest>(test_case);
       });
 }

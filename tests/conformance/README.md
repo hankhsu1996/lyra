@@ -250,12 +250,17 @@ answer becomes right the case passes, and the run then fails until the entry goe
 of recording a defect here rather than commenting the check out inside the case, where the check
 stops running and nothing notices when the behaviour is fixed.
 
-A case appears in one of the two records or neither, never both -- refused and wrong are different
-outcomes and a case recorded as both leaves no saying which it is held to. So the cases the path
-genuinely runs are the ones absent from both, and that is the coverage the corpus reports.
+A run whose programs are built to check their memory (`--sanitize address`, in the run that checks
+Lyra's own) sees what no other run does, so what it finds unfixed is recorded apart, in
+`tests/paths/<path>.address.defects.yaml`, in the same form. Only that run reads it, since the same
+case passes in every other.
 
-Neither record is a place for a failure that is merely inconvenient. What goes in is a defect
-someone has diagnosed, with an entry in the matching progress doc saying what the standard requires.
+A case appears in at most one of the records -- refused and wrong are different outcomes and a case
+recorded twice leaves no saying which it is held to. So the cases the path genuinely runs are the
+ones absent from all of them, and that is the coverage the corpus reports.
+
+No record is a place for a failure that is merely inconvenient. What goes in is a defect someone has
+diagnosed, with an entry in the matching progress doc saying what the standard requires.
 
 ## A case that cannot run at all
 

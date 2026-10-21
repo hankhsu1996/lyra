@@ -18,6 +18,7 @@
 #include "lyra/driver/runtime_export.hpp"
 #include "lyra/driver/subprocess.hpp"
 #include "lyra/support/runtime_prelude.hpp"
+#include "lyra/support/sanitizer.hpp"
 #include "tests/framework/cli_fixture.hpp"
 
 namespace {
@@ -92,15 +93,17 @@ TEST_P(PreparedHeader, IsNamedByEveryFileItReads) {
   ASSERT_TRUE(project_or) << project_or.error();
   const auto& project = *project_or;
   auto exported = lyra::driver::ExportRuntimeTree(
-      *loc_or, project, lyra::driver::LinkTimeOptimization::kNone);
+      *loc_or, project, lyra::driver::LinkTimeOptimization::kNone,
+      lyra::support::Sanitizer::kNone);
   ASSERT_TRUE(exported) << exported.error().primary.message;
 
   const auto include_root = project / lyra::driver::kRuntimeIncludeDir;
   const auto prelude = include_root / lyra::support::kRuntimePreludeHeader;
   const auto optimization = lyra::driver::OptimizationLevel::kO0;
+  const auto sanitizer = lyra::support::Sanitizer::kNone;
 
   std::vector<std::string> listing =
-      lyra::driver::DesignCompileFlags(optimization);
+      lyra::driver::DesignCompileFlags(optimization, sanitizer);
   listing.insert(
       listing.end(),
       {"-I", include_root.string(), "-M", "-xc++-header", prelude.string()});
@@ -122,15 +125,15 @@ TEST_P(PreparedHeader, IsNamedByEveryFileItReads) {
   const auto offer = [&]() -> std::optional<lyra::driver::pch::Offer> {
     lyra::driver::ActionCache actions(
         project / "store", project / "scratch", true);
-    auto inputs =
-        lyra::driver::DigestOfPreludeInputs(cxx_, include_root, optimization);
+    auto inputs = lyra::driver::DigestOfPreludeInputs(
+        cxx_, include_root, optimization, sanitizer);
     if (!inputs) {
       ADD_FAILURE() << inputs.error().primary.message;
       return std::nullopt;
     }
     return lyra::driver::pch::OfferPrelude(
         cxx_, include_root, *inputs, lyra::driver::pch::Policy::kAttempt,
-        actions, optimization, build_dir);
+        actions, optimization, sanitizer, build_dir);
   };
 
   const auto unit = project / "unit.cpp";
@@ -143,7 +146,7 @@ TEST_P(PreparedHeader, IsNamedByEveryFileItReads) {
         build_dir / lyra::driver::kPreludeOfferHeader,
         "#error the prepared header was not taken\n");
     std::vector<std::string> args =
-        lyra::driver::DesignCompileFlags(optimization);
+        lyra::driver::DesignCompileFlags(optimization, sanitizer);
     args.insert(args.end(), {"-I", include_root.string()});
     args.insert(args.end(), offered.flags.begin(), offered.flags.end());
     args.insert(

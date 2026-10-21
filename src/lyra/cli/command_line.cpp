@@ -51,6 +51,7 @@ enum class LyraOption : std::uint8_t {
   kConfig,
   kOptimization,
   kLinkTime,
+  kSanitize,
   kNoPch,
   kCacheDir,
   kRebuild,
@@ -121,10 +122,10 @@ constexpr OptionSet kRewritesMir =
 // What building the design's program acts on besides.
 constexpr OptionSet kBuildsAProgram =
     kRewritesMir | OptionSet{LyraOption::kOptimization, LyraOption::kLinkTime,
-                             LyraOption::kNoPch,        LyraOption::kCacheDir,
-                             LyraOption::kRebuild,      LyraOption::kCxx,
-                             LyraOption::kJobs,         LyraOption::kBackend,
-                             LyraOption::kDpiLink};
+                             LyraOption::kSanitize,     LyraOption::kNoPch,
+                             LyraOption::kCacheDir,     LyraOption::kRebuild,
+                             LyraOption::kCxx,          LyraOption::kJobs,
+                             LyraOption::kBackend,      LyraOption::kDpiLink};
 
 // Where a command shows what it is doing when nobody said. The error stream
 // carries it, so the answer follows from what else the command's streams are
@@ -188,9 +189,9 @@ constexpr auto kCommands = std::to_array<CommandSpec>(
       .requires_out = false,
       .status = SaysStatus::kNever,
       .takes = kRewritesMir},
-     // The project's recipe is written with the compiler and the level it
-     // compiles at baked in, and takes its own width and precompiled header
-     // when it is run.
+     // The project's recipe is written with the compiler, the level it
+     // compiles at and what it checks the program for baked in, and takes its
+     // own width and precompiled header when it is run.
      {.verb = "emit",
       .object = "cpp",
       .kind = CommandKind::kEmitCpp,
@@ -199,8 +200,8 @@ constexpr auto kCommands = std::to_array<CommandSpec>(
       .takes = kRewritesMir |
                OptionSet{
                    LyraOption::kFormat, LyraOption::kOptimization,
-                   LyraOption::kLinkTime, LyraOption::kCxx, LyraOption::kOut,
-                   LyraOption::kDpiLink}},
+                   LyraOption::kLinkTime, LyraOption::kSanitize,
+                   LyraOption::kCxx, LyraOption::kOut, LyraOption::kDpiLink}},
      {.verb = "build",
       .object = "",
       .kind = CommandKind::kBuild,
@@ -238,6 +239,8 @@ auto Spelling(LyraOption option) -> std::string_view {
       return "-O";
     case LyraOption::kLinkTime:
       return "--lto";
+    case LyraOption::kSanitize:
+      return "--sanitize";
     case LyraOption::kNoPch:
       return "--no-pch";
     case LyraOption::kCacheDir:
@@ -291,6 +294,8 @@ auto IsGiven(
       return opts.optimization.has_value();
     case LyraOption::kLinkTime:
       return opts.link_time.has_value();
+    case LyraOption::kSanitize:
+      return opts.sanitize.has_value();
     case LyraOption::kNoPch:
       return opts.no_pch.has_value();
     case LyraOption::kCacheDir:
@@ -367,6 +372,21 @@ auto ParseOptimizationLevel(std::string_view name)
            {"1", driver::OptimizationLevel::kO1},
            {"2", driver::OptimizationLevel::kO2},
            {"3", driver::OptimizationLevel::kO3}}};
+  const auto* const it =
+      std::ranges::find(kNames, name, &decltype(kNames)::value_type::first);
+  if (it == kNames.end()) {
+    return std::nullopt;
+  }
+  return it->second;
+}
+
+// The spelling of each sanitizer after `--sanitize`, in the same shape, as
+// clang's `-fsanitize=` names it.
+auto ParseSanitizer(std::string_view name)
+    -> std::optional<support::Sanitizer> {
+  static constexpr std::array<
+      std::pair<std::string_view, support::Sanitizer>, 1>
+      kNames = {{{"address", support::Sanitizer::kAddress}}};
   const auto* const it =
       std::ranges::find(kNames, name, &decltype(kNames)::value_type::first);
   if (it == kNames.end()) {
@@ -583,6 +603,12 @@ void RegisterCliOptions(slang::CommandLine& cmd, CliOptions& opts) {
       "--lto", opts.link_time,
       "optimize the design together with the runtime it calls, at the link, "
       "at the level -O gives");
+  cmd.add(
+      "--sanitize", opts.sanitize,
+      "build the program to check its memory as it runs: a read or write of "
+      "storage that has ended, or was never its own, ends the run with a "
+      "report",
+      "address");
   cmd.add(
       "--no-pch", opts.no_pch,
       "compile the C++ backend's output without a precompiled header");
@@ -1039,6 +1065,15 @@ auto ResolveCliOptions(
   out.link_time = opts.link_time.value_or(false)
                       ? driver::LinkTimeOptimization::kThin
                       : driver::LinkTimeOptimization::kNone;
+  if (opts.sanitize) {
+    auto sanitizer = ParseSanitizer(*opts.sanitize);
+    if (!sanitizer) {
+      return diag::Fail(
+          diag::DiagCode::kHostInvalidCliArgs,
+          "'{}' given to '--sanitize' is not 'address'", *opts.sanitize);
+    }
+    out.sanitizer = *sanitizer;
+  }
   out.pch = opts.no_pch.value_or(false) ? driver::pch::Policy::kSkip
                                         : driver::pch::Policy::kAttempt;
   out.cxx = opts.cxx;

@@ -54,6 +54,9 @@ class CaseRecord {
   [[nodiscard]] auto UnmatchedIds(const std::vector<ConformanceCase>& cases)
       const -> std::vector<std::string>;
 
+  // Every entry of this record and of `other`, which hold no id in common.
+  [[nodiscard]] auto Joined(const CaseRecord& other) const -> CaseRecord;
+
   // Ids this record and another both hold. A case is refused or answered
   // wrongly, never both, and two records disagreeing about one case would leave
   // no way to say which outcome the run is held to.

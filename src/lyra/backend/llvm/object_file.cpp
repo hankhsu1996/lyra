@@ -23,12 +23,14 @@
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Target/TargetOptions.h>
 #include <llvm/Transforms/IPO/ThinLTOBitcodeWriter.h>
+#include <llvm/Transforms/Instrumentation/AddressSanitizer.h>
 
 #include "lyra/backend/llvm/emit.hpp"
 #include "lyra/backend/llvm/target_machine.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/support/sanitizer.hpp"
 
 namespace lyra::backend::llvm_backend {
 
@@ -78,15 +80,47 @@ void BindToMachine(llvm::Module& module, const llvm::TargetMachine& machine) {
   }
 }
 
+// What clang does under `-fsanitize`: every function the module defines asks
+// to be checked, as clang's code generation marks each one it emits, and the
+// sanitizer's pass runs where every pipeline ends its optimization -- the
+// per-module one, the unoptimized one and the one before a link that optimizes
+// the program whole alike -- so what a link reads is checked already.
+void Instrument(
+    llvm::Module& module, llvm::PassBuilder& builder,
+    support::Sanitizer sanitizer) {
+  switch (sanitizer) {
+    case support::Sanitizer::kNone:
+      return;
+    case support::Sanitizer::kAddress:
+      for (llvm::Function& function : module) {
+        if (!function.isDeclaration()) {
+          function.addFnAttr(llvm::Attribute::SanitizeAddress);
+        }
+      }
+      builder.registerOptimizerLastEPCallback(
+          [](llvm::ModulePassManager& passes, llvm::OptimizationLevel,
+             llvm::ThinOrFullLTOPhase) {
+            // A variable read after its scope ends is checked too, which
+            // clang does unless told not to.
+            llvm::AddressSanitizerOptions options;
+            options.UseAfterScope = true;
+            passes.addPass(llvm::AddressSanitizerPass(options));
+          });
+      return;
+  }
+  std::unreachable();
+}
+
 // What clang does at `-O<n>`: the per-module default pipeline at that level,
 // then machine code at the level clang pairs with it.
 void WriteObject(
     llvm::Module& module, llvm::OptimizationLevel level,
-    llvm::raw_pwrite_stream& out) {
+    support::Sanitizer sanitizer, llvm::raw_pwrite_stream& out) {
   const std::unique_ptr<llvm::TargetMachine> machine =
       CreateTargetMachine(ProcessTarget(), CodeGenLevelOf(level));
   BindToMachine(module, *machine);
   llvm::PassBuilder builder(machine.get());
+  Instrument(module, builder, sanitizer);
   Analyses analyses(builder);
   builder.buildPerModuleDefaultPipeline(level).run(module, analyses.modules);
   llvm::legacy::PassManager passes;
@@ -104,11 +138,12 @@ void WriteObject(
 // level, then the module written as bitcode with its summary.
 void WriteThinLtoBitcode(
     llvm::Module& module, llvm::OptimizationLevel level,
-    llvm::raw_ostream& out) {
+    support::Sanitizer sanitizer, llvm::raw_ostream& out) {
   const std::unique_ptr<llvm::TargetMachine> machine =
       CreateTargetMachine(ProcessTarget(), CodeGenLevelOf(level));
   BindToMachine(module, *machine);
   llvm::PassBuilder builder(machine.get());
+  Instrument(module, builder, sanitizer);
   Analyses analyses(builder);
   llvm::ModulePassManager passes =
       builder.buildThinLTOPreLinkDefaultPipeline(level);
@@ -120,7 +155,8 @@ void WriteThinLtoBitcode(
 
 auto CompileModule(
     EmittedModule module, const std::filesystem::path& output,
-    llvm::OptimizationLevel level, ModuleOutput form) -> diag::Result<void> {
+    llvm::OptimizationLevel level, ModuleOutput form,
+    support::Sanitizer sanitizer) -> diag::Result<void> {
   EmittedModule::Owned owned = std::move(module).Release();
   const std::string path = output.string();
   std::error_code opened;
@@ -132,10 +168,10 @@ auto CompileModule(
   }
   switch (form) {
     case ModuleOutput::kObject:
-      WriteObject(*owned.module, level, out);
+      WriteObject(*owned.module, level, sanitizer, out);
       break;
     case ModuleOutput::kThinLtoBitcode:
-      WriteThinLtoBitcode(*owned.module, level, out);
+      WriteThinLtoBitcode(*owned.module, level, sanitizer, out);
       break;
   }
   out.close();

@@ -29,10 +29,18 @@ build stated rather than what the tree looks like.
 
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 
-def _shipped_transition_impl(_settings, _attr):
+# The library carries machine code and bitcode, so a link optimizing a program
+# whole can read it, except where it is built for a sanitizer: the fat-object
+# pipeline would instrument a module twice, which the release refuses, so that
+# library is machine code alone and a link optimizing the program whole links it
+# as it links any member carrying no bitcode.
+def _shipped_transition_impl(_settings, attr):
+    copt = ["-flto=thin", "-ffat-lto-objects"]
+    if getattr(attr, "sanitizer", "") == "address":
+        copt = ["-fsanitize=address", "-fno-omit-frame-pointer"]
     return {
         "//command_line_option:compilation_mode": "opt",
-        "//command_line_option:copt": ["-flto=thin", "-ffat-lto-objects"],
+        "//command_line_option:copt": copt,
         "//command_line_option:extra_toolchains": ["@runtime_clang_toolchain//:all"],
         "//command_line_option:linkopt": [],
     }
@@ -55,7 +63,9 @@ def _shipped_artifact_impl(ctx):
 
 shipped_artifact = rule(
     implementation = _shipped_artifact_impl,
-    doc = "Re-exports `lib` as `out`, built optimized and with no option the enclosing build added.",
+    doc = """Re-exports `lib` as `out`, built optimized and with no option the
+enclosing build added, unless `sanitizer` names one the artifact is built to
+run under.""",
     attrs = {
         "lib": attr.label(
             allow_single_file = True,
@@ -65,6 +75,11 @@ shipped_artifact = rule(
         "out": attr.string(
             doc = "Shipped file name, which its consumers spell independently.",
             mandatory = True,
+        ),
+        "sanitizer": attr.string(
+            doc = "The sanitizer the artifact checks a program with, or none.",
+            default = "",
+            values = ["", "address"],
         ),
         "_allowlist_function_transition": attr.label(
             default = "@bazel_tools//tools/allowlists/function_transition_allowlist",
@@ -196,10 +211,11 @@ shipped_sources = rule(
 holding them and nothing else, with how each is compiled.
 
 A program's own compiler builds the runtime from these where it optimizes the
-program together with it and cannot read the prebuilt library's bitcode. The
-lists beside the files are this build's own: the translation units with the
-macros each one's library defines for it, the include directories, and the
-macros every compile defines.""",
+program together with it and cannot read the prebuilt library's bitcode, or
+where it checks the program's memory with its own sanitizer, which the prebuilt
+library was not compiled for. The lists beside the files are this build's own:
+the translation units with the macros each one's library defines for it, the
+include directories, and the macros every compile defines.""",
     attrs = {
         "lib": attr.label(
             aspects = [_runtime_sources_aspect],
@@ -213,6 +229,50 @@ macros every compile defines.""",
         ),
         "_allowlist_function_transition": attr.label(
             default = "@bazel_tools//tools/allowlists/function_transition_allowlist",
+        ),
+    },
+)
+
+def _sanitizer_runtime_impl(ctx):
+    # The release's runtime libraries sit in one directory named for its
+    # version, which the toolchain hands over whole; the files are taken out of
+    # it by name so that nothing here restates the version. Below it they are
+    # kept per target, and the one target Lyra ships for is named.
+    dirs = [
+        f
+        for f in ctx.files.release_libs
+        if "/lib/clang/" in f.path and f.basename == "lib"
+    ]
+    if len(dirs) != 1:
+        fail("expected the release's one runtime library directory, found %s" % dirs)
+    triple = "x86_64-unknown-linux-gnu"
+    outs = []
+    for name in ["libclang_rt.asan.a", "libclang_rt.asan_cxx.a", "libclang_rt.asan.a.syms"]:
+        out = ctx.actions.declare_file(ctx.attr.root + "/" + name)
+        ctx.actions.run_shell(
+            inputs = dirs,
+            outputs = [out],
+            command = 'cp "$1/%s/%s" "$2"' % (triple, name),
+            arguments = [dirs[0].path, out.path],
+            mnemonic = "SanitizerRuntime",
+        )
+        outs.append(out)
+    return [DefaultInfo(files = depset(outs))]
+
+sanitizer_runtime = rule(
+    implementation = _sanitizer_runtime_impl,
+    doc = """The address sanitizer's own runtime of the clang release that
+compiles the shipped runtime, under `root`: the code that release instruments
+names a check of the runtime's version, so a program it instrumented links this
+runtime and no other.""",
+    attrs = {
+        "release_libs": attr.label(
+            doc = "The release's runtime libraries, as its toolchain hands them over.",
+            mandatory = True,
+        ),
+        "root": attr.string(
+            doc = "Where the files are staged, as one path segment or more.",
+            mandatory = True,
         ),
     },
 )

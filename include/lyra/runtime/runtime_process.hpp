@@ -140,20 +140,14 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
     return termination_cause_;
   }
 
-  // Resumes `activation` -- the specific frame that suspended (the innermost
-  // one when a task enabled by this process is suspended). Symmetric transfer
-  // carries control back up the enable chain. Returns true if the whole process
-  // ran to completion (judged on the top-level frame), false if it stopped to
-  // wait again. `activation` may be destroyed by the time this returns, so
-  // completion and exceptions are read off the top-level frame, not it.
-  //
-  // Completing runs the whole terminal transition atomically -- terminal state,
-  // frame release, and waking what awaits this process's termination -- so a
-  // body can never be left terminated with its waiters unwoken. The node
-  // outlives the frame. Taking the runtime is what makes this the only way a
-  // body can run: the resumed body reaches its own process identity through
-  // the runtime's ambient, and a caller cannot resume without supplying it.
-  auto ResumeWith(RuntimeEffects& effects, Activation* activation) -> bool;
+  // Runs the process `activation` belongs to from `activation` -- the specific
+  // frame that suspended (the innermost one when a task enabled by this
+  // process is suspended) -- and releases the process and its lineage once it
+  // has terminated. The process is held for the whole run, because its own
+  // ending wakes what may drop every other hold on it, as the last initial
+  // procedure of a program does by ending the program (LRM 24.3). Returns true
+  // if the whole process ran to completion, false if it stopped to wait again.
+  static auto Run(RuntimeEffects& effects, Activation* activation) -> bool;
 
   // The top-level frame's activation. A wait is arranged for whichever frame is
   // carrying the thread, which is the innermost one; this is what the engine
@@ -414,6 +408,21 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   static void ReleaseTerminatedLineage(RuntimeProcess& process);
 
  private:
+  // Resumes `activation` -- the specific frame that suspended (the innermost
+  // one when a task enabled by this process is suspended). Symmetric transfer
+  // carries control back up the enable chain. Returns true if the whole process
+  // ran to completion (judged on the top-level frame), false if it stopped to
+  // wait again. `activation` may be destroyed by the time this returns, so
+  // completion and exceptions are read off the top-level frame, not it.
+  //
+  // Completing runs the whole terminal transition atomically -- terminal state,
+  // frame release, and waking what awaits this process's termination -- so a
+  // body can never be left terminated with its waiters unwoken. The node
+  // outlives the frame. Taking the runtime is what makes this the only way a
+  // body can run: the resumed body reaches its own process identity through
+  // the runtime's ambient, and a caller cannot resume without supplying it.
+  auto ResumeWith(RuntimeEffects& effects, Activation* activation) -> bool;
+
   // The guard is the sole writer of the ambient foreign-execution vehicle,
   // which it sets and restores around a foreign call.
   friend class ForeignExecutionGuard;

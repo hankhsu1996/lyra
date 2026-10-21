@@ -331,12 +331,9 @@ void Runtime::RunAction(
   }
   auto action =
       std::make_shared<RuntimeProcess>(context, std::move(coroutine), rng);
-  RuntimeProcess& running = *action;
   Activation* const top = action->TopActivation();
   roots_.Adopt(std::move(action));
-  if (running.ResumeWith(*this, top)) {
-    RuntimeProcess::ReleaseTerminatedLineage(running);
-  }
+  RuntimeProcess::Run(*this, top);
 }
 
 void Runtime::QueueFinal(Activation* top) {
@@ -551,7 +548,7 @@ void Runtime::ExecuteFinalProcesses() {
   const std::uint64_t requests_before = end_requests_;
   while (QueuePlace* queued = finals_.PopFront()) {
     Activation* activation = queued->activation;
-    const bool completed = activation->Process().ResumeWith(*this, activation);
+    const bool completed = RuntimeProcess::Run(*this, activation);
     // LRM 9.2.3: a `$finish` reached inside a final procedure ends the
     // simulation immediately, so the ones still queued do not run. The request
     // is what says so, however the procedure itself came to an end.
@@ -577,18 +574,9 @@ void Runtime::RunProcess(Activation* activation) {
     return;
   }
   // No wait dispatch: an execution that stopped to wait arranged its own way
-  // back before it gave up control. The owning process is taken before the
-  // resume, since `activation` may be an enabled task's frame that is
-  // destroyed as control returns up the enable chain.
-  RuntimeProcess& process = activation->Process();
-  if (!process.ResumeWith(*this, activation)) {
-    return;
-  }
-  // The terminal transition already woke what awaits this process and its
-  // parent's `wait fork` (LRM 9.3.2, 9.7, 9.6.1). Releasing destroys `process`
-  // and every ancestor the release leaves with nothing under it, so no
-  // statement may follow it here.
-  RuntimeProcess::ReleaseTerminatedLineage(process);
+  // back before it gave up control, and one that ended already woke what
+  // awaits it and its parent's `wait fork` (LRM 9.3.2, 9.7, 9.6.1).
+  RuntimeProcess::Run(*this, activation);
 }
 
 namespace {

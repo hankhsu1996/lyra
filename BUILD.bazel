@@ -3,7 +3,7 @@ load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_static_library.bzl", "cc_static_library")
 load("//tools/bazel:copts.bzl", "LYRA_COPTS")
-load("//tools/bazel:shipped.bzl", "shipped_artifact", "shipped_headers", "shipped_sources")
+load("//tools/bazel:shipped.bzl", "sanitizer_runtime", "shipped_artifact", "shipped_headers", "shipped_sources")
 
 # Compile every declared header once on its own, so a header that only builds
 # because some source happened to include its dependency first fails here
@@ -192,6 +192,25 @@ shipped_artifact(
     visibility = ["//visibility:public"],
 )
 
+# The same library compiled to check the memory of a program the execution
+# backend builds with `--sanitize address`, and the sanitizer's own runtime of
+# the release that compiled it, which such a program links. The C++ backend
+# compiles the runtime's sources with its own compiler instead, whose sanitizer
+# goes with it.
+shipped_artifact(
+    name = "cpp_runtime_address_sanitized",
+    out = "libcpp_runtime_address_sanitized.a",
+    lib = ":cpp_runtime_lib",
+    sanitizer = "address",
+    visibility = ["//visibility:public"],
+)
+
+sanitizer_runtime(
+    name = "address_sanitizer_runtime",
+    release_libs = "@runtime_clang_toolchain_llvm//:lib",
+    root = "address_sanitizer_runtime",
+)
+
 cc_library(
     name = "hir",
     srcs = glob(["src/lyra/hir/*.cpp"]),
@@ -337,6 +356,7 @@ cc_library(
         "@llvm-project//llvm:CodeGen",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:IPO",
+        "@llvm-project//llvm:Instrumentation",
         "@llvm-project//llvm:LTO",
         "@llvm-project//llvm:MC",
         "@llvm-project//llvm:Object",
@@ -479,7 +499,9 @@ cc_binary(
     srcs = ["src/lyra/cli/main.cpp"],
     copts = LYRA_COPTS,
     data = [
+        ":address_sanitizer_runtime",
         ":cpp_runtime",
+        ":cpp_runtime_address_sanitized",
         ":runtime_sources",
         ":runtime_surface",
         "//third_party/systemverilog:svdpi.h",

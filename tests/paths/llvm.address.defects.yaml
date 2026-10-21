@@ -1,0 +1,12 @@
+# What the llvm path does wrongly that only a program built to check its memory
+# shows, one entry per conformance case: the case's id, and text the run it
+# produces contains.
+#
+# The same case passes when its program is built as usual, which is why these
+# are kept apart from the path's defect record: they hold only for the run the
+# address sanitizer checks. A case listed here is expected to fail saying this,
+# and one that stops failing fails the run until its entry goes.
+#
+# A case may appear in this file or in either of the path's own records, never
+# in two.
+08_classes/class_names_a_class_of_its_own_scope: "ERROR: LeakSanitizer: detected memory leaks"

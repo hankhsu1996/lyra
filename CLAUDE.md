@@ -69,7 +69,9 @@ A design is named by `--top` and the files on the command line, or by a `lyra.to
 up from the working directory. Everything after the command word is one command line shared with the
 slang driver, and a standalone `--` ends it; what follows is the simulation's own argv, where LRM
 21.6 plusargs go. `--backend cpp|llvm` picks the backend, `-O0` to `-O3` trade build time for
-simulation speed as a C++ compiler's do, `--lto` optimizes the design together with the runtime, and
+simulation speed as a C++ compiler's do, `--lto` optimizes the design together with the runtime,
+`--sanitize address` builds a program that stops at its first read of storage that has ended
+(`docs/decisions/a-program-is-checked-by-the-sanitizer-of-whoever-instrumented-it.md`), and
 `--time-trace` and `--stats-file` read where a run's cost went off the run itself. A build is kept
 in the user's cache directory by what it read, so `--rebuild` is how to build as though nothing were
 kept. `-j` says how many units are lowered and compiled at once, one by default

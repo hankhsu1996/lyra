@@ -997,6 +997,15 @@ the detail lives in the entry itself.
   project carrying the runtime's sources, fat objects attempted in every build, a plain build after
   an accepted way is refused, a link without a cache, and one flag carrying both the level and the
   link-time optimization are rejected.
+- [a-program-is-checked-by-the-sanitizer-of-whoever-instrumented-it](a-program-is-checked-by-the-sanitizer-of-whoever-instrumented-it.md)
+  -- `--sanitize address` builds a program that stops at its first read of storage that has ended:
+  the execution backend instruments the design itself and links the sanitizer runtime of the LLVM
+  release it links with a runtime library that release compiled for it, the C++ backend's host
+  compiler instruments the design and the runtime's own sources and links its own, the runtime tells
+  the sanitizer of every switch that runs code on a foreign call's own stack, and the corpus is
+  built that way in the run that checks Lyra's own memory, with what it finds held in a record of
+  its own. Static lifetime annotations, refusing views of an ending object, the host's runtime on
+  the execution backend and the fiber library's annotated form are rejected.
 - [program-facts-belong-after-compilation](program-facts-belong-after-compilation.md) -- the
   design's link-level unit reads signatures and nothing else, so what is genuinely program-wide
   moves to whoever runs after compilation: a namespace's initializers order themselves by claiming

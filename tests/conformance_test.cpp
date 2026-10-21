@@ -13,6 +13,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -218,9 +219,13 @@ auto main(int argc, char** argv) -> int {
       .cases_root = runfiles->Rlocation("_main/tests/conformance"),
       .paths_root = runfiles->Rlocation("_main/tests/paths")};
 
+  // The path to run, and what each program it builds is checked for while it
+  // runs: a build of the same path, so the path's records still hold, and a
+  // report of a read of ended storage fails the case that made it.
   const std::span<char* const> args{argv, static_cast<std::size_t>(argc)};
   std::string requested;
   std::size_t workers = 1;
+  std::optional<std::string> sanitizer;
   for (std::size_t i = 1; i + 1 < args.size(); ++i) {
     const std::string_view arg = args[i];
     const std::string_view value = args[i + 1];
@@ -236,6 +241,9 @@ auto main(int argc, char** argv) -> int {
         return 1;
       }
     }
+    if (arg == "--sanitize") {
+      sanitizer = value;
+    }
   }
   if (requested.empty()) {
     fmt::print(stderr, "no path selected: pass --path <name>\n");
@@ -246,7 +254,13 @@ auto main(int argc, char** argv) -> int {
     fmt::print(stderr, "'{}' is not a path this corpus runs on\n", requested);
     return 1;
   }
-  static const ConformancePath kPath = *found;
+  static const ConformancePath kPath = [&] {
+    ConformancePath path = *found;
+    if (sanitizer) {
+      path.selector.insert(path.selector.end(), {"--sanitize", *sanitizer});
+    }
+    return path;
+  }();
 
   static const std::vector<ConformanceCase> kCases =
       LoadConformanceCases(kCorpus.cases_root);
@@ -258,15 +272,23 @@ auto main(int argc, char** argv) -> int {
     return 1;
   }
 
-  static const PathRecords kRecords{
-      .refusals = CaseRecord::Load(kCorpus.paths_root / (kPath.name + ".yaml")),
-      .defects = CaseRecord::Load(
-          kCorpus.paths_root / (kPath.name + ".defects.yaml"))};
+  const CaseRecord refusals =
+      CaseRecord::Load(kCorpus.paths_root / (kPath.name + ".yaml"));
+  const CaseRecord defects =
+      CaseRecord::Load(kCorpus.paths_root / (kPath.name + ".defects.yaml"));
+  // What the sanitizer finds that the path's own run cannot see, which is
+  // recorded for the checked run alone: the same case passes unchecked, and
+  // that record would fail it.
+  const CaseRecord found_by_sanitizer =
+      sanitizer ? CaseRecord::Load(
+                      kCorpus.paths_root /
+                      fmt::format("{}.{}.defects.yaml", kPath.name, *sanitizer))
+                : CaseRecord{};
 
   bool records_hold = true;
   for (const auto& [record, kind] :
-       {std::pair{&kRecords.refusals, "refusal"},
-        std::pair{&kRecords.defects, "defect"}}) {
+       {std::pair{&refusals, "refusal"}, std::pair{&defects, "defect"},
+        std::pair{&found_by_sanitizer, "sanitizer finding"}}) {
     for (const std::string& id : record->UnmatchedIds(kCases)) {
       fmt::print(
           stderr, "the '{}' path records a {} for '{}', which is not a case\n",
@@ -274,24 +296,35 @@ auto main(int argc, char** argv) -> int {
       records_hold = false;
     }
   }
-  // A case is refused or answered wrongly, never both; recorded as both, there
-  // would be no saying which outcome the run is held to.
-  for (const std::string& id : kRecords.refusals.SharedIds(kRecords.defects)) {
-    fmt::print(
-        stderr, "the '{}' path records '{}' as both a refusal and a defect\n",
-        kPath.name, id);
-    records_hold = false;
+  // A case is held to one outcome; recorded twice, there would be no saying
+  // which one the run is held to.
+  for (const auto& [first, second, kinds] :
+       {std::tuple{&refusals, &defects, "a refusal and a defect"},
+        std::tuple{
+            &refusals, &found_by_sanitizer,
+            "a refusal and a sanitizer finding"},
+        std::tuple{
+            &defects, &found_by_sanitizer,
+            "a defect and a sanitizer finding"}}) {
+    for (const std::string& id : first->SharedIds(*second)) {
+      fmt::print(
+          stderr, "the '{}' path records '{}' as both {}\n", kPath.name, id,
+          kinds);
+      records_hold = false;
+    }
   }
   if (!records_hold) {
     return 1;
   }
+  static const PathRecords kRecords{
+      .refusals = refusals, .defects = defects.Joined(found_by_sanitizer)};
 
   fmt::print(
       "{} cases on the {} path, built with {}\n", kCases.size(), kPath.name,
       HostCompiler());
 
-  // NOLINTBEGIN(cppcoreguidelines-owning-memory)
-  // gtest owns an environment it is handed, and keeps it to the end of the run.
+  // gtest owns the environment and every test it is handed, and keeps them to
+  // the end of the run.
   auto owned_runs =
       std::make_unique<CaseRuns>(workers, &kCorpus.lyra_exe, &kPath, &kRecords);
   CaseRuns* const runs = owned_runs.get();
@@ -303,7 +336,7 @@ auto main(int argc, char** argv) -> int {
     testing::RegisterTest(
         filter.group.c_str(), filter.name.c_str(), nullptr, nullptr, __FILE__,
         __LINE__, [&c, runs]() -> testing::Test* {
-          return new ConformanceTest(c, runs);
+          return std::make_unique<ConformanceTest>(c, runs).release();
         });
   }
 
@@ -319,10 +352,10 @@ auto main(int argc, char** argv) -> int {
     testing::RegisterTest(
         "Parked", name.c_str(), nullptr, nullptr, __FILE__, __LINE__,
         [&c]() -> testing::Test* {
-          return new ParkedCaseTest(c, &kCorpus.lyra_exe);
+          return std::make_unique<ParkedCaseTest>(c, &kCorpus.lyra_exe)
+              .release();
         });
   }
-  // NOLINTEND(cppcoreguidelines-owning-memory)
 
   // A repetition is asked for to run every case again, and the environment is
   // what runs them, so it is set up again for each.

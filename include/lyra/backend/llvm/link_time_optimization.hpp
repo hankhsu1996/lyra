@@ -18,7 +18,8 @@ struct LinkTimeInputs {
   // the program.
   std::span<const std::filesystem::path> modules;
   // The runtime library: an archive whose members carry their bitcode beside
-  // their machine code. A member is part of the program where it defines a
+  // their machine code, or machine code alone, which the host link takes as it
+  // is. A member is part of the program where it defines a
   // symbol the program needs, as a linker takes an archive member.
   std::filesystem::path runtime_library;
   // Objects the host link takes as machine code. Whatever they name stays

@@ -58,7 +58,7 @@ auto DumpCapture::Value(const Change& change) const -> DumpValue {
   return std::visit(
       Overloaded{
           [&](const Words& words) -> DumpValue {
-            const std::size_t count =
+            const auto count =
                 static_cast<std::size_t>((words.width + 63) / 64);
             const std::span<const std::uint64_t> all(words_);
             return value::ConstIntegralView{
@@ -82,6 +82,16 @@ void DumpCapture::Clear() {
 DumpProbe::DumpProbe() = default;
 DumpProbe::~DumpProbe() = default;
 Describer::~Describer() = default;
+
+void Describer::BeginBlock(const DumpBlock& block) {
+  enclosing_.push_back(&block);
+  Entered();
+}
+
+void Describer::EndBlock() {
+  Leaving();
+  enclosing_.pop_back();
+}
 
 DumpWatch::DumpWatch(
     ValueDump& dump, DumpCode code, std::unique_ptr<DumpProbe> probe)
@@ -441,15 +451,16 @@ class SelectionDescriber final : public Describer {
         std::make_unique<DumpWatch>(*dump_, code, std::move(probe)));
   }
 
-  void BeginBlock(const DumpBlock& block) override {
+ private:
+  void Entered() override {
+    const DumpBlock& block = *Enclosing().back();
     pending_.push_back({.kind = block.Kind(), .name = block.identifier});
   }
 
-  void EndBlock() override {
+  void Leaving() override {
     CloseScope();
   }
 
- private:
   // `remaining` is how many levels of instances from this scope down are
   // recorded whole. A level is an instance (LRM 21.7.1.2): a block a scope
   // holds is part of the instance holding it, and counts as no level of its
@@ -568,21 +579,13 @@ class PortDescriber final : public Describer {
 
   void Var(const DumpEntry& entry, std::unique_ptr<DumpProbe> probe) override {
     const std::optional<DumpEntry::Connection> port = entry.Port();
-    if (blocks_ != 0 || !port.has_value() || !HasPortValue(entry)) {
+    if (!port.has_value() || !HasPortValue(entry)) {
       return;
     }
     ports_.push_back(
         {.position = port->position,
          .entry = entry,
          .probe = std::move(probe)});
-  }
-
-  void BeginBlock(const DumpBlock&) override {
-    ++blocks_;
-  }
-
-  void EndBlock() override {
-    --blocks_;
   }
 
  private:
@@ -607,7 +610,6 @@ class PortDescriber final : public Describer {
   ValueDump* dump_;
   std::vector<std::unique_ptr<DumpWatch>>* watches_;
   std::vector<Port> ports_;
-  std::uint32_t blocks_ = 0;
 };
 
 }  // namespace

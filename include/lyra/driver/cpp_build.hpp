@@ -20,6 +20,7 @@
 #include "lyra/driver/runtime_export.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/stable_hash/fingerprint.hpp"
+#include "lyra/support/sanitizer.hpp"
 
 namespace lyra::driver {
 
@@ -32,7 +33,8 @@ auto FindUsualCompiler() -> std::optional<std::filesystem::path>;
 
 // How this host turns emitted C++ into a program: which compiler to invoke,
 // what to do about the precompiled header, how hard to optimize and whether
-// with the runtime, and how much of the machine to take while doing it.
+// with the runtime, what to check the program for, and how much of the machine
+// to take while doing it.
 // Resolved once at the CLI boundary and passed unchanged down every path, so
 // the recipe an emitted project carries and the compile Lyra performs cannot
 // disagree about the toolchain.
@@ -46,6 +48,11 @@ struct HostBuild {
   pch::Policy pch = pch::Policy::kAttempt;
   OptimizationLevel optimization = OptimizationLevel::kO0;
   LinkTimeOptimization link_time = LinkTimeOptimization::kNone;
+  // What the host compiler checks the code it compiles for, linking its own
+  // sanitizer's runtime. None where the program's sanitizer goes with another
+  // compiler's, as on the execution backend, whose code generator pairs its
+  // instrumentation with the runtime its own release ships.
+  support::Sanitizer sanitizer = support::Sanitizer::kNone;
   // How many host compiles may run at once, already a positive count.
   std::size_t compile_width = 1;
 };
@@ -173,15 +180,16 @@ auto AssembleProject(
     std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<void>;
 
 // The digest of the prelude's input files as `cxx` reads them at
-// `optimization`: every file the compiler lists as the prelude's dependencies,
-// the C++ library's and the system's among them, by their content. What an
-// emitted file includes of the runtime is the prelude or a header the prelude
-// reaches, so this is everything such a compile reads beyond the project's own
-// files. A compiler that cannot compile the prelude can compile nothing a
-// design emits, and is reported here in its own words.
+// `optimization` and checked for `sanitizer`: every file the compiler lists as
+// the prelude's dependencies, the C++ library's and the system's among them, by
+// their content. What an emitted file includes of the runtime is the prelude or
+// a header the prelude reaches, so this is everything such a compile reads
+// beyond the project's own files. A compiler that cannot compile the prelude
+// can compile nothing a design emits, and is reported here in its own words.
 auto DigestOfPreludeInputs(
     const std::filesystem::path& cxx, const std::filesystem::path& include_root,
-    OptimizationLevel optimization) -> diag::Result<stable_hash::Fingerprint>;
+    OptimizationLevel optimization, support::Sanitizer sanitizer)
+    -> diag::Result<stable_hash::Fingerprint>;
 
 // Compiles each emitted translation unit in `dir` to its object, as many at
 // once as `host` was told to take, in the order given, and reports every one
@@ -226,13 +234,15 @@ auto LinkFlagsFor(
     -> std::vector<std::string>;
 
 // Compiles the runtime's own sources with the host compiler, as many at once as
-// `host` was told to take, each told what the runtime's build states for it and
-// the flag `link_time`. Each compile is an action whose inputs are the file,
-// the whole source tree it may include from, the compiler and what it is told,
-// so the runtime is compiled once per compiler and stays kept across designs.
+// `host` was told to take, each told what the runtime's build states for it,
+// checked for `host`'s sanitizer, and told the flag `link_time` where the build
+// optimizes the program whole at the link. Each compile is an action whose
+// inputs are the file, the whole source tree it may include from, the compiler
+// and what it is told, so the runtime is compiled once per compiler and stays
+// kept across designs.
 auto CompileRuntimeSources(
     const RuntimeLocation& runtime, const HostBuild& host,
-    std::string_view link_time, ActionCache& actions)
+    std::optional<std::string_view> link_time, ActionCache& actions)
     -> diag::Result<std::vector<ActionResult>>;
 
 // Links `inputs` -- objects and archives, whatever produced them -- into the

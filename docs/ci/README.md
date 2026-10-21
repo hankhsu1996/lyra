@@ -375,19 +375,21 @@ one does: a sanitizer report carries a stack trace and names a defect. What make
 at all is that the class it catches is invisible to every other job: a read of memory that is gone
 usually reads what was there, so a green ordinary run is consistent with the code being wrong. Under
 the sanitizer such a read is reported on every execution that makes it; what the job still cannot
-see is an execution the corpus does not reach. The compiler's own IR pools are not in that class,
-since they never move what they hold
+see is an execution the corpus does not reach. Under it the corpus builds every program it runs with
+`--sanitize address`, so the job watches what the compiler builds as well as the compiler: about
+half of the lifetime defects so far were in generated code or in the runtime a program drives. The
+compiler's own IR pools are not in that class, since they never move what they hold
 ([arena-reference-lifetime](../decisions/arena-reference-lifetime.md)). It runs the set twice, once
 under each compiler that builds Lyra, both under remote execution where the key is set. The two
 evaluate a call's arguments and an operator's operands in opposite orders, which C++ leaves to the
 compiler, so a read in one operand of storage another one frees is reported under one of them only.
 
-Two things about it follow from what is instrumented. The compiler is; the runtime library a built
-program links is not, because that library is built as it ships whatever builds the compiler, and a
-user's link is told nothing about a sanitizer. So the job reports on lowering and says nothing about
-the memory a simulation touches while it runs. And the targets tagged `cost` are left out of its
-set: each bounds what the compiler, or a program it built, costs as it ships -- time, stack, memory
--- which is not what a sanitizer build is.
+Two things about it follow from what is instrumented. A program the corpus builds is checked because
+it asks to be, never because the compiler around it is: the runtime library it links is the one
+built for the sanitizer it names, and what such a program finds that is not fixed at once is held in
+`tests/paths/llvm.address.defects.yaml`, since the same case passes in every other run. And the
+targets tagged `cost` are left out of its set: each bounds what the compiler, or a program it built,
+costs as it ships -- time, stack, memory -- which is not what a sanitizer build is.
 
 `external-designs-nightly.yml` runs `external_design_tests`, one job per case, with the compiler
 built optimized. It **gates its own run**: a case that stops somewhere other than where it is
