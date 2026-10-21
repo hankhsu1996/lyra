@@ -9,6 +9,8 @@
 Accepted. Says how a build optimizes the design's code together with the runtime it calls, and how a
 user asks for that apart from how hard the design is optimized; corrects the reason
 [a-packed-value-is-its-words](a-packed-value-is-its-words.md) gave for rejecting runtime bitcode.
+Revised 2026-10-20: under D4 a way the probe accepted and the build then refused is the build's
+failure, where it used to be built again the plain way.
 
 ## Why this decision matters
 
@@ -135,15 +137,12 @@ list, so it is asked once per compiler. The link keeps its cache in the store, L
 the execution backend's and GCC's in a directory of its own, and an emitted project keeps it under
 its objects. Its recipe asks the same question the same way.
 
-Whether a toolchain can do this decides how long a build takes, never whether it succeeds, which is
-what [a-precompiled-header-is-an-attempt](a-precompiled-header-is-an-attempt.md) asks of anything
-that only makes a build faster. Where no way is accepted, or the program's own compile or link is
-refused all the same, the program is built the plain way, with the prebuilt runtime, and kept under
-the same key, since a refusal is the toolchain's and the next build would meet it again; a refusal
-that was not, such as a link that ran out of memory, stands until `--rebuild`. The question is asked
-once rather than attempted in every build, as the prepared header is, because objects that could
-serve a refused link too carry their machine code beside their bitcode, and that cost falls on every
-compile of the accepted path.
+Where no way is accepted, the program is built the plain way, with the prebuilt runtime, so a
+toolchain that cannot do this still builds. Where one is, the program is built that way, and a
+compile or link that then fails is the build's failure and is reported as one, as CMake's is once
+`check_ipo_supported` has enabled the flags. The question is asked once rather than attempted in
+every build, as the prepared header is, because objects that could serve a refused link too carry
+their machine code beside their bitcode, and that cost falls on every compile of the accepted path.
 
 ### D5. A user names the level and link-time optimization apart
 
@@ -168,6 +167,7 @@ already reads a command file.
 | The C++ backend handing the prebuilt bitcode to the user's compiler | Every compiler, again. GCC never reads it, and a clang older than the runtime's cannot.                                                                                                                                |
 | Every emitted project carrying the runtime's sources                | A default build. A project would copy about 1,200 files it never compiles.                                                                                                                                             |
 | The C++ backend attempting it in every build, on fat objects        | The cost. A fat object compiles 20% to 25% slower than a thin one, on every compile under `--lto`, only to serve a link the toolchain refuses.                                                                         |
+| Building the plain way after an accepted way is refused             | The cost against what it serves. The probe already answers whether the toolchain can do this; a refusal after it is a toolchain the probe misjudged, and serving it compiles the runtime a second time.                |
 | The C++ backend's link keeping no cache                             | Incremental. Every link redoes every module's optimization; on Ibex one edited unit rebuilt in 16.2 s, and 8.1 s with the cache.                                                                                       |
 | One flag naming both the level and link-time optimization           | A level without link-time optimization. On OpenTitan the link-time optimization took 635 s of an 818 s build.                                                                                                          |
 

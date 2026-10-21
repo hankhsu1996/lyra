@@ -229,8 +229,8 @@ operation is a call into a separately compiled runtime, and the optimizer cannot
       optimization over the design's modules and the runtime's bitcode itself, a module at a time in
       parallel and kept per module, so the link stays parallel and an edit recompiles only what it
       reached. The C++ backend's host compiler compiles the runtime from its source beside the
-      design and links the two its own way, falling back to the plain build wherever the compiler or
-      its linker refuses. The model is
+      design and links the two its own way, and builds the plain way where a probe finds the
+      compiler or its linker cannot. The model is
       [../decisions/the-design-is-optimized-with-the-runtime-at-the-link.md](../decisions/the-design-is-optimized-with-the-runtime-at-the-link.md).
 
 - [ ] A process body that ends by finishing the simulation is compiled as though it were almost

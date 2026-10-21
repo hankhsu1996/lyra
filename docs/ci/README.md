@@ -73,7 +73,9 @@ gate actually covers.
 Both run remotely, and remote execution scales out, so what a target covers costs the machine that
 asked for it nothing however far it grows. What it costs is how long the slowest shard takes, so a
 remote target is cut into as many shards as keep that short: another shard is one more slot in the
-remote queue, never another core here.
+remote queue, never another core here. A remote shard is given three cores, and a case compiles its
+units one after another, so a shard runs three cases at once; `tests/BUILD.bazel` states the count
+once, and a run on this machine reserves as many cores as it uses.
 
 ## When to run what
 

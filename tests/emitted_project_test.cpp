@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -171,11 +172,9 @@ struct LinkTimeRefusal {
   bool refuses = true;
 };
 
-constexpr std::array<LinkTimeRefusal, 4> kLinkTimeRefusals{{
+constexpr std::array<LinkTimeRefusal, 3> kLinkTimeRefusals{{
     {.name = "refuses-compile", .watched = R"x(*" -flto"*" -c "*)x"},
     {.name = "refuses-link", .watched = R"x(*" -c "*) ;; *" -flto"*)x"},
-    {.name = "refuses-the-program",
-     .watched = R"x(*" -c "*|*"/probe "*) ;; *" -flto"*)x"},
     {.name = "refuses-nothing",
      .watched = R"x(*" -c "*|*"/probe "*) ;; *" -flto"*)x",
      .refuses = false},
@@ -188,16 +187,36 @@ struct HostCompiler {
   std::string_view executable;
 };
 
-class LinkTimeOptimizationRefused
-    : public testing::TestWithParam<std::tuple<HostCompiler, std::size_t>> {};
+// The two things that build a design: the recipe a project ships, and the
+// build Lyra runs itself.
+enum class Builder : std::uint8_t {
+  kRecipe,
+  kLyra,
+};
 
-// What a case is called: the compiler, then what its wrapper refuses.
+auto NameOf(Builder builder) -> std::string_view {
+  switch (builder) {
+    case Builder::kRecipe:
+      return "recipe";
+    case Builder::kLyra:
+      return "lyra";
+  }
+  std::unreachable();
+}
+
+class LinkTimeOptimizationRefused
+    : public testing::TestWithParam<
+          std::tuple<HostCompiler, std::size_t, Builder>> {};
+
+// What a case is called: the compiler, what its wrapper refuses, and what
+// builds.
 auto LinkTimeRefusalName(
     const testing::TestParamInfo<LinkTimeOptimizationRefused::ParamType>& info)
     -> std::string {
-  const auto& [compiler, refusal] = info.param;
-  std::string name =
-      std::format("{}_{}", compiler.name, kLinkTimeRefusals.at(refusal).name);
+  const auto& [compiler, refusal, builder] = info.param;
+  std::string name = std::format(
+      "{}_{}_{}", compiler.name, kLinkTimeRefusals.at(refusal).name,
+      NameOf(builder));
   std::ranges::replace(name, '-', '_');
   return name;
 }
@@ -206,17 +225,16 @@ auto LinkTimeRefusalName(
 
 // A build under --lto optimizes the design together with the runtime in the
 // first way the host compiler and the linker it drives accept, which is theirs
-// to say, so whether one is accepted decides how long a build takes and never
-// whether it succeeds. A compiler that refuses to compile for it, a linker that
-// refuses to link so, and a linker that accepts the probe and then refuses the
-// program each still leave a program, from the project's recipe and from the
-// build Lyra runs itself; a toolchain refusing nothing links the program
-// optimized and never falls back. Each is a wrapper around the compiler that
-// watches, and where it refuses fails, exactly that step. Every one compiles
-// the runtime whole, twice, so each is a case of its own, which is what lets a
-// sharded run take them side by side.
+// to say, and a small program built each way decides which. A compiler that
+// refuses to compile for it and a linker that refuses to link so each still
+// leave a program, from the project's recipe and from the build Lyra runs
+// itself; a toolchain refusing nothing links the program optimized and never
+// falls back. Each is a wrapper around the compiler that watches, and where it
+// refuses fails, exactly that step. A build that optimizes compiles the runtime
+// whole, so each builder under each refusal is a case of its own, which is what
+// lets a sharded run take them side by side.
 TEST_P(LinkTimeOptimizationRefused, StillBuildsAProgram) {
-  const auto [compiler, refusal] = GetParam();
+  const auto [compiler, refusal, builder] = GetParam();
   const LinkTimeRefusal& watching = kLinkTimeRefusals.at(refusal);
   auto real = lyra::driver::FindOnPath(compiler.executable);
   if (!real) {
@@ -247,56 +265,56 @@ TEST_P(LinkTimeOptimizationRefused, StillBuildsAProgram) {
       wrapper, std::filesystem::perms::owner_all,
       std::filesystem::perm_options::add);
 
-  const auto out_dir = *tmp_or / "out";
-  const std::vector<std::string> emit = {"emit",      "cpp",
-                                         "-O2",       "--lto",
-                                         "--top",     "Test",
-                                         "--cxx",     wrapper.string(),
-                                         "-o",        out_dir.string(),
-                                         src.string()};
-  const auto emitted = RunChildProcess(lyra, emit, 120s);
-  ASSERT_EQ(emitted.exit_code, 0) << emitted.stderr_text;
-  const std::vector<std::string> recipe = {
-      "-c", "cd '" + out_dir.string() + "' && sh build.sh -j 0"};
-  const auto built = RunChildProcess(*sh_or, recipe, 600s);
-  ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
-  EXPECT_TRUE(std::filesystem::exists(attempted_marker))
-      << "the recipe never attempted link-time optimization";
-  EXPECT_EQ(std::filesystem::exists(plain_marker), watching.refuses)
-      << "the recipe's fallback to the plain build";
-  const auto ran = RunChildProcess(out_dir / "program", {}, 30s);
-  EXPECT_NE(ran.stdout_text.find("ran 42"), std::string::npos)
-      << "recipe stdout: " << ran.stdout_text;
-
-  std::filesystem::remove(attempted_marker);
-  std::filesystem::remove(plain_marker);
-  const auto program = *tmp_or / "program";
-  const std::vector<std::string> build = {
-      "build",
-      "--backend",
-      "cpp",
-      "-O2",
-      "--lto",
-      "-j",
-      "0",
-      "--top",
-      "Test",
-      "--cxx",
-      wrapper.string(),
-      "--cache-dir",
-      (*tmp_or / "cache").string(),
-      "-o",
-      program.string(),
-      src.string()};
-  const auto in_process = RunChildProcess(lyra, build, 600s);
-  ASSERT_EQ(in_process.exit_code, 0) << in_process.stderr_text;
+  std::filesystem::path program;
+  switch (builder) {
+    case Builder::kRecipe: {
+      const auto out_dir = *tmp_or / "out";
+      const std::vector<std::string> emit = {"emit",      "cpp",
+                                             "-O2",       "--lto",
+                                             "--top",     "Test",
+                                             "--cxx",     wrapper.string(),
+                                             "-o",        out_dir.string(),
+                                             src.string()};
+      const auto emitted = RunChildProcess(lyra, emit, 120s);
+      ASSERT_EQ(emitted.exit_code, 0) << emitted.stderr_text;
+      const std::vector<std::string> recipe = {
+          "-c", "cd '" + out_dir.string() + "' && sh build.sh -j 0"};
+      const auto built = RunChildProcess(*sh_or, recipe, 600s);
+      ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
+      program = out_dir / "program";
+      break;
+    }
+    case Builder::kLyra: {
+      program = *tmp_or / "program";
+      const std::vector<std::string> build = {
+          "build",
+          "--backend",
+          "cpp",
+          "-O2",
+          "--lto",
+          "-j",
+          "0",
+          "--top",
+          "Test",
+          "--cxx",
+          wrapper.string(),
+          "--cache-dir",
+          (*tmp_or / "cache").string(),
+          "-o",
+          program.string(),
+          src.string()};
+      const auto built = RunChildProcess(lyra, build, 600s);
+      ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
+      break;
+    }
+  }
   EXPECT_TRUE(std::filesystem::exists(attempted_marker))
       << "the build never attempted link-time optimization";
   EXPECT_EQ(std::filesystem::exists(plain_marker), watching.refuses)
       << "the build's fallback to the plain build";
-  const auto ran_in_process = RunChildProcess(program, {}, 30s);
-  EXPECT_NE(ran_in_process.stdout_text.find("ran 42"), std::string::npos)
-      << "in-process stdout: " << ran_in_process.stdout_text;
+  const auto ran = RunChildProcess(program, {}, 30s);
+  EXPECT_NE(ran.stdout_text.find("ran 42"), std::string::npos)
+      << "stdout: " << ran.stdout_text;
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -305,7 +323,8 @@ INSTANTIATE_TEST_SUITE_P(
         testing::Values(
             HostCompiler{.name = "clang", .executable = "clang++"},
             HostCompiler{.name = "gcc", .executable = "g++"}),
-        testing::Range<std::size_t>(0, kLinkTimeRefusals.size())),
+        testing::Range<std::size_t>(0, kLinkTimeRefusals.size()),
+        testing::Values(Builder::kRecipe, Builder::kLyra)),
     LinkTimeRefusalName);
 
 // Nothing compiled in advance decides whether a build succeeds, at either thing

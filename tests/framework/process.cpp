@@ -7,6 +7,7 @@
 #include <csignal>
 #include <cstring>
 #include <expected>
+#include <fcntl.h>
 #include <filesystem>
 #include <format>
 #include <optional>
@@ -82,16 +83,22 @@ auto ComputePollTimeoutMs(
 
 auto RunChildProcess(
     const std::filesystem::path& exe, std::span<const std::string> args,
-    std::chrono::seconds timeout) -> ProcessOutcome {
+    std::chrono::seconds timeout,
+    const std::optional<std::filesystem::path>& working_directory)
+    -> ProcessOutcome {
+  // Every end is closed on exec, so a child started at the same moment from
+  // another thread inherits none of them: a write end it held would keep this
+  // reader waiting for its end of file until that other child exited. The
+  // child keeps only the copies made onto its own output.
   std::array<int, 2> stdout_pipe{};
   std::array<int, 2> stderr_pipe{};
-  if (pipe(stdout_pipe.data()) != 0) {
+  if (pipe2(stdout_pipe.data(), O_CLOEXEC) != 0) {
     return {
         .termination = TerminationKind::kSpawnFailed,
         .stdout_text = {},
         .stderr_text = "failed to create stdout pipe"};
   }
-  if (pipe(stderr_pipe.data()) != 0) {
+  if (pipe2(stderr_pipe.data(), O_CLOEXEC) != 0) {
     close(stdout_pipe[0]);
     close(stdout_pipe[1]);
     return {
@@ -104,10 +111,9 @@ auto RunChildProcess(
   posix_spawn_file_actions_init(&actions);
   posix_spawn_file_actions_adddup2(&actions, stdout_pipe[1], STDOUT_FILENO);
   posix_spawn_file_actions_adddup2(&actions, stderr_pipe[1], STDERR_FILENO);
-  posix_spawn_file_actions_addclose(&actions, stdout_pipe[0]);
-  posix_spawn_file_actions_addclose(&actions, stdout_pipe[1]);
-  posix_spawn_file_actions_addclose(&actions, stderr_pipe[0]);
-  posix_spawn_file_actions_addclose(&actions, stderr_pipe[1]);
+  if (working_directory) {
+    posix_spawn_file_actions_addchdir_np(&actions, working_directory->c_str());
+  }
 
   std::string exe_str = exe.string();
   std::vector<char*> argv;
