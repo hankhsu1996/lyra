@@ -61,14 +61,6 @@ auto BuildCaseOverValues(
     std::span<const ValueArm> items, std::optional<mir::Block> default_body)
     -> diag::Result<mir::BlockStmt>;
 
-// Appends to `frame`'s block the steps that assign `held`, a machine boolean
-// local that is false there, whether any of `conditions` holds: each is a step
-// of its own, lowered where none before it held, so it is evaluated only there
-// and the steps stand beside each other however many there are.
-auto AssignAnyHoldsInOrder(
-    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::LocalId held,
-    std::span<const Evaluation> conditions) -> diag::Result<void>;
-
 // One arm of a search: the conditions that select it, each tried in turn, and
 // what it runs.
 struct SearchedArm {

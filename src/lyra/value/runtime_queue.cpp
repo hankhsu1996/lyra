@@ -126,11 +126,6 @@ void RuntimeQueue::Insert(std::optional<std::int64_t> index, const void* item) {
   Core().Insert(index, item);
 }
 
-auto RuntimeQueue::Concat(std::span<const void* const> items) const
-    -> RuntimeQueue {
-  return RuntimeQueue(Core().Concat(items));
-}
-
 auto RuntimeQueue::FromElements(
     const QueueType& type, std::span<const void* const> items) -> RuntimeQueue {
   RuntimeQueue result(type);

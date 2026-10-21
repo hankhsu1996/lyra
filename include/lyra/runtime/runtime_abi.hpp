@@ -1244,8 +1244,7 @@ auto lyra_rt_string_scan_file(
     const void* prototypes_type, const void* answer_type, void* out) -> void*;
 
 auto lyra_rt_string_add(const void* lhs, const void* rhs, void* out) -> void*;
-auto lyra_rt_string_concat(const void* lhs, const void* rhs, void* out)
-    -> void*;
+auto lyra_rt_string_concat(LyraSpan parts, void* out) -> void*;
 auto lyra_rt_replicate_string(
     const void* operand, std::int64_t count, void* out) -> void*;
 auto lyra_rt_string_eq(const void* lhs, const void* rhs) -> std::uint8_t;
@@ -1494,11 +1493,6 @@ auto lyra_rt_queue_dynamic_array_from_array(
 auto lyra_rt_dynarray_element(const void* array, const void* position) -> const
     void*;
 auto lyra_rt_dynarray_element_mut(void* array, const void* position) -> void*;
-auto lyra_rt_dynarray_concat_element(
-    const void* array, const void* item, void* out) -> void*;
-auto lyra_rt_dynarray_concat_spread(
-    const void* array, const void* part, const void* part_type, void* out)
-    -> void*;
 void lyra_rt_dynarray_delete(void* array);
 // A slice of a dynamic array is a fixed-size unpacked array of `answer_type`,
 // and the replacement a window takes is one too, crossing with its type.
@@ -1539,8 +1533,6 @@ auto lyra_rt_dynarray_value_cell_load(void* cell) noexcept -> void*;
 // how many times is the type's to say, since it fixes the element count.
 auto lyra_rt_laidout_from_elements(
     LyraSpan unit, const void* answer_type, void* out) -> void*;
-auto lyra_rt_laidout_conform_size(
-    const void* parts, const void* answer_type, void* out) -> void*;
 auto lyra_rt_dynarray_unpacked_array_from_array(
     const void* source, const void* answer_type, void* out) -> void*;
 auto lyra_rt_queue_unpacked_array_from_array(
@@ -1656,11 +1648,6 @@ void lyra_rt_queue_assign_element_slice(
 auto lyra_rt_queue_size(const void* queue, void* out) -> void*;
 void lyra_rt_queue_push_back(void* queue, const void* item);
 void lyra_rt_queue_push_front(void* queue, const void* item);
-auto lyra_rt_queue_concat_element(
-    const void* queue, const void* item, void* out) -> void*;
-auto lyra_rt_queue_concat_spread(
-    const void* queue, const void* part, const void* part_type, void* out)
-    -> void*;
 void lyra_rt_queue_insert(void* queue, const void* position, const void* item);
 // LRM 7.10.2.4 / 7.10.2.5 pop: the element leaves the queue and is what the
 // call answers with.

@@ -2,7 +2,6 @@
 
 #include <array>
 #include <cstddef>
-#include <cstdint>
 #include <format>
 #include <optional>
 #include <span>
@@ -13,7 +12,6 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/support/integral_operation.hpp"
-#include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
 
@@ -66,26 +64,26 @@ class Applied {
 // The statement of the operation at each row, entered by the row's position.
 using Application = MachineAnswer (*)(const Applied&, const IntegralView&);
 
-template <std::size_t... row>
-constexpr auto ApplicationsAt(std::index_sequence<row...>) {
-  return std::array<Application, sizeof...(row)>{&ApplyIntegralOperation<
-      support::IntegralOperations()[row].op, Applied>...};
-}
-
-constexpr auto kApplications = ApplicationsAt(
-    std::make_index_sequence<support::IntegralOperations().size()>());
-
 // The answer rule of the operation at each row, likewise.
 using AnswerRule = IntegralAnswerType (*)(std::span<const IntegralExtent>);
 
-template <std::size_t... row>
-constexpr auto AnswerRulesAt(std::index_sequence<row...>) {
-  return std::array<AnswerRule, sizeof...(row)>{
-      &AnswerTypeOf<support::IntegralOperations()[row].op>...};
-}
+// Both, at each of `Rows`.
+template <typename Rows>
+struct RowsOver;
 
-constexpr auto kAnswerRules = AnswerRulesAt(
-    std::make_index_sequence<support::IntegralOperations().size()>());
+template <std::size_t... row>
+struct RowsOver<std::index_sequence<row...>> {
+  static constexpr std::array<Application, sizeof...(row)> kApplications{
+      &ApplyIntegralOperation<
+          support::IntegralOperations()[row].op, Applied>...};
+  static constexpr std::array<AnswerRule, sizeof...(row)> kAnswerRules{
+      &AnswerTypeOf<support::IntegralOperations()[row].op>...};
+};
+
+using EveryRow =
+    RowsOver<std::make_index_sequence<support::IntegralOperations().size()>>;
+constexpr auto kApplications = EveryRow::kApplications;
+constexpr auto kAnswerRules = EveryRow::kAnswerRules;
 
 }  // namespace
 

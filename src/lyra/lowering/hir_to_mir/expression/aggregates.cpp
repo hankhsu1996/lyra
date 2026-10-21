@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <cstdint>
 #include <expected>
 #include <optional>
 #include <span>
@@ -15,10 +14,12 @@
 #include "lyra/lowering/hir_to_mir/bitstream.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/concatenation.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/entry_walk.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
-#include "lyra/lowering/hir_to_mir/packed_concat.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/queue_building.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -70,37 +71,66 @@ auto BuildBitsReplication(
       unit, block, support::BuiltinFn::kReplicateBits, run, {}, result_type);
 }
 
-// An unpacked array concatenation (LRM 10.10) as the chain of appends it folds
-// to: the empty accumulator the destination declares, then each part appended
-// left to right -- one element, or, where the part is itself a container, every
-// element it holds in order. No entry composes a part list of arbitrary length,
-// so the fold is here and each step is a two-operand call; the accumulator's
-// own domain (a queue enforcing its bound, a dynamic array unbounded) selects
-// the realization. A spread part crosses erased, its own container domain being
-// no concern of the entry that appends its elements. The empty `{}` is the
-// accumulator with no step folded onto it.
-auto BuildUnpackedConcatChain(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId acc_type,
-    const std::vector<mir::ExprId>& operand_ids) -> mir::Expr {
-  const mir::TypeId element_type = RequiredContainerElementType(unit, acc_type);
-  mir::Expr acc = BuildArrayConstructionCall(unit, block, acc_type, {});
-  for (const mir::ExprId part : operand_ids) {
-    const bool spread =
-        ContributesItsElements(unit, block.exprs.Get(part).type, element_type);
-    const mir::ExprId acc_id = block.exprs.Add(std::move(acc));
-    acc = mir::Expr{
-        .data =
-            mir::CallExpr{
-                .callee =
-                    mir::Direct{
-                        .target = spread
-                                      ? support::BuiltinFn::kArrayConcatSpread
-                                      : support::BuiltinFn::kArrayConcatElement,
-                        .receiver = acc_id},
-                .arguments = {part}},
-        .type = acc_type};
+// An unpacked array concatenation (LRM 10.10) whose parts are not all single
+// elements of a fixed-size array, as steps appending each part, left to right,
+// to a queue the steps hold -- the part itself, or, where it is a container,
+// every element it holds in order:
+//
+//   { q = {}; q.push_back(a); foreach (e in b) q.push_back(e); ...; q }
+//
+// The steps stand beside each other however many parts the source lists, and
+// each element is appended once. The queue is the destination itself where
+// that is a queue, so its bound holds as each element lands; a dynamic or a
+// fixed-size array takes what was appended as an assignment between array kinds
+// does, which a fixed-size one refuses where the counts differ (LRM 7.6,
+// 10.10). The empty `{}` is the queue with nothing appended.
+template <ExprLowerer Lowerer>
+auto BuildUnpackedConcatSteps(
+    Lowerer& lowerer, const WalkFrame& frame,
+    std::span<const hir::ExprId> parts, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  UnitLowerer& owner = lowerer.Owner();
+  mir::CompilationUnit& unit = owner.Unit();
+  const mir::Type& result = unit.types.Get(result_type);
+  const mir::TypeId element_type =
+      RequiredContainerElementType(unit, result_type);
+  const mir::TypeId queue_type =
+      result.Is<mir::QueueType>() ? result_type : QueueOf(unit, element_type);
+  BlockBuilder steps(frame);
+  mir::Block& body = steps.Body();
+  const mir::LocalId appended = steps.DeclareLocal(
+      queue_type,
+      body.exprs.Add(BuildArrayConstructionCall(unit, body, queue_type, {})));
+  for (const hir::ExprId id : parts) {
+    const hir::Expr& part = lowerer.HirExprs().Get(id);
+    auto lowered = lowerer.LowerExpr(part, steps.Frame());
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    const mir::ExprId value = body.exprs.Add(*std::move(lowered));
+    if (!ContributesItsElements(
+            unit, body.exprs.Get(value).type, element_type)) {
+      AppendPushBack(owner, body, appended, queue_type, value);
+      continue;
+    }
+    auto walked = BuildEntryLoopStmt(
+        owner, steps.Frame(),
+        WalkedArrayOf(
+            owner, steps.Frame(), value, DeclaredRangeOf(owner, part.type)),
+        WalkOrder::kFromFirst, std::nullopt,
+        [&](const WalkFrame& at,
+            const VisitedEntry& entry) -> diag::Result<void> {
+          AppendPushBack(
+              owner, *at.current_block, appended, queue_type, entry.element);
+          return {};
+        });
+    if (!walked) return std::unexpected(std::move(walked.error()));
+    body.AppendStmt(*std::move(walked));
   }
-  return acc;
+  const mir::ExprId held = body.ReadLocal(appended, queue_type);
+  if (queue_type == result_type) {
+    return steps.Build(held);
+  }
+  return steps.Build(
+      body.exprs.Add(BuildValueConversion(unit, body, held, result_type)));
 }
 
 }  // namespace
@@ -110,6 +140,25 @@ auto LowerHirConcatExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ConcatExpr& c,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  const auto& result_ty = unit.types.Get(result_type);
+  // A queue or a dynamic array is grown from the parts, and so is a fixed-size
+  // unpacked array where one part spreads, since that part's element count is
+  // the run's. One whose parts are all single elements is instead the
+  // assignment pattern it coincides with (LRM 10.10.1), built by position; the
+  // front end has already rejected one whose count does not match.
+  if (BuildsFromAnElementList(result_ty)) {
+    const mir::TypeId element_type =
+        RequiredContainerElementType(unit, result_type);
+    const bool spreads = std::ranges::any_of(c.operands, [&](hir::ExprId id) {
+      return ContributesItsElements(
+          unit, lowerer.Owner().TranslateType(lowerer.HirExprs().Get(id).type),
+          element_type);
+    });
+    if (!result_ty.Is<mir::UnpackedArrayType>() || spreads) {
+      return BuildUnpackedConcatSteps(lowerer, frame, c.operands, result_type);
+    }
+  }
   std::vector<mir::ExprId> operand_ids;
   operand_ids.reserve(c.operands.size());
   for (const auto& id : c.operands) {
@@ -120,71 +169,15 @@ auto LowerHirConcatExpr(
   // What the operator joins -- bits, characters, elements -- differs by operand
   // family, so which operation this is settles here, where the family is known,
   // rather than at each consumer.
-  mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  const auto& result_ty = unit.types.Get(result_type);
-  // Characters join two at a time, because no entry takes an operand list of
-  // arbitrary length; a source-level join of one is already the string it
-  // names.
   if (result_ty.Is<mir::StringType>()) {
-    if (operand_ids.size() == 1) {
-      return block.exprs.Get(operand_ids.front());
-    }
-    const auto join = [&](mir::ExprId lhs, mir::ExprId rhs) {
-      return mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kConcat,
-                          .receiver = lhs},
-                  .arguments = {rhs}},
-          .type = result_type};
-    };
-    mir::ExprId lhs = operand_ids.front();
-    for (std::size_t i = 1; i + 1 < operand_ids.size(); ++i) {
-      lhs = block.exprs.Add(join(lhs, operand_ids[i]));
-    }
-    return join(lhs, operand_ids.back());
+    return block.exprs.Get(BuildStringJoin(unit, block, operand_ids));
   }
-  // A queue or a dynamic array is grown from the parts directly, the chain
-  // building at the destination's own type -- which is also what decides what
-  // each part contributes.
-  if (result_ty.Is<mir::QueueType>() || result_ty.Is<mir::DynamicArrayType>()) {
-    return BuildUnpackedConcatChain(unit, block, result_type, operand_ids);
-  }
-  // A fixed-size unpacked array whose parts are all single elements is the
-  // assignment pattern it coincides with (LRM 10.10.1), built by position. One
-  // carrying a spread has a run-time element count, so it grows a dynamic array
-  // from the parts and then adopts it into the fixed target, which is an error
-  // when the counts differ (LRM 10.10). The front end has already rejected a
-  // spread-free mismatch, so only the spread form can reach the run-time check.
   if (result_ty.Is<mir::UnpackedArrayType>()) {
-    const mir::TypeId element_type =
-        RequiredContainerElementType(unit, result_type);
-    const bool has_spread =
-        std::ranges::any_of(operand_ids, [&](mir::ExprId part) {
-          return ContributesItsElements(
-              unit, block.exprs.Get(part).type, element_type);
-        });
-    if (!has_spread) {
-      return BuildArrayConstructionCall(
-          unit, block, result_type, std::move(operand_ids));
-    }
-    const mir::TypeId dyn_type = unit.types.Intern(
-        mir::Type{mir::DynamicArrayType{.element_type = element_type}});
-    const mir::ExprId dyn_id = block.exprs.Add(
-        BuildUnpackedConcatChain(unit, block, dyn_type, operand_ids));
-    return mir::Expr{
-        .data =
-            mir::CallExpr{
-                .callee =
-                    mir::Direct{
-                        .target = support::BuiltinFn::kArrayConformSize},
-                .arguments = {dyn_id}},
-        .type = result_type};
+    return BuildArrayConstructionCall(
+        unit, block, result_type, std::move(operand_ids));
   }
   return BuildValueConversion(
-      unit, block, BuildPackedConcat(unit, block, operand_ids), result_type);
+      unit, block, BuildBitsJoin(unit, frame, operand_ids), result_type);
 }
 
 template <ExprLowerer Lowerer>
@@ -208,7 +201,7 @@ auto LowerHirStreamingConcatExpr(
     runs.push_back(block.AsValue(unit.types, *run_or));
   }
   const mir::ExprId stream = BuildReorderedStream(
-      unit, block, BuildPackedConcat(unit, block, runs), s.block_bits);
+      unit, block, BuildBitsJoin(unit, frame, runs), s.block_bits);
   return BuildValueConversion(unit, block, stream, result_type);
 }
 
@@ -241,8 +234,9 @@ auto LowerHirReplicationExpr(
 }
 
 auto BuildPositionalAggregate(
-    mir::CompilationUnit& unit, mir::Block& block, mir::TypeId result_type,
+    mir::CompilationUnit& unit, const WalkFrame& frame, mir::TypeId result_type,
     std::vector<mir::ExprId> elements) -> mir::Expr {
+  mir::Block& block = *frame.current_block;
   const auto& result_ty = unit.types.Get(result_type);
   if (BuildsFromAnElementList(result_ty)) {
     return BuildArrayConstructionCall(
@@ -254,7 +248,7 @@ auto BuildPositionalAggregate(
         .type = result_type};
   }
   return BuildValueConversion(
-      unit, block, BuildPackedConcat(unit, block, elements), result_type);
+      unit, block, BuildBitsJoin(unit, frame, elements), result_type);
 }
 
 // A pattern that states every element by position, dispatched on the
@@ -281,7 +275,7 @@ auto LowerHirAssignmentPatternExpr(
     element_ids.push_back(block.exprs.Add(*std::move(lowered)));
   }
   return BuildPositionalAggregate(
-      lowerer.Owner().Unit(), block, result_type, std::move(element_ids));
+      lowerer.Owner().Unit(), frame, result_type, std::move(element_ids));
 }
 
 // The whole target before any key names an element of it: every element holding
@@ -459,7 +453,7 @@ auto LowerHirAssignmentPatternReplicationExpr(
   }
   // A packed target is as many copies of the items as fill it, which its own
   // type states.
-  const mir::ExprId inner_id = BuildPackedConcat(unit, block, item_ids);
+  const mir::ExprId inner_id = BuildBitsJoin(unit, frame, item_ids);
   const mir::IntegralStateKind inner_state =
       unit.types.Get(block.exprs.Get(inner_id).type).Integral().state_kind;
   const mir::TypeId copies = mir::PackedVectorOf(

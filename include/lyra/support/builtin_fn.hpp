@@ -1132,26 +1132,6 @@ enum class BuiltinFn : std::uint16_t {
   // differently-bounded source to the destination's. A factory on the queue
   // type it builds, since that type is what states the bound.
   kConformBound,
-  // The two steps an unpacked concatenation (LRM 10.10) folds into: appending
-  // one element to the accumulating array, and appending every element of a
-  // spread part in order. A part contributes itself unless the program spreads
-  // a container, so which step it takes is the program's fact, not the part's
-  // type. Both are instance methods on the accumulator, so a concatenation of
-  // any number of parts is the left-to-right chain of them, folded where the
-  // join is built -- no entry composes an operand list of arbitrary length. One
-  // entry each serves every growable array family, the accumulator's own domain
-  // (a queue enforcing its bound, a dynamic array unbounded) selecting the
-  // realization. A spread part crosses erased; its own container representation
-  // is no concern of the appending entry.
-  kArrayConcatElement,
-  kArrayConcatSpread,
-  // The step that fits a concatenation's parts to a fixed-size unpacked array
-  // (LRM 10.10): the parts, accumulated into a dynamic array by the two steps
-  // above, adopted into a target whose element count is fixed, which is an
-  // error when the counts differ. The call answers with that target, as it does
-  // for any static factory, so the entry is named for the array it builds and
-  // not for the dynamic array it reads.
-  kArrayConformSize,
   // A dynamic array sized at run time: `new[N]` and `new[N](src)` (LRM 7.5.1).
   // Each is named because the argument list does not tell them apart -- a
   // `new` copying a source and an element list both carry two operands -- so a
@@ -1162,10 +1142,9 @@ enum class BuiltinFn : std::uint16_t {
   // factory.
   kMakeDynamicArrayNew,
   kMakeDynamicArrayNewCopy,
-  // LRM 11.4.12 concatenation: two operands joined, bits or characters as the
-  // operands are. A longer source-level join folds into a chain, because an
-  // operand list of arbitrary length has no single entry to call.
-  kConcat,
+  // LRM 11.4.12.2 concatenation of strings: every part the source lists, one
+  // list of strings, joined in order into one string sized once.
+  kConcatStrings,
   // LRM 11.4.12.1 replication. Bits are repeated as many times as fill the
   // integral type the call answers with, which is a constant of the source.
   // Characters are repeated as many times as an operand says, since a string's
@@ -1202,11 +1181,10 @@ enum class BuiltinFn : std::uint16_t {
   kFromBool,
   // An operation the source states over values of several kinds, as it is over
   // integral values. The source names the entry above that serves every kind
-  // -- a join of bits and a join of characters are one operator -- and the
+  // -- `===` over integers and over structures is one operator -- and the
   // lowering to MIR, which knows what the operation is applied to, names one
   // of these where that is integral, so every entry below MIR is over values
   // of one kind and has one declaration.
-  kConcatBits,
   kIntegralPow,
   kIntegralCaseEqual,
   kIntegralBitIdentical,

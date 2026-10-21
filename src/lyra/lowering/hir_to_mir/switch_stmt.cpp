@@ -168,23 +168,6 @@ auto BuildCaseOverValues(
       .break_label = leaves.Label()};
 }
 
-auto AssignAnyHoldsInOrder(
-    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::LocalId held,
-    std::span<const Evaluation> conditions) -> diag::Result<void> {
-  mir::Block& block = *frame.current_block;
-  const mir::TypeId boolean = unit.builtins.machine_bool;
-  for (const Evaluation& condition : conditions) {
-    mir::Block tried;
-    auto tested = condition(frame.WithBlock(&tried));
-    if (!tested) return std::unexpected(std::move(tested.error()));
-    AssignLocal(unit, tried, held, ReduceToCondition(unit, tried, *tested));
-    block.AppendIfThen(
-        BuildConditionNot(unit, block, block.ReadLocal(held, boolean)),
-        std::move(tried));
-  }
-  return {};
-}
-
 // Whether an arm is selected is kept in one machine boolean, false wherever an
 // arm is reached since an arm that held has left the search:
 //

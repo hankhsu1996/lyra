@@ -12,7 +12,9 @@
 #include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/operand_use.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/statistics.hpp"
@@ -52,15 +54,57 @@ void Add(const CompilationUnit& unit, const Class& cls, HeldByClasses& held) {
   held.constants += constants.size();
 }
 
-// How deep blocks nest in `body`, the body itself one level. Walked without
-// recursion, so a body nested deeper than a stack allows is still measured.
+// How many levels the tallest expression of `block` stands on, an expression
+// one level above the tallest of its operands. Walked without recursion, as the
+// blocks are.
+auto TallestExpression(const Block& block) -> std::uint64_t {
+  std::vector<std::uint64_t> height(block.exprs.size(), 0);
+  const auto height_of = [&](ExprId id) -> std::uint64_t& {
+    return height.at(id.value);
+  };
+  std::uint64_t tallest = 0;
+  for (const ExprId root : block.exprs.Ids()) {
+    // An expression is visited twice: once to reach its operands, and once
+    // they are measured, to measure it.
+    std::vector<std::pair<ExprId, bool>> unvisited{{root, false}};
+    while (!unvisited.empty()) {
+      const auto [id, operands_measured] = unvisited.back();
+      unvisited.pop_back();
+      if (height_of(id) != 0) {
+        continue;
+      }
+      const ExprData& data = block.exprs.Get(id).data;
+      if (!operands_measured) {
+        unvisited.emplace_back(id, true);
+        ForEachOperand(data, [&](const ExprId& operand, OperandUse) {
+          if (height_of(operand) == 0) {
+            unvisited.emplace_back(operand, false);
+          }
+        });
+        continue;
+      }
+      std::uint64_t measured = 1;
+      ForEachOperand(data, [&](const ExprId& operand, OperandUse) {
+        measured = std::max(measured, height_of(operand) + 1);
+      });
+      height_of(id) = measured;
+      tallest = std::max(tallest, measured);
+    }
+  }
+  return tallest;
+}
+
+// How deep `body` nests, the body itself one level: each block one level
+// inside the block holding it, and an expression as many levels inside its
+// block as it stands on. Walked without recursion, so a body nested deeper
+// than a stack allows is still measured.
 auto NestingDepth(const Block& body) -> std::uint64_t {
   std::uint64_t deepest = 0;
   std::vector<std::pair<const Block*, std::uint64_t>> unvisited{{&body, 1}};
   while (!unvisited.empty()) {
     const auto [block, depth] = unvisited.back();
     unvisited.pop_back();
-    deepest = std::max(deepest, depth);
+    deepest = std::max(deepest, depth + TallestExpression(*block));
     for (const Block& child : block->child_scopes) {
       unvisited.emplace_back(&child, depth + 1);
     }

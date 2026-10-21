@@ -20,6 +20,7 @@
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/bitstream.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/concatenation.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
@@ -707,6 +708,23 @@ class StructBodies : public OperationBodies {
     return *FixedStreamShapeOfParts(Unit(), Members());
   }
 
+  // The `int` sum of what `term(i)` answers for each member `i`, added into a
+  // local of `code` one statement per member.
+  auto SumOverMembers(
+      mir::CallableCode& code, mir::Block& block, const auto& term)
+      -> mir::ExprId {
+    const mir::TypeId count = Unit().builtins.int_type;
+    std::vector<mir::ExprId> terms;
+    terms.reserve(Members().size());
+    for (std::size_t i = 0; i < Members().size(); ++i) {
+      terms.push_back(term(i));
+    }
+    return AccumulateMirBinary(
+        Unit(), block, mir::BinaryOp::kAdd,
+        mir::BuildIntLiteral(Unit(), block, 0), code.AddLocal(count), count,
+        terms);
+  }
+
   // The struct built from one value per member.
   auto Built(mir::Block& block, std::vector<mir::ExprId> members)
       -> mir::ExprId {
@@ -724,9 +742,11 @@ class StructBodies : public OperationBodies {
 // own answers, each taken to the structure's own answer type first.
 auto StructBodies::Equality() -> mir::CallableCode {
   const mir::TypeId answer_type = EqualityAnswer();
-  return Body(
+  return BodyOf(
       support::ValueOperator::kEquality, {WholeType(), WholeType()},
-      answer_type, [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
+      answer_type,
+      [&](mir::CallableCode& code, mir::Block& block,
+          const std::vector<mir::LocalId>& p) {
         std::vector<mir::ExprId> equal;
         equal.reserve(Members().size());
         for (std::size_t i = 0; i < Members().size(); ++i) {
@@ -734,91 +754,96 @@ auto StructBodies::Equality() -> mir::CallableCode {
               block, Member(block, p[0], i), Member(block, p[1], i),
               Members()[i]));
         }
-        return BuildMirLogicalAnd(Unit(), block, answer_type, equal);
+        return AccumulateMirLogicalAnd(
+            Unit(), block, code.AddLocal(answer_type), answer_type, equal);
       });
 }
 
 auto StructBodies::CaseEqual() -> mir::CallableCode {
   const mir::TypeId bit = Unit().builtins.bit1;
-  return Body(
+  return BodyOf(
       support::BuiltinFn::kCaseEqual, {WholeType(), WholeType()}, bit,
-      [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
+      [&](mir::CallableCode& code, mir::Block& block,
+          const std::vector<mir::LocalId>& p) {
         std::vector<mir::ExprId> equal;
         equal.reserve(Members().size());
         for (std::size_t i = 0; i < Members().size(); ++i) {
           equal.push_back(BuildCaseEquality(
               Unit(), block, Member(block, p[0], i), Member(block, p[1], i)));
         }
-        return BuildMirLogicalAnd(Unit(), block, bit, equal);
+        return AccumulateMirLogicalAnd(
+            Unit(), block, code.AddLocal(bit), bit, equal);
       });
 }
 
+// Identical where every pair of members is, asked in order and answered at the
+// first pair that is not: one statement per member, one after another.
 auto StructBodies::BitIdentical() -> mir::CallableCode {
   const mir::TypeId boolean = Unit().builtins.machine_bool;
   return Body(
       support::BuiltinFn::kBitIdentical, {WholeType(), WholeType()}, boolean,
       [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
-        std::vector<mir::ExprId> identical;
-        identical.reserve(Members().size());
         for (std::size_t i = 0; i < Members().size(); ++i) {
-          identical.push_back(BuildBitIdentity(
-              Unit(), block, Member(block, p[0], i), Member(block, p[1], i)));
+          ReturnWhere(
+              block,
+              BuildConditionNot(
+                  Unit(), block,
+                  BuildBitIdentity(
+                      Unit(), block, Member(block, p[0], i),
+                      Member(block, p[1], i))),
+              [&](mir::Block& taken) {
+                return BuildMachineBool(Unit(), taken, false);
+              });
         }
-        return AllHold(Unit(), block, identical);
+        return BuildMachineBool(Unit(), block, true);
       });
 }
 
+// Holding an x or z where any member does, asked in order and answered at the
+// first member that holds one.
 auto StructBodies::HasUnknown() -> mir::CallableCode {
   const mir::TypeId boolean = Unit().builtins.machine_bool;
   return Body(
       support::BuiltinFn::kHasUnknown, {WholeType()}, boolean,
       [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
-        std::vector<mir::ExprId> unknown;
-        unknown.reserve(Members().size());
         for (std::size_t i = 0; i < Members().size(); ++i) {
-          unknown.push_back(
-              BuildHasUnknown(Unit(), block, Member(block, p[0], i)));
+          ReturnWhere(
+              block, BuildHasUnknown(Unit(), block, Member(block, p[0], i)),
+              [&](mir::Block& taken) {
+                return BuildMachineBool(Unit(), taken, true);
+              });
         }
-        return AnyHolds(Unit(), block, unknown);
+        return BuildMachineBool(Unit(), block, false);
       });
 }
 
 // LRM 20.6.2: a structure holds the bits its members hold.
 auto StructBodies::BitWidth() -> mir::CallableCode {
-  const mir::TypeId count = Unit().builtins.int_type;
-  return Body(
-      support::BuiltinFn::kBitstreamWidth, {WholeType()}, count,
-      [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
-        mir::ExprId answer = mir::BuildIntLiteral(Unit(), block, 0);
-        for (std::size_t i = 0; i < Members().size(); ++i) {
-          answer = block.exprs.Add(
-              mir::MakeBinary(
-                  Unit(), block, mir::BinaryOp::kAdd, answer,
-                  BuildBitWidth(Unit(), block, Member(block, p[0], i)), count));
-        }
-        return answer;
+  return BodyOf(
+      support::BuiltinFn::kBitstreamWidth, {WholeType()},
+      Unit().builtins.int_type,
+      [&](mir::CallableCode& code, mir::Block& block,
+          const std::vector<mir::LocalId>& p) {
+        return SumOverMembers(code, block, [&](std::size_t i) {
+          return BuildBitWidth(Unit(), block, Member(block, p[0], i));
+        });
       });
 }
 
 // LRM 20.9: a structure's stream is its members' laid end to end, so the count
 // over it is the sum of theirs under the same control set.
 auto StructBodies::CountBits() -> mir::CallableCode {
-  const mir::TypeId count = Unit().builtins.int_type;
   const mir::TypeId control = BitCountControlType(Unit());
-  return Body(
-      support::BuiltinFn::kCountBits, {WholeType(), control}, count,
-      [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
-        mir::ExprId answer = mir::BuildIntLiteral(Unit(), block, 0);
-        for (std::size_t i = 0; i < Members().size(); ++i) {
-          answer = block.exprs.Add(
-              mir::MakeBinary(
-                  Unit(), block, mir::BinaryOp::kAdd, answer,
-                  BuildBitCount(
-                      Unit(), block, Member(block, p[0], i),
-                      Referent(block, p[1], control)),
-                  count));
-        }
-        return answer;
+  return BodyOf(
+      support::BuiltinFn::kCountBits, {WholeType(), control},
+      Unit().builtins.int_type,
+      [&](mir::CallableCode& code, mir::Block& block,
+          const std::vector<mir::LocalId>& p) {
+        return SumOverMembers(code, block, [&](std::size_t i) {
+          return BuildBitCount(
+              Unit(), block, Member(block, p[0], i),
+              Referent(block, p[1], control));
+        });
       });
 }
 
@@ -829,9 +854,10 @@ auto StructBodies::ToBitstream() -> mir::CallableCode {
   const StreamShape shape = Stream();
   const mir::TypeId stream =
       mir::PackedVectorOf(Unit().types, shape.width, shape.state_kind);
-  return Body(
+  return BodyOf(
       support::BuiltinFn::kToBitstream, {WholeType()}, stream,
-      [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
+      [&](mir::CallableCode& code, mir::Block& block,
+          const std::vector<mir::LocalId>& p) {
         std::vector<mir::ExprId> streams;
         for (std::size_t i = 0; i < Members().size(); ++i) {
           auto member = BuildToBitstream(
@@ -843,20 +869,9 @@ auto StructBodies::ToBitstream() -> mir::CallableCode {
           }
           streams.push_back(block.AsValue(Unit().types, *member));
         }
-        // A stream of no bits is no value, so a fixed stream has a first
-        // member to start from rather than an empty join.
-        mir::ExprId answer = streams.front();
-        for (std::size_t i = 1; i < streams.size(); ++i) {
-          const StreamShape built =
-              *FixedStreamShapeOfParts(Unit(), Members().first(i + 1));
-          answer = block.exprs.Add(
-              mir::MakeBuiltinCall(
-                  Unit(), block, support::BuiltinFn::kConcatBits, answer,
-                  {streams[i]},
-                  mir::PackedVectorOf(
-                      Unit().types, built.width, built.state_kind)));
-        }
-        return answer;
+        return BuildBitsJoin(
+            Unit(), block,
+            code.AddLocal(JoinedBitsType(Unit(), block, streams)), streams);
       });
 }
 

@@ -23,6 +23,7 @@
 #include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/queue_building.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/loops.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -148,38 +149,6 @@ auto AppendKeyLoop(
   if (!walked) return std::unexpected(std::move(walked.error()));
   steps.Body().AppendStmt(*std::move(walked));
   return {};
-}
-
-// A call of a method that changes the container held in `container`, as the
-// statement it is.
-void AppendContainerUpdate(
-    UnitLowerer& unit_lowerer, mir::Block& block, support::BuiltinFn method,
-    mir::LocalId container, mir::TypeId type,
-    std::vector<mir::ExprId> operands) {
-  block.AppendStmt(
-      mir::ExprStmt{
-          .expr = block.exprs.Add(BuildBuiltinMethodCall(
-              unit_lowerer, block, method, block.LocalPlace(container, type),
-              std::move(operands), unit_lowerer.Unit().builtins.void_type))});
-}
-
-// `value` appended to the queue held in `queue`, brought to its element type.
-void AppendPushBack(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::LocalId queue,
-    mir::TypeId queue_type, mir::ExprId value) {
-  const mir::CompilationUnit& unit = unit_lowerer.Unit();
-  const mir::TypeId element =
-      unit.types.Get(queue_type).Get<mir::QueueType>().element_type;
-  AppendContainerUpdate(
-      unit_lowerer, block, support::BuiltinFn::kPushBack, queue, queue_type,
-      {ConvertToType(unit, block, value, element)});
-}
-
-// An unbounded queue of `element` (LRM 7.10).
-auto QueueOf(mir::CompilationUnit& unit, mir::TypeId element) -> mir::TypeId {
-  return unit.types.Intern(
-      mir::Type{
-          mir::QueueType{.element_type = element, .max_bound = std::nullopt}});
 }
 
 // A local of `type` starting out as that type's default.

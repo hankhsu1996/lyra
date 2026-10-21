@@ -571,19 +571,24 @@ label is a value known before the run and compared as `case` compares, and other
 arms are tried one after another, each test a step that runs while none before it held and each
 selected arm leaving the block by a break naming it. Which shape each takes is settled at HIR-to-MIR
 -- from whether its predicates can be unknown, or whether its labels are values known before the run
--- so no consumer derives it. A write yields nothing, as an assignment does in Rust's MIR: what an
-assignment yields where the source reads it (LRM 11.3.6) is what it stored, which the lowering holds
-in a local and reads, so no backend's own rule for the value of an assignment -- C++'s is the target
-itself -- decides it. An assignment operator and an increment (LRM 11.4.1, 11.4.2) are no write of
-their own: each is the operator applied to what the target held and then that write, the target
-settled once for both, so a write names no operator. A value-build primitive spells a value rather
-than operating on values that already exist -- a structured literal is one, and so is every peer
-language's array or aggregate literal. Select expressions are access primitives. Each of these stays
-in MIR for the same reason: removing it would require expanding into a statement-form rewrite that
-does not fit the expression context. Composing values that already exist is not this. A
-concatenation or a replication is an operation over its operands, which every peer reaches through a
-library call and none of them spells as a node, so it is a `CallExpr` against the entry that
-performs it.
+-- so no consumer derives it. The operands an operation is written over as a list stand side by side
+the same way -- a concatenation's, a set's members, and what the compiler lists over a structure's
+members to compare, stream or print one: a join of bits is a local and one write of each part into
+the bits it takes, a fold of the operands' truths is a local and one statement per operand folding
+it in, and a search is steps that each try one condition while the answer is open. A write yields
+nothing, as an assignment does in Rust's MIR: what an assignment yields where the source reads it
+(LRM 11.3.6) is what it stored, which the lowering holds in a local and reads, so no backend's own
+rule for the value of an assignment -- C++'s is the target itself -- decides it. An assignment
+operator and an increment (LRM 11.4.1, 11.4.2) are no write of their own: each is the operator
+applied to what the target held and then that write, the target settled once for both, so a write
+names no operator. A value-build primitive spells a value rather than operating on values that
+already exist -- a structured literal is one, and so is every peer language's array or aggregate
+literal. Select expressions are access primitives. Each of these stays in MIR for the same reason:
+removing it would require expanding into a statement-form rewrite that does not fit the expression
+context. Composing values that already exist is not this, and no peer spells a concatenation as a
+node: a join of strings or a replication is a `CallExpr` against the entry that performs it, as
+every peer reaches one through a library call, and a join of bits is the writes of its parts into
+the bits each takes, as a peer's code generation stores each part of an aggregate into its field.
 
 A callable is one concept: callable code (a signature, plus a body where the declaration defines it)
 and a callable value (code plus a bound environment). A closure is a callable value with a captured

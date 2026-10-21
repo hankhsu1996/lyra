@@ -1,14 +1,15 @@
-# A join is a call, and reaches a fixed-arity entry as a chain
+# A join is stated as the program a person writes for it
 
 ## Date
 
-2026-08-27, revised 2026-08-31
+2026-08-27, revised 2026-08-31 and 2026-10-21
 
 ## Status
 
-Accepted. Supersedes the packed-and-string half of [queue-operators](queue-operators.md) decision 3;
-the queue half of that decision stands unchanged. The 2026-08-31 revision reverses this record's own
-first decision, which made the packed form a MIR node; the reasoning it replaces is kept below.
+Accepted. Supersedes [queue-operators](queue-operators.md) decision 3. The 2026-08-31 revision
+reverses this record's own first decision, which made the packed form a MIR node; the 2026-10-21
+revision reverses decisions 2, 4 and 5, which made a join a call of two operands and folded a longer
+one into a chain of such calls. The reasoning each replaces is kept below.
 
 ## Context
 
@@ -16,7 +17,7 @@ first decision, which made the packed form a MIR node; the reasoning it replaces
 packed operands they compose one bit plane. Over strings they compose characters, and the standard
 even gives the two forms different rules: 11.4.12.1 requires the replication multiplier to be a
 constant expression, while 11.4.12.2 allows a non-constant one and says the destination is resized
-rather than truncated. Over an unpacked queue it is a third thing again, already settled.
+rather than truncated. Over an unpacked queue it is a third thing again (LRM 10.10).
 
 MIR carried one node for the first two and left each consumer to pick which by reading the result
 type. The C++ backend did:
@@ -38,23 +39,17 @@ render, which `mir.md` requires to be a stated call.
 
 ## Decisions
 
-1. **A join is a call against the entry that performs it, over every operand family.** Which
-   operation a source-level `{...}` means follows its operands -- composing bits, characters, or
-   elements is three operations -- and the layer holding the operands states it by naming the entry.
-   No consumer picks a realization by reading a result type, and no consumer needs a node kind of
-   its own to recognize.
+1. **Which operation a join is follows its operands, and the layer holding them states it.**
+   Composing bits, characters, or elements is three operations, and HIR-to-MIR, where the operand
+   family is known, writes each as what it is. No consumer picks a realization by reading a result
+   type, and no consumer needs a node kind of its own to recognize.
 
    MIR's expression set is closed under what a generic programming-language AST needs to express,
-   and none of MIR's peers has a concatenation node: Rust, C++ and Python all reach concatenation
-   through a library call, and none of them has bit concatenation at all. A node here would be the
-   source language's syntax shaping MIR's vocabulary, which `mir.md` forbids outright. An aggregate
-   _literal_ is the opposite case and stays a node -- Rust and C++ both have one, because a literal
-   spells a value rather than operating on values that already exist.
+   and none of MIR's peers has a concatenation node. A node here would be the source language's
+   syntax shaping MIR's vocabulary, which `mir.md` forbids outright.
 
-2. **A join carries two or more operands.** A source-level join of one operand is that operand seen
-   at the join's own type, which LRM 11.8.1 fixes as unsigned however the operand was declared -- a
-   conversion, not a join. HIR-to-MIR states it as one, so the one-operand case exists in one place
-   instead of at every consumer.
+2. **A join of strings of one part is that part.** A source-level join of one string is the string
+   it names. A join of bits needs no such case: one part is one write.
 
 3. **A replication's multiplier reaches the entry as a machine count.** The multiplier is lowered as
    the expression the source wrote and reshaped to a machine count by a call in the argument list,
@@ -69,26 +64,42 @@ render, which `mir.md` requires to be a stated call.
    was reasoning from the clause to what the compiler must be doing, which is the inference
    `an-elaboration-time-value-is-an-input` exists to stop.
 
-4. **A join reaches MIR already folded to the arity its entries take.** Nothing composes an operand
-   list of arbitrary length: a C ABI has no such entry, and neither does the runtime's C++ surface.
-   So an N-operand source join is stated as the left-to-right chain of two-operand calls it stands
-   for. Composing is associative over both the bit plane and the state domain -- total width is a
-   sum, the result holds x and z when any operand does, and each operand lands at the same offset
-   either way -- so the chain and the single N-operand call hold the same value.
+4. **Each join is what a person writes for it by hand, and stands as flat for thirty thousand parts
+   as for two.** Every consumer walks an expression by its nesting and a target compiler bounds how
+   deeply text may nest, so a list the source writes is never stated one level per part.
+   - **Bits** are a local of the joined type and one write of each part into the bits it takes, in
+     the order the source lists them: `t = 0; t[55:48] = a; t[47:32] = b; t[31:0] = c`. Each part's
+     width is its type's (LRM 11.4.12 bans unsized constants "because the size of each operand is
+     needed"), so where it lands is a constant of the program and nothing about it reaches the run.
+     A write into bits is the existing write through the reference a packed value's `slice_mut`
+     answers.
+   - **Strings** are one call over one list of strings, sized once and each part copied once. Every
+     part is of one type and its length is known only at run time, which is the condition every
+     peer's list-taking join has.
+   - **Queue elements and queues** (LRM 10.10) are a queue the steps append each part to -- the part
+     itself, or every element of a part that spreads -- and where the destination is not a queue, it
+     takes what was appended as an assignment between array kinds does.
 
-   The fold happens where the join is built, because arity is not one target's fact: every entry
-   that performs the operation takes two operands. A backend that folded instead would be deciding,
-   in a value-emission entry, how many operations one node stands for -- the render-side defect this
-   record opened with, reached from the other end. Each step's type follows from the operands it has
-   joined so far, so the entry that performs the join is what fixes it and no caller states it.
+## Survey
 
-5. **One entry, one call shape across value families.** Which realization a join reaches follows the
-   value domain of its operands, and each backend answers that its own way: the execution backend
-   derives the ABI symbol from the domain, and the C++ backend has one spelling per entry and lets
-   the host compiler's overload resolution pick. That second form only holds if the runtime presents
-   the same call shape for every family it realizes -- so a join is an instance method on each value
-   type, as every other binary value operation already is. A family whose entry is spelled
-   differently is not a runtime detail: it is a backend that cannot render the entry at all.
+- clang (`clang/lib/CodeGen/CGExprAgg.cpp`, `AggExprEmitter::VisitInitListExpr`) keeps an
+  initializer list as one flat `InitListExpr`, and code generation loops over the record's fields
+  storing each initializer into its field, a bit-field by a store into its bits. rustc
+  (`rustc_codegen_ssa/src/mir/rvalue.rs`, `Rvalue::Aggregate`) keeps one flat operand list in MIR
+  and stores each operand into its field in a loop. LLVM's `APInt` (`llvm/ADT/APInt.h`) has a
+  two-operand `concat`, and many parts are written by `insertBits(SubBits, bitPosition)` into a
+  value sized up front. None of them hands a list of parts to a library.
+- Both compilers make the per-part store in code generation because their only target is machine
+  code. One of Lyra's two targets is C++ source, which has no syntax placing parts of different
+  widths into one bit vector: its only spellings of a call over such parts are a type-erased list,
+  which hands the run the widths the types fix, and a parameter pack, which clang bounds by the
+  bracket depth for a fold expression (`TreeTransform.h`, `err_fold_expression_limit_exceeded`) and
+  by 2^16 for a parameter list (`TypeBase.h`, `FunctionTypeNumParamsWidth`). So MIR states the
+  stores, both targets translate them, and the execution backend does with them what clang does with
+  the C++ rendering.
+- abseil's `StrCat` hands `CatPieces` one list of views, sized once; Rust's `[a, b].concat()` takes
+  a slice; CPython compiles `f"{a}{b}"` to one `BUILD_STRING`. CPython builds `[a, *b, c]` by
+  `LIST_APPEND` and `LIST_EXTEND` into one list.
 
 ## Why the superseded decision does not survive
 
@@ -109,10 +120,8 @@ against the entry that performs it."
 
 Its argument was that one node realized per result type is the render-side defect, and that
 splitting the families fixes it. The argument is sound and is kept; the conclusion drawn from it is
-not. Making all three families calls splits them just as completely -- each names its own entry, and
-no consumer reads a result type -- so nothing in the argument reaches "and the packed one is a
-node". The asymmetry was assumed rather than derived, and it cost what the record's own first
-rejected alternative predicted it would.
+not. Stating each family as what it is splits them just as completely, so nothing in the argument
+reaches "and the packed one is a node".
 
 ## Rejected
 
@@ -121,47 +130,55 @@ rejected alternative predicted it would.
   ground that it "adds contract surface to hold a fact the node could simply state". The prediction
   held: with the packed form a node and every other operation a call, the C++ backend grew exactly
   that dispatch, plus a two-valued selector recording that one of its two entries took a braced list
-  while the other took an argument list. Making the join a call deletes all of it -- the existing
-  builtin-call render already names the entry.
+  while the other took an argument list.
 
-- **Collect the operands into a sequence value and pass one span.** This is how the variadic runtime
-  entries that already exist take their operands, and it needs no fold. It does not fit a join: a
-  sequence is homogeneous and a join's operands have different widths, so the sequence's element
-  type would have to name one of them and be wrong about the rest.
+- **A bit join as a call over every part, each described to the library.** An entry taking a list
+  and its count names any arity, but what it takes is a description of each part -- where it lies,
+  how wide it is, whether it can hold x or z -- built at every call for facts the operand types had
+  already fixed; the C++ side of it was a type-erased part per operand in a braced list. Both hand
+  the run what the program had settled, the description-the-runtime-walks shape clang never takes,
+  and neither is what a person writes for the same join.
+
+- **Fold the join into the chain of two-operand calls it stands for.** This record's decisions 4 and
+  5 until 2026-10-21, on the ground that "a C ABI has no such entry, and neither does the runtime's
+  C++ surface". The chain nested one level per operand, so a concatenation of thirty thousand ended
+  Lyra by stack overflow in a MIR rewrite and ended clang on the C++ backend; each step also made a
+  value as wide as everything joined so far, so the work was the square of the parts.
+
+- **A join of one operand set apart as a conversion before any join is built.** This record's
+  decision 2 until 2026-10-21, so that no consumer met a one-operand join. A join of bits is one
+  write per part, which one part does not change, so the case need not exist there; a join of
+  strings keeps it, as decision 2 says, because one part is already the string.
+
+- **Collect a bit join's operands into a sequence value and pass one span**, the parts as MIR
+  values. A sequence is homogeneous, so the element type would have to name one width and be wrong
+  about the rest. A join of strings is exactly this, because its parts are of one type.
 
 - **Leave the fold to each backend.** Rejected, and it is what this record first decided, on the
   ground that the arity limit is one target's property so it should be paid where that target is.
-  The premise was wrong: both realizations take two operands, so there is no target the limit is
-  specific to. What the fold costs where a backend does it is a value-emission entry that reads how
-  many operands a call carries and decides whether the operation is associative enough to chain --
-  decision logic in render, which is what this whole record exists to remove. The price of the
-  correct side is emitted readability, which `compiler_overview.md` makes load-bearing:
-  `{a, b, c, d}` reads as three nested calls in the surface a developer checks MIR against. That is
-  a real cost and it is paid.
+  What the fold costs where a backend does it is a value-emission entry that reads how many operands
+  a call carries and decides whether the operation is associative enough to chain -- decision logic
+  in render, which is what this whole record exists to remove.
 
 ## Consequences
 
-- The C++ render of a join and of a replication is the ordinary builtin-call render, which already
-  names both entries. The dispatch that existed to name them, and the operand-grouping selector
-  inside it, are gone.
-- MIR-to-LIR has no arm for either operation and mints no intermediate type: a call carries its
-  operands, and every step of a folded chain is already a call.
-- A string join and a string replication are ordinary calls, which is what every other string
-  operation already was.
-- One runtime entry serves each operator across value domains, because the domain a call's operands
-  name is what selects the realization -- the identity rule `builtin-call-identity.md` already
-  states, now reaching a value-build.
-- A consumer that meets a join reads two or more operands and never a one-operand join.
+- The C++ render of a string join and of a replication is the ordinary builtin-call render, and a
+  bit join renders as the local and the writes it is; no render entry knows a join exists.
+- MIR-to-LIR has no arm for a bit join and mints no intermediate type: it lowers the writes as it
+  lowers every write into bits.
+- A join of thirty thousand parts builds on both backends, its MIR as deep as a join of two.
+- An unoptimized build pays a store per part of a narrow join; an optimizing one merges them.
 
 ## Cross-references
 
 - `architecture/mir.md` -- the Purpose paragraph (MIR's peers are C++, Rust and Python, and the
-  source language does not shape its vocabulary); the expression set is closed under what a generic
-  programming-language AST needs to express.
+  source language does not shape its vocabulary); bits of a packed value are written through the
+  reference its `slice_mut` answers.
 - `architecture/backend_contract.md` -- invariant 2 (decision logic in a value-emission entry is a
   MIR design failure) and invariant 7 (no contract entry is specialized for one backend).
-- [queue-operators](queue-operators.md) -- decision 3, whose packed-and-string half this replaces.
-- [builtin-call-identity](builtin-call-identity.md) -- one flat entry per runtime function, with the
-  receiver's type carrying the type-side context.
+- [queue-operators](queue-operators.md) -- decision 3, which this replaces.
+- [a-list-the-source-writes-stands-side-by-side](a-list-the-source-writes-stands-side-by-side.md) --
+  every list the source writes, of which a join's parts are one.
 - LRM 11.4.12 (concatenation), 11.4.12.1 (replication, constant multiplier), 11.4.12.2 (string
-  concatenation and replication, non-constant multiplier), 11.8.1 (a concatenation is unsigned).
+  concatenation and replication, non-constant multiplier), 11.8.1 (a concatenation is unsigned),
+  10.10 (unpacked array concatenation).

@@ -14,6 +14,7 @@
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/local.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -36,19 +37,37 @@ auto BuildMirBinaryExpr(
     mir::ExprId lhs_named, mir::ExprId rhs_named, mir::TypeId result_type)
     -> mir::Expr;
 
-// The conjunction and the disjunction of `tests`, every one of them evaluated,
-// appended to `block` at `type`, which each test already has: for truths the
-// language evaluates all of -- a membership test's items (LRM 11.4.13), a
-// range's two bounds, a structure's members (LRM 11.4.5). A list searched only
-// as far as the answer is open is a condition search instead. Having nothing to
-// fold is not a case for the caller to branch on: it is the empty fold, whose
-// value is the operator's identity.
+// The conjunction and the disjunction of a fixed few `tests`, every one of them
+// evaluated, appended to `block` at `type`, which each test already has: for
+// truths the language evaluates all of -- a range's two bounds, the answer so
+// far and the next term. A list searched only as far as the answer is open is a
+// condition search instead. Having nothing to fold is not a case for the caller
+// to branch on: it is the empty fold, whose value is the operator's identity.
 auto BuildMirLogicalAnd(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type,
     std::span<const mir::ExprId> tests) -> mir::ExprId;
 auto BuildMirLogicalOr(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type,
     std::span<const mir::ExprId> tests) -> mir::ExprId;
+
+// `terms` folded by `op` over a list as long as the source makes it -- a
+// membership test's items, a structure's members -- where each term standing as
+// an operand of the fold before it would nest one level per term: `held`, a
+// local declared in `block` holding `identity`, and one statement per term
+// folding it in, so the statements stand beside each other however many there
+// are. Answers with the read of `held`.
+auto AccumulateMirBinary(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::BinaryOp op,
+    mir::ExprId identity, mir::LocalId held, mir::TypeId type,
+    std::span<const mir::ExprId> terms) -> mir::ExprId;
+
+// The same for the logical folds, from the operator's own identity.
+auto AccumulateMirLogicalAnd(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId held,
+    mir::TypeId type, std::span<const mir::ExprId> tests) -> mir::ExprId;
+auto AccumulateMirLogicalOr(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId held,
+    mir::TypeId type, std::span<const mir::ExprId> tests) -> mir::ExprId;
 
 // An operator's meaning is independent of the enclosing scope, so one template
 // over the pass class serves both the procedural and structural contexts. The

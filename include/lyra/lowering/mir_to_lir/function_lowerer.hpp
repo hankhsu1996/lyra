@@ -291,6 +291,11 @@ class FunctionLowerer {
   // variables ended and the departure carried out of the frame. Each is built
   // once, and every landing and every scope nested inside reaches it.
   auto UnwindEntryAt(std::size_t index) -> diag::Result<lir::BlockId>;
+  // The entry of the scope at `index`, built where what is owed outside it is
+  // reached at `outward`.
+  auto BuildUnwindEntry(std::size_t index, lir::BlockId outward)
+      -> diag::Result<lir::BlockId>;
+  auto BuildRegionEntry(const RegionScope& region) -> lir::BlockId;
   auto FrameEdge() -> lir::BlockId;
   // The frame storage a landing receives a departure into and every scope it
   // passes reads it from. One serves the whole frame, because a departure is

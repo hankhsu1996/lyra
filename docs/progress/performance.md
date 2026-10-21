@@ -273,9 +273,8 @@ operation is a call into a separately compiled runtime, and the optimizer cannot
       larger than a frame keeps. Each call lays its operands and its answer out around the work. Not
       measured on a design that spends its time there.
 
-- [ ] A concatenation of several operands is carried out two at a time on both backends. An
-      optimized build folds the steps together; an unoptimized one makes a value as wide as
-      everything joined so far at each step. Not measured apart from the entry above.
+- [x] A concatenation of several operands writes each part into its answer once on both backends,
+      optimized or not.
 
 - [ ] An array's `unique` and `unique_index` (LRM 7.12.1) compare each element against every
       distinct one seen before it, so they cost the square of the element count. Two elements are

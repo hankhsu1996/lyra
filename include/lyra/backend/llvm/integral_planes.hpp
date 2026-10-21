@@ -113,7 +113,6 @@ using PlaneAnswer = std::variant<Planes, llvm::Value*>;
     case support::IntegralOp::kShiftLeft:
     case support::IntegralOp::kLogicalShiftRight:
     case support::IntegralOp::kArithmeticShiftRight:
-    case support::IntegralOp::kConcat:
     case support::IntegralOp::kReplicate:
     case support::IntegralOp::kConvert:
     case support::IntegralOp::kFromInt:

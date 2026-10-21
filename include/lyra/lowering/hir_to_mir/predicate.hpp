@@ -100,8 +100,23 @@ enum class SettledBy : std::uint8_t {
     std::span<const Predicate> terms, mir::TypeId type)
     -> diag::Result<mir::ExprId>;
 
+// Appends to `frame`'s block the steps that assign `held`, a machine boolean
+// local, whether any of `conditions` holds, where it is false there, or
+// whether every one does, where it is true there: each condition is a step of
+// its own, lowered where the ones before it left the answer open, so it is
+// evaluated only there and the steps stand beside each other however many
+// there are.
+auto AssignAnyHoldsInOrder(
+    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::LocalId held,
+    std::span<const Evaluation> conditions) -> diag::Result<void>;
+auto AssignAllHoldInOrder(
+    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::LocalId held,
+    std::span<const Evaluation> conditions) -> diag::Result<void>;
+
 // A series of predicates as one: a sequential conjunction (LRM 12.6.2, 12.6.3),
-// the search its terms make. A lone term is itself.
+// the search its terms make. The terms are a list the source writes rather
+// than operators it nests, so the search is a run of steps one after another
+// whether or not a term can be unknown. A lone term is itself.
 [[nodiscard]] auto SeriesPredicate(
     const mir::CompilationUnit& unit, std::vector<Predicate> terms)
     -> Predicate;

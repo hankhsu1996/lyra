@@ -1,6 +1,5 @@
 #pragma once
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -201,18 +200,6 @@ class Queue : public OrdinalArrayMethods<Queue<T, kBound>> {
   }
   auto PushFront(const T& item) -> void {
     core_.PushFront(&item);
-  }
-
-  // LRM 10.10 unpacked concatenation, as the two-operand steps a join folds to:
-  // this queue with one element appended, or with every element of a spread
-  // part appended in order.
-  [[nodiscard]] auto ConcatElement(const T& item) const -> Queue {
-    const std::array<const void*, 1> items{&item};
-    return Queue(core_.Concat(items));
-  }
-  template <typename C>
-  [[nodiscard]] auto ConcatSpread(const C& part) const -> Queue {
-    return Queue(core_.Concat(detail::OrdinalAddresses(part)));
   }
 
   // LRM 7.10.2.4 / 7.10.2.5: remove and return the first / last element, the

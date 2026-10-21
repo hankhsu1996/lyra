@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <expected>
 #include <format>
-#include <functional>
 #include <iterator>
 #include <map>
 #include <memory>
@@ -575,64 +574,24 @@ auto BuildAlternative(
   return ObjectAs(block, built, held);
 }
 
-// The object a construction builds at one position of several, as the
-// alternative `taken` says that position takes. Equal neighbours form runs, so
-// the choice is a search over the runs -- the position compared with where
-// each ends, in order, the last being what remains -- and a construction whose
-// objects are all built alike has one run and builds it with no test at all.
-// `position` reads the position afresh at every call, and `build` builds one
-// alternative as the handle `held` holds it by.
-auto ChooseByPosition(
-    const mir::CompilationUnit& unit, mir::Block& block,
-    std::span<const std::uint32_t> taken,
-    const std::function<mir::ExprId()>& position,
-    const std::function<diag::Result<mir::ExprId>(std::uint32_t)>& build,
-    mir::TypeId held) -> diag::Result<mir::ExprId> {
-  struct Run {
-    std::size_t end;
-    std::uint32_t alternative;
-  };
-  std::vector<Run> runs;
-  for (std::size_t at = 0; at < taken.size(); ++at) {
-    if (runs.empty() || runs.back().alternative != taken[at]) {
-      runs.push_back(Run{.end = at + 1, .alternative = taken[at]});
-    } else {
-      runs.back().end = at + 1;
-    }
-  }
-
-  auto chosen = build(runs.back().alternative);
-  if (!chosen) return std::unexpected(std::move(chosen.error()));
-  for (std::size_t back = runs.size() - 1; back > 0; --back) {
-    const Run& run = runs[back - 1];
-    auto built = build(run.alternative);
-    if (!built) return std::unexpected(std::move(built.error()));
-    const mir::ExprId at = position();
-    const mir::ExprId before_end = block.exprs.Add(
-        mir::MakeBinary(
-            unit, block, mir::BinaryOp::kLessThan, at,
-            mir::BuildIntLiteral(
-                unit, block, static_cast<std::int64_t>(run.end)),
-            unit.builtins.bit1));
-    chosen = block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::ConditionalExpr{
-                    .condition = ReduceToCondition(unit, block, before_end),
-                    .then_value = *built,
-                    .else_value = *chosen},
-            .type = held});
-  }
-  return chosen;
-}
-
-// Builds the object of the instance member `id` that the positions `coords`
-// name: the alternative its position takes, its position counted in row-major
-// order.
-auto BuildElement(
+// Appends to `frame`'s block the construction of the object of the instance
+// array `id` that the positions `coords` name, and its append to the sequence
+// the local `sequence` holds: the alternative its position takes, its position
+// counted in row-major order. An array whose objects are all built alike builds
+// that one with no test at all. Otherwise the choice is a switch over the
+// position, each alternative taken at the positions that take it and the one
+// the last position takes at every other, so it stands as flat however many
+// times the alternatives change along the array:
+//
+//   switch (position) {
+//     case p0, p1, ...: append(alternative a); ...
+//     default: append(the last position's alternative)
+//   }
+auto AppendElement(
     StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     hir::InstanceMemberId id, std::span<const mir::LocalId> coords,
-    mir::TypeId held) -> diag::Result<mir::ExprId> {
+    mir::TypeId held, mir::LocalId sequence, mir::TypeId sequence_type)
+    -> diag::Result<void> {
   const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const hir::InstanceMemberDecl& member =
       lowerer.HirScope().instance_members.Get(id);
@@ -656,17 +615,66 @@ auto BuildElement(
     }
     return at;
   };
-  return ChooseByPosition(
-      unit, block, member.taken, position,
-      [&](std::uint32_t which) {
-        return BuildAlternative(lowerer, frame, id, which, coords, held);
-      },
-      held);
+  const std::uint32_t otherwise = member.taken.back();
+  // The positions each other alternative is taken at, in the order the
+  // alternatives first appear along the array.
+  std::vector<std::pair<std::uint32_t, std::vector<std::int64_t>>> taken_at;
+  for (std::size_t at = 0; at < member.taken.size(); ++at) {
+    const std::uint32_t which = member.taken[at];
+    if (which == otherwise) {
+      continue;
+    }
+    auto listed = std::ranges::find(
+        taken_at, which,
+        &std::pair<std::uint32_t, std::vector<std::int64_t>>::first);
+    if (listed == taken_at.end()) {
+      listed =
+          taken_at.insert(taken_at.end(), {which, std::vector<std::int64_t>{}});
+    }
+    listed->second.push_back(static_cast<std::int64_t>(at));
+  }
+  // `in` with the object alternative `which` builds appended to the sequence.
+  const auto kept_in = [&](mir::Block& in,
+                           std::uint32_t which) -> diag::Result<void> {
+    auto built = BuildAlternative(
+        lowerer, frame.WithBlock(&in), id, which, coords, held);
+    if (!built) return std::unexpected(std::move(built.error()));
+    AppendToSequence(unit, in, sequence, sequence_type, *built);
+    return {};
+  };
+  if (taken_at.empty()) {
+    return kept_in(block, otherwise);
+  }
+
+  std::vector<ValueArm> arms;
+  arms.reserve(taken_at.size());
+  for (const auto& [which, positions] : taken_at) {
+    arms.push_back(
+        ValueArm{
+            .values = positions,
+            .body = [&kept_in,
+                     which](const WalkFrame&) -> diag::Result<mir::Block> {
+              mir::Block arm;
+              if (auto kept = kept_in(arm, which); !kept) {
+                return std::unexpected(std::move(kept.error()));
+              }
+              return arm;
+            }});
+  }
+  mir::Block last;
+  if (auto kept = kept_in(last, otherwise); !kept) {
+    return std::unexpected(std::move(kept.error()));
+  }
+  auto choice = BuildValueSwitch(
+      frame, BuildToInt64Call(unit, block, position()), arms, std::move(last));
+  if (!choice) return std::unexpected(std::move(choice.error()));
+  block.AppendStmt(*std::move(choice));
+  return {};
 }
 
 // Builds what an instance declaration's member holds once `coords` are fixed as
-// far as they go: the handle to the object those positions name when they are
-// complete, and the sequence the next dimension counts out while they are not.
+// far as they go: the handle to its one object where it declares no dimension,
+// and otherwise the sequence the next dimension counts out.
 // Counting a dimension out is what the object graph does at construction, so
 // the work reaches the target as a loop over one body rather than as one
 // expression per element, and how many objects a declaration covers is not
@@ -681,8 +689,11 @@ auto BuildInstanceMemberValue(
   const hir::InstanceMemberDecl& member =
       lowerer.HirScope().instance_members.Get(id);
   mir::Block& block = *frame.current_block;
-  if (coords.size() == member.array_dims.size()) {
-    return BuildElement(lowerer, frame, id, coords, held);
+  // A declaration of no dimension builds one object, which is the one
+  // alternative it takes.
+  if (member.array_dims.empty()) {
+    return BuildAlternative(
+        lowerer, frame, id, member.taken.front(), coords, held);
   }
 
   const mir::CompilationUnit& unit = unit_lowerer.Unit();
@@ -705,11 +716,20 @@ auto BuildInstanceMemberValue(
   mir::Block element_block;
   const WalkFrame element_frame = steps.Frame().WithBlock(&element_block);
   coords.push_back(position);
-  auto element_or =
-      BuildInstanceMemberValue(lowerer, element_frame, id, held, coords);
+  // The last dimension counts out objects, and any other the sequences of the
+  // one inside it.
+  const diag::Result<void> kept =
+      coords.size() == member.array_dims.size()
+          ? AppendElement(
+                lowerer, element_frame, id, coords, held, sequence,
+                sequence_type)
+          : BuildInstanceMemberValue(lowerer, element_frame, id, held, coords)
+                .transform([&](mir::ExprId inner) {
+                  AppendToSequence(
+                      unit, element_block, sequence, sequence_type, inner);
+                });
   coords.pop_back();
-  if (!element_or) return std::unexpected(std::move(element_or.error()));
-  AppendToSequence(unit, element_block, sequence, sequence_type, *element_or);
+  if (!kept) return std::unexpected(kept.error());
 
   const mir::BlockId element_scope =
       body.child_scopes.Add(std::move(element_block));

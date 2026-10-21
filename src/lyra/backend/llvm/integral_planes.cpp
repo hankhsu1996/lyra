@@ -383,24 +383,6 @@ class PlaneArithmetic {
     throw InternalError("llvm codegen: unknown shift");
   }
 
-  // LRM 11.4.12: `high` in the most significant positions and `low` below it.
-  [[nodiscard]] auto Concat(
-      Planes high, Planes low, std::uint64_t low_width,
-      std::uint64_t answer_width) const -> Planes {
-    llvm::Type* const type = b_->getIntNTy(Bits(answer_width));
-    const auto joined = [&](llvm::Value* high_plane, llvm::Value* low_plane) {
-      llvm::Value* const raised = b_->CreateZExt(high_plane, type);
-      return Or(
-          IsClear(raised)
-              ? raised
-              : b_->CreateShl(raised, llvm::ConstantInt::get(type, low_width)),
-          b_->CreateZExt(low_plane, type));
-    };
-    return Planes{
-        .value = joined(high.value, low.value),
-        .unknown = joined(high.unknown, low.unknown)};
-  }
-
   // LRM 11.4.12.1: as many copies of the operand as fill the answer, laid end
   // to end. What is laid so far is laid again above itself until it fills the
   // answer, so the steps follow the logarithm of the count, and a copy past
@@ -948,8 +930,6 @@ auto LowerOnPlanes(
       return shifted(
           reads_signed(0) ? ShiftKind::kArithmeticRight
                           : ShiftKind::kLogicalRight);
-    case IntegralOp::kConcat:
-      return words.Concat(load(0), load(1), width(1), answer_width());
     case IntegralOp::kReplicate:
       return words.Replicated(
           load(0), width(0), answer_width(), answers_unknown());

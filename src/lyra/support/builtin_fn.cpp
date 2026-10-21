@@ -30,7 +30,6 @@ auto AnswersAtTheTypeOfTheCall(IntegralAnswer answer) -> bool {
     case IntegralAnswer::kOfFirstOperand:
     case IntegralAnswer::kOneBit:
     case IntegralAnswer::kTwoStateBit:
-    case IntegralAnswer::kJoined:
     case IntegralAnswer::kInt:
     case IntegralAnswer::kInteger:
     case IntegralAnswer::kPosition:
@@ -1679,19 +1678,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "conform_bound",
           .declaration = StaticFactory{"ConformBound"},
           .answer_told = AnswerTold::kBuiltArray};
-    case BuiltinFn::kArrayConcatElement:
-      return {
-          .name = "concat_element",
-          .declaration = Method{"ConcatElement"},
-          .operands = {kMachine, kHeld}};
-    case BuiltinFn::kArrayConcatSpread:
-      return {
-          .name = "concat_spread",
-          .declaration = Method{"ConcatSpread"},
-          .operands = {kMachine, kTyped}};
-    case BuiltinFn::kArrayConformSize:
-      return {
-          .name = "conform_size", .declaration = StaticFactory{"ConformSize"}};
     case BuiltinFn::kMakeDynamicArrayNew:
       return {
           .name = "make_dynamic_array_new",
@@ -1702,13 +1688,8 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "make_dynamic_array_new_copy",
           .declaration = StaticFactory{"NewCopy"},
           .answer_told = AnswerTold::kBuiltArray};
-    case BuiltinFn::kConcat:
-      return {
-          .name = "concat",
-          .declaration = Method{"Concat"},
-          .over_integral_values = BuiltinFn::kConcatBits};
-    case BuiltinFn::kConcatBits:
-      return IntegralEntry(IntegralOp::kConcat, Method{"Concat"});
+    case BuiltinFn::kConcatStrings:
+      return {.name = "concat", .declaration = StaticFactory{"Concat"}};
     case BuiltinFn::kReplicateBits:
       return IntegralEntry(IntegralOp::kReplicate, ValueFunction("Replicate"));
     case BuiltinFn::kReplicateString:

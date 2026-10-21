@@ -6,11 +6,12 @@
 
 ## Status
 
-Accepted; decision 3's packed-and-string half is superseded by
-[concatenation-realization](concatenation-realization.md), which finds that one node realized per
-result type is a decision no consumer should be making. What decision 3 settles about a queue
-concatenation stands. Decision 2's write-side half -- the lowering flag that made an element select
-pick a write-side method -- is superseded by
+Accepted; decision 3 is superseded by [concatenation-realization](concatenation-realization.md),
+which finds that one node realized per result type is a decision no consumer should be making, and
+states a queue concatenation as steps appending each part to a queue, so no builder call takes the
+parts and a dynamic or fixed-size array takes what was appended; the consequence below that such a
+result is rejected went with it. Decision 2's write-side half -- the lowering flag that made an
+element select pick a write-side method -- is superseded by
 [value-descent-as-named-calls](value-descent-as-named-calls.md): reading an element and reaching one
 are two entries the lowering names outright, so no flag chooses between them. That an access is a
 call rather than a select node, and that the store boundary conforms the element shape, are

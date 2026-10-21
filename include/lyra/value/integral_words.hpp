@@ -1630,20 +1630,6 @@ constexpr auto WithSlice(
   return Insert(dst, bits, *start);
 }
 
-// LRM 11.4.12: `high` in the most significant positions and `low` below it.
-// The answer is as wide as the two together.
-template <
-    PlaneWord WrittenWord, std::size_t kWrittenValueWords,
-    std::size_t kWrittenUnknownWords>
-constexpr void Concat(
-    IntegralViewOf<WrittenWord, kWrittenValueWords, kWrittenUnknownWords> out,
-    AnyConstIntegralView auto high, AnyConstIntegralView auto low) {
-  detail::Fill(out.value, 0U);
-  detail::Fill(out.unknown, 0U);
-  Insert(out, low, 0);
-  Insert(out, high, static_cast<std::int64_t>(low.width));
-}
-
 // LRM 11.4.12.1: as many copies of `a` as fill the answer, laid end to end.
 template <
     PlaneWord WrittenWord, std::size_t kWrittenValueWords,

@@ -1460,7 +1460,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kFromSvLogic:
     case support::BuiltinFn::kReadCanonicalBitVec:
     case support::BuiltinFn::kReadCanonicalLogicVec:
-    case support::BuiltinFn::kConcatBits:
     case support::BuiltinFn::kIntegralPow:
     case support::BuiltinFn::kIntegralCaseEqual:
     case support::BuiltinFn::kIntegralBitIdentical:
@@ -1491,8 +1490,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // destination kind, reads its source through the representation the source
     // has.
     case support::BuiltinFn::kUnpackedArrayFromArray:
-    case support::BuiltinFn::kArrayConcatElement:
-    case support::BuiltinFn::kArrayConcatSpread:
       return NamedByValue{.realized = kForDynamicArraysAndQueues};
     case support::BuiltinFn::kQueueFromArray:
     case support::BuiltinFn::kElementSlice:
@@ -1574,7 +1571,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kRealtoa:
     case support::BuiltinFn::kScanString:
     case support::BuiltinFn::kScanFile:
-    case support::BuiltinFn::kConcat:
       return NamedByValue{.realized = kForStrings};
 
     case support::BuiltinFn::kCaseEqual:
@@ -1605,13 +1601,12 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
       return NamedByResult{.realized = {}};
 
     // The factories. Each builds a value out of operands that are the material
-    // of one -- a machine integer, a byte array -- so none of them carries the
-    // representation the entry is realized for, and only what the call answers
-    // with does.
+    // of one -- a machine integer, a byte array, a list of the parts of a join
+    // -- so none of them carries the representation the entry is realized for,
+    // and only what the call answers with does.
     case support::BuiltinFn::kFromByteArray:
+    case support::BuiltinFn::kConcatStrings:
       return NamedByResult{.realized = kForStrings};
-    case support::BuiltinFn::kArrayConformSize:
-      return NamedByResult{.realized = kForUnpackedArrays};
     case support::BuiltinFn::kFromBits:
     case support::BuiltinFn::kFromInt:
       return NamedByResult{.realized = kForReals};

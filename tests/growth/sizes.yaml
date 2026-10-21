@@ -14,9 +14,11 @@ call_arguments: 256
 case_items: 256
 chain_over_wide_values: 128
 concatenation_operands: 256
+condition_series: 256
 enum_members: 256
 format_items: 256
 instance_array: 512
+listed_operands: 300
 loop_choosing_by_outer_index: 100
 loop_counted_by_outer_index: 100
 loop_declaring_a_type: 512

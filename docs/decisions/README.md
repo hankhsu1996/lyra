@@ -208,9 +208,9 @@ the detail lives in the entry itself.
 - [queue-operators](queue-operators.md) -- queue access operators lower to built-in method calls;
   read and write are distinct methods chosen at lowering. Where it places the receiver is superseded
   by [call-receiver-on-the-callee](call-receiver-on-the-callee.md).
-- [concatenation-realization](concatenation-realization.md) -- a join is a call rather than a node
-  of its own, over every operand family, and reaches MIR already folded to the two operands every
-  entry that performs it takes.
+- [concatenation-realization](concatenation-realization.md) -- a join is no node of its own: a join
+  of bits is a local and one write of each part into the bits it takes, a join of strings one call
+  over one list of them, and a join of queue elements appends to a queue.
 - [a-value-states-its-own-bits](a-value-states-its-own-bits.md) -- which bits a value makes is the
   same question as how many, so a value answers both, and a bit-stream cast and a streaming operator
   are the same pack and unpack stated against those entries plus one that re-orders a bit vector.
@@ -247,11 +247,13 @@ the detail lives in the entry itself.
   dropped silently.
 - [lowering-organization](lowering-organization.md) -- how lowering passes organize their internal
   objects (facts, registries, builders, walk frame).
-- [a-choice-the-source-lists-stands-side-by-side](a-choice-the-source-lists-stands-side-by-side.md)
-  -- a case's items stand side by side: a switch over the subject's value (clang's `SwitchStmt`,
-  rustc's `SwitchInt`) where every label is a value known before the run, otherwise arms tried one
-  after another in a block a selected arm leaves by a labeled break; every `break` names what it
-  leaves; an if-else-if stays nested as the source wrote it, except under a uniqueness qualifier.
+- [a-list-the-source-writes-stands-side-by-side](a-list-the-source-writes-stands-side-by-side.md) --
+  a case's items and an operation's operands stand side by side: a switch over the subject's value
+  (clang's `SwitchStmt`, rustc's `SwitchInt`) where every label is a value known before the run,
+  otherwise arms tried one after another in a block a selected arm leaves by a labeled break; every
+  `break` names what it leaves; a join of bits and a fold are a local and one statement per operand,
+  a join of strings is one call over one list, and a search is steps that each try one condition; an
+  if-else-if stays nested as the source wrote it, except under a uniqueness qualifier.
 - [storage-access-as-place-formation](storage-access-as-place-formation.md) -- a dereference of a
   capability wrapper's place names the storage it represents, and each backend supplies the protocol
   from the place's type; naming it that way is never a call, while reading it and replacing the

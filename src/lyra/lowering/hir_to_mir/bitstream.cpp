@@ -147,17 +147,19 @@ auto BuildFromBitstream(
   }
   mir::ExprId filled = bits_id;
   if (stream_width < target->width) {
-    // The pad carries no x or z of its own, so a 2-state run states what it is
-    // and leaves the stream's own domain to decide the join's.
-    const mir::TypeId pad_type = mir::PackedVectorOf(
-        unit.types, target->width - stream_width,
-        mir::IntegralStateKind::kTwoState);
-    const mir::ExprId pad_id = mir::BuildIntegralLiteral(
-        unit, block, pad_type, mir::IntegralConstant{});
+    // The stream lands in the most significant bits and zeros fill the rest:
+    // widened, which puts it in the least significant ones, and moved up. The
+    // zeros carry no x or z, so the stream's own domain is the result's.
+    const mir::TypeId widened =
+        mir::PackedVectorOf(unit.types, target->width, stream.state_kind);
     filled = block.exprs.Add(
         mir::MakeBuiltinCall(
-            unit, block, support::BuiltinFn::kConcatBits, bits_id, {pad_id},
-            mir::PackedVectorOf(unit.types, target->width, stream.state_kind)));
+            unit, block, support::BuiltinFn::kShiftLeft,
+            ConvertToType(unit, block, bits_id, widened),
+            {mir::BuildIntLiteral(
+                unit, block,
+                static_cast<std::int64_t>(target->width - stream_width))},
+            widened));
   }
   // A packed destination is those bits, at the signedness and state domain it
   // declares.

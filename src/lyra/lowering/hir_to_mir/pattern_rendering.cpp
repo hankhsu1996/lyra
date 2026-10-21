@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -16,6 +17,7 @@
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
+#include "lyra/lowering/hir_to_mir/concatenation.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/calls.hpp"
@@ -120,6 +122,14 @@ class Renderer {
       const PackedProjection& projection,
       const hir::PackedAggregateField& field, base::ComponentIndex index)
       -> mir::ExprId;
+  // The text of the member its tag names, one of `members`, of the tagged union
+  // held in `value`, as `member_text` renders that member in the frame it is
+  // handed.
+  auto LiveMemberText(
+      const WalkFrame& frame, mir::LocalId value, mir::TypeId mir_type,
+      hir::TypeId type, std::size_t members,
+      const std::function<mir::ExprId(const WalkFrame&, base::ComponentIndex)>&
+          member_text) -> mir::ExprId;
 
   auto BuildUnpackedAggregate(
       const WalkFrame& frame, mir::LocalId value, hir::TypeId type)
@@ -157,26 +167,9 @@ auto Renderer::Text(const WalkFrame& frame, std::string_view literal)
           .type = StringType()});
 }
 
-// LRM 11.4.12: what a concatenation joins follows the operand's value domain,
-// so joining strings is the entry that joins bit planes, folded into a chain
-// because one entry takes two operands.
 auto Renderer::Join(const WalkFrame& frame, std::vector<mir::ExprId> parts)
     -> mir::ExprId {
-  mir::Block& block = *frame.current_block;
-  mir::ExprId joined = parts.front();
-  for (std::size_t i = 1; i < parts.size(); ++i) {
-    joined = block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{
-                            .target = support::BuiltinFn::kConcat,
-                            .receiver = joined},
-                    .arguments = {parts[i]}},
-            .type = StringType()});
-  }
-  return joined;
+  return BuildStringJoin(Unit(), *frame.current_block, parts);
 }
 
 auto Renderer::SeparatorAfterFirst(const WalkFrame& frame, mir::LocalId ordinal)
@@ -227,6 +220,31 @@ auto Renderer::Named(
     -> mir::ExprId {
   const mir::ExprId label = Text(frame, name + std::string{kNameMark});
   return Join(frame, {label, element_text});
+}
+
+// Each position is asked whether it is the live one, a step of its own, so the
+// steps stand beside each other however many members the union has -- which is
+// also what keeps a member the tag does not select from being read at all
+// (LRM 11.9).
+auto Renderer::LiveMemberText(
+    const WalkFrame& frame, mir::LocalId value, mir::TypeId mir_type,
+    hir::TypeId type, std::size_t members,
+    const std::function<mir::ExprId(const WalkFrame&, base::ComponentIndex)>&
+        member_text) -> mir::ExprId {
+  mir::Block& block = *frame.current_block;
+  const mir::LocalId live = DeclareLocal(frame, Text(frame, ""));
+  for (std::size_t i = 0; i < members; ++i) {
+    const auto index = base::ComponentIndex{static_cast<std::uint32_t>(i)};
+    mir::Block taken;
+    AssignLocal(
+        Unit(), taken, live, member_text(frame.WithBlock(&taken), index));
+    block.AppendIfThen(
+        BuildHoldsMember(
+            Owner(), block, block.LocalPlace(value, mir_type), type, index,
+            hir::CaseKeyword::kCase),
+        std::move(taken));
+  }
+  return block.ReadLocal(live, StringType());
 }
 
 auto Renderer::Render(
@@ -379,31 +397,17 @@ auto Renderer::BuildUnpackedAggregate(
       is_union ? t.Get<hir::UnpackedUnionType>().fields
                : t.Get<hir::UnpackedStructType>().fields;
   const mir::TypeId mir_type = Owner().TranslateType(type);
-  mir::Block& block = *frame.current_block;
 
   std::vector<mir::ExprId> parts;
   parts.push_back(Text(frame, kOpen));
   if (tagged) {
-    // LRM 21.2.1.6 prints the member the tag names, so each position is asked
-    // whether it is the live one -- which is also what keeps a member the tag
-    // does not select from being read at all (LRM 11.9).
-    mir::ExprId chain = Text(frame, "");
-    for (std::size_t i = fields.size(); i-- > 0;) {
-      const auto index = base::ComponentIndex{static_cast<std::uint32_t>(i)};
-      const mir::ExprId live = BuildHoldsMember(
-          Owner(), block, frame.current_block->LocalPlace(value, mir_type),
-          type, index, hir::CaseKeyword::kCase);
-      chain = block.exprs.Add(
-          mir::Expr{
-              .data =
-                  mir::ConditionalExpr{
-                      .condition = live,
-                      .then_value = UnpackedMember(
-                          frame, value, mir_type, t, fields[i], index),
-                      .else_value = chain},
-              .type = StringType()});
-    }
-    parts.push_back(chain);
+    // LRM 21.2.1.6 prints the member the tag names.
+    parts.push_back(LiveMemberText(
+        frame, value, mir_type, type, fields.size(),
+        [&](const WalkFrame& at, base::ComponentIndex index) {
+          return UnpackedMember(
+              at, value, mir_type, t, fields[index.value], index);
+        }));
   } else {
     // A union prints only its first declared member (LRM 21.2.1.6); a
     // structure prints every one of them.
@@ -430,28 +434,16 @@ auto Renderer::BuildPackedAggregate(
                : t.Get<hir::PackedStructType>().fields;
   const mir::TypeId mir_type = Owner().TranslateType(type);
   const PackedProjection projection = ProjectPackedAggregate(Owner(), t);
-  mir::Block& block = *frame.current_block;
 
   std::vector<mir::ExprId> parts;
   parts.push_back(Text(frame, kOpen));
   if (tagged) {
-    mir::ExprId chain = Text(frame, "");
-    for (std::size_t i = fields.size(); i-- > 0;) {
-      const auto index = base::ComponentIndex{static_cast<std::uint32_t>(i)};
-      const mir::ExprId live = BuildHoldsMember(
-          Owner(), block, frame.current_block->LocalPlace(value, mir_type),
-          type, index, hir::CaseKeyword::kCase);
-      chain = block.exprs.Add(
-          mir::Expr{
-              .data =
-                  mir::ConditionalExpr{
-                      .condition = live,
-                      .then_value = PackedMember(
-                          frame, value, mir_type, projection, fields[i], index),
-                      .else_value = chain},
-              .type = StringType()});
-    }
-    parts.push_back(chain);
+    parts.push_back(LiveMemberText(
+        frame, value, mir_type, type, fields.size(),
+        [&](const WalkFrame& at, base::ComponentIndex index) {
+          return PackedMember(
+              at, value, mir_type, projection, fields[index.value], index);
+        }));
   } else {
     const std::size_t count = is_union ? std::size_t{1} : fields.size();
     for (std::size_t i = 0; i < count; ++i) {

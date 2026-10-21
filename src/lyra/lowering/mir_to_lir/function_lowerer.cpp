@@ -675,34 +675,81 @@ auto FunctionLowerer::LandingHere(std::optional<lir::ValueId> unmade)
   return landing;
 }
 
+// Walking outward from `index`, the walk stops at the first scope whose entry
+// needs nothing outside it -- one already built, or a region, which hands the
+// departure to its own handler -- or at the outermost, which continues to the
+// frame's edge. The scopes inside the stop are then built from the outside in,
+// each continuing to the one around it, so a departure from inside many scopes
+// is one loop over them, as clang pops its cleanup stack.
 auto FunctionLowerer::UnwindEntryAt(std::size_t index)
     -> diag::Result<lir::BlockId> {
-  if (const auto built = scopes_[index].unwind_entry; built.has_value()) {
-    return *built;
-  }
-  const lir::Place slot{
-      .base = lir::Use{.value = DepartureSlot()}, .chain = {}};
-  const lir::BlockId resumed = current_;
-  const auto outer = [&]() -> diag::Result<lir::BlockId> {
-    return index == 0 ? diag::Result<lir::BlockId>{FrameEdge()}
-                      : UnwindEntryAt(index - 1);
+  const auto stops = [&](std::size_t at) {
+    return scopes_[at].unwind_entry.has_value() ||
+           std::holds_alternative<RegionScope>(scopes_[at].kind);
   };
+  std::size_t first = index;
+  while (first > 0 && !stops(first)) {
+    --first;
+  }
+  // What the scopes inside the stop continue to: the stop's own entry, built
+  // now for a region, and the frame's edge where the walk reached the outermost
+  // scope without stopping, which is then built like the rest.
+  lir::BlockId outward{};
+  if (const auto built = scopes_[first].unwind_entry; built.has_value()) {
+    outward = *built;
+    ++first;
+  } else if (const auto* region =
+                 std::get_if<RegionScope>(&scopes_[first].kind);
+             region != nullptr) {
+    outward = BuildRegionEntry(*region);
+    scopes_[first].unwind_entry = outward;
+    ++first;
+  } else {
+    outward = FrameEdge();
+  }
+  for (std::size_t at = first; at <= index; ++at) {
+    const diag::Result<lir::BlockId> entered = BuildUnwindEntry(at, outward);
+    if (!entered) {
+      return entered;
+    }
+    scopes_[at].unwind_entry = *entered;
+    outward = *entered;
+  }
+  return outward;
+}
+
+// The region's own test decides whether it claims the departure, so its entry
+// only hands the departure to it.
+auto FunctionLowerer::BuildRegionEntry(const RegionScope& region)
+    -> lir::BlockId {
+  const lir::BlockId resumed = current_;
+  const lir::BlockId entry = NewBlock();
+  SetCurrent(entry);
+  Store(
+      lir::Place{.base = lir::Use{.value = region.caught}, .chain = {}},
+      Load(
+          lir::Place{.base = lir::Use{.value = DepartureSlot()}, .chain = {}},
+          unit_->ControlEffectType()));
+  Terminate(lir::BranchTerm{.target = region.handler});
+  SetCurrent(resumed);
+  return entry;
+}
+
+auto FunctionLowerer::BuildUnwindEntry(std::size_t index, lir::BlockId outward)
+    -> diag::Result<lir::BlockId> {
+  const lir::BlockId resumed = current_;
   // What a scope owes, run once here and passed on to the scope it is nested
   // in, so its code appears once on the way out however many calls inside it
   // can leave.
   const auto owed_then_outward =
       [&](const auto& owe) -> diag::Result<lir::BlockId> {
-    const diag::Result<lir::BlockId> next = outer();
-    if (!next) {
-      return next;
-    }
     const lir::BlockId entry = NewBlock();
     SetCurrent(entry);
     auto owed = owe();
     if (!owed) {
       return std::unexpected(std::move(owed.error()));
     }
-    Terminate(lir::BranchTerm{.target = *next});
+    Terminate(lir::BranchTerm{.target = outward});
     return entry;
   };
   // Taken by value: lowering a cleanup's code opens and closes scopes of its
@@ -727,7 +774,7 @@ auto FunctionLowerer::UnwindEntryAt(std::size_t index)
           },
           // Nothing is owed here any more, so the departure goes straight on.
           [&](const EndPassedOn&) -> diag::Result<lir::BlockId> {
-            return outer();
+            return outward;
           },
           [&](const StorageRelease& release) -> diag::Result<lir::BlockId> {
             return owed_then_outward([&]() -> diag::Result<void> {
@@ -735,17 +782,10 @@ auto FunctionLowerer::UnwindEntryAt(std::size_t index)
               return {};
             });
           },
-          // The region's own test decides whether it claims the departure, so
-          // this only hands the departure to it.
-          [&](const RegionScope& region) -> diag::Result<lir::BlockId> {
-            const lir::BlockId entry = NewBlock();
-            SetCurrent(entry);
-            Store(
-                lir::Place{
-                    .base = lir::Use{.value = region.caught}, .chain = {}},
-                Load(slot, unit_->ControlEffectType()));
-            Terminate(lir::BranchTerm{.target = region.handler});
-            return entry;
+          [](const RegionScope&) -> diag::Result<lir::BlockId> {
+            throw InternalError(
+                "mir_to_lir: a region's unwind entry is built where the walk "
+                "outward stops at it -- please report this as a bug");
           },
           [](const TerminateScope&) -> diag::Result<lir::BlockId> {
             throw InternalError(
@@ -755,11 +795,7 @@ auto FunctionLowerer::UnwindEntryAt(std::size_t index)
           }},
       kind);
   SetCurrent(resumed);
-  if (!entered) {
-    return entered;
-  }
-  scopes_[index].unwind_entry = *entered;
-  return *entered;
+  return entered;
 }
 
 // Past every scope nothing here claims the departure, so what is owed is what

@@ -1,6 +1,5 @@
 #pragma once
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -174,24 +173,6 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>> {
   // LRM 7.5.3: empties the array, resulting in a zero-sized array.
   auto Delete() -> void {
     core_.Delete();
-  }
-
-  // LRM 10.10 unpacked concatenation, as the two-operand steps a join folds to:
-  // this array with one element appended, or with every element of a spread
-  // part appended in order. A part is one element unless the program spreads a
-  // container. Value-returning so the fold chains them without mutating a
-  // shared array, and unbounded, so every appended element is kept.
-  [[nodiscard]] auto ConcatElement(const T& item) const -> DynamicArray {
-    DynamicArray out;
-    const std::array<const void*, 1> appended{&item};
-    out.core_ = core_.Extended(appended);
-    return out;
-  }
-  template <typename C>
-  [[nodiscard]] auto ConcatSpread(const C& part) const -> DynamicArray {
-    DynamicArray out;
-    out.core_ = core_.Extended(detail::OrdinalAddresses(part));
-    return out;
   }
 
  private:
