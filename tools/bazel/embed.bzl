@@ -1,48 +1,27 @@
-"""Rule for embedding file contents into C++ headers."""
+"""Rule for compiling a text file into the binary as a string."""
 
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 
-def _embed_headers_impl(ctx):
+def _embedded_text_impl(ctx):
     output = ctx.actions.declare_file(ctx.attr.out)
-
-    # Build the shell script content
-    script = """
-set -e
-exec > {output}
-cat << 'HEADER'
-// Auto-generated file. Do not edit.
-#pragma once
-#include <map>
-#include <string>
-
-namespace lyra::embedded {{
-
-inline const std::map<std::string, std::string> kEmbeddedFiles = {{
-HEADER
-for f in {files}; do
-    relpath="${{f#*{strip_prefix}}}"
-    printf '    {{"%s", R"SDK_RAW(' "$relpath"
-    cat "$f"
-    echo ')SDK_RAW"}},'
-done
-cat << 'FOOTER'
-}};
-
-}}  // namespace lyra::embedded
-FOOTER
-""".format(
-        output = output.path,
-        files = " ".join([f.path for f in ctx.files.srcs]),
-        strip_prefix = ctx.attr.strip_prefix,
-    )
-
     ctx.actions.run_shell(
         outputs = [output],
-        inputs = ctx.files.srcs,
-        command = script,
+        inputs = [ctx.file.src],
+        command = """
+set -e
+exec > {output}
+printf '// Generated from %s.\\n#pragma once\\n\\n#include <string_view>\\n\\n' '{src}'
+printf 'namespace {namespace} {{\\n\\ninline constexpr std::string_view {symbol} = R"LYRA_EMBEDDED('
+cat '{src}'
+printf ')LYRA_EMBEDDED";\\n\\n}}  // namespace {namespace}\\n'
+""".format(
+            output = output.path,
+            src = ctx.file.src.path,
+            namespace = ctx.attr.namespace,
+            symbol = ctx.attr.symbol,
+        ),
     )
-
     return [
         DefaultInfo(files = depset([output])),
         CcInfo(
@@ -52,11 +31,14 @@ FOOTER
         ),
     ]
 
-embed_headers = rule(
-    implementation = _embed_headers_impl,
+# A header declaring one `std::string_view` whose text is the file `src`, for a
+# text the binary hands on rather than reads from disk.
+embedded_text = rule(
+    implementation = _embedded_text_impl,
     attrs = {
-        "srcs": attr.label_list(allow_files = True),
-        "strip_prefix": attr.string(default = "include/"),
+        "src": attr.label(allow_single_file = True, mandatory = True),
         "out": attr.string(mandatory = True),
+        "namespace": attr.string(mandatory = True),
+        "symbol": attr.string(mandatory = True),
     },
 )

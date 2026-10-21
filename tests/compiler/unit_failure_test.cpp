@@ -4,6 +4,7 @@
 // breaks. Nothing in a design can make the compiler break an invariant on
 // request, so the break is made here, in what each unit is handed to.
 
+#include <algorithm>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
@@ -86,14 +87,18 @@ auto NamesUnit(const lyra::diag::Diagnostic& report, std::string_view unit)
 }
 
 void ExpectEachUnitReported(const std::vector<lyra::diag::Diagnostic>& all) {
-  ASSERT_EQ(all.size(), 2U);
+  // The design's two units and the unit `std`, which every design holds.
+  ASSERT_EQ(all.size(), 3U);
   for (const lyra::diag::Diagnostic& report : all) {
     EXPECT_EQ(report.primary.kind, lyra::diag::DiagKind::kInternalError);
     EXPECT_NE(
         report.primary.message.find("an invariant broke"), std::string::npos);
   }
-  EXPECT_TRUE(NamesUnit(all[0], "Leaf") || NamesUnit(all[1], "Leaf"));
-  EXPECT_TRUE(NamesUnit(all[0], "Top") || NamesUnit(all[1], "Top"));
+  for (const std::string_view unit : {"Leaf", "Top", "std"}) {
+    EXPECT_TRUE(std::ranges::any_of(all, [&](const lyra::diag::Diagnostic& r) {
+      return NamesUnit(r, unit);
+    })) << unit;
+  }
 }
 
 TEST(UnitFailure, EveryUnitThatBreaksIsReportedWithItsUnit) {

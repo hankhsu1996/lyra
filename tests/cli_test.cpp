@@ -2554,9 +2554,9 @@ auto KeptActions(const std::filesystem::path& store) -> std::size_t {
 }
 
 // The actions building a design of one module on the LLVM backend performs:
-// compiling the module's unit, the design root and the program's entry, and
-// linking what they produced.
-constexpr std::size_t kActionsBuildingOneModule = 4;
+// compiling the module's unit, the unit `std` every design holds, the design
+// root and the program's entry, and linking what they produced.
+constexpr std::size_t kActionsBuildingOneModule = 5;
 
 // Every step of a build is kept under what it read, so building a design again
 // performs nothing new; compiling it at another level changes what every step
@@ -3224,13 +3224,14 @@ TEST(LyraBuild, ARunReportsWhereItsCostWent) {
       EXPECT_TRUE(spans.contains(std::string(stage))) << stage;
     }
 
-    // The design's own units are the ones the front end declared; the design
-    // root is composed from them afterwards and reaches only the stages below
-    // MIR.
+    // The design's own units, and the unit `std` every design holds, are the
+    // ones the front end declared; the design root is composed from them
+    // afterwards and reaches only the stages below MIR.
     ASSERT_TRUE(spans.contains("declare unit"));
     const std::set<std::string> declared = spans.at("declare unit");
-    EXPECT_EQ(declared.size(), 2U);
+    EXPECT_EQ(declared.size(), 3U);
     EXPECT_TRUE(declared.contains("Test"));
+    EXPECT_TRUE(declared.contains("std"));
     for (const std::string_view per_unit :
          {"lower to HIR", "lower to MIR", "generate object"}) {
       ASSERT_TRUE(spans.contains(std::string(per_unit))) << per_unit;
@@ -3292,8 +3293,9 @@ TEST(LyraEmit, TheStatisticsNameEveryFileAUnitWrote) {
 
   const nlohmann::json stats = ReadJson(stats_path);
   ASSERT_FALSE(stats.is_discarded());
-  // The design's two units and the design root composed from them.
-  EXPECT_EQ(stats.at("units").size(), 3U);
+  // The design's two units, the unit `std` every design holds, and the design
+  // root composed from them.
+  EXPECT_EQ(stats.at("units").size(), 4U);
   for (const nlohmann::json& unit : stats.at("units")) {
     const std::string name = unit.at("name");
     EXPECT_FALSE(unit.at("artifacts").empty()) << name;

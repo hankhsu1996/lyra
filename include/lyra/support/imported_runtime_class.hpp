@@ -7,9 +7,10 @@
 namespace lyra::support {
 
 // A nominal class the runtime library defines once and every unit imports by
-// reference (LRM 9.7 `process` is the first). The identity names which library
-// class; the members, methods, and handle realization live in the runtime, not
-// in a per-unit declaration. Shared by HIR and MIR, like BuiltinFn.
+// reference, one whose state only the scheduler holds (LRM 9.7 `process`). The
+// identity names which library class; the members, methods, and handle
+// realization live in the runtime, not in a per-unit declaration. Shared by HIR
+// and MIR, like BuiltinFn.
 enum class ImportedRuntimeClass : std::uint8_t {
   kProcess,
 };

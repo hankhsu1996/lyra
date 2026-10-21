@@ -3,6 +3,7 @@ load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_static_library.bzl", "cc_static_library")
 load("//tools/bazel:copts.bzl", "LYRA_COPTS")
+load("//tools/bazel:embed.bzl", "embedded_text")
 load("//tools/bazel:shipped.bzl", "sanitizer_runtime", "shipped_artifact", "shipped_headers", "shipped_sources")
 
 # Compile every declared header once on its own, so a header that only builds
@@ -249,6 +250,14 @@ cc_library(
     deps = [":support"],
 )
 
+embedded_text(
+    name = "std_definitions_text",
+    src = "src/lyra/frontend/std.sv",
+    out = "include/lyra/frontend/std_definitions_text.hpp",
+    namespace = "lyra::frontend",
+    symbol = "kStdDefinitionsText",
+)
+
 cc_library(
     name = "frontend",
     srcs = glob(["src/lyra/frontend/*.cpp"]),
@@ -259,6 +268,7 @@ cc_library(
     deps = [
         ":diag",
         ":slang_source",
+        ":std_definitions_text",
         ":support",
         "@fmt",
         "@slang",
@@ -274,6 +284,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":diag",
+        ":frontend",
         ":hir",
         ":profiling",
         ":slang_source",

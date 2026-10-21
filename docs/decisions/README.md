@@ -1448,6 +1448,14 @@ the detail lives in the entry itself.
   the front end's severity is shipped as given, so a forbidden text it accepts with a warning runs
   with it, and lowering judges no legality.
 
+- [the-classes-of-std-are-written-in-systemverilog](the-classes-of-std-are-written-in-systemverilog.md)
+  -- `std`'s `semaphore` and `mailbox` are defined by SystemVerilog Lyra reads into every
+  compilation as a compilation unit of its own and compiles in the name of `std`, held by a test to
+  what the front end declares; waiters are the waiting processes in the order they arrived, one that
+  stops waiting is dropped, and a `mailbox` of no stated type is refused. Runtime library classes,
+  bodies built in HIR, a package of Lyra's own, tickets, and compiling the definitions only where
+  named are rejected.
+
 ### Conformance testing
 
 - [conformance-case-shape](conformance-case-shape.md) -- a case is a self-checking SystemVerilog
