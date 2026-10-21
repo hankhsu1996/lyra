@@ -27,6 +27,7 @@
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
+#include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
@@ -35,6 +36,7 @@
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
@@ -102,22 +104,36 @@ auto CarrierTypeId(
   throw InternalError("CarrierTypeId: unknown DPI-C scalar ABI");
 }
 
+// How long the foreign side may read what a value crosses as. Only a string
+// crosses as storage of its own -- every other scalar is the number or the
+// pointer itself -- so only a string's crossing reads it (LRM Annex H.8.10).
+// An import's argument is lent for the foreign call, which is as long as the
+// value it borrows from lives. A string an export hands back to its caller
+// outlives the entry that made it, so the run keeps it until the import call
+// that let the caller in returns.
+enum class ForeignHold : std::uint8_t {
+  kForTheCall,
+  kUntilTheImportReturns,
+};
+
 // SV value -> by-value machine carrier (LRM 35.5.6). An integral value yields
 // its widest machine integer, narrowed to the carrier's C width by a machine
-// cast; a real yields its native floating value; a string borrows a
-// NUL-terminated C string that stays valid for the call. Reuses the ordinary
-// value accessors; the boundary conversion is a plain expression, not a
-// DPI-specific primitive. Feeds an argument that crosses by value and the seed
-// of a scalar boundary object the callee writes back through.
+// cast; a real yields its native floating value; a string yields a
+// NUL-terminated C string the foreign side may read for as long as `hold`
+// says. Reuses the ordinary value accessors; the boundary conversion is a
+// plain expression, not a DPI-specific primitive. Feeds an argument that
+// crosses by value, the seed of a scalar boundary object the callee writes
+// back through, and what an export hands back.
 auto MarshalSvToCarrier(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId sv_id,
-    const support::DpiCarrier& carrier_desc) -> mir::ExprId {
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId sv_id,
+    const support::DpiCarrier& carrier_desc, ForeignHold hold) -> mir::ExprId {
   const auto* scalar = std::get_if<support::ScalarCarrier>(&carrier_desc);
   if (scalar == nullptr) {
     throw InternalError(
         "MarshalSvToCarrier: only a by-value scalar converts to a machine "
         "value; every other carrier crosses through a boundary object");
   }
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
   const mir::TypeId carrier = CarrierTypeId(unit, carrier_desc);
   sv_id = block.AsValue(unit.types, sv_id);
   switch (scalar->abi) {
@@ -143,16 +159,34 @@ auto MarshalSvToCarrier(
                       .arguments = {}},
               .type = carrier});
     case support::DpiScalarAbi::kString:
-      return block.exprs.Add(
-          mir::Expr{
-              .data =
-                  mir::CallExpr{
-                      .callee =
-                          mir::Direct{
-                              .target = support::BuiltinFn::kStringCStr,
-                              .receiver = sv_id},
-                      .arguments = {}},
-              .type = carrier});
+      switch (hold) {
+        case ForeignHold::kForTheCall:
+          return block.exprs.Add(
+              mir::Expr{
+                  .data =
+                      mir::CallExpr{
+                          .callee =
+                              mir::Direct{
+                                  .target = support::BuiltinFn::kStringCStr,
+                                  .receiver = sv_id},
+                          .arguments = {}},
+                  .type = carrier});
+        case ForeignHold::kUntilTheImportReturns:
+          return block.exprs.Add(
+              mir::Expr{
+                  .data =
+                      mir::CallExpr{
+                          .callee =
+                              mir::Direct{
+                                  .target = support::BuiltinFn::
+                                      kHandStringToForeignCaller},
+                          .arguments =
+                              {block.exprs.Add(
+                                   BuildCurrentRuntimeCallExpr(unit_lowerer)),
+                               sv_id}},
+                  .type = carrier});
+      }
+      throw InternalError("MarshalSvToCarrier: unknown ForeignHold");
     case support::DpiScalarAbi::kChandle:
       return block.exprs.Add(
           mir::Expr{
@@ -366,11 +400,11 @@ auto BuildOpenArrayBounds(
 // each dimension and whether an element's canonical form is how an individual
 // value of its type crosses (LRM Annex H.12.4).
 auto BuildBoundaryInit(
-    mir::CompilationUnit& unit, mir::Block& block,
+    UnitLowerer& unit_lowerer, mir::Block& block,
     const support::DpiCarrier& carrier, mir::ExprId seed_sv,
-    mir::TypeId actual_type, const hir::TypePool& hir_types,
-    hir::TypeId actual_hir_type, mir::TypeId carrier_type)
-    -> diag::Result<mir::ExprId> {
+    mir::TypeId actual_type, hir::TypeId actual_hir_type,
+    mir::TypeId carrier_type) -> diag::Result<mir::ExprId> {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
   const auto construct = [&](std::vector<mir::ExprId> arguments) {
     return block.exprs.Add(
         mir::Expr{
@@ -383,7 +417,9 @@ auto BuildBoundaryInit(
   return std::visit(
       Overloaded{
           [&](const support::ScalarCarrier&) -> diag::Result<mir::ExprId> {
-            return MarshalSvToCarrier(unit, block, seed_sv, carrier);
+            return MarshalSvToCarrier(
+                unit_lowerer, block, seed_sv, carrier,
+                ForeignHold::kForTheCall);
           },
           [&](const support::VectorCarrier&) -> diag::Result<mir::ExprId> {
             return construct({seed_sv});
@@ -405,7 +441,7 @@ auto BuildBoundaryInit(
             // type states that type under its unpacked layers. What the
             // formal's declaration adds to it is the operands beside the seed.
             const mir::ExprId bounds = BuildOpenArrayBounds(
-                unit, block, open, hir_types, actual_hir_type);
+                unit, block, open, unit_lowerer.Hir().types, actual_hir_type);
             return construct(
                 {seed_sv, bounds,
                  block.exprs.Add(
@@ -582,8 +618,9 @@ auto LowerForeignImportDirect(
     auto sv_or = lowerer.LowerExpr(hir_exprs.Get(operands[i]), frame);
     if (!sv_or) return std::unexpected(std::move(sv_or.error()));
     const mir::ExprId sv_id = block.exprs.Add(*std::move(sv_or));
-    carrier_args.push_back(
-        MarshalSvToCarrier(unit, block, sv_id, import.params[i].carrier));
+    carrier_args.push_back(MarshalSvToCarrier(
+        unit_lowerer, block, sv_id, import.params[i].carrier,
+        ForeignHold::kForTheCall));
   }
 
   mir::Expr foreign_call =
@@ -665,7 +702,8 @@ auto PopulateForeignImportBoundary(
     }
 
     if (CrossesByValue(param)) {
-      call_args.push_back(MarshalSvToCarrier(unit, body, seed_sv, carrier));
+      call_args.push_back(MarshalSvToCarrier(
+          unit_lowerer, body, seed_sv, carrier, ForeignHold::kForTheCall));
       continue;
     }
 
@@ -678,7 +716,7 @@ auto PopulateForeignImportBoundary(
     const mir::TypeId carrier_type = CarrierTypeId(unit, carrier);
     const mir::LocalId temp = cframe.bindings->DeclareAnonymous(carrier_type);
     auto init_or = BuildBoundaryInit(
-        unit, body, carrier, seed_sv, crossing_type, unit_lowerer.Hir().types,
+        unit_lowerer, body, carrier, seed_sv, crossing_type,
         hir_exprs.Get(actual).type, carrier_type);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     body.AppendStmt(mir::LocalDeclStmt{.target = temp, .init = *init_or});
@@ -727,9 +765,10 @@ auto PopulateForeignImportBoundary(
   }
 
   // LRM 35.9 items b and c, checked where the foreign frame has just returned
-  // and its evidence is still in hand. Only a `context` import can reach an
-  // exported subroutine (LRM 35.5.3), so only one can be in the state these
-  // hold it to, and a plain import's boundary carries no check.
+  // and its evidence is still in hand. Only a `context` import may reach an
+  // exported subroutine (LRM 35.5.3), and a plain one that does is refused at
+  // the export, so a plain import's boundary carries no check and stays as
+  // cheap as any call.
   if (import.is_context) {
     if (import.is_task) {
       AppendRuntimeEffectStmt(
@@ -768,9 +807,11 @@ auto BuildDeclaringScopeExpr(
 // current before, on every way out -- a return, a raised effect, or falling off
 // the end.
 //
-// Only a `context` import can reach an exported subroutine (LRM 35.5.3), so it
-// is the only one whose execution can be told to stop while the foreign side
-// holds it. The extent is therefore also where that is answered for: the
+// Only a `context` import may reach an exported subroutine (LRM 35.5.3), so it
+// is the only one whose execution the standard lets be told to stop while the
+// foreign side holds it; a plain import that reaches one anyway is refused
+// there, and its execution leaves at its next suspension. The extent is
+// therefore also where that is answered for: the
 // foreign frame's own obligation is checked where it returns, and this
 // execution leaves if it has been told to, which is the point it regains
 // control at when the foreign side consumed no simulation time and suspended
@@ -1067,37 +1108,108 @@ auto LowerForeignImportCallStmtForm(
   return diag::Result<mir::Stmt>{std::move(stmt)};
 }
 
-// What an exported function's entry answers with when a departure reached the
-// boundary instead of a value: its declared result type's own default,
-// marshaled the way the value would have been. LRM 35.9 obliges the foreign
-// side to return without reading it.
-struct ExportedResult {
-  support::DpiScalarAbi abi;
-  mir::TypeId sv_type;
-};
+// Closes, in `block`, the region a foreign caller's call into the design runs
+// inside around `body`, whose statements the caller has already built. The
+// frame above belongs to another language and ends only by returning, so
+// nothing may unwind into it (LRM 35.9): the region claims every departure and
+// every error, the design's or the tool's -- which is reported and stops the
+// execution where it is received -- and consumes it. Whether a departure is due
+// is answered again where control comes back to the design -- at once at a
+// `context` import's boundary, and after a plain import at the execution's next
+// suspension -- so landing it here loses nothing.
+void CloseForeignCallerRegion(
+    mir::CompilationUnit& unit, CallableBindings& bindings, mir::Block& block,
+    mir::Block&& body) {
+  const mir::TypeId effect_type = unit.types.Intern(
+      mir::Type{mir::RuntimeLibraryType{
+          .kind = mir::RuntimeLibraryKind::kControlEffect}});
+  const mir::BlockId region = block.child_scopes.Add(std::move(body));
+  const mir::LocalId caught = bindings.DeclareAnonymous(effect_type);
+  const mir::BlockId consumed = block.child_scopes.Add(mir::Block{});
+  block.AppendStmt(
+      mir::TryStmt{.body = region, .caught = caught, .handler = consumed});
+}
 
-// Closes an export entry around the boundary `body`: the check LRM 35.9 item d
-// makes the simulator's, then the departure an execution that must stop owes
-// before any statement of the body runs -- the foreign side may call in again
-// after a disable or after the run ended, and nothing of the design runs then
-// -- all inside the region that lands whatever no region of the body claimed,
-// then the answer the entry hands its foreign caller. The entry is that region
-// whether or not a symbol stands in front of it: where the name belongs to a
-// scope, one does, and where it belongs to a namespace, the entry is the
+// Appends the return a foreign caller reaches where the call's region landed
+// a departure or an error instead of answering. An exported name states it
+// from the kind of subroutine it is and what its result crosses as, so its
+// symbol and its entry answer alike. A task always returns the protocol's int
+// (LRM 35.8), which says whether a disable is active, so a task's two ways out
+// meet here, and a function returning nothing answers nothing. LRM 35.9 fixes
+// that value for a task alone, so a function returning a value answers the
+// zero of its result's C type, which needs no SystemVerilog type to state and,
+// for a string, no storage to keep.
+void ReturnTheFallbackAnswer(
+    UnitLowerer& module, mir::Block& block, hir::SubroutineKind kind,
+    support::DpiScalarAbi ret_abi) {
+  mir::CompilationUnit& unit = module.Unit();
+  switch (kind) {
+    case hir::SubroutineKind::kTask:
+      block.AppendStmt(
+          mir::ReturnStmt{
+              .value = block.exprs.Add(
+                  mir::Expr{
+                      .data =
+                          mir::CallExpr{
+                              .callee =
+                                  mir::Direct{
+                                      .target =
+                                          support::BuiltinFn::kDisableIsActive},
+                              .arguments = {block.exprs.Add(
+                                  BuildCurrentRuntimeCallExpr(module))}},
+                      .type =
+                          ForeignBoundaryReturnType(unit, ret_abi, true)})});
+      return;
+    case hir::SubroutineKind::kFunction:
+      break;
+  }
+  const mir::TypeId carrier =
+      CarrierTypeId(unit, support::ScalarCarrier{ret_abi});
+  const auto zero = [&]() -> std::optional<mir::ExprId> {
+    switch (ret_abi) {
+      case support::DpiScalarAbi::kVoid:
+        return std::nullopt;
+      case support::DpiScalarAbi::kBitScalar:
+      case support::DpiScalarAbi::kLogicScalar:
+      case support::DpiScalarAbi::kByte:
+      case support::DpiScalarAbi::kShortInt:
+      case support::DpiScalarAbi::kInt:
+      case support::DpiScalarAbi::kLongInt:
+        return block.exprs.Add(
+            mir::Expr{
+                .data =
+                    mir::CastExpr{
+                        .operand = mir::BuildMachineIntLiteral(unit, block, 0)},
+                .type = carrier});
+      case support::DpiScalarAbi::kReal:
+        return block.exprs.Add(
+            mir::Expr{
+                .data = mir::MachineFloatLiteral{.value = 0.0},
+                .type = carrier});
+      case support::DpiScalarAbi::kString:
+        return block.exprs.Add(mir::MakeStringLiteral(carrier, ""));
+      case support::DpiScalarAbi::kChandle:
+        return block.exprs.Add(
+            mir::Expr{.data = mir::NullLiteral{}, .type = carrier});
+    }
+    throw InternalError("ReturnTheFallbackAnswer: unknown DpiScalarAbi");
+  };
+  block.AppendStmt(mir::ReturnStmt{.value = zero()});
+}
+
+// Closes an export entry around the boundary `body`: the checks of LRM 35.9
+// item d and of LRM 35.5.3 on where the call came from, then the departure an
+// execution that must stop owes before any statement of the body runs -- the
+// foreign side may call in again after a disable or after the run ended, and
+// nothing of the design runs then -- all inside the region that lands whatever
+// no region of the body claimed, then the fallback answer. The entry is that
+// region whether or not a symbol stands in front of it: where the name belongs
+// to a scope, one does, and where it belongs to a namespace, the entry is the
 // symbol and the foreign caller's frame is directly above it.
-//
-// Three answers, told apart by what the entry returns rather than by a flag. A
-// function that returns a value answers with it on the way through and with
-// `returned`'s default where a departure landed; one that returns nothing
-// answers with nothing; and a task, whose entry always returns the protocol's
-// int (LRM 35.8), answers with it whichever way the boundary ended, so its two
-// paths meet at one return.
 void CloseForeignExportEntry(
     UnitLowerer& module, CallableBindings& bindings, mir::Block& entry,
-    mir::Block&& body, mir::TypeId result_type,
-    const std::optional<ExportedResult>& returned) {
-  mir::CompilationUnit& unit = module.Unit();
-
+    mir::Block&& body, hir::SubroutineKind kind,
+    support::DpiScalarAbi ret_abi) {
   mir::Block ran;
   AppendRuntimeEffectStmt(
       module, ran, support::BuiltinFn::kCheckExportReachable, {});
@@ -1105,46 +1217,8 @@ void CloseForeignExportEntry(
       module, ran, support::BuiltinFn::kTakeDepartureIfDue, {});
   ran.AppendStmt(
       mir::BlockStmt{.scope = ran.child_scopes.Add(std::move(body))});
-
-  // The frame above belongs to another language and ends only by returning, so
-  // nothing may unwind into it (LRM 35.9): the region claims every departure
-  // and consumes it. Whether one is due is answered again where control comes
-  // back, so landing it here loses nothing.
-  const mir::TypeId effect_type = unit.types.Intern(
-      mir::Type{mir::RuntimeLibraryType{
-          .kind = mir::RuntimeLibraryKind::kControlEffect}});
-  const mir::BlockId region = entry.child_scopes.Add(std::move(ran));
-  const mir::LocalId caught = bindings.DeclareAnonymous(effect_type);
-  const mir::BlockId consumed = entry.child_scopes.Add(mir::Block{});
-  entry.AppendStmt(
-      mir::TryStmt{.body = region, .caught = caught, .handler = consumed});
-
-  if (returned.has_value()) {
-    const mir::ExprId fallback =
-        entry.exprs.Add(BuildDefaultValueExpr(unit, entry, returned->sv_type));
-    entry.AppendStmt(
-        mir::ReturnStmt{
-            .value = MarshalSvToCarrier(
-                unit, entry, fallback, support::ScalarCarrier{returned->abi})});
-    return;
-  }
-  if (result_type == unit.builtins.void_type) {
-    entry.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
-    return;
-  }
-  entry.AppendStmt(
-      mir::ReturnStmt{
-          .value = entry.exprs.Add(
-              mir::Expr{
-                  .data =
-                      mir::CallExpr{
-                          .callee =
-                              mir::Direct{
-                                  .target =
-                                      support::BuiltinFn::kDisableIsActive},
-                          .arguments = {entry.exprs.Add(
-                              BuildCurrentRuntimeCallExpr(module))}},
-                  .type = result_type})});
+  CloseForeignCallerRegion(module.Unit(), bindings, entry, std::move(ran));
+  ReturnTheFallbackAnswer(module, entry, kind, ret_abi);
 }
 
 auto SynthesizeForeignExportEntry(
@@ -1169,6 +1243,8 @@ auto SynthesizeForeignExportEntry(
   // An exported task lowers to a coroutine -- the result type is the call
   // protocol -- while a function's result is its payload directly.
   const bool is_task = unit.types.Get(result_type).Is<mir::CoroutineType>();
+  const hir::SubroutineKind kind =
+      is_task ? hir::SubroutineKind::kTask : hir::SubroutineKind::kFunction;
 
   // A subroutine of a scope is compiled once per specialization of that scope
   // while its DPI-C name is one program-global symbol, so its entry is reached
@@ -1239,24 +1315,48 @@ auto SynthesizeForeignExportEntry(
         BuildObjectDeref(unit, body, body.LocalPlace(self_local, self_type));
   }
 
-  const auto param_ref = [&](std::size_t i) -> mir::ExprId {
-    return body.ReadLocal(params[i], code.locals.Get(params[i]).type);
+  const auto param_ref = [&](mir::Block& block, std::size_t i) -> mir::ExprId {
+    return block.ReadLocal(params[i], code.locals.Get(params[i]).type);
   };
+
+  // The completion payload's components, in the callee's payload order: the
+  // function return (when non-void) first, then each `output` / `inout` formal
+  // in declaration order, so each component's index lines up with the payload
+  // the callee returns. An `inout` is written back against what it held on the
+  // way in, which an `output` has none of.
+  struct ReturnedValue {};
+  struct OutputFormal {
+    std::size_t param_index;
+  };
+  struct InoutFormal {
+    std::size_t param_index;
+    mir::LocalId held_before;
+  };
+  struct Component {
+    mir::TypeId sv_type;
+    std::variant<ReturnedValue, OutputFormal, InoutFormal> role;
+  };
+  std::vector<Component> components;
+  const bool has_return = export_decl.ret_abi != support::DpiScalarAbi::kVoid;
+  if (has_return) {
+    components.push_back(
+        Component{
+            .sv_type = module.TranslateType(export_decl.ret_sv_type),
+            .role = ReturnedValue{}});
+  }
 
   // Marshal each `input` / `inout` argument to an explicit SV-typed temporary
   // before the call, so the read of an `inout`'s incoming value is sequenced
   // ahead of the copy-back that later overwrites it, and multiple arguments do
   // not alias inside one nested call expression. An `output` formal is not a
-  // method parameter -- it rides the completion payload (LRM 13.5). A vector
-  // reads its SV value from the incoming canonical buffer; a scalar `input`
-  // crosses by value; a scalar `inout` reads through its pointer.
+  // method parameter -- it rides the completion payload (LRM 13.5).
   std::vector<mir::ExprId> call_args;
-  for (std::size_t i = 0; i < export_decl.params.size(); ++i) {
+  // Reads formal `i` into an SV-typed local the call is handed. A vector reads
+  // its incoming canonical buffer; a scalar converts the carrier `carrier`
+  // reaches, which is the formal itself or what it points at.
+  const auto read_in = [&](std::size_t i, mir::TypeId sv_type,
+                           const auto& carrier) -> mir::LocalId {
     const hir::DpiParamAbi& p = export_decl.params[i];
-    if (p.direction == support::DpiDirection::kOutput) {
-      continue;
-    }
-    const mir::TypeId sv_type = module.TranslateType(p.sv_type);
     mir::ExprId sv_init{};
     if (const auto* vec = std::get_if<support::VectorCarrier>(&p.carrier)) {
       sv_init = body.exprs.Add(
@@ -1267,28 +1367,47 @@ auto SynthesizeForeignExportEntry(
                           mir::Direct{
                               .target = VectorReadBuiltin(*vec),
                               .type_argument = sv_type},
-                      .arguments = {param_ref(i)}},
+                      .arguments = {param_ref(body, i)}},
               .type = sv_type});
     } else {
-      const mir::ExprId carrier =
-          p.direction == support::DpiDirection::kInout
-              ? body.Deref(
-                    unit.types, param_ref(i), CarrierTypeId(unit, p.carrier))
-              : param_ref(i);
-      sv_init = body.exprs.Add(
-          MarshalCarrierToSv(module, body_frame, carrier, p.carrier, sv_type));
+      sv_init = body.exprs.Add(MarshalCarrierToSv(
+          module, body_frame, carrier(), p.carrier, sv_type));
     }
     const mir::LocalId sv_in = bindings.DeclareAnonymous(sv_type);
     body.AppendStmt(mir::LocalDeclStmt{.target = sv_in, .init = sv_init});
     call_args.push_back(body.ReadLocal(sv_in, sv_type));
+    return sv_in;
+  };
+  for (std::size_t i = 0; i < export_decl.params.size(); ++i) {
+    const hir::DpiParamAbi& p = export_decl.params[i];
+    const mir::TypeId sv_type = module.TranslateType(p.sv_type);
+    switch (p.direction) {
+      case support::DpiDirection::kInput:
+        read_in(i, sv_type, [&] { return param_ref(body, i); });
+        break;
+      case support::DpiDirection::kInout: {
+        const mir::LocalId sv_in = read_in(i, sv_type, [&] {
+          return body.Deref(
+              unit.types, param_ref(body, i), CarrierTypeId(unit, p.carrier));
+        });
+        components.push_back(
+            Component{
+                .sv_type = sv_type,
+                .role = InoutFormal{.param_index = i, .held_before = sv_in}});
+        break;
+      }
+      case support::DpiDirection::kOutput:
+        components.push_back(
+            Component{
+                .sv_type = sv_type, .role = OutputFormal{.param_index = i}});
+        break;
+    }
   }
   // Foreign code reads SystemVerilog data only through the exports it calls
   // (LRM 35.5.3), so an evaluation of a waited expression that called into it
   // is what the function reports into; with none in progress, it reports
   // nowhere and runs.
-  if (const std::optional<mir::TypeId> report = ReportParamTypeOf(
-          unit, is_task ? hir::SubroutineKind::kTask
-                        : hir::SubroutineKind::kFunction)) {
+  if (const std::optional<mir::TypeId> report = ReportParamTypeOf(unit, kind)) {
     call_args.push_back(body.exprs.Add(
         mir::MakeCallExpr(
             mir::Direct{.target = support::BuiltinFn::kEvaluationInProgress},
@@ -1329,97 +1448,89 @@ auto SynthesizeForeignExportEntry(
                         .type = payload_type})
               : method_call;
 
-  // The completion payload's components, in the callee's payload order: the
-  // function return (when non-void) first, then each `output` / `inout` formal
-  // in declaration order. Built in that exact order so each component's index
-  // lines up with the payload the callee returns. `param_index` is unused for
-  // the return component.
-  struct Component {
-    mir::TypeId sv_type;
-    bool is_return;
-    std::size_t param_index;
-  };
-  std::vector<Component> components;
-  const bool has_return = export_decl.ret_abi != support::DpiScalarAbi::kVoid;
-  if (has_return) {
-    components.push_back(
-        Component{
-            .sv_type = module.TranslateType(export_decl.ret_sv_type),
-            .is_return = true,
-            .param_index = 0});
-  }
-  for (std::size_t i = 0; i < export_decl.params.size(); ++i) {
-    if (support::DpiDirectionWritesBack(export_decl.params[i].direction)) {
-      components.push_back(
-          Component{
-              .sv_type = module.TranslateType(export_decl.params[i].sv_type),
-              .is_return = false,
-              .param_index = i});
-    }
-  }
-
   // Bind the completion value to a local every component projects out of. A
   // completion is a product at every count, so it binds the same way whether or
   // not anything is projected back out of it.
   const mir::LocalId completion = bindings.DeclareAnonymous(payload_type);
   body.AppendStmt(
       mir::LocalDeclStmt{.target = completion, .init = completion_source});
-  const auto component_value = [&](std::size_t k) -> mir::ExprId {
+  const auto component_value = [&](mir::Block& block,
+                                   std::size_t k) -> mir::ExprId {
     return ProjectCompletionComponent(
-        body, completion, payload_type,
+        block, completion, payload_type,
         base::ComponentIndex{static_cast<std::uint32_t>(k)},
         components[k].sv_type);
   };
 
-  // Copy each `output` / `inout` component back through its foreign pointer: a
-  // scalar stores its marshaled carrier through the pointer; a vector reshapes
-  // the SV value into the foreign-owned canonical buffer.
-  for (std::size_t k = 0; k < components.size(); ++k) {
-    const Component& c = components[k];
-    if (c.is_return) {
-      continue;
-    }
-    const hir::DpiParamAbi& p = export_decl.params[c.param_index];
-    const mir::ExprId value = component_value(k);
+  // Writes component `k`, formal `i`, back through its foreign pointer, in
+  // `block`: a scalar stores its marshaled carrier through the pointer; a
+  // vector reshapes the SV value into the foreign-owned canonical buffer.
+  const auto write_back = [&](mir::Block& block, std::size_t k, std::size_t i) {
+    const hir::DpiParamAbi& p = export_decl.params[i];
+    const mir::ExprId value = component_value(block, k);
     if (const auto* vec = std::get_if<support::VectorCarrier>(&p.carrier)) {
-      body.AppendStmt(
+      block.AppendStmt(
           mir::ExprStmt{
-              .expr = body.exprs.Add(
+              .expr = block.exprs.Add(
                   mir::Expr{
                       .data =
                           mir::CallExpr{
                               .callee =
                                   mir::Direct{
                                       .target = VectorWriteBuiltin(*vec)},
-                              .arguments = {param_ref(c.param_index), value}},
+                              .arguments = {param_ref(block, i), value}},
                       .type = void_type})});
-      continue;
+      return;
     }
     const mir::TypeId carrier_type = CarrierTypeId(unit, p.carrier);
-    const mir::ExprId carrier =
-        MarshalSvToCarrier(unit, body, value, p.carrier);
+    const mir::ExprId carrier = MarshalSvToCarrier(
+        module, block, value, p.carrier, ForeignHold::kUntilTheImportReturns);
     const mir::ExprId place =
-        body.Deref(unit.types, param_ref(c.param_index), carrier_type);
-    body.AppendStmt(
+        block.Deref(unit.types, param_ref(block, i), carrier_type);
+    block.AppendStmt(
         mir::ExprStmt{
-            .expr = body.exprs.Add(
+            .expr = block.exprs.Add(
                 mir::MakeAssignExpr(unit.builtins, place, carrier))});
+  };
+
+  // An `output` is always written. An `inout` is written only where the
+  // subroutine changed it: SystemVerilog writes an address into an inout string
+  // only where it effects a change, so the caller keeps its own pointer and the
+  // storage behind it (LRM Annex H.8.10), and for every other carrier writing
+  // back what was there is the same as not writing. A change is any changed
+  // bit, so an x or a z, and a real's sign, each count as one.
+  for (std::size_t k = 0; k < components.size(); ++k) {
+    std::visit(
+        Overloaded{
+            [&](const ReturnedValue&) {},
+            [&](const OutputFormal& output) {
+              write_back(body, k, output.param_index);
+            },
+            [&](const InoutFormal& inout) {
+              mir::Block changed;
+              write_back(changed, k, inout.param_index);
+              const mir::ExprId same = BuildBitIdentity(
+                  unit, body, component_value(body, k),
+                  body.ReadLocal(inout.held_before, components[k].sv_type));
+              body.AppendStmt(
+                  mir::IfStmt{
+                      .condition = BuildConditionNot(unit, body, same),
+                      .then_scope = body.child_scopes.Add(std::move(changed)),
+                      .else_scope = std::nullopt});
+            }},
+        components[k].role);
   }
 
-  if (!is_task && has_return) {
+  if (has_return) {
     const mir::ExprId ret_carrier = MarshalSvToCarrier(
-        unit, body, component_value(0),
-        support::ScalarCarrier{export_decl.ret_abi});
+        module, body, component_value(body, 0),
+        support::ScalarCarrier{export_decl.ret_abi},
+        ForeignHold::kUntilTheImportReturns);
     body.AppendStmt(mir::ReturnStmt{.value = ret_carrier});
   }
 
   CloseForeignExportEntry(
-      module, bindings, entry, std::move(body), code.result_type,
-      !is_task && has_return
-          ? std::optional{ExportedResult{
-                .abi = export_decl.ret_abi,
-                .sv_type = module.TranslateType(export_decl.ret_sv_type)}}
-          : std::nullopt);
+      module, bindings, entry, std::move(body), kind, export_decl.ret_abi);
 
   // The entry's identity is its linkage name: it is a program-global symbol in
   // the DPI name space, not an SV declaration the source can call (LRM 35.4,
@@ -1427,12 +1538,15 @@ auto SynthesizeForeignExportEntry(
   return ForeignExportEntry{
       .code = std::move(code),
       .linkage = mir::ForeignLinkage{.foreign_name = export_decl.foreign_name},
-      .signature = signature};
+      .signature = signature,
+      .kind = kind,
+      .ret_abi = export_decl.ret_abi};
 }
 
 void PublishForeignScopeName(
-    mir::CompilationUnit& unit, const mir::ForeignLinkage& linkage,
-    mir::TypeId signature) {
+    UnitLowerer& module, const ForeignExportEntry& exported) {
+  mir::CompilationUnit& unit = module.Unit();
+  const mir::ForeignLinkage& linkage = exported.linkage;
   // Two scopes of one unit may export one name (LRM 35.4), and both the
   // prototype and the definition are the same either way, so the second states
   // nothing new. Across units the repeat is what this symbol's linkage is for;
@@ -1446,12 +1560,17 @@ void PublishForeignScopeName(
   }
 
   const mir::MachineFunctionType prototype =
-      unit.types.Get(signature).Get<mir::MachineFunctionType>();
+      unit.types.Get(exported.signature).Get<mir::MachineFunctionType>();
 
   mir::CallableCode code = mir::CallableCode::Defined();
   code.body.emplace();
   CallableBindings bindings(unit, code);
-  mir::Block& body = code.Body();
+
+  // Resolving the entry is the design's own work and can fail as the design's
+  // error -- a call from outside a `context` import's call, a scope that
+  // declares no such export -- so it runs inside the same region the entry
+  // stands in, and answers the same fallback where that landed.
+  mir::Block body;
 
   std::vector<mir::TypeId> entry_params{unit.builtins.scope_ptr};
   for (const mir::TypeId type : prototype.params) {
@@ -1460,9 +1579,6 @@ void PublishForeignScopeName(
   }
   code.result_type = prototype.result;
 
-  // The entry this resolves to is the region that stops a departure before it
-  // reaches the foreign caller, so what comes back here is always an answer,
-  // and handing it on is the whole of what is left.
   const mir::LocalId scope = bindings.DeclareAnonymous(unit.builtins.scope_ptr);
   body.AppendStmt(
       mir::LocalDeclStmt{
@@ -1518,11 +1634,13 @@ void PublishForeignScopeName(
   } else {
     body.AppendStmt(mir::ReturnStmt{.value = call});
   }
+  CloseForeignCallerRegion(unit, bindings, code.Body(), std::move(body));
+  ReturnTheFallbackAnswer(module, code.Body(), exported.kind, exported.ret_abi);
 
   unit.foreign_scope_entries.push_back(
       mir::ForeignScopeEntry{
           .linkage = linkage,
-          .signature = signature,
+          .signature = exported.signature,
           .definition = std::move(code)});
 }
 

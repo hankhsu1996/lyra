@@ -53,8 +53,9 @@ class AmbientRunContext {
 // scope of the process whose foreign call is executing (LRM 35.5.3). It is the
 // instance the foreign call chain established -- the calling context import's
 // scope, or one svSetScope redirected to -- and is the exported method's
-// receiver. Throws when no scope is current, which means an export was reached
-// without a context import or svSetScope (LRM 35.5.3 makes that an error).
+// receiver. Throws where no context import's call is running, or where one is
+// and no scope is current -- an import declared in a package with no
+// svSetScope -- both of which LRM 35.5.3 makes an error.
 auto CurrentExportScope() -> Scope*;
 
 // The entry `scope` publishes for the exported subroutine of this name, with

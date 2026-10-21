@@ -105,6 +105,8 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_check_import_function_acknowledged",
       &lyra_rt_check_import_function_acknowledged);
   add("lyra_rt_check_export_reachable", &lyra_rt_check_export_reachable);
+  add("lyra_rt_hand_string_to_foreign_caller",
+      &lyra_rt_hand_string_to_foreign_caller);
   add("lyra_rt_claim_namespace_initialize",
       &lyra_rt_claim_namespace_initialize);
   add("lyra_rt_current_export_scope", &lyra_rt_current_export_scope);

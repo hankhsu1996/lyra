@@ -139,6 +139,40 @@ backend-realized conversion would be written twice and drift. The carrier being 
 a value type, keeps it out of the SV value model and adds no new MIR expression primitive -- it is a
 type in an existing category, and the conversion is an ordinary call.
 
+The single lowered-call window of the invariant holds of the calling side and not of an export's
+entry, where the carrier is what the entry hands back. A number or a pointer is the carrier itself,
+but a string's carrier points at characters, and LRM Annex H.8.10 has SystemVerilog "write a valid
+string address" into an output, a result being the same carrier, while the value holding those
+characters ends with the entry. So a string an export hands back is kept by the run until the import
+call that let the foreign caller in returns. That is the first moment nothing on the foreign side
+can still be reading it, since an export may be called only from inside such a call (LRM 35.5.3),
+and one called from anywhere else is refused before it hands anything out. The entry states this as
+a call of the runtime entry that keeps the string and answers its characters, where an import's
+argument borrows them for the call. This is the Java Native Interface's local reference, for which
+"the Java VM creates a registry for each transition of control from Java to a native method" and
+deletes the registry "after the native method returns". It costs what that one does. Foreign code
+calling a string export in a loop inside one import call holds every string until the import
+returns.
+
+A string address is written only where the standard has one written, so an inout is written back
+only where the subroutine changed it, because SystemVerilog writes an address into an inout string
+only "if SystemVerilog needs to effect a change", and otherwise "only reads from the user's string
+storage" (LRM Annex H.8.10). Writing the run's own copy over an unchanged one would take away the
+caller's pointer, and a caller freeing what it allocated would free the copy instead. The rule is
+stated for every inout rather than for strings alone, since writing back a value whose bits did not
+change is the same as not writing it for every other carrier. Bits decide it rather than equality,
+because a real's negated zero is equal to the zero it came from and is still a change.
+
+An export called from outside the call of a `context` import has no call whose return would release
+what it hands out, and LRM 35.5.3 makes that call an error, so it is refused. It is raised as an
+error of the design where the export's name is resolved -- at the entry of a package's export, and
+before the instance is looked up for a module's -- inside the region an entry stands in, so it is
+reported, the run ends and the execution stops before the subroutine runs. The foreign caller is
+then answered what any export answers where its call reached nothing of the design, which keeps no
+string. The one such call this does not see is a plain import reached from inside a `context` one,
+where the outer call is still running; what it hands out is kept until that outer call returns,
+which bounds it all the same.
+
 ### 4. A DPI export is an internal callable plus a foreign entry point; context is a thread-local ambient handle
 
 An exported subroutine is an ordinary internal SV callable. The export additionally contributes an

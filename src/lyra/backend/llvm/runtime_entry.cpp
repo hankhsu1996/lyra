@@ -1922,6 +1922,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kCheckImportTaskAcknowledged:
     case support::BuiltinFn::kCheckImportFunctionAcknowledged:
     case support::BuiltinFn::kCheckExportReachable:
+    case support::BuiltinFn::kHandStringToForeignCaller:
     case support::BuiltinFn::kClaimNamespaceInitialize:
     case support::BuiltinFn::kCurrentExportScope:
     case support::BuiltinFn::kFindExportEntry:

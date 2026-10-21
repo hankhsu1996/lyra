@@ -249,13 +249,22 @@ void lyra_rt_leave_dpi_scope(void* runtime) noexcept;
 
 // The DPI-C disable protocol (LRM 35.9). The question an exported task's entry
 // answers as its int, and the three checks the clause makes the simulator's.
-// None of them raises: each stands in a frame foreign code reached, so what it
-// does is report and end the run.
+// None of them raises for a breach of the protocol: each holds only once the
+// execution has been told to stop, so what it does is report and end the run.
+// The one at an export's entry also holds the call to LRM 35.5.3, which lets an
+// export be called only from inside a `context` import's call; that breach
+// finds the execution told nothing, so it is raised, and the region of the
+// function foreign code called settles it.
 auto lyra_rt_disable_is_active(void* runtime) -> std::int32_t;
 void lyra_rt_check_import_task_acknowledged(
     void* runtime, std::int32_t returned);
 void lyra_rt_check_import_function_acknowledged(void* runtime);
 void lyra_rt_check_export_reachable(void* runtime);
+
+// A string an export hands to its foreign caller (LRM Annex H.8.10), kept by
+// the run until the import call that let that caller in returns.
+auto lyra_rt_hand_string_to_foreign_caller(void* runtime, const void* text)
+    -> const char*;
 
 auto lyra_rt_claim_namespace_initialize(void* runtime, const char* name)
     -> std::int64_t;

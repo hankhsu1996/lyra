@@ -1558,6 +1558,11 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {.name = "string_cstr", .declaration = Method{"CStr"}};
     case BuiltinFn::kChandlePtr:
       return {.name = "chandle_ptr", .declaration = Method{"Ptr"}};
+    case BuiltinFn::kHandStringToForeignCaller:
+      return {
+          .name = "hand_string_to_foreign_caller",
+          .declaration = RuntimeFunction("HandStringToForeignCaller"),
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kToSvLogic:
       return {
           .name = "to_sv_logic",

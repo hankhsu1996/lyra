@@ -2867,51 +2867,112 @@ TEST(LyraBuild, ABuildThatIsEndedLeavesNothingItStarted) {
       << "the next build left the killed one's directory where it was";
 }
 
-// Foreign code that calls an exported subroutine once its execution thread is
-// in the disabled state breaks the protocol, and a simulator is obliged to
-// report it (LRM 35.9 item d). The run ending puts it in that state too, and
-// what the call is owed then is nothing of the design at all, since the run is
-// over. The corpus cannot state this: the report ends the run in failure, and a
-// case passes only on a zero exit status.
-TEST(LyraRun, CallingInAfterTheRunEndedIsReportedAndRunsNothing) {
+// Foreign code may call an exported subroutine only from inside a call of a
+// `context` import (LRM 35.5.3), and not once its execution thread is in the
+// disabled state (LRM 35.9 item d); a call breaking either is an error the
+// simulator reports, and the call runs nothing of the design. The run ending
+// puts the thread in the disabled state too. A call from a plain import is made
+// to an export of a package, whose name reaches its subroutine directly, and to
+// one of a module, whose name resolves the instance first; the foreign caller
+// catches everything around each, so a report that left by unwinding through
+// it would land there instead. The corpus cannot state this: the report ends
+// the run in failure, and a case passes only on a zero exit status.
+TEST(LyraRun, CallingInWhereNoExportMayBeReachedIsReportedAndRunsNothing) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
   auto tmp_or = MakeScratchDir();
   ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
 
   const auto src = *tmp_or / "test.sv";
-  std::ofstream(src) << "module Test;\n"
-                     << "  import \"DPI-C\" context function int ask();\n"
-                     << "  export \"DPI-C\" function answer;\n"
-                     << "  int entered;\n"
-                     << "  function int answer();\n"
-                     << "    entered = entered + 1;\n"
-                     << "    $finish(0);\n"
-                     << "    return 2;\n"
-                     << "  endfunction\n"
-                     << "  initial begin\n"
-                     << "    entered = 0;\n"
-                     << "    void'(ask());\n"
-                     << "  end\n"
-                     << "  final $display(\"entered=%0d\", entered);\n"
-                     << "endmodule\n";
-  const auto foreign = *tmp_or / "foreign.c";
-  std::ofstream(foreign) << "#include \"dpi.h\"\n"
-                         << "int32_t ask(void) {\n"
-                         << "  return answer() + answer();\n"
-                         << "}\n";
+  std::ofstream(src)
+      << "package P;\n"
+      << "  export \"DPI-C\" function remembered;\n"
+      << "  int remembered_calls;\n"
+      << "  function int remembered();\n"
+      << "    remembered_calls = remembered_calls + 1;\n"
+      << "    return 4;\n"
+      << "  endfunction\n"
+      << "endpackage\n"
+      << "module Test;\n"
+      << "  import \"DPI-C\" context function int ask();\n"
+      << "  import \"DPI-C\" function int ask_package_plainly();\n"
+      << "  import \"DPI-C\" function int ask_module_plainly();\n"
+      << "  export \"DPI-C\" function answer;\n"
+      << "  export \"DPI-C\" function instance_answer;\n"
+      << "  int entered;\n"
+      << "  int instance_calls;\n"
+      << "  function int answer();\n"
+      << "    entered = entered + 1;\n"
+      << "    $finish(0);\n"
+      << "    return 2;\n"
+      << "  endfunction\n"
+      << "  function int instance_answer();\n"
+      << "    instance_calls = instance_calls + 1;\n"
+      << "    return 5;\n"
+      << "  endfunction\n"
+      << "  initial begin\n"
+      << "    entered = 0;\n"
+      << "    if ($test$plusargs(\"package\")) void'(ask_package_plainly());\n"
+      << "    else if ($test$plusargs(\"module\")) "
+         "void'(ask_module_plainly());\n"
+      << "    else void'(ask());\n"
+      << "  end\n"
+      << "  final $display(\"entered=%0d remembered=%0d instance=%0d\",\n"
+      << "                 entered, P::remembered_calls, instance_calls);\n"
+      << "endmodule\n";
+  const auto foreign = *tmp_or / "foreign.cpp";
+  std::ofstream(foreign)
+      << "#include <cstdio>\n"
+      << "#include \"dpi.h\"\n"
+      << "extern \"C\" int32_t ask(void) {\n"
+      << "  return answer() + answer();\n"
+      << "}\n"
+      << "template <class F> int32_t Guarded(F call) {\n"
+      << "  try {\n"
+      << "    return call();\n"
+      << "  } catch (...) {\n"
+      << "    std::printf(\"caught by the foreign caller\\n\");\n"
+      << "    return -1;\n"
+      << "  }\n"
+      << "}\n"
+      << "extern \"C\" int32_t ask_package_plainly(void) {\n"
+      << "  return Guarded([] { return remembered(); });\n"
+      << "}\n"
+      << "extern \"C\" int32_t ask_module_plainly(void) {\n"
+      << "  return Guarded([] { return instance_answer(); });\n"
+      << "}\n";
 
   const std::vector<std::string> args = {
       "run",  "--backend",  "llvm",           "--top",
       "Test", "--dpi-link", foreign.string(), src.string()};
-  const auto run = RunChildProcess(lyra, args, 120s);
-  EXPECT_EQ(run.termination, TerminationKind::kExitedNonZero)
-      << run.stdout_text << run.stderr_text;
-  EXPECT_NE(
-      run.stderr_text.find("entered the disabled state"), std::string::npos)
-      << run.stderr_text;
-  EXPECT_NE(run.stdout_text.find("entered=1"), std::string::npos)
-      << "stdout: " << run.stdout_text;
+  {
+    SCOPED_TRACE("after the run ended");
+    const auto run = RunChildProcess(lyra, args, 120s);
+    EXPECT_EQ(run.termination, TerminationKind::kExitedNonZero)
+        << run.stdout_text << run.stderr_text;
+    EXPECT_NE(
+        run.stderr_text.find("entered the disabled state"), std::string::npos)
+        << run.stderr_text;
+    EXPECT_NE(run.stdout_text.find("entered=1"), std::string::npos)
+        << "stdout: " << run.stdout_text;
+  }
+  for (const auto& [plusarg, ran_nothing] :
+       {std::pair{"+package", "remembered=0"},
+        std::pair{"+module", "instance=0"}}) {
+    SCOPED_TRACE(plusarg);
+    std::vector<std::string> plainly = args;
+    plainly.insert(plainly.end(), {"--", plusarg});
+    const auto run = RunChildProcess(lyra, plainly, 120s);
+    EXPECT_EQ(run.termination, TerminationKind::kExitedNonZero)
+        << run.stdout_text << run.stderr_text;
+    EXPECT_NE(run.stderr_text.find("not declared 'context'"), std::string::npos)
+        << run.stderr_text;
+    EXPECT_NE(run.stdout_text.find(ran_nothing), std::string::npos)
+        << "stdout: " << run.stdout_text;
+    EXPECT_EQ(
+        run.stdout_text.find("caught by the foreign caller"), std::string::npos)
+        << "stdout: " << run.stdout_text;
+  }
 }
 
 auto CountOccurrences(std::string_view text, std::string_view needle)

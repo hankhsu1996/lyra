@@ -123,9 +123,10 @@ from an external main.
       or one `svSetScope` redirected to -- rather than the single-instance recovery above; a
       receiver-less package-scoped export needs no instance at all and calls its package function
       directly (riding on the package unit and callable in `packages.md`, PK1-PK2). Reaching any
-      export now requires a valid scope context, so its caller must be a context import or set the
-      scope with `svSetScope` (LRM 35.5.3). This is the `mhpmcounter_num` / `mhpmcounter_get` shape
-      in the Ibex bring-up; the pure-SV Ibex run never calls them, so this closes the construct, not
+      export requires the call of a context import, and reaching a module's export also needs a
+      scope, which a context import declared in a package or at `$unit` scope names with
+      `svSetScope` first (LRM 35.5.3). This is the `mhpmcounter_num` / `mhpmcounter_get` shape in
+      the Ibex bring-up; the pure-SV Ibex run never calls them, so this closes the construct, not
       the Ibex external-driver usage.
 - [x] D4d -- An export declared inside a generate block (LRM Annex H.9.2): the subroutine belongs to
       that block's scope object rather than to the module, and the entry point recovers that scope
@@ -144,7 +145,11 @@ from an external main.
       out through its foreign pointer. A function result stays a by-value return, limited to a small
       value (LRM 35.5.5): an atom such as `int` / `longint` / `real` / `string` / `chandle`, or a
       scalar `bit` / `logic`; a packed-vector, `integer`, or `time` result is not a small value and
-      cannot be returned.
+      cannot be returned. A string an export hands back -- its result, an `output` or `inout`
+      string, an exported task's `output` -- stays readable until the import call that let the
+      foreign caller in returns, so the caller may read it after the export returned and hold
+      several at once, and an `inout` the export leaves as it was keeps the caller's own pointer
+      (LRM Annex H.8.10).
 
 ### DPI tasks
 
@@ -171,7 +176,7 @@ protocol on top of it.
 - [x] D6c -- The disable protocol (LRM 35.9). Nothing that ends an execution crosses a frame the
       compiler did not emit, because such a frame ends only by returning. So an exported
       subroutine's entry lands whatever would have left it and answers instead: a task returns the
-      disable-active int (LRM 35.8), a function returns its result type's default, and
+      disable-active int (LRM 35.8), a function returns the zero of its C result type, and
       `svIsDisabledState` answers the same question to any foreign frame that asks, with
       `svAckDisabledState` recording that one is following the protocol. Whether a departure is due
       is derived again where control comes back rather than carried across, so the execution leaves
@@ -185,7 +190,10 @@ protocol on top of it.
       once its foreign frames have returned. A run-time error of the design, or a failure of the
       tool, raised anywhere below an exported subroutine stops at its entry the same way: it is
       reported once, the run ends, and the foreign caller regains control in the disabled state --
-      so a foreign handler that catches everything around the call catches nothing.
+      so a foreign handler that catches everything around the call catches nothing. A call to an
+      exported subroutine from outside a `context` import's call, which LRM 35.5.3 makes an error,
+      is refused the same way before the subroutine runs, for a package's export and a module's
+      alike.
 - [x] D6d -- Side-effect attribution inside an exported subroutine body. `%m` (LRM 21.2.1.5) renders
       the exported subroutine's own instantiated position, and a severity task (LRM 20.10) tags its
       report with the call site, so both already read where the exported body is rather than where

@@ -979,7 +979,12 @@ enum class BuiltinFn : std::uint16_t {
   // where its evidence is: what an imported task returned, whether an imported
   // function acknowledged, and whether an exported subroutine was reached at
   // all once the state was entered. None of them leaves by an effect, because
-  // the frame each stands in was reached from foreign code.
+  // each holds only once the execution has been told to stop, so the departure
+  // is already due where control comes back. Outside that state the last also
+  // holds the call to LRM 35.5.3, which lets an export be called only from
+  // inside a `context` import's call; that breach finds the execution told
+  // nothing, so it is raised, and the region of the function foreign code
+  // called settles it.
   kDisableIsActive,
   kCheckImportTaskAcknowledged,
   kCheckImportFunctionAcknowledged,
@@ -1021,6 +1026,12 @@ enum class BuiltinFn : std::uint16_t {
   kRealValue,
   kStringCStr,
   kChandlePtr,
+  // A `String` an export hands to the foreign code that called it -- its
+  // result, an output or an inout string (LRM Annex H.8.10) -- as a C string
+  // the runtime keeps until the import call that let that code in returns,
+  // since the value the entry holds ends with the entry and the foreign side
+  // reads the text after it.
+  kHandStringToForeignCaller,
   // Canonical DPI-C packed and 1-bit-4-state marshaling (LRM Annex H.10.1).
   // `kToSvLogic` reads a 1-bit 4-state value out as its `svLogic` scalar
   // encoding (`value | unknown << 1`); `kFromSvLogic` builds it back in the
