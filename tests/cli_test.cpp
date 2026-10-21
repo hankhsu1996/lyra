@@ -5,8 +5,9 @@
 // started it besides the program: a refusal before the work, nothing left
 // behind, and a word on where it is.
 //
-// None of it is a statement about a backend, so a case that has to run a design
-// asks for the one that compiles no C++, and the file costs seconds and gates.
+// None of it is a statement about what a backend emits, so a case that has to
+// run a design asks for the one that compiles no C++ unless what it states
+// holds of both, and each case costs a few small builds and gates.
 // What an emitted C++ project is worth once built is a different question with
 // a different price, and lives in `emitted_project_test.cpp`.
 

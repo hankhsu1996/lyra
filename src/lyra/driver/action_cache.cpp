@@ -7,7 +7,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
-#include <iterator>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <random>
@@ -16,6 +16,8 @@
 #include <system_error>
 #include <utility>
 #include <vector>
+
+#include <llvm/Support/MemoryBuffer.h>
 
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/stable_hash/fingerprint.hpp"
@@ -63,10 +65,16 @@ auto EntriesOf(const std::filesystem::path& store)
   return entries;
 }
 
-auto ReadWholeFile(const std::filesystem::path& path) -> std::string {
-  std::ifstream in(path, std::ios::binary);
-  return std::string{
-      std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+// Read as a compiler reads its inputs, mapped when large and read whole when
+// small, so hashing a file costs its bytes once; a link hashes the whole
+// runtime library on every build. A file that cannot be read is the empty text.
+auto ReadWholeFile(const std::filesystem::path& path)
+    -> std::unique_ptr<llvm::MemoryBuffer> {
+  auto buffer = llvm::MemoryBuffer::getFile(path.string());
+  if (!buffer) {
+    return llvm::MemoryBuffer::getMemBuffer("", path.string());
+  }
+  return std::move(*buffer);
 }
 
 void MarkUsed(const std::filesystem::path& entry) {
@@ -90,7 +98,7 @@ auto DigestOfFile(const std::filesystem::path& file)
     return diag::Fail(
         diag::DiagCode::kHostIoError, "cannot read '{}'", file.string());
   }
-  return stable_hash::FingerprintOfText(ReadWholeFile(file));
+  return stable_hash::FingerprintOfText(ReadWholeFile(file)->getBuffer());
 }
 
 // The output the action cache records for `digest`, if it is still in the
@@ -104,7 +112,8 @@ auto Kept(
   if (!std::filesystem::is_regular_file(entry, ec)) {
     return std::nullopt;
   }
-  const auto output = stable_hash::FingerprintOfHex(ReadWholeFile(entry));
+  const auto output =
+      stable_hash::FingerprintOfHex(ReadWholeFile(entry)->getBuffer());
   if (!output) {
     return std::nullopt;
   }
@@ -245,7 +254,7 @@ void Action::InputDigest(
 
 void Action::InputFile(
     std::string_view label, const std::filesystem::path& file) {
-  Input(label, ReadWholeFile(file));
+  Input(label, ReadWholeFile(file)->getBuffer());
 }
 
 void Action::InputExecutable(
@@ -288,7 +297,7 @@ auto DigestOfFiles(
   hasher.AddNumber(named.size());
   for (const auto& [name, file] : named) {
     hasher.AddText(name);
-    hasher.AddText(ReadWholeFile(file));
+    hasher.AddText(ReadWholeFile(file)->getBuffer());
   }
   return hasher.Finish();
 }
