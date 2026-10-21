@@ -257,6 +257,13 @@ def _sanitizer_runtime_impl(ctx):
             mnemonic = "SanitizerRuntime",
         )
         outs.append(out)
+    symbolizer = ctx.actions.declare_file(ctx.attr.root + "/llvm-symbolizer")
+    ctx.actions.symlink(
+        output = symbolizer,
+        target_file = ctx.file.release_symbolizer,
+        is_executable = True,
+    )
+    outs.append(symbolizer)
     return [DefaultInfo(files = depset(outs))]
 
 sanitizer_runtime = rule(
@@ -264,10 +271,17 @@ sanitizer_runtime = rule(
     doc = """The address sanitizer's own runtime of the clang release that
 compiles the shipped runtime, under `root`: the code that release instruments
 names a check of the runtime's version, so a program it instrumented links this
-runtime and no other.""",
+runtime and no other. Beside it is that release's symbolizer, the tool its
+runtime starts to name the functions in a report, shipped as clang ships it
+beside clang.""",
     attrs = {
         "release_libs": attr.label(
             doc = "The release's runtime libraries, as its toolchain hands them over.",
+            mandatory = True,
+        ),
+        "release_symbolizer": attr.label(
+            allow_single_file = True,
+            doc = "The release's llvm-symbolizer.",
             mandatory = True,
         ),
         "root": attr.string(

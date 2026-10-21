@@ -25,14 +25,15 @@ compiler that compiles the design, so the runtime ships in a form each such comp
   links, and instrumented code names its runtime's version, so a checked program links both
   ([../decisions/a-program-is-checked-by-the-sanitizer-of-whoever-instrumented-it.md](../decisions/a-program-is-checked-by-the-sanitizer-of-whoever-instrumented-it.md)).
   It carries machine code alone, since the release refuses to instrument a fat object's modules a
-  second time.
+  second time. The release's `llvm-symbolizer` ships beside its sanitizer runtime, which starts it
+  to name the functions in a report.
 
 ## Two consumers of the runtime
 
 - **Bundled (portable artifact).** `emit cpp` copies the runtime -- headers and static library, and
-  for a project built with `--lto` its sources too -- into the output directory alongside the
-  generated sources and a build recipe. The directory is then self-contained: it builds on another
-  machine of the same platform with no Lyra toolchain present.
+  for a project built with `--lto` or `--sanitize address` its sources too -- into the output
+  directory alongside the generated sources and a build recipe. The directory is then
+  self-contained: it builds on another machine of the same platform with no Lyra toolchain present.
 - **In place.** `build` and `run`, on either backend, compile and link the design against the
   runtime where it already lives, and copy nothing. What they produce is an executable, which
   carries the library inside it and runs wherever the machine it was linked for does.
@@ -42,9 +43,8 @@ Both reduce to one question: _where does the Lyra runtime live for this binary?_
 ## Locating the runtime
 
 There is a single answer point: a resolver that, given the running binary's own path, returns the
-runtime's include root and static library. Every consumer depends on the resolved location, never on
-how it was found. The resolution strategy is therefore free to change without touching the emit,
-build, or run paths.
+each file it ships. Every consumer depends on the resolved location, never on how it was found. The
+resolution strategy is therefore free to change without touching the emit, build, or run paths.
 
 Resolution strategies:
 

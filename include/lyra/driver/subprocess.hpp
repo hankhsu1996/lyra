@@ -58,12 +58,21 @@ auto RunProcessesCaptured(
     std::span<const std::string> names)
     -> std::expected<std::vector<ProcessResult>, base::DiagMessage>;
 
+// A variable a child is started with, in place of any of that name this
+// process has.
+struct EnvironmentVariable {
+  std::string name;
+  std::string value;
+};
+
 // Run `exe args...` inheriting this process's stdout and stderr, so the child's
-// output streams straight to the terminal. Returns the child's exit code. This
-// is the program a run executes and not a tool the build ran, so the run's
-// statistics do not count it.
+// output streams straight to the terminal, and its environment with
+// `variables` in it. Returns the child's exit code. This is the program a run
+// executes and not a tool the build ran, so the run's statistics do not count
+// it.
 auto RunProcessStreaming(
-    const std::filesystem::path& exe, std::span<const std::string> args)
+    const std::filesystem::path& exe, std::span<const std::string> args,
+    std::span<const EnvironmentVariable> variables)
     -> std::expected<int, base::DiagMessage>;
 
 }  // namespace lyra::driver
