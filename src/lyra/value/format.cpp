@@ -91,10 +91,6 @@ auto FormatRealBody(const FormatSpec& spec, double v) -> std::string {
   }
 }
 
-auto LowWord(const ConstIntegralView& value) -> std::uint64_t {
-  return value.value.empty() ? 0U : value.value[0];
-}
-
 }  // namespace
 
 auto ApplyFieldWidth(std::string body, const FormatSpec& spec) -> std::string {
@@ -214,8 +210,7 @@ auto FormatIntegralOperand(
           "FormatIntegralOperand: %t requires a TimeFormat in the format "
           "context");
     }
-    return FormatTimeMagnitude(
-        spec, static_cast<double>(LowWord(value)), *ctx.time_format);
+    return FormatIntegralTime(spec, value, *ctx.time_format);
   }
   // LRM 21.2.1.6: an integral element of an assignment pattern prints "as it
   // would unformatted", and the default $display radix is decimal. It occupies
@@ -284,7 +279,7 @@ auto Formatter<double>::Format(
           "Formatter<double>::Format: %t requires a TimeFormat in the format "
           "context");
     }
-    return FormatTimeMagnitude(spec, value, *ctx.time_format);
+    return FormatRealTime(spec, value, *ctx.time_format);
   }
   return ApplyFieldWidth(FormatRealBody(spec, value), spec);
 }
@@ -298,8 +293,7 @@ auto Formatter<float>::Format(
           "Formatter<float>::Format: %t requires a TimeFormat in the format "
           "context");
     }
-    return FormatTimeMagnitude(
-        spec, static_cast<double>(value), *ctx.time_format);
+    return FormatRealTime(spec, static_cast<double>(value), *ctx.time_format);
   }
   return ApplyFieldWidth(
       FormatRealBody(spec, static_cast<double>(value)), spec);

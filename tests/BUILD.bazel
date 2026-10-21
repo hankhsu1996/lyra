@@ -109,6 +109,16 @@ cc_test(
 )
 
 cc_test(
+    name = "value_time_format_test",
+    srcs = ["value/time_format_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:value",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "value_integral_operation_test",
     srcs = ["value/integral_operation_test.cpp"],
     copts = LYRA_COPTS,
