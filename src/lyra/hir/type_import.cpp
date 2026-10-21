@@ -112,7 +112,9 @@ auto TypeImporter::Import(const Type& type) -> Type {
           },
           [this](const EnumType& t) -> Type {
             return Type{EnumType{
-                .base_type = Import(t.base_type), .members = t.members}};
+                .declaration = t.declaration,
+                .base_type = Import(t.base_type),
+                .members = t.members}};
           },
           [this](const UnpackedStructType& t) -> Type {
             return Type{UnpackedStructType{
@@ -167,6 +169,7 @@ auto TypeImporter::Import(const Type& type) -> Type {
           [](const UnitObjectsType& t) -> Type { return Type{t}; },
           [](const VirtualInterfaceType& t) -> Type { return Type{t}; },
           [](const NullType& t) -> Type { return Type{t}; },
+          [](const DynamicType& t) -> Type { return Type{t}; },
           [](const VoidType& t) -> Type { return Type{t}; }});
 }
 

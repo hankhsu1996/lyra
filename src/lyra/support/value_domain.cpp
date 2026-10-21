@@ -30,6 +30,8 @@ auto ValueDomainName(ValueDomain domain) -> std::string_view {
       return "logic_wide";
     case ValueDomain::kWildcardIndex:
       return "wildcard_index";
+    case ValueDomain::kAny:
+      return "any";
     case ValueDomain::kString:
       return "string";
     case ValueDomain::kReal:
@@ -68,6 +70,7 @@ auto IsIntegralLayout(ValueDomain domain) -> bool {
     case ValueDomain::kBitWide:
     case ValueDomain::kLogicWide:
     case ValueDomain::kWildcardIndex:
+    case ValueDomain::kAny:
     case ValueDomain::kString:
     case ValueDomain::kReal:
     case ValueDomain::kShortReal:

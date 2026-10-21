@@ -163,6 +163,8 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             Combine(seed, t.key_type);
           },
           [](const WildcardIndexType&) {},
+          [](const AnyType&) {},
+          [](const AnyReferenceType&) {},
           [](const StringType&) {},
           [](const MachineCStringType&) {},
           [](const MachineBoolType&) {},
@@ -247,6 +249,10 @@ auto Type::KindName() const -> std::string_view {
           [](const QueueType&) { return "queue"; },
           [](const AssociativeArrayType&) { return "associative array"; },
           [](const WildcardIndexType&) { return "wildcard index"; },
+          [](const AnyType&) { return "value of any type"; },
+          [](const AnyReferenceType&) {
+            return "reference to a value of any type";
+          },
           [](const StringType&) { return "string"; },
           [](const MachineCStringType&) { return "machine C string"; },
           [](const MachineBoolType&) { return "machine boolean"; },
@@ -312,6 +318,8 @@ auto Type::Declaration() const -> std::optional<TypeDeclaration> {
           [&](const QueueType&) { return names_none(); },
           [&](const AssociativeArrayType&) { return names_none(); },
           [&](const WildcardIndexType&) { return names_none(); },
+          [&](const AnyType&) { return names_none(); },
+          [&](const AnyReferenceType&) { return names_none(); },
           [&](const StringType&) { return names_none(); },
           [&](const RealType&) { return names_none(); },
           [&](const ShortRealType&) { return names_none(); },
@@ -386,6 +394,8 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
 
           // A single quantity or a single token.
           [](const WildcardIndexType&) -> Element { return std::nullopt; },
+          [](const AnyType&) -> Element { return std::nullopt; },
+          [](const AnyReferenceType&) -> Element { return std::nullopt; },
           [](const StringType&) -> Element { return std::nullopt; },
           [](const MachineCStringType&) -> Element { return std::nullopt; },
           [](const MachineBoolType&) -> Element { return std::nullopt; },
@@ -521,6 +531,10 @@ auto Type::HeldAs() const -> std::optional<Holding> {
             return ValueDomain::kWildcardIndex;
           },
           [](const StringType&) -> Held { return ValueDomain::kString; },
+          [](const AnyType&) -> Held { return ValueDomain::kAny; },
+          [](const AnyReferenceType&) -> Held {
+            return LibraryObject::kAnyReference;
+          },
           [](const RealType&) -> Held { return ValueDomain::kReal; },
           [](const ShortRealType&) -> Held { return ValueDomain::kShortReal; },
           // A chandle (LRM 6.14) is a value holding one host pointer.

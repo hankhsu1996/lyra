@@ -73,9 +73,10 @@ using OrderSignature = bool(std::int64_t, std::int64_t);
 enum class CallableHold : std::uint8_t {
   // Lent for the call: the entry runs it, if at all, before returning.
   kForTheCall,
-  // Kept by what the entry answers -- a wait the caller stops at -- and so
-  // ended with it, however the wait ends.
-  kWhileWaited,
+  // Kept by what the entry answers -- a wait the caller stops at, a reference
+  // the caller hands on -- and so ended with it, which the caller's frame
+  // outlasts.
+  kWhileItsAnswerIsHeld,
   // Kept past the caller: the entry may run it after the frame that handed it
   // over has ended.
   kPastTheCaller,
@@ -112,7 +113,7 @@ struct CallableBounds {
 [[nodiscard]] constexpr auto OutlivesTheCaller(CallableHold hold) -> bool {
   switch (hold) {
     case CallableHold::kForTheCall:
-    case CallableHold::kWhileWaited:
+    case CallableHold::kWhileItsAnswerIsHeld:
       return false;
     case CallableHold::kPastTheCaller:
       return true;

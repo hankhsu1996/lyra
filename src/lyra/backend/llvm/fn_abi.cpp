@@ -277,6 +277,9 @@ auto TypeArgsCalledAt(
     case support::AnswerTold::kIntegralExtent:
       return {TypeExtentArg{
           .type = ToldOfType(called_at, "how wide the value it answers is")}};
+    case support::AnswerTold::kTypeCalledAt:
+      return {TypeConstantArg{
+          .type = ToldOfType(called_at, "the type it is called at")}};
     // The array an entry builds, and the value it answers, are what the call
     // answers with, which a call stating only the type it is made at does not
     // name.
@@ -322,6 +325,7 @@ auto TypeArgsToldAs(
     case support::AnswerTold::kNothing:
     case support::AnswerTold::kElementType:
     case support::AnswerTold::kIntegralExtent:
+    case support::AnswerTold::kTypeCalledAt:
       return TypeArgsCalledAt(told, called_at);
   }
   throw InternalError("llvm codegen: unknown answer told");
@@ -353,6 +357,7 @@ auto AnswerTypeArgs(
     case support::AnswerTold::kAnswerType:
     case support::AnswerTold::kElementType:
     case support::AnswerTold::kIntegralExtent:
+    case support::AnswerTold::kTypeCalledAt:
       return TypeArgsToldAs(types, declared, called_at, answered);
   }
   throw InternalError("llvm codegen: unknown answer told");
@@ -842,6 +847,22 @@ auto CallArranger::ConstructionOf(
           [&](const lir::EmptyType&) -> Built {
             return entry_over(
                 support::ValueDomain::kEmpty, result, RuntimeOp::kDefault);
+          },
+          // A value of any type is built holding none, the one construction it
+          // has (LRM 15.4.9).
+          [&](const lir::AnyType&) -> Built {
+            return entry_over(
+                support::ValueDomain::kAny, result, RuntimeOp::kDefault);
+          },
+          // A reference to a value of any type is built referring to nothing,
+          // which receives nothing (LRM 15.4.9).
+          [&](const lir::AnyReferenceType&) -> Built {
+            return Construction{
+                .symbol = RuntimeSymbol(
+                    support::LibraryObject::kAnyReference, RuntimeOp::kDefault),
+                .operands = OperandReadingsOf(RuntimeOp::kDefault),
+                .realization = std::nullopt,
+                .answer_told = AnswerToldOf(RuntimeOp::kDefault)};
           },
 
           // Nothing below has a construction entry on this backend. Each says

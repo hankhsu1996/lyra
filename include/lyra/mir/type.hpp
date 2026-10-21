@@ -130,6 +130,26 @@ struct StringType {
   auto operator==(const StringType&) const -> bool = default;
 };
 
+// A value of any type, kept with that type and with the identity a value is
+// tested by when it is asked to become a value of another type: C++'s
+// `std::any`, Swift's `Any`. The identity is the text of the type's identity,
+// which two types share exactly where a value of one may be taken as a value of
+// the other, so whichever unit made the value and whichever asks of it state
+// it alike without either knowing the other.
+struct AnyType {
+  auto operator==(const AnyType&) const -> bool = default;
+};
+
+// A value of a type known only where the program runs, which is reached only
+// through a reference: Rust's `dyn Any` behind a `&mut`. A reference to one
+// stands for a variable of a known type, made from a reference to it, and only
+// a value of that type's identity is written through it, as an `AnyType` value
+// carries one (LRM 15.4.5, 13.5.2). It has no value of its own to read or
+// hold, as an erased callable has none apart from a box or a borrow.
+struct ErasedValueType {
+  auto operator==(const ErasedValueType&) const -> bool = default;
+};
+
 // A borrowed, NUL-terminated machine string (the generic-language `*const
 // c_char`, C `const char*`), distinct from the owning `StringType`, which is a
 // simulation value. It names raw character storage the value does not own, so
@@ -729,16 +749,17 @@ class Type {
  private:
   using Data = std::variant<
       IntegralType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
-      AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
-      MachineBoolType, MachineIntType, MachineFloatType, MachineArrayType,
-      MachineFunctionType, EventType, RealType, ShortRealType, ChandleType,
-      VoidType, ObjectType, RuntimeClassType, RuntimeEffectsType, FilesType,
-      DiagnosticType, RuntimeLibraryType, CoroutineType, VariableRefType,
-      ReferenceWrapperType, PointerType, ReferenceType, ManagedRefType,
-      VectorType, TupleType, EmptyType, ObservableType, ResolvedType,
-      DriverType, OpenWriteType, DesignationType, BitsReferenceType,
-      ObjectWriteType, SampledHistoryType, EvaluationAttemptsType,
-      LoopBlocksType, RecordType, ClosureType, ErasedCallableType>;
+      AssociativeArrayType, WildcardIndexType, StringType, AnyType,
+      ErasedValueType, MachineCStringType, MachineBoolType, MachineIntType,
+      MachineFloatType, MachineArrayType, MachineFunctionType, EventType,
+      RealType, ShortRealType, ChandleType, VoidType, ObjectType,
+      RuntimeClassType, RuntimeEffectsType, FilesType, DiagnosticType,
+      RuntimeLibraryType, CoroutineType, VariableRefType, ReferenceWrapperType,
+      PointerType, ReferenceType, ManagedRefType, VectorType, TupleType,
+      EmptyType, ObservableType, ResolvedType, DriverType, OpenWriteType,
+      DesignationType, BitsReferenceType, ObjectWriteType, SampledHistoryType,
+      EvaluationAttemptsType, LoopBlocksType, RecordType, ClosureType,
+      ErasedCallableType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

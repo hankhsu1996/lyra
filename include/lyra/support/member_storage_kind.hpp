@@ -43,6 +43,10 @@ enum class MemberStorageKind : std::uint8_t {
   // where the value lies and the variable, if any, it belongs to. A read hands
   // back the reference itself, and filling it copies one.
   kReference,
+  // A reference to a variable of whatever type (LRM 15.4.9), held whole the
+  // same way: where a value is received, of which type, and what carries it on
+  // to the variable.
+  kAnyReference,
   // A counted hold on the cell of a local a scope keeps past its end (LRM
   // 6.21), which the owner does keep alive: a read hands back the hold, and the
   // hold ending with its owner is what ends the cell once no holder is left.

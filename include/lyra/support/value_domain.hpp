@@ -43,6 +43,8 @@ enum class ValueDomain : std::uint8_t {
   kBitWide,
   kLogicWide,
   kWildcardIndex,
+  // A value of any type, kept with its type and the identity it is tested by.
+  kAny,
   kString,
   kReal,
   kShortReal,

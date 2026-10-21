@@ -69,6 +69,8 @@ auto ClassOfObject(const TypePool& types, TypeId object) -> DeclaredClassRef {
           [&](const QueueType&) { return not_an_object(); },
           [&](const AssociativeArrayType&) { return not_an_object(); },
           [&](const WildcardIndexType&) { return not_an_object(); },
+          [&](const AnyType&) { return not_an_object(); },
+          [&](const ErasedValueType&) { return not_an_object(); },
           [&](const StringType&) { return not_an_object(); },
           [&](const MachineCStringType&) { return not_an_object(); },
           [&](const MachineBoolType&) { return not_an_object(); },

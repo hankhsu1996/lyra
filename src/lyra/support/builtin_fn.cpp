@@ -64,32 +64,32 @@ constexpr MachineSignature kOrder = MachineSignatureOf<OrderSignature>::Get();
 // The bounds of a callable an entry asks of: it calls it at one of the
 // signatures above, many times through a shared view (`Fn`), many times as its
 // only holder (`FnMut`) or once (`FnOnce`), or it starts it; and it keeps it
-// for the call, while what it answers is waited on, or past its caller.
+// for the call, while what it answers is held, or past its caller.
 constexpr CallableBounds kOrderFnForTheCall{
     .trait = CalledClosure{.asks = ClosureKind::kFn, .signature = kOrder},
     .kept = CallableHold::kForTheCall};
 constexpr CallableBounds kEffectFnPastTheCaller{
     .trait = CalledClosure{.asks = ClosureKind::kFn, .signature = kEffect},
     .kept = CallableHold::kPastTheCaller};
-constexpr CallableBounds kEffectFnWhileWaited{
+constexpr CallableBounds kEffectFnWhileItsAnswerIsHeld{
     .trait = CalledClosure{.asks = ClosureKind::kFn, .signature = kEffect},
-    .kept = CallableHold::kWhileWaited};
-constexpr CallableBounds kEffectFnOnceWhileWaited{
+    .kept = CallableHold::kWhileItsAnswerIsHeld};
+constexpr CallableBounds kEffectFnOnceWhileItsAnswerIsHeld{
     .trait = CalledClosure{.asks = ClosureKind::kFnOnce, .signature = kEffect},
-    .kept = CallableHold::kWhileWaited};
+    .kept = CallableHold::kWhileItsAnswerIsHeld};
 constexpr CallableBounds kEffectFnOncePastTheCaller{
     .trait = CalledClosure{.asks = ClosureKind::kFnOnce, .signature = kEffect},
     .kept = CallableHold::kPastTheCaller};
-constexpr CallableBounds kConditionFnWhileWaited{
+constexpr CallableBounds kConditionFnWhileItsAnswerIsHeld{
     .trait = CalledClosure{.asks = ClosureKind::kFn, .signature = kCondition},
-    .kept = CallableHold::kWhileWaited};
-constexpr CallableBounds kWatchFnMutWhileWaited{
+    .kept = CallableHold::kWhileItsAnswerIsHeld};
+constexpr CallableBounds kWatchFnMutWhileItsAnswerIsHeld{
     .trait = CalledClosure{.asks = ClosureKind::kFnMut, .signature = kWatch},
-    .kept = CallableHold::kWhileWaited};
+    .kept = CallableHold::kWhileItsAnswerIsHeld};
 constexpr CallableBounds kStartedForTheCall{
     .trait = StartedBody{}, .kept = CallableHold::kForTheCall};
-constexpr CallableBounds kStartedWhileWaited{
-    .trait = StartedBody{}, .kept = CallableHold::kWhileWaited};
+constexpr CallableBounds kStartedWhileItsAnswerIsHeld{
+    .trait = StartedBody{}, .kept = CallableHold::kWhileItsAnswerIsHeld};
 constexpr CallableBounds kStartedPastTheCaller{
     .trait = StartedBody{}, .kept = CallableHold::kPastTheCaller};
 
@@ -441,7 +441,8 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "bind_property_evaluation",
           .declaration = RuntimeFunction("BindPropertyEvaluation"),
-          .callables = {kEffectFnWhileWaited, kEffectFnWhileWaited}};
+          .callables = {
+              kEffectFnWhileItsAnswerIsHeld, kEffectFnWhileItsAnswerIsHeld}};
     case BuiltinFn::kDisablePropertyEvaluation:
       return {
           .name = "disable_property_evaluation",
@@ -1111,17 +1112,19 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "observation_of_watch",
           .declaration = StaticFactory{"OfWatch"},
-          .callables = {kWatchFnMutWhileWaited}};
+          .callables = {kWatchFnMutWhileItsAnswerIsHeld}};
     case BuiltinFn::kObservationOfWatchQualified:
       return {
           .name = "observation_of_watch_qualified",
           .declaration = StaticFactory{"OfWatchQualified"},
-          .callables = {kWatchFnMutWhileWaited, kConditionFnWhileWaited}};
+          .callables = {
+              kWatchFnMutWhileItsAnswerIsHeld,
+              kConditionFnWhileItsAnswerIsHeld}};
     case BuiltinFn::kObservationQualified:
       return {
           .name = "observation_qualified",
           .declaration = StaticFactory{"Qualified"},
-          .callables = {kConditionFnWhileWaited}};
+          .callables = {kConditionFnWhileItsAnswerIsHeld}};
     case BuiltinFn::kObservationFires:
       return {.name = "observation_fires", .declaration = Method{"Fires"}};
     case BuiltinFn::kWaitRecollecting:
@@ -1332,6 +1335,24 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = RuntimeFunction("Unsize"),
           .takes_a_type_argument = true,
           .type_argument_named = TypeArgumentNamed::kTheCallSignature};
+    case BuiltinFn::kMakeAny:
+      return {
+          .name = "any_make",
+          .declaration = RuntimeFunction("MakeAny"),
+          .operands = {kTyped, kMachine}};
+    case BuiltinFn::kSeeAsAny:
+      return {
+          .name = "see_as_any",
+          .declaration = RuntimeFunction("SeeAsAny"),
+          .takes_a_type_argument = true,
+          .operands = {kMachine, kMachine, kMachine},
+          .answer_told = AnswerTold::kTypeCalledAt,
+          .callables = {kEffectFnWhileItsAnswerIsHeld}};
+    case BuiltinFn::kReceiveAny:
+      return {
+          .name = "receive_any",
+          .declaration = RuntimeFunction("ReceiveAny"),
+          .operands = {kMachine, kMachine}};
     case BuiltinFn::kObjectEventSource:
       return {
           .name = "object_event_source",
@@ -1348,7 +1369,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "fork_wait_all",
           .declaration = RuntimeFunction("ForkWaitAll"),
           .takes_the_runtime_handle = true,
-          .callables = {kStartedWhileWaited}};
+          .callables = {kStartedWhileItsAnswerIsHeld}};
     case BuiltinFn::kForkWaitFirst:
       return {
           .name = "fork_wait_first",
@@ -1604,7 +1625,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "run_foreign_task_on_fiber",
           .declaration = RuntimeFunction("RunForeignTaskOnFiber"),
           .takes_the_runtime_handle = true,
-          .callables = {kEffectFnOnceWhileWaited}};
+          .callables = {kEffectFnOnceWhileItsAnswerIsHeld}};
     case BuiltinFn::kRunExportedTaskToCompletion:
       return {
           .name = "run_exported_task_to_completion",

@@ -1960,6 +1960,49 @@ auto lyra_rt_wildcard_index_copy(const void* value, void* out) -> void*;
 auto lyra_rt_wildcard_index_move(void* value, void* out) -> void*;
 void lyra_rt_wildcard_index_destroy(void* object);
 void lyra_rt_wildcard_index_assign(void* storage, const void* value);
+// A value of any type (LRM 15.4.9). `make` keeps a copy of a value crossing
+// with its type, together with the identity a value is tested by;
+// `see_as_any` makes a reference to one, which receives into the storage its
+// first operand refers to, of the type told after its operands, and is then
+// carried on by the closure it borrows; and `receive_any` writes a value of any
+// type where such a reference stands, where the two are of one identity,
+// answering whether it did (LRM 15.4.5). The rest are such a value's lifecycle.
+auto lyra_rt_any_make(
+    const void* value, const void* value_type, const char* identity, void* out)
+    -> void*;
+auto lyra_rt_see_as_any(
+    const void* incoming, const char* identity, void* carry,
+    const void* value_type, void* out) -> void*;
+auto lyra_rt_receive_any(const void* reference, const void* value) -> bool;
+auto lyra_rt_any_default(void* out) -> void*;
+auto lyra_rt_any_reference_default(void* out) -> void*;
+auto lyra_rt_any_copy(const void* value, void* out) -> void*;
+auto lyra_rt_any_move(void* value, void* out) -> void*;
+void lyra_rt_any_destroy(void* object);
+void lyra_rt_any_assign(void* storage, const void* value);
+// What holds a value of any type in a variable, and a reference to one.
+auto lyra_rt_any_cell_refer(void* cell, void* out) -> void*;
+auto lyra_rt_any_cell_get(void* cell) -> const void*;
+void lyra_rt_any_cell_initialize(void* cell, const void* prototype) noexcept;
+void lyra_rt_any_cell_set(void* cell, const void* value);
+void lyra_rt_any_cell_arm_sampling(void* cell);
+auto lyra_rt_any_cell_sampled_get(void* cell) -> const void*;
+auto lyra_rt_any_cell_open_for_write(void* cell, void* out) -> void*;
+void lyra_rt_any_cell_construct(void* storage);
+void lyra_rt_any_cell_destroy(void* storage);
+auto lyra_rt_any_ref_get(void* reference) -> const void*;
+void lyra_rt_any_ref_set(void* reference, const void* value);
+void lyra_rt_any_ref_arm_sampling(void* reference);
+auto lyra_rt_any_ref_sampled_get(void* reference) -> const void*;
+auto lyra_rt_any_ref_open_for_write(void* reference, void* out) -> void*;
+auto lyra_rt_any_value_cell_alloc() noexcept -> void*;
+void lyra_rt_any_value_cell_store(void* cell, const void* value) noexcept;
+auto lyra_rt_any_value_cell_load(void* cell) noexcept -> void*;
+void lyra_rt_any_value_cell_construct(void* storage);
+void lyra_rt_any_value_cell_destroy(void* storage);
+auto lyra_rt_any_shared_cell_make(void* out) -> void*;
+auto lyra_rt_any_land(const void* designation) noexcept -> void*;
+void lyra_rt_any_sampled_history_construct(void* storage);
 auto lyra_rt_string_bit_identical(const void* lhs, const void* rhs) -> bool;
 auto lyra_rt_real_bit_identical(const void* lhs, const void* rhs) -> bool;
 auto lyra_rt_shortreal_bit_identical(const void* lhs, const void* rhs) -> bool;
@@ -2232,6 +2275,7 @@ void lyra_rt_queue_assign(void* storage, const void* value);
 void lyra_rt_assocarray_assign(void* storage, const void* value);
 void lyra_rt_managedref_assign(void* storage, const void* value);
 void lyra_rt_reference_assign(void* storage, const void* value);
+void lyra_rt_any_reference_assign(void* storage, const void* value);
 // A wait is never copied, so the one written is a value the body built and
 // ends after, and the storage takes it over.
 void lyra_rt_wait_assign(void* storage, void* value);
@@ -2294,6 +2338,7 @@ auto lyra_rt_dpi_logic_buffer_copy(const void* value, void* out) -> void*;
 auto lyra_rt_dpi_open_array_copy(const void* value, void* out) -> void*;
 auto lyra_rt_channel_cancellation_copy(const void* value, void* out) -> void*;
 auto lyra_rt_reference_copy(const void* value, void* out) -> void*;
+auto lyra_rt_any_reference_copy(const void* value, void* out) -> void*;
 auto lyra_rt_string_move(void* value, void* out) -> void*;
 auto lyra_rt_real_move(void* value, void* out) -> void*;
 auto lyra_rt_shortreal_move(void* value, void* out) -> void*;
@@ -2317,6 +2362,7 @@ auto lyra_rt_dpi_logic_buffer_move(void* value, void* out) -> void*;
 auto lyra_rt_dpi_open_array_move(void* value, void* out) -> void*;
 auto lyra_rt_channel_cancellation_move(void* value, void* out) -> void*;
 auto lyra_rt_reference_move(void* value, void* out) -> void*;
+auto lyra_rt_any_reference_move(void* value, void* out) -> void*;
 
 // One member's storage, built in place where its owner was laid out and ended
 // there: `lyra_rt_<domain>_<kind>_construct` / `_destroy` for storage over a
@@ -2327,6 +2373,7 @@ auto lyra_rt_reference_move(void* value, void* out) -> void*;
 // have nothing to end.
 void lyra_rt_borrowed_handle_construct(void* storage);
 void lyra_rt_reference_construct(void* storage);
+void lyra_rt_any_reference_construct(void* storage);
 void lyra_rt_string_cell_construct(void* storage);
 void lyra_rt_real_cell_construct(void* storage);
 void lyra_rt_shortreal_cell_construct(void* storage);

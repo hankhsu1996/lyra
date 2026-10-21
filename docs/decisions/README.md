@@ -1460,9 +1460,12 @@ the detail lives in the entry itself.
   -- `std`'s `semaphore` and `mailbox` are defined by SystemVerilog Lyra reads into every
   compilation as a compilation unit of its own and compiles in the name of `std`, held by a test to
   what the front end declares; waiters are the waiting processes in the order they arrived, one that
-  stops waiting is dropped, and a `mailbox` of no stated type is refused. Runtime library classes,
-  bodies built in HIR, a package of Lyra's own, tickets, and compiling the definitions only where
-  named are rejected.
+  stops waiting is dropped, and a message of a `mailbox` of no stated type is a value of any type
+  kept with the text of its type's equivalence class, which names no queue bound, received through a
+  reference of any type only into a variable of the same text. Runtime library classes, bodies built
+  in HIR, a package of Lyra's own, tickets, a type's address or MIR identity as the class, one
+  object both owning and referring, a bound in the text, copying a message in after `get` returns, a
+  second mailbox definition, and compiling the definitions only where named are rejected.
 
 ### Conformance testing
 

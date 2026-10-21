@@ -349,6 +349,11 @@ auto LowerEnum(
         });
   }
   return hir::EnumType{
+      .declaration =
+          hir::TypeDeclarationRef{
+              .unit_name = CompilationUnitName(
+                  UnitHomeOf(enum_type), unit_lowerer.Specialization()),
+              .path = DefPathOf(enum_type, unit_lowerer.Specialization())},
       .base_type = *base_id_or,
       .members = std::move(members),
   };
@@ -409,6 +414,10 @@ auto TranslateType(
       return hir::Type{hir::ChandleType{}};
     case slang::ast::SymbolKind::NullType:
       return hir::Type{hir::NullType{}};
+    // What the front end gives a mailbox's message type where none was
+    // stated, LRM 15.4.9's `dynamic_type`.
+    case slang::ast::SymbolKind::UntypedType:
+      return hir::Type{hir::DynamicType{}};
     case slang::ast::SymbolKind::ClassType: {
       const auto& class_type = canonical.as<slang::ast::ClassType>();
       if (const auto imported = ImportedRuntimeClassOf(class_type)) {
@@ -916,21 +925,6 @@ auto LowerDefinedClassMethod(
 
 }  // namespace
 
-auto UnitLowerer::ConstructorDeclaresFormals(
-    const slang::ast::ClassType& cls, diag::SourceSpan span)
-    -> diag::Result<bool> {
-  auto ref = ResolveClassRef(cls, span);
-  if (!ref) return std::unexpected(std::move(ref.error()));
-  if (const auto* ext = std::get_if<hir::ExternalClassRef>(&*ref)) {
-    const hir::ExternalClass& published =
-        ExternalClassOf(ext->unit_name, ext->class_path);
-    return published.constructor.has_value() &&
-           !published.constructor->params.empty();
-  }
-  const slang::ast::SubroutineSymbol* constructor = cls.getConstructor();
-  return constructor != nullptr && !constructor->getArguments().empty();
-}
-
 auto UnitLowerer::MakeClassMethodTarget(
     const hir::ClassRef& class_ref,
     const slang::ast::SubroutineSymbol& method) const
@@ -1404,14 +1398,7 @@ auto UnitLowerer::ResolveClassRef(
     const slang::ast::ClassType& cls, diag::SourceSpan span)
     -> diag::Result<hir::ClassRef> {
   // A class `std` declares is the class Lyra's definition of it is, wherever
-  // it is named. A `mailbox` of no stated type has none: its messages are
-  // checked against their reader only at run time (LRM 15.4.9).
-  if (IsMailboxOfAnyType(cls)) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedTypeKind,
-        "a 'mailbox' with no type given for its messages is not yet "
-        "supported");
-  }
+  // it is named.
   if (const slang::ast::ClassType* definition = facts_.StdDefinitionOf(cls)) {
     return ResolveClassRef(*definition, span);
   }
@@ -1903,7 +1890,7 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
   // 8.17). The front end resolves the first two into one fully bound call and
   // answers nothing for the third, having first established that every formal
   // of the base constructor has a default -- so an answer of nothing is the
-  // third case, and whether it owes any default is what the base declares.
+  // third case.
   const slang::ast::Expression* base_clause = nullptr;
   if (const auto* base_type = cls.getBaseClass(); base_type != nullptr) {
     if (!base_arguments.has_value()) {
@@ -1918,22 +1905,22 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
           lowered.push_back(constructor.body.exprs.Add(*std::move(arg_or)));
         }
         base_arguments = std::move(lowered);
-      } else if (auto owes_defaults = ConstructorDeclaresFormals(
-                     base_type->getCanonicalType().as<slang::ast::ClassType>(),
-                     span);
-                 !owes_defaults) {
-        return std::unexpected(std::move(owes_defaults.error()));
-      } else if (*owes_defaults) {
-        return std::unexpected(
-            diag::Make(
-                span, diag::DiagCode::kUnsupportedClassFeature,
-                "a base class constructor argument left to its default value "
-                "is not yet supported")
-                .WithNote(
-                    "state the argument in 'super.new' or on the 'extends' "
-                    "clause"));
       } else {
-        base_arguments.emplace();
+        // Each formal takes its default, as an argument a call leaves out
+        // does (LRM 13.5.3).
+        std::vector<hir::ExprId> defaults;
+        if (const slang::ast::SubroutineSymbol* base_constructor =
+                Defining(
+                    base_type->getCanonicalType().as<slang::ast::ClassType>())
+                    .getConstructor()) {
+          for (const auto* formal : base_constructor->getArguments()) {
+            auto arg_or =
+                init_lowerer.LowerExpr(*formal->getDefaultValue(), init_frame);
+            if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+            defaults.push_back(constructor.body.exprs.Add(*std::move(arg_or)));
+          }
+        }
+        base_arguments = std::move(defaults);
       }
     }
     // The base's instance is found from where this class is declared, the way

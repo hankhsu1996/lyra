@@ -183,6 +183,11 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           // evaluation-attempt storage itself, and a write open on one of
           // them.
           [&](const WildcardIndexType&) { return bare(); },
+          // A value of any type is what a mailbox's own messages are where it
+          // states none (LRM 15.4.9): only the mailbox holds one, and nothing
+          // waits on it.
+          [&](const AnyType&) { return bare(); },
+          [&](const ErasedValueType&) { return bare(); },
           [&](const MachineCStringType&) { return bare(); },
           [&](const MachineBoolType&) { return bare(); },
           [&](const MachineIntType&) { return bare(); },

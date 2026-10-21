@@ -8,10 +8,12 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
+#include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/expression/enum_method.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
+#include "lyra/lowering/hir_to_mir/predicate.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -69,6 +71,41 @@ auto LowerHirDynamicCastExpr(
   const hir::RunTimeCheck check =
       std::get<hir::AssignmentAllowed>(c.validity).check;
 
+  // A destination of `dynamic_type` is of a type only the run knows (LRM
+  // 15.4.9), so it is the destination that answers: it takes the value where
+  // the two are of one identity, which asks for it as a reference.
+  if (check == hir::RunTimeCheck::kValueIsOfAnEquivalentType) {
+    auto destination_or = lowerer.LowerLhsExpr(
+        lowerer.HirExprs().Get(c.destination), steps.Frame());
+    if (!destination_or) {
+      return std::unexpected(std::move(destination_or.error()));
+    }
+    const mir::ExprId reference = AtType(
+        unit, body, PathReference(unit, body, *destination_or),
+        *ParamTypeOf(unit, destination_type, hir::ParamDirection::kRef));
+    const mir::ExprId received = body.exprs.Add(
+        mir::MakeCallExpr(
+            mir::Direct{.target = support::BuiltinFn::kReceiveAny},
+            {reference, source}, unit.builtins.machine_bool));
+    if (c.on_invalid == hir::InvalidAssignmentHandling::kReported) {
+      mir::Block invalid;
+      report_invalid(invalid);
+      body.AppendStmt(
+          mir::IfStmt{
+              .condition = BuildLogicalNot(unit, body, received),
+              .then_scope = body.child_scopes.Add(std::move(invalid)),
+              .else_scope = std::nullopt});
+    }
+    return steps.Build(body.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::ConditionalExpr{
+                    .condition = received,
+                    .then_value = mir::BuildIntLiteral(unit, body, 1),
+                    .else_value = mir::BuildIntLiteral(unit, body, 0)},
+            .type = result_type}));
+  }
+
   // What the destination would take is settled once and then both asked about
   // and stored, so the question and the assignment cannot be about different
   // values. Toward a class the object may not be one of, forming the handle is
@@ -94,6 +131,10 @@ auto LowerHirDynamicCastExpr(
         bind_value(ConvertToType(unit, body, source, destination_type));
         return body.exprs.Add(BuildEnumMembershipCallExpr(
             owner, body, read_value(body), declared));
+      case hir::RunTimeCheck::kValueIsOfAnEquivalentType:
+        throw InternalError(
+            "LowerHirDynamicCastExpr: a destination of 'dynamic_type' is "
+            "answered before any value is bound");
       case hir::RunTimeCheck::kObjectIsOfTheDestinationClass:
         bind_value(body.exprs.Add(
             mir::MakeCallExpr(

@@ -316,6 +316,11 @@ enum class RunTimeCheck : std::uint8_t {
   // it, so one pair of types gives two answers -- the same superclass handle
   // becomes a subclass one or does not, on what was constructed (LRM 8.16).
   kObjectIsOfTheDestinationClass,
+  // A value of `dynamic_type` is of whichever type it was given, and the
+  // storage a `dynamic_type` reference names is of its own, so one pair of
+  // types gives two answers -- a message is received only where the two are
+  // equivalent (LRM 15.4.5, 6.22.2).
+  kValueIsOfAnEquivalentType,
 };
 
 // The two declared types allow no assignment between them at all (LRM 6.22.4,

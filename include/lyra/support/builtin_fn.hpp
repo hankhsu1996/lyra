@@ -857,6 +857,20 @@ enum class BuiltinFn : std::uint16_t {
   // stays where it was made, and is called, and for a box ended, from then on
   // through the definition it opens with.
   kUnsize,
+  // A value of any type (LRM 15.4.9), holding a copy of its operand, kept with
+  // the operand's type and the identity the call's second operand names.
+  kMakeAny,
+  // A reference to a value of any type, as Rust's unsizing coercion makes a
+  // `&mut dyn Any` of a `&mut T`: a value of the identity its second operand
+  // names is written into the storage its first operand refers to, of the
+  // type the call is at, and then the closure its third operand borrows is
+  // called, which carries that value on to wherever the reference stands for
+  // (LRM 13.5.2).
+  kSeeAsAny,
+  // Writes a value of any type into what a reference to one names, where the
+  // two are of one identity, and answers whether it did: a message is received
+  // only into a variable of a type equivalent to its own (LRM 15.4.5, 6.22.2).
+  kReceiveAny,
   // What reports a change to an object's properties (LRM 9.4.2): the event
   // source a wait reaching the object enrols on; a write into its
   // properties, opened on the object alone, open while the full-expression
@@ -1386,6 +1400,10 @@ enum class AnswerTold : std::uint8_t {
   // or z, where its operands fix neither: a stream of bits as wide as what the
   // value it is asked of holds (LRM 6.24.3).
   kIntegralExtent,
+  // The type the call is made at, which a value it answers keeps and nothing
+  // it is handed states: the type of the variable a reference names, which a
+  // value of any type sees it as (LRM 15.4.9).
+  kTypeCalledAt,
 };
 
 // Every property of one runtime entry: what the library calls it, how a call

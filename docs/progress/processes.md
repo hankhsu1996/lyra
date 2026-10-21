@@ -306,9 +306,10 @@ under each item, and the conformance gaps at the end.
       count is reported as an error and changes nothing; a negative mailbox bound is warned of and
       holds any number of messages. A message may be of any type, a class handle or a type a design
       element declares included.
-  - [ ] A `mailbox` with no type given for its messages (LRM 15.4.9), whose messages are of any type
-        and checked against the variable each is read into at run time. Refused wherever it is
-        named, a class extending one included.
+  - [x] A `mailbox` with no type given for its messages (LRM 15.4.9): each message keeps the type it
+        was put with, and is received only into a variable of an equivalent type (LRM 6.22.2) -- a
+        queue whatever bound either side declares -- a `get` or `peek` into another reporting an
+        error and a `try_` form answering below zero, the message staying either way.
 
 ### Concurrency
 

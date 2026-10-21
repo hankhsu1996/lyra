@@ -101,6 +101,8 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
           },
           [&](const mir::WildcardIndexType&) { return crosses_no_boundary(); },
           [&](const mir::StringType&) { return crosses_no_boundary(); },
+          [&](const mir::AnyType&) { return crosses_no_boundary(); },
+          [&](const mir::ErasedValueType&) { return crosses_no_boundary(); },
           [&](const mir::MachineBoolType&) { return crosses_no_boundary(); },
           [&](const mir::MachineArrayType&) { return crosses_no_boundary(); },
           [&](const mir::MachineFunctionType&) {

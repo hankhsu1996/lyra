@@ -121,6 +121,7 @@ auto PositionMapOf(const UnitLowerer& unit_lowerer, hir::TypeId receiver)
           [&](const hir::UnitObjectsType&) { return numbers_no_parts(); },
           [&](const hir::VirtualInterfaceType&) { return numbers_no_parts(); },
           [&](const hir::NullType&) { return numbers_no_parts(); },
+          [&](const hir::DynamicType&) { return numbers_no_parts(); },
           [&](const hir::VoidType&) { return numbers_no_parts(); },
       });
 }

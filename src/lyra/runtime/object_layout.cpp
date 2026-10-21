@@ -13,6 +13,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/runtime/any.hpp"
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/coroutine.hpp"
@@ -37,6 +38,7 @@
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/value_cell.hpp"
 #include "lyra/runtime/var.hpp"
+#include "lyra/value/any.hpp"
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/concepts.hpp"
@@ -119,6 +121,8 @@ auto WithValueClass(ValueDomain domain, F f)
       return f.template operator()<value::WideLogicVector>();
     case ValueDomain::kWildcardIndex:
       return f.template operator()<value::AnyValue>();
+    case ValueDomain::kAny:
+      return f.template operator()<value::Any>();
     case ValueDomain::kString:
       return f.template operator()<value::String>();
     case ValueDomain::kReal:
@@ -253,6 +257,8 @@ auto LayoutOf(support::LibraryObject object) -> ObjectLayout {
       return Of<ErasedObjectWrite>();
     case support::LibraryObject::kReference:
       return Of<ErasedReference>();
+    case support::LibraryObject::kAnyReference:
+      return Of<AnyReference>();
   }
   throw InternalError("object layout: unknown library object");
 }
@@ -301,6 +307,8 @@ auto LayoutOf(
       return Of<void*>();
     case MemberStorageKind::kReference:
       return Of<ErasedReference>();
+    case MemberStorageKind::kAnyReference:
+      return Of<AnyReference>();
     case MemberStorageKind::kSharedPointer:
       return Of<SharedPointer>();
     case MemberStorageKind::kChannelCancellation:
@@ -405,6 +413,7 @@ auto HeldContentsOf(support::DeclaredMemberStorage storage)
           case MemberStorageKind::kSampledHistory:
           case MemberStorageKind::kBorrowedHandle:
           case MemberStorageKind::kReference:
+          case MemberStorageKind::kAnyReference:
           case MemberStorageKind::kSharedPointer:
           case MemberStorageKind::kChannelCancellation:
           case MemberStorageKind::kNamedEvent:

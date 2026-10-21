@@ -39,6 +39,7 @@ constexpr std::string_view kNamesEveryClass = R"(
 module Top;
   semaphore s;
   mailbox #(int) m;
+  mailbox any;
 endmodule
 )";
 
@@ -134,8 +135,8 @@ void ExpectDefinedAsDeclared(
 TEST(StdDefinitions, EveryDefinitionIsWhatItsDeclarationSays) {
   const Elaborated design(kNamesEveryClass);
   const auto defined = DefineStdClasses(design.Compilation());
-  // `semaphore`, and the one specialization of `mailbox` the design names.
-  EXPECT_EQ(defined.size(), 2U);
+  // `semaphore`, and the two specializations of `mailbox` the design names.
+  EXPECT_EQ(defined.size(), 3U);
   for (const auto& [declared, definition] : defined) {
     ExpectDefinedAsDeclared(*declared, *definition);
   }

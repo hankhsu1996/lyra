@@ -312,6 +312,8 @@ auto BuildValueConversion(
           // compatible type and the same index type, which is its own type.
           [&](const mir::AssociativeArrayType& t) { return none(t); },
           [&](const mir::WildcardIndexType& t) { return none(t); },
+          [&](const mir::AnyType& t) { return none(t); },
+          [&](const mir::ErasedValueType& t) { return none(t); },
           [&](const mir::MachineCStringType& t) { return none(t); },
           [&](const mir::MachineBoolType& t) { return none(t); },
           [&](const mir::MachineIntType& t) { return none(t); },

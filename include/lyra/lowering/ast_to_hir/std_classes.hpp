@@ -25,14 +25,10 @@ auto ImportedRuntimeClassOf(const slang::ast::ClassType& cls)
 // `std`'s classes.
 auto IsStdDefinitions(const slang::ast::CompilationUnitSymbol& unit) -> bool;
 
-// Whether `cls` is `std`'s mailbox with no type given for its messages, which
-// carries messages of any type (LRM 15.4.9).
-auto IsMailboxOfAnyType(const slang::ast::ClassType& cls) -> bool;
-
 // The class defining each class `std` declares and Lyra defines: the class
 // itself, and each of its specializations a design names, defined by the
-// definition specialized on the same parameters. A `mailbox` of no stated type
-// has none.
+// definition specialized on the same parameters, a `mailbox` of no stated type
+// among them.
 using StdDefinitions = std::unordered_map<
     const slang::ast::ClassType*, const slang::ast::ClassType*>;
 

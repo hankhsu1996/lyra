@@ -15,6 +15,9 @@ class FunctionRef<R(Params...)> {
  public:
   using Callback = R (*)(void* callable, Params... params);
 
+  // Refers to nothing, as LLVM's empty `function_ref` does: what a slot holds
+  // before one is lent into it. Calling it is an error.
+  FunctionRef() = default;
   FunctionRef(void* callable, Callback callback)
       : callable_(callable), callback_(callback) {
   }
@@ -24,8 +27,8 @@ class FunctionRef<R(Params...)> {
   }
 
  private:
-  void* callable_;
-  Callback callback_;
+  void* callable_ = nullptr;
+  Callback callback_ = nullptr;
 };
 
 }  // namespace lyra::base

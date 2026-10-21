@@ -6,7 +6,9 @@
 // even by a subclass that never mentions it. Where a base constructor takes
 // arguments that are always the same, they may be written on the extends
 // specifier instead, and the tool inserts the call that passes them; a
-// subclass written that way states no super.new of its own. Only after that
+// subclass written that way states no super.new of its own. A call the tool
+// inserts passes each argument of the base constructor its default (LRM
+// 13.5.3), whether or not the subclass declares a constructor. Only after that
 // call returns is this class's own property initialization performed, which is
 // what lets such an initializer read a value the base constructor wrote, and
 // only then does the rest of the subclass constructor's body run (LRM 8.7,
@@ -71,6 +73,27 @@ module Top;
   class SpecifiedBare extends Forwarding(7, 8);
   endclass
 
+  class Defaulted;
+    int x;
+    int y;
+
+    function new(int a = 3, int b = 4);
+      x = a;
+      y = b;
+    endfunction
+  endclass
+
+  class TakesDefaults extends Defaulted;
+  endclass
+
+  class TakesDefaultsInItsOwn extends Defaulted;
+    int z;
+
+    function new();
+      z = x + y;
+    endfunction
+  endclass
+
   int omit_b;
   int omit_d;
   int none_b;
@@ -85,6 +108,9 @@ module Top;
   int spec_sum;
   int bare_a;
   int bare_b;
+  int taken_x;
+  int taken_y;
+  int own_z;
 
   initial begin
     Omitting omit;
@@ -93,6 +119,8 @@ module Top;
     Deeper deep;
     Specified spec;
     SpecifiedBare bare;
+    TakesDefaults takes;
+    TakesDefaultsInItsOwn own;
 
     omit_b = -1;
     omit_d = -1;
@@ -108,6 +136,9 @@ module Top;
     spec_sum = -1;
     bare_a = -1;
     bare_b = -1;
+    taken_x = -1;
+    taken_y = -1;
+    own_z = -1;
 
     omit = new();
     none = new;
@@ -115,6 +146,11 @@ module Top;
     deep = new();
     spec = new();
     bare = new();
+    takes = new;
+    own = new;
+    taken_x = takes.x;
+    taken_y = takes.y;
+    own_z = own.z;
 
     spec_b = spec.b_val;
     spec_a = spec.f_a;
@@ -150,6 +186,10 @@ module Top;
     if (spec_sum !== 10) $fatal(1, "spec_sum was %0d, expected 10", spec_sum);
     if (bare_a !== 7) $fatal(1, "bare_a was %0d, expected 7", bare_a);
     if (bare_b !== 8) $fatal(1, "bare_b was %0d, expected 8", bare_b);
+    if (taken_x !== 3 || taken_y !== 4)
+      $fatal(1, "defaults reached the base as %0d and %0d, expected 3 and 4",
+             taken_x, taken_y);
+    if (own_z !== 7) $fatal(1, "own_z was %0d, expected 7", own_z);
     $display("All checks passed");
   end
 endmodule

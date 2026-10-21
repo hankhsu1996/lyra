@@ -64,6 +64,19 @@ struct PackedArrayType {
   auto operator==(const PackedArrayType&) const -> bool = default;
 };
 
+// The declaration a type is, named the way any unit names it: the unit that
+// holds it and which declaration of that unit it is. SystemVerilog identifies
+// an enumeration, a structure and a union by its declaration rather than by
+// its members (LRM 6.22.1), and a type that crosses a unit boundary is declared
+// by a unit the crossing ones already depend on (LRM 6.22), so the pair
+// identifies it from anywhere.
+struct TypeDeclarationRef {
+  std::string unit_name;
+  support::DefPath path;
+
+  auto operator==(const TypeDeclarationRef&) const -> bool = default;
+};
+
 struct EnumMember {
   std::string name;
   IntegralConstant value;
@@ -72,6 +85,7 @@ struct EnumMember {
 };
 
 struct EnumType {
+  TypeDeclarationRef declaration;
   TypeId base_type;
   std::vector<EnumMember> members;
 
@@ -131,19 +145,6 @@ struct UnpackedAggregateField {
   std::optional<ConstantValue> default_init;
 
   auto operator==(const UnpackedAggregateField&) const -> bool = default;
-};
-
-// The declaration a type is, named the way any unit names it: the unit that
-// holds it and which declaration of that unit it is. SystemVerilog identifies
-// a structure and a union by its declaration rather than by its members (LRM
-// 6.22.1), and a type that crosses a unit boundary is declared by a unit the
-// crossing ones already depend on (LRM 6.22), so the pair identifies it from
-// anywhere.
-struct TypeDeclarationRef {
-  std::string unit_name;
-  support::DefPath path;
-
-  auto operator==(const TypeDeclarationRef&) const -> bool = default;
 };
 
 // LRM 7.2 unpacked structure: a heterogeneous aggregate whose members each hold
@@ -372,6 +373,14 @@ struct NullType {
   auto operator==(const NullType&) const -> bool = default;
 };
 
+// LRM 15.4.9 `dynamic_type`: the type of the messages of a mailbox declared
+// with no type. A value of it is a value of any type that keeps the type it
+// was given, and one is received only into a variable of an equivalent type,
+// which is decided while the simulation runs (LRM 15.4.5).
+struct DynamicType {
+  auto operator==(const DynamicType&) const -> bool = default;
+};
+
 // A type one HIR compilation unit names, and the vocabulary for asking what it
 // is. The alternatives are a closed set, consumed by visiting them: a visitor
 // that names each one rather than defaulting is what makes an alternative added
@@ -389,7 +398,7 @@ class Type {
       DynamicArrayType, QueueType, AssociativeArrayType, WildcardIndexType,
       StringType, EventType, RealType, ShortRealType, RealTimeType, ChandleType,
       ClassHandleType, ImportedClassHandleType, UnitObjectType, UnitObjectsType,
-      VirtualInterfaceType, NullType, VoidType>;
+      VirtualInterfaceType, NullType, DynamicType, VoidType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

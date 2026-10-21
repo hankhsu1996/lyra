@@ -117,10 +117,20 @@ class semaphore;
   endfunction
 endclass
 
+// One message a mailbox holds. A mailbox of no stated type holds messages of
+// a type no array may be of (LRM 15.4.9), so each message is an object of its
+// own, and a mailbox of a stated type holds its messages the same way.
+class mailbox_message #(type T);
+  T value;
+  function new(T value);
+    this.value = value;
+  endfunction
+endclass
+
 class mailbox #(type T);
   // Zero holds any number of messages (LRM 15.4.1).
   local int bound;
-  local T messages[$];
+  local mailbox_message #(T) messages[$];
   local wait_list putting = new;
   local wait_list getting = new;
 
@@ -141,13 +151,25 @@ class mailbox #(type T);
   endfunction
 
   local function void add(T message);
-    messages.push_back(message);
+    mailbox_message #(T) held = new(message);
+    messages.push_back(held);
     getting.changed();
   endfunction
 
-  local function void take(ref T message);
-    message = messages.pop_front();
+  // Copies the first message into `message`, which only a variable of a type
+  // equivalent to the message's receives (LRM 15.4.5, 15.4.9); answers whether
+  // it did. Where the mailbox states a type the two are one and it always does.
+  local function bit copy_first(ref T message);
+    return $cast(message, messages[0].value);
+  endfunction
+
+  local function void remove_first();
+    void'(messages.pop_front());
     putting.changed();
+  endfunction
+
+  local function void report_mismatch();
+    $error("a 'mailbox' message is of a type not equivalent to the variable asking for it, so it stays in the mailbox");
   endfunction
 
   task put(T message);
@@ -171,34 +193,39 @@ class mailbox #(type T);
   endfunction
 
   task get(ref T message);
-    if (try_get(message)) return;
+    int taken = try_get(message);
+    if (taken < 0) report_mismatch();
+    if (taken != 0) return;
     fork
       begin
         getting.arrive();
         while (!(getting.is_first() && messages.size() > 0)) begin
           getting.wait_for_change();
         end
-        take(message);
+        if (copy_first(message)) remove_first();
+        else report_mismatch();
         getting.leave();
       end
     join
   endtask
 
+  // A message of another type than the variable's stays, answered below zero
+  // (LRM 15.4.6).
   function int try_get(ref T message);
     if (!getting.is_empty() || messages.size() == 0) return 0;
-    take(message);
+    if (!copy_first(message)) return -1;
+    remove_first();
     return 1;
   endfunction
 
   // Every waiting peek is let go while a message remains (LRM 15.4.7).
   task peek(ref T message);
     wait (messages.size() > 0);
-    message = messages[0];
+    if (!copy_first(message)) report_mismatch();
   endtask
 
   function int try_peek(ref T message);
     if (messages.size() == 0) return 0;
-    message = messages[0];
-    return 1;
+    return copy_first(message) ? 1 : -1;
   endfunction
 endclass

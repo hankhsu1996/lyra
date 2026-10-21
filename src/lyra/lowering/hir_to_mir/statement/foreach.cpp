@@ -143,6 +143,7 @@ auto DimensionOf(const UnitLowerer& unit_lowerer, hir::TypeId type)
           [&](const hir::UnitObjectsType&) { return none(); },
           [&](const hir::VirtualInterfaceType&) { return none(); },
           [&](const hir::NullType&) { return none(); },
+          [&](const hir::DynamicType&) { return none(); },
           [&](const hir::VoidType&) { return none(); }});
 }
 

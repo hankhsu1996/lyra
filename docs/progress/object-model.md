@@ -282,12 +282,10 @@ deletes -- commented out where the rest of its case still runs, and the whole ca
 cannot run at all. Restoring either is manual: nothing detects that the behaviour became right, so
 this list is what remembers.
 
-- [ ] A base whose constructor declares a formal with a default value is refused. A derived class
-      that writes no `super.new` and no arguments on its extends specifier forwards to its base with
-      the arguments the base declared as defaults (LRM 8.7, 8.17), and nothing computes them. The
-      refusal names the construct and is the same whichever unit declares the base. What it waits on
-      is a default value crossing into the scope that needs it: the expression is written in the
-      declaring class's own scope, so a class extending it cannot simply lower it in its own.
+- [x] A derived class that writes no `super.new` and no arguments on its extends specifier enters
+      its base's constructor with the base's default arguments (LRM 8.7, 8.17, 13.5.3), a default
+      naming something only the base's own scope reaches -- a parameter of its package, a static
+      property of its class -- included.
 - [x] A write to a property evaluates the handle it is reached through once (LRM 8.4, 11.3.5,
       11.4.1): `next().count = 1` calls `next` one time, for a whole write, a write of an element or
       a bit of the property, an assignment operator and a nonblocking assignment alike, as a read
