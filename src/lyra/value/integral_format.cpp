@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -228,10 +229,14 @@ auto FormatStringBody(const ConstIntegralView& value) -> std::string {
   return out;
 }
 
-auto FormatDecimalBody(const ConstIntegralView& value) -> std::string {
+// LRM 21.2.1.3: a decimal number with unknown or high-impedance bits is
+// written as one letter; one with none is what `write_number` writes.
+template <typename WriteNumber>
+auto DecimalOrUnknownLetter(
+    const ConstIntegralView& value, WriteNumber write_number) -> std::string {
   switch (SummarizeUnknowns(value)) {
     case UnknownSummary::kNone:
-      break;
+      return write_number();
     case UnknownSummary::kAllX:
       return "x";
     case UnknownSummary::kAllZ:
@@ -243,7 +248,77 @@ auto FormatDecimalBody(const ConstIntegralView& value) -> std::string {
     case UnknownSummary::kMixed:
       return "X";
   }
-  return FormatDecimalNumeric(value);
+  std::unreachable();
+}
+
+auto FormatDecimalBody(const ConstIntegralView& value) -> std::string {
+  return DecimalOrUnknownLetter(
+      value, [&] { return FormatDecimalNumeric(value); });
+}
+
+void IncrementDigits(std::string& digits) {
+  for (char& digit : digits | std::views::reverse) {
+    if (digit != '9') {
+      ++digit;
+      return;
+    }
+    digit = '0';
+  }
+  digits.insert(digits.begin(), '1');
+}
+
+// `number` (decimal digits after an optional '-') times 10^`shift`, written
+// with `precision` fraction digits. The text is moved and never converted, so
+// the result is exact at any width; digits past the precision round to the
+// nearest, a half to the even digit, as a real operand's do.
+auto ShiftDecimalPoint(
+    std::string_view number, std::int32_t shift, std::int32_t precision)
+    -> std::string {
+  const bool negative = number.starts_with('-');
+  std::string digits{negative ? number.substr(1) : number};
+  if (shift > 0) digits.append(static_cast<std::size_t>(shift), '0');
+  const auto fraction = static_cast<std::size_t>(shift < 0 ? -shift : 0);
+  const auto kept = static_cast<std::size_t>(precision);
+  if (fraction > kept) {
+    const std::size_t dropped = fraction - kept;
+    if (digits.size() <= dropped) {
+      digits.insert(0, dropped + 1 - digits.size(), '0');
+    }
+    const std::size_t cut = digits.size() - dropped;
+    const bool exact_half =
+        digits[cut] == '5' &&
+        digits.find_first_not_of('0', cut + 1) == std::string::npos;
+    const bool round_up =
+        exact_half ? (digits[cut - 1] - '0') % 2 != 0 : digits[cut] >= '5';
+    digits.resize(digits.size() - dropped);
+    if (round_up) IncrementDigits(digits);
+  } else {
+    digits.append(kept - fraction, '0');
+  }
+  // `digits` is now the result times 10^kept.
+  if (digits.size() <= kept) digits.insert(0, kept + 1 - digits.size(), '0');
+  const std::size_t whole = digits.size() - kept;
+  const std::size_t first_nonzero = digits.find_first_not_of('0');
+  digits.erase(0, std::min(first_nonzero, whole - 1));
+  if (kept > 0) digits.insert(digits.size() - kept, ".");
+  // A count that rounds to zero has no sign.
+  const bool written_negative = negative && first_nonzero != std::string::npos;
+  return written_negative ? "-" + digits : digits;
+}
+
+// `$timeformat`'s suffix follows the number, and its width is the field a
+// directive gets where it writes none (LRM 20.4.3), as a type's size is for
+// another conversion (LRM 21.2.1.2).
+auto TimeField(const FormatSpec& spec, std::string body, const TimeFormat& tf)
+    -> std::string {
+  body += tf.suffix;
+  FormatSpec field = spec;
+  if (field.width < 0) field.width = tf.min_width;
+  return ApplyFieldWidth(std::move(body), field);
+}
+
+auto TimePrecision(const TimeFormat& tf) -> std::int32_t {
+  return tf.precision >= 0 ? tf.precision : 0;
 }
 
 // Decimal digits of the largest value `bit_width` bits can hold, which is the
@@ -291,19 +366,22 @@ auto AutoWidthFor(FormatKind kind, const ConstIntegralView& value)
 
 }  // namespace
 
-auto FormatTimeMagnitude(
-    const FormatSpec& spec, double magnitude, const TimeFormat& tf)
+auto FormatIntegralTime(
+    const FormatSpec& spec, const ConstIntegralView& value,
+    const TimeFormat& tf) -> std::string {
+  std::string body = DecimalOrUnknownLetter(value, [&] {
+    return ShiftDecimalPoint(
+        FormatDecimalNumeric(value), spec.timeunit_power - tf.units_power,
+        TimePrecision(tf));
+  });
+  return TimeField(spec, std::move(body), tf);
+}
+
+auto FormatRealTime(const FormatSpec& spec, double value, const TimeFormat& tf)
     -> std::string {
   const double scaled =
-      magnitude * Pow10Double(spec.timeunit_power - tf.units_power);
-  const int precision = tf.precision >= 0 ? tf.precision : 0;
-  std::string body = std::format("{:.{}f}", scaled, precision);
-  body += tf.suffix;
-  // `$timeformat`'s width is the field a directive gets where it writes none
-  // (LRM 20.4.3), as a type's size is for another conversion (LRM 21.2.1.2).
-  FormatSpec field = spec;
-  if (field.width < 0) field.width = tf.min_width;
-  return ApplyFieldWidth(std::move(body), field);
+      value * Pow10Double(spec.timeunit_power - tf.units_power);
+  return TimeField(spec, std::format("{:.{}f}", scaled, TimePrecision(tf)), tf);
 }
 
 auto FormatIntegral(const FormatSpec& spec, const ConstIntegralView& value)
@@ -340,7 +418,7 @@ auto FormatIntegral(const FormatSpec& spec, const ConstIntegralView& value)
           "by the caller before reaching FormatIntegral");
     case FormatKind::kTime:
       throw InternalError(
-          "FormatIntegral: kTime must route through FormatTimeMagnitude");
+          "FormatIntegral: kTime must route through FormatIntegralTime");
   }
 
   FormatSpec effective = spec;

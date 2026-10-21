@@ -2981,9 +2981,9 @@ enough to warrant its own focused review.
 - [ ] R216 -- Two places in the value library do by hand what the library already does once. Text
       read into an integral value has its digits classified twice, by the scan that finds the run
       and again by the conversion that reads it, the second with an arm that refuses what the first
-      let through. And the formatter negates a value and takes its low word with code of its own.
-      Found by reading. Target: a run of digits is classified where it is found, and the formatter
-      asks the library. Not blocked.
+      let through. And the formatter negates a wide value with code of its own. Found by reading.
+      Target: a run of digits is classified where it is found, and the formatter asks the library.
+      Not blocked.
 
 - [ ] R217 -- A structure answers its stream of bits as a value, where every other kind writes its
       bits into a stream it is handed. A structure inside a structure therefore copies the inner

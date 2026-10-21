@@ -3,7 +3,7 @@
 #include <string>
 
 #include "lyra/value/format.hpp"
-#include "lyra/value/integral.hpp"
+#include "lyra/value/integral_words.hpp"
 
 namespace lyra::value {
 
@@ -13,13 +13,17 @@ namespace lyra::value {
 [[nodiscard]] auto FormatIntegral(
     const FormatSpec& spec, const ConstIntegralView& value) -> std::string;
 
-// LRM 21.2.1.3 %t. Rescales `magnitude` from the calling scope's time unit
-// (`spec.timeunit_power`) to the design-wide display unit (`tf.units_power`),
-// then formats with the `$timeformat` precision / suffix / min field width.
-// The per-type formatter extracts the magnitude (uint64 low-word for
-// integral, the `double`/`float` value for real) and hands it here.
-[[nodiscard]] auto FormatTimeMagnitude(
-    const FormatSpec& spec, double magnitude, const TimeFormat& tf)
-    -> std::string;
+// %t (LRM 20.4.3): a count of the calling scope's time unit
+// (`spec.timeunit_power`) written in the design-wide display unit
+// (`tf.units_power`) with the `$timeformat` precision, suffix and field width.
+// An integral count is written exactly, at any width; where it has unknown or
+// high-impedance bits it is written as the decimal conversion writes it (LRM
+// 21.2.1.3), a letter in place of the number.
+[[nodiscard]] auto FormatIntegralTime(
+    const FormatSpec& spec, const ConstIntegralView& value,
+    const TimeFormat& tf) -> std::string;
+
+[[nodiscard]] auto FormatRealTime(
+    const FormatSpec& spec, double value, const TimeFormat& tf) -> std::string;
 
 }  // namespace lyra::value

@@ -26,7 +26,10 @@ both models, zeros being what a hexadecimal field is filled with either way.
       slang frontend, so the lowered form is always a single character.
 - [x] DI2 -- `%t` (time): formatted against the active timescale. The display unit, precision,
       suffix and field width come from `$timeformat` (LRM 20.4.3), applied design-wide, and a width
-      the directive writes takes the place of `$timeformat`'s.
+      the directive writes takes the place of `$timeformat`'s. An integral operand is written
+      exactly at any width and signedness, digits past the precision rounding to the nearest, a half
+      to the even digit as a real operand's do, and one with unknown or high-impedance bits is
+      written as `%d` writes it (LRM 21.2.1.3).
 - [x] DI3 -- `%f` / `%e` / `%g` (real). Default precision 6 per LRM Table 21-2. Coverage tracked
       under `datatypes.md` Real C1.
 - [x] DI4 -- `%m` (hierarchical name, LRM 21.2.1.5). The reported name is the scope the call was
