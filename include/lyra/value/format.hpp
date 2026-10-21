@@ -171,12 +171,9 @@ struct FormatArg {
   [[nodiscard]] static auto Rendered(const String& pattern) -> FormatArg;
 };
 
-// Build a FormatArg that borrows `value`. `value` must outlive every
-// subsequent use of the returned arg. In practice that means callers pass
-// either a stable lvalue (member, local) or a temporary lifetime-extended
-// into the same full-expression as the runtime print call (the emit path
-// builds the items array inline as the print call argument, so temps in
-// the array initializer stay alive through the call).
+// Build a FormatArg that borrows `value`, which must outlive every use of the
+// returned arg. A program builds one over a reference it states, to storage or
+// to a value it keeps until the print that reads the arg is done.
 template <typename T>
 [[nodiscard]] auto MakeFormatArg(const T& value) -> FormatArg {
   return FormatArg{
@@ -299,10 +296,8 @@ struct PrintLiteralItem {
       : data(data), size(size) {
   }
 
-  // Borrows the text bytes of `text`. The caller materializes `text` as a
-  // temporary in the same full-expression as the runtime print call, so the
-  // borrowed bytes outlive the walk (the same lifetime contract `FormatArg`
-  // relies on).
+  // Borrows the text bytes of `text`, which must outlive the walk, as a
+  // `FormatArg`'s value must.
   explicit PrintLiteralItem(const String& text);
 };
 
@@ -313,9 +308,8 @@ struct PrintValueItem {
   // The emit side constructs this directly (`PrintValueItem(x, spec)`). The
   // overload set is closed on the leaf formattable types rather than a single
   // greedy template so a non-formattable operand fails to match cleanly instead
-  // of instantiating an undefined `Formatter`. `const T&` so a caller-side
-  // temporary (an arithmetic rvalue) binds via lifetime extension through the
-  // full expression that contains the runtime print call.
+  // of instantiating an undefined `Formatter`. Each takes its operand by
+  // reference and borrows it, as `MakeFormatArg` does.
   template <IntegralValue T>
   PrintValueItem(const T& value, FormatSpec spec)
       : spec(spec), arg(MakeFormatArg(value)) {

@@ -208,33 +208,21 @@ auto ReferenceTo(const mir::CompilationUnit& unit, mir::TypeId type)
           .referent = type, .mutability = mir::Mutability::kReadOnly}});
 }
 
-// The reference such a body takes `operand` by: to the storage it names where
-// it names storage a value is read from as it lies, and otherwise to its value,
-// held for the full-expression as a C++ reference binds a temporary.
-auto Borrow(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand)
-    -> mir::ExprId {
-  const mir::ExprId object = mir::ReadIfOverlaid(unit, block, operand);
-  return block.exprs.Add(
-      mir::Expr{
-          .data = mir::BorrowExpr{.operand = object},
-          .type = ReferenceTo(unit, block.exprs.Get(object).type)});
-}
-
 // A call of the body `target` names, borrowing what it is asked about.
 auto OwnOperationCall(
     const mir::CompilationUnit& unit, mir::Block& block,
     mir::DirectTarget target, std::optional<mir::ExprId> receiver,
     std::vector<mir::ExprId> operands, mir::TypeId result) -> mir::ExprId {
   for (mir::ExprId& operand : operands) {
-    operand = Borrow(unit, block, operand);
+    operand = mir::Borrow(unit, block, operand);
   }
   return CallOf(
       block,
       mir::Direct{
           .target = std::move(target),
-          .receiver = receiver.transform(
-              [&](mir::ExprId object) { return Borrow(unit, block, object); })},
+          .receiver = receiver.transform([&](mir::ExprId object) {
+            return mir::Borrow(unit, block, object);
+          })},
       std::move(operands), result);
 }
 

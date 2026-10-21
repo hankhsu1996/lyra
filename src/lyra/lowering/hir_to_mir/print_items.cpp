@@ -36,6 +36,7 @@
 #include "lyra/mir/integral_constant_folding.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -207,8 +208,8 @@ auto BuildPrintValueItem(
 // aggregate carries only the text, the clause defining no other conversion for
 // it.
 //
-// Each operand is named once and every use of it is a read of that name, so an
-// operand read twice is evaluated once -- which is what an operand whose
+// Each operand is named once and every use of it refers to that name, so an
+// operand used twice is evaluated once -- which is what an operand whose
 // evaluation the design can observe requires.
 template <ExprLowerer Lowerer>
 auto BuildRuntimeFormatOperand(
@@ -252,15 +253,17 @@ auto BuildRuntimeFormatOperand(
 
   switch (PatternReadingOf(lowerer.Owner().Hir(), source.type)) {
     case PatternReading::kTheValueAnswers:
-      return make_arg(mir::Construct{}, {read_value()});
+      return make_arg(
+          mir::Construct{}, {mir::Borrow(unit, block, read_value())});
     case PatternReading::kTheTypeNamesTheValue:
       return make_arg(
           mir::Direct{.target = support::BuiltinFn::kMakePatternedFormatArg},
-          {read_value(), bind_text()});
+          {mir::Borrow(unit, block, read_value()),
+           mir::Borrow(unit, block, bind_text())});
     case PatternReading::kTheTypeNamesItsMembers:
       return make_arg(
           mir::Direct{.target = support::BuiltinFn::kMakeRenderedFormatArg},
-          {bind_text()});
+          {mir::Borrow(unit, block, bind_text())});
     case PatternReading::kNothingCanAnswer:
       return RefuseAssignmentPatternText(lowerer, hir_arg);
   }
@@ -437,7 +440,8 @@ auto BuildPrintItemExpr(
             return mir::Expr{
                 .data =
                     mir::CallExpr{
-                        .callee = mir::Construct{}, .arguments = {text}},
+                        .callee = mir::Construct{},
+                        .arguments = {mir::Borrow(unit, block, text)}},
                 .type = unit.builtins.print_literal_item};
           },
           [&](const mir::RuntimePrintValue& v) -> mir::Expr {
@@ -447,7 +451,7 @@ auto BuildPrintItemExpr(
                 .data =
                     mir::CallExpr{
                         .callee = mir::Construct{},
-                        .arguments = {v.value, spec}},
+                        .arguments = {mir::Borrow(unit, block, v.value), spec}},
                 .type = unit.builtins.print_value_item};
           }},
       item);

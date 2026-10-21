@@ -12,6 +12,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -129,13 +130,7 @@ auto BuildBorrowedClosure(
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId closure)
     -> mir::ExprId {
   const mir::TypeId closure_type = block.exprs.Get(closure).type;
-  const mir::ExprId borrowed = block.exprs.Add(
-      mir::Expr{
-          .data = mir::BorrowExpr{.operand = closure},
-          .type = unit.types.Intern(
-              mir::Type{mir::ReferenceType{
-                  .referent = closure_type,
-                  .mutability = mir::Mutability::kReadOnly}})});
+  const mir::ExprId borrowed = mir::Borrow(unit, block, closure);
   const mir::TypeId erased = ErasedOf(unit, closure_type);
   return Unsized(
       block, borrowed, erased,

@@ -31,6 +31,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -349,9 +350,10 @@ void ReportCell(
 // having had `state` state it as reached, where the evaluation is handed a
 // report (LRM 9.4.2). A body is handed one only by an evaluation, so the
 // statement is made where the report is there. The value is held where that
-// statement can name it too: a place, or the read of one, by a pointer to the
-// place, which copies nothing, and anything else in a local it is evaluated
-// into once.
+// statement can name it too: in storage that outlasts the statement declaring
+// the local, by a pointer to it, which copies nothing, and anything else --
+// a value, or a place inside one made here, which ends with that statement --
+// in the local, evaluated into it once.
 template <typename State>
 auto Reported(
     mir::CompilationUnit& unit, const WalkFrame& frame, mir::ExprId value,
@@ -361,26 +363,27 @@ auto Reported(
   }
   mir::Block& block = *frame.current_block;
   const auto* copy = std::get_if<mir::CopyExpr>(&block.exprs.Get(value).data);
-  const bool reads_storage = copy != nullptr;
-  if (reads_storage) value = copy->place;
-  const mir::TypeId type = block.exprs.Get(value).type;
-  const bool is_place = mir::IsPlace(block.exprs.Get(value).data);
+  const mir::ExprId place = copy != nullptr ? copy->place : value;
+  const bool names_a_place = mir::IsPlace(block.exprs.Get(value).data);
+  const bool by_pointer = mir::IsPlace(block.exprs.Get(place).data) &&
+                          mir::WholeLiesInStorage(unit, block, place);
+  const mir::TypeId type = block.exprs.Get(place).type;
   const mir::TypeId held_type =
-      is_place ? unit.types.Intern(
-                     mir::Type{mir::PointerType{
-                         .pointee = type,
-                         .ownership = mir::PointerOwnership::kBorrowed,
-                         .mutability = mir::Mutability::kReadOnly}})
-               : type;
+      by_pointer ? unit.types.Intern(
+                       mir::Type{mir::PointerType{
+                           .pointee = type,
+                           .ownership = mir::PointerOwnership::kBorrowed,
+                           .mutability = mir::Mutability::kReadOnly}})
+                 : type;
   const mir::LocalId held = DeclareLocal(
-      frame, is_place
-                 ? block.exprs.Add(mir::MakeAddressOfExpr(value, held_type))
-                 : value);
+      frame, by_pointer
+                 ? block.exprs.Add(mir::MakeAddressOfExpr(place, held_type))
+                 : block.AsValue(unit.types, value));
   const auto named_in = [&](mir::Block& at) {
-    const mir::ExprId local = at.ReadLocal(held, held_type);
-    if (!is_place) return local;
-    const mir::ExprId place = at.Deref(unit.types, local, type);
-    return reads_storage ? at.Read(place) : place;
+    const mir::ExprId lies =
+        by_pointer ? at.Deref(unit.types, at.ReadLocal(held, held_type), type)
+                   : at.LocalPlace(held, type);
+    return names_a_place ? lies : at.Read(lies);
   };
   const mir::LocalId report = *frame.reports_reached_to;
   mir::Block reporting;

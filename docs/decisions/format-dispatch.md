@@ -1,6 +1,7 @@
 # Format dispatch (`Formatter<T>` + `FormatArg`)
 
-Date: 2026-06-04 Status: accepted
+Date: 2026-06-04 Status: accepted. Revised 2026-10-21: the program states each borrow, where the
+lifetime contract used to rest on the items being built inline in the print's argument list.
 
 ## Context
 
@@ -66,12 +67,15 @@ the central pipeline knows nothing about the type set.
 
 ### Lifetime contract
 
-`FormatArg` borrows. The arg never owns; the underlying value must outlive every use of the arg. In
-the runtime callers, the emit path builds the `PrintItem` array inline as the argument to the
-runtime function, so caller-side temporaries inside the array initializer (e.g. `pa.View()`) stay
-alive through the runtime call by C++ full-expression lifetime extension.
-`PrintValue(const T&, spec)` takes `const T&` for the same reason -- rvalue args bind to the
-reference and extend.
+`FormatArg` borrows. The arg never owns; the underlying value must outlive every use of the arg. So
+the program states the borrow: a print item and a run-time format operand are each built over a
+reference to their operand -- to the storage it reads, or to a value made for the print -- as rustc
+builds each `fmt::Argument` over `&arg` and C++ `make_format_args` takes lvalue references only. A
+value made for the print lasts as long as the evaluation the print belongs to, also where a rewrite
+divides that evaluation into steps
+([a-value-too-large-for-a-frame-is-held-through-a-box](a-value-too-large-for-a-frame-is-held-through-a-box.md)).
+Leaving the borrow to the target's own temporary rules holds only while nothing comes between
+building an item and the print reading it, which a rewrite dividing the evaluation into steps does.
 
 `$strobe` / `$fstrobe` capture operands by value into the postponed lambda; the FormatArg builds at
 fire-time inside the lambda and borrows the lambda capture, which survives until the print completes
