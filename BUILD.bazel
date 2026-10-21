@@ -209,9 +209,10 @@ shipped_artifact(
 
 sanitizer_runtime(
     name = "address_sanitizer_runtime",
-    release_libs = "@runtime_clang_toolchain_llvm//:lib",
-    release_symbolizer = "@runtime_clang_toolchain_llvm//:symbolizer",
+    archive = "@llvm-project//compiler-rt:asan.static",
+    cxx_archive = "@llvm-project//compiler-rt:asan_cxx.static",
     root = "address_sanitizer_runtime",
+    symbolizer = "@llvm//tools:llvm-symbolizer",
 )
 
 cc_library(

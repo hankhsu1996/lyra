@@ -38,19 +38,21 @@ sessions at once needs no local setting, because the remote scheduler is one que
 invocation -- the coordination that separate Bazel servers on one machine cannot have.
 
 **Which compiler builds Lyra is a setting of its own, apart from where the actions run.** It is the
-clang release `MODULE.bazel` pins, fetched by the build, wherever they run. `--config=gcc` names the
-remote image's GCC instead, and runs the actions there because that is the only place it exists.
-Either one compiles against the libstdc++ of the machine running the actions, because a program Lyra
-builds is linked by the user's compiler against the runtime library built here. Every warning is
-fatal and each compiler warns of things the other does not, so the merge gate builds under both. A
-test that drives the host C++ compiler finds whichever one the machine executing it has on its PATH;
-the remote image has GCC and no clang, so only a test about clang itself, or about clang and GCC
-side by side, is tagged to stay local.
+static clang of the LLVM release `MODULE.bazel` pins, fetched by the build, wherever they run. It
+compiles for the oldest Linux Lyra supports, whose C library and C++ library the build makes from
+source, so nothing the machine has installed is read, and every program the build links carries its
+libstdc++ inside it (`docs/decisions/a-build-compiles-for-the-oldest-platform-it-supports.md`).
+`--config=gcc` names the remote image's GCC instead, with that image's own library, and runs the
+actions there because that is the only place it exists. Every warning is fatal and each compiler
+warns of things the other does not, so the merge gate builds under both. A test that drives the host
+C++ compiler finds whichever one the machine executing it has on its PATH; the remote image has GCC
+and no clang, so only a test about clang itself, or about clang and GCC side by side, is tagged to
+stay local.
 
 **The runtime library a program links is compiled by the clang of the LLVM release Lyra links,
-whichever compiler builds Lyra**, and one number in `MODULE.bazel` names both. A build asked for
-`--lto` optimizes a design together with that library's bitcode, which only that release reads
-reliably, so moving Lyra's LLVM moves this clang with it
+whichever compiler builds Lyra**, and one number in `MODULE.bazel` names both; by default that clang
+builds Lyra too. A build asked for `--lto` optimizes a design together with that library's bitcode,
+which only that release reads reliably, so moving Lyra's LLVM moves this clang with it
 (`docs/decisions/the-design-is-optimized-with-the-runtime-at-the-link.md`).
 
 ## Lyra CLI

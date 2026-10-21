@@ -986,6 +986,12 @@ the detail lives in the entry itself.
 
 ### Compile-time model and specialization
 
+- [a-build-compiles-for-the-oldest-platform-it-supports](a-build-compiles-for-the-oldest-platform-it-supports.md)
+  -- building Lyra needs glibc 2.34 and nothing else, and compiling a design needs a libstdc++ 13
+  compiler: the build compiles everything for glibc 2.34 and libstdc++ 13.1 with a static clang that
+  needs nothing of the machine, links libstdc++ into every program it links, and keeps GCC as a
+  gate. A host's own GCC install or `/opt` headers, a self-built clang, libc++ for `lyra`, and the
+  module's shared libstdc++ in tests are rejected.
 - [the-design-is-optimized-with-the-runtime-at-the-link](the-design-is-optimized-with-the-runtime-at-the-link.md)
   -- `--lto` optimizes the design's code together with the runtime it calls, at the level `-O` names
   and apart from it: the runtime is compiled by the clang of the LLVM release Lyra links and ships

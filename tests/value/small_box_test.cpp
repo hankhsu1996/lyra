@@ -10,32 +10,36 @@
 namespace lyra::value {
 namespace {
 
-// Counts how many values of its kind are alive, so a box is seen to end the
-// value it holds when it ends, and how many were copied or moved, so a value is
-// seen to be built where it is kept.
+// What a test watches of the values it makes. How many are alive shows a box
+// ending the value it holds when it ends, and how many were copied or moved
+// shows a value built where it is kept.
+struct Tally {
+  int alive = 0;
+  int relocated = 0;
+};
+
 template <std::size_t kBytes>
 struct Counted {
-  explicit Counted(int value) : value(value) {
-    ++alive;
+  Counted(Tally& tally, int value) : tally(&tally), value(value) {
+    ++tally.alive;
   }
-  Counted(const Counted& other) : value(other.value) {
-    ++alive;
-    ++relocated;
+  Counted(const Counted& other) : tally(other.tally), value(other.value) {
+    ++tally->alive;
+    ++tally->relocated;
   }
   auto operator=(const Counted&) -> Counted& = default;
-  Counted(Counted&& other) noexcept : value(other.value) {
-    ++alive;
-    ++relocated;
+  Counted(Counted&& other) noexcept : tally(other.tally), value(other.value) {
+    ++tally->alive;
+    ++tally->relocated;
   }
   auto operator=(Counted&&) -> Counted& = default;
   ~Counted() {
-    --alive;
+    --tally->alive;
   }
 
+  Tally* tally;
   int value;
   std::array<std::byte, kBytes> padding{};
-  static inline int alive = 0;
-  static inline int relocated = 0;
 };
 
 using Small = Counted<8>;
@@ -47,39 +51,44 @@ TEST(SmallBox, KeepsASmallValueInlineAndALargeOneApart) {
   static_assert(sizeof(SmallBox<Small>) == sizeof(Small));
   static_assert(sizeof(SmallBox<Large>) == sizeof(void*));
 
-  const SmallBox<Small> small(3);
+  Tally tally;
+  const SmallBox<Small> small(tally, 3);
   EXPECT_EQ(small->value, 3);
-  const SmallBox<Large> large(4);
+  const SmallBox<Large> large(tally, 4);
   EXPECT_EQ((*large).value, 4);
 }
 
 // Either way the box holds its value from the moment it is built and ends it
 // when it ends, and a move hands the value on.
 TEST(SmallBox, HoldsItsValueForAsLongAsItLasts) {
+  Tally small_tally;
+  Tally large_tally;
   {
-    SmallBox<Small> small(1);
-    SmallBox<Large> large(1);
-    EXPECT_EQ(Small::alive, 1);
-    EXPECT_EQ(Large::alive, 1);
+    SmallBox<Small> small(small_tally, 1);
+    SmallBox<Large> large(large_tally, 1);
+    EXPECT_EQ(small_tally.alive, 1);
+    EXPECT_EQ(large_tally.alive, 1);
     const SmallBox<Large> taken(std::move(large));
-    EXPECT_EQ(Large::alive, 1);
+    EXPECT_EQ(large_tally.alive, 1);
     EXPECT_EQ(taken->value, 1);
   }
-  EXPECT_EQ(Small::alive, 0);
-  EXPECT_EQ(Large::alive, 0);
+  EXPECT_EQ(small_tally.alive, 0);
+  EXPECT_EQ(large_tally.alive, 0);
 }
 
 // A box built from what a maker answers holds that value where it keeps it,
 // never a copy or a move of one made elsewhere first.
 TEST(SmallBox, BuildsWhatAMakerAnswersWhereItKeepsIt) {
-  Small::relocated = 0;
-  Large::relocated = 0;
-  const auto small = SmallBox<Small>::BuiltBy([] { return Small(5); });
-  const auto large = SmallBox<Large>::BuiltBy([] { return Large(6); });
+  Tally small_tally;
+  Tally large_tally;
+  const auto small =
+      SmallBox<Small>::BuiltBy([&] { return Small(small_tally, 5); });
+  const auto large =
+      SmallBox<Large>::BuiltBy([&] { return Large(large_tally, 6); });
   EXPECT_EQ(small->value, 5);
   EXPECT_EQ(large->value, 6);
-  EXPECT_EQ(Small::relocated, 0);
-  EXPECT_EQ(Large::relocated, 0);
+  EXPECT_EQ(small_tally.relocated, 0);
+  EXPECT_EQ(large_tally.relocated, 0);
 }
 
 }  // namespace

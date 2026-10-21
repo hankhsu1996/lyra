@@ -105,14 +105,17 @@ auto ExecutionBackendRuntime(
     case support::Sanitizer::kNone:
       return {.files = {library}, .flags = {}};
     case support::Sanitizer::kAddress: {
+      // The runtime's interceptors stand in for functions that the shared
+      // libraries a program loads call, so the program has to export them. The
+      // runtime names no list of them, so every symbol is exported, as clang's
+      // driver does for a sanitizer runtime that has none.
       const AddressSanitizerRuntime& asan = runtime.address_sanitizer;
       return {
           .files = {library},
           .flags = {
               "-Wl,--whole-archive", asan.archive.string(),
               asan.cxx_archive.string(), "-Wl,--no-whole-archive",
-              "-Wl,--dynamic-list=" + asan.symbols.string(), "-lpthread",
-              "-lrt", "-lm", "-ldl"}};
+              "-Wl,--export-dynamic", "-lpthread", "-lrt", "-lm", "-ldl"}};
     }
   }
   std::unreachable();
@@ -154,7 +157,6 @@ auto ResolveRuntimeLocation(std::string_view binary_path)
   for (auto [path, name] :
        {std::pair{&asan.archive, "libclang_rt.asan.a"},
         std::pair{&asan.cxx_archive, "libclang_rt.asan_cxx.a"},
-        std::pair{&asan.symbols, "libclang_rt.asan.a.syms"},
         std::pair{&asan.symbolizer, "llvm-symbolizer"}}) {
     auto found = LocateShipped(
         *runfiles, std::format("_main/address_sanitizer_runtime/{}", name),

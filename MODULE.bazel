@@ -8,7 +8,10 @@ module(
 )
 
 # Bazel rules for C/C++
-bazel_dep(name = "rules_cc", version = "0.2.8")
+bazel_dep(name = "rules_cc", version = "0.2.25")
+
+# The constraints a platform is named by
+bazel_dep(name = "platforms", version = "1.1.0")
 
 # Slang SystemVerilog Compiler Library
 bazel_dep(name = "slang", version = "11.0")
@@ -43,62 +46,29 @@ bazel_dep(name = "tomlplusplus", version = "3.4.0.bcr.1")
 # one.
 LLVM_RELEASE = "23.1.0"
 
-# LLVM for code generation, as a library. The module also offers a hermetic
-# toolchain, which is not registered: only its `@llvm-project` is used.
-bazel_dep(name = "llvm", version = "0.8.23")
+# LLVM for code generation, as a library, and this release's clang, which
+# builds Lyra and its runtime. The clang is a static executable that needs
+# nothing of the machine it runs on, and what it compiles against -- the C
+# library, the C++ library -- is the release the target platform names
+# (`tools/bazel/BUILD.bazel`), built by the module from source, so a build reads
+# nothing the machine has installed.
+#
+# TODO(hankhsu): the module is read at a commit of upstream main rather than at
+# a release, because static libstdc++ (upstream #854), which `lyra` links so
+# that it runs on the oldest supported Linux, is in no release yet. Once one
+# carries it, drop the `git_override` and name that release here.
+bazel_dep(name = "llvm", version = "0.8.25")
+git_override(
+    module_name = "llvm",
+    commit = "3ce707b7878082393c14aae83baabd34216d92b1",
+    remote = "https://github.com/hermeticbuild/hermetic-llvm.git",
+)
 
 llvm = use_extension("@llvm//extensions:llvm.bzl", "llvm")
 llvm.version(llvm_version = LLVM_RELEASE)
 use_repo(llvm, "llvm-project")
 
-# Each clang below is fetched as the files its toolchain reads and nothing else
-# on Linux x86-64, cut from the official release by lyra-toolchain's script:
-# every action's key hashes the compiler on the machine running Bazel, so a CI
-# runner fetches it on every run, and the official archive unpacks to 11 GB.
-# Another host takes the official archive.
-#
-# The C++ standard library is the machine's own libstdc++, not the one the
-# release ships. A program Lyra builds is linked by the user's compiler against
-# the runtime library built here, and the two have to use the same library.
-bazel_dep(name = "toolchains_llvm", version = "1.11.3")
-
-clang = use_extension("@toolchains_llvm//toolchain/extensions:llvm.bzl", "llvm")
-
-# The compiler that builds Lyra: this clang release, which the build downloads.
-# It is the same on every machine, local or remote, and needs nothing installed.
-# `--config=gcc` selects the remote image's GCC instead.
-clang.toolchain(
-    name = "clang_toolchain",
-    llvm_version = "20.1.8",
-    sha256 = {"linux-x86_64": "a110f87318ea5f9dd677c016dc68792716cb4383539282960c3f355ade1b002a"},
-    stdlib = {"": "dynamic-stdc++"},
-    strip_prefix = {"linux-x86_64": "clang-20.1.8-linux-x64"},
-    urls = {"linux-x86_64": [
-        "https://github.com/hankhsu1996/lyra-toolchain/releases/download/clang-20.1.8/clang-20.1.8-linux-x64.tar.zst",
-    ]},
-)
-
-# The compiler of the runtime library a program links, whichever compiler
-# builds Lyra: `tools/bazel/shipped.bzl` selects it for that library alone, so
-# it is not registered. A static library is archived and never linked, so this
-# release's linker, which needs the libraries of the machine it was built on,
-# is never run.
-clang.toolchain(
-    name = "runtime_clang_toolchain",
-    llvm_version = LLVM_RELEASE,
-    sha256 = {"linux-x86_64": "a4b7189ed50433a82aec09169b9321d6a2e77e48c381f97a5cee1284add26e8f"},
-    stdlib = {"": "dynamic-stdc++"},
-    strip_prefix = {"linux-x86_64": "clang-%s-linux-x64" % LLVM_RELEASE},
-    urls = {"linux-x86_64": [
-        "https://github.com/hankhsu1996/lyra-toolchain/releases/download/clang-{0}/clang-{0}-linux-x64.tar.zst".format(LLVM_RELEASE),
-    ]},
-)
-
-# The runtime's release also supplies the address sanitizer's runtime, which a
-# program whose code that release instrumented has to link.
-use_repo(clang, "clang_toolchain", "runtime_clang_toolchain", "runtime_clang_toolchain_llvm")
-
-register_toolchains("@clang_toolchain//:all")
+register_toolchains("@llvm//toolchain:all")
 
 # Stackful fibers for suspending foreign (DPI) calls across simulation time
 bazel_dep(name = "boost.context", version = "1.89.0")

@@ -12,6 +12,18 @@
 build:gcc --config=rbe
 build:gcc --extra_toolchains=@buildbuddy_toolchain//:ubuntu_cc_toolchain
 
+# Every compile targets the oldest Linux Lyra supports, whichever machine runs
+# it. Every program the build's clang links carries its C++ library inside it,
+# a test as much as `lyra`, so a test runs the library that ships and not one
+# the machine or the toolchain would load beside it.
+build --platforms=//tools/bazel:oldest_supported_linux
+build --dynamic_mode=off
+
+# The toolchain hands the compiler's header directories to every compile as
+# directories, and Bazel before 9 does not look inside a source directory when
+# deciding what changed. This makes it look, as Bazel 9 does by default.
+startup --host_jvm_args=-DBAZEL_TRACK_SOURCE_DIRECTORIES=1
+
 build --cxxopt='-std=c++23'
 
 # LLVM is optimized even in an unoptimized build, and nothing else is. The
@@ -95,6 +107,9 @@ build:fastbuild --cxxopt='-O1'
 # it. A read of memory that is gone usually reads what was there, so an
 # ordinary run is green either way; under the sanitizer the read is reported.
 # `-O1` and a kept frame pointer are what make the report name the read.
+# The flag is the clang toolchain's own, which links the sanitizer's runtime it
+# builds; the options are what GCC reads.
+build:asan --@llvm//config:asan
 build:asan --copt='-fsanitize=address'
 build:asan --copt='-fno-omit-frame-pointer'
 build:asan --copt='-O1'
@@ -109,11 +124,11 @@ build:asan --features=-symbol_check
 test:asan --test_tag_filters=-nightly,-cost
 # A thread's alternate signal stack has one slot and several owners: the
 # sanitizer maps one when a thread starts, LLVM's signal handling swaps in a
-# larger one of its own from the heap, and the sanitizer runtime of the clang
-# and GCC that build Lyra unmaps whichever stack is in the slot when the thread
-# ends, which fails on LLVM's and stops the process. The sanitizer of LLVM 23
-# unmaps only the one it mapped; until the compilers building Lyra carry that,
-# the sanitizer leaves the slot to the program.
+# larger one of its own from the heap, and the sanitizer runtime of GCC 13
+# unmaps whichever stack is in the slot when the thread ends, which fails on
+# LLVM's and stops the process. The sanitizer runtime of the clang that builds
+# Lyra unmaps only the one it mapped; until GCC's does too, the sanitizer
+# leaves the slot to the program.
 test:asan --test_env=ASAN_OPTIONS=use_sigaltstack=0
 
 # Shared cache and result streaming with actions still running locally. Needs a

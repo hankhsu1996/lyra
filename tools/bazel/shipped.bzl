@@ -29,31 +29,37 @@ build stated rather than what the tree looks like.
 
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 
+# The toolchain's own switch for the address sanitizer, which instruments what
+# it compiles and links the sanitizer's runtime; a shipped artifact sets it
+# rather than inheriting the enclosing build's.
+_ADDRESS_SANITIZER = str(Label("@llvm//config:asan"))
+
+# A shipped artifact is built by the release's clang, optimized, with no option
+# the enclosing build added, whatever that build asked for.
+def _artifact_settings(copt, sanitized):
+    return {
+        "//command_line_option:compilation_mode": "opt",
+        "//command_line_option:copt": copt,
+        "//command_line_option:extra_toolchains": ["@llvm//toolchain:all"],
+        "//command_line_option:linkopt": [],
+        _ADDRESS_SANITIZER: sanitized,
+    }
+
+_ARTIFACT_SETTING_NAMES = _artifact_settings([], False).keys()
+
 # The library carries machine code and bitcode, so a link optimizing a program
 # whole can read it, except where it is built for a sanitizer: the fat-object
 # pipeline would instrument a module twice, which the release refuses, so that
 # library is machine code alone and a link optimizing the program whole links it
 # as it links any member carrying no bitcode.
 def _shipped_transition_impl(_settings, attr):
-    copt = ["-flto=thin", "-ffat-lto-objects"]
-    if getattr(attr, "sanitizer", "") == "address":
-        copt = ["-fsanitize=address", "-fno-omit-frame-pointer"]
-    return {
-        "//command_line_option:compilation_mode": "opt",
-        "//command_line_option:copt": copt,
-        "//command_line_option:extra_toolchains": ["@runtime_clang_toolchain//:all"],
-        "//command_line_option:linkopt": [],
-    }
+    sanitized = getattr(attr, "sanitizer", "") == "address"
+    return _artifact_settings([] if sanitized else ["-flto=thin", "-ffat-lto-objects"], sanitized)
 
 _shipped_transition = transition(
     implementation = _shipped_transition_impl,
     inputs = [],
-    outputs = [
-        "//command_line_option:compilation_mode",
-        "//command_line_option:copt",
-        "//command_line_option:extra_toolchains",
-        "//command_line_option:linkopt",
-    ],
+    outputs = _ARTIFACT_SETTING_NAMES,
 )
 
 def _shipped_artifact_impl(ctx):
@@ -233,34 +239,30 @@ include directories, and the macros every compile defines.""",
     },
 )
 
+# The sanitizer's runtime is built as the release builds it -- by its clang,
+# optimized, and not instrumented itself.
+def _sanitizer_runtime_transition_impl(_settings, _attr):
+    return _artifact_settings([], False)
+
+_sanitizer_runtime_transition = transition(
+    implementation = _sanitizer_runtime_transition_impl,
+    inputs = [],
+    outputs = _ARTIFACT_SETTING_NAMES,
+)
+
 def _sanitizer_runtime_impl(ctx):
-    # The release's runtime libraries sit in one directory named for its
-    # version, which the toolchain hands over whole; the files are taken out of
-    # it by name so that nothing here restates the version. Below it they are
-    # kept per target, and the one target Lyra ships for is named.
-    dirs = [
-        f
-        for f in ctx.files.release_libs
-        if "/lib/clang/" in f.path and f.basename == "lib"
-    ]
-    if len(dirs) != 1:
-        fail("expected the release's one runtime library directory, found %s" % dirs)
-    triple = "x86_64-unknown-linux-gnu"
     outs = []
-    for name in ["libclang_rt.asan.a", "libclang_rt.asan_cxx.a", "libclang_rt.asan.a.syms"]:
+    for lib, name in [
+        (ctx.file.archive, "libclang_rt.asan.a"),
+        (ctx.file.cxx_archive, "libclang_rt.asan_cxx.a"),
+    ]:
         out = ctx.actions.declare_file(ctx.attr.root + "/" + name)
-        ctx.actions.run_shell(
-            inputs = dirs,
-            outputs = [out],
-            command = 'cp "$1/%s/%s" "$2"' % (triple, name),
-            arguments = [dirs[0].path, out.path],
-            mnemonic = "SanitizerRuntime",
-        )
+        ctx.actions.symlink(output = out, target_file = lib)
         outs.append(out)
     symbolizer = ctx.actions.declare_file(ctx.attr.root + "/llvm-symbolizer")
     ctx.actions.symlink(
         output = symbolizer,
-        target_file = ctx.file.release_symbolizer,
+        target_file = ctx.file.symbolizer,
         is_executable = True,
     )
     outs.append(symbolizer)
@@ -269,24 +271,36 @@ def _sanitizer_runtime_impl(ctx):
 sanitizer_runtime = rule(
     implementation = _sanitizer_runtime_impl,
     doc = """The address sanitizer's own runtime of the clang release that
-compiles the shipped runtime, under `root`: the code that release instruments
-names a check of the runtime's version, so a program it instrumented links this
-runtime and no other. Beside it is that release's symbolizer, the tool its
-runtime starts to name the functions in a report, shipped as clang ships it
-beside clang.""",
+compiles the shipped runtime, under `root`, by the names that release's driver
+gives it: the code that release instruments names a check of the runtime's
+version, so a program it instrumented links this runtime and no other. Beside it
+is that release's symbolizer, the tool its runtime starts to name the functions
+in a report, shipped as clang ships it beside clang.""",
     attrs = {
-        "release_libs": attr.label(
-            doc = "The release's runtime libraries, as its toolchain hands them over.",
+        "archive": attr.label(
+            allow_single_file = True,
+            cfg = _sanitizer_runtime_transition,
+            doc = "The runtime proper, as an archive.",
             mandatory = True,
         ),
-        "release_symbolizer": attr.label(
+        "cxx_archive": attr.label(
             allow_single_file = True,
-            doc = "The release's llvm-symbolizer.",
+            cfg = _sanitizer_runtime_transition,
+            doc = "The part replacing the C++ allocation operators.",
             mandatory = True,
         ),
         "root": attr.string(
             doc = "Where the files are staged, as one path segment or more.",
             mandatory = True,
+        ),
+        "symbolizer": attr.label(
+            allow_single_file = True,
+            cfg = _sanitizer_runtime_transition,
+            doc = "The release's llvm-symbolizer.",
+            mandatory = True,
+        ),
+        "_allowlist_function_transition": attr.label(
+            default = "@bazel_tools//tools/allowlists/function_transition_allowlist",
         ),
     },
 )

@@ -12,13 +12,12 @@
 namespace lyra::driver {
 
 // The address sanitizer's own runtime of the clang release that compiles the
-// runtime library: the archive, its C++ part, the symbols a program has to
-// export for it, and the release's symbolizer, which turns the addresses in a
-// report into the names of the functions they are in.
+// runtime library, as the archive and its C++ part, and the release's
+// symbolizer, which turns the addresses in a report into the names of the
+// functions they are in.
 struct AddressSanitizerRuntime {
   std::filesystem::path archive;
   std::filesystem::path cxx_archive;
-  std::filesystem::path symbols;
   std::filesystem::path symbolizer;
 };
 

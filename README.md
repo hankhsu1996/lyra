@@ -28,8 +28,9 @@ terms.
 ## Getting started
 
 You need [Bazel](https://bazel.build/), via [bazelisk](https://github.com/bazelbuild/bazelisk); the
-build fetches the compiler that builds Lyra. Lyra and every program it builds use the machine's own
-C++ library, and [CONTRIBUTING.md](CONTRIBUTING.md) says which release that has to be.
+build fetches the compiler that builds Lyra and the C++ library it builds with. A design is compiled
+by your own C++ compiler, and [CONTRIBUTING.md](CONTRIBUTING.md) says which Linux and which compiler
+release Lyra supports.
 
 ```bash
 bazel build //:lyra
