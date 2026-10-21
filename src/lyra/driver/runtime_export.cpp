@@ -154,7 +154,8 @@ auto ResolveRuntimeLocation(std::string_view binary_path)
   for (auto [path, name] :
        {std::pair{&asan.archive, "libclang_rt.asan.a"},
         std::pair{&asan.cxx_archive, "libclang_rt.asan_cxx.a"},
-        std::pair{&asan.symbols, "libclang_rt.asan.a.syms"}}) {
+        std::pair{&asan.symbols, "libclang_rt.asan.a.syms"},
+        std::pair{&asan.symbolizer, "llvm-symbolizer"}}) {
     auto found = LocateShipped(
         *runfiles, std::format("_main/address_sanitizer_runtime/{}", name),
         "the address sanitizer's runtime");

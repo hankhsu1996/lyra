@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <expected>
 #include <filesystem>
@@ -724,18 +725,15 @@ auto RecipeFor(
 // Places the design's program at `destination`: a copy of the output of the
 // action making it, kept or performed now.
 auto PlaceProgram(
-    const CommandContext& ctx, const std::filesystem::path& scratch,
+    const CommandContext& ctx, const driver::RuntimeLocation& runtime,
+    const std::filesystem::path& scratch,
     const std::filesystem::path& destination) -> bool {
   auto host = ResolveHostBuild(ctx);
   if (!host) {
     return false;
   }
-  auto runtime = ResolveRuntime(ctx);
-  if (!runtime) {
-    return false;
-  }
   driver::ActionCache actions(ctx.args->store, scratch, !ctx.args->rebuild);
-  auto recipe = RecipeFor(ctx, *host, *runtime, scratch, actions);
+  auto recipe = RecipeFor(ctx, *host, runtime, scratch, actions);
   if (!recipe) {
     return false;
   }
@@ -793,8 +791,13 @@ auto RunBuild(
     }
     named = *std::move(claimed);
   }
+  auto runtime = ResolveRuntime(ctx);
+  if (!runtime) {
+    return 1;
+  }
   auto scratch = ScratchDir(ctx);
-  if (!scratch || !PlaceProgram(ctx, scratch->Path(), named->WorkingPath())) {
+  if (!scratch ||
+      !PlaceProgram(ctx, *runtime, scratch->Path(), named->WorkingPath())) {
     return 1;
   }
   if (auto placed = named->Finish(); !placed) {
@@ -806,20 +809,49 @@ auto RunBuild(
   return 0;
 }
 
+// What the program a run starts is told beside this process's environment. A
+// program checked for the address sanitizer names the functions in its report
+// only through a symbolizer its runtime starts, which it looks for where the
+// environment says, so it is told the one shipped with its runtime, as a test
+// runner tells the programs it starts. One the person running Lyra named
+// stands, by that variable or among the sanitizer's options, which the runtime
+// reads over it.
+auto ProgramEnvironment(
+    const CommandContext& ctx, const driver::RuntimeLocation& runtime)
+    -> std::vector<driver::EnvironmentVariable> {
+  constexpr const char* kSymbolizerVariable = "ASAN_SYMBOLIZER_PATH";
+  switch (ctx.args->sanitizer) {
+    case support::Sanitizer::kNone:
+      return {};
+    case support::Sanitizer::kAddress:
+      break;
+  }
+  if (std::getenv(kSymbolizerVariable) != nullptr) {
+    return {};
+  }
+  return {driver::EnvironmentVariable{
+      .name = kSymbolizerVariable,
+      .value = runtime.address_sanitizer.symbolizer.string()}};
+}
+
 // Runs a copy of the design's program that belongs to this run alone, so
 // nothing another process does to what is kept can reach it.
 auto RunProgram(const CommandContext& ctx) -> int {
+  auto runtime = ResolveRuntime(ctx);
+  if (!runtime) {
+    return 1;
+  }
   auto scratch = ScratchDir(ctx);
   if (!scratch) {
     return 1;
   }
   const std::filesystem::path program = scratch->Path() / "run";
-  if (!PlaceProgram(ctx, scratch->Path(), program)) {
+  if (!PlaceProgram(ctx, *runtime, scratch->Path(), program)) {
     return 1;
   }
   status::Finished();
-  auto exit_code =
-      driver::RunProcessStreaming(program, ctx.args->simulation_args);
+  auto exit_code = driver::RunProcessStreaming(
+      program, ctx.args->simulation_args, ProgramEnvironment(ctx, *runtime));
   if (!exit_code) {
     ctx.sink->Report(
         diag::Make(diag::DiagCode::kHostIoError, std::move(exit_code.error())));

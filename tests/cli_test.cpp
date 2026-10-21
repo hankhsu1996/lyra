@@ -2190,6 +2190,39 @@ TEST(LyraBuild, AProgramBuiltToCheckItsMemoryReportsAReadOfFreedStorage) {
         << label << ": " << ran.stderr_text;
   }
 
+  // A program Lyra starts is told where its sanitizer's symbolizer is, so the
+  // report names the function that freed the text and not only its address.
+  const std::vector<std::string> run_args = {
+      "run",
+      "--backend",
+      "llvm",
+      "--top",
+      "Test",
+      "--cache-dir",
+      (*tmp_or / "cache").string(),
+      "--dpi-link",
+      foreign.string(),
+      "--sanitize",
+      "address",
+      src.string()};
+  const auto run = RunChildProcess(lyra, run_args, 180s);
+  EXPECT_EQ(run.termination, TerminationKind::kExitedNonZero)
+      << run.stdout_text << run.stderr_text;
+  EXPECT_NE(run.stderr_text.find(" in gone "), std::string::npos)
+      << run.stderr_text;
+
+  // One the person running Lyra named stands, here a path with nothing at it.
+  std::vector<std::string> named_args = {
+      "ASAN_SYMBOLIZER_PATH=" +
+          (*tmp_or / "absent" / "llvm-symbolizer").string(),
+      lyra.string()};
+  named_args.insert(named_args.end(), run_args.begin(), run_args.end());
+  const auto named = RunChildProcess("/usr/bin/env", named_args, 180s);
+  EXPECT_NE(
+      named.stderr_text.find("invalid path to external symbolizer"),
+      std::string::npos)
+      << named.stderr_text;
+
   const auto built = build({});
   ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
       << built.stdout_text << built.stderr_text;

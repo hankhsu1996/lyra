@@ -174,8 +174,9 @@ cc_static_library(
     deps = [":runtime"],
 )
 
-# The runtime's source and how it is compiled, for a build under --lto whose
-# own compiler optimizes a program together with the runtime it calls.
+# The runtime's source and how it is compiled, for a build whose own compiler
+# compiles the runtime beside the design, to optimize the two together under
+# --lto or to check both for its own sanitizer.
 shipped_sources(
     name = "runtime_sources",
     lib = ":runtime",
@@ -208,6 +209,7 @@ shipped_artifact(
 sanitizer_runtime(
     name = "address_sanitizer_runtime",
     release_libs = "@runtime_clang_toolchain_llvm//:lib",
+    release_symbolizer = "@runtime_clang_toolchain_llvm//:symbolizer",
     root = "address_sanitizer_runtime",
 )
 

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cerrno>
 #include <chrono>
 #include <csignal>
@@ -15,6 +16,7 @@
 #include <functional>
 #include <optional>
 #include <poll.h>
+#include <ranges>
 #include <span>
 #include <spawn.h>
 #include <string>
@@ -68,6 +70,31 @@ auto ToCharPointers(std::vector<std::string>& argv) -> std::vector<char*> {
   return ptrs;
 }
 
+// This process's environment with each of `variables` in it, taking the place
+// of any of its name.
+auto EnvironmentWith(std::span<const EnvironmentVariable> variables)
+    -> std::vector<std::string> {
+  std::vector<std::string> environment;
+  const auto inherited_entries =
+      std::ranges::subrange(environ, std::unreachable_sentinel) |
+      std::views::take_while(
+          [](const char* entry) { return entry != nullptr; });
+  for (const char* entry : inherited_entries) {
+    const std::string_view inherited(entry);
+    const std::string_view name = inherited.substr(0, inherited.find('='));
+    if (std::ranges::none_of(
+            variables, [&](const EnvironmentVariable& variable) {
+              return variable.name == name;
+            })) {
+      environment.emplace_back(inherited);
+    }
+  }
+  for (const EnvironmentVariable& variable : variables) {
+    environment.push_back(variable.name + "=" + variable.value);
+  }
+  return environment;
+}
+
 // A child as the run's statistics name it: the command line it was started
 // with, which says what it was asked to do.
 auto CommandLine(const std::vector<std::string>& argv) -> std::string {
@@ -101,13 +128,13 @@ struct StreamOwner {
   bool is_stdout = false;
 };
 
-// Starts `exe` with `argv`, its streams arranged by `actions` where any are
-// given. This process holds off the signals that ask it to end so that one
-// thread can answer them, and a child started as it is would hold them off too,
-// so the child is started receiving every signal. Answers the child, or what
-// the system said in refusing to start one.
+// Starts `exe` with `argv` and `envp`, its streams arranged by `actions` where
+// any are given. This process holds off the signals that ask it to end so that
+// one thread can answer them, and a child started as it is would hold them off
+// too, so the child is started receiving every signal. Answers the child, or
+// what the system said in refusing to start one.
 auto Spawn(
-    const std::string& exe, std::vector<std::string>& argv,
+    const std::string& exe, std::vector<std::string>& argv, char* const* envp,
     const posix_spawn_file_actions_t* actions)
     -> std::expected<pid_t, base::DiagMessage> {
   auto argv_ptrs = ToCharPointers(argv);
@@ -121,7 +148,7 @@ auto Spawn(
   const std::optional<pid_t> child = StartChild([&]() -> std::optional<pid_t> {
     pid_t pid = 0;
     refused = ::posix_spawn(
-        &pid, exe.c_str(), actions, &attributes, argv_ptrs.data(), environ);
+        &pid, exe.c_str(), actions, &attributes, argv_ptrs.data(), envp);
     return refused == 0 ? std::optional<pid_t>{pid} : std::nullopt;
   });
   ::posix_spawnattr_destroy(&attributes);
@@ -162,7 +189,7 @@ auto SpawnCaptured(
   auto argv = BuildArgv(exe_str, args);
 
   const auto started = std::chrono::steady_clock::now();
-  const auto pid = Spawn(exe_str, argv, &actions);
+  const auto pid = Spawn(exe_str, argv, environ, &actions);
   posix_spawn_file_actions_destroy(&actions);
   close(out_pipe[1]);
   close(err_pipe[1]);
@@ -189,6 +216,22 @@ struct Reaped {
   std::uint64_t peak_rss_bytes = 0;
 };
 
+// The most memory the system charged a reaped child. The C library declares
+// the field in a union with the raw word the kernel writes, so it is read from
+// its place in the record rather than through the union.
+auto PeakRssBytes(const struct rusage& usage) -> std::uint64_t {
+  const auto record =
+      std::bit_cast<std::array<std::byte, sizeof(struct rusage)>>(usage);
+  std::int64_t kilobytes = 0;
+  std::memcpy(
+      &kilobytes,
+      std::span(record)
+          .subspan(offsetof(struct rusage, ru_maxrss), sizeof(kilobytes))
+          .data(),
+      sizeof(kilobytes));
+  return static_cast<std::uint64_t>(kilobytes) * 1024;
+}
+
 auto Microseconds(const struct timeval& time) -> std::uint64_t {
   return (static_cast<std::uint64_t>(time.tv_sec) * 1'000'000) +
          static_cast<std::uint64_t>(time.tv_usec);
@@ -214,7 +257,7 @@ auto Reap(pid_t pid) -> std::expected<Reaped, base::DiagMessage> {
       .exit_code =
           WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status),
       .cpu_us = Microseconds(usage.ru_utime) + Microseconds(usage.ru_stime),
-      .peak_rss_bytes = static_cast<std::uint64_t>(usage.ru_maxrss) * 1024};
+      .peak_rss_bytes = PeakRssBytes(usage)};
 }
 
 // Runs every request, at most `max_concurrent` at once, telling `started` and
@@ -402,11 +445,14 @@ auto RunProcessesCaptured(
 }
 
 auto RunProcessStreaming(
-    const std::filesystem::path& exe, std::span<const std::string> args)
+    const std::filesystem::path& exe, std::span<const std::string> args,
+    std::span<const EnvironmentVariable> variables)
     -> std::expected<int, base::DiagMessage> {
   const std::string exe_str = exe.string();
   auto argv = BuildArgv(exe_str, args);
-  const auto pid = Spawn(exe_str, argv, nullptr);
+  auto environment = EnvironmentWith(variables);
+  auto envp = ToCharPointers(environment);
+  const auto pid = Spawn(exe_str, argv, envp.data(), nullptr);
   if (!pid) {
     return std::unexpected(pid.error());
   }
