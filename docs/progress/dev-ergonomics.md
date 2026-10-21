@@ -265,7 +265,7 @@ layer directly.
       more than a run's log keeps. The library is now built as it ships whatever builds the
       compiler, and the run leaves out the tests of what the compiler costs as it ships, which the
       instrumentation changes. On `main` the run is clean: no report over the whole corpus. What a
-      simulation's own memory does while it runs is not something this run sees.
+      simulation's own memory does while it runs is D33's.
 
 - [x] D23 -- A library uses another by naming it. A `lyra.toml` lists the libraries its own depends
       on, each by name and the directory declaring it, and a build reads every library it reaches
@@ -348,6 +348,17 @@ layer directly.
       does; it is never reported as a defect of the compiler, and never ends by a signal. A build
       that compiles several units at once asks for the memory of all of them together. Not built:
       what a unit's code generation needs is not measured per unit.
+
+- [x] D33 -- A program can be built to check its own memory. `--sanitize address` on `build`, `run`
+      and `emit cpp` makes the program's first read or write of storage that has ended, or was never
+      its own, end the run with a report naming where it was made and where the storage was freed --
+      in the design's code and in the runtime alike, on both backends and through an emitted
+      project's recipe. The sanitizer run that checks Lyra's own memory builds every program of the
+      corpus that way, and holds what it finds unfixed in a record of its own; class objects that
+      name each other, never reclaimed, are the one entry. Not built: a user's foreign sources are
+      not instrumented on the execution backend, though their reads through the C library are
+      checked; and what the design printed before a report is lost with the run, as it is when a
+      fault ends one.
 
 ## Out of Scope
 

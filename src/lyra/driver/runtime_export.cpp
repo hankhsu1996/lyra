@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/driver/file_output.hpp"
@@ -49,7 +50,73 @@ auto CopyTree(
   return {};
 }
 
+// A file the binary ships beside it, under `rlocation`, or why there is none.
+auto LocateShipped(
+    const Runfiles& runfiles, const std::string& rlocation,
+    std::string_view what) -> diag::Result<std::filesystem::path> {
+  const std::filesystem::path path = runfiles.Rlocation(rlocation);
+  if (path.empty() || !std::filesystem::exists(path)) {
+    return diag::Fail(diag::DiagCode::kHostIoError, "cannot locate {}", what);
+  }
+  return path;
+}
+
+// Whether a project carries the runtime's own sources: where its compiler may
+// optimize them with the design at the link, or checks the program for a
+// sanitizer, whose instrumentation goes with that compiler's own runtime and
+// not with the prebuilt library's.
+auto CarriesRuntimeSources(
+    LinkTimeOptimization link_time, support::Sanitizer sanitizer) -> bool {
+  switch (sanitizer) {
+    case support::Sanitizer::kNone:
+      break;
+    case support::Sanitizer::kAddress:
+      return true;
+  }
+  switch (link_time) {
+    case LinkTimeOptimization::kNone:
+      return false;
+    case LinkTimeOptimization::kThin:
+      return true;
+  }
+  std::unreachable();
+}
+
 }  // namespace
+
+auto ExecutionBackendLibrary(
+    const RuntimeLocation& runtime, support::Sanitizer sanitizer)
+    -> const std::filesystem::path& {
+  switch (sanitizer) {
+    case support::Sanitizer::kNone:
+      return runtime.lib;
+    case support::Sanitizer::kAddress:
+      return runtime.address_sanitized_lib;
+  }
+  std::unreachable();
+}
+
+auto ExecutionBackendRuntime(
+    const RuntimeLocation& runtime, support::Sanitizer sanitizer)
+    -> LinkedRuntime {
+  const std::filesystem::path& library =
+      ExecutionBackendLibrary(runtime, sanitizer);
+  switch (sanitizer) {
+    case support::Sanitizer::kNone:
+      return {.files = {library}, .flags = {}};
+    case support::Sanitizer::kAddress: {
+      const AddressSanitizerRuntime& asan = runtime.address_sanitizer;
+      return {
+          .files = {library},
+          .flags = {
+              "-Wl,--whole-archive", asan.archive.string(),
+              asan.cxx_archive.string(), "-Wl,--no-whole-archive",
+              "-Wl,--dynamic-list=" + asan.symbols.string(), "-lpthread",
+              "-lrt", "-lm", "-ldl"}};
+    }
+  }
+  std::unreachable();
+}
 
 auto ResolveRuntimeLocation(std::string_view binary_path)
     -> diag::Result<RuntimeLocation> {
@@ -66,41 +133,61 @@ auto ResolveRuntimeLocation(std::string_view binary_path)
   // What makes that true is the staging rather than this walk: a header
   // resolved where this repository keeps it would hand back a directory
   // carrying every header the compiler has.
-  const std::filesystem::path anchor =
-      runfiles->Rlocation("_main/runtime_surface/lyra/runtime/runtime.hpp");
-  if (anchor.empty() || !std::filesystem::exists(anchor)) {
-    return diag::Fail(
-        diag::DiagCode::kHostIoError, "cannot locate the Lyra runtime headers");
+  auto anchor = LocateShipped(
+      *runfiles, "_main/runtime_surface/lyra/runtime/runtime.hpp",
+      "the Lyra runtime headers");
+  if (!anchor) {
+    return std::unexpected(std::move(anchor.error()));
   }
-  const std::filesystem::path lib =
-      runfiles->Rlocation("_main/libcpp_runtime.a");
-  if (lib.empty() || !std::filesystem::exists(lib)) {
-    return diag::Fail(
-        diag::DiagCode::kHostIoError, "cannot locate the Lyra runtime library");
+  auto lib = LocateShipped(
+      *runfiles, "_main/libcpp_runtime.a", "the Lyra runtime library");
+  if (!lib) {
+    return std::unexpected(std::move(lib.error()));
   }
-  const std::filesystem::path svdpi =
-      runfiles->Rlocation("_main/third_party/systemverilog/svdpi.h");
-  if (svdpi.empty() || !std::filesystem::exists(svdpi)) {
-    return diag::Fail(
-        diag::DiagCode::kHostIoError,
-        "cannot locate the standard DPI-C header");
+  auto sanitized = LocateShipped(
+      *runfiles, "_main/libcpp_runtime_address_sanitized.a",
+      "the Lyra runtime library compiled for the address sanitizer");
+  if (!sanitized) {
+    return std::unexpected(std::move(sanitized.error()));
   }
-  const std::filesystem::path source_list = runfiles->Rlocation(
-      std::format("_main/runtime_sources/{}", kRuntimeSourceList));
-  if (source_list.empty() || !std::filesystem::exists(source_list)) {
-    return diag::Fail(
-        diag::DiagCode::kHostIoError, "cannot locate the Lyra runtime sources");
+  AddressSanitizerRuntime asan;
+  for (auto [path, name] :
+       {std::pair{&asan.archive, "libclang_rt.asan.a"},
+        std::pair{&asan.cxx_archive, "libclang_rt.asan_cxx.a"},
+        std::pair{&asan.symbols, "libclang_rt.asan.a.syms"}}) {
+    auto found = LocateShipped(
+        *runfiles, std::format("_main/address_sanitizer_runtime/{}", name),
+        "the address sanitizer's runtime");
+    if (!found) {
+      return std::unexpected(std::move(found.error()));
+    }
+    *path = *std::move(found);
+  }
+  auto svdpi = LocateShipped(
+      *runfiles, "_main/third_party/systemverilog/svdpi.h",
+      "the standard DPI-C header");
+  if (!svdpi) {
+    return std::unexpected(std::move(svdpi.error()));
+  }
+  auto source_list = LocateShipped(
+      *runfiles, std::format("_main/runtime_sources/{}", kRuntimeSourceList),
+      "the Lyra runtime sources");
+  if (!source_list) {
+    return std::unexpected(std::move(source_list.error()));
   }
   return RuntimeLocation{
-      .include_root = anchor.parent_path().parent_path().parent_path(),
-      .lib = lib,
-      .sources_root = source_list.parent_path(),
-      .svdpi_header = svdpi};
+      .include_root = anchor->parent_path().parent_path().parent_path(),
+      .lib = *std::move(lib),
+      .address_sanitized_lib = *std::move(sanitized),
+      .address_sanitizer = std::move(asan),
+      .sources_root = source_list->parent_path(),
+      .svdpi_header = *std::move(svdpi)};
 }
 
 auto ExportRuntimeTree(
     const RuntimeLocation& runtime, const std::filesystem::path& dest_dir,
-    LinkTimeOptimization link_time) -> diag::Result<void> {
+    LinkTimeOptimization link_time, support::Sanitizer sanitizer)
+    -> diag::Result<void> {
   if (auto r = CopyTree(
           runtime.include_root / "lyra",
           dest_dir / kRuntimeIncludeDir / "lyra");
@@ -112,13 +199,10 @@ auto ExportRuntimeTree(
       !r) {
     return r;
   }
-  switch (link_time) {
-    case LinkTimeOptimization::kNone:
-      return {};
-    case LinkTimeOptimization::kThin:
-      return CopyTree(runtime.sources_root, dest_dir / kRuntimeSourceDir);
+  if (!CarriesRuntimeSources(link_time, sanitizer)) {
+    return {};
   }
-  std::unreachable();
+  return CopyTree(runtime.sources_root, dest_dir / kRuntimeSourceDir);
 }
 
 }  // namespace lyra::driver

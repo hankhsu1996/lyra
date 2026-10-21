@@ -19,6 +19,7 @@
 #include "lyra/stable_hash/fingerprint.hpp"
 #include "lyra/status/status.hpp"
 #include "lyra/support/runtime_prelude.hpp"
+#include "lyra/support/sanitizer.hpp"
 
 namespace lyra::driver::pch {
 
@@ -28,9 +29,9 @@ namespace {
 // command that prepares one and the action it is kept under cannot describe
 // different things.
 auto PreparationFlags(
-    const PreparedHeaderFlags& accepted, OptimizationLevel optimization)
-    -> std::vector<std::string> {
-  std::vector<std::string> flags = DesignCompileFlags(optimization);
+    const PreparedHeaderFlags& accepted, OptimizationLevel optimization,
+    support::Sanitizer sanitizer) -> std::vector<std::string> {
+  std::vector<std::string> flags = DesignCompileFlags(optimization, sanitizer);
   flags.insert(
       flags.end(), accepted.preparing.begin(), accepted.preparing.end());
   return flags;
@@ -47,15 +48,15 @@ auto PreparationFlags(
 auto PrepareHeader(
     const std::filesystem::path& cxx, const std::filesystem::path& include_root,
     const stable_hash::Fingerprint& prelude_inputs,
-    const PreparedHeaderFlags& accepted, OptimizationLevel optimization)
-    -> Action {
+    const PreparedHeaderFlags& accepted, OptimizationLevel optimization,
+    support::Sanitizer sanitizer) -> Action {
   Action action("prepare header");
   action.InputExecutable("compiler", cxx);
   std::error_code ec;
   const auto root = std::filesystem::canonical(include_root, ec);
   action.Input("runtime root", (ec ? include_root : root).string());
   action.InputDigest("prelude inputs", prelude_inputs);
-  for (const auto& flag : PreparationFlags(accepted, optimization)) {
+  for (const auto& flag : PreparationFlags(accepted, optimization, sanitizer)) {
     action.Input("flag", flag);
   }
   return action;
@@ -64,9 +65,11 @@ auto PrepareHeader(
 auto BuildAt(
     const std::filesystem::path& cxx, const std::filesystem::path& include_root,
     const PreparedHeaderFlags& accepted, const std::filesystem::path& pch_path,
-    OptimizationLevel optimization) -> diag::Result<void> {
+    OptimizationLevel optimization, support::Sanitizer sanitizer)
+    -> diag::Result<void> {
   const auto prelude = include_root / support::kRuntimePreludeHeader;
-  std::vector<std::string> args = PreparationFlags(accepted, optimization);
+  std::vector<std::string> args =
+      PreparationFlags(accepted, optimization, sanitizer);
   args.insert(
       args.end(), {"-I", include_root.string(), "-xc++-header",
                    prelude.string(), "-o", pch_path.string()});
@@ -188,7 +191,8 @@ auto OfferPrelude(
     const std::filesystem::path& cxx, const std::filesystem::path& include_root,
     const stable_hash::Fingerprint& prelude_inputs, Policy policy,
     ActionCache& actions, OptimizationLevel optimization,
-    const std::filesystem::path& dir) -> std::optional<Offer> {
+    support::Sanitizer sanitizer, const std::filesystem::path& dir)
+    -> std::optional<Offer> {
   if (policy == Policy::kSkip || !actions.Keeps()) {
     return std::nullopt;
   }
@@ -198,9 +202,12 @@ auto OfferPrelude(
     return std::nullopt;
   }
   auto prepared = actions.Execute(
-      PrepareHeader(cxx, include_root, prelude_inputs, *accepted, optimization),
+      PrepareHeader(
+          cxx, include_root, prelude_inputs, *accepted, optimization,
+          sanitizer),
       [&](const std::filesystem::path& pch_path) {
-        return BuildAt(cxx, include_root, *accepted, pch_path, optimization);
+        return BuildAt(
+            cxx, include_root, *accepted, pch_path, optimization, sanitizer);
       });
   if (!prepared) {
     return std::nullopt;

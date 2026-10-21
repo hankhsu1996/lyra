@@ -4,7 +4,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
-#include <string>
 
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/value/basic_dynamic_array.hpp"

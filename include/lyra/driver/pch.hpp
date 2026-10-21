@@ -11,6 +11,7 @@
 #include "lyra/driver/action_cache.hpp"
 #include "lyra/driver/project_layout.hpp"
 #include "lyra/stable_hash/fingerprint.hpp"
+#include "lyra/support/sanitizer.hpp"
 
 namespace lyra::driver::pch {
 
@@ -100,18 +101,19 @@ auto AcceptedPreparedHeaderFlags(
 // The prepared header is the output of an action whose inputs are everything
 // that goes into it: the compiler, where the runtime headers are,
 // `prelude_inputs` -- every file the prelude reads, by its content -- and the
-// command line that
-// prepares it. Finding one kept therefore means it was made from exactly what
-// is on the machine now, which GCC, unlike clang, never checks for itself.
+// command line that prepares it. Finding one kept therefore means it was made
+// from exactly what is on the machine now, which GCC, unlike clang, never
+// checks for itself.
 //
 // What comes back is an offer and never a requirement. Whether the compiler
 // accepts it is the compiler's to answer, and it answers by failing, so a
 // caller passes it only where it can compile again without it -- nothing a
 // build produces, and no reason a build fails, may depend on what this
-// returned. `optimization` must be the one the including translation unit is
-// compiled at: a header prepared under different options is refused. Returns
-// nullopt when the policy skips it, the compiler prepares no header, or nothing
-// is kept, since a header prepared for one build costs more than it saves.
+// returned. `optimization` and `sanitizer` must be those the including
+// translation unit is compiled under: a header prepared under different options
+// is refused. Returns nullopt when the policy skips it, the compiler prepares
+// no header, or nothing is kept, since a header prepared for one build costs
+// more than it saves.
 //
 // A header the compiler refuses is evicted from the cache, so that whoever
 // asks next prepares it again.
@@ -119,6 +121,7 @@ auto OfferPrelude(
     const std::filesystem::path& cxx, const std::filesystem::path& include_root,
     const stable_hash::Fingerprint& prelude_inputs, Policy policy,
     ActionCache& actions, OptimizationLevel optimization,
-    const std::filesystem::path& dir) -> std::optional<Offer>;
+    support::Sanitizer sanitizer, const std::filesystem::path& dir)
+    -> std::optional<Offer>;
 
 }  // namespace lyra::driver::pch

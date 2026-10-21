@@ -10,7 +10,6 @@
 #include <string>
 #include <string_view>
 #include <utility>
-#include <vector>
 
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/integral.hpp"

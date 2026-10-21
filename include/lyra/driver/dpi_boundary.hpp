@@ -10,6 +10,7 @@
 #include "lyra/dpi/abi_header.hpp"
 #include "lyra/driver/project_layout.hpp"
 #include "lyra/driver/runtime_export.hpp"
+#include "lyra/support/sanitizer.hpp"
 
 namespace lyra::driver {
 
@@ -45,13 +46,15 @@ auto WriteDpiSurface(
     const RuntimeLocation& runtime, std::span<const dpi::AbiFragment> fragments,
     const std::filesystem::path& dir) -> diag::Result<void>;
 
-// Which language a foreign source is compiled as, and the standard where its
-// language has one to name (LRM 35). A C source is compiled as C so its symbols
-// keep C linkage, which is what the emitted declaration expects and what a C++
+// What a foreign source is compiled with: the language it is compiled as and
+// the standard where its language has one to name (LRM 35), at `optimization`
+// and checked for `sanitizer`. A C source is compiled as C so its symbols keep
+// C linkage, which is what the emitted declaration expects and what a C++
 // compilation would mangle away. The in-process build and the recipe an emitted
 // project ships both read it here, so the two compile a source alike.
-auto ForeignLanguageFlags(const DpiLinkInput& input)
-    -> std::vector<std::string>;
+auto ForeignCompileFlags(
+    const DpiLinkInput& input, OptimizationLevel optimization,
+    support::Sanitizer sanitizer) -> std::vector<std::string>;
 
 // Compiles each DPI-C link input to a relocatable object in `work_dir` and
 // returns their paths, in input order. Every program links these beside the
@@ -60,12 +63,14 @@ auto ForeignLanguageFlags(const DpiLinkInput& input)
 // and the foreign side's call back to one only the design defines (LRM 35.4).
 // `header_dir` holds the generated ABI header the sources may include, which is
 // why these compiles wait for every unit: that header is what the units state
-// of the foreign name space. As many compile at once as `width` allows, and
-// every one that fails is reported.
+// of the foreign name space. Each is compiled as `ForeignCompileFlags` says,
+// checked for `sanitizer`, the one the compiler links its own runtime for. As
+// many compile at once as `width` allows, and every one that fails is
+// reported.
 auto CompileDpiObjects(
     std::span<const DpiLinkInput> inputs, const std::filesystem::path& cxx,
-    OptimizationLevel optimization, std::size_t width,
-    const std::filesystem::path& header_dir,
+    OptimizationLevel optimization, support::Sanitizer sanitizer,
+    std::size_t width, const std::filesystem::path& header_dir,
     const std::filesystem::path& work_dir)
     -> diag::Result<std::vector<std::filesystem::path>>;
 

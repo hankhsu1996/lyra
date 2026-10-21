@@ -19,6 +19,7 @@
 #include "lyra/mir_transform/pass.hpp"
 #include "lyra/status/status.hpp"
 #include "lyra/support/assertion_policy.hpp"
+#include "lyra/support/sanitizer.hpp"
 
 namespace lyra::cli {
 
@@ -47,6 +48,7 @@ struct ParsedArgs {
   driver::SourceFormatting formatting = driver::SourceFormatting::kOff;
   driver::OptimizationLevel optimization = driver::OptimizationLevel::kO0;
   driver::LinkTimeOptimization link_time = driver::LinkTimeOptimization::kNone;
+  support::Sanitizer sanitizer = support::Sanitizer::kNone;
   driver::pch::Policy pch = driver::pch::Policy::kAttempt;
   // The host C++ compiler a program is compiled or linked with, when the caller
   // named one: a program name or path, never flags.
@@ -90,6 +92,7 @@ struct CliOptions {
   std::optional<bool> no_pch;
   std::optional<std::string> optimization;
   std::optional<bool> link_time;
+  std::optional<std::string> sanitize;
   std::optional<std::string> config;
   std::optional<std::string> cache_dir;
   std::optional<bool> rebuild;

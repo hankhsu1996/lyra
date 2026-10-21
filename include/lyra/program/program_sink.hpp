@@ -12,15 +12,17 @@
 #include "lyra/driver/action_cache.hpp"
 #include "lyra/driver/project_layout.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/support/sanitizer.hpp"
 
 namespace lyra::program {
 
 // How this build turns a unit's module into an object: how hard to compile
-// it, whether for a link that optimizes it with the runtime, and which build of
-// the code generator does.
+// it, whether for a link that optimizes it with the runtime, what the program
+// checks of itself while it runs, and which build of the code generator does.
 struct ObjectBuild {
   driver::OptimizationLevel optimization;
   driver::LinkTimeOptimization link_time;
+  support::Sanitizer sanitizer;
   std::filesystem::path code_generator;
 };
 

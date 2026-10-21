@@ -241,6 +241,36 @@ compile_all() {
   done
   reap
 }
+# Compiles the runtime's own sources, which the project carries where it is
+# optimized with them at the link or checked for a sanitizer, each told what the
+# runtime's build states for it and $1; RT_OBJS names the objects.
+compile_runtime() {
+  RT=@RTSRC@
+  RT_FLAGS=""
+  while read -r flag dir; do RT_FLAGS="$RT_FLAGS $flag $RT/$dir"; done < "$RT/@RTINCS@"
+  while read -r name; do RT_FLAGS="$RT_FLAGS -D$name"; done < "$RT/@RTDEFS@"
+  mkdir -p @OBJDIR@/runtime
+  RT_OBJS=""
+  PIDS=""
+  LIVE=0
+  n=0
+  # Each line is a source and the macros its own library defines for it.
+  while read -r src defs; do
+    n=$((n + 1))
+    RT_OBJS="$RT_OBJS @OBJDIR@/runtime/$n.o"
+    case "$src" in
+      *.c) SRC_FLAGS="@C_FLAGS@" ;;
+      *) SRC_FLAGS="@DESIGN_FLAGS@" ;;
+    esac
+    for name in $defs; do SRC_FLAGS="$SRC_FLAGS -D$name"; done
+    "$CXX" $SRC_FLAGS $RT_FLAGS $1 -c "$RT/$src" -o "@OBJDIR@/runtime/$n.o" \
+      </dev/null >>"$LOG" 2>&1 &
+    PIDS="$PIDS $!"
+    LIVE=$((LIVE + 1))
+    if [ "$LIVE" -ge "$JOBS" ]; then reap; fi
+  done < "$RT/@RTLIST@"
+  reap
+}
 # A project built to optimize at the link optimizes the design together with
 # the runtime, whose sources it carries, in the first way this compiler and the
 # linker it drives accept; a small program built each way in turn says which.
@@ -275,32 +305,13 @@ if [ "$STATUS" -ne 0 ] && [ "$USE_PCH" = "1" ]; then
   compile_all "$LTO"
   if [ "$STATUS" -eq 0 ]; then rm -f "$PCH"; fi
 fi
-if [ "$STATUS" -eq 0 ] && [ -n "$LTO" ]; then
-  RT=@RTSRC@
-  RT_FLAGS=""
-  while read -r flag dir; do RT_FLAGS="$RT_FLAGS $flag $RT/$dir"; done < "$RT/@RTINCS@"
-  while read -r name; do RT_FLAGS="$RT_FLAGS -D$name"; done < "$RT/@RTDEFS@"
-  mkdir -p @OBJDIR@/runtime
-  RT_OBJS=""
-  PIDS=""
-  LIVE=0
-  n=0
-  # Each line is a source and the macros its own library defines for it.
-  while read -r src defs; do
-    n=$((n + 1))
-    RT_OBJS="$RT_OBJS @OBJDIR@/runtime/$n.o"
-    case "$src" in
-      *.c) SRC_FLAGS="@C_FLAGS@" ;;
-      *) SRC_FLAGS="@DESIGN_FLAGS@" ;;
-    esac
-    for name in $defs; do SRC_FLAGS="$SRC_FLAGS -D$name"; done
-    "$CXX" $SRC_FLAGS $RT_FLAGS $LTO -c "$RT/$src" -o "@OBJDIR@/runtime/$n.o" \
-      </dev/null >>"$LOG" 2>&1 &
-    PIDS="$PIDS $!"
-    LIVE=$((LIVE + 1))
-    if [ "$LIVE" -ge "$JOBS" ]; then reap; fi
-  done < "$RT/@RTLIST@"
-  reap
+# The program links the runtime compiled from its sources where it is optimized
+# with it at the link, or checked for a sanitizer, since the library beside the
+# project was compiled by another compiler.
+RUNTIME=@LIBDIR@/@LIB@
+if [ "$STATUS" -eq 0 ] && { [ -n "$LTO" ] || [ "@SANITIZE@" = "1" ]; }; then
+  compile_runtime "$LTO"
+  RUNTIME="$RT_OBJS"
 fi
 # What the compiler said is kept back until the build is known to have failed,
 # so that an attempt which was retried and succeeded says nothing at all. What
@@ -308,9 +319,9 @@ fi
 # and so describes the sources rather than the header.
 if [ "$STATUS" -ne 0 ]; then cat "$LOG" >&2; exit 1; fi
 @DPICOMPILE@if [ -n "$LTO" ]; then
-  "$CXX" @OPT@ $LTO_LINK$OBJS $RT_OBJS@DPIOBJS@ -o @PROG@
+  "$CXX" @OPT@ @SANLINK@ $LTO_LINK$OBJS $RUNTIME@DPIOBJS@ -o @PROG@
 else
-  "$CXX"$OBJS@DPIOBJS@ @LIBDIR@/@LIB@ -o @PROG@
+  "$CXX" @SANLINK@$OBJS@DPIOBJS@ $RUNTIME -o @PROG@
 fi
 )sh";
 
@@ -351,15 +362,16 @@ struct DpiRecipe {
 };
 
 auto RenderDpiRecipe(
-    std::span<const DpiLinkInput> inputs, std::string_view optimization_flag)
-    -> DpiRecipe {
+    std::span<const DpiLinkInput> inputs, const HostBuild& host) -> DpiRecipe {
   DpiRecipe recipe;
   for (const DpiLinkInput& input : inputs) {
     const std::string object = DpiObjectRelPath(input);
     recipe.compile_steps += std::format(
-        "mkdir -p {}/{}\n\"$CXX\" {} {} -c {} -I . -o {}\n", kObjectDir,
-        kDpiSourceDir, JoinWords(ForeignLanguageFlags(input)),
-        optimization_flag, DpiSourceRelPath(input), object);
+        "mkdir -p {}/{}\n\"$CXX\" {} -c {} -I . -o {}\n", kObjectDir,
+        kDpiSourceDir,
+        JoinWords(
+            ForeignCompileFlags(input, host.optimization, host.sanitizer)),
+        DpiSourceRelPath(input), object);
     recipe.link_inputs += std::format(" {}", object);
   }
   return recipe;
@@ -401,12 +413,11 @@ auto RenderOptionalFlags() -> std::string {
 }
 
 auto RenderBuildScript(
-    const std::filesystem::path& cxx, std::span<const DpiLinkInput> dpi_inputs,
-    std::span<const TranslationUnit> translation_units,
-    OptimizationLevel optimization, LinkTimeOptimization link_time)
-    -> std::string {
-  const std::string_view optimization_flag = OptimizationFlag(optimization);
-  const DpiRecipe dpi = RenderDpiRecipe(dpi_inputs, optimization_flag);
+    const HostBuild& host, std::span<const DpiLinkInput> dpi_inputs,
+    std::span<const TranslationUnit> translation_units) -> std::string {
+  const std::string_view optimization_flag =
+      OptimizationFlag(host.optimization);
+  const DpiRecipe dpi = RenderDpiRecipe(dpi_inputs, host);
   std::vector<std::string> relpaths;
   relpaths.reserve(translation_units.size());
   for (const TranslationUnit& unit : translation_units) {
@@ -415,12 +426,26 @@ auto RenderBuildScript(
   const std::string sources = JoinWords(relpaths);
   // Named locals, because the bindings below hold `string_view`s and are read
   // after this statement: a temporary would already have died.
-  const std::string cxx_exe = cxx.string();
-  const std::string design_flags = JoinWords(DesignCompileFlags(optimization));
-  const std::string c_flags = JoinWords(RuntimeCCompileFlags(optimization));
+  const std::string cxx_exe = host.cxx.string();
+  const std::string design_flags =
+      JoinWords(DesignCompileFlags(host.optimization, host.sanitizer));
+  const std::string c_flags =
+      JoinWords(RuntimeCCompileFlags(host.optimization, host.sanitizer));
+  const std::string sanitizer_link =
+      JoinWords(SanitizerLinkFlags(host.sanitizer));
+  // Whether the project checks the program for a sanitizer.
+  const std::string_view sanitize = [&] {
+    switch (host.sanitizer) {
+      case support::Sanitizer::kNone:
+        return "0";
+      case support::Sanitizer::kAddress:
+        return "1";
+    }
+    std::unreachable();
+  }();
   // Whether the project optimizes the design together with the runtime.
   const std::string_view lto = [&] {
-    switch (link_time) {
+    switch (host.link_time) {
       case LinkTimeOptimization::kNone:
         return "0";
       case LinkTimeOptimization::kThin:
@@ -430,7 +455,7 @@ auto RenderBuildScript(
   }();
   const std::string link_time_forms = RenderLinkTimeForms();
   const std::string optional_flags = RenderOptionalFlags();
-  const std::array<std::pair<std::string_view, std::string_view>, 25> bindings =
+  const std::array<std::pair<std::string_view, std::string_view>, 27> bindings =
       {{
           {"@INCLUDE@", kRuntimeIncludeDir},
           {"@PRELUDE@", support::kRuntimePreludeHeader},
@@ -455,6 +480,8 @@ auto RenderBuildScript(
           {"@RTLIST@", kRuntimeSourceList},
           {"@RTINCS@", kRuntimeIncludeDirList},
           {"@RTDEFS@", kRuntimeDefineList},
+          {"@SANITIZE@", sanitize},
+          {"@SANLINK@", sanitizer_link},
           {"@LTOFORMS@", link_time_forms},
           {"@PROBE@", kLinkTimeProbe},
       }};
@@ -513,9 +540,9 @@ auto CopyDpiSources(
 // command that compiles a file and the action it is kept under cannot describe
 // different things.
 auto CompileFlags(
-    const std::filesystem::path& include_root, OptimizationLevel optimization)
-    -> std::vector<std::string> {
-  std::vector<std::string> flags = DesignCompileFlags(optimization);
+    const std::filesystem::path& include_root, OptimizationLevel optimization,
+    support::Sanitizer sanitizer) -> std::vector<std::string> {
+  std::vector<std::string> flags = DesignCompileFlags(optimization, sanitizer);
   flags.emplace_back("-I");
   flags.push_back(include_root.string());
   return flags;
@@ -749,8 +776,10 @@ auto FindUsualCompiler() -> std::optional<std::filesystem::path> {
 
 auto DigestOfPreludeInputs(
     const std::filesystem::path& cxx, const std::filesystem::path& include_root,
-    OptimizationLevel optimization) -> diag::Result<stable_hash::Fingerprint> {
-  std::vector<std::string> args = CompileFlags(include_root, optimization);
+    OptimizationLevel optimization, support::Sanitizer sanitizer)
+    -> diag::Result<stable_hash::Fingerprint> {
+  std::vector<std::string> args =
+      CompileFlags(include_root, optimization, sanitizer);
   args.insert(
       args.end(), {"-M", "-MT", "prelude", "-xc++-header",
                    (include_root / support::kRuntimePreludeHeader).string()});
@@ -775,12 +804,13 @@ auto CompileTranslationUnits(
     std::optional<std::string_view> link_time, ActionCache& actions)
     -> diag::Result<std::vector<ActionResult>> {
   const auto prelude_inputs =
-      DigestOfPreludeInputs(host.cxx, runtime.include_root, host.optimization);
+      DigestOfPreludeInputs(
+          host.cxx, runtime.include_root, host.optimization, host.sanitizer);
   if (!prelude_inputs) {
     return std::unexpected(prelude_inputs.error());
   }
   std::vector<std::string> flags =
-      CompileFlags(runtime.include_root, host.optimization);
+      CompileFlags(runtime.include_root, host.optimization, host.sanitizer);
   if (link_time) {
     flags.emplace_back(*link_time);
   }
@@ -788,7 +818,7 @@ auto CompileTranslationUnits(
   // cannot each find it missing and race to build the same file.
   const std::optional<pch::Offer> prelude = pch::OfferPrelude(
       host.cxx, runtime.include_root, *prelude_inputs, host.pch, actions,
-      host.optimization, dir);
+      host.optimization, host.sanitizer, dir);
 
   const status::Phase phase("Compiling C++");
   status::Pieces(translation_units.size());
@@ -864,14 +894,13 @@ auto AcceptedLinkTimeForm(const HostBuild& host, ActionCache& actions)
                       "-c", source.string(), "-o", object.string()}) &&
                  succeeds(link);
         };
-        std::string accepted;
-        for (std::size_t i = 0; i < kLinkTimeForms.size(); ++i) {
-          if (accepts(kLinkTimeForms.at(i))) {
-            accepted = std::format("{}", i);
-            break;
-          }
-        }
-        return WriteFile(output, accepted);
+        const auto* const first = std::ranges::find_if(kLinkTimeForms, accepts);
+        return WriteFile(
+            output,
+            first == kLinkTimeForms.end()
+                ? std::string()
+                : std::format(
+                      "{}", std::distance(kLinkTimeForms.begin(), first)));
       });
   if (!probed) {
     return std::nullopt;
@@ -886,7 +915,7 @@ auto AcceptedLinkTimeForm(const HostBuild& host, ActionCache& actions)
 
 auto CompileRuntimeSources(
     const RuntimeLocation& runtime, const HostBuild& host,
-    std::string_view link_time, ActionCache& actions)
+    std::optional<std::string_view> link_time, ActionCache& actions)
     -> diag::Result<std::vector<ActionResult>> {
   auto sources = ReadRuntimeSources(runtime.sources_root);
   if (!sources) {
@@ -902,11 +931,14 @@ auto CompileRuntimeSources(
         const RuntimeSource& unit = sources->translation_units[i];
         const std::filesystem::path& source = unit.path;
         std::vector<std::string> flags =
-            source.extension() == ".c" ? RuntimeCCompileFlags(host.optimization)
-                                       : DesignCompileFlags(host.optimization);
+            source.extension() == ".c"
+                ? RuntimeCCompileFlags(host.optimization, host.sanitizer)
+                : DesignCompileFlags(host.optimization, host.sanitizer);
         flags.insert(flags.end(), sources->flags.begin(), sources->flags.end());
         flags.insert(flags.end(), unit.flags.begin(), unit.flags.end());
-        flags.emplace_back(link_time);
+        if (link_time) {
+          flags.emplace_back(*link_time);
+        }
         const status::Piece piece(source.filename().string());
         Action action("compile runtime source");
         action.Input(
@@ -1109,9 +1141,8 @@ auto AssembleProject(
 
   const auto script_path = dir / "build.sh";
   if (auto r = WriteFile(
-          script_path, RenderBuildScript(
-                           host.cxx, dpi_inputs, sources.translation_units,
-                           host.optimization, host.link_time));
+          script_path,
+          RenderBuildScript(host, dpi_inputs, sources.translation_units));
       !r) {
     return r;
   }
@@ -1127,7 +1158,7 @@ auto AssembleProject(
         script_path.string(), ec.message());
   }
 
-  return ExportRuntimeTree(runtime, dir, host.link_time);
+  return ExportRuntimeTree(runtime, dir, host.link_time, host.sanitizer);
 }
 
 }  // namespace lyra::driver

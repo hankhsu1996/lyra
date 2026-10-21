@@ -1,12 +1,16 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#include "lyra/support/sanitizer.hpp"
 
 namespace lyra::driver {
 
@@ -52,11 +56,11 @@ inline constexpr std::string_view kRuntimeIncludeDir = "runtime/include";
 inline constexpr std::string_view kRuntimeLibDir = "runtime/lib";
 inline constexpr std::string_view kRuntimeLibFile = "libcpp_runtime.a";
 inline constexpr std::string_view kRuntimeCacheDir = "runtime/cache";
-// Where a project optimized at the link keeps the runtime's own sources, which
-// its compiler builds beside the design so that it optimizes the two as one
-// program, with a list of those a build compiles, each with the macros its own
-// library defines for it, and the include directories and macros every such
-// compile is told.
+// Where a project keeps the runtime's own sources, which its compiler builds
+// beside the design where it optimizes the two as one program or checks the
+// program's memory, with a list of those a build compiles, each with the macros
+// its own library defines for it, and the include directories and macros every
+// such compile is told.
 inline constexpr std::string_view kRuntimeSourceDir = "runtime/src";
 inline constexpr std::string_view kRuntimeSourceList = "sources.txt";
 inline constexpr std::string_view kRuntimeIncludeDirList = "include_dirs.txt";
@@ -132,23 +136,57 @@ inline constexpr std::string_view kLinkTimeProbe = "int main() { return 0; }\n";
 inline constexpr std::array<std::string_view, 2> kDesignCompileFlags{
     kCxxStandardFlag, kNoTypeBasedAliasingFlag};
 
-// What every compile of the design's own code is told, at `optimization`.
-[[nodiscard]] inline auto DesignCompileFlags(OptimizationLevel optimization)
+// What a host compile and a host link are told to check a program with
+// `sanitizer`: the compiler's own sanitizer, which its driver links its own
+// runtime for, and every frame kept so a report can name where each read was
+// made.
+[[nodiscard]] inline auto SanitizerCompileFlags(support::Sanitizer sanitizer)
+    -> std::vector<std::string> {
+  switch (sanitizer) {
+    case support::Sanitizer::kNone:
+      return {};
+    case support::Sanitizer::kAddress:
+      return {"-fsanitize=address", "-fno-omit-frame-pointer"};
+  }
+  std::unreachable();
+}
+[[nodiscard]] inline auto SanitizerLinkFlags(support::Sanitizer sanitizer)
+    -> std::vector<std::string> {
+  switch (sanitizer) {
+    case support::Sanitizer::kNone:
+      return {};
+    case support::Sanitizer::kAddress:
+      return {"-fsanitize=address"};
+  }
+  std::unreachable();
+}
+
+// What every compile of the design's own code is told, at `optimization` and
+// checked for `sanitizer`.
+[[nodiscard]] inline auto DesignCompileFlags(
+    OptimizationLevel optimization, support::Sanitizer sanitizer)
     -> std::vector<std::string> {
   std::vector<std::string> flags(
       kDesignCompileFlags.begin(), kDesignCompileFlags.end());
   flags.emplace_back(OptimizationFlag(optimization));
+  std::ranges::move(
+      SanitizerCompileFlags(sanitizer), std::back_inserter(flags));
   return flags;
 }
 
 // What every compile of a C source the runtime carries is told, at
-// `optimization`. The host compiler is a C++ driver, which reads a `.c` file as
-// C++ unless told its language, and nothing of how the design's own code is
-// read applies to it: it is compiled in the C standard the compiler defaults
-// to, as the runtime's own build compiles it.
-[[nodiscard]] inline auto RuntimeCCompileFlags(OptimizationLevel optimization)
+// `optimization` and checked for `sanitizer`. The host compiler is a C++
+// driver, which reads a `.c` file as C++ unless told its language, and nothing
+// of how the design's own code is read applies to it: it is compiled in the C
+// standard the compiler defaults to, as the runtime's own build compiles it.
+[[nodiscard]] inline auto RuntimeCCompileFlags(
+    OptimizationLevel optimization, support::Sanitizer sanitizer)
     -> std::vector<std::string> {
-  return {"-x", "c", std::string(OptimizationFlag(optimization))};
+  std::vector<std::string> flags{
+      "-x", "c", std::string(OptimizationFlag(optimization))};
+  std::ranges::move(
+      SanitizerCompileFlags(sanitizer), std::back_inserter(flags));
+  return flags;
 }
 
 // Where a compile is offered the prepared prelude: a header holding one include

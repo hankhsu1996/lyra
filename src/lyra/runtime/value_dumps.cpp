@@ -86,20 +86,14 @@ class NameFinder final : public Describer {
 
   void Var(const DumpEntry& entry, std::unique_ptr<DumpProbe> probe) override {
     std::string path;
-    for (const std::string& block : blocks_) {
-      path += block;
+    for (const DumpBlock* block : Enclosing()) {
+      path += block->identifier;
       path.push_back('.');
     }
     path += entry.identifier;
     if (path == name_) {
       found_ = probe->Member();
     }
-  }
-  void BeginBlock(const DumpBlock& block) override {
-    blocks_.emplace_back(block.identifier);
-  }
-  void EndBlock() override {
-    blocks_.pop_back();
   }
 
   [[nodiscard]] auto Found() const -> const void* {
@@ -108,7 +102,6 @@ class NameFinder final : public Describer {
 
  private:
   std::string_view name_;
-  std::vector<std::string> blocks_;
   const void* found_ = nullptr;
 };
 

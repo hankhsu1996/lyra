@@ -327,13 +327,106 @@ INSTANTIATE_TEST_SUITE_P(
         testing::Values(Builder::kRecipe, Builder::kLyra)),
     LinkTimeRefusalName);
 
+// A project built to check its memory compiles the design and the runtime with
+// its own compiler's sanitizer, from its recipe and from the build Lyra runs
+// itself, and the program ends at the first read of storage that has ended,
+// with a report naming where it was freed: here the runtime copying text a
+// foreign function freed. Before that the design waits under a foreign call,
+// which runs on a stack of its own, so a switch the check mistook for a fault
+// would be the report printed instead. The execution backend's own check is
+// held to the same program.
+TEST(
+    LyraEmittedProject,
+    AProgramBuiltToCheckItsMemoryReportsAReadOfFreedStorage) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto sh_or = lyra::driver::FindOnPath("sh");
+  ASSERT_TRUE(sh_or.has_value()) << sh_or.error().Text();
+
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  std::ofstream(src) << "module Test;\n"
+                     << "  import \"DPI-C\" context task pause();\n"
+                     << "  import \"DPI-C\" function string gone();\n"
+                     << "  export \"DPI-C\" task wait_a_step;\n"
+                     << "  task wait_a_step();\n"
+                     << "    #1;\n"
+                     << "  endtask\n"
+                     << "  initial begin\n"
+                     << "    string text;\n"
+                     << "    pause();\n"
+                     << "    text = gone();\n"
+                     << "    $display(\"read %0d characters\", text.len());\n"
+                     << "  end\n"
+                     << "endmodule\n";
+  const auto foreign = *tmp_or / "foreign.c";
+  std::ofstream(foreign)
+      << "#include <stdlib.h>\n"
+      << "#include <string.h>\n"
+      << "#include \"dpi.h\"\n"
+      << "int pause(void) {\n"
+      << "  return wait_a_step();\n"
+      << "}\n"
+      << "const char* gone(void) {\n"
+      << "  char* text = malloc(64);\n"
+      << "  strcpy(text, \"text the foreign side has already freed\");\n"
+      << "  free(text);\n"
+      << "  return text;\n"
+      << "}\n";
+  const auto reports_the_read = [](const lyra::test::ProcessOutcome& ran) {
+    return ran.termination == lyra::test::TerminationKind::kExitedNonZero &&
+           ran.stderr_text.find(
+               "ERROR: AddressSanitizer: heap-use-after-free") !=
+               std::string::npos &&
+           ran.stderr_text.find("freed by thread") != std::string::npos;
+  };
+
+  const auto out_dir = *tmp_or / "out";
+  const std::vector<std::string> emit = {
+      "emit",      "cpp", "--sanitize",     "address",    "--top",
+      "Test",      "-o",  out_dir.string(), "--dpi-link", foreign.string(),
+      src.string()};
+  const auto emitted = RunChildProcess(lyra, emit, 120s);
+  ASSERT_EQ(emitted.exit_code, 0) << emitted.stderr_text;
+  const std::vector<std::string> recipe = {
+      "-c", "cd '" + out_dir.string() + "' && sh build.sh -j 0"};
+  const auto built = RunChildProcess(*sh_or, recipe, 600s);
+  ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
+  const auto ran = RunChildProcess(out_dir / "program", {}, 30s);
+  EXPECT_TRUE(reports_the_read(ran)) << "recipe: " << ran.stderr_text;
+
+  const auto program = *tmp_or / "program";
+  const std::vector<std::string> build = {
+      "build",
+      "--backend",
+      "cpp",
+      "--sanitize",
+      "address",
+      "-j",
+      "0",
+      "--top",
+      "Test",
+      "--cache-dir",
+      (*tmp_or / "cache").string(),
+      "-o",
+      program.string(),
+      "--dpi-link",
+      foreign.string(),
+      src.string()};
+  const auto in_process = RunChildProcess(lyra, build, 600s);
+  ASSERT_EQ(in_process.exit_code, 0) << in_process.stderr_text;
+  const auto ran_in_process = RunChildProcess(program, {}, 30s);
+  EXPECT_TRUE(reports_the_read(ran_in_process))
+      << "in-process: " << ran_in_process.stderr_text;
+}
+
 // Nothing compiled in advance decides whether a build succeeds, at either thing
 // that builds a design. The project's recipe prepares a header, and is handed
 // it back after every header's timestamp has moved under it, which is what a
 // checkout leaves, and what a compiler judging by timestamps would refuse. The
-// in-process build
-// is handed back a prepared header that is not one at all. Both still owe a
-// program. The timestamps are moved here by hand because Lyra no longer moves
+// in-process build is handed back a prepared header that is not one at all.
+// Both still owe a program. The timestamps are moved here by hand because Lyra no longer moves
 // them itself and a checkout is not something a test can stage.
 TEST(LyraEmittedProject, BuildsEvenWhenThePrecompiledHeaderIsRefused) {
   const auto lyra = ResolveLyra();

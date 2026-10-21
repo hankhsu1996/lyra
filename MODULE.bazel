@@ -93,7 +93,10 @@ clang.toolchain(
         "https://github.com/hankhsu1996/lyra-toolchain/releases/download/clang-{0}/clang-{0}-linux-x64.tar.zst".format(LLVM_RELEASE),
     ]},
 )
-use_repo(clang, "clang_toolchain", "runtime_clang_toolchain")
+
+# The runtime's release also supplies the address sanitizer's runtime, which a
+# program whose code that release instrumented has to link.
+use_repo(clang, "clang_toolchain", "runtime_clang_toolchain", "runtime_clang_toolchain_llvm")
 
 register_toolchains("@clang_toolchain//:all")
 

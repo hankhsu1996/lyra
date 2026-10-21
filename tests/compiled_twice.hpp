@@ -251,7 +251,10 @@ auto RunOverCorpus(
     const std::string name = test_case.id.substr(split + 1);
     testing::RegisterTest(
         group.c_str(), name.c_str(), nullptr, nullptr, __FILE__, __LINE__,
-        [&test_case, make]() -> testing::Test* { return make(test_case); });
+        // gtest takes ownership of the test a factory hands it.
+        [&test_case, make]() -> testing::Test* {
+          return make(test_case).release();
+        });
   }
 
   const int failures = RUN_ALL_TESTS();

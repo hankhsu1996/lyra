@@ -2052,7 +2052,7 @@ using lyra::runtime::RaiseDeclinedDeparture;
 using lyra::runtime::Read;
 using lyra::runtime::ReadReport;
 using lyra::runtime::RealTimeInUnit;
-using lyra::runtime::ReceiveDeparture;
+using lyra::runtime::ReceiveDepartureOf;
 using lyra::runtime::RefArmSampling;
 using lyra::runtime::RefBeginTakeover;
 using lyra::runtime::RefDriveTakeover;
@@ -2810,8 +2810,7 @@ auto lyra_rt_receive_departure(void* exception) -> void* {
   // The landing is handed what the unwinder carries, not the effect itself;
   // receiving is what turns one into the other, and it is the point after which
   // this departure is this landing's to finish or to decline.
-  abi::__cxa_begin_catch(exception);
-  return ReceiveDeparture().target;
+  return ReceiveDepartureOf(exception).target;
 }
 
 void lyra_rt_finish_departure() {

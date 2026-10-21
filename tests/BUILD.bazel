@@ -737,12 +737,21 @@ cc_test(
 cc_test(
     name = "llvm_tests",
     srcs = ["conformance_test.cpp"],
+    # Where the build checks Lyra's own memory, every program the corpus builds
+    # is checked as well, so one scheduled run answers whether anything reads
+    # storage that has ended, in the compiler or in what it built.
     args = [
         "--path",
         "llvm",
         "--workers",
         str(_HOST_COMPILES_AT_ONCE),
-    ],
+    ] + select({
+        "//tools/bazel:under_address_sanitizer": [
+            "--sanitize",
+            "address",
+        ],
+        "//conditions:default": [],
+    }),
     copts = LYRA_COPTS,
     data = CONFORMANCE_DATA,
     shard_count = 48,

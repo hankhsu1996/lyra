@@ -327,6 +327,19 @@ void RuntimeProcess::SettleTerminated(
   owned_by_->Ended(*this, services);
 }
 
+auto RuntimeProcess::Run(RuntimeEffects& effects, Activation* activation)
+    -> bool {
+  // Taken before the resume, since `activation` may be an enabled task's frame
+  // that is destroyed as control returns up the enable chain.
+  const std::shared_ptr<RuntimeProcess> process =
+      activation->Process().shared_from_this();
+  if (!process->ResumeWith(effects, activation)) {
+    return false;
+  }
+  ReleaseTerminatedLineage(*process);
+  return true;
+}
+
 auto RuntimeProcess::ResumeWith(RuntimeEffects& effects, Activation* activation)
     -> bool {
   if (execution_state_ == ProcessExecutionState::kTerminated) {

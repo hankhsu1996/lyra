@@ -159,12 +159,12 @@ passes.
 
 The bodies of tests that keep a record, each with the question it asks:
 
-| Question                                     | Designs               | Record, per path                     |
-| -------------------------------------------- | --------------------- | ------------------------------------ |
-| What does a program do?                      | `tests/conformance/`  | `<path>.yaml`, `<path>.defects.yaml` |
-| What does compiling cost as a design grows?  | `tests/growth/`       | `<path>.growth.yaml`                 |
-| Which units does an edit make again?         | `tests/incremental/`  | `<path>.incremental.yaml`            |
-| How far does a design written elsewhere get? | the benchmark suite's | `<path>.external_designs.yaml`       |
+| Question                                     | Designs               | Record, per path                                                    |
+| -------------------------------------------- | --------------------- | ------------------------------------------------------------------- |
+| What does a program do?                      | `tests/conformance/`  | `<path>.yaml`, `<path>.defects.yaml`, `<path>.address.defects.yaml` |
+| What does compiling cost as a design grows?  | `tests/growth/`       | `<path>.growth.yaml`                                                |
+| Which units does an edit make again?         | `tests/incremental/`  | `<path>.incremental.yaml`                                           |
+| How far does a design written elsewhere get? | the benchmark suite's | `<path>.external_designs.yaml`                                      |
 
 The second and third are the same kind of question along two axes: a cost no program can observe and
 no single compile shows, measured by compiling twice and holding one run to the other.

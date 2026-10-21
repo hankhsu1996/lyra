@@ -7,6 +7,7 @@
 
 #include "lyra/backend/llvm/emit.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/support/sanitizer.hpp"
 
 namespace lyra::backend::llvm_backend {
 
@@ -33,9 +34,11 @@ enum class ModuleOutput : std::uint8_t {
 // suspending body executable: such a body reaches here as an ordinary function
 // carrying coroutine intrinsics, and it is the coroutine passes that derive its
 // frame and resume state. So nothing here names an optimization pass, and an
-// unoptimized object is still a correct one.
+// unoptimized object is still a correct one. A module compiled for `sanitizer`
+// is checked as clang checks a translation unit compiled for it.
 auto CompileModule(
     EmittedModule module, const std::filesystem::path& output,
-    llvm::OptimizationLevel level, ModuleOutput form) -> diag::Result<void>;
+    llvm::OptimizationLevel level, ModuleOutput form,
+    support::Sanitizer sanitizer) -> diag::Result<void>;
 
 }  // namespace lyra::backend::llvm_backend

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <filesystem>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <string>
@@ -16,6 +17,7 @@
 #include "lyra/driver/project_layout.hpp"
 #include "lyra/driver/subprocess.hpp"
 #include "lyra/status/status.hpp"
+#include "lyra/support/sanitizer.hpp"
 
 namespace lyra::driver {
 
@@ -76,18 +78,23 @@ auto WriteDpiSurface(
   return CopyFile(runtime.svdpi_header, dir / kSvdpiHeader);
 }
 
-auto ForeignLanguageFlags(const DpiLinkInput& input)
-    -> std::vector<std::string> {
-  if (input.compile_as_c) {
-    return {"-x", "c"};
-  }
-  return {std::string(kCxxStandardFlag), "-x", "c++"};
+auto ForeignCompileFlags(
+    const DpiLinkInput& input, OptimizationLevel optimization,
+    support::Sanitizer sanitizer) -> std::vector<std::string> {
+  std::vector<std::string> flags =
+      input.compile_as_c ? std::vector<std::string>{"-x", "c"}
+                         : std::vector<std::string>{
+                               std::string(kCxxStandardFlag), "-x", "c++"};
+  flags.emplace_back(OptimizationFlag(optimization));
+  std::ranges::move(
+      SanitizerCompileFlags(sanitizer), std::back_inserter(flags));
+  return flags;
 }
 
 auto CompileDpiObjects(
     std::span<const DpiLinkInput> inputs, const std::filesystem::path& cxx,
-    OptimizationLevel optimization, std::size_t width,
-    const std::filesystem::path& header_dir,
+    OptimizationLevel optimization, support::Sanitizer sanitizer,
+    std::size_t width, const std::filesystem::path& header_dir,
     const std::filesystem::path& work_dir)
     -> diag::Result<std::vector<std::filesystem::path>> {
   std::vector<std::filesystem::path> objects;
@@ -110,11 +117,11 @@ auto CompileDpiObjects(
     // are already required to differ in; taking the stem instead would let one
     // source and another of a different language overwrite each other.
     objects.push_back(work_dir / (input.source.filename().string() + ".o"));
-    std::vector<std::string> args = ForeignLanguageFlags(input);
+    std::vector<std::string> args =
+        ForeignCompileFlags(input, optimization, sanitizer);
     args.insert(
-        args.end(), {std::string(OptimizationFlag(optimization)), "-c",
-                     input.source.string(), "-I", header_dir.string(), "-o",
-                     objects.back().string()});
+        args.end(), {"-c", input.source.string(), "-I", header_dir.string(),
+                     "-o", objects.back().string()});
     requests.push_back(ProcessRequest{.exe = cxx, .args = std::move(args)});
     names.push_back(input.source.filename().string());
   }

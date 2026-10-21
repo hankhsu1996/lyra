@@ -18,7 +18,14 @@ compiler that compiles the design, so the runtime ships in a form each such comp
 - **Its sources ship beside it, with how each is compiled.** The C++ backend's design is compiled by
   the user's compiler, of any release or family, and source is the one form every such compiler
   reads. They are stated by the runtime's own build -- the translation units, their include
-  directories and their macros -- so nothing that compiles them restates any of it.
+  directories and their macros -- so nothing that compiles them restates any of it. The same
+  compiler builds them where it checks a program for its sanitizer.
+- **A second build of the library is compiled for the address sanitizer, beside that release's
+  sanitizer runtime.** The execution backend instruments a design's code with the LLVM release Lyra
+  links, and instrumented code names its runtime's version, so a checked program links both
+  ([../decisions/a-program-is-checked-by-the-sanitizer-of-whoever-instrumented-it.md](../decisions/a-program-is-checked-by-the-sanitizer-of-whoever-instrumented-it.md)).
+  It carries machine code alone, since the release refuses to instrument a fat object's modules a
+  second time.
 
 ## Two consumers of the runtime
 

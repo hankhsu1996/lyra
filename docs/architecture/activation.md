@@ -97,9 +97,11 @@ the awaiter consumes, not of the scheduler.
    task enable makes the enabler all three; a fork branch separates them -- attached to the spawning
    process's lineage, which determines storage ownership and cancellation membership, while its
    termination is what the join of the fork statement that spawned it waits for, with no single
-   resuming continuation. _Consequence: these relations are not one pointer; a model that collapses
-   them cannot express fork or selective cancellation. The lineage edge realizes two of them; the
-   join realizes the third._
+   resuming continuation. Ownership is shared, and whatever runs an execution holds a share for the
+   whole step. The step's own ending can drop every other share, as the last initial procedure of a
+   program does when it ends the program's threads (LRM 24.3). _Consequence: these relations are not
+   one pointer; a model that collapses them cannot express fork or selective cancellation. The
+   lineage edge realizes two of them; the join realizes the third._
 
 4. **Every external reference to a parked activation is a membership that ends with its owner, and a
    frame is destroyed only after no scheduler structure can name its token.** Each place that can

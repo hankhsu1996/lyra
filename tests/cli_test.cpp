@@ -2114,6 +2114,92 @@ TEST(LyraBuild, TheLlvmProgramRunsOnItsOwn) {
   }
 }
 
+// A program built to check its memory ends at the first read of storage that
+// has ended, and the report names where it was freed and where it was read.
+// Here the reader is the runtime, copying text a foreign function returns
+// after freeing it. Before that the design waits under a foreign call, which
+// runs on a stack of its own; the check stops at its first report, so a switch
+// it mistook for a fault would be the report printed instead. Built without the
+// check, the same program runs to its end.
+TEST(LyraBuild, AProgramBuiltToCheckItsMemoryReportsAReadOfFreedStorage) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  const auto src = *tmp_or / "test.sv";
+  std::ofstream(src) << "module Test;\n"
+                     << "  import \"DPI-C\" context task pause();\n"
+                     << "  import \"DPI-C\" function string gone();\n"
+                     << "  export \"DPI-C\" task wait_a_step;\n"
+                     << "  task wait_a_step();\n"
+                     << "    #1;\n"
+                     << "  endtask\n"
+                     << "  initial begin\n"
+                     << "    string text;\n"
+                     << "    pause();\n"
+                     << "    $display(\"waited at %0t\", $time);\n"
+                     << "    text = gone();\n"
+                     << "    $display(\"read %0d characters\", text.len());\n"
+                     << "  end\n"
+                     << "endmodule\n";
+  const auto foreign = *tmp_or / "foreign.c";
+  std::ofstream(foreign)
+      << "#include <stdlib.h>\n"
+      << "#include <string.h>\n"
+      << "#include \"dpi.h\"\n"
+      << "int pause(void) {\n"
+      << "  return wait_a_step();\n"
+      << "}\n"
+      << "const char* gone(void) {\n"
+      << "  char* text = malloc(64);\n"
+      << "  strcpy(text, \"text the foreign side has already freed\");\n"
+      << "  free(text);\n"
+      << "  return text;\n"
+      << "}\n";
+
+  const auto program = *tmp_or / "program";
+  const auto build = [&](std::vector<std::string> how) {
+    std::vector<std::string> args = {
+        "build",          "--backend",     "llvm",
+        "--top",          "Test",          "-o",
+        program.string(), "--cache-dir",   (*tmp_or / "cache").string(),
+        "--dpi-link",     foreign.string()};
+    args.insert(args.end(), how.begin(), how.end());
+    args.push_back(src.string());
+    return RunChildProcess(lyra, args, 180s);
+  };
+
+  for (const auto& [label, how] :
+       {std::pair{"checked", std::vector<std::string>{"--sanitize", "address"}},
+        std::pair{
+            "checked, -O2 --lto",
+            std::vector<std::string>{
+                "--sanitize", "address", "-O2", "--lto"}}}) {
+    const auto built = build(how);
+    ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
+        << label << ": " << built.stdout_text << built.stderr_text;
+    const auto ran = RunChildProcess(program, {}, 60s);
+    EXPECT_EQ(ran.termination, TerminationKind::kExitedNonZero)
+        << label << ": " << ran.stdout_text << ran.stderr_text;
+    EXPECT_NE(
+        ran.stderr_text.find("ERROR: AddressSanitizer: heap-use-after-free"),
+        std::string::npos)
+        << label << ": " << ran.stderr_text;
+    EXPECT_NE(ran.stderr_text.find("freed by thread"), std::string::npos)
+        << label << ": " << ran.stderr_text;
+  }
+
+  const auto built = build({});
+  ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
+      << built.stdout_text << built.stderr_text;
+  const auto ran = RunChildProcess(program, {}, 60s);
+  EXPECT_EQ(ran.termination, TerminationKind::kExitedNormally)
+      << ran.stdout_text << ran.stderr_text;
+  EXPECT_NE(ran.stdout_text.find("waited at 1"), std::string::npos)
+      << ran.stdout_text;
+}
+
 // A value ends with the expression that made it, so what a running program
 // holds is bounded by what it can still read and not by how much it has
 // computed. A process that never waits makes a million calls here, each

@@ -27,6 +27,7 @@
 #include <gtest/gtest.h>
 #include <iterator>
 #include <map>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -219,8 +220,7 @@ TEST(RepeatableEmission, ADesignWrittenToShowAnOrderingWritesOneProgram) {
 auto main(int argc, char** argv) -> int {
   return lyra::test::RunOverCorpus(
       argc, argv, "a written program",
-      [](const ConformanceCase& test_case) -> testing::Test* {
-        // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
-        return new RepeatableEmissionTest(test_case);
+      [](const ConformanceCase& test_case) -> std::unique_ptr<testing::Test> {
+        return std::make_unique<RepeatableEmissionTest>(test_case);
       });
 }

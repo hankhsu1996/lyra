@@ -1926,10 +1926,12 @@ auto CompileObject(
   action.InputExecutable("code generator", build.code_generator);
   action.Input("output", std::format("{}", std::to_underlying(form)));
   action.Input("level", driver::OptimizationFlag(build.optimization));
+  action.Input(
+      "sanitizer", std::format("{}", std::to_underlying(build.sanitizer)));
   return actions.Execute(
       action, [&](const std::filesystem::path& output) -> diag::Result<void> {
         return backend::llvm_backend::CompileModule(
-            std::move(module), output, level, form);
+            std::move(module), output, level, form, build.sanitizer);
       });
 }
 

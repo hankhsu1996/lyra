@@ -91,8 +91,25 @@ class Describer {
 
   virtual void Var(
       const DumpEntry& entry, std::unique_ptr<DumpProbe> probe) = 0;
-  virtual void BeginBlock(const DumpBlock& block) = 0;
-  virtual void EndBlock() = 0;
+  void BeginBlock(const DumpBlock& block);
+  void EndBlock();
+
+ protected:
+  // The named scopes around what is being described, outermost first.
+  [[nodiscard]] auto Enclosing() const -> std::span<const DumpBlock* const> {
+    return enclosing_;
+  }
+
+ private:
+  // A named scope was entered, which is now the innermost of `Enclosing`, or
+  // the innermost is about to be left. A describer that records nothing of
+  // the scopes themselves has nothing to do on either.
+  virtual void Entered() {
+  }
+  virtual void Leaving() {
+  }
+
+  std::vector<const DumpBlock*> enclosing_;
 };
 
 // One thing a running dump records: enrolled on its place for as long as the
