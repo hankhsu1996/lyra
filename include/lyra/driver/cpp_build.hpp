@@ -180,12 +180,12 @@ auto AssembleProject(
     std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<void>;
 
 // The digest of the prelude's input files as `cxx` reads them at
-// `optimization` and checked for `sanitizer`: every file the compiler lists as the prelude's dependencies,
-// the C++ library's and the system's among them, by their content. What an
-// emitted file includes of the runtime is the prelude or a header the prelude
-// reaches, so this is everything such a compile reads beyond the project's own
-// files. A compiler that cannot compile the prelude can compile nothing a
-// design emits, and is reported here in its own words.
+// `optimization` and checked for `sanitizer`: every file the compiler lists as
+// the prelude's dependencies, the C++ library's and the system's among them, by
+// their content. What an emitted file includes of the runtime is the prelude or
+// a header the prelude reaches, so this is everything such a compile reads
+// beyond the project's own files. A compiler that cannot compile the prelude
+// can compile nothing a design emits, and is reported here in its own words.
 auto DigestOfPreludeInputs(
     const std::filesystem::path& cxx, const std::filesystem::path& include_root,
     OptimizationLevel optimization, support::Sanitizer sanitizer)

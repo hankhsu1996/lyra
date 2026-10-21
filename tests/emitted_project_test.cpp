@@ -426,8 +426,8 @@ TEST(
 // it back after every header's timestamp has moved under it, which is what a
 // checkout leaves, and what a compiler judging by timestamps would refuse. The
 // in-process build is handed back a prepared header that is not one at all.
-// Both still owe a program. The timestamps are moved here by hand because Lyra no longer moves
-// them itself and a checkout is not something a test can stage.
+// Both still owe a program. The timestamps are moved here by hand because Lyra
+// no longer moves them itself and a checkout is not something a test can stage.
 TEST(LyraEmittedProject, BuildsEvenWhenThePrecompiledHeaderIsRefused) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();

@@ -803,9 +803,8 @@ auto CompileTranslationUnits(
     const RuntimeLocation& runtime, const HostBuild& host,
     std::optional<std::string_view> link_time, ActionCache& actions)
     -> diag::Result<std::vector<ActionResult>> {
-  const auto prelude_inputs =
-      DigestOfPreludeInputs(
-          host.cxx, runtime.include_root, host.optimization, host.sanitizer);
+  const auto prelude_inputs = DigestOfPreludeInputs(
+      host.cxx, runtime.include_root, host.optimization, host.sanitizer);
   if (!prelude_inputs) {
     return std::unexpected(prelude_inputs.error());
   }
