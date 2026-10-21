@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <vector>
 
 #include "lyra/mir/compilation_unit.hpp"
@@ -17,5 +18,11 @@ namespace lyra::mir {
 // unit leaves behind already says.
 [[nodiscard]] auto CountsOf(const CompilationUnit& unit)
     -> std::vector<support::Count>;
+
+// How deep the blocks of `unit`'s bodies nest, at the deepest. Every consumer
+// walks a body by its nesting and a target compiler bounds how deeply text may
+// nest, so a depth that follows how much the source wrote rather than how
+// deeply it nested is what breaks a build.
+[[nodiscard]] auto NestingDepthOf(const CompilationUnit& unit) -> std::uint64_t;
 
 }  // namespace lyra::mir

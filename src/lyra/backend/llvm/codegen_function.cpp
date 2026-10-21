@@ -498,6 +498,23 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
                 blocks_[br.if_false.value]);
             return {};
           },
+          [&](const lir::SwitchTerm& s) -> diag::Result<void> {
+            auto discriminant = LowerOperand(s.discriminant);
+            if (!discriminant) {
+              return std::unexpected(std::move(discriminant.error()));
+            }
+            auto* const type =
+                llvm::cast<llvm::IntegerType>((*discriminant)->getType());
+            llvm::SwitchInst* const dispatch = builder_.CreateSwitch(
+                *discriminant, blocks_[s.otherwise.value],
+                static_cast<unsigned>(s.targets.size()));
+            for (const lir::SwitchTarget& target : s.targets) {
+              dispatch->addCase(
+                  llvm::ConstantInt::getSigned(type, target.value),
+                  blocks_[target.target.value]);
+            }
+            return {};
+          },
           [&](const lir::SuspendTerm& s) -> diag::Result<void> {
             // The wakeup source was registered by the calls preceding this
             // terminator; the suspension only hands control back and names the

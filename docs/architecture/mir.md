@@ -15,8 +15,8 @@ MIR's vocabulary is what those languages share:
 - A type system covering value types, object types, and composing wrappers (owning pointer, vector).
 - Object-oriented features: classes with members, member access through an explicit receiver
   expression.
-- Structured control flow: `if`, loop, sequence, return; a region whose body can be left from
-  anywhere within it -- including from a callable it invoked -- and whose continuation is the
+- Structured control flow: `if`, switch, loop, sequence, return; a region whose body can be left
+  from anywhere within it -- including from a callable it invoked -- and whose continuation is the
   statement after it, together with the raise that sends an effect the region declines on to the one
   that does claim it; and a body paired with a cleanup that runs on every way out of it.
 
@@ -121,8 +121,11 @@ what the construct means.
 - Lightweight structured control flow inside a callable body: `if`, loop, sequence, the region that
   consumes a control effect naming it, the raise that passes one it declines outward, and the body
   paired with a cleanup that runs on every way out of it -- which is how an extent whose exit is an
-  effect is stated, rather than by relying on a target language to run code at scope exit. No basic
-  blocks at this layer.
+  effect is stated, rather than by relying on a target language to run code at scope exit. And the
+  switch: a machine integer and the values each case is taken at, every value at most once, and what
+  runs where none is -- clang's `SwitchStmt` and rustc's `SwitchInt`. A loop, and a block standing
+  as a statement, may carry a label, and every `break` names the one it leaves, as rustc's THIR
+  names the scope every `break` leaves. No basic blocks at this layer.
 - A primitive expression set: literals, references, unary / binary / conditional operators, calls,
   conversions, closures, the block expression -- a sequence of statements and the value it ends
   with, which is how an evaluation of several steps stands where only an expression may, sequencing
@@ -393,7 +396,8 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
 - A MIR node that preserves SystemVerilog syntactic sugar as an opaque payload: a `CaseStmt` /
   `CaseInsideStmt` in MIR, an `InsideExpr` / `CasezExpr` / `CasexExpr` in MIR's expression set, a
   `ForeachStmt` in MIR. Sugar of this kind is desugared to primitives upstream. (MIR's vocabulary is
-  the generic-language vocabulary, not the source language's.)
+  the generic-language vocabulary, not the source language's.) The switch is not this: it is a
+  dispatch on a machine integer's value, which carries no case equality, no wildcard and no order.
 - A MIR node kind invented to express a backend-side storage realization or runtime library wrapper
   (a `ReadCell` / `WriteCell` / `MutateCell` node for one backend's observable cell, an
   `AcquireLock` / `ReleaseLock` node for some scheduling discipline). Backend storage realizations
@@ -558,12 +562,16 @@ words, so it is the search `||` makes over the negated operand and has no shape 
 `a <-> b` evaluates both operands and is an operation over two values like any other. So no operator
 of the expression set skips an operand and no backend's own rules decide whether one runs. Where
 nothing can be unknown a selection and a search are the conditional alone, the next arm or operand
-standing as its third operand. Either way a chain the source writes flat -- three hundred operands
-of `||`, a conditional whose third operand is a conditional three hundred times over -- is a run of
-steps beside each other, as deep as one of two: a target compiler bounds how deeply text may nest,
-and a program the language accepts has to be one the target accepts. Which shape a source-level
-construct takes follows from whether its predicates can be unknown and is settled at HIR-to-MIR, so
-no consumer derives it. A write yields nothing, as an assignment does in Rust's MIR: what an
+standing as its third operand, so such a chain is as deep as the source nests it, which the front
+end bounds. What the source writes as a list rather than nested -- the items of a case statement,
+the labels of one item, a generate case's items -- stands side by side, as deep for thirty thousand
+items as for two, because a target compiler bounds how deeply text may nest and a program the
+language accepts has to be one the target accepts: a switch over the subject's value where every
+label is a value known before the run and compared as `case` compares, and otherwise a block whose
+arms are tried one after another, each test a step that runs while none before it held and each
+selected arm leaving the block by a break naming it. Which shape each takes is settled at HIR-to-MIR
+-- from whether its predicates can be unknown, or whether its labels are values known before the run
+-- so no consumer derives it. A write yields nothing, as an assignment does in Rust's MIR: what an
 assignment yields where the source reads it (LRM 11.3.6) is what it stored, which the lowering holds
 in a local and reads, so no backend's own rule for the value of an assignment -- C++'s is the target
 itself -- decides it. An assignment operator and an increment (LRM 11.4.1, 11.4.2) are no write of

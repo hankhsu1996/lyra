@@ -104,10 +104,11 @@ two ways.
    because a target compiler bounds how deeply text may nest: a chain the program states flat -- a
    long sum, a run of operators of which the target has some as operators and the rest as functions
    of the value -- has to reach the target flat, or a program the language accepts is one the target
-   refuses. The items of a case reach it as an `else if` per item, which opens no bracket per item
-   but is still one selection statement inside another; a target's parser recurses on that, so a
-   case of tens of thousands of items is deep in the target, as it is in MIR. Each choice reads only
-   the node's kind and its own children, so they are spellings.
+   refuses. An `if` in the `else` of another reaches it as `else if`, which opens no bracket per
+   link, and is as deep as the source nested it. A `break` naming a statement reaches C++ as a
+   `goto` to a label after that statement, since C++'s own `break` would leave the nearest `switch`
+   rather than the loop it names. Each choice reads only the node's kind and its own children, so
+   they are spellings.
 
    Different syntactic shape is therefore not the test, and reading it as one condemns the
    mechanical cases. A member reached through a pointer and one reached inline, a declaration that

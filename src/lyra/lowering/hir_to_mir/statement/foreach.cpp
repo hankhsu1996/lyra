@@ -173,21 +173,21 @@ struct Level {
 // A `foreach` while its loops are built: the iterated dimensions outermost
 // first, and the array as a path settled in the implicit block around the
 // loops (LRM 12.7.3), absent where no dimension reads the array while the
-// program runs. `leaves` is the label the outermost loop carries, which a
-// `break` in the body names to leave every dimension (LRM 12.8).
+// program runs. `leaves` is the outermost loop, which a `break` in the body
+// names to leave every dimension (LRM 12.8).
 struct Nest {
   ProcessLowerer* process = nullptr;
   const hir::ForeachStmt* stmt = nullptr;
   std::vector<Level> levels;
   std::optional<SettledPath> array;
-  mir::LoopLabelId leaves;
+  BreakTarget* leaves = nullptr;
 };
 
 // The source's body, lowered into a scope of its own.
 auto LowerBody(const Nest& nest, const WalkFrame& frame)
     -> diag::Result<mir::Block> {
   return LowerStmtIntoChildScope(
-      *nest.process, frame.WithBreakLeaving(nest.leaves), nest.stmt->body);
+      *nest.process, frame.WithBreakLeaving(*nest.leaves), nest.stmt->body);
 }
 
 // The loop variable of `level`, as the path to the storage its declaration gave
@@ -236,11 +236,11 @@ auto IteratedValue(const Nest& nest, const WalkFrame& frame, std::size_t depth)
 // The loop of the level at `depth`, standing in the frame's block: its body is
 // the loop of the level inside it, and the innermost level's body is the
 // source's own. A count the loop samples ahead of itself is appended to that
-// block, whose statements therefore run before the returned loop. `break_label`
-// is the label this loop carries, which only the outermost does.
+// block, whose statements therefore run before the returned loop. Only the
+// outermost loop is one a break may name.
 auto BuildLevelLoopStmt(
-    const Nest& nest, const WalkFrame& frame, std::size_t depth,
-    std::optional<mir::LoopLabelId> break_label) -> diag::Result<mir::Stmt> {
+    const Nest& nest, const WalkFrame& frame, std::size_t depth)
+    -> diag::Result<mir::Stmt> {
   ProcessLowerer& process = *nest.process;
   mir::CompilationUnit& unit = process.Owner().Unit();
   mir::Block& block = *frame.current_block;
@@ -251,12 +251,13 @@ auto BuildLevelLoopStmt(
     if (!body) return std::unexpected(std::move(body.error()));
     pass = *std::move(body);
   } else {
-    auto inner = BuildLevelLoopStmt(
-        nest, frame.WithBlock(&pass), depth + 1, std::nullopt);
+    auto inner = BuildLevelLoopStmt(nest, frame.WithBlock(&pass), depth + 1);
     if (!inner) return std::unexpected(std::move(inner.error()));
     pass.AppendStmt(*std::move(inner));
   }
   const mir::BlockId body_scope = block.child_scopes.Add(std::move(pass));
+  const std::optional<mir::LabelId> break_label =
+      depth == 0 ? nest.leaves->Label() : std::nullopt;
 
   const Level& level = nest.levels[depth];
   const auto require_int_index = [&] {
@@ -380,12 +381,13 @@ auto LowerForeachStmt(
         SettledForRead(unit_lowerer, wrapper_frame, *std::move(path));
   }
 
+  BreakTarget leaves(*frame.bindings);
   const Nest nest{
       .process = &process,
       .stmt = &f,
       .levels = std::move(levels),
       .array = std::move(settled_array),
-      .leaves = process.NextLoopLabel()};
+      .leaves = &leaves};
 
   if (nest.levels.empty()) {
     // A list naming no variable iterates no dimension, so the body runs once.
@@ -397,9 +399,9 @@ auto LowerForeachStmt(
     wrapper.AppendStmt(BuildCountingLoopStmt(
         unit, wrapper_frame, wrapper, mir::BuildIntLiteral(unit, wrapper, 1),
         wrapper_frame.bindings->DeclareAnonymous(unit.builtins.int_type),
-        body_scope, nest.leaves));
+        body_scope, leaves.Label()));
   } else {
-    auto outermost = BuildLevelLoopStmt(nest, wrapper_frame, 0, nest.leaves);
+    auto outermost = BuildLevelLoopStmt(nest, wrapper_frame, 0);
     if (!outermost) return std::unexpected(std::move(outermost.error()));
     wrapper.AppendStmt(*std::move(outermost));
   }

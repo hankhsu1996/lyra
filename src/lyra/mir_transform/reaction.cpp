@@ -78,14 +78,21 @@ auto StopsWithin(const mir::Block& block, std::optional<mir::ExprId> allowed)
 }
 
 // Whether one of `stmts`, statements of `block`, leaves the stretch they make
-// up other than by reaching its end: a return, or a break or continue meant
-// for a loop the stretch is the body of rather than for one nested inside it.
+// up other than by reaching its end: a return, a break naming a statement the
+// stretch does not hold, or a continue meant for a loop the stretch is the body
+// of rather than for one nested inside it. `held` are the labels of the
+// statements around `block` that the stretch holds.
 auto LeavesEarly(
     const mir::Block& block, std::span<const mir::StmtId> stmts,
-    bool in_inner_loop) -> bool {
-  const auto child = [&](mir::BlockId id, bool inner) {
+    const std::vector<mir::LabelId>& held, bool in_inner_loop) -> bool {
+  const auto child = [&](mir::BlockId id, bool inner,
+                         std::optional<mir::LabelId> label) {
+    std::vector<mir::LabelId> within = held;
+    if (label.has_value()) {
+      within.push_back(*label);
+    }
     const mir::Block& scope = block.child_scopes.Get(id);
-    return LeavesEarly(scope, scope.root_stmts, inner);
+    return LeavesEarly(scope, scope.root_stmts, within, inner);
   };
   return std::ranges::any_of(stmts, [&](mir::StmtId id) {
     return std::visit(
@@ -95,26 +102,42 @@ auto LeavesEarly(
             [](const mir::ExprStmt&) { return false; },
             [](const mir::RaiseStmt&) { return false; },
             [&](const mir::BlockStmt& s) {
-              return child(s.scope, in_inner_loop);
+              return child(s.scope, in_inner_loop, s.break_label);
             },
             [&](const mir::TryStmt& s) {
-              return child(s.body, in_inner_loop) ||
-                     child(s.handler, in_inner_loop);
+              return child(s.body, in_inner_loop, std::nullopt) ||
+                     child(s.handler, in_inner_loop, std::nullopt);
             },
             [&](const mir::FinallyStmt& s) {
-              return child(s.body, in_inner_loop) ||
-                     child(s.cleanup, in_inner_loop);
+              return child(s.body, in_inner_loop, std::nullopt) ||
+                     child(s.cleanup, in_inner_loop, std::nullopt);
             },
             [&](const mir::IfStmt& s) {
-              return child(s.then_scope, in_inner_loop) ||
+              return child(s.then_scope, in_inner_loop, std::nullopt) ||
                      (s.else_scope.has_value() &&
-                      child(*s.else_scope, in_inner_loop));
+                      child(*s.else_scope, in_inner_loop, std::nullopt));
             },
-            [&](const mir::ForStmt& s) { return child(s.scope, true); },
-            [&](const mir::WhileStmt& s) { return child(s.scope, true); },
-            [&](const mir::DoWhileStmt& s) { return child(s.scope, true); },
+            [&](const mir::SwitchStmt& s) {
+              return std::ranges::any_of(
+                         s.cases,
+                         [&](const mir::SwitchCase& selected) {
+                           return child(
+                               selected.body, in_inner_loop, std::nullopt);
+                         }) ||
+                     (s.default_body.has_value() &&
+                      child(*s.default_body, in_inner_loop, std::nullopt));
+            },
+            [&](const mir::ForStmt& s) {
+              return child(s.scope, true, s.break_label);
+            },
+            [&](const mir::WhileStmt& s) {
+              return child(s.scope, true, s.break_label);
+            },
+            [&](const mir::DoWhileStmt& s) {
+              return child(s.scope, true, s.break_label);
+            },
             [&](const mir::BreakStmt& s) {
-              return s.target.has_value() || !in_inner_loop;
+              return !std::ranges::contains(held, s.target);
             },
             [&](const mir::ContinueStmt&) { return !in_inner_loop; },
             [](const mir::ReturnStmt&) { return true; }},
@@ -211,7 +234,7 @@ auto MatchReaction(
   const auto* loop =
       std::get_if<mir::ForStmt>(&body.stmts.Get(stmts.back()).data);
   if (loop == nullptr || !loop->init.empty() || loop->condition.has_value() ||
-      !loop->step.empty() || loop->break_label.has_value()) {
+      !loop->step.empty()) {
     return std::nullopt;
   }
   const std::span<const mir::StmtId> before_loop =
@@ -245,7 +268,7 @@ auto MatchReaction(
     wait = stopping(stop);
   }
   if (!wait.has_value() || StopsWithin(pass, wait) ||
-      LeavesEarly(pass, pass.root_stmts, false)) {
+      LeavesEarly(pass, pass.root_stmts, {}, false)) {
     return std::nullopt;
   }
   // A setup going on to the first stop answers whether to stop there, which
@@ -255,7 +278,7 @@ auto MatchReaction(
     case LoopOrder::kRunThenStop:
       break;
     case LoopOrder::kStopThenRun:
-      if (LeavesEarly(body, before_loop, false)) {
+      if (LeavesEarly(body, before_loop, {}, false)) {
         return std::nullopt;
       }
       break;

@@ -18,9 +18,9 @@ namespace lyra::lowering::hir_to_mir {
 // declares the local with its type's default initialiser, then assigns
 // `expr_id` to it. The decl and assign are split (rather than a single
 // var-decl-with-init) so the cpp backend's packed-init gap does not bite when
-// the type unifies to a packed-explicit form. Cascade lowerings use this to
-// snapshot a selector or predicate once before an if-then-else chain reads it
-// repeatedly. With an `origin` the local gets a cross-body identity so a
+// the type unifies to a packed-explicit form. Snapshotting a case's selector
+// once is what lets each label be compared with one evaluation of it (LRM
+// 12.5). With an `origin` the local gets a cross-body identity so a
 // closure can forward it; without one it is anonymous (used only within
 // `wrapper`).
 auto SnapshotExprToLocal(

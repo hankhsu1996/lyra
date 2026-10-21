@@ -13,7 +13,8 @@
 // the compiler starts to make per step is held from the day it is reported,
 // without this file naming it. How deep the text a run writes nests is held the
 // same way, read off the text, since a compiler reading it bounds its depth and
-// no design is bounded by one.
+// no design is bounded by one, and so is how deep a unit's code nests, which
+// the run reports and every consumer walking that code pays for.
 //
 // Everything held here is a count the run reports or a property of the text it
 // wrote, so one tree gives one answer. What a run spent -- a stage's time, its
@@ -122,6 +123,8 @@ constexpr std::string_view kBodiesLowered = "bodies lowered";
 // How deep the text a run writes nests at the deepest, over every file, which
 // a compiler reading the text bounds and a design does not.
 constexpr std::string_view kDeepestNesting = "deepest nesting";
+// How deep one form of a unit nests at the deepest, over every unit.
+constexpr std::string_view kNestingDepth = "nesting depth";
 
 // What one compile left behind, as the run itself recorded it: how many of each
 // kind of thing its units left and hold, taken together. A unit's name carries
@@ -273,6 +276,13 @@ auto Compile(
       for (const auto& [kind, count] : held.items()) {
         reading[std::format("{}.{}", form, kind)] += count.get<std::uint64_t>();
       }
+    }
+    // How deep a unit nests is no count, so what the run left is the deepest
+    // over every unit, as for the text it wrote.
+    for (const auto& [form, depth] : unit.at("nesting_depth").items()) {
+      std::uint64_t& deepest =
+          reading[std::format("{}.{}", form, kNestingDepth)];
+      deepest = std::max<std::uint64_t>(deepest, depth.get<std::uint64_t>());
     }
   }
   // The span a body's lowering runs under, one event each.

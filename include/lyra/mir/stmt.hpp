@@ -26,14 +26,14 @@ struct StmtId {
   auto operator<=>(const StmtId&) const -> std::strong_ordering = default;
 };
 
-// Identifies a loop as a non-local break target (the outermost loop of a
-// `foreach`). The universal labeled-break primitive; the C++
-// backend renders it as a `goto` to a label after the loop, an LLVM backend as
-// a branch.
-struct LoopLabelId {
+// Names a statement a `break` leaves: a loop, or a block, whose continuation
+// is the statement after it, as a Rust label names a loop or a block. The C++
+// backend renders it as a label after the statement, which a `break` naming it
+// reaches by `goto`; an LLVM backend as a branch.
+struct LabelId {
   std::uint32_t value = base::kUnassignedId;
 
-  auto operator<=>(const LoopLabelId&) const -> std::strong_ordering = default;
+  auto operator<=>(const LabelId&) const -> std::strong_ordering = default;
 };
 
 struct EmptyStmt {};
@@ -49,6 +49,7 @@ struct ExprStmt {
 
 struct BlockStmt {
   BlockId scope;
+  std::optional<LabelId> break_label = std::nullopt;
 };
 
 // A region whose body can be left by a control effect, and whose normal
@@ -102,6 +103,22 @@ struct IfStmt {
   std::optional<BlockId> else_scope;
 };
 
+// The values one case of a switch is taken at, and what it runs.
+struct SwitchCase {
+  std::vector<std::int64_t> values;
+  BlockId body;
+};
+
+// Runs the case one of whose values `discriminant`, a machine integer, holds,
+// or `default_body` where none does, as clang's `SwitchStmt` and rustc's
+// `SwitchInt` do. No value appears twice, and a case ends at the end of its
+// body, so the order of the cases means nothing.
+struct SwitchStmt {
+  ExprId discriminant;
+  std::vector<SwitchCase> cases;
+  std::optional<BlockId> default_body;
+};
+
 struct ForInitDecl {
   LocalId induction_var = {};
   ExprId init = {};
@@ -118,21 +135,24 @@ struct ForStmt {
   std::optional<ExprId> condition;
   std::vector<ExprId> step;
   BlockId scope;
-  std::optional<LoopLabelId> break_label = std::nullopt;
+  std::optional<LabelId> break_label = std::nullopt;
 };
 
 struct WhileStmt {
   ExprId condition;
   BlockId scope;
+  std::optional<LabelId> break_label = std::nullopt;
 };
 
 struct DoWhileStmt {
   ExprId condition;
   BlockId scope;
+  std::optional<LabelId> break_label = std::nullopt;
 };
 
+// Leaves the statement `target` names.
 struct BreakStmt {
-  std::optional<LoopLabelId> target = std::nullopt;
+  LabelId target;
 };
 
 struct ContinueStmt {};
@@ -148,7 +168,7 @@ struct ReturnStmt {
 
 using StmtData = std::variant<
     EmptyStmt, LocalDeclStmt, ExprStmt, BlockStmt, TryStmt, RaiseStmt,
-    FinallyStmt, IfStmt, ForStmt, WhileStmt, DoWhileStmt, BreakStmt,
+    FinallyStmt, IfStmt, SwitchStmt, ForStmt, WhileStmt, DoWhileStmt, BreakStmt,
     ContinueStmt, ReturnStmt>;
 
 struct Stmt {

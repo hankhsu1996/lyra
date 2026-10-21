@@ -320,7 +320,7 @@ auto LowerLocator(
             unit_lowerer, taken, found, result_type,
             CollectedOf(taken, key, entry, collected));
         if (walk.ends_at_first_found) {
-          taken.AppendStmt(mir::BreakStmt{});
+          taken.AppendStmt(mir::BreakStmt{.target = at.break_leaves->Name()});
         }
         b.AppendIfThen(holds, std::move(taken));
         return {};
@@ -425,7 +425,8 @@ auto LowerUnique(
               mir::Block same;
               AssignLocal(
                   unit, same, repeated, BuildMachineBool(unit, same, true));
-              same.AppendStmt(mir::BreakStmt{});
+              same.AppendStmt(
+                  mir::BreakStmt{.target = in.break_leaves->Name()});
               ib.AppendIfThen(
                   BuildBitIdentity(
                       unit, ib, ib.ReadLocal(held, key_type), earlier.element),

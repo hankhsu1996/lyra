@@ -550,8 +550,7 @@ void RenderExpr(
             const Enclosure enclosure(
                 out, value < 0 ? Precedence::kPrefix : Precedence::kPostfix,
                 at_least);
-            WriteNumber(out, value, 10);
-            out += "LL";
+            WriteInt64Constant(out, value);
           },
           [&](const mir::ReferenceExpr& r) {
             RenderReferenceExpr(view, r, out);

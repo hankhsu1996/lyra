@@ -418,6 +418,15 @@ class LirDumper {
                   "br {} ? bb{} : bb{}", FormatOperand(br.condition),
                   br.if_true.value, br.if_false.value);
             },
+            [&](const SwitchTerm& s) -> std::string {
+              std::string text =
+                  std::format("switch {} [", FormatOperand(s.discriminant));
+              for (const SwitchTarget& target : s.targets) {
+                text +=
+                    std::format(" {}: bb{}", target.value, target.target.value);
+              }
+              return text + std::format(" ] otherwise bb{}", s.otherwise.value);
+            },
             [](const SuspendTerm& s) -> std::string {
               return std::format(
                   "suspend -> bb{} abandoned bb{}", s.resume.value,

@@ -1277,7 +1277,7 @@ auto FunctionLowerer::LowerStmtInto(
             return LowerDiscardedInto(block, s.expr);
           },
           [&](const mir::BlockStmt& s) -> diag::Result<void> {
-            return LowerBlockInto(block.child_scopes.Get(s.scope));
+            return LowerBlockStmtInto(block, s);
           },
           [&](const mir::TryStmt& s) -> diag::Result<void> {
             return LowerTryInto(block, s);
@@ -1301,6 +1301,9 @@ auto FunctionLowerer::LowerStmtInto(
           },
           [&](const mir::IfStmt& s) -> diag::Result<void> {
             return LowerIfInto(block, s);
+          },
+          [&](const mir::SwitchStmt& s) -> diag::Result<void> {
+            return LowerSwitchInto(block, s);
           },
           [&](const mir::ForStmt& s) -> diag::Result<void> {
             return LowerForInto(block, s);
@@ -1363,6 +1366,89 @@ auto FunctionLowerer::LowerIfInto(
   return {};
 }
 
+// The discriminant is a full-expression, and the machine integer it settles
+// owns nothing, so everything made while settling it ends before the
+// dispatch. Every case, and the default, ends at one join.
+auto FunctionLowerer::LowerSwitchInto(
+    const mir::Block& block, const mir::SwitchStmt& stmt)
+    -> diag::Result<void> {
+  const std::size_t depth = scopes_.size();
+  auto discriminant = LowerExpr(block, stmt.discriminant);
+  if (!discriminant) {
+    return std::unexpected(std::move(discriminant.error()));
+  }
+  if (auto closed = CloseExtent(depth); !closed) {
+    return std::unexpected(std::move(closed.error()));
+  }
+
+  const lir::BlockId merge_id = NewBlock();
+  const auto run = [&](mir::BlockId body) -> diag::Result<lir::BlockId> {
+    const lir::BlockId entry = NewBlock();
+    const lir::BlockId resume = current_;
+    SetCurrent(entry);
+    if (auto lowered = LowerBlockInto(block.child_scopes.Get(body)); !lowered) {
+      return std::unexpected(std::move(lowered.error()));
+    }
+    if (!Terminated()) {
+      Terminate(lir::BranchTerm{.target = merge_id});
+    }
+    SetCurrent(resume);
+    return entry;
+  };
+
+  std::vector<lir::SwitchTarget> targets;
+  for (const mir::SwitchCase& selected : stmt.cases) {
+    auto entry = run(selected.body);
+    if (!entry) {
+      return std::unexpected(std::move(entry.error()));
+    }
+    for (const std::int64_t value : selected.values) {
+      targets.push_back(lir::SwitchTarget{.value = value, .target = *entry});
+    }
+  }
+  lir::BlockId otherwise = merge_id;
+  if (stmt.default_body.has_value()) {
+    auto entry = run(*stmt.default_body);
+    if (!entry) {
+      return std::unexpected(std::move(entry.error()));
+    }
+    otherwise = *entry;
+  }
+  Terminate(
+      lir::SwitchTerm{
+          .discriminant = *std::move(discriminant),
+          .targets = std::move(targets),
+          .otherwise = otherwise});
+  SetCurrent(merge_id);
+  return {};
+}
+
+// A labeled block is the target of a break naming it, which goes on at the
+// statement after the block; a block no break names is its statements.
+auto FunctionLowerer::LowerBlockStmtInto(
+    const mir::Block& block, const mir::BlockStmt& stmt) -> diag::Result<void> {
+  if (!stmt.break_label.has_value()) {
+    return LowerBlockInto(block.child_scopes.Get(stmt.scope));
+  }
+  const lir::BlockId exit_id = NewBlock();
+  breakable_scopes_.push_back(
+      BreakableScope{
+          .label = stmt.break_label,
+          .continue_target = std::nullopt,
+          .break_target = exit_id,
+          .scope_depth = scopes_.size()});
+  auto body = LowerBlockInto(block.child_scopes.Get(stmt.scope));
+  breakable_scopes_.pop_back();
+  if (!body) {
+    return std::unexpected(std::move(body.error()));
+  }
+  if (!Terminated()) {
+    Terminate(lir::BranchTerm{.target = exit_id});
+  }
+  SetCurrent(exit_id);
+  return {};
+}
+
 auto FunctionLowerer::LowerWhileInto(
     const mir::Block& block, const mir::WhileStmt& stmt) -> diag::Result<void> {
   const lir::BlockId header_id = NewBlock();
@@ -1382,14 +1468,14 @@ auto FunctionLowerer::LowerWhileInto(
           .if_false = exit_id});
 
   SetCurrent(body_id);
-  loops_.push_back(
-      LoopTargets{
-          .label = std::nullopt,
+  breakable_scopes_.push_back(
+      BreakableScope{
+          .label = stmt.break_label,
           .continue_target = header_id,
           .break_target = exit_id,
           .scope_depth = scopes_.size()});
   auto body = LowerBlockInto(block.child_scopes.Get(stmt.scope));
-  loops_.pop_back();
+  breakable_scopes_.pop_back();
   if (!body) {
     return std::unexpected(std::move(body.error()));
   }
@@ -1410,14 +1496,14 @@ auto FunctionLowerer::LowerDoWhileInto(
   Terminate(lir::BranchTerm{.target = body_id});
 
   SetCurrent(body_id);
-  loops_.push_back(
-      LoopTargets{
-          .label = std::nullopt,
+  breakable_scopes_.push_back(
+      BreakableScope{
+          .label = stmt.break_label,
           .continue_target = latch_id,
           .break_target = exit_id,
           .scope_depth = scopes_.size()});
   auto body = LowerBlockInto(block.child_scopes.Get(stmt.scope));
-  loops_.pop_back();
+  breakable_scopes_.pop_back();
   if (!body) {
     return std::unexpected(std::move(body.error()));
   }
@@ -1479,14 +1565,14 @@ auto FunctionLowerer::LowerForInto(
   }
 
   SetCurrent(body_id);
-  loops_.push_back(
-      LoopTargets{
+  breakable_scopes_.push_back(
+      BreakableScope{
           .label = stmt.break_label,
           .continue_target = step_id,
           .break_target = exit_id,
           .scope_depth = scopes_.size()});
   auto body = LowerBlockInto(block.child_scopes.Get(stmt.scope));
-  loops_.pop_back();
+  breakable_scopes_.pop_back();
   if (!body) {
     return std::unexpected(std::move(body.error()));
   }
@@ -1509,31 +1595,33 @@ auto FunctionLowerer::LowerForInto(
 
 auto FunctionLowerer::LowerBreakInto(const mir::BreakStmt& stmt)
     -> diag::Result<void> {
-  // An unlabeled break leaves the innermost loop; a labeled one leaves the
-  // loop that carries the label, however many loops it is nested inside.
-  for (const LoopTargets& loop : std::views::reverse(loops_)) {
-    if (!stmt.target.has_value() || loop.label == stmt.target) {
+  // A break leaves the statement that carries the label it names, however
+  // deep inside it the break stands.
+  for (const BreakableScope& left : std::views::reverse(breakable_scopes_)) {
+    if (left.label == stmt.target) {
+      auto cleaned = RunCleanupsDownTo(left.scope_depth);
+      if (!cleaned) {
+        return std::unexpected(std::move(cleaned.error()));
+      }
+      Terminate(lir::BranchTerm{.target = left.break_target});
+      return {};
+    }
+  }
+  throw InternalError("mir_to_lir: break outside of any matching statement");
+}
+
+auto FunctionLowerer::LowerContinueInto() -> diag::Result<void> {
+  for (const BreakableScope& loop : std::views::reverse(breakable_scopes_)) {
+    if (loop.continue_target.has_value()) {
       auto cleaned = RunCleanupsDownTo(loop.scope_depth);
       if (!cleaned) {
         return std::unexpected(std::move(cleaned.error()));
       }
-      Terminate(lir::BranchTerm{.target = loop.break_target});
+      Terminate(lir::BranchTerm{.target = *loop.continue_target});
       return {};
     }
   }
-  throw InternalError("mir_to_lir: break outside of any matching loop");
-}
-
-auto FunctionLowerer::LowerContinueInto() -> diag::Result<void> {
-  if (loops_.empty()) {
-    throw InternalError("mir_to_lir: continue outside of any loop");
-  }
-  auto cleaned = RunCleanupsDownTo(loops_.back().scope_depth);
-  if (!cleaned) {
-    return std::unexpected(std::move(cleaned.error()));
-  }
-  Terminate(lir::BranchTerm{.target = loops_.back().continue_target});
-  return {};
+  throw InternalError("mir_to_lir: continue outside of any loop");
 }
 
 auto FunctionLowerer::CurrentRuntime() -> lir::Operand {

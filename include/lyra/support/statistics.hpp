@@ -85,6 +85,11 @@ struct Count {
 void RecordCounts(
     std::string_view unit, std::string_view form, std::vector<Count> counts);
 
+// How deeply a unit nests in one of its forms, at the deepest. Not a count of
+// things held: two units together nest no deeper than the deeper of them.
+void RecordNestingDepth(
+    std::string_view unit, std::string_view form, std::uint64_t depth);
+
 // How long one tool the build ran took: on the clock, and of processor time as
 // the system charges it once the child has been reaped; and the most memory
 // the system charges it, which it starts from what the process held as it
