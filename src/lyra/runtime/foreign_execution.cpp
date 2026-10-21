@@ -222,17 +222,21 @@ class Fiber final : public ForeignExecution {
   // Frees the frames the entry's exit kept, once the fiber's stack runs
   // nothing. The sanitizer offers no call that frees them outright, so they are
   // taken over as this stack's, left for good, which frees them, and this
-  // stack's own are then taken back.
+  // stack's own are then taken back. Its own entries are called directly: a
+  // call made while the kept frames are this stack's would take its frame from
+  // them, and lose it as they are freed. Only the sanitizer keeps frames, so
+  // the entries are there whenever there are frames to free.
   void FreeFakeStack() {
     if (fake_stack_ == nullptr) {
       return;
     }
     void* own = nullptr;
-    StackBounds here;
-    StartSwitch(&own, {});
-    FinishSwitch(fake_stack_, &here);
-    StartSwitch(nullptr, here);
-    FinishSwitch(own, nullptr);
+    const void* bottom = nullptr;
+    std::size_t size = 0;
+    __sanitizer_start_switch_fiber(&own, nullptr, 0);
+    __sanitizer_finish_switch_fiber(fake_stack_, &bottom, &size);
+    __sanitizer_start_switch_fiber(nullptr, bottom, size);
+    __sanitizer_finish_switch_fiber(own, nullptr, nullptr);
   }
 
   StackBounds fiber_stack_;
