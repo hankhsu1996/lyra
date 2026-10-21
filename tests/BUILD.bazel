@@ -43,6 +43,14 @@ package(features = ["parse_headers"])
 # on purpose, as the sanitizer one does to every frame and to the address
 # space, would be measuring itself, so it leaves the target out.
 
+# How many host compiles a test that drives the host compiler runs at once. A
+# remote executor gives every test three cores whatever it asks for, so this is
+# that many, and a test says so with `cpu:` too, which is what makes a run on
+# this machine reserve as many as it uses. The test is told the count rather
+# than asking the machine, because one that is running other tests beside it is
+# not its own.
+_HOST_COMPILES_AT_ONCE = 3
+
 cc_library(
     name = "framework",
     srcs = glob(["framework/*.cpp"]),
@@ -620,13 +628,14 @@ cc_test(
     # them more than once, and no two can share the header one prepared.
     # Declaring that cost is what keeps a loaded machine from reporting a
     # timeout as a test failure. The costliest cases each compile the whole
-    # runtime for link-time optimization, so there are enough shards that no
-    # two of them need meet in one.
+    # runtime for link-time optimization, so the target takes as many shards as
+    # Bazel allows, which keeps them apart without this count having to follow
+    # how many cases there are; a shard with nothing to run ends at once.
     size = "large",
     srcs = ["emitted_project_test.cpp"],
     copts = LYRA_COPTS,
     data = ["//:lyra"],
-    shard_count = 8,
+    shard_count = 50,
     tags = ["nightly"],
     deps = [
         ":framework",
@@ -690,19 +699,23 @@ cc_test(
     # Each case builds emitted C++ with the host compiler, so a shard's cost is
     # dominated by compilation rather than by simulation. Declaring that cost is
     # what keeps a loaded machine from reporting a timeout as a test failure.
-    # A case compiles its units one after another, so the slowest case bounds
-    # its shard whatever the count; the corpus is cut into enough shards that
-    # the rest of a shard's cases add little beside it.
+    # A case compiles its units one after another, so a shard runs several
+    # cases at once, and the slowest case bounds its shard whatever the count.
     size = "large",
     srcs = ["conformance_test.cpp"],
     args = [
         "--path",
         "cpp",
+        "--workers",
+        str(_HOST_COMPILES_AT_ONCE),
     ],
     copts = LYRA_COPTS,
     data = CONFORMANCE_DATA,
     shard_count = 48,
-    tags = ["nightly"],
+    tags = [
+        "cpu:%d" % _HOST_COMPILES_AT_ONCE,
+        "nightly",
+    ],
     deps = [
         ":framework",
         "@bazel_tools//tools/cpp/runfiles",
@@ -712,19 +725,23 @@ cc_test(
 )
 
 # Each case links a program with the host C++ compiler, and a case carrying
-# foreign sources compiles them with it too. A shard runs remotely, where
-# another one costs a slot in the remote queue rather than a core here, so the
-# corpus is cut finely enough that the slowest shard is what a wait is made of.
+# foreign sources compiles them with it too, so a shard runs several cases at
+# once. A shard runs remotely, where another one costs a slot in the remote
+# queue rather than a core here, so the corpus is cut finely enough that the
+# slowest shard is what a wait is made of.
 cc_test(
     name = "llvm_tests",
     srcs = ["conformance_test.cpp"],
     args = [
         "--path",
         "llvm",
+        "--workers",
+        str(_HOST_COMPILES_AT_ONCE),
     ],
     copts = LYRA_COPTS,
     data = CONFORMANCE_DATA,
     shard_count = 48,
+    tags = ["cpu:%d" % _HOST_COMPILES_AT_ONCE],
     deps = [
         ":framework",
         "@bazel_tools//tools/cpp/runfiles",

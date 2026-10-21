@@ -13,6 +13,7 @@
 #include <vector>
 #include <yaml-cpp/yaml.h>
 
+#include "cli_fixture.hpp"
 #include "conformance_case.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "process.hpp"
@@ -272,7 +273,16 @@ auto RunConformanceCase(
     const ConformanceCase& test_case, const PathRecords& records)
     -> std::optional<std::string> {
   const std::vector<std::string> argv = BuildArgv(path, test_case);
-  const ProcessOutcome outcome = RunChildProcess(lyra_exe, argv, kStuckAfter);
+  // A program opens files where it starts, under names another case may use
+  // too, and a shard runs several cases at once, so each case starts in a
+  // directory of its own.
+  const auto here = MakeScratchDir();
+  if (!here) {
+    return std::format(
+        "{}: no directory to run the case in: {}", test_case.id, here.error());
+  }
+  const ProcessOutcome outcome =
+      RunChildProcess(lyra_exe, argv, kStuckAfter, *here);
   const auto report = [&](std::string_view what) {
     return Render(what, test_case, path.name, argv, outcome);
   };

@@ -210,10 +210,9 @@ auto CompileTranslationUnits(
 
 // The first of `kLinkTimeForms` that `host`'s compiler and the linker it
 // drives accept, found by compiling and linking `kLinkTimeProbe` with each in
-// turn; nothing where none is. Whether one is accepted decides only how long a
-// build takes, never whether it succeeds, so a probe that cannot run answers
-// nothing too. The probe is an action whose inputs are the compiler and the
-// forms, so it runs once per compiler.
+// turn; nothing where none is. A build with no form is built the plain way, so
+// a probe that cannot run answers nothing too. The probe is an action whose
+// inputs are the compiler and the forms, so it runs once per compiler.
 auto AcceptedLinkTimeForm(const HostBuild& host, ActionCache& actions)
     -> std::optional<LinkTimeForm>;
 

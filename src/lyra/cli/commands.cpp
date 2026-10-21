@@ -427,28 +427,25 @@ auto PlainCppRecipe(
 }
 
 // The C++ backend's program optimized whole by its host compiler at the link,
-// under `form`: the design's files and the runtime's own sources compiled for
-// that, and linked so. The form was accepted by a probe, so a compile or a
-// link refused all the same says only that this build cannot have it, and the
-// program is then built the plain way: a refused compile answers nothing, and a
-// refused link builds that way in its place.
+// under `form`, which a probe has accepted: the design's files and the
+// runtime's own sources compiled for that, and linked so.
 auto LinkTimeOptimizedCppRecipe(
     const CommandContext& ctx, const driver::LinkTimeForm& form,
     std::span<const driver::TranslationUnit> translation_units,
     std::span<const std::filesystem::path> foreign,
     const std::filesystem::path& project,
     const driver::RuntimeLocation& runtime, const driver::HostBuild& host,
-    driver::ActionCache& actions) -> std::optional<ProgramRecipe> {
+    driver::ActionCache& actions) -> diag::Result<ProgramRecipe> {
   const profiling::StageScope stage("host compile");
   auto design = driver::CompileTranslationUnits(
       project, translation_units, runtime, host, form.compile, actions);
   if (!design) {
-    return std::nullopt;
+    return std::unexpected(std::move(design.error()));
   }
   auto runtime_objects =
       driver::CompileRuntimeSources(runtime, host, form.compile, actions);
   if (!runtime_objects) {
-    return std::nullopt;
+    return std::unexpected(std::move(runtime_objects.error()));
   }
   driver::Action action("link, optimizing the whole program");
   std::vector<std::filesystem::path> linked;
@@ -473,24 +470,9 @@ auto LinkTimeOptimizedCppRecipe(
   return ProgramRecipe{
       .action = std::move(action),
       .build = [linked = std::move(linked), link_time = std::move(link_time),
-                translation_units = std::vector<driver::TranslationUnit>(
-                    translation_units.begin(), translation_units.end()),
-                foreign = std::vector<std::filesystem::path>(
-                    foreign.begin(), foreign.end()),
-                project, runtime, host, actions = &actions](
-                   const std::filesystem::path& program) -> diag::Result<void> {
-        {
-          const profiling::StageScope stage("link");
-          if (driver::LinkProgram(linked, link_time, program, host.cxx)) {
-            return {};
-          }
-        }
-        auto plain = PlainCppRecipe(
-            translation_units, foreign, project, runtime, host, *actions);
-        if (!plain) {
-          return std::unexpected(std::move(plain.error()));
-        }
-        return plain->build(program);
+                cxx = host.cxx](const std::filesystem::path& program) {
+        const profiling::StageScope stage("link");
+        return driver::LinkProgram(linked, link_time, program, cxx);
       }};
 }
 
@@ -514,26 +496,26 @@ auto CppProgramRecipe(
   if (!foreign) {
     return std::nullopt;
   }
-  switch (host.link_time) {
-    case driver::LinkTimeOptimization::kNone:
-      break;
-    case driver::LinkTimeOptimization::kThin:
-      if (const auto form = driver::AcceptedLinkTimeForm(host, actions)) {
-        if (auto whole = LinkTimeOptimizedCppRecipe(
-                ctx, *form, sources->translation_units, *foreign, project,
-                runtime, host, actions)) {
-          return whole;
+  auto recipe = [&]() -> diag::Result<ProgramRecipe> {
+    switch (host.link_time) {
+      case driver::LinkTimeOptimization::kNone:
+        break;
+      case driver::LinkTimeOptimization::kThin:
+        if (const auto form = driver::AcceptedLinkTimeForm(host, actions)) {
+          return LinkTimeOptimizedCppRecipe(
+              ctx, *form, sources->translation_units, *foreign, project,
+              runtime, host, actions);
         }
-      }
-      break;
-  }
-  auto plain = PlainCppRecipe(
-      sources->translation_units, *foreign, project, runtime, host, actions);
-  if (!plain) {
-    ctx.sink->Report(std::move(plain.error()));
+        break;
+    }
+    return PlainCppRecipe(
+        sources->translation_units, *foreign, project, runtime, host, actions);
+  }();
+  if (!recipe) {
+    ctx.sink->Report(std::move(recipe.error()));
     return std::nullopt;
   }
-  return *std::move(plain);
+  return *std::move(recipe);
 }
 
 // This compiler's own executable. The LLVM backend's code generator is part of

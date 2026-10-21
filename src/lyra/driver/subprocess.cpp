@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <expected>
+#include <fcntl.h>
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -135,13 +136,17 @@ auto Spawn(
 auto SpawnCaptured(
     const std::filesystem::path& exe, std::span<const std::string> args,
     std::size_t index) -> std::expected<Running, base::DiagMessage> {
+  // Every end is closed on exec, so a compile started at the same moment from
+  // another thread inherits none of them: a write end it held would keep this
+  // reader waiting for its end of file until that other compile exited. The
+  // child keeps only the copies made onto its own output.
   std::array<int, 2> out_pipe{};
   std::array<int, 2> err_pipe{};
-  if (pipe(out_pipe.data()) != 0) {
+  if (pipe2(out_pipe.data(), O_CLOEXEC) != 0) {
     return std::unexpected(
         base::DiagMessage("cannot create a pipe ({})", std::strerror(errno)));
   }
-  if (pipe(err_pipe.data()) != 0) {
+  if (pipe2(err_pipe.data(), O_CLOEXEC) != 0) {
     close(out_pipe[0]);
     close(out_pipe[1]);
     return std::unexpected(
@@ -152,10 +157,6 @@ auto SpawnCaptured(
   posix_spawn_file_actions_init(&actions);
   posix_spawn_file_actions_adddup2(&actions, out_pipe[1], STDOUT_FILENO);
   posix_spawn_file_actions_adddup2(&actions, err_pipe[1], STDERR_FILENO);
-  posix_spawn_file_actions_addclose(&actions, out_pipe[0]);
-  posix_spawn_file_actions_addclose(&actions, out_pipe[1]);
-  posix_spawn_file_actions_addclose(&actions, err_pipe[0]);
-  posix_spawn_file_actions_addclose(&actions, err_pipe[1]);
 
   const std::string exe_str = exe.string();
   auto argv = BuildArgv(exe_str, args);

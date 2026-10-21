@@ -987,10 +987,11 @@ the detail lives in the entry itself.
   as fat LTO objects, the execution backend runs ThinLTO itself at the link, every function states
   its processor, and the C++ backend's host compiler compiles the runtime from its source beside the
   design, in the first way of asking for link-time optimization its toolchain accepts, found once
-  per compiler, with the link's cache in the store and the plain build wherever it is refused. Full
-  LTO, importing the runtime per unit, the host linker reading the prebuilt bitcode, every project
-  carrying the runtime's sources, fat objects attempted in every build, a link without a cache, and
-  one flag carrying both the level and the link-time optimization are rejected.
+  per compiler, with the link's cache in the store and the plain build wherever no way is accepted.
+  Full LTO, importing the runtime per unit, the host linker reading the prebuilt bitcode, every
+  project carrying the runtime's sources, fat objects attempted in every build, a plain build after
+  an accepted way is refused, a link without a cache, and one flag carrying both the level and the
+  link-time optimization are rejected.
 - [program-facts-belong-after-compilation](program-facts-belong-after-compilation.md) -- the
   design's link-level unit reads signatures and nothing else, so what is genuinely program-wide
   moves to whoever runs after compilation: a namespace's initializers order themselves by claiming

@@ -244,9 +244,9 @@ compile_all() {
 # A project built to optimize at the link optimizes the design together with
 # the runtime, whose sources it carries, in the first way this compiler and the
 # linker it drives accept; a small program built each way in turn says which.
-# Whether one is accepted decides how long the build takes and never whether it
-# succeeds, so where none is, or the program's own compile or link is refused
-# all the same, the plain build below builds it.
+# Where none is, the program is built the plain way, with the prebuilt runtime.
+# Once one is, the program is built that way, and a compile or link that then
+# fails is the build's failure.
 LTO=""
 if [ "@LTO@" = "1" ]; then
   P=@OBJDIR@/probe
@@ -264,44 +264,7 @@ if [ "@LTO@" = "1" ]; then
 @LTOFORMS@
 FORMS
 fi
-if [ -n "$LTO" ]; then
-  RT=@RTSRC@
-  RT_FLAGS=""
-  while read -r flag dir; do RT_FLAGS="$RT_FLAGS $flag $RT/$dir"; done < "$RT/@RTINCS@"
-  while read -r name; do RT_FLAGS="$RT_FLAGS -D$name"; done < "$RT/@RTDEFS@"
-  compile_all "$PCH_FLAG $LTO"
-  if [ "$STATUS" -ne 0 ] && [ "$USE_PCH" = "1" ]; then
-    compile_all "$LTO"
-    if [ "$STATUS" -eq 0 ]; then rm -f "$PCH"; fi
-  fi
-  if [ "$STATUS" -eq 0 ]; then
-    mkdir -p @OBJDIR@/runtime
-    RT_OBJS=""
-    PIDS=""
-    LIVE=0
-    n=0
-    # Each line is a source and the macros its own library defines for it.
-    while read -r src defs; do
-      n=$((n + 1))
-      RT_OBJS="$RT_OBJS @OBJDIR@/runtime/$n.o"
-      case "$src" in
-        *.c) SRC_FLAGS="@C_FLAGS@" ;;
-        *) SRC_FLAGS="@DESIGN_FLAGS@" ;;
-      esac
-      for name in $defs; do SRC_FLAGS="$SRC_FLAGS -D$name"; done
-      "$CXX" $SRC_FLAGS $RT_FLAGS $LTO -c "$RT/$src" -o "@OBJDIR@/runtime/$n.o" \
-        </dev/null >>"$LOG" 2>&1 &
-      PIDS="$PIDS $!"
-      LIVE=$((LIVE + 1))
-      if [ "$LIVE" -ge "$JOBS" ]; then reap; fi
-    done < "$RT/@RTLIST@"
-    reap
-  fi
-  if [ "$STATUS" -eq 0 ]; then
-@DPICOMPILE@    if "$CXX" @OPT@ $LTO_LINK$OBJS $RT_OBJS@DPIOBJS@ -o @PROG@ 2>/dev/null; then exit 0; fi
-  fi
-fi
-compile_all "$PCH_FLAG"
+compile_all "$PCH_FLAG $LTO"
 if [ "$STATUS" -ne 0 ] && [ "$USE_PCH" = "1" ]; then
   # The precompiled header is an attempt and never a requirement, so it does not
   # get to decide whether this build succeeds. Compile again the way that needs
@@ -309,15 +272,46 @@ if [ "$STATUS" -ne 0 ] && [ "$USE_PCH" = "1" ]; then
   # sources, and it goes so the next build prepares it afresh. Everything is
   # compiled again rather than only what failed, because tracking that costs
   # more shell than the rare path is worth.
-  compile_all ""
+  compile_all "$LTO"
   if [ "$STATUS" -eq 0 ]; then rm -f "$PCH"; fi
+fi
+if [ "$STATUS" -eq 0 ] && [ -n "$LTO" ]; then
+  RT=@RTSRC@
+  RT_FLAGS=""
+  while read -r flag dir; do RT_FLAGS="$RT_FLAGS $flag $RT/$dir"; done < "$RT/@RTINCS@"
+  while read -r name; do RT_FLAGS="$RT_FLAGS -D$name"; done < "$RT/@RTDEFS@"
+  mkdir -p @OBJDIR@/runtime
+  RT_OBJS=""
+  PIDS=""
+  LIVE=0
+  n=0
+  # Each line is a source and the macros its own library defines for it.
+  while read -r src defs; do
+    n=$((n + 1))
+    RT_OBJS="$RT_OBJS @OBJDIR@/runtime/$n.o"
+    case "$src" in
+      *.c) SRC_FLAGS="@C_FLAGS@" ;;
+      *) SRC_FLAGS="@DESIGN_FLAGS@" ;;
+    esac
+    for name in $defs; do SRC_FLAGS="$SRC_FLAGS -D$name"; done
+    "$CXX" $SRC_FLAGS $RT_FLAGS $LTO -c "$RT/$src" -o "@OBJDIR@/runtime/$n.o" \
+      </dev/null >>"$LOG" 2>&1 &
+    PIDS="$PIDS $!"
+    LIVE=$((LIVE + 1))
+    if [ "$LIVE" -ge "$JOBS" ]; then reap; fi
+  done < "$RT/@RTLIST@"
+  reap
 fi
 # What the compiler said is kept back until the build is known to have failed,
 # so that an attempt which was retried and succeeded says nothing at all. What
 # gets shown is the last attempt, which is the one that needed nothing prepared
 # and so describes the sources rather than the header.
 if [ "$STATUS" -ne 0 ]; then cat "$LOG" >&2; exit 1; fi
-@DPICOMPILE@"$CXX"$OBJS@DPIOBJS@ @LIBDIR@/@LIB@ -o @PROG@
+@DPICOMPILE@if [ -n "$LTO" ]; then
+  "$CXX" @OPT@ $LTO_LINK$OBJS $RT_OBJS@DPIOBJS@ -o @PROG@
+else
+  "$CXX"$OBJS@DPIOBJS@ @LIBDIR@/@LIB@ -o @PROG@
+fi
 )sh";
 
 // Words as one shell list, space separated. A list with nothing in it renders
