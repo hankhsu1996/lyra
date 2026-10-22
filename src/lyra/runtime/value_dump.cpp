@@ -23,12 +23,15 @@
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/dump_writer.hpp"
+#include "lyra/runtime/object_change.hpp"
+#include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/value_dumps.hpp"
 #include "lyra/support/dump_kind.hpp"
 #include "lyra/value/integral_words.hpp"
+#include "lyra/value/object_ref.hpp"
 
 namespace lyra::runtime {
 
@@ -81,6 +84,10 @@ void DumpCapture::Clear() {
 
 DumpProbe::DumpProbe() = default;
 DumpProbe::~DumpProbe() = default;
+
+auto DumpProbe::Referent() const -> value::ObjectRef {
+  return nullptr;
+}
 Describer::~Describer() = default;
 
 void Describer::BeginBlock(const DumpBlock& block) {
@@ -97,11 +104,29 @@ DumpWatch::DumpWatch(
     ValueDump& dump, DumpCode code, std::unique_ptr<DumpProbe> probe)
     : dump_(&dump), code_(code), probe_(std::move(probe)) {
   EnrolOnPlace(membership_, this, probe_->Watched());
+  FollowReferent();
 }
 
 DumpWatch::~DumpWatch() = default;
 
+void DumpWatch::FollowReferent() {
+  value::ObjectRef now = probe_->Referent();
+  if (now.IsBitIdentical(referent_)) {
+    return;
+  }
+  referent_membership_.Unlink();
+  referent_ = std::move(now);
+  Trigger watched;
+  if (referent_) {
+    watched.observable = &ObjectRootOf(referent_)->EventSource();
+  }
+  EnrolOnPlace(referent_membership_, this, watched);
+}
+
 void DumpWatch::Reached() {
+  // What the thing refers to moves only with a change of the thing, which is
+  // a change whether or not one was already seen this time step.
+  FollowReferent();
   if (changed_) {
     return;
   }

@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
+#include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -34,8 +35,8 @@ auto IntegrateStaticInitializer(
         install_block.exprs.Add(BuildStaticStorageAccess(
             unit, install_frame, binding.home, binding.cell_type,
             mir::EnclosingHops{}));
-    const mir::ExprId prototype = install_block.exprs.Add(
-        BuildDefaultValueFromHir(process.Owner(), install_block, decl.type));
+    const mir::ExprId prototype =
+        BuildDeclaredInitialValue(process.Owner(), install_frame, decl.type);
     install_block.AppendStmt(
         mir::ExprStmt{
             .expr = install_block.exprs.Add(
@@ -56,8 +57,8 @@ auto IntegrateStaticInitializer(
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     init_value = value_block.exprs.Add(*std::move(init_or));
   } else {
-    init_value = value_block.exprs.Add(
-        BuildDefaultValueFromHir(process.Owner(), value_block, decl.type));
+    init_value =
+        BuildDeclaredInitialValue(process.Owner(), value_frame, decl.type);
   }
 
   const mir::Expr assign_expr = BuildStoreExpr(

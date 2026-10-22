@@ -11,6 +11,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
 #include "lyra/lowering/hir_to_mir/declared_variable.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -39,8 +40,7 @@ auto BuildInitialValue(
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     value = block.exprs.Add(*std::move(init_or));
   } else {
-    value = block.exprs.Add(
-        BuildDefaultValueFromHir(process.Owner(), block, hir_local.type));
+    value = BuildDeclaredInitialValue(process.Owner(), frame, hir_local.type);
   }
   return ConvertToType(process.Owner().Unit(), block, value, type);
 }

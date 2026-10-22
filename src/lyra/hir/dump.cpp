@@ -794,36 +794,30 @@ class HirDumper {
     return std::format("DelayControl duration=Expr[{}]", d.duration.value);
   }
 
+  static auto FormatEventEntry(const EventEntry& entry) -> std::string {
+    const std::string occurrence = std::visit(
+        Overloaded{
+            [](const ValueChange& c) {
+              return std::format(
+                  "signal=Expr[{}] edge={} {}", c.signal.value,
+                  FormatEventEdge(c.edge), FormatCells(c.cells));
+            },
+            [](const NamedEventTrigger& t) {
+              return std::format("event=Expr[{}]", t.event.value);
+            }},
+        entry.occurrence);
+    return std::format(
+        "{{{}{}}}", occurrence, FormatCondition(entry.condition));
+  }
+
   static auto FormatEventControl(const EventControl& e) -> std::string {
-    std::string out = "EventControl triggers=[";
-    for (std::size_t i = 0; i < e.triggers.size(); ++i) {
+    std::string out = "EventControl entries=[";
+    for (std::size_t i = 0; i < e.entries.size(); ++i) {
       if (i != 0) out += ", ";
-      out += std::format(
-          "{{signal=Expr[{}] edge={}{} {}}}", e.triggers[i].signal.value,
-          FormatEventEdge(e.triggers[i].edge),
-          FormatCondition(e.triggers[i].condition),
-          FormatCells(e.triggers[i].cells));
+      out += FormatEventEntry(e.entries[i]);
     }
     out += "]";
     return out;
-  }
-
-  static auto FormatNamedEventControl(const NamedEventControl& n)
-      -> std::string {
-    return std::format(
-        "NamedEventControl event={{{}}}{}", FormatSensitivityEntry(n.event),
-        FormatCondition(n.condition));
-  }
-
-  static auto FormatAnyEventControl(const AnyEventControl& event)
-      -> std::string {
-    return std::visit(
-        Overloaded{
-            [](const EventControl& e) { return FormatEventControl(e); },
-            [](const NamedEventControl& n) {
-              return FormatNamedEventControl(n);
-            }},
-        event);
   }
 
   static auto FormatTimingControlHeader(const TimingControl& tc)
@@ -837,9 +831,6 @@ class HirDumper {
                   "ImplicitEventControl sensitivity={}",
                   FormatSensitivityList(ie.sensitivity_list));
             },
-            [](const NamedEventControl& n) {
-              return FormatNamedEventControl(n);
-            },
         },
         tc);
   }
@@ -850,13 +841,10 @@ class HirDumper {
         Overloaded{
             [](const DelayControl& d) { return FormatDelayControl(d); },
             [](const EventControl& e) { return FormatEventControl(e); },
-            [](const NamedEventControl& n) {
-              return FormatNamedEventControl(n);
-            },
             [](const RepeatedEventControl& r) -> std::string {
               return std::format(
                   "RepeatedEventControl count=Expr[{}] event={}", r.count.value,
-                  FormatAnyEventControl(r.event));
+                  FormatEventControl(r.event));
             },
         },
         control);
@@ -2733,7 +2721,6 @@ class HirDumper {
             },
             [](const EventControl&) {},
             [](const ImplicitEventControl&) {},
-            [](const NamedEventControl&) {},
         },
         t.timing);
     Dedent();

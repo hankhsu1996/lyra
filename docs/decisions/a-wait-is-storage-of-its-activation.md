@@ -42,11 +42,10 @@ fiber (LRM 35.9), which waits for no occurrence at all.
   (`the-waiting-process-evaluates-its-wait.md`, LRM 9.4.3). The shape is the same in every case;
   only the block differs.
 - **A wait's memberships stand for the wait's life.** It enrols on each place it watches -- an
-  observable, a named event, a `wait fork` condition, a process's termination -- when it is built,
-  and leaves when it ends. Reaching a place asks the wait whether an activation is parked on it, and
-  takes that activation if the occurrence is an event for it. One stop answers every change that
-  arrives before the activation runs, and a change the activation makes itself while running is no
-  occurrence.
+  observable, a `wait fork` condition, a process's termination -- when it is built, and leaves when
+  it ends. Reaching a place asks the wait whether an activation is parked on it, and takes that
+  activation if the occurrence is an event for it. One stop answers every change that arrives before
+  the activation runs, and a change the activation makes itself while running is no occurrence.
 - **A wait for a state is reached by each change on the way there.** A `join` watches each branch's
   termination (LRM 9.3.2 -- a killed branch has terminated as surely as one that ran out),
   `wait fork` the process's children (LRM 9.6.1), an `await` its target's termination (LRM 9.7).

@@ -1636,7 +1636,7 @@ def run_self_tests() -> bool:
         "A015 static factory of a runtime type")
     ok &= expect(
         RUNTIME_TYPE_LITERAL_PATTERN.search(
-            'std::format("{}lyra::runtime::NamedEvent::Wait()", pad)'),
+            'std::format("{}lyra::runtime::SynchronizationObject::Wait()", pad)'),
         "A015 type named mid-literal")
     ok &= expect(
         not RUNTIME_TYPE_LITERAL_PATTERN.search(

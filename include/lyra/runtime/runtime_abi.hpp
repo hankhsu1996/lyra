@@ -506,17 +506,16 @@ auto lyra_rt_make_trigger(
     std::int64_t lsb_bit_offset, std::int64_t bit_width, void* out) -> void*;
 
 // What decides whether reaching a wait is an event for it (LRM 9.4.2). Two
-// halves, and one entry per combination of them, so the call states which form
-// it is building. A watched half is the expression's watch, a closure the
-// compiler builds for it which arms itself on what the expression is worth and
-// answers whether it moved the way the control asks for, comparing as the
-// expression's type does. A qualifying half is an `iff` condition, answering
-// whether it holds by LRM 12.4 truth (LRM 9.4.2.3). Each is handed over as a
-// closure of no known type, which the observation takes. Watching nothing is
-// what an implicit sensitivity carries (LRM 9.2.2.2.1) and what an unqualified
-// named-event wait carries, the trigger there being the event itself
-// (LRM 15.5.1). Like a trigger these are transient, and the waits built from
-// them hold them for as long as they last.
+// halves, and one entry per combination the language makes of them, so the
+// call states which form it is building. A watched half is a watch the
+// compiler builds -- over an expression, or over the triggers of the object an
+// event names (LRM 15.5.2) -- which arms itself on what it is worth and answers
+// whether it moved the way the control asks for. A qualifying half is an `iff`
+// condition, answering whether it holds by LRM 12.4 truth (LRM 9.4.2.3), and
+// stands only beside a watched one. Each is handed over as a closure of no
+// known type, which the observation takes. Watching nothing is what an
+// implicit sensitivity carries (LRM 9.2.2.2.1). Like a trigger these are
+// transient, and the waits built from them hold them for as long as they last.
 //
 // Building one evaluates nothing. The wait holding it arms it with what the
 // expression is worth where the wait begins, and the waiting process asks it
@@ -527,7 +526,6 @@ auto lyra_rt_observation_on_reaching(void* out) -> void*;
 auto lyra_rt_observation_of_watch(void* watch, void* out) -> void*;
 auto lyra_rt_observation_of_watch_qualified(
     void* watch, void* condition, void* out) -> void*;
-auto lyra_rt_observation_qualified(void* condition, void* out) -> void*;
 auto lyra_rt_observation_fires(const void* observation) -> std::int64_t;
 
 // The waits on the places an evaluation the process made reached, one read
@@ -596,14 +594,18 @@ void lyra_rt_read_report_end_evaluation(void* report, void* runtime) noexcept;
 auto lyra_rt_evaluation_in_progress(void* runtime) -> void*;
 void lyra_rt_refuse_report(const void* why);
 
-// A named event (LRM 15.5). Triggering records the instant and ends the wait of
-// every process the trigger is an event for; waiting for one is an ordinary
-// wait naming the event, since the event is a place a wait enrols on like
-// any other. `triggered` answers whether the most recent trigger happened in
-// this time step, which is a comparison of instants rather than a state the
-// event clears.
-void lyra_rt_trigger(void* event, void* runtime);
-auto lyra_rt_triggered(const void* event, void* runtime, void* out) -> void*;
+// An event (LRM 15.5), which crosses as the address of its value, a reference
+// to a synchronization object or to none. A wait on one is an ordinary wait put
+// on what the object reports to, and measures the object's triggers from where
+// it began; `triggered` and those triggers state the object in the report an
+// evaluation hands them, null where it makes none.
+auto lyra_rt_event_new(void* out) -> void*;
+void lyra_rt_trigger(const void* event, void* runtime);
+auto lyra_rt_triggered(
+    const void* event, void* runtime, void* evaluation, void* out) -> void*;
+auto lyra_rt_event_occurrences(const void* event, void* evaluation)
+    -> std::int64_t;
+auto lyra_rt_event_reports_to(const void* event) -> void*;
 
 // LRM 9.6.2 `disable`. A target crosses as its address, and a control effect as
 // the target it names, since that is all one carries.
@@ -706,8 +708,8 @@ void lyra_rt_dump_ports_flush(void* runtime, const void* name);
 
 // What an instance describes of itself to a dump starting (LRM 21.7.1.2): one
 // member, by the wrapper it is and the domain of what it holds, with the
-// constant stating its declaration; a named event; and the bracket around the
-// static variables of a named block, task or function.
+// constant stating its declaration; an event variable; and the bracket around
+// the static variables of a named block, task or function.
 void lyra_rt_bit8_cell_describe(void* cell, void* runtime, const void* entry);
 void lyra_rt_bit16_cell_describe(void* cell, void* runtime, const void* entry);
 void lyra_rt_bit32_cell_describe(void* cell, void* runtime, const void* entry);
@@ -2401,7 +2403,6 @@ void lyra_rt_dynarray_sampled_history_construct(void* storage);
 void lyra_rt_queue_sampled_history_construct(void* storage);
 void lyra_rt_assocarray_sampled_history_construct(void* storage);
 void lyra_rt_managedref_sampled_history_construct(void* storage);
-void lyra_rt_named_event_construct(void* storage);
 void lyra_rt_cancellation_target_construct(void* storage);
 void lyra_rt_evaluation_attempts_construct(void* storage);
 void lyra_rt_timer_construct(void* storage);
@@ -2432,7 +2433,6 @@ void lyra_rt_dynarray_sampled_history_destroy(void* storage);
 void lyra_rt_queue_sampled_history_destroy(void* storage);
 void lyra_rt_assocarray_sampled_history_destroy(void* storage);
 void lyra_rt_managedref_sampled_history_destroy(void* storage);
-void lyra_rt_named_event_destroy(void* storage);
 void lyra_rt_cancellation_target_destroy(void* storage);
 void lyra_rt_evaluation_attempts_destroy(void* storage);
 void lyra_rt_timer_destroy(void* storage);

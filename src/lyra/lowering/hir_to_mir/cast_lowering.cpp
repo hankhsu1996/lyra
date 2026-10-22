@@ -320,7 +320,6 @@ auto BuildValueConversion(
           [&](const mir::MachineFloatType& t) { return none(t); },
           [&](const mir::MachineArrayType& t) { return none(t); },
           [&](const mir::MachineFunctionType& t) { return none(t); },
-          [&](const mir::EventType& t) { return none(t); },
           [&](const mir::ChandleType& t) { return none(t); },
           [&](const mir::VoidType& t) { return none(t); },
           [&](const mir::ObjectType& t) { return none(t); },

@@ -531,13 +531,6 @@ auto LowerPropertySpec(
 
   auto event_or = LowerEventControl(proc, frame, *clock, span);
   if (!event_or) return std::unexpected(std::move(event_or.error()));
-  auto* value_change = std::get_if<hir::EventControl>(&*event_or);
-  if (value_change == nullptr) {
-    return RefuseAssertionForm(
-        span,
-        "a clocking event that is a named event rather than a value "
-        "change");
-  }
 
   // LRM 16.12 tests the disable condition across the whole interval from the
   // start of an attempt to its end, not at that interval's ticks, so what it
@@ -565,7 +558,7 @@ auto LowerPropertySpec(
   if (!body_or) return std::unexpected(std::move(body_or.error()));
 
   return hir::PropertySpec{
-      .clock = *std::move(value_change),
+      .clock = *std::move(event_or),
       .disable = std::move(disable),
       .body = AddProperty(frame, *std::move(body_or))};
 }

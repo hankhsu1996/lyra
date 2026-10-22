@@ -159,8 +159,7 @@ in the engine orders and nothing in the standard licenses.
 
 Each `(sampled expression, clocking event)` a unit needs has a history of the depth its deepest
 `$past` asks for; the count is an elaboration-time constant (LRM 16.9.3), so the depth is known
-where the storage is declared. It is member storage reached only through its address, the shape a
-named event already has.
+where the storage is declared. It is member storage reached only through its address.
 
 It is installed already full of the expression's default sampled value. LRM 16.9.3 requires exactly
 that answer before the kth prior tick exists, so a history that starts full has no empty case and no

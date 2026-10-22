@@ -74,29 +74,51 @@ struct Reads {
   auto operator==(const Reads&) const -> bool = default;
 };
 
-// One entry of an explicit `@(...)` event control (LRM 9.4.2). `signal` is the
-// expression the event is a change in the value of, `edge` the direction its
-// least significant bit must take where one was written, and `cells` the
-// storage elaboration sealed that it reads -- a change to any of which is a
-// candidacy for the event rather than the event itself. What it reaches
-// through a handle, an interface or a call is the expression's own nodes,
-// found as an evaluation reaches them.
-//
-// `condition` is the LRM 9.4.2.3 `iff` qualifier: a value change is an event
-// only while it holds. It is read when the watched expression moves, and what
-// it reads is no part of what the entry is sensitive to, because the standard
-// evaluates it then and not when the qualifier itself moves.
-struct EventTrigger {
+// What an entry of an explicit `@(...)` event control (LRM 9.4.2) waits for
+// when its operand is a value: a change in it. `signal` is the expression the
+// event is a change in the value of, `edge` the direction its least significant
+// bit must take where one was written, and `cells` the storage elaboration
+// sealed that it reads -- a change to any of which is a candidacy for the event
+// rather than the event itself. What it reaches through a handle, an interface
+// or a call is the expression's own nodes, found as an evaluation reaches them.
+struct ValueChange {
   ExprId signal;
   support::EventEdge edge{};
   std::vector<SensitivityEntry> cells;
-  std::optional<ExprId> condition;
 
-  auto operator==(const EventTrigger&) const -> bool = default;
+  auto operator==(const ValueChange&) const -> bool = default;
 };
 
+// What an entry waits for when its operand is an event: a trigger of it (LRM
+// 15.5.2), `@e` alone or `e` among the entries of a list. `event` is evaluated
+// where the control is reached, and the wait is on the synchronization object
+// it names then: an assignment to the event afterwards reaches only a later
+// wait (LRM 15.5.5.1), and naming another element of an array of events is no
+// occurrence (LRM 15.5.1).
+struct NamedEventTrigger {
+  ExprId event;
+
+  auto operator==(const NamedEventTrigger&) const -> bool = default;
+};
+
+// One entry of an event control, `[edge] expression [iff condition]`, waiting
+// for what the type of its operand makes an occurrence of it.
+//
+// `condition` is the LRM 9.4.2.3 `iff` qualifier: an occurrence is an event
+// only while it holds. It is read where the occurrence happens, and what it
+// reads is no part of what the entry is sensitive to, because the standard
+// evaluates it then and not when the qualifier itself moves.
+struct EventEntry {
+  std::variant<ValueChange, NamedEventTrigger> occurrence;
+  std::optional<ExprId> condition;
+
+  auto operator==(const EventEntry&) const -> bool = default;
+};
+
+// `@(...)`: the wait ends at the first event of any entry, so the order the
+// entries are written in means nothing.
 struct EventControl {
-  std::vector<EventTrigger> triggers;
+  std::vector<EventEntry> entries;
 
   auto operator==(const EventControl&) const -> bool = default;
 };
@@ -109,31 +131,15 @@ struct ImplicitEventControl {
   auto operator==(const ImplicitEventControl&) const -> bool = default;
 };
 
-// LRM 15.5.2 `@e;`. What the wait watches is the event rather than the value of
-// an expression, so the entry names storage and nothing else -- a trigger is
-// the event itself, and there is no value to have moved. `condition` is the LRM
-// 9.4.2.3 `iff` qualifier, read where the trigger happens.
-struct NamedEventControl {
-  SensitivityEntry event;
-  std::optional<ExprId> condition;
-
-  auto operator==(const NamedEventControl&) const -> bool = default;
-};
-
-using TimingControl = std::variant<
-    DelayControl, EventControl, ImplicitEventControl, NamedEventControl>;
-
-// An `event_control` in whichever of its two forms the source wrote (LRM A.6.5)
-// -- a change in the value of an expression, or a named event's trigger. The
-// name says "any" because `EventControl` alone is the value-change form.
-using AnyEventControl = std::variant<EventControl, NamedEventControl>;
+using TimingControl =
+    std::variant<DelayControl, EventControl, ImplicitEventControl>;
 
 // LRM 9.4.5 `repeat (n) @(...)`: the effect waits for that many occurrences of
 // the event. The grammar puts a repeat count only in front of an event control,
 // and only where a whole `delay_or_event_control` may stand.
 struct RepeatedEventControl {
   ExprId count;
-  AnyEventControl event;
+  EventControl event;
 
   auto operator==(const RepeatedEventControl&) const -> bool = default;
 };
@@ -144,8 +150,8 @@ struct RepeatedEventControl {
 // in front of a statement -- plus the repeat form, which only this position
 // admits. A nonblocking assignment (LRM 10.4.2) and a nonblocking event trigger
 // (LRM 15.5.1) each carry one.
-using DelayOrEventControl = std::variant<
-    DelayControl, EventControl, NamedEventControl, RepeatedEventControl>;
+using DelayOrEventControl =
+    std::variant<DelayControl, EventControl, RepeatedEventControl>;
 
 // The effect happens where the statement is reached.
 struct ImmediateEffect {

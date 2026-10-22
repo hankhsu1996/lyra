@@ -2,27 +2,30 @@
 
 #include <memory>
 
-#include "lyra/runtime/named_event.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/runtime/synchronization_object.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/value_dump.hpp"
 #include "lyra/runtime/value_dumps.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/integral_words.hpp"
+#include "lyra/value/object_ref.hpp"
 #include "lyra/value/real.hpp"
 
 namespace lyra::runtime {
 
 namespace {
 
-// A named event, recorded in a time step it was triggered in (LRM 21.7.2.2).
+// An event variable, recorded in a time step the object it names then was
+// triggered in (LRM 21.7.2.2). Giving the variable another object is a change
+// of it, and so is a trigger of the object it names.
 class EventProbe final : public DumpProbe {
  public:
-  explicit EventProbe(NamedEvent& event) : event_(&event) {
+  explicit EventProbe(Var<value::ObjectRef>& event) : event_(&event) {
   }
 
   void Read(DumpCapture& into, DumpCode code) const override {
-    switch (event_->Triggered(current_runtime()).Truth()) {
+    switch (EventTriggered(event_->Get(), current_runtime(), nullptr).Truth()) {
       case value::Truthiness::kKnownNonzero:
         into.Triggered(code);
         return;
@@ -38,8 +41,12 @@ class EventProbe final : public DumpProbe {
     return watched;
   }
 
+  [[nodiscard]] auto Referent() const -> value::ObjectRef override {
+    return event_->Get();
+  }
+
   [[nodiscard]] auto Identity() const -> const void* override {
-    return event_;
+    return &event_->Get();
   }
 
   [[nodiscard]] auto Member() const -> const void* override {
@@ -47,7 +54,7 @@ class EventProbe final : public DumpProbe {
   }
 
  private:
-  NamedEvent* event_;
+  Var<value::ObjectRef>* event_;
 };
 
 }  // namespace
@@ -57,7 +64,8 @@ auto Describing(RuntimeEffects& runtime) -> Describer& {
 }
 
 void DescribeTo(
-    NamedEvent& event, RuntimeEffects& runtime, const DumpEntry* entry) {
+    Var<value::ObjectRef>& event, RuntimeEffects& runtime,
+    const DumpEntry* entry) {
   Describing(runtime).Var(*entry, std::make_unique<EventProbe>(event));
 }
 

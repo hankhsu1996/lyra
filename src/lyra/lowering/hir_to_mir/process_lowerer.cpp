@@ -18,6 +18,7 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/concurrent_assertion.hpp"
+#include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -272,9 +273,7 @@ auto DefaultInitialValue(
     ProcessLowerer& process, const WalkFrame& frame,
     const hir::ProceduralVarDecl& decl) -> InitialValue {
   return [&process, &frame, &decl]() -> diag::Result<mir::ExprId> {
-    mir::Block& body = *frame.current_block;
-    return body.exprs.Add(
-        BuildDefaultValueFromHir(process.Owner(), body, decl.type));
+    return BuildDeclaredInitialValue(process.Owner(), frame, decl.type);
   };
 }
 

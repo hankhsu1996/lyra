@@ -43,22 +43,14 @@ auto BuildEventWaitStmt(
     const hir::EventControl& ec) -> bool;
 
 // The leaves an event control a change decides watches, each paired with the
-// observation of the trigger it belongs to, declared in the block `frame` is
-// writing: what a wait built from them enrols on.
+// observation of the entry it belongs to, declared in the block `frame` is
+// writing: what a wait built from them enrols on. An entry naming an event
+// evaluates the event there, so a wait built from leaves of one is built where
+// the control is reached.
 template <ExprLowerer Lowerer>
 auto BuildEventLeaves(
     Lowerer& lowerer, const WalkFrame& frame, const hir::EventControl& ec)
     -> diag::Result<std::vector<ObservedLeaf>>;
-
-auto BuildNamedEventWaitStmt(
-    ProcessLowerer& process, WalkFrame frame, mir::Block& block,
-    const hir::NamedEventControl& nec) -> diag::Result<mir::Stmt>;
-
-// The same wait for a caller holding an event control whose form it has no
-// reason to know -- a repeat counts occurrences of either alike (LRM 9.4.5).
-auto BuildAnyEventWaitStmt(
-    ProcessLowerer& process, WalkFrame frame, mir::Block& block,
-    const hir::AnyEventControl& event) -> diag::Result<mir::Stmt>;
 
 auto LowerTimedStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,

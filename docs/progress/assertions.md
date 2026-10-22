@@ -132,12 +132,12 @@ The IDs are stable references and do not imply execution order beyond the depend
       value, and a past value of one is its current value too (LRM 16.5.1), so no cell is armed for
       it and an expression reading only such variables keeps no history.
 
-      Four things are refused rather than answered. A sampled value of a `ref static` formal,
+      Three things are refused rather than answered. A sampled value of a `ref static` formal,
       whose actual's Preponed value is what it should answer with. A history function over an
       expression reading both an automatic variable and one the design element holds, which needs
-      the history kept per variable rather than per expression. A call outside a procedure reaches
-      only the default clocking rule, which is not wired. And a clocking event that is a named
-      event rather than a value change is not carried.
+      the history kept per variable rather than per expression. And a call outside a procedure
+      reaches only the default clocking rule, which is not wired. A clocking event that names an
+      event ticks at its triggers, as any event control on it does.
 
 - [ ] AS5 -- Concurrent assertions (LRM 16.5-16.13): sequences, properties, their named
       declarations, `disable iff`, and the clocking a property is evaluated against. Evaluation is
@@ -174,10 +174,10 @@ The IDs are stable references and do not imply execution order beyond the depend
       window, a repetition admitting an empty match, a nonconsecutive or goto repetition, composing
       sequences with `and` / `or` / `intersect` / `throughout` / `within`, `first_match`, the
       property connectives and the operators over time, the abort operators, more than one clocking
-      event (LRM 16.13), a clocking event that is a named event, a hierarchical name reaching a
-      variable of a named block in a declared assertion's action block (LRM 23.6 allows it, and the
-      clause's example reaches one in an immediate assertion's), and the fifth statement form,
-      `cover sequence`, which counts every match an attempt produces rather than the attempt.
+      event (LRM 16.13), a hierarchical name reaching a variable of a named block in a declared
+      assertion's action block (LRM 23.6 allows it, and the clause's example reaches one in an
+      immediate assertion's), and the fifth statement form, `cover sequence`, which counts every
+      match an attempt produces rather than the attempt.
 
 - [ ] AS6 -- Assertion control tasks (LRM 20.11). They act on assertion state -- turning checking
       on, off, or killing it by scope or by name -- so they need that state to exist first.

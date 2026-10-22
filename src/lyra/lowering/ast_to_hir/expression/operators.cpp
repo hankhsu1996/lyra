@@ -11,7 +11,6 @@
 #include <slang/ast/statements/ConditionalStatements.h>
 #include <slang/ast/types/Type.h>
 
-#include "lyra/lowering/ast_to_hir/event_handle.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/pattern.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
@@ -44,10 +43,6 @@ template <ExprLowerer Lowerer>
 auto LowerUnaryExpr(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::UnaryExpression& un,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  if (auto refused = RefuseReadingAnEventAsAValue(*un.operand().type, span);
-      !refused) {
-    return std::unexpected(std::move(refused.error()));
-  }
   const hir::UnaryOp op = LowerUnaryOp(un.op);
   auto operand_or = lowerer.LowerExpr(un.operand(), frame);
   if (!operand_or) return std::unexpected(std::move(operand_or.error()));
@@ -65,14 +60,6 @@ template <ExprLowerer Lowerer>
 auto LowerBinaryExpr(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::BinaryExpression& bin,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  if (auto refused = RefuseReadingAnEventAsAValue(*bin.left().type, span);
-      !refused) {
-    return std::unexpected(std::move(refused.error()));
-  }
-  if (auto refused = RefuseReadingAnEventAsAValue(*bin.right().type, span);
-      !refused) {
-    return std::unexpected(std::move(refused.error()));
-  }
   auto lhs_or = lowerer.LowerExpr(bin.left(), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
   const hir::ExprId lhs_id = frame.Exprs().Add(*std::move(lhs_or));

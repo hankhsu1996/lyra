@@ -13,10 +13,12 @@ settled are revised. Where a leaf set comes from is revised by
 
 **The wait families are two, not three.** This entry's table put a named event's waiter list beside
 the value-change subscription as a disjoint engine subsystem, on the reasoning that MIR follows the
-execution split rather than the syntactic one. The execution split turned out to be one shape: a
-named event is a place a wait registers on and a trigger is what happens there, differing from a
-variable cell only in that nothing about it has bits, which is a case the per-leaf filtering already
-answers. So `@e` is a wait whose one leaf names the event, and the same wait serves
+execution split rather than the syntactic one. The execution split turned out to be one shape: the
+synchronization object an event names (LRM 6.17) is a place a wait registers on and a trigger is
+what happens there, differing from a variable cell only in that nothing about it has bits, which is
+a case the per-leaf filtering already answers. So `@e` is a wait whose one leaf is the object the
+event names where the wait begins, decided by that object's triggers since then, which is why an
+event and a value change stand side by side in one event list; and the same wait serves
 `wait (e.triggered)`, whose leaf a value-change-only vocabulary could not express at all. What
 remains disjoint is time.
 
@@ -100,7 +102,7 @@ same level as disjoint statements:
 | --------------------- | ------------------------------- | --------------------------- |
 | Time-anchored         | `DelayStmt { duration }`        | a placement in a later slot |
 | Value-change anchored | `SensitivityWaitStmt { reads }` | `Observable::Subscribe`     |
-| Sync-primitive        | `ExprStmt { event.Await() }`    | `NamedEvent` waiter list    |
+| Sync-primitive        | `ExprStmt { event.Await() }`    | an event's waiter list      |
 
 HIR keeps `hir::TimingControl` as a sum type because HIR is source-faithful and LRM 9.4 groups them
 syntactically.
@@ -171,5 +173,5 @@ classification cheaply by looking at `sensitivity_list.size()`.
 one arm carries no polymorphism, only the historical shape of an abstraction that no longer applies.
 The LRM groups `#N`, `@(...)`, and `wait` syntactically because they share the
 procedural-timing-control grammar position; the engine treats them as three disjoint subsystems
-(time queue vs Observable subscription vs NamedEvent waiter list). MIR is execution-modelling, so it
+(time queue vs Observable subscription vs an event's waiter list). MIR is execution-modelling, so it
 follows the execution split, not the syntactic one.

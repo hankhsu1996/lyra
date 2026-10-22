@@ -958,7 +958,6 @@ auto CallArranger::ConstructionOf(
             return no_construct();
           },
           [&](const lir::LoopBlocksType&) -> Built { return no_construct(); },
-          [&](const lir::EventType&) -> Built { return no_construct(); },
           // A write is opened by the wrapper it writes through, which is an
           // operation on the wrapper rather than a value anything builds, and
           // a part designated within it is built by the step that reaches it.

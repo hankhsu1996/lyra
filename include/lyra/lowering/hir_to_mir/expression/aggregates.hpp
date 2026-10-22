@@ -80,6 +80,7 @@ auto LowerHirReplicationExpr(
 template <ExprLowerer Lowerer>
 auto LowerHirDynamicArrayNewExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::DynamicArrayNewExpr& n,
-    mir::TypeId result_type) -> diag::Result<mir::Expr>;
+    hir::TypeId hir_result_type, mir::TypeId result_type)
+    -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

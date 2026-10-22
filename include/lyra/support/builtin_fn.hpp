@@ -163,11 +163,17 @@ enum class BuiltinFn : std::uint16_t {
   kOcttoa,
   kBintoa,
   kRealtoa,
-  // LRM 15.5 named-event operations. `Trigger` arises from `-> e;` collapsing
-  // at HIR -> MIR; waiting for one is the ordinary wait, naming the event as a
-  // leaf. `Triggered` is the LRM 15.5.3 same-time-step query.
+  // LRM 15.5 operations on an event, each handed the event's value, a
+  // reference to a synchronization object or to none (LRM 6.17). `EventNew`
+  // makes the object a declaration with no initializer names; `Trigger` is
+  // `-> e;`; `Triggered` the LRM 15.5.3 same-time-step query. A wait on an
+  // event is the ordinary wait, its leaf put where `EventReportsTo` says and
+  // decided by `EventOccurrences` moving from where the wait began.
+  kEventNew,
   kTrigger,
   kTriggered,
+  kEventOccurrences,
+  kEventReportsTo,
   // LRM 16.9.3 sampled value history operations, all reached through the
   // history's own address. `Install` fills it with the expression's default
   // sampled value and fixes how far back it reaches, which the design does
@@ -697,18 +703,17 @@ enum class BuiltinFn : std::uint16_t {
   kScalarPropagationDelay,
   kVectorPropagationDelay,
   // What decides whether reaching a wait is an event for it (LRM 9.4.2), built
-  // where the wait begins and held for as long as it lasts. Two halves, each
-  // present exactly where the source put one: an event control watches an
-  // expression through the watch the compiler builds for it, and a named
-  // event's trigger is the event itself so it watches nothing; either may carry
-  // an `iff` qualifier (LRM 9.4.2.3, 15.5). Four entries because the four
-  // combinations are what the language distinguishes and an absent half has no
-  // value to stand in for it, so which one a wait carries is settled where the
-  // source is read rather than by counting arguments.
+  // where the wait begins and held for as long as it lasts: being reached, for
+  // a wait sensitive to what it reads; or the watch the compiler builds for an
+  // entry of an event control -- an expression's value, or the triggers of the
+  // object an event names (LRM 15.5.2) -- with or without an `iff` qualifier
+  // (LRM 9.4.2.3). Three entries because the three are what the language
+  // distinguishes and an absent half has no value to stand in for it, so which
+  // one a wait carries is settled where the source is read rather than by
+  // counting arguments.
   kObservationOnReaching,
   kObservationOfWatch,
   kObservationOfWatchQualified,
-  kObservationQualified,
   // Building an observation evaluates nothing. Asking whether a candidacy was
   // an event evaluates it, by the waiting process for a wait that process
   // decides (LRM 4.5), and answers one or zero.
@@ -1464,6 +1469,10 @@ struct RuntimeEntry {
   // source-level call it lowers yields (LRM 9.7 `await`, a void task). The
   // entry builds what is waited for; the stop is the caller's.
   bool answers_a_wait = false;
+  // Whether the entry is handed the report the evaluation calling it states
+  // what it reaches in (LRM 9.4.2), null where that evaluation makes none. It
+  // rides after the engine handle and ahead of the operands the source wrote.
+  bool takes_the_read_report = false;
   // How a call to the entry ends. An entry can depart unless its definition
   // cannot raise a departure: a run-time error it raises is a departure too,
   // and it may run the design's own code, which a `disable` anywhere reaches

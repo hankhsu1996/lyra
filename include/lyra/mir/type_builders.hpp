@@ -88,9 +88,8 @@ auto ConstructionTablePointer(const TypePool& types) -> TypeId;
 // The observable-cell type for a variable of `value_type`: a SystemVerilog
 // value-storage data object (LRM 6.5) is an observable cell, so its writes fire
 // subscribers and its value is reached through the cell; any other type -- a
-// handle, a container, an object, a named event (which carries its own
-// subscribe mechanism), a runtime facade, a machine primitive -- is its own
-// storage and passes through unwrapped.
+// handle, a container, an object, a runtime facade, a machine primitive -- is
+// its own storage and passes through unwrapped.
 auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId;
 
 }  // namespace lyra::mir

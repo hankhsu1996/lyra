@@ -441,7 +441,6 @@ class MirDumper {
               return std::format(
                   "MachineFunction(({}) -> Type[{}])", params, m.result.value);
             },
-            [](const EventType&) -> std::string { return "EventType"; },
             [](const RealType&) -> std::string { return "RealType"; },
             [](const ShortRealType&) -> std::string { return "ShortRealType"; },
             [](const ChandleType&) -> std::string { return "ChandleType"; },

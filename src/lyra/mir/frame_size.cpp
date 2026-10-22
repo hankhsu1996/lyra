@@ -236,7 +236,6 @@ auto LaidOut(const CompilationUnit& unit, TypeId type, const auto& part)
           [&](const VectorType& t) { return handle(t); },
           [&](const CoroutineType& t) { return handle(t); },
           [&](const DriverType& t) { return handle(t); },
-          [&](const EventType& t) { return handle(t); },
           [&](const ObjectType& t) { return handle(t); },
           [&](const RuntimeClassType& t) { return handle(t); },
           [&](const RuntimeEffectsType& t) { return handle(t); },

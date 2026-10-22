@@ -353,6 +353,12 @@ the detail lives in the entry itself.
   shares; MIR carries no event-control node, and one enum for the edge specifier is shared by
   compiler and runtime. A dedicated MIR statement, a per-leaf build call, and an engine enrolment
   verb are rejected.
+- [an-event-is-a-reference-to-its-object](an-event-is-a-reference-to-its-object.md) -- an event's
+  value is a counted reference to a runtime synchronization object, held as a process handle is; a
+  declaration and `new[N]` give each event position a new object while the type's one default, what
+  a missing entry reads, is `null`; a wait is put on the object its event names where it begins and
+  decided by that object's triggers since. An object in place, wrapped only for containers, and a
+  wait decided by being reached are rejected.
 - [update-due-on-an-event](update-due-on-an-event.md) -- an assignment whose update is due on an
   event states no slot where it stands, so the update is carried by an execution of no lineage that
   waits, places itself in the NBA region of the slot the event lands in, and writes there. A

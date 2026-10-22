@@ -181,9 +181,10 @@ class RuntimeEffects {
   // lineage (LRM 9.5), schedules it, and answers the process it now is.
   auto Spawn(Coroutine<void> coroutine) -> std::shared_ptr<RuntimeProcess>;
 
-  // Takes `coroutine` on as an execution of no lineage and schedules it: a
-  // deferred effect the standard makes no process of, so nothing that names
-  // processes finds it (LRM 9.4.5 and 15.5.1 against 9.6.1, 9.6.3).
+  // Takes `coroutine` on as an execution of no lineage and runs it up to its
+  // first wait: a deferred effect the standard makes no process of, so nothing
+  // that names processes finds it (LRM 9.4.5 and 15.5.1 against 9.6.1, 9.6.3),
+  // whose control the statement reaching it executes.
   void RunDetached(Coroutine<void> coroutine);
 
   // The process whose body is executing right now (LRM 9.5); the observation

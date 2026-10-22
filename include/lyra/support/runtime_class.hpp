@@ -9,11 +9,12 @@ namespace lyra::support {
 
 // A class the runtime library defines whose objects generated code reaches but
 // never lays out: the scope every object of the design hierarchy is (LRM 23.3),
-// the part every object the program builds starts with (LRM 8.3), and the
-// object a process is (LRM 9.7). It belongs to no compilation unit, so which
-// one it is is the whole of its identity, and how a target spells it is that
-// target's own answer. Where a class of the source extends one, generated code
-// places the class's own storage after it and nothing inside it.
+// the part every object the program builds starts with (LRM 8.3), the object a
+// process is (LRM 9.7), and the synchronization object an event names (LRM
+// 6.17). It belongs to no compilation unit, so which one it is is the whole of
+// its identity, and how a target spells it is that target's own answer. Where a
+// class of the source extends one, generated code places the class's own
+// storage after it and nothing inside it.
 //
 // Two layers name it -- a type of each stands for a value of one -- so it lives
 // beside them rather than in either.
@@ -21,6 +22,7 @@ enum class RuntimeClass : std::uint8_t {
   kScope,
   kObject,
   kProcess,
+  kSynchronizationObject,
 };
 
 // What a dump calls it.

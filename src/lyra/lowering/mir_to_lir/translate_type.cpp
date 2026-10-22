@@ -191,9 +191,6 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
                 .params = TranslateTypes(mf.params),
                 .result = TranslateType(mf.result)}};
           },
-          [](const mir::EventType&) -> lir::Type {
-            return lir::Type{lir::EventType{}};
-          },
           [](const mir::RealType&) -> lir::Type {
             return lir::Type{lir::RealType{}};
           },

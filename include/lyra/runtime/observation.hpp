@@ -9,11 +9,11 @@
 namespace lyra::runtime {
 
 // What decides whether reaching a wait is an event for it, held while the
-// procedure waits there. Two halves, each present exactly where the source put
-// one: an event control watches an expression's value, and a named event's
-// trigger is the event itself so it watches nothing; either may carry an `iff`
-// qualifier, which is read when what is watched moves and not when the
-// qualifier itself does (LRM 9.4.2, 9.4.2.3, 15.5).
+// procedure waits there: what the wait watches, which an event control
+// compares from where the wait began -- an expression's value, or how many
+// times the object an event names has been triggered (LRM 15.5.2) -- and the
+// `iff` qualifier where the source wrote one, which is read when what is
+// watched moves and not when the qualifier itself does (LRM 9.4.2, 9.4.2.3).
 //
 // Both live no longer than the wait. A change while the procedure is not parked
 // at the event control is not one it reports, and the control measures from
@@ -38,12 +38,10 @@ namespace lyra::runtime {
 class ArmedObservation {
  public:
   // Built unarmed: it has nothing to compare against until the expression is
-  // first evaluated. A wait whose target decides by being reached -- a named
-  // event's trigger is the event -- watches nothing, and `iff` is the whole of
-  // what can still hold it back. The qualifier answers whether it holds, its
-  // value already reduced to LRM 12.4 truth where the expression is compiled.
+  // first evaluated. The qualifier answers whether it holds, its value already
+  // reduced to LRM 12.4 truth where the expression is compiled.
   ArmedObservation(
-      std::optional<OwnedClosure<support::WatchSignature>> watch,
+      OwnedClosure<support::WatchSignature> watch,
       std::optional<OwnedClosure<support::ConditionSignature>> condition);
 
   ArmedObservation(const ArmedObservation&) = delete;
@@ -58,9 +56,7 @@ class ArmedObservation {
   void Arm() {
     // Told it is arming, the watch only takes its baseline, so what it
     // answers then is no event.
-    if (watch_.has_value()) {
-      (*watch_)(true);
-    }
+    watch_(true);
     armed_ = true;
   }
 
@@ -84,12 +80,11 @@ class ArmedObservation {
       Arm();
       return false;
     }
-    return (!watch_.has_value() || (*watch_)(false)) &&
-           (!condition_.has_value() || (*condition_)());
+    return watch_(false) && (!condition_.has_value() || (*condition_)());
   }
 
  private:
-  std::optional<OwnedClosure<support::WatchSignature>> watch_;
+  OwnedClosure<support::WatchSignature> watch_;
   std::optional<OwnedClosure<support::ConditionSignature>> condition_;
   bool armed_ = false;
 };
@@ -99,12 +94,11 @@ class ArmedObservation {
 // wait rather than as long as the statement that reached the control, so
 // whatever is watching holds it between them and none of them owns it.
 //
-// One factory per form the language distinguishes. Watching nothing is
-// the implicit sensitivity of an `always_comb` / `always_latch` body, an `@*`,
-// a `wait (cond)` or a continuous assignment -- the standard makes those
+// One factory per form the language distinguishes. Watching nothing is the
+// implicit sensitivity of an `always_comb` / `always_latch` body, an `@*`, a
+// `wait (cond)` or a continuous assignment -- the standard makes those
 // sensitive to the variables read rather than to the value of an expression
-// (LRM 9.2.2.2.1), so being reached is the whole condition -- and is equally an
-// unqualified `@e`, whose trigger is the event itself (LRM 15.5.1).
+// (LRM 9.2.2.2.1), so being reached is the whole condition.
 //
 // Every member no expression shapes is defined in the library: a unit stating
 // a wait constructs, copies and destroys these, and a definition written here
@@ -121,14 +115,12 @@ class Observation {
   // Being reached is the whole condition, so there is nothing armed to hold.
   [[nodiscard]] static auto OnReaching() -> Observation;
 
-  // An expression's watch, with or without an `iff` qualifier, and the
-  // qualifier alone, which answers whether it holds as LRM 12.4 decides.
+  // A watch, with or without an `iff` qualifier, which answers whether it
+  // holds as LRM 12.4 decides.
   [[nodiscard]] static auto OfWatch(OwnedClosure<support::WatchSignature> watch)
       -> Observation;
   [[nodiscard]] static auto OfWatchQualified(
       OwnedClosure<support::WatchSignature> watch,
-      OwnedClosure<support::ConditionSignature> condition) -> Observation;
-  [[nodiscard]] static auto Qualified(
       OwnedClosure<support::ConditionSignature> condition) -> Observation;
 
   // Arms what this holds, where the wait begins. Being reached holds nothing to

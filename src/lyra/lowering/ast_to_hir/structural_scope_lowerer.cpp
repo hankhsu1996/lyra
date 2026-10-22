@@ -43,7 +43,6 @@
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
-#include "lyra/lowering/ast_to_hir/event_handle.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/hierarchy_override.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
@@ -845,11 +844,6 @@ auto StructuralScopeLowerer::PopulateVariableMember(
   if (const auto binding = owner_->ReferenceBindingOf(var)) {
     kind = hir::StructuralReferenceDecl{.binding = *binding};
   } else if (const auto* init = var.getInitializer(); init != nullptr) {
-    if (auto refused = RefuseGivingAnEventAValue(
-            var.getType(), frontend::PointSpanOf(var.location));
-        !refused) {
-      return std::unexpected(std::move(refused.error()));
-    }
     auto init_or = LowerExpr(*init, frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     kind = hir::StructuralVariableDecl{

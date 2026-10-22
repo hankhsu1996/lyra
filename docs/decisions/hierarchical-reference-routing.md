@@ -72,16 +72,15 @@ property of each segment.
 
 A reference's sealed endpoint is the access surface of the target it reaches. A reference whose leaf
 is an observable storage cell seals to that cell; a reference whose leaf is a class object handle
-seals to the handle, with property access happening through the class's existing access protocol; a
-reference whose leaf is a named event seals to the event, with the existing event protocol. There is
-no synthetic "endpoint type" that wraps each target; the endpoint is the target itself, reached
-through a sealed direct path.
+seals to the handle, with property access happening through the class's existing access protocol; an
+event is a variable whose value is a reference to a synchronization object, so a reference whose
+leaf is an event seals to that variable's cell like any other. There is no synthetic "endpoint type"
+that wraps each target; the endpoint is the target itself, reached through a sealed direct path.
 
 The MIR representation reuses existing type variants -- a borrowed pointer to the appropriate
-observable cell, the managed reference for class handles, the event surface type. The fact that a
-particular field is a sealed reference (rather than, for example, a constructor-stored pointer) is
-recorded at the structural layer that records the reference; the type carries only the value's
-runtime shape.
+observable cell, the managed reference for class handles and events. The fact that a particular
+field is a sealed reference (rather than, for example, a constructor-stored pointer) is recorded at
+the structural layer that records the reference; the type carries only the value's runtime shape.
 
 ### D4. `ref` ports are forwarding links collapsed at Seal
 

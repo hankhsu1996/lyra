@@ -5,13 +5,16 @@
 // after, under a #time line naming the step (LRM 21.7.1.1, 21.7.1.2, 21.7.2).
 // A vector is written after a b, a real after an r, and a triggered event as a
 // 1 directly before its code; the codes themselves are the tool's to choose,
-// so they are read off the declarations.
+// so they are read off the declarations. An event is recorded as triggered in
+// a step the object it names then is triggered, so one given another event's
+// object follows that object and leaves the one it named before (LRM 15.5.5.1).
 module Top;
   logic [3:0] a = 4'h3;
   wire [3:0] w = a;
   real r = 1.5;
   integer n = 7;
   event e;
+  event moved, target, left_behind;
 
   string lines[$];
 
@@ -19,6 +22,7 @@ module Top;
   int a_size, w_size, n_size;
   string a_at_0, w_at_0, r_at_0, n_at_0;
   string a_at_5, w_at_5, r_at_5, e_at_5, n_at_5;
+  string moved_at_6, moved_at_7;
 
   // The kind, size and code of the $var line declaring `name`.
   function automatic void Declared(string name, output string kind,
@@ -66,7 +70,7 @@ module Top;
   initial begin
     int fd;
     string line;
-    string a_code, w_code, r_code, n_code, e_code;
+    string a_code, w_code, r_code, n_code, e_code, moved_code, moved_kind;
     int ignored;
 
     $dumpfile("changes.vcd");
@@ -75,6 +79,10 @@ module Top;
     r = 2.25;
     n = -2;
     -> e;
+    left_behind = moved;
+    moved = target;
+    #1 -> target;
+    #1 -> left_behind;
     #1 $dumpflush;
 
     fd = $fopen("changes.vcd", "r");
@@ -89,6 +97,7 @@ module Top;
     Declared("r", r_kind, ignored, r_code);
     Declared("n", n_kind, n_size, n_code);
     Declared("e", e_kind, ignored, e_code);
+    Declared("moved", moved_kind, ignored, moved_code);
     a_at_0 = RecordedAt(0, a_code);
     w_at_0 = RecordedAt(0, w_code);
     r_at_0 = RecordedAt(0, r_code);
@@ -98,6 +107,8 @@ module Top;
     r_at_5 = RecordedAt(5, r_code);
     n_at_5 = RecordedAt(5, n_code);
     e_at_5 = RecordedAt(5, e_code);
+    moved_at_6 = RecordedAt(6, moved_code);
+    moved_at_7 = RecordedAt(7, moved_code);
   end
 
   final begin
@@ -146,6 +157,12 @@ module Top;
     if (e_at_5 != "1")
       $fatal(1, "e was recorded at time 5 as '%s', expected it triggered",
              e_at_5);
+    if (moved_at_6 != "1")
+      $fatal(1, "an event given another's object was recorded as '%s' when that object was triggered, expected it triggered",
+             moved_at_6);
+    if (moved_at_7 != "")
+      $fatal(1, "an event given another's object was recorded as '%s' when the object it left was triggered, expected nothing",
+             moved_at_7);
     $display("All checks passed");
   end
 endmodule

@@ -7,7 +7,7 @@
 namespace lyra::runtime {
 
 ArmedObservation::ArmedObservation(
-    std::optional<OwnedClosure<support::WatchSignature>> watch,
+    OwnedClosure<support::WatchSignature> watch,
     std::optional<OwnedClosure<support::ConditionSignature>> condition)
     : watch_(std::move(watch)), condition_(std::move(condition)) {
 }
@@ -36,12 +36,6 @@ auto Observation::OfWatchQualified(
     OwnedClosure<support::ConditionSignature> condition) -> Observation {
   return Observation{std::make_shared<ArmedObservation>(
       std::move(watch), std::move(condition))};
-}
-
-auto Observation::Qualified(OwnedClosure<support::ConditionSignature> condition)
-    -> Observation {
-  return Observation{
-      std::make_shared<ArmedObservation>(std::nullopt, std::move(condition))};
 }
 
 void Observation::Arm() const {

@@ -26,8 +26,6 @@ auto MemberStorageKindName(MemberStorageKind kind) -> std::string_view {
       return "any_reference";
     case MemberStorageKind::kSharedPointer:
       return "shared_pointer";
-    case MemberStorageKind::kNamedEvent:
-      return "named_event";
     case MemberStorageKind::kCancellationTarget:
       return "cancellation_target";
     case MemberStorageKind::kChannelCancellation:

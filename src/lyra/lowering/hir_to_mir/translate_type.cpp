@@ -246,8 +246,10 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
           [](const hir::DynamicType&) -> mir::Type {
             return mir::Type{mir::AnyType{}};
           },
-          [](const hir::EventType&) -> mir::Type {
-            return mir::Type{mir::EventType{}};
+          // LRM 6.17: an event is a handle to a synchronization object, so
+          // it is held, copied, compared and nulled as a class handle is.
+          [&](const hir::EventType&) -> mir::Type {
+            return unit_.types.Get(unit_.builtins.event);
           },
           [](const hir::RealType&) -> mir::Type {
             return mir::Type{mir::RealType{}};

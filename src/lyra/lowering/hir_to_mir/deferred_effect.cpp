@@ -105,9 +105,6 @@ auto BuildDueSlotWaitStmt(
           [&](const hir::EventControl& ec) -> diag::Result<mir::Stmt> {
             return BuildEventWaitStmt(process, carrier_frame, body, ec);
           },
-          [&](const hir::NamedEventControl& nec) -> diag::Result<mir::Stmt> {
-            return BuildNamedEventWaitStmt(process, carrier_frame, body, nec);
-          },
           [&](const hir::RepeatedEventControl& r) -> diag::Result<mir::Stmt> {
             auto count_or = process.LowerExpr(
                 process.HirBody().exprs.Get(r.count), outer_frame);
@@ -118,7 +115,7 @@ auto BuildDueSlotWaitStmt(
             mir::Block loop_body;
             const WalkFrame loop_frame = carrier_frame.WithBlock(&loop_body);
             auto wait_or =
-                BuildAnyEventWaitStmt(process, loop_frame, loop_body, r.event);
+                BuildEventWaitStmt(process, loop_frame, loop_body, r.event);
             if (!wait_or) return std::unexpected(std::move(wait_or.error()));
             loop_body.AppendStmt(*std::move(wait_or));
             return BuildRepeatLoopStmt(

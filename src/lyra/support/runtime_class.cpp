@@ -18,6 +18,8 @@ auto RuntimeClassName(RuntimeClass klass) -> std::string_view {
       return "Object";
     case RuntimeClass::kProcess:
       return "Process";
+    case RuntimeClass::kSynchronizationObject:
+      return "SynchronizationObject";
   }
   throw InternalError("RuntimeClassName: unknown runtime class");
 }
@@ -42,6 +44,7 @@ auto VirtualsDeclaredBy(RuntimeClass klass) -> std::span<const LibraryVirtual> {
       return kScopeVirtuals;
     case RuntimeClass::kObject:
     case RuntimeClass::kProcess:
+    case RuntimeClass::kSynchronizationObject:
       return {};
   }
   throw InternalError("VirtualsDeclaredBy: unknown runtime class");
@@ -53,6 +56,7 @@ auto LibraryBaseOf(RuntimeClass klass) -> std::optional<RuntimeClass> {
       return RuntimeClass::kObject;
     case RuntimeClass::kObject:
     case RuntimeClass::kProcess:
+    case RuntimeClass::kSynchronizationObject:
       return std::nullopt;
   }
   throw InternalError("LibraryBaseOf: unknown runtime class");

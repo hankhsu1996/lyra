@@ -15,7 +15,6 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/pattern.hpp"
 #include "lyra/hir/type_id.hpp"
-#include "lyra/lowering/ast_to_hir/event_handle.hpp"
 #include "lyra/lowering/ast_to_hir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
@@ -50,11 +49,6 @@ auto LowerConditionClauses(
   std::vector<hir::ConditionClause> clauses;
   clauses.reserve(conditions.size());
   for (const auto& condition : conditions) {
-    if (auto refused =
-            RefuseReadingAnEventAsAValue(*condition.expr->type, span);
-        !refused) {
-      return std::unexpected(std::move(refused.error()));
-    }
     auto expr_or = lowerer.LowerExpr(*condition.expr, frame);
     if (!expr_or) return std::unexpected(std::move(expr_or.error()));
     const hir::ExprId expr_id = frame.Exprs().Add(*std::move(expr_or));

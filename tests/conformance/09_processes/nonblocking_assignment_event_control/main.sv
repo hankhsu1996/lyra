@@ -12,6 +12,11 @@
 // target held before it. The repeat form waits for that many occurrences of the
 // event first. The standard makes no process of any of this, so `wait fork`
 // does not wait for an update that has not happened yet.
+//
+// The control itself is executed where the statement stands (LRM 9.4.5): a
+// change the procedure makes straight after the statement is an event for it,
+// and an event the control names is the object that event names there, whatever
+// it names afterwards (LRM 15.5.5.1).
 module Top;
   logic clk = 0;
   event tick;
@@ -26,10 +31,15 @@ module Top;
   int read_before_edge = 9;
   int wait_fork_time = 9;
   int seen_at_edge = 9;
+  logic armed = 0;
+  int on_own_change = 9;
+  event first_object, second_object, named;
+  int on_object_named = 9;
 
   // Rising edges at 5, 15, 25 and 35.
   initial repeat (8) #5 clk = ~clk;
   initial #7 -> tick;
+  initial #3 -> first_object;
 
   // Rewriting the operand after time zero reaches none of the updates.
   initial #1 source = 99;
@@ -51,6 +61,11 @@ module Top;
     ordered <= @(posedge clk) 2;
     mem[index] <= @(posedge clk) source;
     index = 1;
+    on_own_change <= @(armed) 1;
+    armed = 1;
+    named = first_object;
+    on_object_named <= @(named) 1;
+    named = second_object;
     // Nothing above blocked, so the procedure is still at time zero and no
     // update has been made -- and `wait fork` has nothing to wait for.
     read_before_edge = on_edge;
@@ -82,6 +97,12 @@ module Top;
     if (mem[0] !== 1)
       $fatal(1, "element 0 holds %0d, expected the update to reach the index the statement read",
              mem[0]);
+    if (on_own_change !== 1)
+      $fatal(1, "a change made straight after the statement left %0d, expected the update 1",
+             on_own_change);
+    if (on_object_named !== 1)
+      $fatal(1, "an update on an event left %0d, expected the object it named at the statement to land it",
+             on_object_named);
     if (mem[1] !== 9)
       $fatal(1, "the update reached element 1, whose index was written after the statement");
     $display("All checks passed");

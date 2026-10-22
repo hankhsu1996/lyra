@@ -21,7 +21,6 @@
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/loop_blocks.hpp"
-#include "lyra/runtime/named_event.hpp"
 #include "lyra/runtime/net.hpp"
 #include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
@@ -33,6 +32,7 @@
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/shared_pointer.hpp"
 #include "lyra/runtime/storage_for.hpp"
+#include "lyra/runtime/synchronization_object.hpp"
 #include "lyra/runtime/tail.hpp"
 #include "lyra/runtime/timer.hpp"
 #include "lyra/runtime/trigger.hpp"
@@ -313,8 +313,6 @@ auto LayoutOf(
       return Of<SharedPointer>();
     case MemberStorageKind::kChannelCancellation:
       return support::kChannelCancellationStorage;
-    case MemberStorageKind::kNamedEvent:
-      return Of<NamedEvent>();
     case MemberStorageKind::kCancellationTarget:
       return Of<CancellationTarget>();
     case MemberStorageKind::kEvaluationAttempts:
@@ -416,7 +414,6 @@ auto HeldContentsOf(support::DeclaredMemberStorage storage)
           case MemberStorageKind::kAnyReference:
           case MemberStorageKind::kSharedPointer:
           case MemberStorageKind::kChannelCancellation:
-          case MemberStorageKind::kNamedEvent:
           case MemberStorageKind::kCancellationTarget:
           case MemberStorageKind::kEvaluationAttempts:
           case MemberStorageKind::kTimer:
@@ -435,6 +432,8 @@ auto LayoutOf(support::RuntimeClass klass) -> ObjectLayout {
       return Of<GcObject>();
     case support::RuntimeClass::kProcess:
       return Of<RuntimeProcess>();
+    case support::RuntimeClass::kSynchronizationObject:
+      return Of<SynchronizationObject>();
   }
   throw InternalError("object layout: unknown runtime class");
 }
@@ -452,9 +451,10 @@ auto TypeInfoSymbolOf(support::RuntimeClass klass) -> std::string {
     case support::RuntimeClass::kObject:
       return std::string("_ZTI") + typeid(GcObject).name();
     case support::RuntimeClass::kProcess:
+    case support::RuntimeClass::kSynchronizationObject:
       throw InternalError(
-          "object layout: a process is read as a class a value extends -- "
-          "please report this as a bug");
+          "object layout: a process or an event's object is read as a class a "
+          "value extends -- please report this as a bug");
   }
   throw InternalError("object layout: unknown runtime class");
 }
@@ -472,11 +472,12 @@ auto BaseObjectConstructorSymbolOf(support::RuntimeClass klass)
     case support::RuntimeClass::kObject:
       return "_ZN4lyra7runtime8GcObjectC2Ev";
     case support::RuntimeClass::kProcess:
+    case support::RuntimeClass::kSynchronizationObject:
       break;
   }
   throw InternalError(
-      "object layout: a process is read as a class a value extends -- please "
-      "report this as a bug");
+      "object layout: a process or an event's object is read as a class a "
+      "value extends -- please report this as a bug");
 }
 
 auto BaseObjectDestructorSymbolOf(support::RuntimeClass klass)
@@ -487,11 +488,12 @@ auto BaseObjectDestructorSymbolOf(support::RuntimeClass klass)
     case support::RuntimeClass::kObject:
       return "_ZN4lyra7runtime8GcObjectD2Ev";
     case support::RuntimeClass::kProcess:
+    case support::RuntimeClass::kSynchronizationObject:
       break;
   }
   throw InternalError(
-      "object layout: a process is read as a class a value extends -- please "
-      "report this as a bug");
+      "object layout: a process or an event's object is read as a class a "
+      "value extends -- please report this as a bug");
 }
 
 // The Itanium mangling of each member function of `lyra::runtime::Scope`. A

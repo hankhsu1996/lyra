@@ -57,29 +57,29 @@ what the construct means.
   integer is a number a runtime entry takes or returns. Every value a runtime entry returns as a
   plain scalar, every table a runtime record reads as raw storage, and every value that crosses a
   foreign-call boundary is one of these.
-- The type system: value types (integral, real, string, event, ...); one object type, naming a class
-  by its identity, which is one of two forms -- an intra-unit class (a class of this unit, however
-  the name reaching it was written) and an external-unit class (a class another compilation unit
-  published, named by that unit and the class); three composing wrappers, pointer, reference and
-  vector, a pointer stating its ownership -- unique, shared or borrowed, the last two written
-  `Shared<T>` and `Borrowed<T>` in these docs -- and a reference, as in Rust and C++, being bound
-  once to a referent that exists elsewhere and never null, so holding one says only that the
-  referent is read where it lies rather than copied; and five categories: the **tuple**, the
-  structural product (positional; interned by its components, so two with the same components are
-  one type); the **record**, a declared struct, union or tagged union (positional like the tuple,
-  but its identity is its declaration, so two with the same members are two types); the **closure**,
-  an anonymous concrete callable value (capture fields plus one invoke body, a distinct type per
-  site); the **erased callable**, a closure of a type unknown where it is called, reached only
-  through a box or a borrow, of a signature of machine types and nothing else
-  (`compiler_generated_storage.md` invariant 10); and the **object** (`mir::Class`), the rich
-  nominal object with methods and dispatch. A component of a tuple or a record is reached the same
-  way: by its position, as a field step on the place holding it, whether that place is a variable, a
-  dereference or a value held for the full-expression; a union's members all lie at its start. The
-  closure and the object share a **field substrate** -- a field declaration, a field id keyed within
-  one declaration, and one access node -- while staying distinct types; an access names the
-  declaration it reaches into, so what the substrate shares is the vocabulary and never the
-  identity. Structural versus nominal, and storage versus callable, are the ordinary
-  generic-language distinctions (C++/Rust/LLVM carry them).
+- The type system: value types (integral, real, string, ...); one object type, naming a class by its
+  identity, which is one of two forms -- an intra-unit class (a class of this unit, however the name
+  reaching it was written) and an external-unit class (a class another compilation unit published,
+  named by that unit and the class); three composing wrappers, pointer, reference and vector, a
+  pointer stating its ownership -- unique, shared or borrowed, the last two written `Shared<T>` and
+  `Borrowed<T>` in these docs -- and a reference, as in Rust and C++, being bound once to a referent
+  that exists elsewhere and never null, so holding one says only that the referent is read where it
+  lies rather than copied; and five categories: the **tuple**, the structural product (positional;
+  interned by its components, so two with the same components are one type); the **record**, a
+  declared struct, union or tagged union (positional like the tuple, but its identity is its
+  declaration, so two with the same members are two types); the **closure**, an anonymous concrete
+  callable value (capture fields plus one invoke body, a distinct type per site); the **erased
+  callable**, a closure of a type unknown where it is called, reached only through a box or a
+  borrow, of a signature of machine types and nothing else (`compiler_generated_storage.md`
+  invariant 10); and the **object** (`mir::Class`), the rich nominal object with methods and
+  dispatch. A component of a tuple or a record is reached the same way: by its position, as a field
+  step on the place holding it, whether that place is a variable, a dereference or a value held for
+  the full-expression; a union's members all lie at its start. The closure and the object share a
+  **field substrate** -- a field declaration, a field id keyed within one declaration, and one
+  access node -- while staying distinct types; an access names the declaration it reaches into, so
+  what the substrate shares is the vocabulary and never the identity. Structural versus nominal, and
+  storage versus callable, are the ordinary generic-language distinctions (C++/Rust/LLVM carry
+  them).
 - A record is an unpacked structure, union or tagged union the source declared (LRM 7.2, 7.3), as
   rustc's struct, union and enum are one kind of declared type. It carries its kind, its members'
   types, the name another unit reaches it by and a method for each operation the language defines on
@@ -105,7 +105,13 @@ what the construct means.
   -- a structure member's own initializer is part of it (LRM 7.2.2, 7.4.5) -- and nothing below this
   layer has that declaration. An array's type names its element type, so whatever builds, sizes or
   answers an array of any kind learns how its elements start from the type. It is one of the type's
-  operations above, stated for the element type.
+  operations above, stated for the element type. It is what reading an entry an array does not have
+  answers (LRM Table 7-1), and for every type but one it is also what a declaration that writes no
+  initializer starts at (Table 6-7). The exception is a reference to a runtime object that the
+  source language makes anew for each declaration -- an event's synchronization object (LRM 6.17) --
+  which reads as no object and starts as a new one, each position its own; a declaration, and an
+  array growing by `new[N]`, state that object on top of the type's value, so no copy of one value
+  stands for several objects.
 - Capability wrappers: types that represent a storage place instead of being a value -- an
   observable cell, a reference, a net's resolved value, a net driver's contribution. A capability
   wrapper composes over the value type it represents, and the wrapper and that storage are distinct

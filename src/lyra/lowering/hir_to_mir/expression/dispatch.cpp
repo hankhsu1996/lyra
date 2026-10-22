@@ -170,7 +170,8 @@ auto LowerAsPlaceImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
                 lowerer, frame, k, expr.type, result_type);
           },
           [&](const hir::DynamicArrayNewExpr& n) -> diag::Result<mir::Expr> {
-            return LowerHirDynamicArrayNewExpr(lowerer, frame, n, result_type);
+            return LowerHirDynamicArrayNewExpr(
+                lowerer, frame, n, expr.type, result_type);
           },
           [&](const hir::AssociativeAssignmentPatternExpr& a)
               -> diag::Result<mir::Expr> {

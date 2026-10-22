@@ -41,7 +41,6 @@
 #include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/host_command.hpp"
 #include "lyra/runtime/loop_blocks.hpp"
-#include "lyra/runtime/named_event.hpp"
 #include "lyra/runtime/nba_region.hpp"
 #include "lyra/runtime/net.hpp"
 #include "lyra/runtime/object_change.hpp"
@@ -61,6 +60,7 @@
 #include "lyra/runtime/shared_pointer.hpp"
 #include "lyra/runtime/sim_time.hpp"
 #include "lyra/runtime/simulation_entry.hpp"
+#include "lyra/runtime/synchronization_object.hpp"
 #include "lyra/runtime/timer.hpp"
 #include "lyra/runtime/value_cell.hpp"
 #include "lyra/runtime/value_change_wait.hpp"
@@ -2020,7 +2020,6 @@ using lyra::runtime::LogicWide;
 using lyra::runtime::LoopBlocks;
 using lyra::runtime::MakeForeignExecution;
 using lyra::runtime::MakeSharedCell;
-using lyra::runtime::NamedEvent;
 using lyra::runtime::NetOf;
 using lyra::runtime::NetReportsTo;
 using lyra::runtime::NumberAt;
@@ -2636,7 +2635,7 @@ void lyra_rt_timer_arm(
 }
 
 // What crosses is the place's one word. For a place reached by itself that is
-// the cell's own address -- a variable, a net, a named event -- and a `void*`
+// the cell's own address -- a variable, a net -- and a `void*`
 // carries no type to adjust by, so it is read as the address of what waits on
 // that cell: every such cell names `Observable` as its first base, which is
 // what makes the two addresses one under the platform ABI. For a place reached
@@ -2667,12 +2666,6 @@ auto lyra_rt_observation_of_watch_qualified(
   return Emplace(
       out, Observation::OfWatchQualified(
                AdoptClosure<lyra::support::WatchSignature>(watch),
-               AdoptClosure<lyra::support::ConditionSignature>(condition)));
-}
-
-auto lyra_rt_observation_qualified(void* condition, void* out) -> void* {
-  return Emplace(
-      out, Observation::Qualified(
                AdoptClosure<lyra::support::ConditionSignature>(condition)));
 }
 
@@ -2797,15 +2790,31 @@ auto lyra_rt_resume_in_nba_region(void* out) -> void* {
   return Emplace(out, ResumeInNbaRegion());
 }
 
-void lyra_rt_trigger(void* event, void* runtime) {
-  static_cast<NamedEvent*>(event)->Trigger(
-      *static_cast<RuntimeEffects*>(runtime));
+auto lyra_rt_event_new(void* out) -> void* {
+  return Emplace(out, lyra::runtime::EventNew());
 }
 
-auto lyra_rt_triggered(const void* event, void* runtime, void* out) -> void* {
+void lyra_rt_trigger(const void* event, void* runtime) {
+  lyra::runtime::EventTrigger(
+      Read<ObjectRef>(event), *static_cast<RuntimeEffects*>(runtime));
+}
+
+auto lyra_rt_triggered(
+    const void* event, void* runtime, void* evaluation, void* out) -> void* {
   return Emplace(
-      out, static_cast<const NamedEvent*>(event)->Triggered(
-               *static_cast<RuntimeEffects*>(runtime)));
+      out, lyra::runtime::EventTriggered(
+               Read<ObjectRef>(event), *static_cast<RuntimeEffects*>(runtime),
+               static_cast<ReadReport*>(evaluation)));
+}
+
+auto lyra_rt_event_occurrences(const void* event, void* evaluation)
+    -> std::int64_t {
+  return lyra::runtime::EventOccurrences(
+      Read<ObjectRef>(event), static_cast<ReadReport*>(evaluation));
+}
+
+auto lyra_rt_event_reports_to(const void* event) -> void* {
+  return lyra::runtime::EventReportsTo(Read<ObjectRef>(event));
 }
 
 auto lyra_rt_receive_departure(void* exception) -> void* {
@@ -3137,7 +3146,8 @@ void lyra_rt_shortreal_ref_describe(
 }
 void lyra_rt_describe_event(void* event, void* runtime, const void* entry) {
   DescribeTo(
-      *static_cast<NamedEvent*>(event), *static_cast<RuntimeEffects*>(runtime),
+      *static_cast<Var<ObjectRef>*>(event),
+      *static_cast<RuntimeEffects*>(runtime),
       static_cast<const DumpEntry*>(entry));
 }
 void lyra_rt_begin_described_block(void* runtime, const void* block) {
@@ -7061,9 +7071,6 @@ void lyra_rt_assocarray_sampled_history_construct(void* storage) {
 void lyra_rt_managedref_sampled_history_construct(void* storage) {
   BuildAt<SampledHistory<ObjectRef>>(storage);
 }
-void lyra_rt_named_event_construct(void* storage) {
-  BuildAt<NamedEvent>(storage);
-}
 void lyra_rt_cancellation_target_construct(void* storage) {
   BuildAt<CancellationTarget>(storage);
 }
@@ -7159,9 +7166,6 @@ void lyra_rt_assocarray_sampled_history_destroy(void* storage) {
 }
 void lyra_rt_managedref_sampled_history_destroy(void* storage) {
   std::destroy_at(static_cast<SampledHistory<ObjectRef>*>(storage));
-}
-void lyra_rt_named_event_destroy(void* storage) {
-  std::destroy_at(static_cast<NamedEvent*>(storage));
 }
 void lyra_rt_cancellation_target_destroy(void* storage) {
   std::destroy_at(static_cast<CancellationTarget*>(storage));

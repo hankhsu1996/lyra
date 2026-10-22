@@ -108,7 +108,6 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
           [&](const mir::MachineFunctionType&) {
             return crosses_no_boundary();
           },
-          [&](const mir::EventType&) { return crosses_no_boundary(); },
           [&](const mir::RealType&) { return crosses_no_boundary(); },
           [&](const mir::ShortRealType&) { return crosses_no_boundary(); },
           [&](const mir::ChandleType&) { return crosses_no_boundary(); },

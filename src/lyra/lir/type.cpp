@@ -183,7 +183,6 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             }
             Combine(seed, t.result);
           },
-          [](const EventType&) {},
           [](const RealType&) {},
           [](const ShortRealType&) {},
           [](const ChandleType&) {},
@@ -260,7 +259,6 @@ auto Type::KindName() const -> std::string_view {
           [](const MachineFloatType&) { return "machine float"; },
           [](const MachineArrayType&) { return "machine array"; },
           [](const MachineFunctionType&) { return "machine function"; },
-          [](const EventType&) { return "named event"; },
           [](const RealType&) { return "real"; },
           [](const ShortRealType&) { return "shortreal"; },
           [](const ChandleType&) { return "chandle"; },
@@ -352,7 +350,6 @@ auto Type::Declaration() const -> std::optional<TypeDeclaration> {
           [&](const LoopBlocksType&) { return names_none(); },
           [&](const OpenWriteType&) { return names_none(); },
           [&](const DesignationType&) { return names_none(); },
-          [&](const EventType&) { return names_none(); },
           [&](const RuntimeEffectsType&) { return names_none(); },
           [&](const FilesType&) { return names_none(); },
           [&](const DiagnosticType&) { return names_none(); },
@@ -404,7 +401,6 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const RealType&) -> Element { return std::nullopt; },
           [](const ShortRealType&) -> Element { return std::nullopt; },
           [](const ChandleType&) -> Element { return std::nullopt; },
-          [](const EventType&) -> Element { return std::nullopt; },
           [](const EmptyType&) -> Element { return std::nullopt; },
           [](const VoidType&) -> Element { return std::nullopt; },
 
@@ -512,8 +508,8 @@ auto Type::IsAddressOnly() const -> bool {
   }
   return Is<ObservableType>() || Is<ResolvedType>() || Is<ObjectType>() ||
          Is<CrossUnitClassType>() || Is<RuntimeClassType>() ||
-         Is<EventType>() || Is<SampledHistoryType>() ||
-         Is<EvaluationAttemptsType>() || Is<LoopBlocksType>();
+         Is<SampledHistoryType>() || Is<EvaluationAttemptsType>() ||
+         Is<LoopBlocksType>();
 }
 
 auto Type::HeldAs() const -> std::optional<Holding> {
@@ -664,7 +660,6 @@ auto Type::HeldAs() const -> std::optional<Holding> {
           [](const ObjectType&) -> Held { return std::nullopt; },
           [](const CrossUnitClassType&) -> Held { return std::nullopt; },
           [](const RuntimeClassType&) -> Held { return std::nullopt; },
-          [](const EventType&) -> Held { return std::nullopt; },
           [](const ObservableType&) -> Held { return std::nullopt; },
           [](const ResolvedType&) -> Held { return std::nullopt; },
           [](const DriverType&) -> Held { return std::nullopt; },
