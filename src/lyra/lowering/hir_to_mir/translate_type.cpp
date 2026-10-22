@@ -243,6 +243,9 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
           [](const hir::StringType&) -> mir::Type {
             return mir::Type{mir::StringType{}};
           },
+          [](const hir::DynamicType&) -> mir::Type {
+            return mir::Type{mir::AnyType{}};
+          },
           [](const hir::EventType&) -> mir::Type {
             return mir::Type{mir::EventType{}};
           },

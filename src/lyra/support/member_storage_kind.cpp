@@ -22,6 +22,8 @@ auto MemberStorageKindName(MemberStorageKind kind) -> std::string_view {
       return "borrowed_handle";
     case MemberStorageKind::kReference:
       return "reference";
+    case MemberStorageKind::kAnyReference:
+      return "any_reference";
     case MemberStorageKind::kSharedPointer:
       return "shared_pointer";
     case MemberStorageKind::kNamedEvent:

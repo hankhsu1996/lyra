@@ -686,6 +686,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_assocarray_assign", &lyra_rt_assocarray_assign);
   add("lyra_rt_managedref_assign", &lyra_rt_managedref_assign);
   add("lyra_rt_reference_assign", &lyra_rt_reference_assign);
+  add("lyra_rt_any_reference_assign", &lyra_rt_any_reference_assign);
   add("lyra_rt_wait_assign", &lyra_rt_wait_assign);
   add("lyra_rt_element_default", &lyra_rt_element_default);
   add("lyra_rt_discarded_write", &lyra_rt_discarded_write);
@@ -710,6 +711,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_dpi_open_array_copy", &lyra_rt_dpi_open_array_copy);
   add("lyra_rt_channel_cancellation_copy", &lyra_rt_channel_cancellation_copy);
   add("lyra_rt_reference_copy", &lyra_rt_reference_copy);
+  add("lyra_rt_any_reference_copy", &lyra_rt_any_reference_copy);
   add("lyra_rt_string_move", &lyra_rt_string_move);
   add("lyra_rt_real_move", &lyra_rt_real_move);
   add("lyra_rt_shortreal_move", &lyra_rt_shortreal_move);
@@ -733,6 +735,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_dpi_open_array_move", &lyra_rt_dpi_open_array_move);
   add("lyra_rt_channel_cancellation_move", &lyra_rt_channel_cancellation_move);
   add("lyra_rt_reference_move", &lyra_rt_reference_move);
+  add("lyra_rt_any_reference_move", &lyra_rt_any_reference_move);
   add("lyra_rt_real_add", &lyra_rt_real_add);
   add("lyra_rt_real_sub", &lyra_rt_real_sub);
   add("lyra_rt_real_mul", &lyra_rt_real_mul);
@@ -1066,6 +1069,38 @@ void BindMemberOperationEntries(const auto& add) {
   add("lyra_rt_wildcard_index_move", &lyra_rt_wildcard_index_move);
   add("lyra_rt_wildcard_index_destroy", &lyra_rt_wildcard_index_destroy);
   add("lyra_rt_wildcard_index_assign", &lyra_rt_wildcard_index_assign);
+  add("lyra_rt_any_make", &lyra_rt_any_make);
+  add("lyra_rt_see_as_any", &lyra_rt_see_as_any);
+  add("lyra_rt_receive_any", &lyra_rt_receive_any);
+  add("lyra_rt_any_default", &lyra_rt_any_default);
+  add("lyra_rt_any_reference_default", &lyra_rt_any_reference_default);
+  add("lyra_rt_any_copy", &lyra_rt_any_copy);
+  add("lyra_rt_any_move", &lyra_rt_any_move);
+  add("lyra_rt_any_destroy", &lyra_rt_any_destroy);
+  add("lyra_rt_any_assign", &lyra_rt_any_assign);
+  add("lyra_rt_any_cell_refer", &lyra_rt_any_cell_refer);
+  add("lyra_rt_any_cell_get", &lyra_rt_any_cell_get);
+  add("lyra_rt_any_cell_initialize", &lyra_rt_any_cell_initialize);
+  add("lyra_rt_any_cell_set", &lyra_rt_any_cell_set);
+  add("lyra_rt_any_cell_arm_sampling", &lyra_rt_any_cell_arm_sampling);
+  add("lyra_rt_any_cell_sampled_get", &lyra_rt_any_cell_sampled_get);
+  add("lyra_rt_any_cell_open_for_write", &lyra_rt_any_cell_open_for_write);
+  add("lyra_rt_any_cell_construct", &lyra_rt_any_cell_construct);
+  add("lyra_rt_any_cell_destroy", &lyra_rt_any_cell_destroy);
+  add("lyra_rt_any_ref_get", &lyra_rt_any_ref_get);
+  add("lyra_rt_any_ref_set", &lyra_rt_any_ref_set);
+  add("lyra_rt_any_ref_arm_sampling", &lyra_rt_any_ref_arm_sampling);
+  add("lyra_rt_any_ref_sampled_get", &lyra_rt_any_ref_sampled_get);
+  add("lyra_rt_any_ref_open_for_write", &lyra_rt_any_ref_open_for_write);
+  add("lyra_rt_any_value_cell_alloc", &lyra_rt_any_value_cell_alloc);
+  add("lyra_rt_any_value_cell_store", &lyra_rt_any_value_cell_store);
+  add("lyra_rt_any_value_cell_load", &lyra_rt_any_value_cell_load);
+  add("lyra_rt_any_value_cell_construct", &lyra_rt_any_value_cell_construct);
+  add("lyra_rt_any_value_cell_destroy", &lyra_rt_any_value_cell_destroy);
+  add("lyra_rt_any_shared_cell_make", &lyra_rt_any_shared_cell_make);
+  add("lyra_rt_any_land", &lyra_rt_any_land);
+  add("lyra_rt_any_sampled_history_construct",
+      &lyra_rt_any_sampled_history_construct);
   add("lyra_rt_string_bit_identical", &lyra_rt_string_bit_identical);
   add("lyra_rt_real_bit_identical", &lyra_rt_real_bit_identical);
   add("lyra_rt_shortreal_bit_identical", &lyra_rt_shortreal_bit_identical);
@@ -1098,6 +1133,7 @@ void BindMemberOperationEntries(const auto& add) {
 void BindStorageEntries(const auto& add) {
   add("lyra_rt_borrowed_handle_construct", &lyra_rt_borrowed_handle_construct);
   add("lyra_rt_reference_construct", &lyra_rt_reference_construct);
+  add("lyra_rt_any_reference_construct", &lyra_rt_any_reference_construct);
   add("lyra_rt_string_cell_construct", &lyra_rt_string_cell_construct);
   add("lyra_rt_real_cell_construct", &lyra_rt_real_cell_construct);
   add("lyra_rt_shortreal_cell_construct", &lyra_rt_shortreal_cell_construct);

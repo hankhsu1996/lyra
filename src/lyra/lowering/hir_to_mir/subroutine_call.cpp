@@ -20,11 +20,13 @@
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/equivalence_identity.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -487,6 +489,101 @@ auto ResolveCallee(
       plan.form);
 }
 
+// Whether an actual of type `actual` is handed to a formal of type `formal`
+// as a value of any type: a formal of `dynamic_type` takes a value of whichever
+// type its actual has, and keeps that type with it (LRM 15.4.9). An actual
+// already of that type is handed on as it is.
+auto TakenAsAny(
+    const UnitLowerer& unit_lowerer, mir::TypeId formal, hir::TypeId actual)
+    -> bool {
+  return unit_lowerer.Unit().types.Get(formal).Is<mir::AnyType>() &&
+         !unit_lowerer.Hir().types.Get(actual).Is<hir::DynamicType>();
+}
+
+// The identity a value of `type` is kept with, as the machine text a call
+// names it by.
+auto IdentityText(
+    UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId type)
+    -> mir::ExprId {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  return block.exprs.Add(
+      mir::MakeStringLiteral(
+          unit.builtins.machine_c_string,
+          EquivalenceIdentityOf(unit_lowerer, type)));
+}
+
+// `value`, of `type`, as a value of the type `any` holding a copy of it, kept
+// at the type every type equivalent to `type` is kept at.
+auto MadeAny(
+    UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId type,
+    mir::ExprId value, mir::TypeId any) -> mir::ExprId {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const mir::TypeId kept =
+      WithoutQueueBounds(unit.types, unit_lowerer.TranslateType(type));
+  return block.exprs.Add(
+      mir::MakeCallExpr(
+          mir::Direct{.target = support::BuiltinFn::kMakeAny},
+          {ConvertToType(unit, block, value, kept),
+           IdentityText(unit_lowerer, block, type)},
+          any));
+}
+
+// The variable `place` names, of `type`, as a reference of the type
+// `reference` to a value of any type (LRM 13.5.2, 15.4.9), as Rust makes a
+// `&mut dyn Any` of a `&mut T`. A value received through it is written into a
+// local of the frame, of the type every type equivalent to `type` is kept at,
+// and a closure the frame lends then assigns that local to the variable, which
+// brings it to the variable's own type as any assignment would. The frame
+// outlasts the call the reference is handed to, so both live as long as it.
+auto SeenAsAny(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, hir::TypeId type,
+    const AccessPath& place, mir::TypeId reference) -> mir::ExprId {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  mir::Block& block = *frame.current_block;
+  const mir::TypeId seen = unit_lowerer.TranslateType(type);
+  const mir::TypeId kept = WithoutQueueBounds(unit.types, seen);
+  const auto reference_to = [&](const AccessPath& path, mir::TypeId at) {
+    return AtType(
+        unit, block, PathReference(unit, block, path),
+        *ParamTypeOf(unit, at, hir::ParamDirection::kRef));
+  };
+  const AccessPath incoming{
+      .owner = block.LocalPlace(
+          DeclareLocal(
+              frame, block.exprs.Add(BuildDefaultValueExpr(unit, block, kept))),
+          kept),
+      .descent = {}};
+
+  ClosureBuilder carry(unit, frame, support::ClosureKind::kFn);
+  mir::Block& body = carry.Body();
+  const AccessPath received{
+      .owner = SnapshotPlaceIntoClosure(
+          unit_lowerer, frame, carry, reference_to(incoming, kept)),
+      .descent = {}};
+  const AccessPath variable{
+      .owner = SnapshotPlaceIntoClosure(
+          unit_lowerer, frame, carry, reference_to(place, seen)),
+      .descent = {}};
+  body.AppendStmt(
+      mir::ExprStmt{
+          .expr = body.exprs.Add(BuildStoreExpr(
+              unit, body, variable,
+              ConvertToType(
+                  unit, body, PathValue(unit, body, received), seen)))});
+  const mir::ExprId made = block.exprs.Add(carry.BuildVoid());
+  const mir::TypeId closure_type = block.exprs.Get(made).type;
+  const mir::ExprId lent = BuildBorrowedClosure(
+      unit, block, block.LocalPlace(DeclareLocal(frame, made), closure_type));
+
+  return block.exprs.Add(
+      mir::MakeCallExpr(
+          mir::Direct{
+              .target = support::BuiltinFn::kSeeAsAny, .type_argument = kept},
+          {reference_to(incoming, kept),
+           IdentityText(unit_lowerer, block, type), lent},
+          reference));
+}
+
 // Emits the call boundary into `frame`: the callee with whatever leads the
 // arguments the source wrote, and each actual bound by its direction -- an
 // `input` value, an `inout`'s incoming value, an `output`'s nothing, a `ref`
@@ -567,16 +664,27 @@ auto EmitSubroutineCall(
       case hir::ParamDirection::kConstRef: {
         auto arg_or = lowerer.LowerLhsExpr(hir_arg, frame);
         if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-        call_args.push_back(AtType(
-            unit, block, PathReference(unit, block, *arg_or),
-            *ParamTypeOf(unit, formal.type, formal.direction)));
+        const mir::TypeId reference =
+            *ParamTypeOf(unit, formal.type, formal.direction);
+        call_args.push_back(
+            TakenAsAny(lowerer.Owner(), formal.type, hir_arg.type)
+                ? SeenAsAny(
+                      lowerer.Owner(), frame, hir_arg.type, *arg_or, reference)
+                : AtType(
+                      unit, block, PathReference(unit, block, *arg_or),
+                      reference));
         break;
       }
 
       case hir::ParamDirection::kInput: {
         auto arg_or = lowerer.LowerExpr(hir_arg, frame);
         if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-        call_args.push_back(block.exprs.Add(*std::move(arg_or)));
+        const mir::ExprId value = block.exprs.Add(*std::move(arg_or));
+        call_args.push_back(
+            TakenAsAny(lowerer.Owner(), formal.type, hir_arg.type)
+                ? MadeAny(
+                      lowerer.Owner(), block, hir_arg.type, value, formal.type)
+                : value);
         break;
       }
     }
@@ -776,17 +884,33 @@ auto EmitReportingCall(
       // An `inout` actual is of its own type, and the function takes the
       // formal's.
       case hir::ParamDirection::kInput:
-      case hir::ParamDirection::kInOut:
-        call_args.push_back(ConvertToType(
-            unit, block,
-            block.exprs.Add(
-                BuildDefaultValueFromHir(lowerer.Owner(), block, actual_type)),
-            formal.type));
+      case hir::ParamDirection::kInOut: {
+        const mir::ExprId value = block.exprs.Add(
+            BuildDefaultValueFromHir(lowerer.Owner(), block, actual_type));
+        call_args.push_back(
+            TakenAsAny(lowerer.Owner(), formal.type, actual_type)
+                ? MadeAny(
+                      lowerer.Owner(), block, actual_type, value, formal.type)
+                : ConvertToType(unit, block, value, formal.type));
         break;
+      }
       // What the function reads through a `ref` formal is what the caller
-      // names there, which the caller's own text states.
+      // names there, which the caller's own text states. A reference to a value
+      // of any type refers to nothing here, since the function writes nothing
+      // through it.
       case hir::ParamDirection::kRef:
       case hir::ParamDirection::kConstRef: {
+        const mir::TypeId reference =
+            *ParamTypeOf(unit, formal.type, formal.direction);
+        if (unit.types.Get(formal.type).Is<mir::AnyType>()) {
+          call_args.push_back(block.exprs.Add(
+              mir::Expr{
+                  .data =
+                      mir::CallExpr{
+                          .callee = mir::Construct{}, .arguments = {}},
+                  .type = reference}));
+          break;
+        }
         const mir::TypeId value_type =
             lowerer.Owner().TranslateType(actual_type);
         const mir::LocalId held = DeclareLocal(
@@ -798,7 +922,7 @@ auto EmitReportingCall(
                 unit, block,
                 block.exprs.Add(mir::MakeLocalRefExpr(held, value_type)),
                 value_type),
-            *ParamTypeOf(unit, formal.type, formal.direction)));
+            reference));
         break;
       }
     }

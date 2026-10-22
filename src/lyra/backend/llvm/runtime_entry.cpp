@@ -177,9 +177,8 @@ constexpr DomainSet kBitstreams =
 // neither its bytes nor laid out by a type compiled with the design.
 constexpr DomainSet kLibraryObjects =
     kLibraryContainers | kReals |
-    DomainSet{
-        Domain::kWildcardIndex, Domain::kString, Domain::kChandle,
-        Domain::kEmpty, Domain::kManagedRef};
+    DomainSet{Domain::kWildcardIndex, Domain::kAny,   Domain::kString,
+              Domain::kChandle,       Domain::kEmpty, Domain::kManagedRef};
 // What an aggregate net resolves in (LRM 6.7.1), and what any net does.
 constexpr DomainSet kAggregateNets = kLaidOutByType;
 constexpr DomainSet kNetValues = kFourStateIntegral | kAggregateNets;
@@ -189,7 +188,8 @@ constexpr DomainSet kNetValues = kFourStateIntegral | kAggregateNets;
 // array, whose bytes do not.
 constexpr DomainSet kObjectsThatStateThemselves =
     kLibraryContainers | kReals |
-    DomainSet{Domain::kString, Domain::kChandle, Domain::kManagedRef};
+    DomainSet{
+        Domain::kAny, Domain::kString, Domain::kChandle, Domain::kManagedRef};
 constexpr DomainSet kVariableObjects =
     kObjectsThatStateThemselves | kLaidOutByType;
 constexpr DomainSet kVariableValues = kIntegral | kVariableObjects;
@@ -404,8 +404,11 @@ constexpr std::array kForQueueSlicesAssigned{
 constexpr std::array kForBitsWritten{
     RealizedFor{.domains = kIntegral, .told = ToldWidthMetadata{.after = 0}}};
 
-constexpr std::array kForWhatIsNull{RealizedFor{
-    .domains = {Domain::kChandle, Domain::kEmpty, Domain::kManagedRef}}};
+// What a construction taking nothing builds holding nothing: a null handle, the
+// one value of no bits, and a value of any type before one is put in it.
+constexpr std::array kForWhatIsBuiltHoldingNothing{RealizedFor{
+    .domains = {
+        Domain::kAny, Domain::kChandle, Domain::kEmpty, Domain::kManagedRef}}};
 constexpr std::array kForWhatIsTrueOrFalse{RealizedFor{
     .domains = kReals | DomainSet{Domain::kChandle, Domain::kManagedRef}}};
 constexpr std::array kForWhatFormatsItself{RealizedFor{
@@ -416,8 +419,8 @@ constexpr std::array kForWhatAHostValueBuilds{
     RealizedFor{.domains = {Domain::kString, Domain::kChandle}}};
 constexpr std::array kForWhatEndsWithWork{RealizedFor{
     .domains = kLibraryContainers | DomainSet{
-                                        Domain::kWildcardIndex, Domain::kString,
-                                        Domain::kManagedRef}}};
+                                        Domain::kWildcardIndex, Domain::kAny,
+                                        Domain::kString, Domain::kManagedRef}}};
 
 // What refusing a realization the library does not hold says.
 auto Refusal(std::string_view entry, std::string_view realization)
@@ -647,6 +650,7 @@ auto ReachedByKey(support::ValueDomain domain) -> bool {
     case support::ValueDomain::kBitWide:
     case support::ValueDomain::kLogicWide:
     case support::ValueDomain::kWildcardIndex:
+    case support::ValueDomain::kAny:
     case support::ValueDomain::kString:
     case support::ValueDomain::kReal:
     case support::ValueDomain::kShortReal:
@@ -775,6 +779,7 @@ auto RuntimeSymbol(support::DeclaredMemberStorage storage, RuntimeOp op)
       return RuntimeSymbol(storage.domain, op);
     case support::MemberStorageKind::kBorrowedHandle:
     case support::MemberStorageKind::kReference:
+    case support::MemberStorageKind::kAnyReference:
     case support::MemberStorageKind::kSharedPointer:
     case support::MemberStorageKind::kNamedEvent:
     case support::MemberStorageKind::kCancellationTarget:
@@ -814,6 +819,7 @@ auto ToldBuilding(support::DeclaredMemberStorage storage) -> Told {
     case support::MemberStorageKind::kInlineValue:
     case support::MemberStorageKind::kBorrowedHandle:
     case support::MemberStorageKind::kReference:
+    case support::MemberStorageKind::kAnyReference:
     case support::MemberStorageKind::kSharedPointer:
     case support::MemberStorageKind::kNamedEvent:
     case support::MemberStorageKind::kCancellationTarget:
@@ -919,6 +925,10 @@ auto MemberStorageKindOf(
               -> std::optional<support::MemberStorageKind> {
             return support::MemberStorageKind::kReference;
           },
+          [](const lir::AnyReferenceType&)
+              -> std::optional<support::MemberStorageKind> {
+            return support::MemberStorageKind::kAnyReference;
+          },
           [&](const lir::MachineFunctionType& t) { return borrowed(t); },
           // A pointer is the one whose ownership decides the answer. A borrowed
           // one likewise names storage somebody else ends; a unique one is a
@@ -1017,6 +1027,7 @@ auto MemberStorageKindOf(
           [&](const lir::QueueType& t) { return value_of(t); },
           [&](const lir::AssociativeArrayType& t) { return value_of(t); },
           [&](const lir::StringType& t) { return value_of(t); },
+          [&](const lir::AnyType& t) { return value_of(t); },
           [&](const lir::RealType& t) { return value_of(t); },
           [&](const lir::ShortRealType& t) { return value_of(t); },
           [&](const lir::TupleType& t) { return value_of(t); },
@@ -1104,6 +1115,7 @@ auto DeclaredStorageOf(
           ValueDomainOf(unit, type).value_or(support::ValueDomain::kEmpty));
     case support::MemberStorageKind::kBorrowedHandle:
     case support::MemberStorageKind::kReference:
+    case support::MemberStorageKind::kAnyReference:
     case support::MemberStorageKind::kSharedPointer:
     case support::MemberStorageKind::kNamedEvent:
     case support::MemberStorageKind::kCancellationTarget:
@@ -1337,7 +1349,7 @@ auto RealizationsOf(RuntimeOp op) -> std::span<const RealizedFor> {
     case RuntimeOp::kFromEntriesWildcard:
       return kForAssociativeArraysFromEntries;
     case RuntimeOp::kDefault:
-      return kForWhatIsNull;
+      return kForWhatIsBuiltHoldingNothing;
     case RuntimeOp::kFromLiteral:
       return kForDynamicArraysAndQueues;
     case RuntimeOp::kFromElements:
@@ -2000,6 +2012,15 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kStringFromBits:
     case support::BuiltinFn::kByteArrayFromString:
     case support::BuiltinFn::kByteArrayFromBits:
+      return NamedAlone{};
+
+    // A value of any type made of a value crossing with its type, a reference
+    // of any type made of storage crossing with its type, and a value received
+    // through such a reference: the library holds each as one object whatever
+    // type it is of (LRM 15.4.9).
+    case support::BuiltinFn::kMakeAny:
+    case support::BuiltinFn::kSeeAsAny:
+    case support::BuiltinFn::kReceiveAny:
       return NamedAlone{};
   }
   throw InternalError("llvm codegen: unknown builtin");

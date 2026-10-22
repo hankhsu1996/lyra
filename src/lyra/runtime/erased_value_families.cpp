@@ -26,6 +26,7 @@ constexpr auto FamiliesCover(support::ValueDomain domain) -> bool {
     case support::ValueDomain::kBitWide:
     case support::ValueDomain::kLogicWide:
     case support::ValueDomain::kWildcardIndex:
+    case support::ValueDomain::kAny:
     case support::ValueDomain::kString:
     case support::ValueDomain::kReal:
     case support::ValueDomain::kShortReal:

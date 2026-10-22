@@ -21,7 +21,10 @@ defines each class the front end declares in `std` without a body, under the nam
 methods the declaration gives it. That scope is compiled as the unit `std`, which is the unit a name
 of one of those classes already reaches, and a specialization of one is defined by the definition
 specialized on the same parameters. To everything after the front end, such a class is a class of
-another unit: HIR, MIR, both backends and the runtime carry nothing of their own for it.
+another unit: HIR, MIR, both backends and the runtime carry nothing of their own for it beyond the
+value of any type D4 needs. A definition is specialized after the front end has reported on the
+design, so each is bound before specializations are collected and one the front end cannot elaborate
+for the parameters a design gave it is Lyra's own defect, stopped where it is found.
 
 This is how the field supplies a language's library. Rust's channel is Rust in
 `library/std/src/sync/mpmc/`, over a waiter list and the thread park primitive; C++'s
@@ -51,10 +54,28 @@ whose process has finished or been killed wherever it is next asked who is first
 behind the first waits for the first to change or to end. A `try_` form succeeds only where its
 waiting form would not wait. A waiter is woken by any change, so a change re-tests every waiter.
 
-**D4. A `mailbox` of no stated type is refused until it is carried.** Its messages are of any type
-and each is checked at run time against the variable it is read into (LRM 15.4.9), which needs a
-value that carries its type and a test of type equivalence at run time; no definition written in
-SystemVerilog can state either.
+**D4. A message of a `mailbox` of no stated type is a value of any type, received only into a
+variable of an equivalent type** (LRM 15.4.5, 15.4.9). What the front end gives the parameter is a
+type no source spells, and the definition is the same text specialized on it. Each message is held
+in an object of its own, since the front end admits no array of that type (a property of it is
+admitted); a mailbox of a stated type holds its messages the same way, so the two share one text.
+Taking a message is a `$cast` of it into the variable asking, which for a stated type asks nothing.
+
+Two concepts are what the language library cannot state, and they are two, as Rust's `Box<dyn Any>`
+and `&mut dyn Any` are and as C++'s `std::any` is apart from `function_ref`. A value of any type
+owns its value, keeping it with that value's type and with the text of the type's equivalence class
+(LRM 6.22.2), which every unit computes alone from the type, as rustc computes a `TypeId` in any
+crate after erasing what does not count. A `ref` argument of no stated type is a reference to a
+value of any type: it stands for a variable it does not own, with that variable's type and text and
+a way to write it. A `put` makes a value of any type of the value handed; a `get` or a `peek` is
+handed a reference to the asking variable, and a message is written through it only where the two
+texts agree, the write landing in the variable when it is made, as any write through a `ref` does
+(LRM 13.5.2).
+
+A queue's bound is no part of which type it is (LRM 6.22.2 e), so neither text names one, and a
+value is kept at its type with every bound dropped. A message received is written into storage of
+that type, which the caller holds for the call, and the caller's own assignment then carries it into
+the variable, applying the variable's bound as any assignment to it does (LRM 7.10.5).
 
 ## Rejected
 
@@ -73,6 +94,23 @@ SystemVerilog can state either.
   any design element stating a time scale.
 - **Waiters holding a ticket counted out on arrival.** A killed waiter keeps its ticket, so every
   waiter behind it waits for ever.
+- **The type's address as its identity.** A record's type is stated by the unit declaring it and
+  every queue shares one, so equal addresses neither follow from equal types nor answer for an
+  element type.
+- **MIR's own type identity as the equivalence class.** MIR keeps an enumeration by its members
+  where the standard identifies one by its declaration (LRM 6.22.1), so two enumerations would test
+  alike that the standard keeps apart.
+- **A message received by copying it in after the call returns.** A `ref` writes the variable when
+  the write is made (LRM 13.5.2); a copy made after `get` returns lets another process see the
+  message gone and the variable not yet written.
+- **One runtime object both owning a value of any type and standing for a variable.** An argument
+  that owns its value is copied where a reference is not, and each operation then asks which of the
+  two it holds.
+- **A queue's bound in the text.** Two queues of one element and different bounds are equivalent, so
+  a message put from one would be refused by the other.
+- **A second definition for the `mailbox` of no stated type.** It differs from the other only in how
+  a message is held, and two texts would each carry the waiting order, the bound and the `try_`
+  rules.
 - **Compiling the definitions only into designs that name one of their classes.** Every
   compilation-unit scope with content is compiled, and nothing records that a non-generic class was
   named before lowering; a `mailbox` specialization exists only where one is named. A cold C++ build

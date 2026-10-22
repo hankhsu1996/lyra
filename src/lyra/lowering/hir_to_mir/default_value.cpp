@@ -264,6 +264,14 @@ auto BuildDefaultValueExpr(
                     mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
                 .type = type};
           },
+          // A message of a mailbox of no stated type, before one is put, holds
+          // no value of any type (LRM 15.4.9).
+          [&](const mir::AnyType&) -> mir::Expr {
+            return mir::Expr{
+                .data =
+                    mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
+                .type = type};
+          },
           // What a declaration holds for an object whose class this unit does
           // not declare is a handle to it, and a handle starts out null; the
           // object type itself is what that handle points at, which a
@@ -404,6 +412,9 @@ auto BuildDefaultValueExpr(
           },
           [&](const mir::ErasedCallableType&) -> mir::Expr {
             return holds_no_declared_value("a closure of no known type");
+          },
+          [&](const mir::ErasedValueType&) -> mir::Expr {
+            return holds_no_declared_value("a value of no known type");
           },
           [&](const mir::VariableRefType&) -> mir::Expr {
             return holds_no_declared_value("a reference to a cell");

@@ -12,14 +12,13 @@ auto DeclareVariable(
     mir::CompilationUnit& unit, CallableBindings& bindings, mir::Block& block,
     BindingOriginId origin, const std::optional<std::string>& name,
     mir::TypeId value_type, bool body_can_wait) -> DeclaredVariable {
-  if (!body_can_wait) {
-    return DeclaredVariable{
-        .local = bindings.DeclareProcedural(origin, name, value_type),
-        .type = value_type};
+  const mir::TypeId held_as =
+      body_can_wait ? mir::ObservableCellOf(unit.types, value_type)
+                    : value_type;
+  const mir::LocalId local = bindings.DeclareProcedural(origin, name, held_as);
+  if (!unit.types.Get(held_as).Is<mir::ObservableType>()) {
+    return DeclaredVariable{.local = local, .type = held_as};
   }
-  const mir::TypeId cell_type = mir::ObservableCellOf(unit.types, value_type);
-  const mir::LocalId local =
-      bindings.DeclareProcedural(origin, name, cell_type);
   block.AppendStmt(
       mir::LocalDeclStmt{
           .target = local,
@@ -28,8 +27,8 @@ auto DeclareVariable(
                   .data =
                       mir::CallExpr{
                           .callee = mir::Construct{}, .arguments = {}},
-                  .type = cell_type})});
-  return DeclaredVariable{.local = local, .type = cell_type};
+                  .type = held_as})});
+  return DeclaredVariable{.local = local, .type = held_as};
 }
 
 auto InitializeVariable(

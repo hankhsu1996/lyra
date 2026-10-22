@@ -217,7 +217,12 @@ auto LowerAsPlaceImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
       },
       expr.data);
   if (!raw_or) return raw_or;
-  if (lowerer.Owner().Unit().types.Get(raw_or->type).IsCapabilityWrapper()) {
+  const mir::Type& raw_type = lowerer.Owner().Unit().types.Get(raw_or->type);
+  if (raw_type.IsCapabilityWrapper()) {
+    // What the wrapper holds is the type of the storage it names, which for a
+    // reference to a value of any type is no type a value has, as `*r` of
+    // Rust's `&mut dyn Any` is `dyn Any` (LRM 15.4.9).
+    const mir::TypeId held = raw_type.WrappedValueType();
     const mir::ExprId cell_id =
         frame.current_block->exprs.Add(*std::move(raw_or));
     // The sampled value of an expression is the expression over the sampled
@@ -227,12 +232,12 @@ auto LowerAsPlaceImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
     if (frame.reads_as_of == ReadsAsOf::kPreponed &&
         KeepsSampledValue(lowerer, expr)) {
       return frame.current_block->SampledWrapperContents(
-          lowerer.Owner().Unit().types, cell_id, result_type);
+          lowerer.Owner().Unit().types, cell_id, held);
     }
     // Reading what the wrapper holds names the storage it represents, which
     // is then read where a value is wanted.
     return frame.current_block->WrapperContents(
-        lowerer.Owner().Unit().types, cell_id, result_type);
+        lowerer.Owner().Unit().types, cell_id, held);
   }
   return raw_or;
 }

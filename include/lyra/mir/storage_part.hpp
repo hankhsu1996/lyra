@@ -23,7 +23,9 @@ auto AnswersReferenceIntoReceiver(const CallExpr& call) -> bool;
 
 // Whether `call`, answering `type`, binds a reference variable to the storage
 // its one argument names rather than building a value of it, as a C++
-// reference parameter binds an lvalue.
+// reference parameter binds an lvalue. One built over nothing binds nothing,
+// and is a reference to a value of any type that refers to nothing (LRM
+// 15.4.9), as an empty `function_ref` is.
 auto BindsReference(const TypePool& types, const CallExpr& call, TypeId type)
     -> bool;
 

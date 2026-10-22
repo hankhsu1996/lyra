@@ -52,7 +52,7 @@ auto AnswersReferenceIntoReceiver(const CallExpr& call) -> bool {
 auto BindsReference(const TypePool& types, const CallExpr& call, TypeId type)
     -> bool {
   return std::holds_alternative<Construct>(call.callee) &&
-         types.Get(type).Is<VariableRefType>();
+         !call.arguments.empty() && types.Get(type).Is<VariableRefType>();
 }
 
 namespace {

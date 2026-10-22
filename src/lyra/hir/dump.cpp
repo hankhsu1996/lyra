@@ -424,7 +424,9 @@ class HirDumper {
                     FormatIntegralConstant(e.members[i].value));
               }
               return std::format(
-                  "Enum(base=Type[{}], members=[{}])", e.base_type.value,
+                  "Enum({}::{}, base=Type[{}], members=[{}])",
+                  e.declaration.unit_name,
+                  support::DisplayOf(e.declaration.path), e.base_type.value,
                   members);
             },
             [](const UnpackedStructType& s) -> std::string {
@@ -521,6 +523,7 @@ class HirDumper {
               return std::format("VirtualInterfaceType(unit={})", v.unit_name);
             },
             [](const NullType&) -> std::string { return "NullType"; },
+            [](const DynamicType&) -> std::string { return "DynamicType"; },
             [](const VoidType&) -> std::string { return "VoidType"; },
         });
   }
@@ -908,6 +911,8 @@ class HirDumper {
         return "value-is-a-member";
       case RunTimeCheck::kObjectIsOfTheDestinationClass:
         return "object-is-of-the-destination-class";
+      case RunTimeCheck::kValueIsOfAnEquivalentType:
+        return "value-is-of-an-equivalent-type";
     }
     throw InternalError("HirDumper::FormatRunTimeCheck: unknown check");
   }

@@ -196,6 +196,9 @@ auto TypeIdentity(
     case SymbolKind::CHandleType:
     case SymbolKind::EventType:
     case SymbolKind::VoidType:
+    // What the front end gives a mailbox's message type where none was stated
+    // (LRM 15.4.9 `dynamic_type`).
+    case SymbolKind::UntypedType:
       return canonical.toString();
     case SymbolKind::PackedArrayType: {
       const auto& array = canonical.as<slang::ast::PackedArrayType>();

@@ -124,6 +124,8 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           },
           [](const WildcardIndexType&) {},
           [](const StringType&) {},
+          [](const AnyType&) {},
+          [](const ErasedValueType&) {},
           [](const MachineCStringType&) {},
           [](const MachineBoolType&) {},
           [&](const MachineIntType& t) {
@@ -312,6 +314,8 @@ auto Type::IsAddressOnly() const -> bool {
           [](const AssociativeArrayType&) { return false; },
           [](const WildcardIndexType&) { return false; },
           [](const StringType&) { return false; },
+          [](const AnyType&) { return false; },
+          [](const ErasedValueType&) { return false; },
           [](const MachineCStringType&) { return false; },
           [](const MachineBoolType&) { return false; },
           [](const MachineIntType&) { return false; },
@@ -404,6 +408,8 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           [](const TupleType&) { return true; },
           [](const RecordType&) { return true; },
           [](const StringType&) { return true; },
+          [](const AnyType&) { return true; },
+          [](const ErasedValueType&) { return false; },
           [](const RealType&) { return true; },
           [](const ShortRealType&) { return true; },
 
@@ -510,6 +516,8 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           // A single quantity or a single token.
           [](const WildcardIndexType&) -> Element { return std::nullopt; },
           [](const StringType&) -> Element { return std::nullopt; },
+          [](const AnyType&) -> Element { return std::nullopt; },
+          [](const ErasedValueType&) -> Element { return std::nullopt; },
           [](const MachineCStringType&) -> Element { return std::nullopt; },
           [](const MachineBoolType&) -> Element { return std::nullopt; },
           [](const MachineIntType&) -> Element { return std::nullopt; },

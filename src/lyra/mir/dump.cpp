@@ -409,6 +409,10 @@ class MirDumper {
               return "WildcardIndexType";
             },
             [](const StringType&) -> std::string { return "StringType"; },
+            [](const AnyType&) -> std::string { return "AnyType"; },
+            [](const ErasedValueType&) -> std::string {
+              return "ErasedValueType";
+            },
             [](const MachineCStringType&) -> std::string {
               return "MachineCStringType";
             },

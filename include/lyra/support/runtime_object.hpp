@@ -34,6 +34,8 @@ enum class LibraryObject : std::uint8_t {
   kDesignation,
   kObjectWrite,
   kReference,
+  // A reference to a value of any type (LRM 15.4.9).
+  kAnyReference,
 };
 
 // An object generated code holds by value: it gives the object storage in its

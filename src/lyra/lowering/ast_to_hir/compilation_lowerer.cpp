@@ -297,6 +297,47 @@ void BindEveryBody(const Collected& collected) {
   }
 }
 
+// Binds what one of Lyra's definitions of `std` holds, and notes whether the
+// front end refused any of it. The front end reports what it refuses once,
+// before any definition is specialized, so a definition it cannot elaborate
+// for the parameters a design gave it would otherwise reach lowering as a
+// placeholder with nothing said.
+struct BindsADefinition
+    : slang::ast::ASTVisitor<
+          BindsADefinition,
+          slang::ast::VisitFlags::AllGood | slang::ast::VisitFlags::Bad> {
+  bool refused = false;
+
+  template <typename T>
+  void handle(const T& node) {
+    if constexpr (requires { node.bad(); }) {
+      refused = refused || node.bad();
+    }
+    if constexpr (requires { node.getType().isError(); }) {
+      refused = refused || node.getType().isError();
+    }
+    visitDefault(node);
+  }
+};
+
+// Lyra's definition of each class of `std` a design names is specialized once
+// every body is bound, so it is bound in its turn before specializations are
+// collected, as any body naming one is. The definitions are Lyra's own text,
+// so one the front end refuses is Lyra's defect.
+void BindEveryDefinition(const StdDefinitions& definitions) {
+  for (const auto& [_, definition] : definitions) {
+    BindsADefinition binder;
+    definition->visit(binder);
+    if (binder.refused) {
+      throw InternalError(
+          std::format(
+              "Lyra's definition of '{}' does not elaborate for the "
+              "parameters a design gave it",
+              definition->toString()));
+    }
+  }
+}
+
 auto CollectSpecializationHomes(
     const LowerCompilationFacts& facts, const SpecializationPolicy& policy)
     -> SpecializationHomes {
@@ -554,6 +595,7 @@ auto DeclaredDesign::Declare(
   const Collected collected = CollectUnits(facts, units->specialization);
   BindEveryBody(collected);
   units->std_classes = DefineStdClasses(facts.Compilation());
+  BindEveryDefinition(units->std_classes);
   units->specialization_homes =
       CollectSpecializationHomes(facts, units->specialization);
   units->DeclareEveryUnit(facts, collected, CheckedAgainstOf(collected), sink);

@@ -213,6 +213,14 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           // change how the value is stored.
           [&](const mir::EnumType& e) { WriteIntegralCppType(out, e.base); },
           [&](const mir::StringType&) { out += "lyra::value::String"; },
+          [&](const mir::AnyType&) { out += "lyra::value::Any"; },
+          // A value of no known type is held only through a reference, which
+          // is spelled whole where it is.
+          [&](const mir::ErasedValueType&) {
+            throw InternalError(
+                "backend::cpp: a value of no known type is named apart from "
+                "the reference holding it -- please report this as a bug");
+          },
           [&](const mir::MachineCStringType&) { out += "const char*"; },
           [&](const mir::MachineBoolType&) { out += "bool"; },
           [&](const mir::MachineIntType& m) { out += MachineIntCppType(m); },
@@ -287,6 +295,13 @@ void WriteOne(TargetText& out, const CppType& spelling) {
             Write(out, "lyra::runtime::Coroutine<", type(c.payload), ">");
           },
           [&](const mir::VariableRefType& r) {
+            // A reference to a value of no known type is where that value is
+            // received and what carries it on, as Rust's `&mut dyn Any` is a
+            // pointer and its metadata.
+            if (unit.types.Get(r.pointee).Is<mir::ErasedValueType>()) {
+              out += "lyra::runtime::AnyReference";
+              return;
+            }
             Write(
                 out, "lyra::runtime::VariableRef<", type(r.pointee), ">",
                 CppConstQualifier{r.mutability});
@@ -524,6 +539,8 @@ auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [&](const mir::QueueType&) { return reaches_nothing(); },
           [&](const mir::AssociativeArrayType&) { return reaches_nothing(); },
           [&](const mir::WildcardIndexType&) { return reaches_nothing(); },
+          [&](const mir::AnyType&) { return reaches_nothing(); },
+          [&](const mir::ErasedValueType&) { return reaches_nothing(); },
           [&](const mir::StringType&) { return reaches_nothing(); },
           [&](const mir::MachineCStringType&) { return reaches_nothing(); },
           [&](const mir::MachineBoolType&) { return reaches_nothing(); },
@@ -606,6 +623,8 @@ auto ReceiverSpellingAsCpp(
                 return holds_no_object();
               },
               [&](const mir::WildcardIndexType&) { return holds_no_object(); },
+              [&](const mir::AnyType&) { return holds_no_object(); },
+              [&](const mir::ErasedValueType&) { return holds_no_object(); },
               [&](const mir::StringType&) { return holds_no_object(); },
               [&](const mir::MachineCStringType&) { return holds_no_object(); },
               [&](const mir::MachineBoolType&) { return holds_no_object(); },
@@ -741,6 +760,12 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           [&](const mir::QueueType& t) { by_naming_itself(t); },
           [&](const mir::AssociativeArrayType& t) { by_naming_itself(t); },
           [&](const mir::WildcardIndexType& t) { by_naming_itself(t); },
+          [&](const mir::AnyType& t) { by_naming_itself(t); },
+          [](const mir::ErasedValueType&) {
+            throw InternalError(
+                "backend::cpp: a value of no known type is held only through a "
+                "reference, so none is constructed");
+          },
           [&](const mir::ObjectType& t) { by_naming_itself(t); },
           [&](const mir::RecordType& t) { by_naming_itself(t); },
           [&](const mir::RuntimeClassType& t) { by_naming_itself(t); },

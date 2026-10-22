@@ -1128,6 +1128,7 @@ auto CodeGenModule::HoldsItsBytesInline(
     case support::MemberStorageKind::kValueCell:
     case support::MemberStorageKind::kBorrowedHandle:
     case support::MemberStorageKind::kReference:
+    case support::MemberStorageKind::kAnyReference:
     case support::MemberStorageKind::kSharedPointer:
     case support::MemberStorageKind::kNamedEvent:
     case support::MemberStorageKind::kCancellationTarget:

@@ -155,6 +155,15 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
           [](const mir::WildcardIndexType&) -> lir::Type {
             return lir::Type{lir::WildcardIndexType{}};
           },
+          [](const mir::AnyType&) -> lir::Type {
+            return lir::Type{lir::AnyType{}};
+          },
+          // Reached only through a reference, which is translated whole.
+          [](const mir::ErasedValueType&) -> lir::Type {
+            throw InternalError(
+                "mir to lir: a value of no known type is translated apart from "
+                "the reference holding it -- please report this as a bug");
+          },
           [](const mir::StringType&) -> lir::Type {
             return lir::Type{lir::StringType{}};
           },
@@ -244,6 +253,9 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
           // every caller, so the type cannot say which of the two it was
           // handed: what it states is the values that storage holds.
           [&](const mir::VariableRefType& r) -> lir::Type {
+            if (mir_->types.Get(r.pointee).Is<mir::ErasedValueType>()) {
+              return lir::Type{lir::AnyReferenceType{}};
+            }
             return lir::Type{lir::VariableRefType{
                 .pointee = TranslateType(r.pointee),
                 .mutability = TranslateMutability(r.mutability)}};

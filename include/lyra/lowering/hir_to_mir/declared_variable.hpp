@@ -22,10 +22,11 @@ namespace lyra::lowering::hir_to_mir {
 // reach the variable may wait on it (LRM 9.4.2) -- the branches the body forks
 // and the subroutines it lends it to all can (LRM 6.21, 13.5.2) -- so it lives
 // in a cell that reports every write, as a design variable does. Where the
-// body cannot, nothing is there to be told, and it is the value itself.
+// body cannot, or its type is one no wait observes, nothing is there to be
+// told, and it is the value itself.
 struct DeclaredVariable {
   mir::LocalId local;
-  // The cell, or the value where the body cannot wait.
+  // The cell, or the value where nothing is told of a write to it.
   mir::TypeId type;
 };
 

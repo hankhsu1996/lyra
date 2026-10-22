@@ -15,6 +15,7 @@
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/runtime_object.hpp"
+#include "lyra/value/any.hpp"
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/dpi_open_array.hpp"
@@ -193,6 +194,13 @@ auto LaidOut(const CompilationUnit& unit, TypeId type, const auto& part)
             return LayoutOfClass<value::WildcardKey>();
           },
           [](const StringType&) { return LayoutOfClass<value::String>(); },
+          [](const AnyType&) { return LayoutOfClass<value::Any>(); },
+          [](const ErasedValueType&) -> support::Layout {
+            throw InternalError(
+                "mir: a value of a type known only where the program runs is "
+                "laid out only behind a reference -- please report this as a "
+                "bug");
+          },
           [](const RealType&) { return LayoutOfClass<value::Real>(); },
           [](const ShortRealType&) {
             return LayoutOfClass<value::ShortReal>();

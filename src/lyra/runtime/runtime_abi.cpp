@@ -22,6 +22,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/ambient_run_context.hpp"
+#include "lyra/runtime/any.hpp"
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/construction_table.hpp"
@@ -69,6 +70,7 @@
 #include "lyra/runtime/value_handle.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/support/callable_bounds.hpp"
+#include "lyra/value/any.hpp"
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/assert.hpp"
 #include "lyra/value/chandle.hpp"
@@ -1914,6 +1916,7 @@ using lyra::runtime::Activation;
 using lyra::runtime::AdoptClosure;
 using lyra::runtime::AdoptObject;
 using lyra::runtime::AllocateValueCell;
+using lyra::runtime::AnyReference;
 using lyra::runtime::ArmWholeVariable;
 using lyra::runtime::ArrayAt;
 using lyra::runtime::ArrayTypeAt;
@@ -5287,6 +5290,136 @@ void lyra_rt_wildcard_index_assign(void* storage, const void* value) {
       *static_cast<const lyra::value::AnyValue*>(value);
 }
 
+auto lyra_rt_any_make(
+    const void* value, const void* value_type, const char* identity, void* out)
+    -> void* {
+  return std::construct_at(
+      static_cast<lyra::value::Any*>(out),
+      lyra::value::Any::CopyOf(
+          lyra::runtime::TypeAt(value_type), value, identity));
+}
+
+auto lyra_rt_see_as_any(
+    const void* incoming, const char* identity, void* carry,
+    const void* value_type, void* out) -> void* {
+  return std::construct_at(
+      static_cast<lyra::runtime::AnyReference*>(out),
+      lyra::runtime::ErasedAt(incoming).storage,
+      lyra::runtime::TypeAt(value_type), identity,
+      lyra::runtime::Borrow<lyra::support::EffectSignature>(
+          *static_cast<lyra::runtime::ClosureValue*>(carry)));
+}
+
+auto lyra_rt_receive_any(const void* reference, const void* value) -> bool {
+  return lyra::runtime::ReceiveAny(
+      *static_cast<const lyra::runtime::AnyReference*>(reference),
+      *static_cast<const lyra::value::Any*>(value));
+}
+
+auto lyra_rt_any_default(void* out) -> void* {
+  return std::construct_at(static_cast<lyra::value::Any*>(out));
+}
+auto lyra_rt_any_reference_default(void* out) -> void* {
+  return std::construct_at(static_cast<AnyReference*>(out));
+}
+
+auto lyra_rt_any_copy(const void* value, void* out) -> void* {
+  return std::construct_at(
+      static_cast<lyra::value::Any*>(out),
+      *static_cast<const lyra::value::Any*>(value));
+}
+
+auto lyra_rt_any_move(void* value, void* out) -> void* {
+  return std::construct_at(
+      static_cast<lyra::value::Any*>(out),
+      std::move(*static_cast<lyra::value::Any*>(value)));
+}
+
+void lyra_rt_any_destroy(void* object) {
+  std::destroy_at(static_cast<lyra::value::Any*>(object));
+}
+
+void lyra_rt_any_assign(void* storage, const void* value) {
+  *static_cast<lyra::value::Any*>(storage) =
+      *static_cast<const lyra::value::Any*>(value);
+}
+
+// What holds a value of any type in a variable, and a reference to one.
+namespace {
+using AnyValueOfAnyType = lyra::value::Any;
+}  // namespace
+
+auto lyra_rt_any_cell_refer(void* cell, void* out) -> void* {
+  return lyra::runtime::ReferToCell<AnyValueOfAnyType>(cell, out);
+}
+auto lyra_rt_any_cell_get(void* cell) -> const void* {
+  return &lyra::runtime::VariableAt<AnyValueOfAnyType>(cell).Get();
+}
+void lyra_rt_any_cell_initialize(void* cell, const void* prototype) noexcept {
+  lyra::runtime::VariableAt<AnyValueOfAnyType>(cell).Initialize(
+      lyra::runtime::Read<AnyValueOfAnyType>(prototype));
+}
+void lyra_rt_any_cell_set(void* cell, const void* value) {
+  lyra::runtime::VariableAt<AnyValueOfAnyType>(cell).Set(
+      lyra::runtime::Read<AnyValueOfAnyType>(value));
+}
+void lyra_rt_any_cell_arm_sampling(void* cell) {
+  lyra::runtime::VariableAt<AnyValueOfAnyType>(cell).ArmSampling();
+}
+auto lyra_rt_any_cell_sampled_get(void* cell) -> const void* {
+  return &lyra::runtime::VariableAt<AnyValueOfAnyType>(cell).SampledGet();
+}
+auto lyra_rt_any_cell_open_for_write(void* cell, void* out) -> void* {
+  return lyra::runtime::OpenCellWrite<AnyValueOfAnyType>(cell, out);
+}
+void lyra_rt_any_cell_construct(void* storage) {
+  lyra::runtime::BuildAt<lyra::runtime::Var<AnyValueOfAnyType>>(storage);
+}
+void lyra_rt_any_cell_destroy(void* storage) {
+  std::destroy_at(&lyra::runtime::VariableAt<AnyValueOfAnyType>(storage));
+}
+auto lyra_rt_any_ref_get(void* reference) -> const void* {
+  return lyra::runtime::RefGet<AnyValueOfAnyType>(reference);
+}
+void lyra_rt_any_ref_set(void* reference, const void* value) {
+  lyra::runtime::RefSet<AnyValueOfAnyType>(reference, value);
+}
+void lyra_rt_any_ref_arm_sampling(void* reference) {
+  lyra::runtime::RefArmSampling<AnyValueOfAnyType>(reference);
+}
+auto lyra_rt_any_ref_sampled_get(void* reference) -> const void* {
+  return lyra::runtime::RefSampledGet<AnyValueOfAnyType>(reference);
+}
+auto lyra_rt_any_ref_open_for_write(void* reference, void* out) -> void* {
+  return lyra::runtime::OpenRefWrite<AnyValueOfAnyType>(reference, out);
+}
+auto lyra_rt_any_value_cell_alloc() noexcept -> void* {
+  return lyra::runtime::AllocateValueCell<AnyValueOfAnyType>();
+}
+void lyra_rt_any_value_cell_store(void* cell, const void* value) noexcept {
+  lyra::runtime::LocalAt<AnyValueOfAnyType>(cell).Assign(
+      lyra::runtime::Read<AnyValueOfAnyType>(value));
+}
+auto lyra_rt_any_value_cell_load(void* cell) noexcept -> void* {
+  return &lyra::runtime::LocalAt<AnyValueOfAnyType>(cell).Storage();
+}
+void lyra_rt_any_value_cell_construct(void* storage) {
+  lyra::runtime::BuildAt<lyra::runtime::ValueCell<AnyValueOfAnyType>>(storage);
+}
+void lyra_rt_any_value_cell_destroy(void* storage) {
+  std::destroy_at(&lyra::runtime::LocalAt<AnyValueOfAnyType>(storage));
+}
+auto lyra_rt_any_shared_cell_make(void* out) -> void* {
+  return lyra::runtime::MakeSharedCell<AnyValueOfAnyType>(out);
+}
+auto lyra_rt_any_land(const void* designation) noexcept -> void* {
+  return lyra::runtime::LandDesignation<AnyValueOfAnyType>(designation);
+}
+void lyra_rt_any_sampled_history_construct(void* storage) {
+  lyra::runtime::BuildAt<lyra::runtime::SampledHistory<AnyValueOfAnyType>>(
+      storage);
+}
+
 auto lyra_rt_string_bit_identical(const void* lhs, const void* rhs) -> bool {
   return lyra::runtime::BitIdentical<String>(lhs, rhs);
 }
@@ -6614,6 +6747,9 @@ void lyra_rt_managedref_assign(void* storage, const void* value) {
 void lyra_rt_reference_assign(void* storage, const void* value) {
   *static_cast<ErasedReference*>(storage) = Read<ErasedReference>(value);
 }
+void lyra_rt_any_reference_assign(void* storage, const void* value) {
+  *static_cast<AnyReference*>(storage) = Read<AnyReference>(value);
+}
 void lyra_rt_wait_assign(void* storage, void* value) {
   *static_cast<Wait*>(storage) = std::move(*static_cast<Wait*>(value));
 }
@@ -6749,6 +6885,9 @@ auto lyra_rt_channel_cancellation_copy(const void* value, void* out) -> void* {
 auto lyra_rt_reference_copy(const void* value, void* out) -> void* {
   return Emplace(out, Read<ErasedReference>(value));
 }
+auto lyra_rt_any_reference_copy(const void* value, void* out) -> void* {
+  return Emplace(out, Read<AnyReference>(value));
+}
 
 // A value moved into storage that takes it over. What is left behind is still
 // an object, which the body then ends.
@@ -6821,12 +6960,18 @@ auto lyra_rt_channel_cancellation_move(void* value, void* out) -> void* {
 auto lyra_rt_reference_move(void* value, void* out) -> void* {
   return Emplace(out, Read<ErasedReference>(value));
 }
+auto lyra_rt_any_reference_move(void* value, void* out) -> void* {
+  return Emplace(out, Read<AnyReference>(value));
+}
 
 void lyra_rt_borrowed_handle_construct(void* storage) {
   BuildAt<void*>(storage);
 }
 void lyra_rt_reference_construct(void* storage) {
   BuildAt<ErasedReference>(storage);
+}
+void lyra_rt_any_reference_construct(void* storage) {
+  BuildAt<AnyReference>(storage);
 }
 void lyra_rt_string_cell_construct(void* storage) {
   BuildAt<Var<String>>(storage);

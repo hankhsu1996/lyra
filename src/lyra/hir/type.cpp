@@ -172,6 +172,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [seed](const RealTimeType&) { return seed; },
           [seed](const ChandleType&) { return seed; },
           [seed](const NullType&) { return seed; },
+          [seed](const DynamicType&) { return seed; },
           [seed](const VoidType&) { return seed; }});
 }
 
@@ -204,6 +205,7 @@ auto Type::IsIntegral() const -> bool {
           [](const UnitObjectsType&) { return false; },
           [](const VirtualInterfaceType&) { return false; },
           [](const NullType&) { return false; },
+          [](const DynamicType&) { return false; },
           [](const VoidType&) { return false; },
       });
 }
@@ -238,7 +240,11 @@ auto Type::IsValueChangeObservable() const -> bool {
           // Which instance a virtual interface holds is a value it is compared
           // by (LRM 25.9), so a wait on it waits for a different instance.
           [](const VirtualInterfaceType&) { return true; },
+          // Neither is a type a declaration names: one only indexes an array
+          // (LRM 7.8.1), and the other only a mailbox's own messages are of
+          // (LRM 15.4.9), which nothing but the mailbox reads.
           [](const WildcardIndexType&) { return false; },
+          [](const DynamicType&) { return false; },
           [](const EventType&) { return false; },
           [](const UnitObjectType&) { return false; },
           [](const UnitObjectsType&) { return false; },
@@ -295,6 +301,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const UnitObjectsType&) -> Element { return std::nullopt; },
           [](const VirtualInterfaceType&) -> Element { return std::nullopt; },
           [](const NullType&) -> Element { return std::nullopt; },
+          [](const DynamicType&) -> Element { return std::nullopt; },
           [](const VoidType&) -> Element { return std::nullopt; },
       });
 }

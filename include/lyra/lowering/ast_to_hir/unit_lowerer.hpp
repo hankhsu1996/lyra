@@ -896,15 +896,6 @@ class UnitLowerer {
       const slang::ast::SubroutineSymbol& method, diag::SourceSpan span)
       -> diag::Result<bool>;
 
-  // Whether the constructor of `cls` declares any formal: what the declaring
-  // unit published where another unit declares the class, and the class's own
-  // declaration otherwise. Asked where the front end resolved no base call,
-  // which it does exactly when every formal has a default value, so this is
-  // whether a construction of `cls` as a base owes any default.
-  auto ConstructorDeclaresFormals(
-      const slang::ast::ClassType& cls, diag::SourceSpan span)
-      -> diag::Result<bool>;
-
   // What a call to the class method `method` passes and awaits and what it
   // yields: what the declaring unit published where there is such a thing, and
   // the method's own declaration otherwise.

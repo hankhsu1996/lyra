@@ -382,6 +382,14 @@ auto Disagreement(
             told_names());
       }
       return std::nullopt;
+    case support::AnswerTold::kTypeCalledAt:
+      if (!is_told_of_its_answer_as("value_type")) {
+        return std::format(
+            "is declared told the type it is called at, as `value_type` "
+            "ahead of `out`, and takes{}",
+            told_names());
+      }
+      return std::nullopt;
     case support::AnswerTold::kIntegralExtent:
       if (told.size() != 2 || !hands(0, Hands::kWidth) ||
           !hands(1, Hands::kFourState)) {

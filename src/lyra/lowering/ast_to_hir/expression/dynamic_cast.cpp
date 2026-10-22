@@ -41,9 +41,11 @@ auto IsInterfaceClass(const slang::ast::Type& type) -> bool {
 }
 
 // What the two declared types settle, and where they settle nothing, which
-// run-time check is left. The order is the standard's own: a class destination
-// is governed by LRM 8.16, an enumeration by the exception LRM 6.24.2's example
-// states, and everything else by plain compatibility (LRM 6.22.3, 6.22.4).
+// run-time check is left. A `dynamic_type` on either side settles nothing,
+// since what it stands for is a type only the run knows (LRM 15.4.9). Otherwise
+// the order is the standard's own: a class destination is governed by LRM 8.16,
+// an enumeration by the exception LRM 6.24.2's example states, and everything
+// else by plain compatibility (LRM 6.22.3, 6.22.4).
 auto ClassifyValidity(
     const slang::ast::Type& destination, const slang::ast::Type& source)
     -> hir::AssignmentValidity {
@@ -52,6 +54,9 @@ auto ClassifyValidity(
     return hir::AssignmentValidity{hir::AssignmentAllowed{.check = check}};
   };
 
+  if (destination.isUntypedType() || source.isUntypedType()) {
+    return allowed(hir::RunTimeCheck::kValueIsOfAnEquivalentType);
+  }
   if (destination.isClass()) {
     // LRM 6.22.5: a class handle is type incompatible with every type that is
     // not one, so nothing but a handle or `null` can reach such a destination.

@@ -2,6 +2,7 @@
 
 #include <type_traits>
 
+#include "lyra/value/any.hpp"
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/empty.hpp"
@@ -24,6 +25,7 @@ namespace lyra::value {
 // is (LRM 7.8.1).
 extern "C" {
 extern const ValueType lyra_rt_wildcard_index_value_type;
+extern const ValueType lyra_rt_any_value_type;
 extern const ValueType lyra_rt_string_value_type;
 extern const ValueType lyra_rt_real_value_type;
 extern const ValueType lyra_rt_shortreal_value_type;
@@ -42,6 +44,8 @@ template <typename T>
     return IntegralValueType::Of<T>().Type();
   } else if constexpr (std::is_same_v<T, AnyValue>) {
     return lyra_rt_wildcard_index_value_type;
+  } else if constexpr (std::is_same_v<T, Any>) {
+    return lyra_rt_any_value_type;
   } else if constexpr (std::is_same_v<T, String>) {
     return lyra_rt_string_value_type;
   } else if constexpr (std::is_same_v<T, Real>) {

@@ -36,6 +36,7 @@
 #include <vector>      // IWYU pragma: keep
 
 #include "lyra/runtime/ambient_run_context.hpp"  // IWYU pragma: keep
+#include "lyra/runtime/any.hpp"                  // IWYU pragma: keep
 #include "lyra/runtime/bound_members.hpp"        // IWYU pragma: keep
 #include "lyra/runtime/class_definition.hpp"     // IWYU pragma: keep
 #include "lyra/runtime/construction_table.hpp"   // IWYU pragma: keep

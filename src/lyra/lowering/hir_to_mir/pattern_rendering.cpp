@@ -342,6 +342,7 @@ auto Renderer::BuildBody(
           [&](const hir::UnitObjectsType& t) { return none(t); },
           [&](const hir::VirtualInterfaceType& t) { return none(t); },
           [&](const hir::NullType& t) { return none(t); },
+          [&](const hir::DynamicType& t) { return none(t); },
           [&](const hir::VoidType& t) { return none(t); },
       });
 }
@@ -763,6 +764,9 @@ auto PatternReadingOf(const hir::CompilationUnit& hir, hir::TypeId type)
           // An index of no declared type is a place a key of any integral width
           // is stored under, never a type a value has (LRM 7.8.1).
           [&](const hir::WildcardIndexType& t) { return not_a_value(t); },
+          // What only a mailbox's own messages are of (LRM 15.4.9), which no
+          // pattern names.
+          [&](const hir::DynamicType& t) { return not_a_value(t); },
           [&](const hir::UnitObjectType& t) { return not_a_value(t); },
           [&](const hir::UnitObjectsType& t) { return not_a_value(t); },
           [&](const hir::VoidType& t) { return not_a_value(t); },

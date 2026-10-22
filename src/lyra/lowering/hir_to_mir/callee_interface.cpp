@@ -68,11 +68,17 @@ auto ParamTypeOf(
     case hir::ParamDirection::kInput:
     case hir::ParamDirection::kInOut:
       return value_type;
+    // A reference to a value of any type refers to the value where it lies,
+    // whatever its type, rather than to something holding one, as Rust's
+    // `&mut dyn Any` and `Box<dyn Any>` hold one unsized type two ways.
     case hir::ParamDirection::kRef:
     case hir::ParamDirection::kConstRef:
       return unit.types.Intern(
           mir::Type{mir::VariableRefType{
-              .pointee = value_type,
+              .pointee =
+                  unit.types.Get(value_type).Is<mir::AnyType>()
+                      ? unit.types.Intern(mir::Type{mir::ErasedValueType{}})
+                      : value_type,
               .mutability = direction == hir::ParamDirection::kConstRef
                                 ? mir::Mutability::kReadOnly
                                 : mir::Mutability::kMutable}});

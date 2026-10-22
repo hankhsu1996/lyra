@@ -1,6 +1,5 @@
 #include "lyra/lowering/ast_to_hir/std_classes.hpp"
 
-#include <algorithm>
 #include <format>
 #include <optional>
 #include <string>
@@ -30,18 +29,6 @@ auto IsDeclaredInStd(const slang::ast::ClassType& cls) -> bool {
   return scope != nullptr &&
          scope == static_cast<const slang::ast::Scope*>(
                       &scope->getCompilation().getStdPackage());
-}
-
-// Whether one of `cls`'s type parameters was given no type, which the front
-// end leaves untyped.
-auto HasUntypedParameter(const slang::ast::ClassType& cls) -> bool {
-  return std::ranges::any_of(
-      cls.genericParameters, [](const slang::ast::Symbol* param) {
-        const auto* type_param =
-            param->as_if<slang::ast::TypeParameterSymbol>();
-        return type_param != nullptr &&
-               type_param->targetType.getType().isUntypedType();
-      });
 }
 
 // The definition of `declared` that a specialization of it reaches, specialized
@@ -101,11 +88,6 @@ auto IsStdDefinitions(const slang::ast::CompilationUnitSymbol& unit) -> bool {
   return false;
 }
 
-auto IsMailboxOfAnyType(const slang::ast::ClassType& cls) -> bool {
-  return cls.genericClass != nullptr && IsDeclaredInStd(cls) &&
-         HasUntypedParameter(cls);
-}
-
 auto DefineStdClasses(slang::ast::Compilation& compilation) -> StdDefinitions {
   const slang::ast::CompilationUnitSymbol* definitions = nullptr;
   for (const auto* unit : compilation.getRoot().compilationUnits) {
@@ -129,7 +111,6 @@ auto DefineStdClasses(slang::ast::Compilation& compilation) -> StdDefinitions {
     const auto& generic = member.as<slang::ast::GenericClassDefSymbol>();
     for (const slang::ast::Type& specialized : generic.specializations()) {
       const auto& declared = specialized.as<slang::ast::ClassType>();
-      if (HasUntypedParameter(declared)) continue;
       defined.emplace(
           &declared,
           &SpecializeAlike(

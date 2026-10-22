@@ -132,6 +132,20 @@ struct StringType {
   auto operator==(const StringType&) const -> bool = default;
 };
 
+// A value of any type, kept with that type and the identity it is tested by,
+// which the library holds as an object of its own.
+struct AnyType {
+  auto operator==(const AnyType&) const -> bool = default;
+};
+
+// A reference to a value of a type known only where the program runs: where a
+// value of its identity is received and what carries it on, held as an object
+// of the library's own, as a reference to an unsized value is a pointer and
+// its metadata in rustc's layout.
+struct AnyReferenceType {
+  auto operator==(const AnyReferenceType&) const -> bool = default;
+};
+
 // A borrowed, NUL-terminated machine string (C `const char*`): raw character
 // storage the value does not own, distinct from the owning `StringType`.
 struct MachineCStringType {
@@ -450,15 +464,16 @@ class Type {
  private:
   using Data = std::variant<
       IntegralType, UnpackedArrayType, DynamicArrayType, QueueType,
-      AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
-      MachineBoolType, MachineIntType, MachineFloatType, MachineArrayType,
-      MachineFunctionType, EventType, RealType, ShortRealType, ChandleType,
-      VoidType, EmptyType, ObjectType, CrossUnitClassType, RuntimeClassType,
-      ClosureType, ErasedCallableType, RuntimeEffectsType, FilesType,
-      DiagnosticType, RuntimeLibraryType, CoroutineType, VariableRefType,
-      PointerType, ManagedRefType, VectorType, TupleType, RecordType,
-      ResolvedType, DriverType, ObservableType, SampledHistoryType,
-      EvaluationAttemptsType, LoopBlocksType, OpenWriteType, DesignationType>;
+      AssociativeArrayType, WildcardIndexType, StringType, AnyType,
+      AnyReferenceType, MachineCStringType, MachineBoolType, MachineIntType,
+      MachineFloatType, MachineArrayType, MachineFunctionType, EventType,
+      RealType, ShortRealType, ChandleType, VoidType, EmptyType, ObjectType,
+      CrossUnitClassType, RuntimeClassType, ClosureType, ErasedCallableType,
+      RuntimeEffectsType, FilesType, DiagnosticType, RuntimeLibraryType,
+      CoroutineType, VariableRefType, PointerType, ManagedRefType, VectorType,
+      TupleType, RecordType, ResolvedType, DriverType, ObservableType,
+      SampledHistoryType, EvaluationAttemptsType, LoopBlocksType, OpenWriteType,
+      DesignationType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {
