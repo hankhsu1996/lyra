@@ -18,8 +18,6 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/concurrent_assertion.hpp"
-#include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
-#include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -266,24 +264,13 @@ auto LowerImplicitListProcess(ProcessLowerer& process, const hir::Reads& reads)
       });
 }
 
-// The value a formal that brings no value in, or the implicit result variable,
-// starts at on each entry: its type's default (LRM Table 6-7 for a scalar,
-// Table 7-1 for an aggregate), since a body may read either before writing it.
-auto DefaultInitialValue(
-    ProcessLowerer& process, const WalkFrame& frame,
-    const hir::ProceduralVarDecl& decl) -> InitialValue {
-  return [&process, &frame, &decl]() -> diag::Result<mir::ExprId> {
-    return BuildDeclaredInitialValue(process.Owner(), frame, decl.type);
-  };
-}
-
 // A formal that brings a value in: the parameter the call hands it through,
 // which the variable starts at. Where the body cannot wait the variable is the
 // parameter itself. A static subroutine's is the one variable every call shares
 // (LRM 13.3.2), and the call assigns it the value it hands in.
 auto DeclareParameterVar(
     ProcessLowerer& process, const WalkFrame& frame, hir::ProceduralVarId var,
-    const hir::ProceduralVarDecl& decl) -> diag::Result<mir::LocalId> {
+    const hir::ProceduralVarDecl& decl) -> mir::LocalId {
   UnitLowerer& unit_lowerer = process.Owner();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& body = *frame.current_block;
@@ -306,12 +293,9 @@ auto DeclareParameterVar(
                 unit, body, variable, body.ReadLocal(parameter, value_type)))});
     return parameter;
   }
-  auto started = LowerVarStart(
-      process, frame, var, decl.name, [&]() -> diag::Result<mir::ExprId> {
-        return body.ReadLocal(parameter, value_type);
-      });
-  if (!started) return std::unexpected(std::move(started.error()));
-  body.AppendStmt(*std::move(started));
+  body.AppendStmt(LowerVarStart(process, frame, var, decl.name, [&] {
+    return body.ReadLocal(parameter, value_type);
+  }));
   return parameter;
 }
 
@@ -420,11 +404,9 @@ auto ProcessLowerer::LowerSubroutine(
 
     const BindingOriginId origin = ProceduralOrigin{.var = param.var};
     if (!param_type.has_value()) {
-      auto started = LowerVarStart(
+      code.Body().AppendStmt(LowerVarStart(
           *this, body_frame, param.var, hir_var.name,
-          DefaultInitialValue(*this, body_frame, hir_var));
-      if (!started) return std::unexpected(std::move(started.error()));
-      code.Body().AppendStmt(*std::move(started));
+          DefaultInitialValue(*this, body_frame, hir_var)));
       output_vars_.push_back(param.var);
       continue;
     }
@@ -439,9 +421,8 @@ auto ProcessLowerer::LowerSubroutine(
       continue;
     }
 
-    auto parameter = DeclareParameterVar(*this, body_frame, param.var, hir_var);
-    if (!parameter) return std::unexpected(std::move(parameter.error()));
-    params.push_back(*parameter);
+    params.push_back(
+        DeclareParameterVar(*this, body_frame, param.var, hir_var));
     if (dir == hir::ParamDirection::kInOut) {
       output_vars_.push_back(param.var);
     }
@@ -454,12 +435,10 @@ auto ProcessLowerer::LowerSubroutine(
   // a fall-through or value-less `return` carries. void functions and tasks
   // have none.
   if (src.result_var.has_value()) {
-    auto started = LowerVarStart(
+    code.Body().AppendStmt(LowerVarStart(
         *this, body_frame, *src.result_var, std::nullopt,
         DefaultInitialValue(
-            *this, body_frame, src.body.procedural_vars.Get(*src.result_var)));
-    if (!started) return std::unexpected(std::move(started.error()));
-    code.Body().AppendStmt(*std::move(started));
+            *this, body_frame, src.body.procedural_vars.Get(*src.result_var))));
     result_var_ = src.result_var;
   }
 
@@ -572,9 +551,9 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
       });
 }
 
-auto ProcessLowerer::RegisterConstructorFormals(
+void ProcessLowerer::RegisterConstructorFormals(
     const hir::SubroutineDecl& ctor, const WalkFrame& frame,
-    std::vector<mir::LocalId>& params) -> diag::Result<void> {
+    std::vector<mir::LocalId>& params) {
   OpenActivationScope(*this, frame, DeclaredAhead(ctor));
   for (const auto& param : ctor.params) {
     if (param.direction != hir::ParamDirection::kInput) {
@@ -582,12 +561,9 @@ auto ProcessLowerer::RegisterConstructorFormals(
           "ProcessLowerer::RegisterConstructorFormals: a non-input "
           "constructor formal reached MIR lowering; AST-to-HIR rejects these");
     }
-    auto parameter = DeclareParameterVar(
-        *this, frame, param.var, ctor.body.procedural_vars.Get(param.var));
-    if (!parameter) return std::unexpected(std::move(parameter.error()));
-    params.push_back(*parameter);
+    params.push_back(DeclareParameterVar(
+        *this, frame, param.var, ctor.body.procedural_vars.Get(param.var)));
   }
-  return {};
 }
 
 auto ProcessLowerer::LowerConstructorBodyInto(const WalkFrame& frame)

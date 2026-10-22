@@ -9,11 +9,12 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
 #include "lyra/lowering/hir_to_mir/declared_variable.hpp"
-#include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -24,26 +25,6 @@
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
-
-// The value a variable starts at where its declaration is reached, in the
-// frame's block: its declaration assignment, or its type's default value where
-// the source wrote none, at the variable's declared type.
-auto BuildInitialValue(
-    ProcessLowerer& process, WalkFrame frame,
-    const hir::ProceduralVarDecl& hir_local, mir::TypeId type)
-    -> diag::Result<mir::ExprId> {
-  auto& block = *frame.current_block;
-  mir::ExprId value{};
-  if (hir_local.init.has_value()) {
-    auto init_or =
-        process.LowerExpr(process.HirBody().exprs.Get(*hir_local.init), frame);
-    if (!init_or) return std::unexpected(std::move(init_or.error()));
-    value = block.exprs.Add(*std::move(init_or));
-  } else {
-    value = BuildDeclaredInitialValue(process.Owner(), frame, hir_local.type);
-  }
-  return ConvertToType(process.Owner().Unit(), block, value, type);
-}
 
 // Binds a promoted variable to the cell its scope's entry made, so every
 // reference to it -- its own initializer's among them -- reaches that cell.
@@ -72,19 +53,25 @@ auto InitializePromotedVar(
 
 }  // namespace
 
+auto DefaultInitialValue(
+    ProcessLowerer& process, const WalkFrame& frame,
+    const hir::ProceduralVarDecl& decl) -> InitialValue {
+  return [&process, &frame, &decl] {
+    return BuildDeclaredInitialValue(process.Owner(), frame, decl.type);
+  };
+}
+
 auto LowerVarStart(
     ProcessLowerer& process, WalkFrame frame, hir::ProceduralVarId var,
     const std::optional<std::string>& name, const InitialValue& initial)
-    -> diag::Result<mir::Stmt> {
+    -> mir::Stmt {
   const auto& hir_local = process.HirBody().procedural_vars.Get(var);
   // A lifetime-extended automatic (LRM 6.21) is a cell held by a shared
   // pointer, recorded where the scope declaring it was entered; its
   // declaration takes that pointer and initializes the cell through it.
   if (hir_local.lifetime_extended) {
     const PromotedVarBinding promoted = BindPromotedVar(process, var);
-    auto value = initial();
-    if (!value) return std::unexpected(std::move(value.error()));
-    return InitializePromotedVar(process, frame, promoted, *value);
+    return InitializePromotedVar(process, frame, promoted, initial());
   }
   // LRM 6.21: a static-lifetime variable keeps a cell that outlives every
   // activation, so its storage and its binding are both settled before the body
@@ -100,19 +87,40 @@ auto LowerVarStart(
       unit, *frame.bindings, block, ProceduralOrigin{.var = var}, name,
       process.Owner().TranslateType(hir_local.type), frame.body_can_wait);
   process.MapProceduralVar(var, AutomaticVarBinding{.type = variable.type});
-  auto value = initial();
-  if (!value) return std::unexpected(std::move(value.error()));
-  return InitializeVariable(unit, block, variable, *value);
+  return InitializeVariable(unit, block, variable, initial());
 }
 
 auto LowerVarDeclaration(
     ProcessLowerer& process, WalkFrame frame, hir::ProceduralVarId var)
     -> diag::Result<mir::Stmt> {
   const auto& hir_local = process.HirBody().procedural_vars.Get(var);
+  // LRM 6.21, 13.3: an automatic variable takes its default on each entry to
+  // its scope, and its declaration assignment is made to it after, so an
+  // assignment naming the variable reads that default. A static one was
+  // brought up before the body, its assignment with it.
+  mir::Stmt started = LowerVarStart(
+      process, frame, var, hir_local.name,
+      DefaultInitialValue(process, frame, hir_local));
+  if (!hir_local.init.has_value() ||
+      hir_local.lifetime == hir::VariableLifetime::kStatic) {
+    return started;
+  }
   const mir::TypeId type = process.Owner().TranslateType(hir_local.type);
-  return LowerVarStart(process, frame, var, hir_local.name, [&] {
-    return BuildInitialValue(process, frame, hir_local, type);
-  });
+  mir::Block& block = *frame.current_block;
+  block.AppendStmt(std::move(started));
+  auto init =
+      process.LowerExpr(process.HirBody().exprs.Get(*hir_local.init), frame);
+  if (!init) return std::unexpected(std::move(init.error()));
+  const mir::ExprId value = ConvertToType(
+      process.Owner().Unit(), block, block.exprs.Add(*std::move(init)), type);
+  const AccessPath variable{
+      .owner = block.exprs.Add(LowerProceduralVarRefExpr(process, frame, var)),
+      .descent = {}};
+  return mir::Stmt{
+      .label = std::nullopt,
+      .data = mir::ExprStmt{
+          .expr = block.exprs.Add(
+              BuildStoreExpr(process.Owner().Unit(), block, variable, value))}};
 }
 
 auto LowerVarDeclStmt(

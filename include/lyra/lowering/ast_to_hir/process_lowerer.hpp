@@ -103,13 +103,13 @@ class ProcessLowerer {
       const slang::ast::VariableSymbol& var, hir::TypeId type,
       std::optional<hir::ExprId> init);
 
-  // Both steps for a declaration whose initializer is already known -- which is
-  // every one but a source declaration statement, whose initializer has to
-  // lower against the identity this mints.
+  // Both steps for a declaration the source gives no declaration assignment --
+  // a formal, a function's result, a loop variable -- whose content is known
+  // before anything names it.
   auto AddProceduralVar(
       const WalkFrame& frame, hir::ProceduralBody& body,
-      const slang::ast::VariableSymbol& var, hir::TypeId type,
-      std::optional<hir::ExprId> init = std::nullopt) -> hir::ProceduralVarId;
+      const slang::ast::VariableSymbol& var, hir::TypeId type)
+      -> hir::ProceduralVarId;
 
   // The constants `scope` declares whose value differs between the objects
   // built from this unit, each a declaration of the scope the walk frame is

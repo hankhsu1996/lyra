@@ -3198,28 +3198,20 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       // resolved names storage that exists, and a later store -- a user
       // initializer included (LRM 10.5) -- is held to that representation
       // rather than fixing it by running first. A non-observable value member
-      // carries no cell wrapper, so an ordinary store of its initializer, or of
-      // the default where it has none, is what gives it its value.
+      // carries no cell wrapper, so an ordinary store of the default is what
+      // gives it its value. Either way the initializer is then stored, and may
+      // read the member it initializes (LRM 10.5).
       if (unit_lowerer.Unit().types.Get(mir_field_type).IsCapabilityWrapper()) {
         install_in_constructor(hir_id);
-        if (var->initializer.has_value()) {
-          auto value_or =
-              LowerExpr(hir_scope.exprs.Get(*var->initializer), init_frame);
-          if (!value_or) return std::unexpected(std::move(value_or.error()));
-          emit_value_store(initialize_block.exprs.Add(*std::move(value_or)));
-        }
       } else {
-        mir::ExprId value_id{};
-        if (var->initializer.has_value()) {
-          auto value_or =
-              LowerExpr(hir_scope.exprs.Get(*var->initializer), init_frame);
-          if (!value_or) return std::unexpected(std::move(value_or.error()));
-          value_id = initialize_block.exprs.Add(*std::move(value_or));
-        } else {
-          value_id =
-              BuildDeclaredInitialValue(unit_lowerer, init_frame, d.type);
-        }
-        emit_value_store(value_id);
+        emit_value_store(
+            BuildDeclaredInitialValue(unit_lowerer, init_frame, d.type));
+      }
+      if (var->initializer.has_value()) {
+        auto value_or =
+            LowerExpr(hir_scope.exprs.Get(*var->initializer), init_frame);
+        if (!value_or) return std::unexpected(std::move(value_or.error()));
+        emit_value_store(initialize_block.exprs.Add(*std::move(value_or)));
       }
     }
 

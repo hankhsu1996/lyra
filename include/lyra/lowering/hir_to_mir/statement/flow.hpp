@@ -18,9 +18,17 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// The value a variable starts at, built in the frame's block once the variable
-// is bound, so an initializer naming the variable itself reaches it.
-using InitialValue = std::function<diag::Result<mir::ExprId>()>;
+// The value a variable starts at, built in the frame's block only where
+// reaching its declaration brings it up: a static one was brought up before the
+// body and asks for none.
+using InitialValue = std::function<mir::ExprId()>;
+
+// What a variable starts at where nothing hands it a value: its type's default
+// (LRM Table 6-7 for a scalar, Table 7-1 for an aggregate), taken on each entry
+// to its scope (LRM 6.21, 13.3.2).
+auto DefaultInitialValue(
+    ProcessLowerer& process, const WalkFrame& frame,
+    const hir::ProceduralVarDecl& decl) -> InitialValue;
 
 // What reaching the point of declaration of the variable `var` of the body does
 // (LRM 6.21). An automatic one comes into being in the frame's block -- a
@@ -33,13 +41,13 @@ using InitialValue = std::function<diag::Result<mir::ExprId>()>;
 auto LowerVarStart(
     ProcessLowerer& process, WalkFrame frame, hir::ProceduralVarId var,
     const std::optional<std::string>& name, const InitialValue& initial)
-    -> diag::Result<mir::Stmt>;
+    -> mir::Stmt;
 
 // The point of declaration of `var` as the source wrote it: it answers to its
-// own identifier and starts at its declaration assignment, or at its type's
-// default value where there is none. The variable is declared the same way
-// whether a statement of the source declares it or a construct does in its own
-// header (LRM 12.7.3).
+// own identifier, starts at its type's default value, and is then given its
+// declaration assignment where there is one, which may read it. The variable is
+// declared the same way whether a statement of the source declares it or a
+// construct does in its own header (LRM 12.7.3).
 auto LowerVarDeclaration(
     ProcessLowerer& process, WalkFrame frame, hir::ProceduralVarId var)
     -> diag::Result<mir::Stmt>;

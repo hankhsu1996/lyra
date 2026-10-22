@@ -309,6 +309,19 @@ auto MakePatternVarRefExpr(
       hir::PatternVarRef{.pattern = *pattern}, *type_id, span);
 }
 
+// A name of a variable or a constant the body declares, typed by the type the
+// front end gave the name: a declaration assignment may name the variable it
+// initializes (LRM 10.5), and that name is lowered before the declaration it
+// names is complete.
+auto MakeProceduralVarRefExpr(
+    UnitLowerer& unit_lowerer, hir::ProceduralVarId var,
+    const slang::ast::Type& type, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  auto type_id = unit_lowerer.InternType(type, span);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  return hir::MakeRefExpr(hir::ProceduralVarRef{.var = var}, *type_id, span);
+}
+
 // An enumeration's members are part of what the type is (LRM 6.19), so this
 // value varies with the type and a type is already an artifact's axis. Where a
 // block declares the enumeration itself, the blocks declare different types and
@@ -493,10 +506,7 @@ auto LowerNamedValueProc(
     // built from this unit is read from the body's own cell; any other folds.
     case Referent::kParameterConstant:
       if (auto held = proc.LookupProceduralVar(target)) {
-        const hir::TypeId type =
-            frame.current_procedural_body->procedural_vars.Get(*held).type;
-        return hir::MakeRefExpr(
-            hir::ProceduralVarRef{.var = *held}, type, span);
+        return MakeProceduralVarRefExpr(unit_lowerer, *held, *named.type, span);
       }
       return MakeParameterConstantExpr(
           unit_lowerer, frame, target, *named.type, span);
@@ -522,10 +532,8 @@ auto LowerNamedValueProc(
     case Referent::kVariableStorage: {
       const auto& var = target.as<slang::ast::VariableSymbol>();
       if (auto local = proc.LookupProceduralVar(var)) {
-        const hir::TypeId type =
-            frame.current_procedural_body->procedural_vars.Get(*local).type;
-        return hir::MakeRefExpr(
-            hir::ProceduralVarRef{.var = *local}, type, span);
+        return MakeProceduralVarRefExpr(
+            unit_lowerer, *local, *named.type, span);
       }
       return LowerValueRef(unit_lowerer, frame, var, *named.type, span);
     }
