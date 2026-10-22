@@ -990,7 +990,8 @@ the detail lives in the entry itself.
   disable-active int instead, the departure is derived again where control comes back, and an
   execution holding an unreturned foreign call is asked to stop rather than settled. Unwinding
   through the foreign frames, carrying the departure across, and a second departure state at the
-  boundary are rejected.
+  boundary are rejected. Revised 2026-10-21: the release at the run's end unwinds the foreign
+  frames, running what every frame of the design's on that stack owes.
 
 ### Compile-time model and specialization
 
@@ -1398,7 +1399,8 @@ the detail lives in the entry itself.
   `activation.md` invariant 2's third alternative. Catching the throw at the engine loop, skipping
   `final` after `$stop`, `$stop` as a failure, a fifth severity, and aborting at the raise site are
   rejected. Revised 2026-10-21: a refused request for memory delivers everything the design wrote to
-  standard output.
+  standard output; and a run-time error becomes a departure at the first region or activation that
+  takes it, a cleanup's landing only passing it on.
 - [deferred-report-queue](deferred-report-queue.md) -- a pending report stays in the region's own
   list and withdrawal is a refusal to act, so it records the sources that can withdraw it and acts
   only if all still stand: two `disable` targets through the accepted cancellation-source

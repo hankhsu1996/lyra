@@ -5,7 +5,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <cxxabi.h>
 #include <deque>
 #include <exception>
 #include <format>
@@ -2052,7 +2051,6 @@ using lyra::runtime::RaiseDeclinedDeparture;
 using lyra::runtime::Read;
 using lyra::runtime::ReadReport;
 using lyra::runtime::RealTimeInUnit;
-using lyra::runtime::ReceiveDepartureOf;
 using lyra::runtime::RefArmSampling;
 using lyra::runtime::RefBeginTakeover;
 using lyra::runtime::RefDriveTakeover;
@@ -2819,30 +2817,23 @@ auto lyra_rt_event_reports_to(const void* event) -> void* {
   return lyra::runtime::EventReportsTo(Read<ObjectRef>(event));
 }
 
-auto lyra_rt_receive_departure(void* exception) -> void* {
-  // The landing is handed what the unwinder carries, not the effect itself;
-  // receiving is what turns one into the other, and it is the point after which
-  // this departure is this landing's to finish or to decline.
-  return ReceiveDepartureOf(exception).target;
-}
-
-void lyra_rt_finish_departure() {
-  abi::__cxa_end_catch();
+auto lyra_rt_receive_departure() -> void* {
+  // Asked inside a handler that has begun handling what arrived, as a C++
+  // handler asks it; what is not the design's leaves from inside the question.
+  return lyra::runtime::ReceiveDeparture().target;
 }
 
 void lyra_rt_decline_departure(void* target) {
-  // Carries on the departure the landing holds, which is not always what the
+  // Carries on the departure the handler holds, which is not always what the
   // unwinder brought: an error it received is carried on as the departure it
-  // became, so no later landing receives the error a second time.
-  abi::__cxa_end_catch();
+  // became, so no later handler receives the error a second time.
   RaiseDeclinedDeparture(
       ControlEffect{.target = static_cast<CancellationTarget*>(target)});
 }
 
 void lyra_rt_settle_departure(void* target) {
-  // Settles the departure the landing holds rather than what the unwinder
+  // Settles the departure the handler holds rather than what the unwinder
   // brought, for the reason declining carries that one on.
-  abi::__cxa_end_catch();
   GeneratedCallScope::Current().SettleDeparture(
       std::make_exception_ptr(
           ControlEffect{.target = static_cast<CancellationTarget*>(target)}));

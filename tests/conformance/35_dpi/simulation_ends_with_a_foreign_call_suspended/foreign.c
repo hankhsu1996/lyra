@@ -3,10 +3,14 @@
    through its loop. */
 #include "dpi.h"
 
-int32_t advance(int32_t rounds) {
+int32_t advance(const char* tag, int32_t rounds) {
   int32_t i;
+  if (tag[0] == '\0') {
+    return 1;
+  }
   for (i = 0; i < rounds; i++) {
-    if (step(i + 2) != 0) {
+    if (step("a label longer than a string keeps in place, by far", i + 2) !=
+        0) {
       return 1;
     }
   }

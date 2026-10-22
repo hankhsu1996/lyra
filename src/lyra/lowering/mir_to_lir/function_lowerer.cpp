@@ -43,14 +43,14 @@ namespace lyra::lowering::mir_to_lir {
 
 namespace {
 
-// Whether a call ending this way can leave by a departure, which is what
-// obliges it to name the landing the departure reaches.
-auto MayDepart(support::CallEnding ending) -> bool {
+// Whether a call ending this way can be unwound out of, which is what obliges
+// it to name the landing unwinding reaches.
+auto MayUnwind(support::CallEnding ending) -> bool {
   switch (ending) {
     case support::CallEnding::kReturns:
       return false;
-    case support::CallEnding::kReturnsOrDeparts:
-    case support::CallEnding::kDeparts:
+    case support::CallEnding::kReturnsOrUnwinds:
+    case support::CallEnding::kUnwinds:
       return true;
   }
   throw InternalError("mir_to_lir: unknown call ending");
@@ -496,11 +496,20 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   // Everything from here runs as a stretch of the body: the storage its
   // variables live in belongs to whoever drives it, and so does each
   // parameter's binding.
+  std::optional<RegionScope> top;
   if (is_coroutine) {
     auto suspended = EmitInitialSuspend();
     if (!suspended) {
       return std::unexpected(std::move(suspended.error()));
     }
+    // The execution a coroutine's body is the top of takes whatever unwinds
+    // out of the body and completes with it, so the whole body stands in a
+    // region of its own, as a C++ coroutine's body stands in a `try` whose
+    // handler hands what escaped to its promise.
+    top = RegionScope{
+        .handler = NewBlock(),
+        .caught = NewPlaceLocal(unit_->ControlEffectType())};
+    OpenScope(*top);
   }
   OpenVariables();
   for (const auto& [param, argument] : taken) {
@@ -527,6 +536,12 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   auto frame_closed = CloseExtent(0);
   if (!frame_closed) {
     return std::unexpected(std::move(frame_closed.error()));
+  }
+  if (top.has_value()) {
+    auto completed = EmitCoroutineHandler(*top);
+    if (!completed) {
+      return std::unexpected(std::move(completed.error()));
+    }
   }
 
   // A block the lowering left open either falls off the end of a void or
@@ -644,11 +659,15 @@ auto FunctionLowerer::ConstructBase() -> diag::Result<void> {
   return {};
 }
 
-auto FunctionLowerer::DepartureSlot() -> lir::ValueId {
-  if (!departure_slot_.has_value()) {
-    departure_slot_ = NewPlaceLocal(unit_->ControlEffectType());
+auto FunctionLowerer::UnwindingType() -> lir::TypeId {
+  return AddressType(unit_->TranslateType(unit_->Mir().builtins.void_type));
+}
+
+auto FunctionLowerer::ExceptionSlot() -> lir::ValueId {
+  if (!exception_slot_.has_value()) {
+    exception_slot_ = NewPlaceLocal(UnwindingType());
   }
-  return *departure_slot_;
+  return *exception_slot_;
 }
 
 auto FunctionLowerer::LandingHere(std::optional<lir::ValueId> unmade)
@@ -659,14 +678,22 @@ auto FunctionLowerer::LandingHere(std::optional<lir::ValueId> unmade)
   if (!continued) {
     return std::unexpected(continued.error());
   }
+  // The way out stops at the innermost region open here, so this frame takes
+  // the raise exactly where one is open at all.
+  const bool taken = std::ranges::any_of(scopes_, [](const UnwindScope& scope) {
+    return std::holds_alternative<RegionScope>(scope.kind);
+  });
   const lir::BlockId landing = NewBlock();
   const lir::BlockId resumed = current_;
   SetCurrent(landing);
-  const lir::Operand effect =
-      Emit(unit_->ControlEffectType(), lir::ReceiveDepartureInstr{});
+  const lir::Operand exception = Emit(
+      UnwindingType(),
+      lir::LandingInstr{
+          .clause = taken ? lir::LandingInstr::Clause::kCatchAll
+                          : lir::LandingInstr::Clause::kCleanup});
   Store(
-      lir::Place{.base = lir::Use{.value = DepartureSlot()}, .chain = {}},
-      effect);
+      lir::Place{.base = lir::Use{.value = ExceptionSlot()}, .chain = {}},
+      exception);
   if (unmade.has_value()) {
     MarkStorage(lir::StorageInstr::Op::kDead, *unmade);
   }
@@ -676,11 +703,11 @@ auto FunctionLowerer::LandingHere(std::optional<lir::ValueId> unmade)
 }
 
 // Walking outward from `index`, the walk stops at the first scope whose entry
-// needs nothing outside it -- one already built, or a region, which hands the
-// departure to its own handler -- or at the outermost, which continues to the
-// frame's edge. The scopes inside the stop are then built from the outside in,
-// each continuing to the one around it, so a departure from inside many scopes
-// is one loop over them, as clang pops its cleanup stack.
+// needs nothing outside it -- one already built, or a region, whose handler
+// takes what arrives -- or at the outermost, which continues to the frame's
+// edge. The scopes inside the stop are then built from the outside in, each
+// continuing to the one around it, so unwinding from inside many scopes is one
+// loop over them, as clang pops its cleanup stack.
 auto FunctionLowerer::UnwindEntryAt(std::size_t index)
     -> diag::Result<lir::BlockId> {
   const auto stops = [&](std::size_t at) {
@@ -691,9 +718,9 @@ auto FunctionLowerer::UnwindEntryAt(std::size_t index)
   while (first > 0 && !stops(first)) {
     --first;
   }
-  // What the scopes inside the stop continue to: the stop's own entry, built
-  // now for a region, and the frame's edge where the walk reached the outermost
-  // scope without stopping, which is then built like the rest.
+  // What the scopes inside the stop continue to: the stop's own entry, which
+  // for a region is its handler, and the frame's edge where the walk reached
+  // the outermost scope without stopping, which is then built like the rest.
   lir::BlockId outward{};
   if (const auto built = scopes_[first].unwind_entry; built.has_value()) {
     outward = *built;
@@ -701,7 +728,7 @@ auto FunctionLowerer::UnwindEntryAt(std::size_t index)
   } else if (const auto* region =
                  std::get_if<RegionScope>(&scopes_[first].kind);
              region != nullptr) {
-    outward = BuildRegionEntry(*region);
+    outward = region->handler;
     scopes_[first].unwind_entry = outward;
     ++first;
   } else {
@@ -718,29 +745,12 @@ auto FunctionLowerer::UnwindEntryAt(std::size_t index)
   return outward;
 }
 
-// The region's own test decides whether it claims the departure, so its entry
-// only hands the departure to it.
-auto FunctionLowerer::BuildRegionEntry(const RegionScope& region)
-    -> lir::BlockId {
-  const lir::BlockId resumed = current_;
-  const lir::BlockId entry = NewBlock();
-  SetCurrent(entry);
-  Store(
-      lir::Place{.base = lir::Use{.value = region.caught}, .chain = {}},
-      Load(
-          lir::Place{.base = lir::Use{.value = DepartureSlot()}, .chain = {}},
-          unit_->ControlEffectType()));
-  Terminate(lir::BranchTerm{.target = region.handler});
-  SetCurrent(resumed);
-  return entry;
-}
-
 auto FunctionLowerer::BuildUnwindEntry(std::size_t index, lir::BlockId outward)
     -> diag::Result<lir::BlockId> {
   const lir::BlockId resumed = current_;
   // What a scope owes, run once here and passed on to the scope it is nested
   // in, so its code appears once on the way out however many calls inside it
-  // can leave.
+  // can be unwound out of.
   const auto owed_then_outward =
       [&](const auto& owe) -> diag::Result<lir::BlockId> {
     const lir::BlockId entry = NewBlock();
@@ -772,13 +782,19 @@ auto FunctionLowerer::BuildUnwindEntry(std::size_t index, lir::BlockId outward)
               return {};
             });
           },
-          // Nothing is owed here any more, so the departure goes straight on.
+          // Nothing is owed here any more, so unwinding goes straight on.
           [&](const EndPassedOn&) -> diag::Result<lir::BlockId> {
             return outward;
           },
           [&](const StorageRelease& release) -> diag::Result<lir::BlockId> {
             return owed_then_outward([&]() -> diag::Result<void> {
               EmitScopeDrop(release);
+              return {};
+            });
+          },
+          [&](const HandlingScope&) -> diag::Result<lir::BlockId> {
+            return owed_then_outward([&]() -> diag::Result<void> {
+              EmitStatement(lir::EndHandlingInstr{});
               return {};
             });
           },
@@ -789,18 +805,18 @@ auto FunctionLowerer::BuildUnwindEntry(std::size_t index, lir::BlockId outward)
           },
           [](const TerminateScope&) -> diag::Result<lir::BlockId> {
             throw InternalError(
-                "mir_to_lir: a cleanup's code can depart, and a departure "
-                "starting inside a cleanup has nowhere to go -- please report "
-                "this as a bug");
+                "mir_to_lir: a cleanup's code can be unwound out of, and "
+                "unwinding starting inside a cleanup has nowhere to go -- "
+                "please report this as a bug");
           }},
       kind);
   SetCurrent(resumed);
   return entered;
 }
 
-// Past every scope nothing here claims the departure, so what is owed is what
-// any other way out of the body owes -- the end of the storage its declared
-// variables live in -- and then the body completes by departing.
+// Past every scope nothing here takes the raise, so what is owed is what any
+// other way out of the body owes -- the end of the storage its declared
+// variables live in -- and then unwinding goes on out of the body.
 auto FunctionLowerer::FrameEdge() -> lir::BlockId {
   if (frame_edge_.has_value()) {
     return *frame_edge_;
@@ -811,29 +827,65 @@ auto FunctionLowerer::FrameEdge() -> lir::BlockId {
   SetCurrent(edge);
   CloseVariables();
   Terminate(
-      lir::DepartTerm{
-          .departure = Load(
+      lir::UnwindResumeTerm{
+          .exception = Load(
               lir::Place{
-                  .base = lir::Use{.value = DepartureSlot()}, .chain = {}},
-              unit_->ControlEffectType())});
+                  .base = lir::Use{.value = ExceptionSlot()}, .chain = {}},
+              UnwindingType())});
   SetCurrent(resumed);
   return edge;
 }
 
-auto FunctionLowerer::EmitDepartingCall(
+auto FunctionLowerer::OpenHandler(const RegionScope& region)
+    -> diag::Result<void> {
+  SetCurrent(region.handler);
+  EmitStatement(
+      lir::BeginHandlingInstr{
+          .exception = Load(
+              lir::Place{
+                  .base = lir::Use{.value = ExceptionSlot()}, .chain = {}},
+              UnwindingType())});
+  OpenScope(HandlingScope{});
+  // What arrived is asked about inside the handling, because the asking is
+  // itself a way out of it: what is not the design's goes on from there.
+  return EmitInvoke(
+      lir::BuiltinTarget{.fn = support::BuiltinFn::kReceiveDeparture}, {},
+      lir::Place{.base = lir::Use{.value = region.caught}, .chain = {}});
+}
+
+auto FunctionLowerer::EmitCoroutineHandler(const RegionScope& top)
+    -> diag::Result<void> {
+  auto opened = OpenHandler(top);
+  if (!opened) {
+    return opened;
+  }
+  auto closed = CloseExtent(0);
+  if (!closed) {
+    return closed;
+  }
+  CloseVariables();
+  Terminate(
+      lir::DepartTerm{
+          .departure = Load(
+              lir::Place{.base = lir::Use{.value = top.caught}, .chain = {}},
+              unit_->ControlEffectType())});
+  return {};
+}
+
+auto FunctionLowerer::EmitInvoke(
     lir::CallTarget target, std::vector<lir::Operand> args,
     lir::Destination destination) -> diag::Result<void> {
   const std::optional<lir::ValueId> owner =
       OwningTransient(destination, lir::CallMakesValue(target));
-  // A call that departs makes no value, so the bytes the value would have
-  // lain in go out of use where the departure lands.
+  // A call unwound out of makes no value, so the bytes the value would have
+  // lain in go out of use where the unwinding lands.
   auto landing = LandingHere(owner);
   if (!landing) {
     return std::unexpected(std::move(landing.error()));
   }
   const lir::BlockId returned = NewBlock();
   Terminate(
-      lir::DepartingCallInstr{
+      lir::InvokeTerm{
           .destination = std::move(destination),
           .target = std::move(target),
           .args = std::move(args),
@@ -873,15 +925,15 @@ auto FunctionLowerer::Terminated() const -> bool {
 
 namespace {
 
-// A callee that can leave without returning is stated as a departing call, so
-// that whatever is owed between here and the frame's edge gets its turn.
+// A callee that can be unwound out of is called as an invoke, so that whatever
+// is owed between here and the frame's edge gets its turn.
 void RequireReturns(const lir::Rvalue& value) {
   if (const auto* call = std::get_if<lir::CallInstr>(&value);
-      call != nullptr && MayDepart(lir::CallEndingOf(call->target))) {
+      call != nullptr && MayUnwind(lir::CallEndingOf(call->target))) {
     throw InternalError(
-        "mir_to_lir: a callee that can leave without returning is called as "
-        "an instruction rather than as a departing call -- please report this "
-        "as a bug");
+        "mir_to_lir: a callee that can be unwound out of is called as an "
+        "instruction rather than as an invoke -- please report this as a "
+        "bug");
   }
 }
 
@@ -1693,8 +1745,12 @@ auto FunctionLowerer::RunCleanupsDownTo(std::size_t depth)
               EmitScopeDrop(release);
               return {};
             },
+            [&](const HandlingScope&) -> diag::Result<void> {
+              EmitStatement(lir::EndHandlingInstr{});
+              return {};
+            },
             // Leaving a region, or a cleanup's own code, by an ordinary way out
-            // owes it nothing: a region's handler is only for a departure.
+            // owes it nothing: a region's handler is only for what unwinds.
             [](const RegionScope&) -> diag::Result<void> { return {}; },
             [](const TerminateScope&) -> diag::Result<void> { return {}; }},
         kind);
@@ -1784,14 +1840,15 @@ auto FunctionLowerer::LowerTryInto(
   const lir::BlockId handler_id = NewBlock();
   const lir::BlockId merge_id = NewBlock();
 
-  // The effect is written where control leaves the body and read where the
-  // handler runs, which are different blocks, so it is frame storage rather
+  // The effect is received where the handler begins and read by its
+  // statements, which may stand in other blocks, so it is frame storage rather
   // than a value in flight.
   const lir::ValueId caught =
       NewPlaceLocal(unit_->TranslateType(code_->locals.Get(stmt.caught).type));
   locals_[stmt.caught.value] = PlaceBinding{.slot = caught};
+  const RegionScope region{.handler = handler_id, .caught = caught};
 
-  OpenScope(RegionScope{.handler = handler_id, .caught = caught});
+  OpenScope(region);
   auto body = LowerBlockInto(block.child_scopes.Get(stmt.body));
   scopes_.pop_back();
   if (!body) {
@@ -1801,22 +1858,23 @@ auto FunctionLowerer::LowerTryInto(
     Terminate(lir::BranchTerm{.target = merge_id});
   }
 
-  SetCurrent(handler_id);
+  const std::size_t depth = scopes_.size();
+  auto opened = OpenHandler(region);
+  if (!opened) {
+    return opened;
+  }
   auto handler = LowerBlockInto(block.child_scopes.Get(stmt.handler));
   if (!handler) {
     return std::unexpected(std::move(handler.error()));
   }
   // Reaching the handler's end is what claiming the effect amounts to:
-  // execution resumes past the region (LRM 9.6.2), and the departure it was
-  // holding is released here because nothing carries it any further.
+  // execution resumes past the region (LRM 9.6.2), once the handling of what
+  // the region took has ended there.
+  auto closed = CloseExtent(depth);
+  if (!closed) {
+    return closed;
+  }
   if (!Terminated()) {
-    Emit(
-        unit_->TranslateType(unit_->Mir().builtins.void_type),
-        lir::CallInstr{
-            .target =
-                lir::ControlEffectTarget{
-                    .op = lir::ControlEffectTarget::Op::kFinishDeparture},
-            .args = {}});
     Terminate(lir::BranchTerm{.target = merge_id});
   }
 
@@ -3025,14 +3083,14 @@ auto FunctionLowerer::CallInto(
           std::move(destination),
           lir::CallInstr{.target = std::move(target), .args = std::move(args)});
       return {};
-    case support::CallEnding::kReturnsOrDeparts:
-      return EmitDepartingCall(
+    case support::CallEnding::kReturnsOrUnwinds:
+      return EmitInvoke(
           std::move(target), std::move(args), std::move(destination));
-    case support::CallEnding::kDeparts: {
-      auto departed = EmitDepartingCall(
+    case support::CallEnding::kUnwinds: {
+      auto unwound = EmitInvoke(
           std::move(target), std::move(args), std::move(destination));
-      if (!departed) {
-        return departed;
+      if (!unwound) {
+        return unwound;
       }
       // Nothing comes back to the point the call returns to, so whatever the
       // source wrote after the call is never reached and has no lowering.

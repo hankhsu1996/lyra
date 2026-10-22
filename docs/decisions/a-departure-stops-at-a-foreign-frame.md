@@ -1,6 +1,8 @@
 # A departure stops at a frame this compiler did not emit
 
-Date: 2026-09-16 Status: accepted
+Date: 2026-09-16 Status: accepted. Revised 2026-10-21: D8 said the rule that forbids unwinding a
+foreign call's frames forbids running them; the release does unwind them, running nothing of the
+other language's, and runs what each of the design's frames on that stack owes.
 
 ## Why this decision matters
 
@@ -48,8 +50,9 @@ D1. No departure crosses a frame this compiler did not emit. Every function this
     for foreign code to call is a region that lands whatever no region inside it claimed, because
     past it there is no frame of ours for a departure to travel through. That includes a run-time
     error of the design and a failure of the tool: a region receives whatever unwinds into it, and
-    receiving an error settles it into the departure no region may claim, so nothing thrown reaches
-    the foreign frame -- not even into a foreign handler that would catch anything. Such a function
+    receiving an error settles it into the departure no region may claim, so nothing the design or
+    the tool raises reaches the foreign frame -- not even into a foreign handler that would catch
+    anything; only the release of the stack once the run is over passes it (D8). Such a function
     is an exported subroutine's entry, and also the program-global symbol in front of a module's
     entry, because resolving which entry it calls is the design's own work and can fail as the
     design's error. Rust puts the same guard on every function it defines with a non-unwinding ABI
@@ -97,8 +100,9 @@ D7. The gate is one question with two sources. A target disabled since this exec
     is.
 
 D8. When the run itself ends, nothing is handed control. A foreign call that never returned is
-    released the way every other suspended execution is -- the run is over, and the same rule that
-    forbids unwinding its frames forbids running them.
+    released the way every other suspended execution is -- the run is over, so none of its code
+    runs again. The stack it stands on is released by unwinding, which runs nothing of the other
+    language's and runs what every frame of the design's on that stack owes.
 ```
 
 ## Rejected alternatives

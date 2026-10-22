@@ -153,9 +153,9 @@ class CodeGenFunction {
     llvm::Value* value = nullptr;
     lir::TypeId type;
   };
-  // The two destinations of a call that can depart, as LLVM names those of an
-  // invoke (`InvokeInst::getNormalDest`, `getUnwindDest`): the block the call
-  // returns to, and the landing a departure out of it reaches.
+  // The two destinations of a call that can be unwound out of, as LLVM names
+  // those of an invoke (`InvokeInst::getNormalDest`, `getUnwindDest`): the
+  // block the call returns to, and the landing unwinding out of it reaches.
   struct InvokeDest {
     llvm::BasicBlock* normal;
     llvm::BasicBlock* unwind;
@@ -224,9 +224,17 @@ class CodeGenFunction {
   // the types it states, never by the values in hand.
   auto LowerCall(const lir::CallInstr& call, const DestinationRef& destination)
       -> diag::Result<llvm::Value*>;
-  // Opens a landing: the pad the platform transfers to, and the target the
-  // departure names, which is what the body's own test reads.
-  auto LowerReceiveDeparture() -> diag::Result<llvm::Value*>;
+  // Opens a landing: the pad the platform transfers to, answering what is
+  // unwinding as the pointer the unwinder carries.
+  auto LowerLanding(const lir::LandingInstr& landing) -> llvm::Value*;
+  // A handler's extent, spelled as the C++ ABI's own begin and end of a catch,
+  // as clang spells it; neither can be unwound out of.
+  auto LowerBeginHandling(const lir::BeginHandlingInstr& begun)
+      -> diag::Result<llvm::Value*>;
+  auto LowerEndHandling() -> llvm::Value*;
+  // What a landing pad yields and `resume` takes: the unwinder's pointer and a
+  // selector no clause here reads.
+  auto LandingPadType() -> llvm::StructType*;
   // What a call arranged as `abi` enters. A dispatch through an interface
   // class's part enters a body with the value's start instead of the part, as
   // C++ adjusts `this` for a virtual base, so the receiver in `args` is

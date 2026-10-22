@@ -96,6 +96,12 @@ auto CodeGenFunction::LowerInstrInto(const lir::Instr& instr)
           [](const lir::StorageInstr&) -> Done { return {}; },
           [&](const lir::CloseVariablesInstr& closed) -> Done {
             return done(LowerCloseVariables(closed));
+          },
+          [&](const lir::BeginHandlingInstr& begun) -> Done {
+            return done(LowerBeginHandling(begun));
+          },
+          [&](const lir::EndHandlingInstr&) -> Done {
+            return done(LowerEndHandling());
           }},
       instr.data);
 }
@@ -127,8 +133,8 @@ auto CodeGenFunction::LowerRvalue(
           [&](const lir::UseInstr& use) -> Lowered {
             return LowerUse(use, destination);
           },
-          [&](const lir::ReceiveDepartureInstr&) -> Lowered {
-            return LowerReceiveDeparture();
+          [&](const lir::LandingInstr& landing) -> Lowered {
+            return LowerLanding(landing);
           },
           [&](const lir::ProductInstr& product) -> Lowered {
             return LowerProduct(
@@ -1181,7 +1187,8 @@ auto CodeGenFunction::HandleWithView(
       out);
 }
 
-auto CodeGenFunction::LowerReceiveDeparture() -> diag::Result<llvm::Value*> {
+auto CodeGenFunction::LowerLanding(const lir::LandingInstr& landing)
+    -> llvm::Value* {
   // The referee is named on the function rather than at the landing, so it is
   // set the first time one is needed and is absent from a body that has none.
   if (!value_->hasPersonalityFn()) {
@@ -1193,26 +1200,49 @@ auto CodeGenFunction::LowerReceiveDeparture() -> diag::Result<llvm::Value*> {
                     llvm::FunctionType::get(builder_.getInt32Ty(), true))
                 .getCallee()));
   }
-  // The pad takes whatever reaches it: which region may claim a departure is a
-  // question about the target it names, which the body already tests, so
-  // selecting here on anything finer answers it twice in two vocabularies.
-  //
-  // It says so with a clause, which is what makes this frame one the platform
-  // stops at while it works out where a raise is going -- and a landing has to
-  // be such a frame, because a landing that is only reached afterwards is
-  // reached only when somewhere else already stopped it. The clause matches
-  // anything, so it names no raised type; receiving what arrived is what turns
-  // it into the departure the body tests, and what is not the design's is
-  // carried on from there before the body sees it.
-  llvm::Type* const pad_type =
-      llvm::StructType::get(module_->Types().Ptr(), builder_.getInt32Ty());
-  llvm::LandingPadInst* const pad = builder_.CreateLandingPad(pad_type, 1);
-  pad->addClause(llvm::ConstantPointerNull::get(module_->Types().Ptr()));
-  const std::array<llvm::Value*, 1> carried{
-      builder_.CreateExtractValue(pad, 0)};
-  return CallEntry(
-      RuntimeSymbol(support::BuiltinFn::kReceiveDeparture),
-      module_->Types().Ptr(), Addresses(1), carried);
+  // A frame that takes the raise matches anything, naming no raised type:
+  // which region claims a departure is a question about the target it names,
+  // which the handler tests once it has asked the runtime what arrived.
+  llvm::LandingPadInst* const pad =
+      builder_.CreateLandingPad(LandingPadType(), 1);
+  switch (landing.clause) {
+    case lir::LandingInstr::Clause::kCatchAll:
+      pad->addClause(llvm::ConstantPointerNull::get(module_->Types().Ptr()));
+      break;
+    case lir::LandingInstr::Clause::kCleanup:
+      pad->setCleanup(true);
+      break;
+  }
+  return builder_.CreateExtractValue(pad, 0);
+}
+
+auto CodeGenFunction::LowerBeginHandling(const lir::BeginHandlingInstr& begun)
+    -> diag::Result<llvm::Value*> {
+  auto exception = LowerOperand(begun.exception);
+  if (!exception) {
+    return std::unexpected(std::move(exception.error()));
+  }
+  llvm::CallInst* const call = builder_.CreateCall(
+      module_->Module().getOrInsertFunction(
+          "__cxa_begin_catch",
+          llvm::FunctionType::get(
+              module_->Types().Ptr(), {module_->Types().Ptr()}, false)),
+      {*exception});
+  call->setDoesNotThrow();
+  return call;
+}
+
+auto CodeGenFunction::LowerEndHandling() -> llvm::Value* {
+  llvm::CallInst* const call =
+      builder_.CreateCall(module_->Module().getOrInsertFunction(
+          "__cxa_end_catch",
+          llvm::FunctionType::get(builder_.getVoidTy(), false)));
+  call->setDoesNotThrow();
+  return call;
+}
+
+auto CodeGenFunction::LandingPadType() -> llvm::StructType* {
+  return llvm::StructType::get(module_->Types().Ptr(), builder_.getInt32Ty());
 }
 
 auto CodeGenFunction::ResolveCall(

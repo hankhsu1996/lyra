@@ -1286,13 +1286,13 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "finish",
           .declaration = RuntimeFunction("Finish"),
           .takes_the_runtime_handle = true,
-          .ending = CallEnding::kDeparts};
+          .ending = CallEnding::kUnwinds};
     case BuiltinFn::kStop:
       return {
           .name = "stop",
           .declaration = RuntimeFunction("Stop"),
           .takes_the_runtime_handle = true,
-          .ending = CallEnding::kDeparts};
+          .ending = CallEnding::kUnwinds};
     case BuiltinFn::kExit:
       return {
           .name = "exit",

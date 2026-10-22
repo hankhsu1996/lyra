@@ -325,6 +325,13 @@ class LirDumper {
               return std::format(
                   "{} {}", StorageOpName(storage.op),
                   FormatOperand(Use{.value = storage.of}));
+            },
+            [&](const BeginHandlingInstr& begun) -> std::string {
+              return std::format(
+                  "begin_handling {}", FormatOperand(begun.exception));
+            },
+            [](const EndHandlingInstr&) -> std::string {
+              return "end_handling";
             }},
         data);
   }
@@ -337,8 +344,14 @@ class LirDumper {
                   "call {}({})", FormatCallTarget(call.target),
                   FormatOperands(call.args));
             },
-            [](const ReceiveDepartureInstr&) -> std::string {
-              return "receive departure";
+            [](const LandingInstr& landing) -> std::string {
+              switch (landing.clause) {
+                case LandingInstr::Clause::kCatchAll:
+                  return "landing catch_all";
+                case LandingInstr::Clause::kCleanup:
+                  return "landing cleanup";
+              }
+              throw InternalError("lir dump: unknown landing clause");
             },
             [&](const ProductInstr& product) -> std::string {
               return std::format(
@@ -436,10 +449,14 @@ class LirDumper {
             [&](const DepartTerm& depart) -> std::string {
               return std::format("depart {}", FormatOperand(depart.departure));
             },
-            [](const UnreachableTerm&) -> std::string { return "unreachable"; },
-            [&](const DepartingCallInstr& call) -> std::string {
+            [&](const UnwindResumeTerm& resumed) -> std::string {
               return std::format(
-                  "{} = call {}({}) -> bb{} departs bb{}",
+                  "unwind_resume {}", FormatOperand(resumed.exception));
+            },
+            [](const UnreachableTerm&) -> std::string { return "unreachable"; },
+            [&](const InvokeTerm& call) -> std::string {
+              return std::format(
+                  "{} = call {}({}) -> bb{} unwinds bb{}",
                   FormatDestination(fn, call.destination),
                   FormatCallTarget(call.target), FormatOperands(call.args),
                   call.returned.value, call.landing.value);

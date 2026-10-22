@@ -1,6 +1,5 @@
 #include "lyra/runtime/cancellation.hpp"
 
-#include <cxxabi.h>
 #include <exception>
 #include <utility>
 
@@ -105,43 +104,6 @@ auto ReceiveDeparture() -> ControlEffect {
     SettleRaised(current_runtime(), std::current_exception());
     return ControlEffect{.target = nullptr};
   }
-}
-
-namespace {
-
-// Ends the catch a landing began when the receiving is left by a raise, as the
-// cleanup a C++ handler carries ends it on that way out; a return leaves it to
-// the landing's own exit. What is in flight is counted once the catch has
-// begun, since the exception it began was in flight until then.
-class EndCatchOnRaise {
- public:
-  explicit EndCatchOnRaise(void* exception)
-      : in_flight_(BeginCatch(exception)) {
-  }
-  EndCatchOnRaise(const EndCatchOnRaise&) = delete;
-  auto operator=(const EndCatchOnRaise&) -> EndCatchOnRaise& = delete;
-  EndCatchOnRaise(EndCatchOnRaise&&) = delete;
-  auto operator=(EndCatchOnRaise&&) -> EndCatchOnRaise& = delete;
-  ~EndCatchOnRaise() {
-    if (std::uncaught_exceptions() > in_flight_) {
-      abi::__cxa_end_catch();
-    }
-  }
-
- private:
-  static auto BeginCatch(void* exception) -> int {
-    abi::__cxa_begin_catch(exception);
-    return std::uncaught_exceptions();
-  }
-
-  int in_flight_;
-};
-
-}  // namespace
-
-auto ReceiveDepartureOf(void* exception) -> ControlEffect {
-  const EndCatchOnRaise handling(exception);
-  return ReceiveDeparture();
 }
 
 Unwound::Unwound(bool control_effect, std::exception_ptr raised)
