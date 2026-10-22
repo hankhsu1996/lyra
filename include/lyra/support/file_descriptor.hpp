@@ -4,10 +4,11 @@
 
 namespace lyra::support {
 
-// LRM 21.3.1 pre-bound file descriptors. Bit 31 set selects the FD encoding;
-// the low bits index the reserved slot. Shared between lowering (which
-// materialises these as literals for $display / $strobe stdout sinks) and
-// runtime (which dispatches them).
+// LRM 21.3.1 pre-opened file descriptors. Bit 31 set selects the FD encoding;
+// the low bits index the file table's slot holding that standard stream.
+// Shared between lowering, which writes standard output's as the descriptor of
+// output that names none (`$display`, `$strobe`, `$printtimescale`), and the
+// file table, which opens those slots.
 inline constexpr std::int32_t kFdHighBit =
     static_cast<std::int32_t>(static_cast<std::uint32_t>(1) << 31U);
 inline constexpr std::int32_t kStdinFd = kFdHighBit | 0;

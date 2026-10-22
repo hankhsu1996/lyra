@@ -40,26 +40,23 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// A scan completes with the matched-conversion count, how far the parse
-// advanced, then one value per conversion in the order the call named them
-// (LRM 21.3.4.3). The positions and the type the call carries are stated
-// together here, so a step reading a component and the type declaring it
-// cannot come to disagree.
+// A scan completes with the matched-conversion count, then one value per
+// conversion in the order the call named them (LRM 21.3.4.3). The positions
+// and the type the call carries are stated together here, so a step reading a
+// component and the type declaring it cannot come to disagree.
 constexpr base::ComponentIndex kScanMatched{0};
-constexpr base::ComponentIndex kScanConsumed{1};
 
 auto ScanParsedValue(std::size_t conversion) -> base::ComponentIndex {
   return base::ComponentIndex{
-      kScanConsumed.value + 1 + static_cast<std::uint32_t>(conversion)};
+      kScanMatched.value + 1 + static_cast<std::uint32_t>(conversion)};
 }
 
 auto ScanCompletionComponents(
-    mir::TypeId matched, mir::TypeId consumed,
-    const std::vector<mir::TypeId>& parsed) -> std::vector<mir::TypeId> {
+    mir::TypeId matched, const std::vector<mir::TypeId>& parsed)
+    -> std::vector<mir::TypeId> {
   std::vector<mir::TypeId> components;
-  components.reserve(parsed.size() + 2);
+  components.reserve(parsed.size() + 1);
   components.push_back(matched);
-  components.push_back(consumed);
   components.insert(components.end(), parsed.begin(), parsed.end());
   return components;
 }
@@ -162,10 +159,7 @@ auto LowerScanSystemSubroutineCall(
   auto& unit_lowerer = process.Owner();
   auto& unit = unit_lowerer.Unit();
   const mir::TypeId integer_t = unit.builtins.integer;
-  const mir::TypeId int_type = unit.builtins.int_type;
-  const mir::TypeId string_t = unit.builtins.string;
   const mir::TypeId bit_t = unit.builtins.bit1;
-  const mir::TypeId void_t = unit.builtins.void_type;
   const bool is_file = info.source == support::ScanSourceKind::kFile;
 
   std::vector<mir::TypeId> target_types;
@@ -220,8 +214,7 @@ auto LowerScanSystemSubroutineCall(
               unit, body, static_cast<std::int64_t>(-1))});
 
   // The format is always an operand the rule covers. The source is one only
-  // where the call names it, which `$fscanf` does not: its source is the file's
-  // buffered text.
+  // where the call names it, which `$fscanf` does not: its source is the file.
   std::vector<mir::ExprId> rule_operands;
   if (!is_file) {
     rule_operands.push_back(body.ReadLocal(source_var, raw_source_type));
@@ -233,12 +226,13 @@ auto LowerScanSystemSubroutineCall(
   mir::Block scan_body;
   const WalkFrame scan_frame = step_frame.WithBlock(&scan_body);
 
-  // The descriptor, read as the number the file broker works in, each time a
-  // call names it.
-  const auto fd_number = [&]() {
-    return BuildToInt64Call(
-        unit, scan_body, scan_body.ReadLocal(source_var, raw_source_type));
-  };
+  // `$fscanf` reads the stream the descriptor names, so the call is made on
+  // the run's file table and names the descriptor as the number it works in;
+  // `$sscanf` reads the string its source names. LRM 21.3.4.3(a) gives
+  // `$sscanf` alone the rule that a null character counts as white space, so
+  // which of the two parses runs is fixed by the system function the source
+  // names, not by the bytes it receives.
+  mir::Direct parse_fn{};
   mir::ExprId source_id{};
   if (is_file) {
     if (!unit.types.Get(raw_source_type).IsIntegral()) {
@@ -257,17 +251,12 @@ auto LowerScanSystemSubroutineCall(
                             .receiver = runtime_id},
                     .arguments = {}},
             .type = unit.builtins.files});
-    source_id = scan_body.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{
-                            .target = support::BuiltinFn::kPeekBuffered,
-                            .receiver = files_id},
-                    .arguments = {fd_number()}},
-            .type = string_t});
+    parse_fn = mir::Direct{
+        .target = support::BuiltinFn::kFileScan, .receiver = files_id};
+    source_id = BuildToInt64Call(
+        unit, scan_body, scan_body.ReadLocal(source_var, raw_source_type));
   } else {
+    parse_fn = mir::Direct{.target = support::BuiltinFn::kScanString};
     source_id = LiftStringSource(
         unit_lowerer, scan_frame, raw_source_type,
         scan_body.ReadLocal(source_var, raw_source_type));
@@ -292,18 +281,13 @@ auto LowerScanSystemSubroutineCall(
           .type = unit.types.Intern(
               mir::Type{mir::TupleType{.elements = target_types}})});
 
-  // LRM 21.3.4.3(a) gives `$sscanf` alone the rule that a null character
-  // counts as white space, so which of the two parses runs is fixed by the
-  // system function the source names, not by the bytes it receives.
-  const support::BuiltinFn parse_fn =
-      is_file ? support::BuiltinFn::kScanFile : support::BuiltinFn::kScanString;
   const mir::TypeId payload_type = CompletionPayloadType(
-      unit, ScanCompletionComponents(integer_t, int_type, target_types));
+      unit, ScanCompletionComponents(integer_t, target_types));
   const mir::ExprId parse_call_id = scan_body.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = mir::Direct{.target = parse_fn},
+                  .callee = parse_fn,
                   .arguments = {source_id, format_id, prototypes_id}},
           .type = payload_type});
   const mir::LocalId completion =
@@ -320,39 +304,6 @@ auto LowerScanSystemSubroutineCall(
                   ProjectCompletionComponent(
                       scan_body, completion, payload_type, kScanMatched,
                       integer_t)))});
-
-  if (is_file) {
-    const mir::ExprId runtime_after =
-        scan_body.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-    const mir::ExprId files_after = scan_body.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{
-                            .target = support::BuiltinFn::kFiles,
-                            .receiver = runtime_after},
-                    .arguments = {}},
-            .type = unit.builtins.files});
-    // LRM 21.3.4.3 "the offending input character is left unread in the input
-    // stream": how far the parse advanced is what lets the file form rewind
-    // the unconsumed tail before the next read.
-    const mir::ExprId consumed_read = BuildToInt64Call(
-        unit, scan_body,
-        ProjectCompletionComponent(
-            scan_body, completion, payload_type, kScanConsumed, int_type));
-    const mir::ExprId advance_call = scan_body.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{
-                            .target = support::BuiltinFn::kAdvanceFd,
-                            .receiver = files_after},
-                    .arguments = {fd_number(), consumed_read}},
-            .type = void_t});
-    scan_body.AppendStmt(mir::ExprStmt{.expr = advance_call});
-  }
 
   // LRM 21.3.4.3: the k-th output lvalue is only written when at least
   // k+1 matches were made, so the commit is gated on the matched count.

@@ -1,6 +1,8 @@
 # Every way a run ends walks one path, and a report is not a stop
 
-Date: 2026-09-08 Status: accepted
+Date: 2026-09-08 Status: accepted. Revised 2026-10-21: a refused request for memory delivers
+everything the design wrote to standard output, where it used to lose a line not yet finished,
+because standard output has no buffer of the runtime's own in front of the process's stream.
 
 ## Why this decision matters
 
@@ -123,17 +125,16 @@ D5. What decides whether `final` procedures run is whether the simulation reache
     exhausting its work, the design asking to end, and a run-time error of the design ending it are
     all that end. What is not is the tool being unable to carry on: a `final` procedure is design
     code, and the state it would read is already known to be wrong. What the tool owes either way --
-    the immediate cover report (LRM 16.3), the output drain, the exit status -- is owed because the
-    run is over, so it is not on this axis at all.
+    the immediate cover report (LRM 16.3), the flush of what the design wrote, the exit status -- is
+    owed because the run is over, so it is not on this axis at all.
 
     One ending pays none of that: a request for memory the host refuses. Whatever runs after it
     may ask again -- composing a report, leaving a frame, stopping the engine -- so the request is
-    where the program ends, having written one line it needed nothing to write and every line the
-    design had finished on standard output. A line it had not finished, the cover report and what
-    a file the design opened still holds are not delivered. LLVM's own handler and Rust's standard
-    library end a program the same way and for that reason; the status is a failing exit rather
-    than their signal, because who acts on it is the design's author, and a signal is how a defect
-    of the tool reads.
+    where the program ends, having written one line it needed nothing to write and everything the
+    design wrote to standard output. The cover report and what a file the design opened still holds
+    are not delivered. LLVM's own handler and Rust's standard library end a program the same way
+    and for that reason; the status is a failing exit rather than their signal, because who acts on
+    it is the design's author, and a signal is how a defect of the tool reads.
 
 D6. `$stop` ends the run where a tool has no interactive mode, and the diagnostic is the whole of
     what separates it from `$finish`. LRM 20.2 has `$stop` suspend the simulation and `$finish` exit

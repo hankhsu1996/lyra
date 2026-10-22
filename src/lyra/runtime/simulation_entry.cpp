@@ -10,7 +10,6 @@
 #include <string>
 #include <string_view>
 #include <unistd.h>
-#include <utility>
 #include <vector>
 
 #include "lyra/base/diag_message.hpp"
@@ -104,9 +103,7 @@ auto RunDesignRoot(
   for (std::size_t i = 1; i < args.size(); ++i) {
     arguments.emplace_back(args[i]);
   }
-  auto options = DefaultRuntimeOptions();
-  options.plusargs = PlusargsFrom(arguments);
-  Runtime runtime{std::move(options)};
+  Runtime runtime{RuntimeOptions{.plusargs = PlusargsFrom(arguments)}};
 
   // Building the design and resolving its references precede the simulation
   // (LRM 3.12). An error here has no activation to leave and no final procedure

@@ -1575,7 +1575,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kBintoa:
     case support::BuiltinFn::kRealtoa:
     case support::BuiltinFn::kScanString:
-    case support::BuiltinFn::kScanFile:
       return NamedByValue{.realized = kForStrings};
 
     case support::BuiltinFn::kCaseEqual:
@@ -1777,13 +1776,12 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kTimeFormat:
     case support::BuiltinFn::kSetTimeFormat:
     case support::BuiltinFn::kResetTimeFormat:
-    case support::BuiltinFn::kPeekBuffered:
-    case support::BuiltinFn::kAdvanceFd:
     case support::BuiltinFn::kFileOpen:
     case support::BuiltinFn::kFileOpenMode:
     case support::BuiltinFn::kFileClose:
     case support::BuiltinFn::kFileGetc:
     case support::BuiltinFn::kFileGets:
+    case support::BuiltinFn::kFileScan:
     case support::BuiltinFn::kFileRead:
     case support::BuiltinFn::kFileReadMemory:
     case support::BuiltinFn::kFileError:

@@ -124,10 +124,6 @@ ProcessExecutionGuard::~ProcessExecutionGuard() {
   AsRuntime(*effects_).running_ = previous_running_;
 }
 
-auto RuntimeEffects::Stream() -> StreamDispatcher& {
-  return AsRuntime(*this).stream_;
-}
-
 auto RuntimeEffects::Diagnostic() -> DiagnosticDispatcher& {
   return AsRuntime(*this).diagnostic_;
 }

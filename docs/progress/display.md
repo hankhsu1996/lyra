@@ -43,9 +43,11 @@ both models, zeros being what a hexadecimal field is filled with either way.
       (default-decimal plus `b` / `h` / `o` radix variants per LRM 21.2.1.1); descriptors per LRM
       21.3.1 (MCD with bit 0 = stdout, FD with bit 31 set, OR-able MCDs that fan output across
       sinks, channel reuse on close); `$fopen` / `$fclose` with the full mode-string family (`r` /
-      `rb` / `w` / `wb` / `a` / `ab` plus their `+` update variants). Read-mode `$fopen` opens a
-      real `FILE*` so the FD shape is genuine even though the read tasks themselves are out of
-      scope.
+      `rb` / `w` / `wb` / `a` / `ab` plus their `+` update variants). STDIN, STDOUT and STDERR are
+      the process's own standard streams, so the design's output and output C code writes come out
+      in the order written, every way of flushing standard output hands it to the operating system,
+      and every read task reads standard input from STDIN. A write to a file opened only for
+      reading, or a read of one opened only for writing, is an error `$ferror` reports.
 - [x] DI6 -- `$strobe` / `$strobeb` / `$strobeh` / `$strobeo` (LRM 21.2.2). Lowers to a closure
       submitted via the postponed-region builtin; the closure body builds and writes the same print
       items the `$display` family produces. Lambda init-capture snapshots procedural locals by value
@@ -76,8 +78,9 @@ both models, zeros being what a hexadecimal field is filled with either way.
       / `%%`; 4-state vocabulary (`x` / `z` / `?` / `_`) inside the integer conversions; single-char
       `x`/`z`/`?` fill for `%d`. An output the parse never reached keeps its prior value, since LRM
       21.3.4.3 writes only successfully matched outputs. `$sscanf` takes a string or string-literal
-      input; `$fscanf` takes an int FD, honours "offending input character is left unread" via the
-      underlying FD's putback buffer, and stamps `$ferror` on invalid / closed descriptors.
+      input; `$fscanf` takes an int FD and reads its stream a character at a time, so a scan costs
+      the characters it reads, works on a stream that cannot seek such as standard input, leaves the
+      offending input character unread, and stamps `$ferror` on invalid / closed descriptors.
 - [x] DI9 -- `$sformat` / `$sformatf` / `$swrite` family (LRM 21.3.3). Six subroutines: `$swrite` /
       `$swriteb` / `$swriteh` / `$swriteo` with auto-format (per-task default radix per LRM
       21.2.1.1), `$sformat` with explicit literal format, and `$sformatf` returning the formatted

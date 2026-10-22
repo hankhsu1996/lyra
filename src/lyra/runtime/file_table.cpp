@@ -4,21 +4,22 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <fstream>
 #include <ios>
 #include <iostream>
 #include <memory>
 #include <optional>
-#include <ostream>
 #include <span>
 #include <stop_token>
+#include <streambuf>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
-#include "lyra/runtime/stream_dispatcher.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/support/file_descriptor.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -30,10 +31,10 @@ namespace lyra::runtime {
 namespace {
 
 // LRM 21.3.1 Table 21-6 mode strings -> openmode flags + per-direction
-// permission bits. Unknown modes return nullopt so $fopen yields 0 per
-// LRM "if a file cannot be opened ... a zero is returned". The
-// permission bits drive LRM 21.3.4's "fd can be read from only if
-// opened with r or r+" check in the read entries.
+// permissions. Unknown modes return nullopt so $fopen yields 0 per LRM "if a
+// file cannot be opened ... a zero is returned". The permissions decide whether
+// an opened file is read, written or both, which is what LRM 21.3.4's "fd can
+// be read from only if opened with r or r+" comes down to.
 struct ParsedMode {
   std::ios_base::openmode flags;
   bool permits_read;
@@ -81,70 +82,128 @@ auto ParseMode(std::string_view mode) -> std::optional<ParsedMode> {
       .permits_write = it->second.write};
 }
 
+// The `int` the source wrote for a descriptor, offset, operation or character
+// (LRM 21.3), which reaches here widened to a machine integer.
+auto AsInt32(std::int64_t value) -> std::int32_t {
+  return static_cast<std::int32_t>(value);
+}
+
+auto MakeInt(std::int32_t v) -> value::Int {
+  return value::Int::FromInt(v);
+}
+
+auto IsFileDescriptor(std::int32_t descriptor) -> bool {
+  return (static_cast<std::uint32_t>(descriptor) & (1U << 31U)) != 0U;
+}
+
+// The index the low 31 bits of a file descriptor carry (LRM 21.3.1).
+auto IndexOf(std::int32_t descriptor) -> std::size_t {
+  return static_cast<std::uint32_t>(descriptor) & 0x7FFF'FFFFU;
+}
+
+// Decode a file descriptor into an index of a table `size` long, or nullopt for
+// any value that is not one (zero, an MCD, out of range).
+auto IndexInTable(std::int32_t descriptor, std::size_t size)
+    -> std::optional<std::size_t> {
+  if (!IsFileDescriptor(descriptor)) return std::nullopt;
+  const std::size_t idx = IndexOf(descriptor);
+  if (idx >= size) return std::nullopt;
+  return idx;
+}
+
+auto IsOpen(const FileTable::File& file) -> bool {
+  return file.reads != nullptr || file.writes != nullptr;
+}
+
+// LRM 21.3.4.1: a byte `$ungetc` pushed back, or one a scan left unread, is the
+// next byte any read takes. Answers the stream's end-of-file value at its end.
+auto TakeByte(FileTable::File& file) -> int {
+  if (file.putback.has_value()) {
+    const auto byte = static_cast<unsigned char>(*file.putback);
+    file.putback.reset();
+    return byte;
+  }
+  return file.reads->get();
+}
+
+// The one position LRM 21.3.5 gives a descriptor, used by whichever input or
+// output operation comes next, is the stream buffer's: a file's input and
+// output sides share it.
+auto BufferOf(const FileTable::File& file) -> std::streambuf* {
+  return file.reads != nullptr ? file.reads->rdbuf() : file.writes->rdbuf();
+}
+
+constexpr auto kEitherSide = std::ios_base::in | std::ios_base::out;
+
 }  // namespace
 
-namespace {
-
-void WriteToFile(
-    std::ostream& sink, std::string_view body, bool append_newline) {
-  sink.write(body.data(), static_cast<std::streamsize>(body.size()));
-  if (append_newline) sink.put('\n');
+// LRM 21.3.1 pre-opens STDIN, STDOUT and STDERR, and makes channel 0 of a
+// multichannel descriptor standard output as well.
+FileTable::FileTable() : fd_files_(IndexOf(support::kStderrFd) + 1) {
+  fd_files_.at(IndexOf(support::kStdinFd)).reads = &std::cin;
+  fd_files_.at(IndexOf(support::kStdoutFd)).writes = &std::cout;
+  fd_files_.at(IndexOf(support::kStderrFd)).writes = &std::cerr;
+  channel_files_.at(0).writes = &std::cout;
 }
 
-void WriteToStream(
-    StreamDispatcher& stream, std::string_view body, bool append_newline) {
-  stream.Append(body);
-  stream.FinishRecord(append_newline);
-}
-
-void DispatchWrite(
-    FileTable& files, StreamDispatcher& stream, std::int64_t descriptor_value,
-    std::string_view body, bool append_newline) {
-  const auto descriptor = static_cast<std::int32_t>(descriptor_value);
-  if (descriptor == 0) return;
-  const auto raw = static_cast<std::uint32_t>(descriptor);
-
-  // FD path: bit 31 set => single descriptor. Stdio sentinels route through
-  // the stream dispatcher / std::cerr so test-harness ordering with stdout
-  // prints is preserved; other FDs go to their owned fstream.
-  if ((raw & (1U << 31U)) != 0U) {
-    if (descriptor == support::kStdoutFd) {
-      WriteToStream(stream, body, append_newline);
-      return;
-    }
-    if (descriptor == support::kStderrFd) {
-      WriteToFile(std::cerr, body, append_newline);
-      return;
-    }
-    std::fstream* sink = files.Resolve(descriptor);
-    if (sink == nullptr) return;
-    WriteToFile(*sink, body, append_newline);
+template <typename Visit>
+void FileTable::ForEachOpenFile(std::int64_t descriptor_value, Visit visit) {
+  const std::int32_t descriptor = AsInt32(descriptor_value);
+  if (IsFileDescriptor(descriptor)) {
+    if (File* file = FileIfOpen(descriptor); file != nullptr) visit(*file);
     return;
   }
-
-  // MCD path: iterate bits 0..30 in ascending order. Bit 0 -> stream sink.
-  // Bits 1..30 -> FileTable slots. Unset / unmapped bits silently no-op.
-  for (std::uint32_t bit = 0; bit <= 30U; ++bit) {
+  // LRM 21.3.1: an MCD names every channel whose bit it sets, in ascending
+  // order; bit 31 is clear, so bits 0..30 are all there are.
+  const auto raw = static_cast<std::uint32_t>(descriptor);
+  for (std::size_t bit = 0; bit < kChannelCount; ++bit) {
     if ((raw & (1U << bit)) == 0U) continue;
-    if (bit == 0U) {
-      WriteToStream(stream, body, append_newline);
-      continue;
-    }
-    const auto channel = static_cast<std::int32_t>(1U << bit);
-    std::fstream* sink = files.Resolve(channel);
-    if (sink == nullptr) continue;
-    WriteToFile(*sink, body, append_newline);
+    File& file = channel_files_.at(bit);
+    if (IsOpen(file)) visit(file);
   }
 }
 
-}  // namespace
+auto FileTable::FileIfOpen(std::int32_t fd) -> File* {
+  const auto idx = IndexInTable(fd, fd_files_.size());
+  if (!idx.has_value()) return nullptr;
+  File& file = fd_files_.at(*idx);
+  return IsOpen(file) ? &file : nullptr;
+}
+
+auto FileTable::FileToRead(std::int64_t fd_value, std::string_view task)
+    -> File* {
+  const std::int32_t fd = AsInt32(fd_value);
+  File* file = FileIfOpen(fd);
+  if (file == nullptr) {
+    SetError(fd, EBADF, std::format("{}: not an open file descriptor", task));
+    return nullptr;
+  }
+  if (file->reads == nullptr) {
+    SetError(fd, EBADF, std::format("{}: file not open for reading", task));
+    return nullptr;
+  }
+  return file;
+}
+
+void FileTable::WriteTo(
+    std::int64_t descriptor, std::string_view text, bool newline) {
+  ForEachOpenFile(descriptor, [&](File& file) {
+    if (file.writes == nullptr) {
+      file.error = ErrorRecord{
+          .errno_value = EBADF, .message = "file not open for writing"};
+      return;
+    }
+    file.writes->write(text.data(), static_cast<std::streamsize>(text.size()));
+    if (newline) file.writes->put('\n');
+  });
+}
 
 void FileTable::Write(std::int64_t descriptor, const value::String& text) {
-  DispatchWrite(*this, *stream_, descriptor, text.View(), false);
+  WriteTo(descriptor, text.View(), false);
 }
 
 void FileTable::Writeln(std::int64_t descriptor, const value::String& text) {
-  DispatchWrite(*this, *stream_, descriptor, text.View(), true);
+  WriteTo(descriptor, text.View(), true);
 }
 
 ChannelCancellation::ChannelCancellation(std::vector<std::stop_token> tokens)
@@ -167,243 +226,103 @@ auto FileTable::Open(
     if (!parsed.has_value()) return 0;
     auto stream = std::make_unique<std::fstream>(name_z, parsed->flags);
     if (!stream->is_open()) return 0;
-    // Reuse the first free slot above the reserved stdio indexes; grow on
-    // demand. fstream destructor closes/flushes on slot reset.
-    for (std::size_t i = kFdReservedSlots; i < fd_pool_.size(); ++i) {
-      if (fd_pool_.at(i).file == nullptr) {
-        fd_pool_.at(i).file = std::move(stream);
-        fd_pool_.at(i).error = ErrorRecord{};
-        fd_pool_.at(i).permits_read = parsed->permits_read;
-        fd_pool_.at(i).permits_write = parsed->permits_write;
-        return support::kFdHighBit | static_cast<std::int32_t>(i);
-      }
-    }
-    fd_pool_.emplace_back(
-        FdSlot{
-            .file = std::move(stream),
-            .error = {},
-            .cancel_source = {},
-            .putback = std::nullopt,
-            .permits_read = parsed->permits_read,
-            .permits_write = parsed->permits_write});
-    return support::kFdHighBit | static_cast<std::int32_t>(fd_pool_.size() - 1);
+    // Take the place of the first closed file; grow on demand. The pre-opened
+    // files are always open, so their places are never taken.
+    const auto free = std::ranges::find_if(
+        fd_files_, [](const File& file) { return !IsOpen(file); });
+    const auto idx = static_cast<std::size_t>(free - fd_files_.begin());
+    File& file = free == fd_files_.end() ? fd_files_.emplace_back() : *free;
+    file.reads = parsed->permits_read ? stream.get() : nullptr;
+    file.writes = parsed->permits_write ? stream.get() : nullptr;
+    file.owned = std::move(stream);
+    file.error = ErrorRecord{};
+    return support::kFdHighBit | static_cast<std::int32_t>(idx);
   }
   // MCD path: open write-truncate (LRM 21.3.1 omits the type for MCD form).
   auto stream = std::make_unique<std::fstream>(
       name_z, std::ios_base::out | std::ios_base::trunc);
   if (!stream->is_open()) return 0;
-  for (std::size_t slot = 1; slot < kMcdSlotCount; ++slot) {
-    if (mcd_slots_.at(slot).file == nullptr) {
-      mcd_slots_.at(slot).file = std::move(stream);
-      return static_cast<std::int32_t>(1U << slot);
-    }
+  for (std::size_t bit = 0; bit < kChannelCount; ++bit) {
+    File& file = channel_files_.at(bit);
+    if (IsOpen(file)) continue;
+    file.writes = stream.get();
+    file.owned = std::move(stream);
+    return static_cast<std::int32_t>(1U << bit);
   }
-  // All slots in use: stream's destructor closes the just-opened handle so
+  // Every channel in use: stream's destructor closes the just-opened handle so
   // nothing leaks. Return 0 per LRM.
   return 0;
 }
 
-void FileTable::Close(std::int64_t descriptor_value) {
-  const auto descriptor = static_cast<std::int32_t>(descriptor_value);
-  if (descriptor == 0) return;
-  const auto raw = static_cast<std::uint32_t>(descriptor);
-  if ((raw & (1U << 31U)) != 0U) {
-    const std::size_t idx = raw & 0x7FFF'FFFFU;
-    if (idx < kFdReservedSlots || idx >= fd_pool_.size()) return;
-    auto& slot = fd_pool_.at(idx);
-    slot.file.reset();
-    slot.error = ErrorRecord{};
+void FileTable::Close(std::int64_t descriptor) {
+  ForEachOpenFile(descriptor, [](File& file) {
+    if (file.owned == nullptr) return;
+    file.owned.reset();
+    file.reads = nullptr;
+    file.writes = nullptr;
+    file.error = ErrorRecord{};
     // LRM 21.3.2: fire cancel on any pending observers; replace the source
-    // so the next $fopen on this slot starts with a fresh signal.
-    slot.cancel_source.request_stop();
-    slot.cancel_source = std::stop_source{};
-    // Any pending $ungetc dies with the slot.
-    slot.putback.reset();
-    return;
-  }
-  // MCD: iterate each set bit in 1..30 and close that slot. Bit 0 is the
-  // stdout sentinel and is never closed.
-  for (std::size_t slot_idx = 1; slot_idx < kMcdSlotCount; ++slot_idx) {
-    if ((raw & (1U << slot_idx)) == 0U) continue;
-    auto& slot = mcd_slots_.at(slot_idx);
-    slot.file.reset();
-    slot.cancel_source.request_stop();
-    slot.cancel_source = std::stop_source{};
-  }
+    // so the next $fopen to take this place starts with a fresh signal.
+    file.cancel_source.request_stop();
+    file.cancel_source = std::stop_source{};
+    // Any pending $ungetc dies with the file.
+    file.putback.reset();
+  });
 }
-
-auto FileTable::Resolve(std::int32_t descriptor) -> std::fstream* {
-  if (descriptor == 0) return nullptr;
-  const auto raw = static_cast<std::uint32_t>(descriptor);
-  if ((raw & (1U << 31U)) != 0U) {
-    const std::size_t idx = raw & 0x7FFF'FFFFU;
-    // Stdio sentinels (0/1/2) and out-of-range indexes are not owned here.
-    if (idx < kFdReservedSlots || idx >= fd_pool_.size()) return nullptr;
-    return fd_pool_.at(idx).file.get();
-  }
-  // MCD single bit. Bit 0 alone is the stdout sentinel -- not owned here.
-  for (std::size_t slot = 1; slot < kMcdSlotCount; ++slot) {
-    if (raw == (1U << slot)) return mcd_slots_.at(slot).file.get();
-  }
-  return nullptr;
-}
-
-auto FileTable::ResolveSlot(std::int32_t descriptor) -> FdSlot* {
-  if (descriptor == 0) return nullptr;
-  const auto raw = static_cast<std::uint32_t>(descriptor);
-  // Slot access is only meaningful for FD-shape descriptors. MCDs are
-  // write-only sinks with no putback / mode state; stdio sentinels are
-  // not owned at this layer.
-  if ((raw & (1U << 31U)) == 0U) return nullptr;
-  const std::size_t idx = raw & 0x7FFF'FFFFU;
-  if (idx < kFdReservedSlots || idx >= fd_pool_.size()) return nullptr;
-  auto& slot = fd_pool_.at(idx);
-  if (slot.file == nullptr) return nullptr;
-  return &slot;
-}
-
-namespace {
-
-// Decode an FD-shaped descriptor into a pool index, or nullopt for any value
-// that's not an owned FD (MCD, stdio sentinel, out of range, or zero).
-auto FdPoolIndex(std::int32_t descriptor, std::size_t pool_size)
-    -> std::optional<std::size_t> {
-  if (descriptor == 0) return std::nullopt;
-  const auto raw = static_cast<std::uint32_t>(descriptor);
-  if ((raw & (1U << 31U)) == 0U) return std::nullopt;
-  const std::size_t idx = raw & 0x7FFF'FFFFU;
-  if (idx < 3U || idx >= pool_size) return std::nullopt;
-  return idx;
-}
-
-}  // namespace
 
 void FileTable::SetError(
     std::int32_t fd, int errno_value, std::string message) {
-  const auto idx = FdPoolIndex(fd, fd_pool_.size());
+  const auto idx = IndexInTable(fd, fd_files_.size());
   if (!idx.has_value()) return;
-  fd_pool_.at(*idx).error =
+  fd_files_.at(*idx).error =
       ErrorRecord{.errno_value = errno_value, .message = std::move(message)};
 }
 
 auto FileTable::LastError(std::int32_t fd) const -> int {
-  const auto idx = FdPoolIndex(fd, fd_pool_.size());
+  const auto idx = IndexInTable(fd, fd_files_.size());
   if (!idx.has_value()) return 0;
-  return fd_pool_.at(*idx).error.errno_value;
+  return fd_files_.at(*idx).error.errno_value;
 }
 
 auto FileTable::LastErrorMessage(std::int32_t fd) const -> std::string_view {
-  const auto idx = FdPoolIndex(fd, fd_pool_.size());
+  const auto idx = IndexInTable(fd, fd_files_.size());
   if (!idx.has_value()) return {};
-  return fd_pool_.at(*idx).error.message;
+  return fd_files_.at(*idx).error.message;
 }
 
 void FileTable::ClearError(std::int32_t fd) {
-  const auto idx = FdPoolIndex(fd, fd_pool_.size());
+  const auto idx = IndexInTable(fd, fd_files_.size());
   if (!idx.has_value()) return;
-  fd_pool_.at(*idx).error = ErrorRecord{};
+  fd_files_.at(*idx).error = ErrorRecord{};
 }
 
-auto FileTable::PeekBuffered(std::int64_t fd_value) -> value::String {
-  const auto fd = static_cast<std::int32_t>(fd_value);
-  auto* slot = ResolveSlot(fd);
-  if (slot == nullptr) {
-    SetError(fd, EBADF, "$fscanf: not an open file descriptor");
-    return value::String{};
-  }
-  if (!slot->permits_read) {
-    SetError(fd, EBADF, "$fscanf: file not open for reading");
-    return value::String{};
-  }
-  std::string out;
-  // LRM 21.3.4.1: any byte left by `$ungetc` (or a prior scan's offending
-  // character) is observable before the underlying stream.
-  if (slot->putback.has_value()) {
-    out.push_back(*slot->putback);
-  }
-  // Drain the rest of the file from the current stream position. Read the
-  // remainder in one shot via tellg/seekg + a sized buffer rather than
-  // byte-by-byte to keep the hot path linear in file length.
-  std::fstream* file = slot->file.get();
-  const auto here = file->tellg();
-  file->seekg(0, std::ios::end);
-  const auto end = file->tellg();
-  file->seekg(here);
-  std::size_t file_bytes = 0;
-  if (here != std::fstream::pos_type{-1} && end != std::fstream::pos_type{-1} &&
-      end > here) {
-    file_bytes = static_cast<std::size_t>(end - here);
-  }
-  if (file_bytes > 0) {
-    const std::size_t prefix = out.size();
-    out.resize(prefix + file_bytes);
-    const std::span<char> tail = std::span{out}.subspan(prefix);
-    file->read(tail.data(), static_cast<std::streamsize>(tail.size()));
-    const auto got = static_cast<std::size_t>(file->gcount());
-    out.resize(prefix + got);
-    file_bytes = got;
-  }
-  slot->peek_len = file_bytes;
-  // The `PeekBuffered` snapshot virtualises the putback byte into the
-  // returned string; only `AdvanceFd` decides whether to drain it. Clearing
-  // it here would lose the byte if the parser ultimately did not consume
-  // it. Leave putback intact; `AdvanceFd` consumes it explicitly.
-  return value::String(std::move(out));
+auto FileTable::ScanInputOf(std::int64_t fd) -> FileScanInput {
+  return FileScanInput(FileToRead(fd, "$fscanf"));
 }
 
-void FileTable::AdvanceFd(std::int64_t fd_value, std::int64_t n_value) {
-  const auto fd = static_cast<std::int32_t>(fd_value);
-  auto* slot = ResolveSlot(fd);
-  if (slot == nullptr) return;
-  if (!slot->permits_read) return;
-  const auto n = static_cast<std::int32_t>(n_value);
-  auto remaining = static_cast<std::size_t>(n < 0 ? 0 : n);
-  const std::size_t peek_len = slot->peek_len;
-  slot->peek_len = 0;
-  // Putback byte (if any) was the first byte the parser saw. Consume it
-  // first so the count we apply to the file stream is purely file-relative.
-  const bool had_putback = slot->putback.has_value();
-  if (had_putback) {
-    if (remaining > 0) {
-      slot->putback.reset();
-      --remaining;
-    }
+auto FileScanInput::Peek() -> int {
+  if (file_ == nullptr) return kNoByte;
+  if (file_->putback.has_value()) {
+    return static_cast<unsigned char>(*file_->putback);
   }
-  // `remaining` is now the number of file bytes the parser consumed out of
-  // `peek_len`. Anything past that has to go back to the stream so the next
-  // read sees it again.
-  const std::size_t file_consumed = std::min(remaining, peek_len);
-  const std::size_t file_unconsumed = peek_len - file_consumed;
-  if (file_unconsumed == 0) return;
-  std::fstream* file = slot->file.get();
-  if (file_unconsumed == 1U && !slot->putback.has_value()) {
-    // LRM 21.3.4.1: a single leftover byte is the "offending input
-    // character" -- park it in the slot's putback so $fgetc / $fgets /
-    // $fread / the next scan-source see it without a stream seek.
-    file->seekg(-1, std::ios::cur);
-    const int ch = file->get();
-    if (ch != std::char_traits<char>::eof()) {
-      slot->putback = static_cast<char>(ch);
-    }
-    return;
+  const int byte = file_->reads->peek();
+  return byte == std::char_traits<char>::eof() ? kNoByte : byte;
+}
+
+auto FileScanInput::Consume() -> int {
+  if (file_ == nullptr) return kNoByte;
+  const int byte = TakeByte(*file_);
+  return byte == std::char_traits<char>::eof() ? kNoByte : byte;
+}
+
+void FileScanInput::Unget(int byte) {
+  if (file_ == nullptr || file_->putback.has_value()) {
+    throw InternalError(
+        "a scan gave back a byte its input has no room for -- please report "
+        "this as a bug");
   }
-  // Multi-byte tail: rewind the stream by the unconsumed count.
-  file->seekg(-static_cast<std::streamoff>(file_unconsumed), std::ios::cur);
+  file_->putback = static_cast<char>(byte);
 }
-
-namespace {
-
-// The `int` the source wrote for a descriptor, offset, operation or character
-// (LRM 21.3), which reaches here widened to a machine integer.
-auto AsInt32(std::int64_t value) -> std::int32_t {
-  return static_cast<std::int32_t>(value);
-}
-
-auto MakeInt(std::int32_t v) -> value::Int {
-  return value::Int::FromInt(v);
-}
-
-}  // namespace
 
 auto FileTable::Open(const value::String& name) -> value::Int {
   return MakeInt(Open(name.View(), std::nullopt));
@@ -415,52 +334,33 @@ auto FileTable::OpenWithMode(
 }
 
 auto FileTable::Getc(std::int64_t fd_value) -> value::Int {
-  const std::int32_t fd = AsInt32(fd_value);
-  auto* slot = ResolveSlot(fd);
-  if (slot == nullptr) {
-    SetError(fd, EBADF, "$fgetc: not an open file descriptor");
-    return MakeInt(-1);
-  }
-  // LRM 21.3.4: read entries require an FD opened with r or r+ type.
-  if (!slot->permits_read) {
-    SetError(fd, EBADF, "$fgetc: file not open for reading");
-    return MakeInt(-1);
-  }
-  // LRM 21.3.4.1: drain any byte left by $ungetc (or by the scanner's
-  // "offending character" pushback) before consulting the stream.
-  if (slot->putback.has_value()) {
-    const auto byte = static_cast<unsigned char>(*slot->putback);
-    slot->putback.reset();
-    return MakeInt(byte);
-  }
-  const int c = slot->file->get();
+  File* file = FileToRead(fd_value, "$fgetc");
+  if (file == nullptr) return MakeInt(-1);
+  const int c = TakeByte(*file);
   if (c == std::char_traits<char>::eof()) {
     // LRM 21.3.4.1: EOF is signalled as -1 (wider than 8 bits so callers can
-    // distinguish from 0xFF). fstream's eof bit is now set; $feof picks it up.
-    SetError(fd, 0, "$fgetc: EOF");
+    // distinguish from 0xFF). The stream's eof bit is now set; $feof picks it
+    // up.
+    SetError(AsInt32(fd_value), 0, "$fgetc: EOF");
     return MakeInt(-1);
   }
   return MakeInt(c & 0xFF);
 }
 
 auto FileTable::Ungetc(std::int64_t c, std::int64_t fd_value) -> value::Int {
-  const std::int32_t fd = AsInt32(fd_value);
-  auto* slot = ResolveSlot(fd);
-  if (slot == nullptr) {
-    SetError(fd, EBADF, "$ungetc: not an open file descriptor");
-    return MakeInt(-1);
-  }
+  File* file = FileToRead(fd_value, "$ungetc");
+  if (file == nullptr) return MakeInt(-1);
   // LRM 21.3.4.1 NOTE: implementations may limit pushback depth. We keep a
   // single-byte buffer per FD; a second $ungetc before any read returns -1
   // per "if an error occurs pushing a character ... code is set to EOF".
-  // Using a Lyra-side slot instead of std::fstream's putback area lifts
-  // libstdc++'s "must read first" restriction so $ungetc on a freshly-opened
-  // stream works as the LRM specifies.
-  if (slot->putback.has_value()) {
-    SetError(fd, EAGAIN, "$ungetc: putback buffer full");
+  if (file->putback.has_value()) {
+    SetError(AsInt32(fd_value), EAGAIN, "$ungetc: putback buffer full");
     return MakeInt(-1);
   }
-  slot->putback = static_cast<char>(AsInt32(c) & 0xFF);
+  file->putback = static_cast<char>(AsInt32(c) & 0xFF);
+  // The pushed byte is the next one read, so the descriptor is no longer at
+  // its end (LRM 21.3.8), as C's `ungetc` clears end-of-file.
+  file->reads->clear(file->reads->rdstate() & std::ios_base::badbit);
   return MakeInt(0);
 }
 
@@ -468,34 +368,19 @@ auto FileTable::Gets(std::int64_t fd_value) -> TextRead {
   const auto read_nothing = [] {
     return TextRead{MakeInt(0), value::String{}};
   };
-  const std::int32_t fd = AsInt32(fd_value);
-  auto* slot = ResolveSlot(fd);
-  if (slot == nullptr) {
-    SetError(fd, EBADF, "$fgets: not an open file descriptor");
-    return read_nothing();
-  }
-  if (!slot->permits_read) {
-    SetError(fd, EBADF, "$fgets: file not open for reading");
-    return read_nothing();
-  }
-  // LRM 21.3.4.2 + 21.3.4.1: byte-by-byte loop so any pending $ungetc byte
-  // is the first byte of the line. std::getline would bypass the slot-side
-  // putback.
+  File* file = FileToRead(fd_value, "$fgets");
+  if (file == nullptr) return read_nothing();
+  // LRM 21.3.4.2 + 21.3.4.1: byte by byte, so a pushed-back byte is the first
+  // of the line.
   std::string line;
   while (true) {
-    int c = 0;
-    if (slot->putback.has_value()) {
-      c = static_cast<unsigned char>(*slot->putback);
-      slot->putback.reset();
-    } else {
-      c = slot->file->get();
-    }
+    const int c = TakeByte(*file);
     if (c == std::char_traits<char>::eof()) break;
     line.push_back(static_cast<char>(c));
     if (c == '\n') break;
   }
   if (line.empty()) {
-    SetError(fd, 0, "$fgets: EOF");
+    SetError(AsInt32(fd_value), 0, "$fgets: EOF");
     return read_nothing();
   }
   return TextRead{
@@ -504,30 +389,22 @@ auto FileTable::Gets(std::int64_t fd_value) -> TextRead {
 
 auto FileTable::ReadInto(const value::IntegralView& dest, std::int64_t fd_value)
     -> value::Int {
-  const std::int32_t fd = AsInt32(fd_value);
-  auto* slot = ResolveSlot(fd);
-  if (slot == nullptr) {
-    SetError(fd, EBADF, "$fread: not an open file descriptor");
-    return MakeInt(0);
-  }
-  if (!slot->permits_read) {
-    SetError(fd, EBADF, "$fread: file not open for reading");
-    return MakeInt(0);
-  }
+  File* file = FileToRead(fd_value, "$fread");
+  if (file == nullptr) return MakeInt(0);
   const auto byte_count = static_cast<std::size_t>((dest.width + 7U) / 8U);
   std::vector<char> buf(byte_count, '\0');
   std::size_t pos = 0;
   // LRM 21.3.4.1: any pending $ungetc byte is the next byte read from the
   // FD; place it at the head of the buffer before consulting the stream.
-  if (slot->putback.has_value()) {
-    buf[pos++] = *slot->putback;
-    slot->putback.reset();
+  if (file->putback.has_value()) {
+    buf[pos++] = *file->putback;
+    file->putback.reset();
   }
   const auto rest = std::span<char>(buf).subspan(pos);
-  slot->file->read(rest.data(), static_cast<std::streamsize>(rest.size()));
-  const auto got = pos + static_cast<std::size_t>(slot->file->gcount());
+  file->reads->read(rest.data(), static_cast<std::streamsize>(rest.size()));
+  const auto got = pos + static_cast<std::size_t>(file->reads->gcount());
   if (got == 0U) {
-    SetError(fd, 0, "$fread: EOF");
+    SetError(AsInt32(fd_value), 0, "$fread: EOF");
     return MakeInt(0);
   }
   // LRM 21.3.4.4: 2-value, big-endian. On a short read, the trailing buffer is
@@ -556,21 +433,14 @@ auto ReadMemoryWords(
     std::int64_t count,
     const std::function<void(std::int64_t, std::span<const char>)>& write_word)
     -> std::int32_t {
-  const std::int32_t fd = AsInt32(fd_value);
-  auto* slot = files.ResolveSlot(fd);
-  if (slot == nullptr) {
-    files.SetError(fd, EBADF, "$fread: not an open file descriptor");
-    return 0;
-  }
-  if (!slot->permits_read) {
-    files.SetError(fd, EBADF, "$fread: file not open for reading");
-    return 0;
-  }
+  FileTable::File* file = files.FileToRead(fd_value, "$fread");
+  if (file == nullptr) return 0;
 
   // LRM 21.3.4.4: out-of-range start has no defined behaviour. Stamp EINVAL
   // and return 0 so the user sees the failure rather than a silent no-op.
   if (start_sv < declared.Low() || start_sv > declared.High()) {
-    files.SetError(fd, EINVAL, "$fread: start index out of array range");
+    files.SetError(
+        AsInt32(fd_value), EINVAL, "$fread: start index out of array range");
     return 0;
   }
   const auto available_elements =
@@ -587,13 +457,13 @@ auto ReadMemoryWords(
     std::size_t pos = 0;
     // LRM 21.3.4.1: drain any $ungetc-deposited byte only on the very first
     // element's first byte; subsequent bytes come straight from the stream.
-    if (k == 0 && slot->putback.has_value()) {
-      buf[pos++] = *slot->putback;
-      slot->putback.reset();
+    if (k == 0 && file->putback.has_value()) {
+      buf[pos++] = *file->putback;
+      file->putback.reset();
     }
     const auto rest = std::span<char>(buf).subspan(pos);
-    slot->file->read(rest.data(), static_cast<std::streamsize>(rest.size()));
-    const auto got_this = pos + static_cast<std::size_t>(slot->file->gcount());
+    file->reads->read(rest.data(), static_cast<std::streamsize>(rest.size()));
+    const auto got_this = pos + static_cast<std::size_t>(file->reads->gcount());
     if (got_this == 0U) break;
     // A partial element keeps the zeros the buffer started with in the bytes
     // the file did not reach, which are its least significant -- the packed
@@ -611,12 +481,11 @@ auto FileTable::Seek(
     std::int64_t fd_value, std::int64_t offset, std::int64_t operation)
     -> value::Int {
   const std::int32_t fd = AsInt32(fd_value);
-  auto* slot = ResolveSlot(fd);
-  if (slot == nullptr) {
+  File* file = FileIfOpen(fd);
+  if (file == nullptr) {
     SetError(fd, EBADF, "$fseek: not an open file descriptor");
     return MakeInt(-1);
   }
-  const auto offset_v = static_cast<std::streamoff>(AsInt32(offset));
   std::ios_base::seekdir dir{};
   switch (AsInt32(operation)) {
     case 0:
@@ -632,18 +501,19 @@ auto FileTable::Seek(
       SetError(fd, EINVAL, "$fseek: operation must be 0, 1, or 2");
       return MakeInt(-1);
   }
-  auto& stream = *slot->file;
-  stream.clear();
-  // LRM 21.3.5 gives a descriptor one position, used by whichever input or
-  // output operation comes next; a stream's get and put sides share it.
-  stream.seekg(offset_v, dir);
-  if (stream.fail()) {
+  const auto reached = BufferOf(*file)->pubseekoff(
+      static_cast<std::streamoff>(AsInt32(offset)), dir, kEitherSide);
+  if (reached == std::streampos{-1}) {
     SetError(fd, errno, "$fseek: seek failed");
     return MakeInt(-1);
   }
+  // A seek that lands starts the stream afresh, end-of-file included, as C's
+  // does.
+  if (file->reads != nullptr) file->reads->clear();
+  if (file->writes != nullptr) file->writes->clear();
   // LRM 21.3.5: "Repositioning the current file position with $fseek or
   // $rewind shall cancel any $ungetc operations."
-  slot->putback.reset();
+  file->putback.reset();
   return MakeInt(0);
 }
 
@@ -653,13 +523,14 @@ auto FileTable::Rewind(std::int64_t fd) -> value::Int {
 
 auto FileTable::Tell(std::int64_t fd_value) -> value::Int {
   const std::int32_t fd = AsInt32(fd_value);
-  std::fstream* stream = Resolve(fd);
-  if (stream == nullptr) {
+  File* file = FileIfOpen(fd);
+  if (file == nullptr) {
     SetError(fd, EBADF, "$ftell: not an open file descriptor");
     return MakeInt(-1);
   }
-  const auto pos = stream->tellg();
-  if (pos == std::fstream::pos_type{-1}) {
+  const auto pos =
+      BufferOf(*file)->pubseekoff(0, std::ios_base::cur, kEitherSide);
+  if (pos == std::streampos{-1}) {
     SetError(fd, errno, "$ftell: tell failed");
     return MakeInt(-1);
   }
@@ -667,10 +538,10 @@ auto FileTable::Tell(std::int64_t fd_value) -> value::Int {
 }
 
 auto FileTable::Eof(std::int64_t fd_value) -> value::Int {
-  const std::int32_t fd = AsInt32(fd_value);
-  std::fstream* stream = Resolve(fd);
-  if (stream == nullptr) return MakeInt(0);
-  return MakeInt(stream->eof() ? 1 : 0);
+  const File* file = FileIfOpen(AsInt32(fd_value));
+  const bool at_end =
+      file != nullptr && file->reads != nullptr && file->reads->eof();
+  return MakeInt(at_end ? 1 : 0);
 }
 
 auto FileTable::Error(std::int64_t fd_value) -> TextRead {
@@ -686,61 +557,26 @@ auto FileTable::Error(std::int64_t fd_value) -> TextRead {
 }
 
 void FileTable::FlushAll() {
-  // LRM 21.3.1 makes standard output channel 0 of a multichannel descriptor,
-  // so it is one of the open files LRM 21.3.6 reaches.
-  stream_->Drain();
-  for (auto& slot : mcd_slots_) {
-    if (slot.file != nullptr) slot.file->flush();
+  for (File& file : channel_files_) {
+    if (file.writes != nullptr) file.writes->flush();
   }
-  for (auto& slot : fd_pool_) {
-    if (slot.file != nullptr) slot.file->flush();
+  for (File& file : fd_files_) {
+    if (file.writes != nullptr) file.writes->flush();
   }
 }
 
-void FileTable::Flush(std::int64_t descriptor_value) {
-  const std::int32_t descriptor = AsInt32(descriptor_value);
-  if (descriptor == 0) return;
-  const auto raw = static_cast<std::uint32_t>(descriptor);
-  if ((raw & (1U << 31U)) != 0U) {
-    if (descriptor == support::kStdoutFd) {
-      stream_->Drain();
-      return;
-    }
-    std::fstream* s = Resolve(descriptor);
-    if (s != nullptr) s->flush();
-    return;
-  }
-  // MCD form: bit 0 names standard output (LRM 21.3.1); bits 1..30 are the
-  // channels this table owns.
-  if ((raw & 1U) != 0U) stream_->Drain();
-  for (std::uint32_t bit = 1; bit <= 30U; ++bit) {
-    if ((raw & (1U << bit)) == 0U) continue;
-    std::fstream* s = Resolve(static_cast<std::int32_t>(1U << bit));
-    if (s != nullptr) s->flush();
-  }
+void FileTable::Flush(std::int64_t descriptor) {
+  ForEachOpenFile(descriptor, [](File& file) {
+    if (file.writes != nullptr) file.writes->flush();
+  });
 }
 
 auto FileTable::CancellationFor(std::int64_t descriptor)
     -> ChannelCancellation {
   std::vector<std::stop_token> tokens;
-  const auto raw_signed = static_cast<std::int32_t>(descriptor);
-  if (raw_signed == 0) return ChannelCancellation{std::move(tokens)};
-  const auto raw = static_cast<std::uint32_t>(raw_signed);
-  if ((raw & (1U << 31U)) != 0U) {
-    const std::size_t idx = raw & 0x7FFF'FFFFU;
-    // Stdio sentinels (0/1/2) and out-of-range indexes have no observable
-    // close event -- contribute no token.
-    if (idx >= kFdReservedSlots && idx < fd_pool_.size()) {
-      tokens.push_back(fd_pool_.at(idx).cancel_source.get_token());
-    }
-    return ChannelCancellation{std::move(tokens)};
-  }
-  // MCD: collect one token per set bit in 1..30. Bit 0 is stdout sentinel
-  // (cannot be closed) so it contributes nothing.
-  for (std::size_t slot = 1; slot < kMcdSlotCount; ++slot) {
-    if ((raw & (1U << slot)) == 0U) continue;
-    tokens.push_back(mcd_slots_.at(slot).cancel_source.get_token());
-  }
+  ForEachOpenFile(descriptor, [&tokens](File& file) {
+    tokens.push_back(file.cancel_source.get_token());
+  });
   return ChannelCancellation{std::move(tokens)};
 }
 
