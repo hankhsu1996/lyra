@@ -187,10 +187,10 @@ void ProcessLowerer::DefineProceduralVar(
 
 auto ProcessLowerer::AddProceduralVar(
     const WalkFrame& frame, hir::ProceduralBody& body,
-    const slang::ast::VariableSymbol& var, hir::TypeId type,
-    std::optional<hir::ExprId> init) -> hir::ProceduralVarId {
+    const slang::ast::VariableSymbol& var, hir::TypeId type)
+    -> hir::ProceduralVarId {
   const hir::ProceduralVarId id = DeclareProceduralVar(frame, body, var);
-  DefineProceduralVar(body, id, var, type, init);
+  DefineProceduralVar(body, id, var, type, std::nullopt);
   return id;
 }
 

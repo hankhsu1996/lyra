@@ -23,7 +23,6 @@
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
-#include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -509,9 +508,7 @@ auto ClassDeclLowerer::PopulateBodies(
   // registry the ctor body uses. Formals land as MIR locals after the leading
   // parameters; the base-call arg exprs and every field initializer below read
   // them through that registry.
-  auto formals_or =
-      ctor_lowerer.RegisterConstructorFormals(ctor, frame, ctor_params);
-  if (!formals_or) return std::unexpected(std::move(formals_or.error()));
+  ctor_lowerer.RegisterConstructorFormals(ctor, frame, ctor_params);
   // A construction is handed where to report what it reads (LRM 9.4.2), after
   // its formals, as a function is, and everything it evaluates -- its base's
   // arguments, its property initializers, its body -- states there what it
@@ -548,12 +545,14 @@ auto ClassDeclLowerer::PopulateBodies(
   }
 
   // Initialize each property in declaration order before the constructor body
-  // runs (LRM 8.7): a property with an explicit initializer takes that value --
-  // lowered through the constructor lowerer so a property read resolves against
-  // the receiver -- and one without starts as a declaration that writes none
-  // does (LRM Table 6-7). The ordering is the single declaration-order pass
-  // because an initializer may read an earlier property whose own
+  // runs (LRM 8.7): every property starts as a declaration that writes none
+  // does (LRM Table 6-7), and one with an explicit initializer is then assigned
+  // that value -- lowered through the constructor lowerer so a property read
+  // resolves against the receiver -- since the initializer may read the
+  // property itself (LRM 10.5). The ordering is the single declaration-order
+  // pass because an initializer may read an earlier property whose own
   // initialization has already run.
+  //
   // Index the source-declared initializers by their target so the per-field
   // loop below reads each one in O(1): the source names only the fields it
   // wrote, and the pass visits every field.
@@ -566,27 +565,29 @@ auto ClassDeclLowerer::PopulateBodies(
     const hir::ClassField& field = hir_class.fields.Get(hir_field_id);
     const mir::FieldId mir_field_id = shape.field_translation.Get(hir_field_id);
     const mir::TypeId field_type = mir_class.fields.Get(mir_field_id).type;
-    mir::ExprId value_id{};
+    const auto store = [&](mir::ExprId value_id) {
+      const mir::ExprId self_ref = ctor_block.exprs.Add(MakeSelfRefExpr(frame));
+      const mir::ExprId target = ctor_block.exprs.Add(
+          mir::MakeFieldAccessExpr(
+              BuildObjectDeref(unit_lowerer.Unit(), ctor_block, self_ref),
+              mir::ClassFieldTarget{
+                  .owner = mir::IntraUnitClassRef{class_id_},
+                  .slot = mir_field_id},
+              field_type));
+      ctor_block.AppendStmt(
+          mir::ExprStmt{
+              .expr = ctor_block.exprs.Add(
+                  mir::MakeAssignExpr(
+                      unit_lowerer.Unit().builtins, target, value_id))});
+    };
+    store(BuildDeclaredInitialValue(unit_lowerer, frame, field.type));
     if (const auto it = initializer_of.find(hir_field_id);
         it != initializer_of.end()) {
       auto value_or =
           ctor_lowerer.LowerExpr(ctor.body.exprs.Get(it->second), reporting);
       if (!value_or) return std::unexpected(std::move(value_or.error()));
-      value_id = ctor_block.exprs.Add(*std::move(value_or));
-    } else {
-      value_id = BuildDeclaredInitialValue(unit_lowerer, frame, field.type);
+      store(ctor_block.exprs.Add(*std::move(value_or)));
     }
-    const mir::ExprId self_ref = ctor_block.exprs.Add(MakeSelfRefExpr(frame));
-    const mir::ExprId target = ctor_block.exprs.Add(
-        mir::MakeFieldAccessExpr(
-            BuildObjectDeref(unit_lowerer.Unit(), ctor_block, self_ref),
-            mir::ClassFieldTarget{
-                .owner = mir::IntraUnitClassRef{class_id_},
-                .slot = mir_field_id},
-            field_type));
-    const mir::ExprId assign = ctor_block.exprs.Add(
-        mir::MakeAssignExpr(unit_lowerer.Unit().builtins, target, value_id));
-    ctor_block.AppendStmt(mir::ExprStmt{.expr = assign});
   }
 
   // Each instance method (LRM 8.6) is lowered as a callable this class owns: it

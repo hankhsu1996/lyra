@@ -142,9 +142,9 @@ class ProcessLowerer {
   // arguments -- which LRM 8.7 orders before the body and which may reference
   // the ctor's formals -- in the same procedural-var registry the body will
   // use. A non-input formal is a compiler-bug invariant.
-  auto RegisterConstructorFormals(
+  void RegisterConstructorFormals(
       const hir::SubroutineDecl& ctor, const WalkFrame& frame,
-      std::vector<mir::LocalId>& params) -> diag::Result<void>;
+      std::vector<mir::LocalId>& params);
 
   // Walks the constructor's body statements into `frame.current_block`,
   // assuming the formals have already been registered and any base-call

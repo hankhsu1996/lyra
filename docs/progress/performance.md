@@ -290,6 +290,14 @@ operation is a call into a separately compiled runtime, and the optimizer cannot
 
 - [ ] How many processes a design makes is not looked at: a port connection is still one.
 
+- [ ] A variable or a class property with a declaration assignment is built at its type's default
+      and then given the assignment -- an automatic one each time its declaration is reached, a
+      property each time an object is made -- because the assignment may read what it initializes
+      and the language says it reads that default (LRM 6.21, 10.5, 13.3). Where it does not, the
+      default is a store nothing reads. Removing a store overwritten before any read is the general
+      answer, and this store is one instance of it; nothing ahead of the host compiler removes one
+      today. Not measured.
+
 ## Construction / compile-time performance
 
 The cost of producing compiled artifacts and of building the object graph at time zero. The primary
