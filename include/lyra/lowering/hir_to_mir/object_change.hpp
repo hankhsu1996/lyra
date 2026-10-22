@@ -8,10 +8,10 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// The entries below act on an object and are handed whatever reaches it, as
-// the source reached it: a class handle (LRM 8.3), or the running method's own
-// object. Which object a handle names is opened from it by each target, as an
-// access's receiver is.
+// The entries below act on an object and are handed the value that reaches it:
+// a class handle (LRM 8.3), or the running method's own object, read where it
+// is named where it lies. Which object a handle names is opened from it by each
+// target, as an access's receiver is.
 
 // The event source of the object `object` reaches, which a wait reaching the
 // object enrols on: one per object, covering every property (LRM 9.4.2).

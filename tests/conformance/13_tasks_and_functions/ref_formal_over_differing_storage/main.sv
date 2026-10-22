@@ -17,15 +17,36 @@
 // whichever of them it is part of: a design variable, where the write is a
 // change of that variable, an automatic variable, a class property, or the
 // storage another ref formal already holds.
+//
+// A class property is the same storage whether a handle reaches its object or
+// it is a property of the object a method runs on, named alone or through
+// `this` (LRM 8.11), and either may be passed to a ref or a const ref formal.
 module Top;
   typedef struct {
     int a;
     int b;
   } pair_t;
 
+  function automatic int read_through(const ref int slot);
+    return slot;
+  endfunction
+
   class Holder;
     int owned;
     int slots[3];
+    int seen_own;
+
+    static function void add_one(ref int slot);
+      slot = slot + 1;
+    endfunction
+
+    task lend_own();
+      add_to(owned, 1);
+      add_to(this.owned, 10);
+      add_to(slots[1], 3);
+      add_one(owned);
+      seen_own = read_through(owned);
+    endtask
   endclass
 
   Holder held;
@@ -74,13 +95,18 @@ module Top;
     add_to_member(detached_pair, 7);
     carried_element = detached_parts[1];
     carried_member = detached_pair.b;
+    held.lend_own();
     #1;
   end
 
   final begin
     if (scoped !== 7) $fatal(1, "scoped was %0d, expected 7", scoped);
-    if (held.owned !== 207)
-      $fatal(1, "held.owned was %0d, expected 207", held.owned);
+    if (held.owned !== 219)
+      $fatal(1, "held.owned was %0d, expected 219", held.owned);
+    if (held.seen_own !== 219)
+      $fatal(1, "held.seen_own was %0d, expected 219", held.seen_own);
+    if (held.slots[1] !== 3)
+      $fatal(1, "held.slots[1] was %0d, expected 3", held.slots[1]);
     if (carried !== 307) $fatal(1, "carried was %0d, expected 307", carried);
     if (wakes !== 1) $fatal(1, "wakes was %0d, expected 1", wakes);
 
