@@ -126,7 +126,7 @@ struct ControlEffect {
 // recorded.
 [[noreturn]] void RaiseUnclaimableEffect();
 
-// Raises again the departure a landing received and declines, so a landing
+// Raises again the departure a handler received and declines, so a handler
 // further out tests the target it names (LRM 9.6.2). What is raised is the
 // departure as received, which for a run-time error is the one it became.
 [[noreturn]] void RaiseDeclinedDeparture(ControlEffect effect);
@@ -169,22 +169,17 @@ struct Unwound {
 // departure, which the caller states the way its own frame leaves.
 void SettleRaised(RuntimeEffects& effects, const std::exception_ptr& raised);
 
-// What a landing received, as the control effect it now carries. A landing
+// What a handler received, as the control effect it now carries. A handler
 // receives whatever unwinds into it: a control effect is carried as it is, and
 // a run-time error is settled here and carried on as the departure no region
-// may claim, so it is reported once, by the first landing it reaches, and
+// may claim, so it is reported once, by the first handler it reaches, and
 // every cleanup it passes after that runs as for any departure. Anything else
-// -- the release of a suspended stack, which must pass every frame untouched --
-// is raised again from here, unchanged, so a landing names no raised type.
+// -- the release of a suspended stack, which passes every frame running what
+// each owes -- is raised again from here, unchanged, so a handler names no
+// raised type.
 //
 // Call only while an exception is being handled, as above.
 [[nodiscard]] auto ReceiveDeparture() -> ControlEffect;
-
-// `ReceiveDeparture` for a landing that is handed the raised object rather than
-// entered as a handler: it begins handling `exception` itself, and so also ends
-// that handling when the receiving is left by a raise, since no exit of the
-// landing is taken then to end it.
-[[nodiscard]] auto ReceiveDepartureOf(void* exception) -> ControlEffect;
 
 // Runs `stretch`, a stretch of the design's code that no activation holds, as
 // its own landing, which settles it the way an activation's landing settles a

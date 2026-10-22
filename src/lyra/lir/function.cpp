@@ -36,8 +36,6 @@ auto ControlEffectOpName(ControlEffectTarget::Op op) -> std::string_view {
   switch (op) {
     case ControlEffectTarget::Op::kTakeDepartureIfDue:
       return "take_departure_if_due";
-    case ControlEffectTarget::Op::kFinishDeparture:
-      return "finish_departure";
     case ControlEffectTarget::Op::kDeclineDeparture:
       return "decline_departure";
   }
@@ -80,17 +78,17 @@ auto CallEndingOf(const CallTarget& target) -> support::CallEnding {
   using support::CallEnding;
   return std::visit(
       Overloaded{
-          [](const FunctionTarget&) { return CallEnding::kReturnsOrDeparts; },
-          [](const DispatchTarget&) { return CallEnding::kReturnsOrDeparts; },
-          [](const IndirectTarget&) { return CallEnding::kReturnsOrDeparts; },
-          [](const SymbolTarget&) { return CallEnding::kReturnsOrDeparts; },
-          [](const ForeignTarget&) { return CallEnding::kReturns; },
+          [](const FunctionTarget&) { return CallEnding::kReturnsOrUnwinds; },
+          [](const DispatchTarget&) { return CallEnding::kReturnsOrUnwinds; },
+          [](const IndirectTarget&) { return CallEnding::kReturnsOrUnwinds; },
+          [](const SymbolTarget&) { return CallEnding::kReturnsOrUnwinds; },
+          [](const ForeignTarget&) { return CallEnding::kReturnsOrUnwinds; },
           [](const BuiltinTarget& builtin) {
             return support::RuntimeEntryOf(builtin.fn).ending;
           },
-          [](const ConstructTarget&) { return CallEnding::kReturnsOrDeparts; },
+          [](const ConstructTarget&) { return CallEnding::kReturnsOrUnwinds; },
           [](const LibraryConstructorTarget&) {
-            return CallEnding::kReturnsOrDeparts;
+            return CallEnding::kReturnsOrUnwinds;
           },
           [](const ValueCellTarget&) { return CallEnding::kReturns; },
           // Keeping a part's value only moves memory; writing a slice is what
@@ -101,14 +99,14 @@ auto CallEndingOf(const CallTarget& target) -> support::CallEnding {
                 return CallEnding::kReturns;
               case OpenWriteTarget::Op::kAssignElementSlice:
               case OpenWriteTarget::Op::kAssignQueueSlice:
-                return CallEnding::kReturnsOrDeparts;
+                return CallEnding::kReturnsOrUnwinds;
             }
             throw InternalError("lir: unknown open-write operation");
           },
           // Writing bits within a write is what a slice write is, which can
           // raise.
           [](const DesignatedBitsTarget&) {
-            return CallEnding::kReturnsOrDeparts;
+            return CallEnding::kReturnsOrUnwinds;
           },
           [](const EndValueTarget&) { return CallEnding::kReturns; },
           [](const CopyValueTarget&) { return CallEnding::kReturns; },
@@ -116,11 +114,9 @@ auto CallEndingOf(const CallTarget& target) -> support::CallEnding {
           [](const ControlEffectTarget& effect) {
             switch (effect.op) {
               case ControlEffectTarget::Op::kTakeDepartureIfDue:
-                return CallEnding::kReturnsOrDeparts;
-              case ControlEffectTarget::Op::kFinishDeparture:
-                return CallEnding::kReturns;
+                return CallEnding::kReturnsOrUnwinds;
               case ControlEffectTarget::Op::kDeclineDeparture:
-                return CallEnding::kDeparts;
+                return CallEnding::kUnwinds;
             }
             throw InternalError("lir: unknown control-effect operation");
           },
@@ -133,7 +129,7 @@ auto CallEndingOf(const CallTarget& target) -> support::CallEnding {
                 return CallEnding::kReturns;
               case CoroutineTarget::Op::kAwait:
               case CoroutineTarget::Op::kRelease:
-                return CallEnding::kReturnsOrDeparts;
+                return CallEnding::kReturnsOrUnwinds;
             }
             throw InternalError("lir: unknown coroutine operation");
           }},

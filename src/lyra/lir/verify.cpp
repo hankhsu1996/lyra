@@ -238,7 +238,8 @@ void VerifyInstr(
                 break;
             }
           },
-          [](const CloseVariablesInstr&) {}},
+          [](const CloseVariablesInstr&) {}, [](const BeginHandlingInstr&) {},
+          [](const EndHandlingInstr&) {}},
       instr.data);
 }
 
@@ -334,7 +335,7 @@ void VerifyRvalue(
           [](const UnaryInstr&) {},
           // Where it may stand is a property of the block rather than of the
           // instruction, so it is held where the blocks are walked.
-          [](const ReceiveDepartureInstr&) {}, [](const OpenVariablesInstr&) {},
+          [](const LandingInstr&) {}, [](const OpenVariablesInstr&) {},
           [&](const UseInstr& use) {
             if (OperandType(fn, use.operand) != result_type) {
               throw InternalError(
@@ -352,48 +353,46 @@ void VerifyRvalue(
       value);
 }
 
-// A landing is a block one departing call names and that opens by receiving
-// what arrived. Neither half stands without the other: a body reaches a landing
-// no other way, and a departure has nowhere else to be read -- so a block that
-// opens this way and is named by nothing would never run, and one that is named
-// and does not would run with the departure unread. It is one call's alone,
+// A landing is a block one invoke names and that opens by taking what is
+// unwinding. Neither half stands without the other: a body reaches a landing no
+// other way, and what is unwinding has nowhere else to be taken -- so a block
+// that opens this way and is named by nothing would never run, and one that is
+// named and does not would run with nothing taken. It is one call's alone,
 // because what a target owes on the way out of that call is that call's.
-auto ReceivesDeparture(const Instr& instr) -> bool {
+auto TakesUnwinding(const Instr& instr) -> bool {
   const auto* assign = std::get_if<AssignInstr>(&instr.data);
   return assign != nullptr &&
-         std::holds_alternative<ReceiveDepartureInstr>(assign->value);
+         std::holds_alternative<LandingInstr>(assign->value);
 }
 
 void VerifyLandings(const Function& fn) {
   std::vector<std::size_t> named(fn.blocks.size(), 0);
   for (const BasicBlock& block : fn.blocks) {
-    if (const auto* call =
-            std::get_if<DepartingCallInstr>(&block.terminator.data)) {
+    if (const auto* call = std::get_if<InvokeTerm>(&block.terminator.data)) {
       ++named[call->landing.value];
     }
   }
   for (std::size_t index = 0; index < fn.blocks.size(); ++index) {
     const std::vector<Instr>& instrs = fn.blocks[index].instrs;
     for (std::size_t at = 0; at < instrs.size(); ++at) {
-      if (!ReceivesDeparture(instrs[at])) {
+      if (!TakesUnwinding(instrs[at])) {
         continue;
       }
       if (at != 0) {
         throw InternalError(
-            "lir verify: a departure is received somewhere other than at the "
-            "start of a landing");
+            "lir verify: what is unwinding is taken somewhere other than at "
+            "the start of a landing");
       }
     }
-    const bool receives = !instrs.empty() && ReceivesDeparture(instrs[0]);
-    if (receives != (named[index] != 0)) {
+    const bool takes = !instrs.empty() && TakesUnwinding(instrs[0]);
+    if (takes != (named[index] != 0)) {
       throw InternalError(
-          receives ? "lir verify: a landing no departing call names"
-                   : "lir verify: a departing call names a block that receives "
-                     "no departure");
+          takes ? "lir verify: a landing no invoke names"
+                : "lir verify: an invoke names a block that takes nothing "
+                  "unwinding");
     }
     if (named[index] > 1) {
-      throw InternalError(
-          "lir verify: a landing more than one departing call names");
+      throw InternalError("lir verify: a landing more than one invoke names");
     }
   }
 }
@@ -406,8 +405,7 @@ void VerifyFunction(const CompilationUnit& unit, const Function& fn) {
     for (const Instr& instr : block.instrs) {
       VerifyInstr(unit, fn, allocated, instr);
     }
-    if (const auto* call =
-            std::get_if<DepartingCallInstr>(&block.terminator.data)) {
+    if (const auto* call = std::get_if<InvokeTerm>(&block.terminator.data)) {
       RequireInitializes(
           unit, fn, allocated, call->destination, CallMakesValue(call->target));
       RequireCallWellFormed(unit, fn, call->target, call->args);
@@ -415,14 +413,16 @@ void VerifyFunction(const CompilationUnit& unit, const Function& fn) {
     // Only a body whose call protocol is the coroutine one can hand control
     // back to the scheduler; a suspension anywhere else has no one to resume
     // it. An abandonment is reached only from a suspension, so it is bounded
-    // by the same fact.
-    const bool parks =
+    // by the same fact, and so is completing an execution with a departure,
+    // which only the top of one can do.
+    const bool coroutine_only =
         std::holds_alternative<SuspendTerm>(block.terminator.data) ||
-        std::holds_alternative<AbandonTerm>(block.terminator.data);
-    if (parks && !is_coroutine) {
+        std::holds_alternative<AbandonTerm>(block.terminator.data) ||
+        std::holds_alternative<DepartTerm>(block.terminator.data);
+    if (coroutine_only && !is_coroutine) {
       throw InternalError(
-          "lir verify: a suspension appears in a body whose result type is not "
-          "a coroutine");
+          "lir verify: a suspension, or a completion with a departure, appears "
+          "in a body whose result type is not a coroutine");
     }
   }
   VerifyLandings(fn);

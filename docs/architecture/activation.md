@@ -116,8 +116,9 @@ the awaiter consumes, not of the scheduler.
    in order to answer it -- the closure an event control asks whether its expression moved --
    belongs to the wait and ends with it, since it may refer to anything the frame holds; a foreign
    task's body, which runs on a stack of its own, is never outlived by the frame either, because an
-   execution inside a foreign call is torn down only once that call has returned (invariant 8).
-   _Consequence: an activation can be cancelled and torn down with no dangling token left in any
+   execution inside a foreign call is torn down only once that call has returned, or once the run is
+   over, by unwinding the stack the call stands on, which passes through the call first (invariant
+   8). _Consequence: an activation can be cancelled and torn down with no dangling token left in any
    queue or wait -- its frame's waits and its queue place end with it, and so does every closure
    that could call back into the frame -- and leaving a list is a detach, so neither end ever
    searches the other, and neither can hold a belief the other has abandoned._

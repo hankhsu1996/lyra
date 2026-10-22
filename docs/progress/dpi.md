@@ -178,10 +178,10 @@ protocol on top of it.
       made inside, and a run that ends while they are suspended still reaches its final procedures.
       Rides on the timing and suspension machinery (`scheduling.md`, `processes.md`).
 - [x] D6c -- The disable protocol (LRM 35.9). Nothing that ends an execution crosses a frame the
-      compiler did not emit, because such a frame ends only by returning. So an exported
-      subroutine's entry lands whatever would have left it and answers instead: a task returns the
-      disable-active int (LRM 35.8), a function returns the zero of its C result type, and
-      `svIsDisabledState` answers the same question to any foreign frame that asks, with
+      compiler did not emit, because while the run lasts such a frame ends only by returning. So an
+      exported subroutine's entry lands whatever would have left it and answers instead: a task
+      returns the disable-active int (LRM 35.8), a function returns the zero of its C result type,
+      and `svIsDisabledState` answers the same question to any foreign frame that asks, with
       `svAckDisabledState` recording that one is following the protocol. Whether a departure is due
       is derived again where control comes back rather than carried across, so the execution leaves
       at its own boundary and the disabled block ends where LRM 9.6.2 says it does. The three

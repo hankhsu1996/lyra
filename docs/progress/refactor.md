@@ -2354,22 +2354,14 @@ enough to warrant its own focused review.
       parsing switched off, and its own `-j` would collide with this command line's. Blocked on
       that fork.
 
-- [ ] R147 -- On the execution backend a run-time error that ends the run leaves a suspended body
-      without running any of the cleanups it passes, and the body's frame is then released at the
-      last wait it made, which runs what was owed there instead. A block the body left after that
-      wait is left a second time, and one it entered after it is never left. Nothing observable goes
-      wrong today only because leaving a disable target that is not the innermost is ignored rather
-      than refused; made strict, a named block holding the last wait followed by an error in a later
-      block aborts the run instead of reporting it, and nothing else in the gate changes. The C++
-      backend runs those cleanups, as destructors, and so does clang for every exception.
-
-      Two answers were tried and are not it. Letting a landing treat an error as a departure no
-      region claims changes nothing for most errors, because the runtime calls that raise them are
-      ordinary calls with no landing; and it breaks the release of a suspended foreign stack, which
-      travels the same way and which an export's entry, landing every departure, then stops. What
-      it takes is a call that can raise an error stated as one that can leave its caller, as clang
-      states every call that is not known not to unwind, and the stack release told apart from an
-      error where a landing decides to stop something. Not blocked.
+- [x] R147 -- On the execution backend a run-time error that ends the run left a suspended body
+      without running the cleanups it passed, and the body's frame was then released at the last
+      wait it made, which ran what was owed there instead: a block left after that wait was left a
+      second time, and one entered after it never was. Every call that can be unwound out of now
+      runs what the frame owes on that way out before anything handles the raise, and the top of a
+      coroutine's body takes it there and completes, so the frame is never released at an earlier
+      wait. The C++ backend ran those cleanups as destructors all along, as clang does for every
+      exception.
 
 - [x] R148 -- On the execution backend, reading one element of a variable copied the whole variable,
       and writing one element copied it, rebuilt it and copied it back. The representative compute
@@ -2647,10 +2639,13 @@ enough to warrant its own focused review.
 - [ ] R171 -- On the execution backend a run-time error raised inside a constructor leaves the
       storage being constructed behind. An instance of the design hierarchy and an object built with
       `new` are each allocated by their class's allocation and then constructed, and nothing between
-      the two gives the storage back if the constructor raises. The C++ backend's construction does,
-      as clang does for every `new`, by entering the constructor with a cleanup that frees the
-      storage and continues the unwind. It is one case of a call that can raise not being stated as
-      one that can leave its caller, so it closes with that rather than on its own. Not blocked.
+      the two gives the storage back if the constructor raises, nor ends the members the constructor
+      had already given values: a class whose constructor sets a `string` member and then raises
+      leaves both the member's text and the object's storage, while the C++ backend leaves neither.
+      Every call there can already be unwound out of, so what is missing is not an edge but a
+      statement of what is owed on it: clang's constructor pushes the end of each member it has
+      built as a cleanup only an unwinding takes, and its new-expression one that frees the storage.
+      Not blocked.
 
 - [ ] R172 -- A declaration another unit makes is named differently from one this unit makes, at
       every reference to it. Each semantic layer spells a class, a property of a class, a method, a

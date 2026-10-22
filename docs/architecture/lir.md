@@ -101,8 +101,9 @@ below LIR, at LIR-to-LLVM.
 - Symbols a call reaches by name: a body of this program that another artifact holds, and a foreign
   symbol -- the linkage name of a callable defined outside the program. LIR states the name and the
   machine types the call crosses on; how the name is resolved -- a link line, an execution session
-  -- is below LIR. The two are kept apart because a departure can come out of the first and never
-  out of the second, which is a frame that ends only by returning.
+  -- is below LIR. The two are kept apart because the second is entered by another language's
+  convention and no departure comes out of it, though the release of a stack waiting beneath it
+  unwinds through it, so both are called as calls that can be unwound out of.
 - The boundary protocol to the scheduling runtime (entry, suspend, resume, abandonment, completion).
 
 ## Does Not Own
@@ -160,13 +161,13 @@ identity is the suspect, not the analysis.
 6. The runtime protocol is explicit: suspend, resume, abandonment, and each way a body is left
    appear as CFG edges, not as lowering conventions implied by node order. A suspension names both
    ways control can leave it -- the driver resumes the body, or ends it where it stands -- so what
-   the second owes is in the graph rather than assumed; and a body left by a departure says so with
-   a terminator of its own, as a returning one does. A coroutine body's entry is such a suspension,
-   before its first statement, so whoever drives the body runs every stretch of it, the first
-   included, and ending it there ends what it was handed and nothing else -- the initial suspend a
-   C++ coroutine's promise states, here stated in the graph rather than left to each backend.
-   _Machine-execution consequence: the scheduler's boundary is visible to the optimizer as edges,
-   not as a side convention only the lowering knows._
+   the second owes is in the graph rather than assumed; and a body left by unwinding, or an
+   execution completed by a departure, says so with a terminator of its own, as a returning one
+   does. A coroutine body's entry is such a suspension, before its first statement, so whoever
+   drives the body runs every stretch of it, the first included, and ending it there ends what it
+   was handed and nothing else -- the initial suspend a C++ coroutine's promise states, here stated
+   in the graph rather than left to each backend. _Machine-execution consequence: the scheduler's
+   boundary is visible to the optimizer as edges, not as a side convention only the lowering knows._
 7. LIR carries no source-language semantics. Every node is a generic machine-execution operation; no
    SV-specific shape -- an out-of-bounds guard, an index-validity predicate, an NBA region, an event
    control -- survives, because each was lowered to generic control flow or a runtime call at

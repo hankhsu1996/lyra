@@ -256,7 +256,9 @@ struct SymbolTarget {
 // A DPI-C import's foreign symbol (LRM 35.4): a body another language's
 // compiler emits, resolved by name the way a symbol target is. What separates
 // the two is the frame the call enters, which here is one no departure crosses
-// -- it ends only by returning (LRM 35.9).
+// (LRM 35.9). It is still unwound through where the run ends while an exported
+// task beneath it waits, because the stack it stands on is released by
+// unwinding, and it runs nothing of the other language's on the way.
 struct ForeignTarget {
   std::string symbol;
 };
@@ -356,20 +358,15 @@ struct DynamicStorageTarget {
 // does, and a departure naming none is one no region may claim.
 //
 // `kTakeDepartureIfDue` is where a body regains control and leaves if one is
-// owed: it is a departing call rather than a question, so what a body carries
-// at such a point is the same whether or not anything encloses it. The other
-// two are ways out of a region's landing -- `kFinishDeparture` where the region
-// claimed it and execution continues past that region, and `kDeclineDeparture`
-// where it did not and the same departure carries on to the landing outside.
-// Past the outermost region there is no landing left to carry it to, and the
-// body itself is left. A LIR-only target with no MIR twin: what a body states
-// is the region and the cleanup, never how a departure travels between them.
+// owed: it is a call that can be unwound out of rather than a question, so what
+// a body carries at such a point is the same whether or not anything encloses
+// it. `kDeclineDeparture` is the way out of a region's handler where the region
+// did not claim what it received: it raises the same departure again, toward
+// whatever takes it outside. A LIR-only target with no MIR twin: what a body
+// states is the region and the cleanup, never how a departure travels between
+// them.
 struct ControlEffectTarget {
-  enum class Op : std::uint8_t {
-    kTakeDepartureIfDue,
-    kFinishDeparture,
-    kDeclineDeparture
-  };
+  enum class Op : std::uint8_t { kTakeDepartureIfDue, kDeclineDeparture };
   Op op;
 };
 
@@ -427,12 +424,12 @@ using CallTarget = std::variant<
 // How a call to `target` ends, which is a property of the callee and never of
 // what it happens to do. The design's own code can depart, wherever it stands
 // and whatever artifact holds it, because a `disable` anywhere inside it
-// reaches every execution it encloses (LRM 9.6.2). Runtime code can depart
-// wherever it can raise, since a run-time error is a departure too; a runtime
-// entry answers for itself, and one that only moves memory raises nothing a
-// departure is made of. Foreign code is the one callee a departure never comes
-// out of: it stops at that frame and crosses as a value instead. A call that
-// can depart names the landing the departure reaches, so it is a terminator.
+// reaches every execution it encloses (LRM 9.6.2). Runtime code can be unwound
+// out of wherever it can raise, since a run-time error is a departure too; a
+// runtime entry answers for itself, and one that only moves memory raises
+// nothing. Foreign code no departure comes out of is unwound through all the
+// same where the stack it waits on is released. A call that can be unwound out
+// of names the landing it reaches, so it is a terminator.
 auto CallEndingOf(const CallTarget& target) -> support::CallEnding;
 
 struct CallInstr {
@@ -619,12 +616,12 @@ struct BitsStoreInstr {
 // one value after another. A slot's bytes come into use where the lowering
 // says; a made value's, with the instruction that makes it, which needs no
 // statement. Either goes out of use where the lowering says, on every way out
-// of the extent it was introduced in, a departure included -- and where a call
-// that would have made the value departs instead, in that call's landing. A
-// value handed on takes its bytes out of use with it, which is what a return
-// does with the value it returns. How long a frame's bytes are needed is all
-// this states; none of them is a value too large for a frame, which MIR keeps
-// in a box.
+// of the extent it was introduced in, unwinding included -- and where a call
+// that would have made the value is unwound out of instead, in that call's
+// landing. A value handed on takes its bytes out of use with it, which is what
+// a return does with the value it returns. How long a frame's bytes are needed
+// is all this states; none of them is a value too large for a frame, which MIR
+// keeps in a box.
 //
 // A LIR-only statement with no MIR twin: a target whose own language places
 // its values states none of this. It is the pair rustc's MIR states as
@@ -687,13 +684,22 @@ struct DynamicCastInstr {
   Operand operand;
 };
 
-// Receives the departure that transferred here, answering the target it names
-// (LRM 9.6.2) -- null where no region may claim it, which is what a run-time
-// error is received as. A block beginning with this
-// is a landing, which is the whole of what makes it one: it is reached only as
-// some departing call's landing, and what arrives is not an operand anyone
-// passed.
-struct ReceiveDepartureInstr {};
+// Takes what is unwinding out of the call whose landing this is, answering it
+// as the machine pointer the unwinder carries; nothing is handled yet. A block
+// beginning with this is a landing, which is the whole of what makes it one: it
+// is reached only as some call's landing, and what arrives is not an operand
+// anyone passed.
+//
+// `clause` says whether this frame takes the raise on the way out of that call
+// -- a region of the frame encloses it, or the frame is an execution's top --
+// or only runs what is owed and lets it go on, which is what decides where the
+// platform's search for a taker stops. It is read off the same nesting that
+// builds the way out, as clang reads the clauses of a landing pad off its scope
+// stack.
+struct LandingInstr {
+  enum class Clause : std::uint8_t { kCatchAll, kCleanup };
+  Clause clause;
+};
 
 // Which of a body's declared variables: the position the body's statement of
 // its variables gave it. Meaningless outside that body.
@@ -727,6 +733,19 @@ struct CloseVariablesInstr {
   Operand variables;
 };
 
+// The extent in which a handler of this frame handles `exception`, what a
+// landing took: begun where the handler starts, before it asks the runtime what
+// arrived, and ended on every way out of the handler -- falling off its end,
+// and being unwound out of it by a raise of its own or by what it asked about.
+// Every begin is matched by one end, so the platform's record of what is being
+// handled is left as the frame found it, as clang begins a catch and pushes
+// the end of it as a cleanup of the handler.
+struct BeginHandlingInstr {
+  Operand exception;
+};
+
+struct EndHandlingInstr {};
+
 // What computes a value, as rustc's MIR names the right-hand side of an
 // assignment: every instruction that yields one, a call to a callee answering
 // nothing included, whose value is the void one.
@@ -734,8 +753,8 @@ using Rvalue = std::variant<
     CallInstr, ProductInstr, UnionInstr, ClosureInstr, ArrayInstr,
     VectorGetInstr, DiscriminantInstr, LoadInstr, OverlaidLoadInstr,
     AddrOfInstr, BinaryInstr, UnaryInstr, CastInstr, HandleCastInstr,
-    DynamicCastInstr, ReceiveDepartureInstr, OpenVariablesInstr,
-    VariableAddressInstr, UseInstr>;
+    DynamicCastInstr, LandingInstr, OpenVariablesInstr, VariableAddressInstr,
+    UseInstr>;
 
 // A value computed once and consumed where it is used, with a pure dataflow
 // origin and no storage of its own to name.
@@ -756,10 +775,11 @@ struct AssignInstr {
 };
 
 // One step of a block: an assignment, or a statement that yields nothing --
-// a write into a value already there, or a frame's bytes coming into or going
-// out of use.
+// a write into a value already there, a frame's bytes coming into or going out
+// of use, or a handler's extent beginning or ending.
 using InstrData = std::variant<
-    AssignInstr, StoreInstr, BitsStoreInstr, StorageInstr, CloseVariablesInstr>;
+    AssignInstr, StoreInstr, BitsStoreInstr, StorageInstr, CloseVariablesInstr,
+    BeginHandlingInstr, EndHandlingInstr>;
 
 struct Instr {
   InstrData data;
@@ -818,15 +838,24 @@ struct SuspendTerm {
 // carries no value and is not a completion.
 struct AbandonTerm {};
 
-// Leaves the body carrying `departure`, the one a landing received, once what
-// every scope owed on the way out has run: the other way a body completes
-// beside returning (LRM 9.6.2, 20.2). It is an operand rather than whatever the
-// unwinder brought, because a run-time error was received as the departure no
-// region may claim, and that is the one that leaves. Whether the body's caller
-// or the activation it completes receives it is the callable's result type, as
-// it is for a return.
+// Completes the execution this body is the top of with `departure`, the one its
+// own handler received once what every scope owed on the way out had run: the
+// other way an execution completes beside returning (LRM 9.6.2, 20.2), handed
+// to the execution the way a C++ coroutine hands what escaped its body to its
+// promise. It is an operand rather than whatever the unwinder brought, because
+// a run-time error was received as the departure no region may claim, and that
+// is the one the execution settles. Only a body entered as a coroutine is the
+// top of an execution.
 struct DepartTerm {
   Operand departure;
+};
+
+// Goes on unwinding out of the body with `exception`, what a landing took,
+// once what every scope owed on the way out has run and nothing in this frame
+// took it: the way a body is left by a raise it does not handle, as LLVM's
+// `resume` and rustc's `UnwindResume` are.
+struct UnwindResumeTerm {
+  Operand exception;
 };
 
 // Ends a block control never reaches -- the join of a conditional whose arms
@@ -835,17 +864,19 @@ struct DepartTerm {
 // block.
 struct UnreachableTerm {};
 
-// A call whose callee may leave by a departure instead of returning (LRM 9.6.2,
-// 9.7): the result continues at `returned`, and a departure transfers to
-// `landing`, where the effect arrives rather than being passed as an operand.
+// A call whose callee can be unwound out of instead of returning (LRM 9.6.2,
+// 9.7): the result continues at `returned`, and unwinding transfers to
+// `landing`, where what is unwinding arrives rather than being passed as an
+// operand -- LLVM's `invoke`, and a call naming its unwind action in rustc's
+// MIR.
 //
 // It is a terminator and not an instruction because control leaves the block
 // through it either way, which is what a terminator means here; both of this
-// IR's peers say it the same way. Only a callee that can depart takes this
-// form, which is every callee but one declared not to; a call to one that
-// cannot stays an instruction. Where its value goes is stated as an
+// IR's peers say it the same way. Only a callee that can be unwound out of
+// takes this form, which is every callee but one declared not to; a call to
+// one that cannot stays an instruction. Where its value goes is stated as an
 // assignment's is, as a call in rustc's MIR names its `destination`.
-struct DepartingCallInstr {
+struct InvokeTerm {
   Destination destination;
   CallTarget target;
   std::vector<Operand> args;
@@ -855,7 +886,7 @@ struct DepartingCallInstr {
 
 using TerminatorData = std::variant<
     ReturnTerm, BranchTerm, CondBranchTerm, SwitchTerm, SuspendTerm,
-    AbandonTerm, DepartTerm, UnreachableTerm, DepartingCallInstr>;
+    AbandonTerm, DepartTerm, UnwindResumeTerm, UnreachableTerm, InvokeTerm>;
 
 struct Terminator {
   TerminatorData data;

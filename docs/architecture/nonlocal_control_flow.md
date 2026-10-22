@@ -82,10 +82,11 @@ reaches the next landing.
 
 Every frame in that diagram is one this compiler emitted, and a departure travels through them by
 whatever means the target language gives it. A frame belonging to another language is not: it cannot
-be unwound and it cannot be skipped, and it ends only by returning. So a departure stops there, and
-what crosses in its place is a value that language's own convention defines -- for DPI-C, the int an
-exported task hands its caller (LRM 35.8), which says whether a disable is active on this execution
-thread.
+be unwound by a departure and it cannot be skipped, and while the run lasts it ends only by
+returning; once the run is over, the release of the whole stack unwinds through it and runs nothing
+of that language's. So a departure stops there, and what crosses in its place is a value that
+language's own convention defines -- for DPI-C, the int an exported task hands its caller (LRM
+35.8), which says whether a disable is active on this execution thread.
 
 Nothing is carried across. Whether a departure is due is answered rather than stored (invariant 5),
 so the execution derives it again at the first frame of its own that it reaches, which is the call
@@ -140,9 +141,9 @@ language.
    proof would need the callee's body, which another unit may hold, and a call written before the
    proof existed would have to be revisited when it changed.
 
-8. **A run-time error is the departure no region may claim from the first landing that receives
-   it.** It is reported there, once, and then travels as every other departure does, so every
-   cleanup it passes runs and it stops at a foreign frame's entry like the rest.
+8. **A run-time error is the departure no region may claim from the first region or execution top
+   that receives it.** It is reported there, once, and then travels as every other departure does,
+   so every cleanup it passes runs and it stops at a foreign frame's entry like the rest.
 
 ## Forbidden shapes
 
@@ -186,25 +187,31 @@ construct the way a C++ compiler realizes the same C++: a call is assumed able t
 callee is declared not to be, and that declaration is true because the callee's definition is
 `noexcept` -- so a wrong one terminates rather than letting a departure slip past a landing.
 
-Both backends' landings catch whatever the platform's unwinder carries and ask the runtime what it
-was. A control effect is itself. A run-time error is settled there -- reported, the run ended, the
-execution asked to stop -- and carried on as the departure no region may claim, so it is reported
-once, by the first landing it reaches, and every cleanup after that runs as for any departure. The
-release of a suspended stack, which must pass every frame untouched, the runtime raises again from
-inside that question, unchanged. Which exception is which is a question only the language the
-runtime is written in can answer, and naming that language's type identity from generated code would
-make a fact of the runtime's own spelling -- its mangling, and which translation unit holds the one
-definition of the identity -- something every artifact links against. Rust's `catch_unwind` has the
-same shape for the same reason: its landing matches anything, and the runtime then decides from the
-exception it was handed whether the raise was its own.
+Both backends' regions catch whatever the platform's unwinder carries and ask the runtime what it
+was, and so does the top of an execution. A control effect is itself. A run-time error is settled
+there -- reported, the run ended, the execution asked to stop -- and carried on as the departure no
+region may claim, so it is reported once, by the first region or execution top it reaches, and every
+cleanup after that runs as for any departure. The release of a suspended stack, which must pass
+every frame running what each owes, the runtime raises again from inside that question, unchanged.
+Which exception is which is a question only the language the runtime is written in can answer, and
+naming that language's type identity from generated code would make a fact of the runtime's own
+spelling -- its mangling, and which translation unit holds the one definition of the identity --
+something every artifact links against. Rust's `catch_unwind` has the same shape for the same
+reason: its landing matches anything, and the runtime then decides from the exception it was handed
+whether the raise was its own.
 
 The execution backend keeps the scopes a departure can meet -- cleanups, the end of each value the
 body owns, and regions alike -- on one stack in the order they nest, as Clang's exception handling
 does. Each call has a landing of its own, because what the target owes on the way out of one call --
-a temporary it made to pass an argument -- is that call's alone; the landing receives what arrived
-and passes it to the innermost scope open where the call was made, whose cleanup runs once on the
-way out and passes it to the scope it is nested in, until a region's handler or the frame's own edge
-takes it. A cleanup's code therefore appears once on the unwinding path however many calls inside it
+a temporary it made to pass an argument -- is that call's alone; the landing takes what arrived,
+handling nothing yet, and passes it to the innermost scope open where the call was made, whose
+cleanup runs once on the way out and passes it to the scope it is nested in, until a region's
+handler takes it or the frame's own edge carries it on out of the body. Only a handler begins
+handling what arrived, and every way out of the handler ends it, as Clang begins a `catch` and ends
+it in a cleanup of the handler; a landing says whether its way out ends in such a handler, which is
+what tells the platform this frame takes the raise. A body entered as a coroutine stands in a region
+of its own, as a C++ coroutine's body stands in a `try` whose handler hands what escaped to its
+promise. A cleanup's code therefore appears once on the unwinding path however many calls inside it
 can leave, while the ordinary ways out -- falling off the end, a return, a loop exit -- still copy
 it, as below. A value whose end passes to storage or to the caller stops being owed at that point,
 so the paths built while it was owed keep ending it and those built afterwards do not.

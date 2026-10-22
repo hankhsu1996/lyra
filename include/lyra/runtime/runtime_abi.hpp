@@ -626,22 +626,19 @@ auto lyra_rt_effect_names_target(void* effect, void* target, void* out) noexcept
     -> void*;
 void lyra_rt_take_departure_if_due(void* runtime);
 
-// A departure that arrived at a landing, in the steps the platform's unwinding
-// protocol takes. A landing stops whatever the platform is carrying, and
-// receiving turns it into the departure it carries -- a run-time error is
-// settled there and becomes the departure no region may claim -- and answers
-// the target that departure names, which is what the landing tests; anything
-// else is carried on from inside the receive, unchanged. Finishing releases
-// the departure, which a landing does when it continues past its own region;
-// declining carries the one the landing holds on outward. Settling hands that
-// one to the activation a suspendable body completes instead, which is how such
-// a body is left by one: it then completes as it would by returning, and
-// whoever drives it carries the departure on. They are entries of this ABI
-// rather than calls a body makes for itself, so generated code names no
-// unwinding symbol and no raised type, and each target's own protocol stays
-// inside the runtime.
-auto lyra_rt_receive_departure(void* exception) -> void*;
-void lyra_rt_finish_departure();
+// A departure a handler took, in the steps only the runtime can take. The
+// handler has begun handling whatever the platform carried, and receiving
+// turns it into the departure it carries -- a run-time error is settled there
+// and becomes the departure no region may claim -- and answers the target that
+// departure names, which is what the handler tests; anything else is carried
+// on from inside the receive, unchanged. Declining raises the departure the
+// handler holds again, outward. Settling hands it to the activation a
+// suspendable body completes instead, which is how such a body is left by one:
+// it then completes as it would by returning, and whoever drives it carries
+// the departure on. Where handling begins and ends is the generated code's,
+// which spells it as clang does, so these name no raised type and leave the
+// extent of a handler to the code that knows it.
+auto lyra_rt_receive_departure() -> void*;
 [[noreturn]] void lyra_rt_decline_departure(void* target);
 void lyra_rt_settle_departure(void* target);
 

@@ -2,7 +2,10 @@
 
 Date: 2026-09-08 Status: accepted. Revised 2026-10-21: a refused request for memory delivers
 everything the design wrote to standard output, where it used to lose a line not yet finished,
-because standard output has no buffer of the runtime's own in front of the process's stream.
+because standard output has no buffer of the runtime's own in front of the process's stream. Revised
+again 2026-10-21: D9's error becomes a departure at the first landing that takes it, a region's or
+the activation's own, where it named a cleanup's landing too; a cleanup's landing only passes what
+arrived on, as the C++ backend's already did.
 
 ## Why this decision matters
 
@@ -84,8 +87,8 @@ R2. Such a task may stand in any body: a procedure, a task, a function, a class 
 R3. Final procedures run once the simulation has ended this way (LRM 9.2.3), except that one
     reached from inside a final procedure ends the simulation immediately, so the ones still
     queued do not.
-R4. A frame of another language is never unwound and never skipped; it ends only by returning
-    (LRM 35.9).
+R4. A frame of another language is never unwound by the design and never skipped; while the run
+    lasts it ends only by returning (LRM 35.9).
 R5. A foreign frame beneath an execution the run ended under is told that its caller will not
     continue, in the protocol's own terms. LRM 35.9 names the disabled state for a disable only,
     because that is the one stop it lets reach a foreign call and come back to it; what the
@@ -161,10 +164,11 @@ D9. A body is left in exactly two ways: it returns, or it departs. A departure i
     names, or the activation's own landing. So an activation settles the value it produced or the
     departure that reached its landing, and a condition the source language cannot express is not a
     third outcome beside them: it is a departure no region can claim, which is the shape a kill
-    already takes. It becomes one at the first landing it reaches -- a region's, a cleanup's, or the
+    already takes. It becomes one at the first landing that takes it -- a region's, or the
     activation's own -- which reports it and ends the run, and from there it travels as every other
-    departure does. The raiser cannot do this itself: the library that raises most such errors is
-    also what the compiler folds constants with, where no run exists.
+    departure does; the cleanups it passed before that ran already, and print nothing. The raiser
+    cannot do this itself: the library that raises most such errors is also what the compiler folds
+    constants with, where no run exists.
 
 D10. A task that ends the run departs from the execution that called it, and never parks it. The
      simulator exits at the call (LRM 20.2), so no statement after it runs, and the call is legal

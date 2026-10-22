@@ -532,30 +532,42 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
             if (!departure) {
               return std::unexpected(std::move(departure.error()));
             }
+            // The departure goes to the activation the body completes, which
+            // it leaves through its final suspension, as a return does. That
+            // suspension is where releasing the frame finds it stopped.
             const std::array<llvm::Value*, 1> args{*departure};
-            if (IsCoroutine()) {
-              // A coroutine hands the departure to the activation it completes
-              // and leaves through its final suspension, as a return does.
-              // That suspension is where releasing the frame finds it stopped;
-              // a frame unwound out of is found stopped wherever it last
-              // waited, and releasing it runs that wait's abandonment again.
-              CallEntry(
-                  RuntimeSymbol(RuntimeOp::kSettleDeparture),
-                  builder_.getVoidTy(), Addresses(1), args);
-              builder_.CreateBr(coro_final_);
-              return {};
-            }
             CallEntry(
-                RuntimeSymbol(lir::ControlEffectTarget::Op::kDeclineDeparture),
+                RuntimeSymbol(RuntimeOp::kSettleDeparture),
                 builder_.getVoidTy(), Addresses(1), args);
-            builder_.CreateUnreachable();
+            builder_.CreateBr(coro_final_);
+            return {};
+          },
+          [&](const lir::UnwindResumeTerm& resumed) -> diag::Result<void> {
+            auto exception = LowerOperand(resumed.exception);
+            if (!exception) {
+              return std::unexpected(std::move(exception.error()));
+            }
+            // A coroutine unwound out of is done, and says so before the
+            // unwinding leaves it, as LLVM's coroutines ask of a landing pad.
+            // Its body starts at its initial suspension, so nothing unwinds
+            // while it is first entered and no frame is left to free here.
+            if (IsCoroutine()) {
+              builder_.CreateCall(
+                  llvm::Intrinsic::getOrInsertDeclaration(
+                      &module_->Module(), llvm::Intrinsic::coro_end),
+                  {llvm::ConstantPointerNull::get(module_->Types().Ptr()),
+                   builder_.getInt1(true),
+                   llvm::ConstantTokenNone::get(module_->Context())});
+            }
+            builder_.CreateResume(builder_.CreateInsertValue(
+                llvm::PoisonValue::get(LandingPadType()), *exception, 0));
             return {};
           },
           [&](const lir::UnreachableTerm&) -> diag::Result<void> {
             builder_.CreateUnreachable();
             return {};
           },
-          [&](const lir::DepartingCallInstr& call) -> diag::Result<void> {
+          [&](const lir::InvokeTerm& call) -> diag::Result<void> {
             auto destination = ResolveDestination(call.destination);
             if (!destination) {
               return std::unexpected(std::move(destination.error()));
@@ -574,8 +586,8 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
             // where it is put.
             llvm::IRBuilder<> at(blocks_[call.returned.value]);
             StoreInto(*destination, *answered, at);
-            // A call emitted as instructions of this body departs from
-            // nowhere, so control goes on to where the call returns.
+            // A call this body realizes as its own instructions cannot be
+            // unwound out of, so control goes on to where the call returns.
             if (!builder_.GetInsertBlock()->hasTerminator()) {
               builder_.CreateBr(blocks_[call.returned.value]);
             }

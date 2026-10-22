@@ -1110,13 +1110,14 @@ auto LowerForeignImportCallStmtForm(
 
 // Closes, in `block`, the region a foreign caller's call into the design runs
 // inside around `body`, whose statements the caller has already built. The
-// frame above belongs to another language and ends only by returning, so
-// nothing may unwind into it (LRM 35.9): the region claims every departure and
-// every error, the design's or the tool's -- which is reported and stops the
-// execution where it is received -- and consumes it. Whether a departure is due
-// is answered again where control comes back to the design -- at once at a
-// `context` import's boundary, and after a plain import at the execution's next
-// suspension -- so landing it here loses nothing.
+// frame above belongs to another language, which no departure or error may
+// unwind into (LRM 35.9): the region claims every departure and every error,
+// the design's or the tool's -- which is reported and stops the execution where
+// it is received -- and consumes it. Only the release of the whole stack once
+// the run is over, which receiving raises again, passes through it. Whether a
+// departure is due is answered again where control comes back to the design --
+// at once at a `context` import's boundary, and after a plain import at the
+// execution's next suspension -- so landing it here loses nothing.
 void CloseForeignCallerRegion(
     mir::CompilationUnit& unit, CallableBindings& bindings, mir::Block& block,
     mir::Block&& body) {
