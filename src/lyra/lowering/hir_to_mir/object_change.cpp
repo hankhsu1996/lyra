@@ -1,8 +1,6 @@
 #include "lyra/lowering/hir_to_mir/object_change.hpp"
 
 #include <optional>
-#include <utility>
-#include <vector>
 
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/mir/class_ref.hpp"
@@ -17,17 +15,19 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// A call to an entry acting on an object, which is the first of `arguments`:
-// whatever reaches the object, as the source reached it.
+// A call to an entry acting on the object `object` reaches. The entry is handed
+// the value reaching it, so where that is named where it lies -- the running
+// method's own object, a handle held in a variable -- it is read.
 auto Call(
-    mir::Block& block, support::BuiltinFn fn, std::optional<mir::CallPart> part,
-    std::vector<mir::ExprId> arguments, mir::TypeId type) -> mir::ExprId {
+    const mir::CompilationUnit& unit, mir::Block& block, support::BuiltinFn fn,
+    std::optional<mir::CallPart> part, mir::ExprId object, mir::TypeId type)
+    -> mir::ExprId {
   return block.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee = mir::Direct{.target = fn, .part = part},
-                  .arguments = std::move(arguments)},
+                  .arguments = {block.AsValue(unit.types, object)}},
           .type = type});
 }
 
@@ -37,8 +37,8 @@ auto ObjectEventSourceOf(
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId object)
     -> mir::ExprId {
   return Call(
-      block, support::BuiltinFn::kObjectEventSource, std::nullopt,
-      {block.AsValue(unit.types, object)}, mir::ErasedPointer(unit.types));
+      unit, block, support::BuiltinFn::kObjectEventSource, std::nullopt, object,
+      mir::ErasedPointer(unit.types));
 }
 
 auto PropertyStorage(
@@ -70,7 +70,7 @@ auto PropertyReference(
       mir::Type{mir::VariableRefType{
           .pointee = type, .mutability = mir::Mutability::kMutable}});
   return Call(
-      block, support::BuiltinFn::kReferProperty, property, {receiver},
+      unit, block, support::BuiltinFn::kReferProperty, property, receiver,
       reference);
 }
 

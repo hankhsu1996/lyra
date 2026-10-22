@@ -203,8 +203,9 @@ each stage establishes, not how.
 - [x] Class-method argument directions beyond `input` (LRM 13.5): an instance method and a static
       method carry an `output`, `inout`, `ref`, or `const ref` formal back to the caller's actual in
       every position the LRM allows, through a direct call and through a virtual override alike. A
-      class property is legal as a ref actual and as an output one, so one object may be handed
-      another's property to read or to write. One satisfier is still rejected: an interface class
+      class property is legal as a ref actual and as an output one, whether a handle reaches its
+      object or it is a property of the object a method runs on, so one object may be handed its own
+      property or another's to read or to write. One satisfier is still rejected: an interface class
       contract that a class meets by inheriting a base implementation rather than defining one,
       where the forwarding this needs would have to hand its own completion whatever the forwarded
       call's carried back (LRM 8.26.2).
