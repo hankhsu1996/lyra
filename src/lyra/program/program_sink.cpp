@@ -56,6 +56,7 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_file_close", &lyra_rt_file_close);
   add("lyra_rt_file_getc", &lyra_rt_file_getc);
   add("lyra_rt_file_gets", &lyra_rt_file_gets);
+  add("lyra_rt_file_scan", &lyra_rt_file_scan);
   add("lyra_rt_file_error", &lyra_rt_file_error);
   add("lyra_rt_file_read", &lyra_rt_file_read);
   add("lyra_rt_file_read_memory", &lyra_rt_file_read_memory);
@@ -66,8 +67,6 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_file_eof", &lyra_rt_file_eof);
   add("lyra_rt_file_flush", &lyra_rt_file_flush);
   add("lyra_rt_file_flush_all", &lyra_rt_file_flush_all);
-  add("lyra_rt_peek_buffered", &lyra_rt_peek_buffered);
-  add("lyra_rt_advance_fd", &lyra_rt_advance_fd);
   add("lyra_rt_string_make", &lyra_rt_string_make);
   add("lyra_rt_make_print_literal_item", &lyra_rt_make_print_literal_item);
   add("lyra_rt_format", &lyra_rt_format);
@@ -622,7 +621,6 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_string_bintoa", &lyra_rt_string_bintoa);
   add("lyra_rt_string_realtoa", &lyra_rt_string_realtoa);
   add("lyra_rt_string_scan_string", &lyra_rt_string_scan_string);
-  add("lyra_rt_string_scan_file", &lyra_rt_string_scan_file);
   add("lyra_rt_string_add", &lyra_rt_string_add);
   add("lyra_rt_replicate_string", &lyra_rt_replicate_string);
   add("lyra_rt_string_concat", &lyra_rt_string_concat);

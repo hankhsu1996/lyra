@@ -4,7 +4,14 @@
 // clears the string instead (LRM 21.3.7). $fseek returns -1 when it cannot
 // reposition the file, and 0 when it can (LRM 21.3.5). The code is a value
 // like any other, so the call stands as an operand where it is read.
+//
+// A file opened for reading alone cannot be written, and STDOUT, pre-opened
+// for append (LRM 21.3.1), cannot be read, so each of those is an operation
+// that met an error. Neither can a character be pushed back onto STDOUT, since
+// no read of it could return the character (LRM 21.3.4.1).
 module Top;
+  localparam int STDOUT = 32'h8000_0001;
+
   int fd;
   int first_byte;
 
@@ -20,6 +27,17 @@ module Top;
   int after_good_seek;
   string described;
   bit read_as_operand;
+
+  string after_write_text;
+  int after_write;
+
+  int read_of_stdout;
+  string after_read_of_stdout_text;
+  int after_read_of_stdout;
+
+  int pushback_onto_stdout;
+  string after_pushback_text;
+  int after_pushback;
 
   initial begin
     fd = $fopen("errors.txt", "w");
@@ -40,7 +58,16 @@ module Top;
     after_good_seek_text = "stale";
     after_good_seek = $ferror(fd, after_good_seek_text);
     read_as_operand = $ferror(fd, described) == 0;
+
+    $fwrite(fd, "more");
+    after_write = $ferror(fd, after_write_text);
     $fclose(fd);
+
+    read_of_stdout = $fgetc(STDOUT);
+    after_read_of_stdout = $ferror(STDOUT, after_read_of_stdout_text);
+
+    pushback_onto_stdout = $ungetc(65, STDOUT);
+    after_pushback = $ferror(STDOUT, after_pushback_text);
   end
 
   final begin
@@ -71,6 +98,26 @@ module Top;
              after_good_seek_text);
     if (read_as_operand !== 1'b1)
       $fatal(1, "the code compared where it was read did not equal 0");
+
+    if (after_write === 0)
+      $fatal(1, "$ferror after writing a file opened for reading was 0");
+    if (after_write_text.len() == 0)
+      $fatal(1, "$ferror after writing a file opened for reading gave no text");
+
+    if (read_of_stdout !== -1)
+      $fatal(1, "$fgetc of STDOUT returned %0d, expected -1", read_of_stdout);
+    if (after_read_of_stdout === 0)
+      $fatal(1, "$ferror after reading STDOUT was 0, expected a code");
+    if (after_read_of_stdout_text.len() == 0)
+      $fatal(1, "$ferror after reading STDOUT gave no description");
+
+    if (pushback_onto_stdout !== -1)
+      $fatal(1, "$ungetc onto STDOUT returned %0d, expected -1",
+             pushback_onto_stdout);
+    if (after_pushback === 0)
+      $fatal(1, "$ferror after pushing back onto STDOUT was 0");
+    if (after_pushback_text.len() == 0)
+      $fatal(1, "$ferror after pushing back onto STDOUT gave no description");
     $display("All checks passed");
   end
 endmodule

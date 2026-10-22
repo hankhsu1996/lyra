@@ -29,7 +29,6 @@
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/scope_info.hpp"
-#include "lyra/runtime/stream_dispatcher.hpp"
 #include "lyra/runtime/timer.hpp"
 #include "lyra/support/scope_execution.hpp"
 #include "lyra/value/string.hpp"
@@ -51,21 +50,11 @@ auto Times(std::size_t count) -> std::string {
 
 }  // namespace
 
-auto DefaultRuntimeOptions() -> RuntimeOptions {
-  return RuntimeOptions{
-      .stream_sink = [](std::string_view text) { std::cout << text; },
-      .diagnostic_sink = [](std::string_view text) { std::cerr << text; },
-      .plusargs = {}};
-}
-
-Runtime::Runtime() : Runtime(DefaultRuntimeOptions()) {
+Runtime::Runtime() : Runtime(RuntimeOptions{}) {
 }
 
 Runtime::Runtime(RuntimeOptions options)
-    : stream_(std::move(options.stream_sink)),
-      diagnostic_(std::move(options.diagnostic_sink)),
-      dumps_(options.plusargs),
-      plusargs_(std::move(options.plusargs)) {
+    : dumps_(options.plusargs), plusargs_(std::move(options.plusargs)) {
   diagnostic_.SetContextSource([this] { return ReportContext(); });
 }
 
@@ -119,10 +108,8 @@ auto Runtime::Run() -> int {
   RunAsLanding(*this, [this] { dumps_.End(); });
   // Owed because the run is over, whichever way it ended: LRM 16.3 asks a tool
   // with no assertion API to report immediate cover results at the end of
-  // simulation, and a record the design left open is written out rather than
-  // dropped.
+  // simulation.
   ReportCoverage();
-  stream_.Drain();
   return diagnostic_.ReportedFatal() || tool_failed_ ? 1 : 0;
 }
 
@@ -198,7 +185,7 @@ void Runtime::ReportDesignError(const base::DiagMessage& message) {
 
 void Runtime::ReportToolFailure(std::string_view message) {
   tool_failed_ = true;
-  diagnostic_.Line(std::format("error: {}", message));
+  DiagnosticDispatcher::Line(std::format("error: {}", message));
   RequestToolStop();
 }
 
@@ -220,7 +207,7 @@ void Runtime::ReportSimulationControl(
   if (selected == 2) {
     line += std::format(", {:.3f}s of processor time", ProcessorSeconds());
   }
-  diagnostic_.Line(line);
+  DiagnosticDispatcher::Line(line);
 }
 
 auto Runtime::ReportContext() const -> DiagnosticDispatcher::Context {
@@ -272,22 +259,21 @@ void Runtime::ReportUnsettledSlot(std::span<const NotedProcedure> ran) {
                   " in '{}'",
                   std::string_view{
                       one.procedure.scope->HierarchicalPath().View()});
-    diagnostic_.Line(
+    DiagnosticDispatcher::Line(
         std::format(
             "{}{}note: this procedure{} ran {} in the last {} passes",
             written_at, written_at.empty() ? "" : ": ", where, Times(one.runs),
             kNotedRegionPasses));
   }
   if (named < counted.size()) {
-    diagnostic_.Line(
+    DiagnosticDispatcher::Line(
         std::format("note: and {} more procedures", counted.size() - named));
   }
 }
 
 void Runtime::ReportCoverage() {
   for (const std::string& line : coverage_.Report()) {
-    stream_.Append(line);
-    stream_.FinishRecord(true);
+    std::cout << line << '\n';
   }
 }
 

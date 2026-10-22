@@ -32,7 +32,6 @@
 #include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/running_state.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
-#include "lyra/runtime/stream_dispatcher.hpp"
 #include "lyra/runtime/time_slot.hpp"
 #include "lyra/runtime/value_dumps.hpp"
 #include "lyra/value/format.hpp"
@@ -46,14 +45,10 @@ class RuntimeProcess;
 class Scope;
 
 struct RuntimeOptions {
-  StreamDispatcher::StreamSink stream_sink;
-  DiagnosticDispatcher::DiagnosticSink diagnostic_sink;
   // LRM 21.6 command-line plusarg tokens with the `+` prefix already
   // stripped, in the order they appeared on the host command line.
   std::vector<std::string> plusargs;
 };
-
-[[nodiscard]] auto DefaultRuntimeOptions() -> RuntimeOptions;
 
 // The kinds of process that start at time zero. They start in turn, in the
 // order written here, each turn once the one before it has run to its first
@@ -79,7 +74,7 @@ inline constexpr std::size_t kStartTurnCount =
     static_cast<std::size_t>(StartKind::kTriggeredProcedure) + 1;
 
 // The concrete simulation runtime. Owns every mutable piece of simulator
-// state -- time, region queues, execution ambient, I/O sinks, the attached
+// state -- time, region queues, execution ambient, the file table, the attached
 // design, the executions no process started -- and drives the resolve walk and
 // the run.
 // Generated code sees only the `RuntimeEffects` view; the host boundary here
@@ -281,9 +276,8 @@ class Runtime final : public RuntimeEffects {
   // simulation where it offers no assertion API to ask for them on demand.
   void ReportCoverage();
 
-  StreamDispatcher stream_;
   DiagnosticDispatcher diagnostic_;
-  FileTable files_{stream_};
+  FileTable files_;
   // Built from the plusargs before they are moved into their own source.
   ValueDumps dumps_;
   PlusArgsSource plusargs_;

@@ -233,8 +233,8 @@ still queued do not run.
 
 The one ending that runs none of them is the tool being unable to carry the run on: a `final`
 procedure is design code, and the state it would read is already known to be wrong. What the engine
-owes either way -- the immediate cover report (LRM 16.3), the output drain, the exit status -- is
-owed because the run is over, not because of how it ended.
+owes either way -- the immediate cover report (LRM 16.3), the flush of what the design wrote, the
+exit status -- is owed because the run is over, not because of how it ended.
 
 A run-time error of the design is not a separate ending. It is reported where the activation it left
 lands, and asks for the ending `$fatal` asks for, so the same tail runs and the engine sees a

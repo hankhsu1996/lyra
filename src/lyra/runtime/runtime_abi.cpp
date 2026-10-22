@@ -1332,23 +1332,25 @@ auto EmplaceCompletion(
   return out;
 }
 
-// The matched-conversion count, how far the parse advanced, and one value per
-// conversion (LRM 21.3.4.3). Each value starts as the prototype the call
-// supplied and is parsed in place, so a conversion that never ran carries its
-// prototype back and the caller's own destination stays as it was. A scan
-// destination is an integral or a string and lowering rejects anything else,
-// so a value of any other type reaching here is a compiler bug. An integral
-// one is parsed in its planes, which are laid back out in the value once the
-// scan is over.
+// Where a scan's completion puts its first parsed value: the matched-conversion
+// count leads it.
+constexpr std::size_t kScanFirstValue = 1;
+
+// The matched-conversion count and one value per conversion (LRM 21.3.4.3).
+// Each value starts as the prototype the call supplied and is parsed in place,
+// so a conversion that never ran carries its prototype back and the caller's
+// own destination stays as it was. A scan destination is an integral or a
+// string and lowering rejects anything else, so a value of any other type
+// reaching here is a compiler bug. An integral one is parsed in its planes,
+// which are laid back out in the value once the scan is over.
 auto EmplaceScan(
-    void* out, const value::TupleType& type, const value::String& input,
-    const value::String& format, value::detail::NullByte null_byte,
-    const void* prototypes, const value::TupleType& prototypes_type) -> void* {
+    void* out, const value::TupleType& type, value::ScanInput& input,
+    const value::String& format, const void* prototypes,
+    const value::TupleType& prototypes_type) -> void* {
   const std::span<const value::TupleComponent> stated =
       prototypes_type.Components();
   std::vector<value::AnyValue> components;
-  components.reserve(stated.size() + 2);
-  components.emplace_back();
+  components.reserve(stated.size() + 1);
   components.emplace_back();
   for (std::size_t i = 0; i < stated.size(); ++i) {
     components.push_back(
@@ -1358,7 +1360,7 @@ auto EmplaceScan(
   std::deque<value::WrittenWords> parsed;
   std::vector<value::ScanTarget> targets;
   targets.reserve(stated.size());
-  for (std::size_t i = 2; i < components.size(); ++i) {
+  for (std::size_t i = kScanFirstValue; i < components.size(); ++i) {
     value::AnyValue& component = components[i];
     if (const value::IntegralValueType* integral =
             component.Type().AsIntegral()) {
@@ -1373,17 +1375,15 @@ auto EmplaceScan(
     }
   }
 
-  const value::ScanCount count =
-      value::detail::ScanImpl(input, format, null_byte, targets);
+  const std::int64_t items = value::detail::ScanImpl(input, format, targets);
   auto words = parsed.cbegin();
-  for (std::size_t i = 2; i < components.size(); ++i) {
+  for (std::size_t i = kScanFirstValue; i < components.size(); ++i) {
     if (components[i].Type().AsIntegral() != nullptr) {
       words->StoreTo(components[i].Bytes());
       ++words;
     }
   }
-  components[0] = Held(value::Integer::FromInt(count.items));
-  components[1] = Held(value::Int::FromInt(count.consumed));
+  components[0] = Held(value::Integer::FromInt(items));
   return EmplaceCompletion(out, type, std::move(components));
 }
 
@@ -2178,6 +2178,17 @@ auto lyra_rt_file_gets(
       static_cast<FileTable*>(files)->Gets(fd));
 }
 
+auto lyra_rt_file_scan(
+    void* files, std::int64_t fd, const void* format, const void* prototypes,
+    const void* prototypes_type, const void* answer_type, void* out) -> void* {
+  lyra::runtime::FileScanInput source =
+      static_cast<FileTable*>(files)->ScanInputOf(fd);
+  return lyra::runtime::EmplaceScan(
+      out, lyra::runtime::TupleTypeAt(answer_type), source,
+      Read<String>(format), prototypes,
+      lyra::runtime::TupleTypeAt(prototypes_type));
+}
+
 auto lyra_rt_file_error(
     void* files, std::int64_t fd, const void* answer_type, void* out) -> void* {
   return lyra::runtime::EmplaceBoth(
@@ -2252,14 +2263,6 @@ void lyra_rt_file_flush(void* files, std::int64_t descriptor) {
 
 void lyra_rt_file_flush_all(void* files) {
   static_cast<FileTable*>(files)->FlushAll();
-}
-
-auto lyra_rt_peek_buffered(void* files, std::int64_t fd, void* out) -> void* {
-  return Emplace(out, static_cast<FileTable*>(files)->PeekBuffered(fd));
-}
-
-void lyra_rt_advance_fd(void* files, std::int64_t fd, std::int64_t count) {
-  static_cast<FileTable*>(files)->AdvanceFd(fd, count);
 }
 
 auto lyra_rt_cancellation_for(void* files, std::int64_t descriptor, void* out)
@@ -4335,19 +4338,11 @@ void lyra_rt_string_realtoa(void* value, const void* number) {
 auto lyra_rt_string_scan_string(
     const void* input, const void* format, const void* prototypes,
     const void* prototypes_type, const void* answer_type, void* out) -> void* {
+  lyra::value::StringScanInput source(Read<String>(input).View());
   return lyra::runtime::EmplaceScan(
-      out, lyra::runtime::TupleTypeAt(answer_type), Read<String>(input),
-      Read<String>(format), lyra::value::detail::NullByte::kWhiteSpace,
-      prototypes, lyra::runtime::TupleTypeAt(prototypes_type));
-}
-
-auto lyra_rt_string_scan_file(
-    const void* input, const void* format, const void* prototypes,
-    const void* prototypes_type, const void* answer_type, void* out) -> void* {
-  return lyra::runtime::EmplaceScan(
-      out, lyra::runtime::TupleTypeAt(answer_type), Read<String>(input),
-      Read<String>(format), lyra::value::detail::NullByte::kOrdinary,
-      prototypes, lyra::runtime::TupleTypeAt(prototypes_type));
+      out, lyra::runtime::TupleTypeAt(answer_type), source,
+      Read<String>(format), prototypes,
+      lyra::runtime::TupleTypeAt(prototypes_type));
 }
 
 auto lyra_rt_string_add(const void* lhs, const void* rhs, void* out) -> void* {

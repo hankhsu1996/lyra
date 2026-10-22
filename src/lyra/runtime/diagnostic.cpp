@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <format>
 #include <functional>
+#include <iostream>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -58,9 +59,12 @@ auto DiagnosticDispatcher::CountKeyHash::operator()(
   return place_hash ^ (severity_hash << 1U);
 }
 
-DiagnosticDispatcher::DiagnosticDispatcher(
-    DiagnosticSink sink, std::uint32_t rate_limit)
-    : sink_(std::move(sink)), rate_limit_(rate_limit) {
+DiagnosticDispatcher::DiagnosticDispatcher(std::uint32_t rate_limit)
+    : rate_limit_(rate_limit) {
+}
+
+void DiagnosticDispatcher::Write(std::string_view text) {
+  std::cerr << text;
 }
 
 void DiagnosticDispatcher::SetContextSource(ContextSource context) {
@@ -101,7 +105,7 @@ void DiagnosticDispatcher::Report(
 }
 
 void DiagnosticDispatcher::Line(std::string_view line) {
-  sink_(std::format("{}\n", line));
+  Write(std::format("{}\n", line));
 }
 
 auto DiagnosticDispatcher::ReportedFatal() const -> bool {
@@ -128,7 +132,7 @@ void DiagnosticDispatcher::Emit(
     if (count >= rate_limit_) {
       if (count == rate_limit_) {
         ++count;
-        sink_(
+        Write(
             std::format(
                 "{}{}note: further {} reports from here are not shown after "
                 "{} of them\n",
@@ -149,7 +153,7 @@ void DiagnosticDispatcher::Emit(
   if (context) {
     text += std::format("note: {}\n", context->where);
   }
-  sink_(text);
+  Write(text);
 }
 
 }  // namespace lyra::runtime

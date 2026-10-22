@@ -1390,13 +1390,15 @@ the detail lives in the entry itself.
   primitives, and every ending composes them; a design's run-time error is a report Lyra writes for
   the design rather than a failure crossing the engine. `final` procedures run when the simulation
   reached its end -- exhaustion, the design asking, or such an error -- and not when the tool could
-  not carry on, while the cover report, the output drain and the exit status are owed either way.
-  `$stop` ends the run where nothing can resume it and the Table 20-1 diagnostic is the whole of
-  what separates it from `$finish`; that diagnostic prints where the task executes and carries no
-  severity. The simulation's boundary follows the elaboration phases, so a time-zero initializer's
-  error is a run-time error rather than an escape. Completes the reversal of `activation.md`
-  invariant 2's third alternative. Catching the throw at the engine loop, skipping `final` after
-  `$stop`, `$stop` as a failure, a fifth severity, and aborting at the raise site are rejected.
+  not carry on, while the cover report, the flush of what the design wrote and the exit status are
+  owed either way. `$stop` ends the run where nothing can resume it and the Table 20-1 diagnostic is
+  the whole of what separates it from `$finish`; that diagnostic prints where the task executes and
+  carries no severity. The simulation's boundary follows the elaboration phases, so a time-zero
+  initializer's error is a run-time error rather than an escape. Completes the reversal of
+  `activation.md` invariant 2's third alternative. Catching the throw at the engine loop, skipping
+  `final` after `$stop`, `$stop` as a failure, a fifth severity, and aborting at the raise site are
+  rejected. Revised 2026-10-21: a refused request for memory delivers everything the design wrote to
+  standard output.
 - [deferred-report-queue](deferred-report-queue.md) -- a pending report stays in the region's own
   list and withdrawal is a refusal to act, so it records the sources that can withdraw it and acts
   only if all still stand: two `disable` targets through the accepted cancellation-source

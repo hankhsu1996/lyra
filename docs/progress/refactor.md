@@ -468,9 +468,9 @@ enough to warrant its own focused review.
 
   Sub-items, by family:
   - Pure value-layer (no receiver, render as `lyra::value::Name(...)`):
-    - [x] `$sscanf` / `$fscanf`: a pure value-layer scan plus `files`-side `PeekBuffered` /
-          `AdvanceFd` primitives for the file form. The MIR shape of the two SV system tasks differs
-          by primitive composition, not by an enum tag on a unified call.
+    - [x] `$sscanf`: a pure value-layer scan of a string. `$fscanf` reads the descriptor's stream,
+          so it is a `files` method listed below; the two are distinct calls, not an enum tag on a
+          unified call.
     - [x] `$sformat` / `$sformatf` / `$swrite[bho]?`: route to the existing `Format` method (the one
           print already uses) returning a string; for `$sformat` the call result is assigned to the
           output lvalue. The dedicated `LyraSFormat` runtime entry retires.
@@ -487,11 +487,11 @@ enough to warrant its own focused review.
           non-zero exit code per LRM 20.10.
   - File-IO subsystem (`services.Files()`):
     - [x] `$fopen` / `$fclose` / `$fread` / `$fseek` / `$rewind` / `$ftell` / `$feof` / `$ferror` /
-          `$fflush` / `$fgetc` / `$ungetc` / `$fgets`: each lowers to a `BuiltinFnCallee` method on
-          the `files` broker (`files.Open`, `files.Close`, `files.Read`, ...). The runtime
-          free-function `Lyra*` entries are retired; the `FileTable` methods are the only surface.
-          `$fwrite` already rides the print pipeline (`kFormat` + `kWrite`); `$fputc` is not yet
-          wired.
+          `$fflush` / `$fgetc` / `$ungetc` / `$fgets` / `$fscanf`: each lowers to a
+          `BuiltinFnCallee` method on the `files` broker (`files.Open`, `files.Close`, `files.Read`,
+          ...). The runtime free-function `Lyra*` entries are retired; the `FileTable` methods are
+          the only surface. `$fwrite` already rides the print pipeline (`kFormat` + `kWrite`);
+          `$fputc` is not yet wired.
   - Engine forwarders on `services`:
     - [x] `$time` / `$stime` / `$realtime`: each lowers to a `FreeFnCallee` against the matching
           runtime entry with the engine handle and the calling scope's unit power as ordinary

@@ -879,16 +879,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = ValueFunction("ScanString"),
           .operands = {kMachine, kMachine, kTyped},
           .answer_told = AnswerTold::kAnswerType};
-    case BuiltinFn::kScanFile:
-      return {
-          .name = "scan_file",
-          .declaration = ValueFunction("ScanFile"),
-          .operands = {kMachine, kMachine, kTyped},
-          .answer_told = AnswerTold::kAnswerType};
-    case BuiltinFn::kPeekBuffered:
-      return {.name = "peek_buffered", .declaration = Method{"PeekBuffered"}};
-    case BuiltinFn::kAdvanceFd:
-      return {.name = "advance_fd", .declaration = Method{"AdvanceFd"}};
     case BuiltinFn::kFileOpen:
       return {.name = "file_open", .declaration = Method{"Open"}};
     case BuiltinFn::kFileOpenMode:
@@ -903,6 +893,14 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "file_gets",
           .declaration = Method{"Gets"},
+          .answer_told = AnswerTold::kAnswerType};
+    // The file table, the descriptor, the format, and the value each
+    // conversion starts from, a tuple crossing with its type (LRM 21.3.4.3).
+    case BuiltinFn::kFileScan:
+      return {
+          .name = "file_scan",
+          .declaration = Method{"Scan"},
+          .operands = {kMachine, kMachine, kMachine, kTyped},
           .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kFileRead:
       return {

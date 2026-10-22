@@ -1,6 +1,10 @@
 // $feof returns a nonzero value once end of file has been detected reading a
 // descriptor, and zero otherwise. Reading the last byte a file holds does not
 // detect it; the read that finds nothing left does (LRM 21.3.8, 21.3.4.1).
+//
+// A seek that cannot reposition the file leaves it where it was (LRM 21.3.5),
+// end of file included; one that does sets the position of the next read, so
+// nothing has been detected there yet.
 module Top;
   int fd;
   int at_open;
@@ -8,6 +12,9 @@ module Top;
   int after_last_byte;
   int past_the_end;
   int after_eof;
+  int failed_seek;
+  int after_failed_seek;
+  int after_seek;
 
   initial begin
     fd = $fopen("eof.txt", "w");
@@ -20,6 +27,10 @@ module Top;
     after_last_byte = $feof(fd);
     past_the_end = $fgetc(fd);
     after_eof = $feof(fd);
+    failed_seek = $fseek(fd, -1, 0);
+    after_failed_seek = $feof(fd);
+    void'($fseek(fd, 0, 0));
+    after_seek = $feof(fd);
     $fclose(fd);
   end
 
@@ -35,6 +46,14 @@ module Top;
       $fatal(1, "$fgetc past the end returned %0d, expected -1", past_the_end);
     if (after_eof === 0)
       $fatal(1, "$feof after end of file was 0, expected a nonzero value");
+    if (failed_seek !== -1)
+      $fatal(1, "$fseek before the file start returned %0d, expected -1",
+             failed_seek);
+    if (after_failed_seek === 0)
+      $fatal(1, "$feof after a seek that failed was 0, expected a nonzero value");
+    if (after_seek !== 0)
+      $fatal(1, "$feof after a seek to the start was %0d, expected 0",
+             after_seek);
     $display("All checks passed");
   end
 endmodule

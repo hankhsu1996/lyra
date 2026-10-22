@@ -11,7 +11,6 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
-#include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/string.hpp"
 
@@ -28,78 +27,9 @@ namespace {
   return ch >= '0' && ch <= '9';
 }
 
-// The absence of a byte: what a read past the end of the input yields, and
-// what an empty pushback slot holds. One spelling for both, because they are
-// the same fact read at two moments.
-constexpr int kNoByte = -1;
+constexpr int kNoByte = ScanInput::kNoByte;
 
-// The byte stream the format walker reads through. The parser looks at most
-// one byte ahead of what it has accepted, so a single-byte pushback slot is
-// the whole rewind capability it needs. Which bytes separate input fields is
-// a property of the scan the caller asked for (LRM 21.3.4.3(a)), so the
-// stream answers that question rather than a free helper.
-class ScanCursor {
- public:
-  ScanCursor(std::string_view buf, detail::NullByte null_byte)
-      : buf_(buf), null_byte_(null_byte) {
-  }
-
-  auto Peek() -> int {
-    if (pushback_ != kNoByte) {
-      return pushback_;
-    }
-    if (cursor_ >= buf_.size()) {
-      return kNoByte;
-    }
-    return static_cast<unsigned char>(buf_[cursor_]);
-  }
-
-  auto Consume() -> int {
-    if (pushback_ != kNoByte) {
-      const int byte = pushback_;
-      pushback_ = kNoByte;
-      return byte;
-    }
-    if (cursor_ >= buf_.size()) {
-      return kNoByte;
-    }
-    const int byte = static_cast<unsigned char>(buf_[cursor_]);
-    ++cursor_;
-    return byte;
-  }
-
-  void Unget(int byte) {
-    if (pushback_ != kNoByte) {
-      throw InternalError(
-          "ScanCursor::Unget: pushback slot already holds a byte; scanner "
-          "attempted to Unget twice without an intervening Consume");
-    }
-    if (byte == kNoByte) {
-      return;
-    }
-    pushback_ = byte;
-  }
-
-  [[nodiscard]] auto IsWhitespace(int ch) const -> bool {
-    if (ch == '\0') {
-      return null_byte_ == detail::NullByte::kWhiteSpace;
-    }
-    return IsAsciiWhitespace(ch);
-  }
-
-  // Offset of the next unread byte, ignoring any pending pushback.
-  [[nodiscard]] auto Position() const -> std::size_t {
-    return cursor_;
-  }
-
- private:
-  std::string_view buf_;
-  detail::NullByte null_byte_;
-  std::size_t cursor_ = 0;
-  int pushback_ = kNoByte;
-};
-
-void SkipSourceWhitespace(ScanCursor& src) {
+void SkipSourceWhitespace(ScanInput& src) {
   while (true) {
     const int ch = src.Peek();
     if (ch == kNoByte || !src.IsWhitespace(ch)) {
@@ -147,7 +77,7 @@ struct DecimalResult {
 // (with `_` separators) or a single x/X/z/Z/? that fills the entire dest.
 // `max_width == 0` means no limit; non-zero caps the digit / `_` chars
 // consumed (C-scanf convention: the sign does not count toward the width).
-[[nodiscard]] auto ReadDecimal(ScanCursor& src, std::size_t max_width)
+[[nodiscard]] auto ReadDecimal(ScanInput& src, std::size_t max_width)
     -> std::optional<DecimalResult> {
   SkipSourceWhitespace(src);
   int ch = src.Peek();
@@ -203,7 +133,7 @@ struct DecimalResult {
 // are digits of the radix, an x, a z or `?` standing for a whole digit, or the
 // `_` that separates digits. A run holding no digit at all is no value.
 [[nodiscard]] auto ReadDigits(
-    ScanCursor& src, std::size_t max_width, DigitRadix radix)
+    ScanInput& src, std::size_t max_width, DigitRadix radix)
     -> std::optional<std::string> {
   SkipSourceWhitespace(src);
   std::string run;
@@ -228,7 +158,7 @@ struct DecimalResult {
 
 // Standard scanf `%s`: skip leading whitespace, then read non-whitespace
 // chars until whitespace or EOF.
-[[nodiscard]] auto ReadString(ScanCursor& src, std::size_t max_width)
+[[nodiscard]] auto ReadString(ScanInput& src, std::size_t max_width)
     -> std::optional<std::string> {
   SkipSourceWhitespace(src);
   std::string buf;
@@ -251,7 +181,7 @@ struct DecimalResult {
 // extension (read N bytes into a char array) needs a string-slot output
 // shape, which is a separate feature; reject it here so the gap stays
 // visible.
-[[nodiscard]] auto ReadChar(ScanCursor& src, std::size_t max_width)
+[[nodiscard]] auto ReadChar(ScanInput& src, std::size_t max_width)
     -> std::optional<unsigned char> {
   if (max_width > 1U) {
     throw SimulationError(
@@ -293,7 +223,7 @@ void WriteChar(unsigned char ch, const IntegralView& dest) {
 }
 
 [[nodiscard]] auto ScanFromSource(
-    ScanCursor& src, std::string_view fmt, std::span<const ScanTarget> targets)
+    ScanInput& src, std::string_view fmt, std::span<const ScanTarget> targets)
     -> std::int32_t {
   std::int32_t items = 0;
   std::size_t target_ix = 0;
@@ -474,15 +404,43 @@ void WriteChar(unsigned char ch, const IntegralView& dest) {
 
 }  // namespace
 
+auto StringScanInput::Peek() -> int {
+  if (next_ >= text_.size()) {
+    return kNoByte;
+  }
+  return static_cast<unsigned char>(text_[next_]);
+}
+
+auto StringScanInput::Consume() -> int {
+  const int byte = Peek();
+  if (byte != kNoByte) {
+    ++next_;
+  }
+  return byte;
+}
+
+void StringScanInput::Unget(int byte) {
+  if (next_ == 0 || static_cast<unsigned char>(text_[next_ - 1]) != byte) {
+    throw InternalError(
+        "a scan ungot a byte it had not just consumed -- please report this "
+        "as a bug");
+  }
+  --next_;
+}
+
+auto ScanInput::IsWhitespace(int byte) const -> bool {
+  if (byte == '\0') {
+    return null_byte_ == NullByte::kWhiteSpace;
+  }
+  return IsAsciiWhitespace(byte);
+}
+
 namespace detail {
 
 auto ScanImpl(
-    const value::String& input, const value::String& format, NullByte null_byte,
-    std::span<const ScanTarget> targets) -> ScanCount {
-  ScanCursor src(input.View(), null_byte);
-  const std::int32_t items = ScanFromSource(src, format.View(), targets);
-  return ScanCount{
-      .items = items, .consumed = static_cast<std::int64_t>(src.Position())};
+    ScanInput& input, const value::String& format,
+    std::span<const ScanTarget> targets) -> std::int64_t {
+  return ScanFromSource(input, format.View(), targets);
 }
 
 }  // namespace detail

@@ -23,7 +23,6 @@
 
 namespace lyra::runtime {
 
-class StreamDispatcher;
 class DiagnosticDispatcher;
 class FileTable;
 class PlusArgsSource;
@@ -46,7 +45,6 @@ class ValueDumps;
 // split without a vtable.
 class RuntimeEffects {
  public:
-  auto Stream() -> StreamDispatcher&;
   auto Diagnostic() -> DiagnosticDispatcher&;
   auto Files() -> FileTable&;
   auto PlusArgs() -> PlusArgsSource&;

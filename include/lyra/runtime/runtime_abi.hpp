@@ -128,6 +128,11 @@ auto lyra_rt_file_ungetc(
 // as its elements with its type beside them.
 auto lyra_rt_file_gets(
     void* files, std::int64_t fd, const void* answer_type, void* out) -> void*;
+// LRM 21.3.4.3 `$fscanf`, parsing from the descriptor's stream: the completion
+// is `$sscanf`'s, the count and one value per prototype.
+auto lyra_rt_file_scan(
+    void* files, std::int64_t fd, const void* format, const void* prototypes,
+    const void* prototypes_type, const void* answer_type, void* out) -> void*;
 auto lyra_rt_file_error(
     void* files, std::int64_t fd, const void* answer_type, void* out) -> void*;
 auto lyra_rt_file_read(
@@ -146,13 +151,6 @@ auto lyra_rt_file_tell(void* files, std::int64_t fd, void* out) -> void*;
 auto lyra_rt_file_eof(void* files, std::int64_t fd, void* out) -> void*;
 void lyra_rt_file_flush(void* files, std::int64_t descriptor);
 void lyra_rt_file_flush_all(void* files);
-
-// The bytes a scan may read without consuming them, and the commit of how many
-// it used (LRM 21.3.4.3). A scan parses out of what it can see and only then
-// says how far it got, so looking and consuming are two operations rather than
-// one read that has to guess the length first.
-auto lyra_rt_peek_buffered(void* files, std::int64_t fd, void* out) -> void*;
-void lyra_rt_advance_fd(void* files, std::int64_t fd, std::int64_t count);
 
 // The joint cancel state of the channels a descriptor names (LRM 21.3.2), built
 // in storage the caller gives. A deferred write snapshots it so the write
@@ -1234,14 +1232,11 @@ void lyra_rt_string_bintoa(
     bool number_is_signed, bool number_is_four_state);
 void lyra_rt_string_realtoa(void* value, const void* number);
 
-// LRM 21.3.4.3 `$sscanf` / `$fscanf`, resolved through the domain of the text
-// they read. `prototypes` is the product of one value per conversion, stating
-// the shape each parses into; the completion leads with the matched-conversion
-// count and how far the parse advanced, then carries one value per prototype.
+// LRM 21.3.4.3 `$sscanf`, resolved through the domain of the text it reads.
+// `prototypes` is the product of one value per conversion, stating the shape
+// each parses into; the completion leads with the matched-conversion count,
+// then carries one value per prototype.
 auto lyra_rt_string_scan_string(
-    const void* input, const void* format, const void* prototypes,
-    const void* prototypes_type, const void* answer_type, void* out) -> void*;
-auto lyra_rt_string_scan_file(
     const void* input, const void* format, const void* prototypes,
     const void* prototypes_type, const void* answer_type, void* out) -> void*;
 

@@ -73,7 +73,6 @@
 #include "lyra/runtime/sequence.hpp"                // IWYU pragma: keep
 #include "lyra/runtime/sim_time.hpp"                // IWYU pragma: keep
 #include "lyra/runtime/simulation_entry.hpp"        // IWYU pragma: keep
-#include "lyra/runtime/stream_dispatcher.hpp"       // IWYU pragma: keep
 #include "lyra/runtime/suspension.hpp"              // IWYU pragma: keep
 #include "lyra/runtime/synchronization_object.hpp"  // IWYU pragma: keep
 #include "lyra/runtime/trigger.hpp"                 // IWYU pragma: keep

@@ -2,6 +2,10 @@
 // next $fgetc on that descriptor returns that character, and the file itself
 // is unchanged. Repositioning the file with $fseek or $rewind cancels any
 // pushback that has not been read (LRM 21.3.4.1, 21.3.5).
+//
+// A character pushed back after end of file is the next one read, so the
+// descriptor is no longer at its end: $feof answers zero until a read finds
+// nothing left again (LRM 21.3.8).
 module Top;
   int fd;
   int pushback_result;
@@ -14,6 +18,11 @@ module Top;
 
   int after_seek;
   int after_rewind;
+
+  int at_end_before_pushback;
+  int at_end_after_pushback;
+  int pushed_after_end;
+  int at_end_again;
 
   initial begin
     fd = $fopen("pushback.txt", "w");
@@ -47,6 +56,18 @@ module Top;
     void'($rewind(fd));
     after_rewind = $fgetc(fd);
     $fclose(fd);
+
+    fd = $fopen("pushback.txt", "r");
+    void'($fgetc(fd));
+    void'($fgetc(fd));
+    void'($fgetc(fd));
+    at_end_before_pushback = $feof(fd);
+    void'($ungetc(89, fd));
+    at_end_after_pushback = $feof(fd);
+    pushed_after_end = $fgetc(fd);
+    void'($fgetc(fd));
+    at_end_again = $feof(fd);
+    $fclose(fd);
   end
 
   final begin
@@ -74,6 +95,17 @@ module Top;
     if (after_rewind !== 65)
       $fatal(1, "$rewind left the pushback in place: read %0d, expected 65",
              after_rewind);
+
+    if (at_end_before_pushback === 0)
+      $fatal(1, "$feof after reading past the end was 0");
+    if (at_end_after_pushback !== 0)
+      $fatal(1, "$feof after a pushback at the end was %0d, expected 0",
+             at_end_after_pushback);
+    if (pushed_after_end !== 89)
+      $fatal(1, "the byte pushed back at the end read as %0d, expected 89",
+             pushed_after_end);
+    if (at_end_again === 0)
+      $fatal(1, "$feof after reading past the end again was 0");
     $display("All checks passed");
   end
 endmodule
