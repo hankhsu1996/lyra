@@ -46,6 +46,8 @@ auto RuntimeClassCppType(support::RuntimeClass klass) -> std::string_view {
       return "lyra::runtime::GcObject";
     case support::RuntimeClass::kProcess:
       return "lyra::runtime::RuntimeProcess";
+    case support::RuntimeClass::kSynchronizationObject:
+      return "lyra::runtime::SynchronizationObject";
   }
   throw InternalError("backend::cpp: unknown runtime class");
 }
@@ -243,7 +245,6 @@ void WriteOne(TargetText& out, const CppType& spelling) {
             out += ")>";
           },
           [&](const mir::ChandleType&) { out += "lyra::value::Chandle"; },
-          [&](const mir::EventType&) { out += "lyra::runtime::NamedEvent"; },
           [&](const mir::RealType&) { out += "lyra::value::Real"; },
           [&](const mir::ShortRealType&) { out += "lyra::value::ShortReal"; },
           [&](const mir::UnpackedArrayType& ua) {
@@ -548,7 +549,6 @@ auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [&](const mir::MachineFloatType&) { return reaches_nothing(); },
           [&](const mir::MachineArrayType&) { return reaches_nothing(); },
           [&](const mir::MachineFunctionType&) { return reaches_nothing(); },
-          [&](const mir::EventType&) { return reaches_nothing(); },
           [&](const mir::RealType&) { return reaches_nothing(); },
           [&](const mir::ShortRealType&) { return reaches_nothing(); },
           [&](const mir::ChandleType&) { return reaches_nothing(); },
@@ -634,7 +634,6 @@ auto ReceiverSpellingAsCpp(
               [&](const mir::MachineFunctionType&) {
                 return holds_no_object();
               },
-              [&](const mir::EventType&) { return holds_no_object(); },
               [&](const mir::RealType&) { return holds_no_object(); },
               [&](const mir::ShortRealType&) { return holds_no_object(); },
               [&](const mir::ChandleType&) { return holds_no_object(); },
@@ -752,7 +751,6 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           [&](const mir::MachineArrayType& t) { by_naming_itself(t); },
           [&](const mir::MachineFunctionType& t) { by_naming_itself(t); },
           [&](const mir::ChandleType& t) { by_naming_itself(t); },
-          [&](const mir::EventType& t) { by_naming_itself(t); },
           [&](const mir::RealType& t) { by_naming_itself(t); },
           [&](const mir::ShortRealType& t) { by_naming_itself(t); },
           [&](const mir::UnpackedArrayType& t) { by_naming_itself(t); },

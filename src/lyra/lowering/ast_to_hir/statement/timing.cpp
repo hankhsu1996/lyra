@@ -39,10 +39,10 @@ auto LowerEventEdge(slang::ast::EdgeKind kind) -> support::EventEdge {
   throw InternalError("LowerEventEdge: unknown slang EdgeKind value");
 }
 
-// LRM 9.4.2.3: the `iff` qualifier, which the change must hold for to be an
+// LRM 9.4.2.3: the `iff` qualifier, which an occurrence must hold for to be an
 // event. What it reads is no part of the wait's sensitivity -- the standard
-// evaluates it where the watched expression moves and not when the qualifier
-// itself does, so a change in the qualifier alone reaches nothing.
+// evaluates it where the occurrence happens and not when the qualifier itself
+// moves, so a change in the qualifier alone reaches nothing.
 auto LowerEventCondition(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::SignalEventControl& sig)
@@ -55,18 +55,11 @@ auto LowerEventCondition(
   return std::optional<hir::Expr>{*std::move(cond_or)};
 }
 
-auto AddEventCondition(WalkFrame frame, std::optional<hir::Expr> condition)
-    -> std::optional<hir::ExprId> {
-  if (!condition.has_value()) {
-    return std::nullopt;
-  }
-  return frame.Exprs().Add(*std::move(condition));
-}
-
-auto LowerSignalEventTrigger(
+// What a value entry waits for: a change in the value of its operand.
+auto LowerValueChange(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::SignalEventControl& sig, diag::SourceSpan span)
-    -> diag::Result<hir::EventTrigger> {
+    -> diag::Result<hir::ValueChange> {
   auto expr_or = proc.LowerExpr(sig.expr, frame);
   if (!expr_or) return std::unexpected(std::move(expr_or.error()));
 
@@ -84,86 +77,55 @@ auto LowerSignalEventTrigger(
         "an event control on a value of this type is not yet supported");
   }
 
-  const auto edge_kind = LowerEventEdge(sig.edge);
-
   // What the expression reads is what makes the wait a candidate; the edge
   // belongs to the expression, whose value decides.
   auto cells = CellsOfWaitedExpression(proc, frame, sig.expr);
   if (!cells) return std::unexpected(std::move(cells.error()));
 
-  auto condition = LowerEventCondition(proc, frame, sig);
-  if (!condition) return std::unexpected(std::move(condition.error()));
-
-  return hir::EventTrigger{
+  return hir::ValueChange{
       .signal = frame.Exprs().Add(*std::move(expr_or)),
-      .edge = edge_kind,
+      .edge = LowerEventEdge(sig.edge),
       .cells = *std::move(cells),
-      .condition = AddEventCondition(frame, *std::move(condition)),
   };
 }
 
-// The storage a plain reference designates, for a construct that names a cell
-// rather than reading a value out of one -- a wait registering on it, a trigger
-// occurring at it. Nothing but a bare name reaches storage that way.
-auto AsWatchedStorage(const hir::Expr& expr)
-    -> std::optional<hir::RoutedValueRef> {
-  const auto* primary = std::get_if<hir::PrimaryExpr>(&expr.data);
-  if (primary == nullptr) {
-    return std::nullopt;
-  }
-  if (const auto* routed = std::get_if<hir::RoutedValueRef>(&primary->data)) {
-    return *routed;
-  }
-  return std::nullopt;
-}
-
-// LRM 15.5.2 `@e;` on a named event. Distinguished from value-change `@(sig)`
-// by the controlled expression's type. A trigger is the event itself, so the
-// control watches the event's storage and no value is read from it; an edge
-// needs an integral operand, which an event is not, so binding refuses one and
-// no polarity reaches this far.
-auto LowerNamedEventControl(
+// What an event entry waits for: a trigger of the object its operand names
+// where the control is reached, rather than a change in what the operand
+// reads, which is no occurrence (LRM 15.5.1). An edge needs an integral
+// operand, which an event is not, so binding refuses one and no polarity
+// reaches this far.
+auto LowerNamedEventTrigger(
     ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::SignalEventControl& sig, diag::SourceSpan span)
-    -> diag::Result<hir::NamedEventControl> {
+    const slang::ast::SignalEventControl& sig)
+    -> diag::Result<hir::NamedEventTrigger> {
   auto expr_or = proc.LowerExpr(sig.expr, frame);
   if (!expr_or) return std::unexpected(std::move(expr_or.error()));
-
-  // LRM 15.5 admits an event wherever a variable of its type may be declared,
-  // so a name reaching one through an array element or a class handle is a
-  // legal event control the route does not carry yet. What the front end
-  // accepted is the measure, so this says what is missing rather than what the
-  // source may write.
-  const std::optional<hir::RoutedValueRef> route = AsWatchedStorage(*expr_or);
-  if (!route.has_value()) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedEventTriggerForm,
-        "waiting on an event reached this way is not yet supported; an event "
-        "declared directly in a design element is");
-  }
-  auto condition = LowerEventCondition(proc, frame, sig);
-  if (!condition) return std::unexpected(std::move(condition.error()));
-  return hir::NamedEventControl{
-      .event =
-          hir::SensitivityEntry{.cell = *route, .part = hir::WatchedWhole{}},
-      .condition = AddEventCondition(frame, *std::move(condition)),
-  };
+  return hir::NamedEventTrigger{
+      .event = frame.Exprs().Add(*std::move(expr_or))};
 }
 
-// One `@(...)` entry, which is a named event or a value change by the type of
-// what it names (LRM 15.5.2, 9.4.2); slang gives both the same shape.
+// The entry `sig` is: what it waits for, decided by the type of its operand
+// (LRM 9.4.2, 15.5.2), which slang gives the same shape, and its qualifier.
 auto LowerEventEntry(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::SignalEventControl& sig, diag::SourceSpan span)
-    -> diag::Result<hir::AnyEventControl> {
-  if (sig.expr.type->isEvent()) {
-    auto nec_or = LowerNamedEventControl(proc, frame, sig, span);
-    if (!nec_or) return std::unexpected(std::move(nec_or.error()));
-    return *std::move(nec_or);
-  }
-  auto trigger_or = LowerSignalEventTrigger(proc, frame, sig, span);
-  if (!trigger_or) return std::unexpected(std::move(trigger_or.error()));
-  return hir::EventControl{.triggers = {*std::move(trigger_or)}};
+    -> diag::Result<hir::EventEntry> {
+  using Occurrence = std::variant<hir::ValueChange, hir::NamedEventTrigger>;
+  auto occurrence = [&]() -> diag::Result<Occurrence> {
+    if (sig.expr.type->isEvent()) {
+      return LowerNamedEventTrigger(proc, frame, sig);
+    }
+    return LowerValueChange(proc, frame, sig, span);
+  }();
+  if (!occurrence) return std::unexpected(std::move(occurrence.error()));
+  auto condition = LowerEventCondition(proc, frame, sig);
+  if (!condition) return std::unexpected(std::move(condition.error()));
+  return hir::EventEntry{
+      .occurrence = *std::move(occurrence),
+      .condition = condition->has_value()
+                       ? std::optional<hir::ExprId>{frame.Exprs().Add(
+                             **std::move(condition))}
+                       : std::nullopt};
 }
 
 // LRM 9.4.2.1 `@(a or b)` / `@(a, b)`: every entry watches for its own event
@@ -172,8 +134,7 @@ auto LowerEventListControl(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::EventListControl& list, diag::SourceSpan span)
     -> diag::Result<hir::EventControl> {
-  std::vector<hir::EventTrigger> triggers;
-  triggers.reserve(list.events.size());
+  hir::EventControl control;
   for (const auto* event : list.events) {
     // The front end flattens a nested list into this one and refuses any other
     // control written as an entry.
@@ -181,12 +142,12 @@ auto LowerEventListControl(
       throw InternalError(
           "an event list entry reached lowering that is no signal event");
     }
-    auto trigger_or = LowerSignalEventTrigger(
+    auto entry = LowerEventEntry(
         proc, frame, event->as<slang::ast::SignalEventControl>(), span);
-    if (!trigger_or) return std::unexpected(std::move(trigger_or.error()));
-    triggers.push_back(*std::move(trigger_or));
+    if (!entry) return std::unexpected(std::move(entry.error()));
+    control.entries.push_back(*std::move(entry));
   }
-  return hir::EventControl{.triggers = std::move(triggers)};
+  return control;
 }
 
 // LRM 9.4.1 `#N`. The amount is an ordinary expression, read where the control
@@ -197,19 +158,6 @@ auto LowerDelayControl(
   auto duration = proc.LowerExpr(delay.expr, frame);
   if (!duration) return std::unexpected(std::move(duration.error()));
   return hir::DelayControl{.duration = frame.Exprs().Add(*std::move(duration))};
-}
-
-// An event control stands wherever the wider forms of LRM A.6.5 do: what it
-// names is a suspension, and that is the whole of what those forms are. Which
-// wider form it is widened into belongs to the caller, because the position the
-// control was written in is what fixes which of them admits it.
-template <typename Control>
-auto AsWiderControl(hir::AnyEventControl event) -> Control {
-  return std::visit(
-      Overloaded{
-          [](hir::EventControl e) -> Control { return e; },
-          [](hir::NamedEventControl n) -> Control { return n; }},
-      std::move(event));
 }
 
 // `controlled` is the statement the control gates. Only `@*` reads it: LRM
@@ -231,7 +179,7 @@ auto LowerTimingControl(
     case slang::ast::TimingControlKind::EventList: {
       auto event_or = LowerEventControl(proc, frame, tc, span);
       if (!event_or) return std::unexpected(std::move(event_or.error()));
-      return AsWiderControl<hir::TimingControl>(*std::move(event_or));
+      return hir::TimingControl{*std::move(event_or)};
     }
     case slang::ast::TimingControlKind::ImplicitEvent: {
       const auto& reads = proc.Owner().Sensitivity().AnalyzeImplicitEventList(
@@ -288,15 +236,15 @@ auto LowerTriggerTiming(
 // of -- reaches it here, so what one is written to mean is settled once.
 auto LowerEventControl(
     ProcessLowerer& proc, WalkFrame frame, const slang::ast::TimingControl& tc,
-    diag::SourceSpan span) -> diag::Result<hir::AnyEventControl> {
+    diag::SourceSpan span) -> diag::Result<hir::EventControl> {
   if (tc.kind == slang::ast::TimingControlKind::EventList) {
-    auto list_or = LowerEventListControl(
+    return LowerEventListControl(
         proc, frame, tc.as<slang::ast::EventListControl>(), span);
-    if (!list_or) return std::unexpected(std::move(list_or.error()));
-    return *std::move(list_or);
   }
-  return LowerEventEntry(
+  auto entry = LowerEventEntry(
       proc, frame, tc.as<slang::ast::SignalEventControl>(), span);
+  if (!entry) return std::unexpected(std::move(entry.error()));
+  return hir::EventControl{.entries = {*std::move(entry)}};
 }
 
 auto LowerDelayOrEventControl(
@@ -313,7 +261,7 @@ auto LowerDelayOrEventControl(
     case slang::ast::TimingControlKind::EventList: {
       auto event_or = LowerEventControl(proc, frame, tc, span);
       if (!event_or) return std::unexpected(std::move(event_or.error()));
-      return AsWiderControl<hir::DelayOrEventControl>(*std::move(event_or));
+      return hir::DelayOrEventControl{*std::move(event_or)};
     }
     case slang::ast::TimingControlKind::RepeatedEvent: {
       const auto& repeated = tc.as<slang::ast::RepeatedEventControl>();
@@ -419,13 +367,11 @@ auto LowerIntraAssignmentStmt(
       Overloaded{
           [&](hir::DelayControl d) { wait_then_assign(d); },
           [&](hir::EventControl e) { wait_then_assign(std::move(e)); },
-          [&](hir::NamedEventControl n) { wait_then_assign(std::move(n)); },
           [&](hir::RepeatedEventControl r) {
             const hir::StmtId nothing = plain(hir::EmptyStmt{});
             const hir::StmtId wait = plain(
                 hir::TimedStmt{
-                    .timing =
-                        AsWiderControl<hir::TimingControl>(std::move(r.event)),
+                    .timing = hir::TimingControl{std::move(r.event)},
                     .stmt = nothing});
             statements.push_back(
                 plain(hir::RepeatStmt{.count = r.count, .body = wait}));
@@ -466,15 +412,6 @@ auto LowerEventTriggerStmt(
     -> diag::Result<hir::Stmt> {
   auto expr_or = proc.LowerExpr(et.target, frame);
   if (!expr_or) return std::unexpected(std::move(expr_or.error()));
-  // The front end refuses a target that is not an event at all, so what
-  // reaches here is a legal event the route does not carry yet -- the same set
-  // the wait side meets, for the same reason.
-  if (!AsWatchedStorage(*expr_or).has_value()) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedStatementForm,
-        "triggering an event reached this way is not yet supported; an event "
-        "declared directly in a design element is");
-  }
   auto timing_or = LowerTriggerTiming(proc, frame, et, span);
   if (!timing_or) return std::unexpected(std::move(timing_or.error()));
   return hir::Stmt{

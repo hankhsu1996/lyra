@@ -170,7 +170,6 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_observation_of_watch", &lyra_rt_observation_of_watch);
   add("lyra_rt_observation_of_watch_qualified",
       &lyra_rt_observation_of_watch_qualified);
-  add("lyra_rt_observation_qualified", &lyra_rt_observation_qualified);
   add("lyra_rt_observation_fires", &lyra_rt_observation_fires);
   add("lyra_rt_wait_recollecting", &lyra_rt_wait_recollecting);
   add("lyra_rt_wait_until", &lyra_rt_wait_until);
@@ -200,8 +199,11 @@ void BindEngineEntries(const auto& add) {
       &lyra_rt_read_report_end_evaluation);
   add("lyra_rt_evaluation_in_progress", &lyra_rt_evaluation_in_progress);
   add("lyra_rt_refuse_report", &lyra_rt_refuse_report);
+  add("lyra_rt_event_new", &lyra_rt_event_new);
   add("lyra_rt_triggered", &lyra_rt_triggered);
   add("lyra_rt_trigger", &lyra_rt_trigger);
+  add("lyra_rt_event_occurrences", &lyra_rt_event_occurrences);
+  add("lyra_rt_event_reports_to", &lyra_rt_event_reports_to);
   add("lyra_rt_enter_target", &lyra_rt_enter_target);
   add("lyra_rt_leave_target", &lyra_rt_leave_target);
   add("lyra_rt_disable", &lyra_rt_disable);
@@ -1177,7 +1179,6 @@ void BindStorageEntries(const auto& add) {
       &lyra_rt_assocarray_sampled_history_construct);
   add("lyra_rt_managedref_sampled_history_construct",
       &lyra_rt_managedref_sampled_history_construct);
-  add("lyra_rt_named_event_construct", &lyra_rt_named_event_construct);
   add("lyra_rt_cancellation_target_construct",
       &lyra_rt_cancellation_target_construct);
   add("lyra_rt_timer_construct", &lyra_rt_timer_construct);
@@ -1223,7 +1224,6 @@ void BindStorageEntries(const auto& add) {
       &lyra_rt_assocarray_sampled_history_destroy);
   add("lyra_rt_managedref_sampled_history_destroy",
       &lyra_rt_managedref_sampled_history_destroy);
-  add("lyra_rt_named_event_destroy", &lyra_rt_named_event_destroy);
   add("lyra_rt_cancellation_target_destroy",
       &lyra_rt_cancellation_target_destroy);
   add("lyra_rt_timer_destroy", &lyra_rt_timer_destroy);

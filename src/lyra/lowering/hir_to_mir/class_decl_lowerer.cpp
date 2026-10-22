@@ -21,6 +21,7 @@
 #include "lyra/lowering/hir_to_mir/class_definition.hpp"
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
+#include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -183,8 +184,8 @@ auto LowerStaticStorageInto(
     const mir::ExprId installed =
         install_block.exprs.Add(BuildStaticStorageAccess(
             unit, bring_up.install, home, cell_type, mir::EnclosingHops{}));
-    const mir::ExprId prototype = install_block.exprs.Add(
-        BuildDefaultValueFromHir(unit_lowerer, install_block, prop.type));
+    const mir::ExprId prototype =
+        BuildDeclaredInitialValue(unit_lowerer, bring_up.install, prop.type);
     install_block.AppendStmt(
         mir::ExprStmt{
             .expr = install_block.exprs.Add(
@@ -549,9 +550,10 @@ auto ClassDeclLowerer::PopulateBodies(
   // Initialize each property in declaration order before the constructor body
   // runs (LRM 8.7): a property with an explicit initializer takes that value --
   // lowered through the constructor lowerer so a property read resolves against
-  // the receiver -- and one without takes its type's Table 7-1 default. The
-  // ordering is the single declaration-order pass because an initializer may
-  // read an earlier property whose own initialization has already run.
+  // the receiver -- and one without starts as a declaration that writes none
+  // does (LRM Table 6-7). The ordering is the single declaration-order pass
+  // because an initializer may read an earlier property whose own
+  // initialization has already run.
   // Index the source-declared initializers by their target so the per-field
   // loop below reads each one in O(1): the source names only the fields it
   // wrote, and the pass visits every field.
@@ -572,8 +574,7 @@ auto ClassDeclLowerer::PopulateBodies(
       if (!value_or) return std::unexpected(std::move(value_or.error()));
       value_id = ctor_block.exprs.Add(*std::move(value_or));
     } else {
-      value_id = ctor_block.exprs.Add(
-          BuildDefaultValueFromHir(unit_lowerer, ctor_block, field.type));
+      value_id = BuildDeclaredInitialValue(unit_lowerer, frame, field.type);
     }
     const mir::ExprId self_ref = ctor_block.exprs.Add(MakeSelfRefExpr(frame));
     const mir::ExprId target = ctor_block.exprs.Add(

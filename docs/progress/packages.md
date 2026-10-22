@@ -99,17 +99,9 @@ callable-bearing part of PK4 reuse; PK1 is independent of it.
         reports that a variable of that type is not yet supported, so every other package-scope
         variable a design has keeps working.
   - [ ] A net declared at package scope (LRM 26.2) is rejected; a package holds variables, not nets.
-  - [ ] A package or `$unit` subroutine waits on a value rather than only on time. Measured over the
-        whole axis: a delay (LRM 9.4.1) works, an event control naming a named event refuses
-        politely, and both an event control naming a variable (LRM 9.4.2) and a `wait` on a
-        condition (LRM 9.4.3) abort as a compiler bug on a legal program -- the polite refusal
-        stands in front of the two aborts, so a census reports one gap where there are three. What
-        the abort says is that such a body sits inside no instance, which is true and is the wrong
-        question: a wait needs only the cell it watches, and only a wait naming something the
-        surrounding design hierarchy holds needs an instance to count from. The same constructs
-        inside a class method, the other body that sits in no structural scope, already work. Fixing
-        it also has to establish that a suspension inside a namespace callable resumes correctly
-        when its caller is a process of some other unit, which nothing exercises today.
+  - [x] A package or `$unit` subroutine waits on a value as well as on time: an event control naming
+        a variable (LRM 9.4.2), one naming an event (LRM 15.5.2) and a `wait` on a condition (LRM
+        9.4.3), on a variable or an event the package or `$unit` scope declares.
 - [x] PK4 -- The `import` forms for the remaining item kinds and the LRM 26.3 name-search and
       shadowing rules. An import brings a name into a scope's lookup; it does not create a new kind
       of reference, so a name resolved through an import lowers identically to the explicit

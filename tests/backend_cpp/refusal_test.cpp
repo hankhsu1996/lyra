@@ -59,7 +59,7 @@ auto UnitWithNullOf(mir::TypeId (*type_of)(mir::CompilationUnit&))
 TEST(CppBackendRefusal, ANodeWithNoFormIsReportedAsUnsupported) {
   const mir::CompilationUnit refused =
       UnitWithNullOf([](mir::CompilationUnit& unit) {
-        return unit.types.Intern(mir::Type{mir::EventType{}});
+        return unit.types.Intern(mir::Type{mir::RealType{}});
       });
   diag::DiagnosticSink refusals;
   std::ignore = EmitCppUnit(refused, refusals);

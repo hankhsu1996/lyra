@@ -39,6 +39,7 @@
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/continuous_assign.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
+#include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
@@ -1624,8 +1625,8 @@ auto BindInputPort(
   };
 
   mir::Block& ctor_block = *frame.current_block;
-  const mir::ExprId prototype = ctor_block.exprs.Add(
-      BuildDefaultValueFromHir(unit_lowerer, ctor_block, member.type));
+  const mir::ExprId prototype =
+      BuildDeclaredInitialValue(unit_lowerer, frame, member.type);
   ctor_block.AppendStmt(
       mir::ExprStmt{
           .expr = ctor_block.exprs.Add(
@@ -2298,8 +2299,9 @@ auto LowerGenerateAsStmt(
 // Describes, as statements of `frame`'s block, what a value dump records of
 // an instance (LRM 21.7.1.2): each declaration, as the member it is with the
 // constant stating it, and each named block, task or function around the
-// static variables of one. A named event is described by an entry of its own,
-// since it is no capability wrapper over a value.
+// static variables of one. An event is described by an entry of its own, since
+// what a dump records of it is when the object it names is triggered rather
+// than a value it holds.
 auto DescribeDumped(
     const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     const hir::DumpedMembers& dumped) -> diag::Result<void> {
@@ -2318,7 +2320,7 @@ auto DescribeDumped(
     if (!path) return std::unexpected(std::move(path.error()));
     const mir::ExprId member = OwnerPlace(*path);
     const support::BuiltinFn entry =
-        unit.types.Get(block.exprs.Get(member).type).Is<mir::EventType>()
+        OwnerValueType(unit, block, path->owner) == unit.builtins.event
             ? support::BuiltinFn::kDescribeEvent
             : support::BuiltinFn::kDescribe;
     append(
@@ -3045,8 +3047,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             .expr = ctor_block.exprs.Add(
                 mir::MakeCapabilityInstallCallExpr(
                     target,
-                    ctor_block.exprs.Add(BuildDefaultValueFromHir(
-                        unit_lowerer, ctor_block, d.type)),
+                    BuildDeclaredInitialValue(unit_lowerer, ctor_frame, d.type),
                     support::BuiltinFn::kInitialize,
                     unit_lowerer.Unit().builtins.void_type))});
     return target;
@@ -3167,17 +3168,15 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     const auto* net = std::get_if<hir::StructuralNetDecl>(&d.kind);
     const auto* var = std::get_if<hir::StructuralVariableDecl>(&d.kind);
     const mir::Type& value_ty = unit_lowerer.Unit().types.Get(mir_value_type);
-    // Owned children, cross-instance reference slots (borrowed pointers filled
-    // in the resolve phase), and named events have no "value assignment" --
-    // their declaration shape itself fixes the field at construction. A net
-    // takes none either: its value is produced by its drivers, seeded when each
-    // driver updates in the initialize phase. Value-typed variables (integral,
-    // string, real, unpacked / dynamic array) receive an LRM 10.5
+    // Owned children and cross-instance reference slots (borrowed pointers
+    // filled in the resolve phase) have no "value assignment" -- their
+    // declaration shape itself fixes the field at construction. A net takes
+    // none either: its value is produced by its drivers, seeded when each
+    // driver updates in the initialize phase. Variables receive an LRM 10.5
     // initialization statement, run in the initialize phase after the tree's
     // references resolve, not in the constructor.
-    const bool is_assignable_value = var != nullptr &&
-                                     !IsOwnedChildOrReferenceSlot(value_ty) &&
-                                     !value_ty.Is<mir::EventType>();
+    const bool is_assignable_value =
+        var != nullptr && !IsOwnedChildOrReferenceSlot(value_ty);
     if (is_assignable_value) {
       const mir::ExprId init_target = initialize_block.exprs.Add(
           mir::MakeFieldAccessExpr(init_self_object(), cell, mir_field_type));
@@ -3217,8 +3216,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
           if (!value_or) return std::unexpected(std::move(value_or.error()));
           value_id = initialize_block.exprs.Add(*std::move(value_or));
         } else {
-          value_id = initialize_block.exprs.Add(
-              BuildDefaultValueFromHir(unit_lowerer, initialize_block, d.type));
+          value_id =
+              BuildDeclaredInitialValue(unit_lowerer, init_frame, d.type);
         }
         emit_value_store(value_id);
       }

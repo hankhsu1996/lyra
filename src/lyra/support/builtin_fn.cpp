@@ -356,16 +356,28 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "realtoa",
           .declaration = Method{"Realtoa"},
           .mutates_receiver = true};
+    case BuiltinFn::kEventNew:
+      return {.name = "event_new", .declaration = RuntimeFunction("EventNew")};
     case BuiltinFn::kTrigger:
       return {
           .name = "trigger",
-          .declaration = Method{"Trigger"},
+          .declaration = RuntimeFunction("EventTrigger"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kTriggered:
       return {
           .name = "triggered",
-          .declaration = Method{"Triggered"},
-          .takes_the_runtime_handle = true};
+          .declaration = RuntimeFunction("EventTriggered"),
+          .takes_the_runtime_handle = true,
+          .takes_the_read_report = true};
+    case BuiltinFn::kEventOccurrences:
+      return {
+          .name = "event_occurrences",
+          .declaration = RuntimeFunction("EventOccurrences"),
+          .takes_the_read_report = true};
+    case BuiltinFn::kEventReportsTo:
+      return {
+          .name = "event_reports_to",
+          .declaration = RuntimeFunction("EventReportsTo")};
     case BuiltinFn::kSampledHistoryInstall:
       return {
           .name = "sampled_history_install",
@@ -1120,11 +1132,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .callables = {
               kWatchFnMutWhileItsAnswerIsHeld,
               kConditionFnWhileItsAnswerIsHeld}};
-    case BuiltinFn::kObservationQualified:
-      return {
-          .name = "observation_qualified",
-          .declaration = StaticFactory{"Qualified"},
-          .callables = {kConditionFnWhileItsAnswerIsHeld}};
     case BuiltinFn::kObservationFires:
       return {.name = "observation_fires", .declaration = Method{"Fires"}};
     case BuiltinFn::kWaitRecollecting:

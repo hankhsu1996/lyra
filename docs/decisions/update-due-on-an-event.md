@@ -14,9 +14,10 @@ the event happens in, and nothing at the statement can say which that is. The RH
 statement is reached and the procedure does not block (LRM 9.4.5), so what is owed is a placement
 made later, by something that watched for the event.
 
-Only two things in the runtime watch for an event, and both name an activation: an observable cell's
-membership list and a named event's. So either a membership learns to name something other than an
-activation, or the thing that waits is an activation.
+Only one thing in the runtime watches for an event, and it names an activation: an observable's
+membership list, whether the observable is a cell or the event source of the object an event names.
+So either a membership learns to name something other than an activation, or the thing that waits is
+an activation.
 
 ## Decision
 
@@ -24,7 +25,17 @@ The update is carried by an **execution of no lineage**: a coroutine that holds 
 needs, waits for the event, places itself in the NBA region of the slot it lands in, and makes the
 write there.
 
-Three things follow, and each is the point.
+Four things follow, and each is the point.
+
+**It starts waiting where the statement stands.** The control is executed by the statement (LRM
+9.4.5), so the execution is run at once, as the statement that reached it, up to its wait, and only
+then does that process carry on: a change the process makes straight after the statement is an event
+for the wait, and an event the control names is the object it names there. An execution scheduled to
+start later would begin watching after the process had moved on and miss both. For the same reason a
+run-time error evaluating the control before the wait begins is the statement's, raised in the
+process that reached it, which stops there as it does for any error it raises; the execution is no
+process of the design, so it has nothing else to answer for that error. Once it waits, an error it
+meets is its own.
 
 **What the update writes and where it writes it are frozen where the statement stands**, into that
 execution, by the same freeze an ordinary nonblocking closure uses -- the target's root captured as
@@ -33,9 +44,10 @@ so a later write to the index or the operand does not reach an update still to c
 
 **It belongs to no lineage.** LRM 9.4.5 makes no process of the update, so nothing that names
 processes may find it: `wait fork` (LRM 9.6.1) does not wait for it, `disable fork` (LRM 9.6.3) does
-not reach it, and it draws no seed from the process that reached the statement, which would move
-that process's own random stream (LRM 18.14.1). It draws none because it evaluates nothing of the
-design: every expression it needed was read before it existed.
+not reach it. It does evaluate the control it carries, where the statement stands and again at each
+candidacy, so it draws from a generator of its own, taken out of the reaching process's as a
+thread's is (LRM 18.14.2): that process's stream moves by one at the statement, and not by however
+often the wait wakes.
 
 **It reaches the region itself rather than submitting a closure into it.** Once the event has named
 the slot, the carrier suspends into that slot's NBA region and writes when it resumes. This is the
@@ -50,8 +62,9 @@ closure and suspends nothing.
   the NBA region -- and the grammar gives both statements the same `delay_or_event_control`
   production. So the three placements and this carrier take whatever the effect is: `->> e` submits
   a closure to this slot's region, `->> #d e` to the region of the slot the delay names, and
-  `->> @(ev) e` is carried the same way an update is. A trigger holds nothing frozen, because a
-  named event reference designates the same storage whenever it is reached.
+  `->> @(ev) e` is carried the same way an update is. A trigger freezes the event it names, which is
+  a reference to a synchronization object (LRM 6.17): the object triggered where it lands is the one
+  the event named where the statement stood.
 - The repeat form (`a <= repeat (n) @(ev) b`) is the same carrier with the wait in a loop, so the
   count is read once where the statement stands and nothing about the count reaches the runtime.
 - **One statement's whole effect is one deferred effect**, however many places it writes. A
@@ -70,11 +83,11 @@ closure and suspends nothing.
 
 ## Rejected
 
-- **A membership that names a closure instead of an activation.** The observable cell's and the
-  named event's membership lists would each gain an alternative, every consumer of a fired
-  membership would branch on which it got, and the repeat count would become runtime state. It also
-  spreads: each new kind of target that can hold a wait would have to carry both. One shape covers
-  both -- a membership names an activation, and an update that must wait is one.
+- **A membership that names a closure instead of an activation.** An observable's membership list
+  would gain an alternative, every consumer of a fired membership would branch on which it got, and
+  the repeat count would become runtime state. It also spreads: each new kind of target that can
+  hold a wait would have to carry both. One shape covers both -- a membership names an activation,
+  and an update that must wait is one.
 - **A `fork` branch.** The spawning path exists and would need no new verb, but it adopts the branch
   into the spawner's lineage, which is exactly what LRM 9.6.1 and 9.6.3 must not see. Reusing it and
   then hiding the branch from `wait fork` states one relation in two places and keeps neither true.

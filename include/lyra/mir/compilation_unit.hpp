@@ -253,6 +253,9 @@ struct BuiltinMirTypes {
   // `process`) references, one of the classes the runtime library defines, as
   // the scope class is.
   TypeId process_object;
+  // What a source event is: a managed reference to the synchronization object
+  // the runtime library defines (LRM 6.17), or to none.
+  TypeId event;
   TypeId files;
   TypeId diagnostic;
   // An enumeration's member table: its members in declared order, which the
@@ -456,6 +459,12 @@ struct CompilationUnit {
             .process_object = types.Intern(
                 Type{RuntimeClassType{
                     .which = support::RuntimeClass::kProcess}}),
+            .event = types.Intern(
+                Type{ManagedRefType{
+                    .pointee = types.Intern(
+                        Type{RuntimeClassType{
+                            .which = support::RuntimeClass::
+                                kSynchronizationObject}})}}),
             .files = types.Intern(Type{FilesType{}}),
             .diagnostic = types.Intern(Type{DiagnosticType{}}),
             .enumeration = types.Intern(

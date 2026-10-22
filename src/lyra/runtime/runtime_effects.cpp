@@ -372,25 +372,30 @@ auto RuntimeEffects::Spawn(Coroutine<void> coroutine)
 
 void RuntimeEffects::RunDetached(Coroutine<void> coroutine) {
   Runtime& rt = AsRuntime(*this);
-  const RuntimeProcess* const reached_by = rt.current_process_;
+  RuntimeProcess* const reached_by = rt.current_process_;
   if (reached_by == nullptr) {
     throw InternalError(
         "RuntimeEffects::RunDetached: no ambient process to take the owning "
         "scope from");
   }
-  // The carrier evaluates nothing of the design -- what it writes and where it
-  // writes it were both settled where the statement was reached -- so it draws
-  // no random values, and taking a generator out of the process that reached
-  // the statement would move that process's own stream (LRM 18.14.1).
+  // The carrier evaluates the control it carries, there and again at each
+  // candidacy, so it draws from a generator of its own, taken out of the
+  // reaching process's as a thread's is (LRM 18.14.2): that process's stream
+  // moves by one at the statement, and not by however often the wait wakes.
   auto carrier = std::make_shared<RuntimeProcess>(
       reached_by->Context().WithoutLineage(), std::move(coroutine),
-      DrawRng{RandomSeed{0}});
+      reached_by->Running().rng.Split());
   Activation* const activation = carrier->TopActivation();
   // No lineage and no disable membership: the standard makes no process of the
   // update this carries out, so nothing that names processes may find it. What
   // keeps it alive until it ends is therefore the runtime itself.
-  Schedule(Now(), carrier->Context().regions.active, activation);
-  rt.AdoptProcess(std::move(carrier));
+  rt.AdoptProcess(carrier);
+  // It runs now, as the statement that reached it, until it first waits: the
+  // statement executes the control it carries (LRM 9.4.5). So the object an
+  // event names and the value a change is measured from are those of that
+  // moment, a change the process makes after the statement is one the wait
+  // sees, and an error evaluating the control is the statement's.
+  RuntimeProcess::RunUndispatched(*this, activation);
 }
 
 auto RuntimeEffects::CurrentProcess() -> RuntimeProcess& {

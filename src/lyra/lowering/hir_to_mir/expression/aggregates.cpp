@@ -15,11 +15,13 @@
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/concatenation.hpp"
+#include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/entry_walk.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/queue_building.hpp"
+#include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -470,30 +472,85 @@ auto LowerHirAssignmentPatternReplicationExpr(
 template <ExprLowerer Lowerer>
 auto LowerHirDynamicArrayNewExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::DynamicArrayNewExpr& n,
-    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+    hir::TypeId hir_result_type, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
-  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  UnitLowerer& unit_lowerer = lowerer.Owner();
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const hir::TypeId element = unit_lowerer.Hir()
+                                  .types.Get(hir_result_type)
+                                  .template As<hir::DynamicArrayType>()
+                                  ->element_type;
   auto size_or = lowerer.LowerExpr(lowerer.HirExprs().Get(n.size), frame);
   if (!size_or) return std::unexpected(std::move(size_or.error()));
-  const mir::ExprId size_id =
-      BuildToInt64Call(unit, block, block.exprs.Add(*std::move(size_or)));
-
-  std::vector<mir::ExprId> args{size_id};
+  const mir::ExprId size = block.exprs.Add(*std::move(size_or));
+  std::optional<mir::ExprId> source;
   if (n.initializer.has_value()) {
     auto init_or =
         lowerer.LowerExpr(lowerer.HirExprs().Get(*n.initializer), frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
-    args.push_back(block.exprs.Add(*std::move(init_or)));
+    source = block.exprs.Add(*std::move(init_or));
   }
-  const support::BuiltinFn form =
-      n.initializer.has_value() ? support::BuiltinFn::kMakeDynamicArrayNewCopy
-                                : support::BuiltinFn::kMakeDynamicArrayNew;
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = mir::Direct{.target = form},
-              .arguments = std::move(args)},
-      .type = result_type};
+  const auto made = [&](mir::ExprId count, std::optional<mir::ExprId> from) {
+    std::vector<mir::ExprId> args{BuildToInt64Call(unit, block, count)};
+    if (from.has_value()) args.push_back(*from);
+    return mir::Expr{
+        .data =
+            mir::CallExpr{
+                .callee =
+                    mir::Direct{
+                        .target =
+                            from.has_value()
+                                ? support::BuiltinFn::kMakeDynamicArrayNewCopy
+                                : support::BuiltinFn::kMakeDynamicArrayNew},
+                .arguments = std::move(args)},
+        .type = result_type};
+  };
+  if (!HoldsADeclaredEvent(unit_lowerer.Hir().types, element)) {
+    return made(size, source);
+  }
+
+  // Every element past those taken from the source starts at its type's
+  // default value (LRM 7.5.1), which gives each event a new object: the
+  // elements from the source's size on, none where it has as many as `new[N]`
+  // makes. The count and the source are read a second time for that, so each
+  // is evaluated once, into a local.
+  const mir::TypeId int_type = unit.builtins.int_type;
+  const mir::TypeId size_type = block.exprs.Get(size).type;
+  const mir::LocalId held_size = DeclareLocal(frame, size);
+  std::optional<mir::LocalId> held_source;
+  mir::TypeId source_type{};
+  if (source.has_value()) {
+    source_type = block.exprs.Get(*source).type;
+    held_source = DeclareLocal(frame, *source);
+  }
+  const mir::LocalId array = DeclareLocal(
+      frame,
+      block.exprs.Add(made(
+          block.ReadLocal(held_size, size_type),
+          held_source.has_value() ? std::optional<mir::ExprId>{block.ReadLocal(
+                                        *held_source, source_type)}
+                                  : std::nullopt)));
+  const mir::LocalId given = DeclareLocal(
+      frame, held_source.has_value()
+                 ? block.exprs.Add(
+                       mir::MakeCallExpr(
+                           mir::Direct{
+                               .target = support::BuiltinFn::kSize,
+                               .receiver =
+                                   block.LocalPlace(*held_source, source_type)},
+                           {}, int_type))
+                 : mir::BuildIntLiteral(unit, block, 0));
+  GiveElementsNewEvents(
+      unit_lowerer, frame, array, result_type, element,
+      block.ReadLocal(given, int_type),
+      block.exprs.Add(
+          mir::MakeBinary(
+              unit, block, mir::BinaryOp::kSub,
+              ConvertToType(
+                  unit, block, block.ReadLocal(held_size, size_type), int_type),
+              block.ReadLocal(given, int_type), int_type)));
+  return block.exprs.Get(block.ReadLocal(array, result_type));
 }
 
 // LRM 7.9.11 associative literal. Each (key, value) entry is lowered into a
@@ -566,11 +623,11 @@ template auto LowerHirAssignmentPatternKeyedExpr(
     const hir::AssignmentPatternKeyedExpr&, hir::TypeId, mir::TypeId)
     -> diag::Result<mir::Expr>;
 template auto LowerHirDynamicArrayNewExpr(
-    ProcessLowerer&, WalkFrame, const hir::DynamicArrayNewExpr&, mir::TypeId)
-    -> diag::Result<mir::Expr>;
+    ProcessLowerer&, WalkFrame, const hir::DynamicArrayNewExpr&, hir::TypeId,
+    mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirDynamicArrayNewExpr(
     const StructuralScopeLowerer&, WalkFrame, const hir::DynamicArrayNewExpr&,
-    mir::TypeId) -> diag::Result<mir::Expr>;
+    hir::TypeId, mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirAssociativeAssignmentPatternExpr(
     ProcessLowerer&, WalkFrame, const hir::AssociativeAssignmentPatternExpr&,
     mir::TypeId) -> diag::Result<mir::Expr>;

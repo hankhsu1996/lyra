@@ -325,14 +325,18 @@ auto LowerBuiltinMethodCall(
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
 
   // The entry reads its operands in one order: the object it acts on where it
-  // has one, the engine where it reaches it, then these.
+  // has one, the engine where it reaches it, the report of the evaluation
+  // calling it where it states what it reaches there, then these.
   const std::size_t leading = (b.receiver.has_value() ? 1 : 0) +
                               (entry.takes_the_runtime_handle ? 1 : 0);
   const auto lower_operands =
       [&](WalkFrame at) -> diag::Result<std::vector<mir::ExprId>> {
     mir::Block& into = *at.current_block;
     std::vector<mir::ExprId> args;
-    args.reserve(c.arguments.size());
+    args.reserve(c.arguments.size() + 1);
+    if (entry.takes_the_read_report) {
+      args.push_back(BuildReportHandedOn(unit, at));
+    }
     for (const hir::ExprId operand : RequiredOperands(c)) {
       auto arg_or = lowerer.LowerExpr(hir_exprs.Get(operand), at);
       if (!arg_or) return std::unexpected(std::move(arg_or.error()));

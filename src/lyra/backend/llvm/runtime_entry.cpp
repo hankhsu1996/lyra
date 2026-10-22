@@ -781,7 +781,6 @@ auto RuntimeSymbol(support::DeclaredMemberStorage storage, RuntimeOp op)
     case support::MemberStorageKind::kReference:
     case support::MemberStorageKind::kAnyReference:
     case support::MemberStorageKind::kSharedPointer:
-    case support::MemberStorageKind::kNamedEvent:
     case support::MemberStorageKind::kCancellationTarget:
     case support::MemberStorageKind::kChannelCancellation:
     case support::MemberStorageKind::kEvaluationAttempts:
@@ -821,7 +820,6 @@ auto ToldBuilding(support::DeclaredMemberStorage storage) -> Told {
     case support::MemberStorageKind::kReference:
     case support::MemberStorageKind::kAnyReference:
     case support::MemberStorageKind::kSharedPointer:
-    case support::MemberStorageKind::kNamedEvent:
     case support::MemberStorageKind::kCancellationTarget:
     case support::MemberStorageKind::kChannelCancellation:
     case support::MemberStorageKind::kEvaluationAttempts:
@@ -1001,10 +999,6 @@ auto MemberStorageKindOf(
             }
             throw InternalError("llvm codegen: unknown runtime library kind");
           },
-          [](const lir::EventType&)
-              -> std::optional<support::MemberStorageKind> {
-            return support::MemberStorageKind::kNamedEvent;
-          },
           [](const lir::EvaluationAttemptsType&)
               -> std::optional<support::MemberStorageKind> {
             return support::MemberStorageKind::kEvaluationAttempts;
@@ -1117,7 +1111,6 @@ auto DeclaredStorageOf(
     case support::MemberStorageKind::kReference:
     case support::MemberStorageKind::kAnyReference:
     case support::MemberStorageKind::kSharedPointer:
-    case support::MemberStorageKind::kNamedEvent:
     case support::MemberStorageKind::kCancellationTarget:
     case support::MemberStorageKind::kChannelCancellation:
     case support::MemberStorageKind::kEvaluationAttempts:
@@ -1750,8 +1743,11 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // Designating the whole of what a write was opened on reads nothing of the
     // value there, so the library realizes it once.
     case support::BuiltinFn::kDesignateWhole:
+    case support::BuiltinFn::kEventNew:
     case support::BuiltinFn::kTrigger:
     case support::BuiltinFn::kTriggered:
+    case support::BuiltinFn::kEventOccurrences:
+    case support::BuiltinFn::kEventReportsTo:
     case support::BuiltinFn::kCurrentRuntime:
     case support::BuiltinFn::kSubmitNba:
     case support::BuiltinFn::kSubmitNbaAfter:
@@ -1831,7 +1827,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kObservationOnReaching:
     case support::BuiltinFn::kObservationOfWatch:
     case support::BuiltinFn::kObservationOfWatchQualified:
-    case support::BuiltinFn::kObservationQualified:
     case support::BuiltinFn::kObservationFires:
     case support::BuiltinFn::kWaitOn:
     case support::BuiltinFn::kWaitOnImplicitList:

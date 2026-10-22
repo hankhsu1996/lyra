@@ -379,14 +379,13 @@ each meets the same lifetime question above.
       lets `disable` of a named `fork` reach a branch parked on a delay, and what a task enabled
       inside a target will need for the same reason.
 
-- [x] **Named events across a suspension** (LRM 15.5) -- realized on the execution backend. A named
-      event is member storage the owner holds, a waiter set and the instant of its last trigger,
-      reached only through its address and never read out as a value: `-> e` records the instant and
-      releases every process parked on it at once, `@e` parks the running process until the next
-      trigger, and `e.triggered` answers whether the most recent trigger happened in the current
-      time step (LRM 15.5.3). The await is an ordinary registration whose suspension follows it, so
-      an event a process parks on crosses a time step like every other wait. Rolled up in
-      `processes.md` (P9).
+- [x] **Named events across a suspension** (LRM 15.5) -- realized on the execution backend. An event
+      is a reference to a synchronization object the runtime keeps, held and copied as a class
+      handle is: `-> e` releases every process waiting on the object at once, `@e` parks the running
+      process until that object's next trigger, and `e.triggered` answers whether its most recent
+      trigger happened in the current time step (LRM 15.5.3). The wait is an ordinary one whose
+      suspension follows it, so an event a process parks on crosses a time step like every other
+      wait. Rolled up in `processes.md` (P9).
 
 ## Other backend surfaces
 
@@ -396,9 +395,7 @@ each meets the same lifetime question above.
       per builtin rather than inferred from what its operands happen to be, and what the library
       does not realize is stated the same way, naming which shape it has no entry for. An entry now
       exists as a prototype, a definition, and a binding held to each other by a check, so one
-      written without the others fails the build instead of failing to resolve at run time. What is
-      still refused says which shape it has no entry for: a named event's members have no storage
-      realization.
+      written without the others fails the build instead of failing to resolve at run time.
 - [x] **A memory load or dump (LRM 21.4, 21.5).** Every form the source may write runs here: an
       unpacked memory of any depth, a dynamic array, a queue, an associative array, each either
       running upward from an address or bounded by a window. A memory's words are taken out in

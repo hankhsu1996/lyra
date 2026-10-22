@@ -22,7 +22,6 @@
 #include "lyra/diag/failure_context.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/lowering/ast_to_hir/event_handle.hpp"
 #include "lyra/lowering/ast_to_hir/expression/dynamic_cast.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/statement/assertions.hpp"
@@ -71,10 +70,6 @@ auto LowerVariableDeclStmt(
   const auto local_id = proc.DeclareProceduralVar(frame, body, sym);
   std::optional<hir::ExprId> init_id;
   if (const auto* init_expr = sym.getInitializer()) {
-    if (auto refused = RefuseGivingAnEventAValue(sym.getType(), span);
-        !refused) {
-      return std::unexpected(std::move(refused.error()));
-    }
     auto init_or = proc.LowerExpr(*init_expr, frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     init_id = frame.Exprs().Add(*std::move(init_or));
@@ -205,10 +200,6 @@ auto LowerProceduralContinuousAssignStmt(
         "this form of procedural continuous assignment is not yet supported");
   }
   const auto& assign = pa.assignment.as<slang::ast::AssignmentExpression>();
-  if (auto refused = RefuseTakingOverAnEvent(*assign.left().type, span);
-      !refused) {
-    return std::unexpected(std::move(refused.error()));
-  }
   auto target_or = proc.LowerExpr(assign.left(), frame);
   if (!target_or) return std::unexpected(std::move(target_or.error()));
   auto source_or = proc.LowerExpr(assign.right(), frame);
@@ -235,9 +226,6 @@ auto LowerProceduralContinuousEndStmt(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::ProceduralDeassignStatement& pd, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
-  if (auto refused = RefuseTakingOverAnEvent(*pd.lvalue.type, span); !refused) {
-    return std::unexpected(std::move(refused.error()));
-  }
   auto target_or = proc.LowerExpr(pd.lvalue, frame);
   if (!target_or) return std::unexpected(std::move(target_or.error()));
   return hir::Stmt{

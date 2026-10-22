@@ -1130,7 +1130,6 @@ auto CodeGenModule::HoldsItsBytesInline(
     case support::MemberStorageKind::kReference:
     case support::MemberStorageKind::kAnyReference:
     case support::MemberStorageKind::kSharedPointer:
-    case support::MemberStorageKind::kNamedEvent:
     case support::MemberStorageKind::kCancellationTarget:
     case support::MemberStorageKind::kChannelCancellation:
     case support::MemberStorageKind::kEvaluationAttempts:

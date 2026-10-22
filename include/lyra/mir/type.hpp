@@ -231,9 +231,6 @@ struct MachineFunctionType {
   auto operator==(const MachineFunctionType&) const -> bool = default;
 };
 
-struct EventType {
-  auto operator==(const EventType&) const -> bool = default;
-};
 struct RealType {
   auto operator==(const RealType&) const -> bool = default;
 };
@@ -753,13 +750,13 @@ class Type {
       IntegralType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
       AssociativeArrayType, WildcardIndexType, StringType, AnyType,
       ErasedValueType, MachineCStringType, MachineBoolType, MachineIntType,
-      MachineFloatType, MachineArrayType, MachineFunctionType, EventType,
-      RealType, ShortRealType, ChandleType, VoidType, ObjectType,
-      RuntimeClassType, RuntimeEffectsType, FilesType, DiagnosticType,
-      RuntimeLibraryType, CoroutineType, VariableRefType, ReferenceWrapperType,
-      PointerType, ReferenceType, ManagedRefType, VectorType, TupleType,
-      EmptyType, ObservableType, ResolvedType, DriverType, OpenWriteType,
-      DesignationType, BitsReferenceType, ObjectWriteType, SampledHistoryType,
+      MachineFloatType, MachineArrayType, MachineFunctionType, RealType,
+      ShortRealType, ChandleType, VoidType, ObjectType, RuntimeClassType,
+      RuntimeEffectsType, FilesType, DiagnosticType, RuntimeLibraryType,
+      CoroutineType, VariableRefType, ReferenceWrapperType, PointerType,
+      ReferenceType, ManagedRefType, VectorType, TupleType, EmptyType,
+      ObservableType, ResolvedType, DriverType, OpenWriteType, DesignationType,
+      BitsReferenceType, ObjectWriteType, SampledHistoryType,
       EvaluationAttemptsType, LoopBlocksType, RecordType, ClosureType,
       ErasedCallableType>;
 

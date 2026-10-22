@@ -141,7 +141,6 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             HashIds(seed, t.params);
             HashId(seed, t.result);
           },
-          [](const EventType&) {},
           [](const RealType&) {},
           [](const ShortRealType&) {},
           [](const ChandleType&) {},
@@ -300,7 +299,6 @@ auto Type::IsAddressOnly() const -> bool {
           [](const ResolvedType&) { return true; },
           [](const ObjectType&) { return true; },
           [](const RuntimeClassType&) { return true; },
-          [](const EventType&) { return true; },
           [](const SampledHistoryType&) { return true; },
           [](const EvaluationAttemptsType&) { return true; },
           [](const LoopBlocksType&) { return true; },
@@ -464,7 +462,6 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           [](const SampledHistoryType&) { return false; },
           [](const EvaluationAttemptsType&) { return false; },
           [](const LoopBlocksType&) { return false; },
-          [](const EventType&) { return false; },
           [](const RuntimeEffectsType&) { return false; },
           [](const FilesType&) { return false; },
           [](const DiagnosticType&) { return false; },
@@ -525,7 +522,6 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const RealType&) -> Element { return std::nullopt; },
           [](const ShortRealType&) -> Element { return std::nullopt; },
           [](const ChandleType&) -> Element { return std::nullopt; },
-          [](const EventType&) -> Element { return std::nullopt; },
           [](const EmptyType&) -> Element { return std::nullopt; },
           [](const VoidType&) -> Element { return std::nullopt; },
 

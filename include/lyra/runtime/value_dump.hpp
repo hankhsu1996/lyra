@@ -14,6 +14,7 @@
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/wait.hpp"
 #include "lyra/value/integral_words.hpp"
+#include "lyra/value/object_ref.hpp"
 
 namespace lyra::runtime {
 
@@ -69,6 +70,10 @@ class DumpProbe {
   virtual void Read(DumpCapture& into, DumpCode code) const = 0;
   // Where a change to the thing is reported.
   [[nodiscard]] virtual auto Watched() const -> Trigger = 0;
+  // Where the thing holds a reference, the object it refers to now, whose
+  // changes are changes of the thing too; none where it holds no reference.
+  // What it refers to moves only with a change of the thing.
+  [[nodiscard]] virtual auto Referent() const -> value::ObjectRef;
   // The storage the thing is, which two names standing for one thing share.
   [[nodiscard]] virtual auto Identity() const -> const void* = 0;
   // The member of the instance the thing was described from, which is how a
@@ -138,11 +143,18 @@ class DumpWatch {
   }
 
  private:
+  // Enrols on what the thing refers to now, where that moved.
+  void FollowReferent();
+
   bool changed_ = false;
   ValueDump* dump_;
   DumpCode code_;
   std::unique_ptr<DumpProbe> probe_;
   WaitMembership membership_;
+  // What the thing refers to, held for as long as the watch is enrolled on
+  // it, and moved when the thing comes to refer to another.
+  value::ObjectRef referent_;
+  WaitMembership referent_membership_;
 };
 
 // What a dump records (LRM 21.7.1.2): each instance named and as many levels

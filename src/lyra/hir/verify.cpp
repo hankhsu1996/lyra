@@ -84,20 +84,20 @@ void ReachReads(const Reads& reads, const auto& reach) {
 }
 
 void ReachEventControl(const EventControl& control, const auto& reach) {
-  for (const EventTrigger& trigger : control.triggers) {
-    reach(trigger.signal, Slot::kOperand);
-    ReachSensitivity(trigger.cells, reach);
-    if (trigger.condition.has_value()) {
-      reach(*trigger.condition, Slot::kOperand);
+  for (const EventEntry& entry : control.entries) {
+    std::visit(
+        Overloaded{
+            [&](const ValueChange& c) {
+              reach(c.signal, Slot::kOperand);
+              ReachSensitivity(c.cells, reach);
+            },
+            [&](const NamedEventTrigger& t) {
+              reach(t.event, Slot::kOperand);
+            }},
+        entry.occurrence);
+    if (entry.condition.has_value()) {
+      reach(*entry.condition, Slot::kOperand);
     }
-  }
-}
-
-void ReachNamedEventControl(
-    const NamedEventControl& control, const auto& reach) {
-  ReachSensitivityEntry(control.event, reach);
-  if (control.condition.has_value()) {
-    reach(*control.condition, Slot::kOperand);
   }
 }
 
@@ -108,9 +108,6 @@ void ReachTimingControl(const TimingControl& timing, const auto& reach) {
           [&](const EventControl& c) { ReachEventControl(c, reach); },
           [&](const ImplicitEventControl& c) {
             ReachSensitivity(c.sensitivity_list, reach);
-          },
-          [&](const NamedEventControl& c) {
-            ReachNamedEventControl(c, reach);
           }},
       timing);
 }
@@ -121,18 +118,9 @@ void ReachDelayOrEventControl(
       Overloaded{
           [&](const DelayControl& c) { reach(c.duration, Slot::kOperand); },
           [&](const EventControl& c) { ReachEventControl(c, reach); },
-          [&](const NamedEventControl& c) { ReachNamedEventControl(c, reach); },
           [&](const RepeatedEventControl& c) {
             reach(c.count, Slot::kOperand);
-            std::visit(
-                Overloaded{
-                    [&](const EventControl& event) {
-                      ReachEventControl(event, reach);
-                    },
-                    [&](const NamedEventControl& event) {
-                      ReachNamedEventControl(event, reach);
-                    }},
-                c.event);
+            ReachEventControl(c.event, reach);
           }},
       control);
 }

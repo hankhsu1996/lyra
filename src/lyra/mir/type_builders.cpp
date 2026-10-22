@@ -174,8 +174,7 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           // Not value storage, so its own declaration shape is its storage and
           // it is not wrapped: a handle onto storage of another lifetime
           // (pointer, reference, vector), an object (a class instance
-          // or an instantiated child), a named event (LRM 15 -- it carries its
-          // own subscribe mechanism), a runtime facade (effects, files,
+          // or an instantiated child), a runtime facade (effects, files,
           // diagnostics, a runtime-library type), a coroutine result, a machine
           // primitive (a plain boolean, integer, float, C string, array, or
           // code address), a closure, the wildcard index type (LRM 7.8.1),
@@ -194,7 +193,6 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           [&](const MachineFloatType&) { return bare(); },
           [&](const MachineArrayType&) { return bare(); },
           [&](const MachineFunctionType&) { return bare(); },
-          [&](const EventType&) { return bare(); },
           [&](const VoidType&) { return bare(); },
           [&](const ObjectType&) { return bare(); },
           [&](const RuntimeClassType&) { return bare(); },

@@ -50,16 +50,13 @@ is uniform either way. The `mir::MemberDecl.initializer` field is removed; a mem
 carries name and type only.**
 
 Vars whose type has no value-assignment semantics -- owned children (pointer, vector), borrowed
-handles to objects, cross-instance reference slots (borrowed pointers filled in Resolve), and named
-events -- do not receive an init statement. Their declaration shape itself fixes the field at
-construction:
+handles to objects, and cross-instance reference slots (borrowed pointers filled in Resolve) -- do
+not receive an init statement. Their declaration shape itself fixes the field at construction:
 
 - Pointer / vector / object fields, of this unit's classes or another's, default to their C++
   default (null pointer, empty container).
 - A cross-instance reference slot is a borrowed pointer left null at construction and filled in the
   Resolve phase by the route the reference names (`hierarchical-reference-routing.md`).
-- A `NamedEvent` field is default-constructed; the event identity is fixed for the lifetime of the
-  scope and never reassigned.
 
 ### C++ render
 
@@ -121,21 +118,20 @@ the constructor function, with no NSDMI analogue.
 
 ### Why filter non-assignable types out of the init statement
 
-Owned children, cross-instance reference slots, and named events have no value-assignment operation:
+Owned children and cross-instance reference slots have no value-assignment operation:
 
 - An owned child is constructed by its own construction, or by generate construction, later in
   `root_stmts`, with its own arguments.
 - A cross-instance reference slot is a borrowed pointer written once by the resolve-phase route
   code, never through `AssignExpr` in the constructor.
-- A `NamedEvent` is non-copyable and non-movable by design (LRM 15.5; the runtime takes pointers
-  into the event object); assigning over it would require a copy/move operator the type does not
-  provide.
 
 The HIR-side declaration for these types is the equivalent of "this field exists with its
 construction-time identity"; there is no later "set its value" semantic to encode. Emitting an
-`AssignExpr` for them would either fail to compile (events) or invent a no-op write (containers,
-pointers). The filter is structural: any var whose MIR type is a pointer, a vector, an object of a
-class of this or another unit, or an event does not get an init statement.
+`AssignExpr` for them would invent a no-op write (containers, pointers). The filter is structural:
+any var whose MIR type is a pointer, a vector or an object of a class of this or another unit does
+not get an init statement. An event is not among them: its value is a reference to the object it
+names, assigned like any other value, so its declaration gets the init statement that gives it a new
+object (LRM 6.17, Table 6-7).
 
 ## Rejected alternatives
 

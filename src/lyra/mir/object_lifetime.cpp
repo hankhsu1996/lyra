@@ -23,6 +23,7 @@ auto LifetimeOfLibraryClass(support::RuntimeClass which) -> ObjectLifetime {
       return ObjectLifetime::kTheRun;
     case support::RuntimeClass::kObject:
     case support::RuntimeClass::kProcess:
+    case support::RuntimeClass::kSynchronizationObject:
       return ObjectLifetime::kWhileReferenced;
   }
   throw InternalError("mir::ObjectLifetimeOf: unknown RuntimeClass");

@@ -63,6 +63,11 @@ Rules:
         disagreement is a module asking for a symbol nothing defines, which a
         link reports with no word about which operation was meant.
 
+  R010  Whether an entry is handed the report of the evaluation calling it is
+        stated once, the same way as R004: its runtime entry declaration
+        says so, and its ABI prototype takes the report as a parameter named
+        `evaluation`. Scoped like R004.
+
 Usage:
   python3 tools/policy/check_runtime_abi.py
 """
@@ -111,6 +116,8 @@ FLOAT_PARAMETERS = {"double", "float"}
 
 HANDLE_PARAMETER = "runtime"
 HANDLE_PROPERTY = ".takes_the_runtime_handle = true"
+REPORT_PARAMETER = "evaluation"
+REPORT_PROPERTY = ".takes_the_read_report = true"
 RETURN_PROPERTY = ".ending = CallEnding::kReturns"
 
 VIOLATION_HINT = (
@@ -144,8 +151,10 @@ class Abi(NamedTuple):
     defined: list[Entry]
     bound: list[Binding]
     handle_takers: set[str] = set()
+    report_takers: set[str] = set()
     non_raisers: set[str] = set()
     handle_rows: dict[str, bool] = {}
+    report_rows: dict[str, bool] = {}
     return_rows: dict[str, bool] = {}
     spilled_spans: list[Entry] = []
     table_named: list[str] = []
@@ -209,15 +218,20 @@ def prototypes_of(text: str) -> list[Prototype]:
     return prototypes
 
 
-def handle_takers_of(text: str) -> set[str]:
-    """The declared entries whose prototype takes the engine handle."""
+def takers_of(text: str, parameter_name: str) -> set[str]:
+    """The declared entries whose prototype takes a parameter of that name."""
     return {
         prototype.name
         for prototype in prototypes_of(text)
         if any(
-            HANDLE_PARAMETER in re.findall(r"\w+", parameter)
+            parameter_name in re.findall(r"\w+", parameter)
             for parameter in prototype.parameters)
     }
+
+
+def handle_takers_of(text: str) -> set[str]:
+    """The declared entries whose prototype takes the engine handle."""
+    return takers_of(text, HANDLE_PARAMETER)
 
 
 def non_raisers_of(text: str) -> set[str]:
@@ -353,6 +367,12 @@ def check_r004(abi: Abi) -> list[str]:
         "takes the engine handle", "declares")
 
 
+def check_r010(abi: Abi) -> list[str]:
+    return check_agreement(
+        abi, "R010", abi.report_rows, abi.report_takers,
+        "is handed the evaluation's report", "takes")
+
+
 def check_r008(abi: Abi) -> list[str]:
     return check_agreement(
         abi, "R008", abi.return_rows, abi.non_raisers, "cannot raise",
@@ -388,8 +408,10 @@ def load(root: Path) -> Abi:
             (root / TABLE_DEFINITION).read_text()),
         bound=bindings_of((root / BINDINGS).read_text()),
         handle_takers=handle_takers_of(header),
+        report_takers=takers_of(header, REPORT_PARAMETER),
         non_raisers=non_raisers_of(header),
         handle_rows=rows_of(entries, HANDLE_PROPERTY),
+        report_rows=rows_of(entries, REPORT_PROPERTY),
         return_rows=rows_of(entries, RETURN_PROPERTY),
         spilled_spans=spilled_spans_of(header))
 
@@ -407,8 +429,10 @@ def run_self_tests() -> bool:
             defined=entries_of(source),
             bound=bindings_of(bindings),
             handle_takers=handle_takers_of(header),
+            report_takers=takers_of(header, REPORT_PARAMETER),
             non_raisers=non_raisers_of(header),
             handle_rows=rows_of(entries, HANDLE_PROPERTY),
+            report_rows=rows_of(entries, REPORT_PROPERTY),
             return_rows=rows_of(entries, RETURN_PROPERTY))
 
     ok = True
@@ -489,6 +513,18 @@ def run_self_tests() -> bool:
     ok &= expect(
         not check_r004(abi(entries=states)),
         "R004 says nothing about an entry the ABI does not declare by name")
+
+    reports = "auto lyra_rt_a(const void* p, void* evaluation) -> void*;"
+    states_report = row.format(", .takes_the_read_report = true")
+    ok &= expect(
+        len(check_r010(abi(header=takes_none, entries=states_report))) == 1,
+        "R010 reports a row claiming a report the prototype does not take")
+    ok &= expect(
+        len(check_r010(abi(header=reports, entries=states_none))) == 1,
+        "R010 reports a prototype taking a report the row does not state")
+    ok &= expect(
+        not check_r010(abi(header=reports, entries=states_report)),
+        "R010 is silent when the two sides agree")
 
     raises_none = "void lyra_rt_a(void* p) noexcept;"
     raises = "void lyra_rt_a(void* p);"
@@ -577,7 +613,8 @@ def main() -> int:
     abi = load(Path(__file__).resolve().parents[2])
     failures = (
         check_r001(abi) + check_r002(abi) + check_r003(abi) + check_r004(abi)
-        + check_r007(abi) + check_r008(abi) + check_r009(abi))
+        + check_r007(abi) + check_r008(abi) + check_r009(abi)
+        + check_r010(abi))
 
     if failures:
         print("Runtime ABI check failed:")

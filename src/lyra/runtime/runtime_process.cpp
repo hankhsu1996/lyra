@@ -9,6 +9,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/foreign_execution.hpp"
 #include "lyra/runtime/generated_call_scope.hpp"
@@ -327,6 +328,22 @@ auto RuntimeProcess::Run(RuntimeEffects& effects, Activation* activation)
   }
   ReleaseTerminatedLineage(*process);
   return true;
+}
+
+void RuntimeProcess::RunUndispatched(
+    RuntimeEffects& effects, Activation* activation) {
+  const std::shared_ptr<RuntimeProcess> process =
+      activation->Process().shared_from_this();
+  if (!Run(effects, activation) ||
+      process->TerminationCause() != ProcessTerminationCause::kKilled) {
+    return;
+  }
+  // Nothing outside it names an execution run this way, so what ended it is an
+  // error it met, already reported where it was received. It was met where the
+  // calling process stands, so it stops that process the same way.
+  RuntimeProcess& caller = effects.CurrentProcess();
+  caller.RequestTermination(ProcessTerminationCause::kKilled);
+  RaiseUnclaimableEffect();
 }
 
 auto RuntimeProcess::ResumeWith(RuntimeEffects& effects, Activation* activation)

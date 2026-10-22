@@ -256,8 +256,9 @@ under each item, and the conformance gaps at the end.
       assignment region of a slot: this one where the source wrote no control, the one a delay
       names, or the one an event happens in, in every form an event control takes including a repeat
       count. A procedure that only reaches the wait later in that slot is still in time for the
-      trigger, since the trigger has not happened when the statement runs. The standard makes no
-      process of such an update, so `wait fork` does not wait for one.
+      trigger, since the trigger has not happened when the statement runs. What it triggers is the
+      object the event names where the statement stands, whatever the event names when it lands. The
+      standard makes no process of such an update, so `wait fork` does not wait for one.
 - [x] T7 -- Intra-assignment timing controls (LRM 9.4.5). An assignment carrying one reads its
       right-hand side where the statement is reached and makes the assignment only once the control
       is satisfied, so a later write to anything that right-hand side read does not reach it --
@@ -271,29 +272,37 @@ under each item, and the conformance gaps at the end.
       each landing at its own time (LRM 4.4.2.4, 10.4.2). A non-blocking event control does not
       suspend it either: the update becomes due in the NBA region of the slot the event happens in,
       however far off that is, so a procedure the same event wakes reads the value the target held
-      before it. Everything the update needs is settled where the statement stands, its target's
-      index included, and two updates to one variable land in the order the statements ran. A
-      concatenation left-hand side (LRM 11.4.12) is one left-hand side, so a control on such an
+      before it. The control starts watching where the statement stands, so a change the procedure
+      makes straight after the statement is an event for it, and an event it names is the object
+      that event names there. Everything the update needs is settled where the statement stands, its
+      target's index included, and two updates to one variable land in the order the statements ran.
+      A concatenation left-hand side (LRM 11.4.12) is one left-hand side, so a control on such an
       assignment is read once and every member's share lands in the same slot. The standard makes no
       process of a pending update, so `wait fork` does not wait for one and `disable fork` does not
       reach one.
 
 ### Synchronisation primitives
 
-- [x] P9 -- Named events (LRM 15.5): `event e;` declaration, `-> e;` trigger, `@e;` await, and the
-      `e.triggered` query (LRM 15.5.3 same-time-step persistence), which a `wait` condition may read
-      -- so a procedure unblocks whether it reaches the wait before the trigger or in the same time
-      step as it, and stays blocked if it reaches one in a later step. Waiting for an event and
-      waiting for a value to change are the same wait, differing only in that a trigger carries no
-      value, so an `iff` qualifier is the whole of what can hold one back. `wait_order(...)` and
-      event aliasing / nullness / comparison are out of scope: each wants an event variable to be an
-      assignable handle to a shared synchronization object, which is a question about values rather
-      than about scheduling.
-  - [x] What is out of scope is refused where the source is read, with one answer whichever backend
-        was asked for: an event given a value, by assignment or as a declaration's initializer (LRM
-        15.5.5.1, 15.5.5.2), and an event read as a value, as an operand or as a condition (LRM
-        15.5.5.3). It once reached the source backend and came out as C++ the host compiler
-        rejected.
+- [x] P9 -- Named events (LRM 15.5). An event variable is a handle to a synchronization object (LRM
+      6.17): a declaration with no initializer names a new one -- each element of a fixed-size
+      array, each element `new[N]` makes and each member of a structure included -- and `null` names
+      none, which is what reading an entry an array does not have answers (Table 7-1). Assigning one
+      event to another makes both name one object, so a trigger through either reaches whoever waits
+      on either (LRM 15.5.5.1); two events compare by the object they name, and an event tests true
+      exactly where it names one (LRM 15.5.5.3). An event is held wherever a value is -- an element
+      of every kind of array, a member of a structure, a property of a class, a variable of a
+      package, a message of a mailbox, an argument of any direction and a result -- and is triggered
+      (`->`) and waited on (`@`), alone or as an entry of an event list beside value changes,
+      however it is reached. A wait is put on the object its event names where the wait begins and
+      stays there, so an assignment reaches only later waits and naming another element of an array
+      is no occurrence (LRM 15.5.1); the object lives as long as anything names it or waits on it
+      (LRM 15.5.5.2). Triggering an event that names nothing does nothing, and a wait on one waits
+      for as long as the run lasts, one of the two outcomes the clause leaves open. `e.triggered`
+      (LRM 15.5.3) is the object's state for the time step, which a `wait` condition may read, so a
+      procedure unblocks whether it reaches the wait before the trigger or in the same time step as
+      it, and stays blocked if it reaches one in a later step. An `iff` qualifier holds a trigger
+      back as it holds back a value change.
+  - [ ] `wait_order(...)` (LRM 15.5.4), refused where it is written.
 - [x] P11 -- `wait (cond) body` level-sensitive control (LRM 9.4.3). Sensitivity is what `cond`
       reads. The "skip suspend if cond is already true" semantic falls out of the lowering.
       `wait fork;` (LRM 9.6.1) is a distinct process-control construct belonging to the fork

@@ -5,7 +5,6 @@
 #include <memory>
 #include <span>
 
-#include "lyra/runtime/named_event.hpp"
 #include "lyra/runtime/net.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
@@ -15,6 +14,7 @@
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
+#include "lyra/value/object_ref.hpp"
 #include "lyra/value/real.hpp"
 
 // How each storage the library realizes is described to a value dump (LRM
@@ -233,9 +233,11 @@ void DescribeTo(
   DescribeReference<T>(port.Erased(), runtime, entry);
 }
 
-// A named event, recorded in a time step it was triggered in (LRM 21.7.2.2).
+// An event variable, recorded in a time step the object it names then was
+// triggered in (LRM 21.7.2.2). No other variable a dump records holds a handle.
 void DescribeTo(
-    NamedEvent& event, RuntimeEffects& runtime, const DumpEntry* entry);
+    Var<value::ObjectRef>& event, RuntimeEffects& runtime,
+    const DumpEntry* entry);
 
 // A named block, task or function the instance declares, around the things
 // its static variables are (LRM 21.7.2.3 `$scope`).

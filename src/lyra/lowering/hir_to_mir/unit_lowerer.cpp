@@ -33,6 +33,7 @@
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
+#include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
@@ -187,8 +188,8 @@ auto PopulateNamespaceOwnStorage(
         mir::NamedStaticVariable{.name = d.name, .variable = variable});
 
     // The install body gives the cell its declared representation and default.
-    const mir::ExprId prototype = install_block.exprs.Add(
-        BuildDefaultValueFromHir(unit_lowerer, install_block, d.type));
+    const mir::ExprId prototype =
+        BuildDeclaredInitialValue(unit_lowerer, install_frame, d.type);
     install_block.AppendStmt(
         mir::ExprStmt{
             .expr = install_block.exprs.Add(
@@ -872,7 +873,10 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   // declares -- and the class lowering writes into them as it goes.
   mir::CallableCode install_code = mir::CallableCode::Defined();
   install_code.result_type = unit_.builtins.void_type;
-  const WalkFrame install_frame = WalkFrame{}.WithBlock(&install_code.Body());
+  CallableBindings install_bindings(unit_, install_code);
+  const WalkFrame install_frame = WalkFrame{}
+                                      .WithBlock(&install_code.Body())
+                                      .WithBindings(&install_bindings);
 
   mir::CallableCode value_code = mir::CallableCode::Defined();
   value_code.result_type = unit_.builtins.void_type;

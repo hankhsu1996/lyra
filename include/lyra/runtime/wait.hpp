@@ -68,10 +68,10 @@ using Observer = std::variant<
     Awaiter*, SampledValue*, SourceFollower*, ProgramThreads*,
     PropertyEvaluation*, DumpWatch*>;
 
-// One place an observer watches: an observable, a named event, a join, a `wait
-// fork` condition, a process's termination. It stands for as long as the
-// observer does, so what an awaiter watches is enrolled on once however often
-// the execution stops there.
+// One place an observer watches: an observable, a join, a `wait fork`
+// condition, a process's termination. It stands for as long as the observer
+// does, so what an awaiter watches is enrolled on once however often the
+// execution stops there.
 struct WaitMembership : IntrusiveListNode<WaitMembership> {
   // A null awaiter on the sentinel a list embeds to close its ring.
   Observer observer = static_cast<Awaiter*>(nullptr);
@@ -90,9 +90,9 @@ struct WaitMembership : IntrusiveListNode<WaitMembership> {
 
   // What decides whether reaching this membership is an event for the wait
   // (LRM 9.4.2): reaching it is a candidacy, and this decides. It holds nothing
-  // where being reached is the whole of it -- an implicit sensitivity, an
-  // unqualified event, a join. It is held rather than pointed at, so it lives
-  // as long as anything watching for that wait does.
+  // where being reached is the whole of it -- an implicit sensitivity, a join.
+  // It is held rather than pointed at, so it lives as long as anything watching
+  // for that wait does.
   Observation observation;
 };
 

@@ -14,7 +14,6 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/conversion.hpp"
-#include "lyra/lowering/ast_to_hir/event_handle.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/statement/timing.hpp"
@@ -68,11 +67,6 @@ auto LowerAssignmentExpr(
     const slang::ast::AssignmentExpression& as, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   auto& unit_lowerer = lowerer.Owner();
-
-  if (auto refused = RefuseGivingAnEventAValue(*as.left().type, span);
-      !refused) {
-    return std::unexpected(std::move(refused.error()));
-  }
 
   auto lhs_or = lowerer.LowerExpr(as.left(), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));

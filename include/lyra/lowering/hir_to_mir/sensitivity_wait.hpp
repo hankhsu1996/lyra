@@ -2,6 +2,7 @@
 
 #include <optional>
 #include <span>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/arena.hpp"
@@ -22,11 +23,19 @@ class ClosureBuilder;
 class ProcessLowerer;
 class UnitLowerer;
 
-// One leaf of a wait: the storage watched, and what decides whether reaching it
-// is an event for the wait. The leaves watching for one event name one
-// observation between them, since what is being watched for is one thing.
+// What a leaf watching for an event to be triggered watches: the
+// synchronization object the event held in the local `handle` names, read
+// where the wait is built (LRM 15.5.2, 15.5.5.1).
+struct HeldEvent {
+  mir::LocalId handle;
+};
+
+// One leaf of a wait: the storage watched, or the object an event names, and
+// what decides whether reaching it is an event for the wait. The leaves
+// watching for one event name one observation between them, since what is
+// being watched for is one thing.
 struct ObservedLeaf {
-  hir::SensitivityEntry entry;
+  std::variant<hir::SensitivityEntry, HeldEvent> watched;
   mir::LocalId observation;
 };
 
@@ -129,16 +138,19 @@ auto ReportReads(
 // another sealed pointer) is the bare `FieldAccess`.
 
 // The block a wait whose stop is in `stop_block` is built in, where `cells` are
-// what it watches and `evaluated` the expressions of `exprs` its observations
-// evaluate where a change happens: the outermost block of the body, which
-// lasts for the body's whole run, or `stop_block` where anything among them
-// names something the body declares, which exists only from its declaration on
-// (LRM 6.21).
+// what it watches, `evaluated` the expressions of `exprs` its observations
+// evaluate where a change happens, and `evaluates_where_reached` whether it
+// evaluates anything once, where it is reached: the outermost block of the
+// body, which lasts for the body's whole run, or `stop_block` where anything it
+// watches or evaluates at a change names something the body declares, which
+// exists only from its declaration on (LRM 6.21), and where it evaluates
+// anything where it is reached, which it does each time it is.
 [[nodiscard]] auto WaitStorageBlock(
     const WalkFrame& frame, mir::Block& stop_block,
     std::span<const hir::SensitivityEntry> cells,
     const base::Arena<hir::Expr, hir::ExprId>& exprs,
-    std::span<const hir::ExprId> evaluated) -> mir::Block&;
+    std::span<const hir::ExprId> evaluated, bool evaluates_where_reached)
+    -> mir::Block&;
 
 // One trigger per leaf, as the machine array a wait is built on, built in
 // `target_block`. A leaf watching part of its cell names the part by the

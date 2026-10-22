@@ -113,8 +113,8 @@ target and why a forced value is not a driver; this file does not restate it.
       7.3), and part of a string, a queue, a dynamic array or an associative array, whose parts lie
       at no fixed place in the value (LRM 7.10.3).
 
-- [ ] PCA8 -- A takeover of an `event` variable (LRM 10.6, 15.5.5). Refused where it is written, as
-      giving an event a value is.
+- [x] PCA8 -- A takeover of an `event` variable (LRM 10.6, 15.5.5): `assign` and `force` hold it to
+      the object their source names, so a wait begun while it is held is on that object.
 
 - [x] PCA9 -- A force on a module's `ref` port, from inside the module or by a hierarchical name and
       through any number of `ref` ports, is a force on what the port is connected to (LRM 23.3.3.2),

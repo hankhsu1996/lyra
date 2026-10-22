@@ -254,16 +254,6 @@ auto BuildDefaultValueExpr(
             return BuildAssociativeConstructionCall(
                 unit, block, type, {}, std::nullopt);
           },
-          // Types whose default is what their own constructor makes of no
-          // arguments: a named event, which SV gives no initializer grammar at
-          // all, and an object, whose members the constructor scope is what
-          // populates.
-          [&](const mir::EventType&) -> mir::Expr {
-            return mir::Expr{
-                .data =
-                    mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
-                .type = type};
-          },
           // A message of a mailbox of no stated type, before one is put, holds
           // no value of any type (LRM 15.4.9).
           [&](const mir::AnyType&) -> mir::Expr {
@@ -294,7 +284,9 @@ auto BuildDefaultValueExpr(
             return holds_no_declared_value("a reference");
           },
           // LRM 8.4 / Table 7-1: an uninitialized class handle defaults to
-          // null.
+          // null, and so does an event read where an array has no entry. A
+          // declared event names a new object of its own (Table 6-7), which a
+          // declaration states on top of this.
           [&](const mir::ManagedRefType&) -> mir::Expr {
             return mir::Expr{.data = mir::NullLiteral{}, .type = type};
           },

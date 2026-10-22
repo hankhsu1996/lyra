@@ -306,6 +306,31 @@ auto BuildTriggerExpr(
           .type = unit.builtins.trigger});
 }
 
+// The leaf watching for the event `event` holds to be triggered: the place the
+// object it names reports a trigger to, read once where the wait is built, and
+// the whole of that place, since a trigger has no bits.
+auto BuildEventTriggerExpr(
+    mir::Block& block, const mir::CompilationUnit& unit, const HeldEvent& event,
+    mir::LocalId observation) -> mir::ExprId {
+  const mir::ExprId reports_to = block.exprs.Add(
+      mir::MakeCallExpr(
+          mir::Direct{
+              .target = support::BuiltinFn::kEventReportsTo,
+              .receiver = block.LocalPlace(event.handle, unit.builtins.event)},
+          {}, mir::ErasedPointer(unit.types)));
+  const LeafPart whole = WholePlace(unit, block);
+  return block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee = mir::Construct{},
+                  .arguments =
+                      {reports_to,
+                       block.ReadLocal(observation, unit.builtins.observation),
+                       whole.steps, whole.first, whole.width}},
+          .type = unit.builtins.trigger});
+}
+
 // Appends `entry(arguments)`, acting on the report, to `block`.
 void ActOnReport(
     const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId report,
@@ -513,7 +538,8 @@ auto WaitStorageBlock(
     const WalkFrame& frame, mir::Block& stop_block,
     std::span<const hir::SensitivityEntry> cells,
     const base::Arena<hir::Expr, hir::ExprId>& exprs,
-    std::span<const hir::ExprId> evaluated) -> mir::Block& {
+    std::span<const hir::ExprId> evaluated, bool evaluates_where_reached)
+    -> mir::Block& {
   const bool watches_a_body_variable =
       std::ranges::any_of(cells, [](const hir::SensitivityEntry& cell) {
         return std::visit(
@@ -526,7 +552,8 @@ auto WaitStorageBlock(
       !std::ranges::all_of(evaluated, [&](hir::ExprId expr) {
         return hir::ReadsElaboratedStorageOnly(exprs, expr);
       });
-  return watches_a_body_variable || evaluates_a_body_variable
+  return watches_a_body_variable || evaluates_a_body_variable ||
+                 evaluates_where_reached
              ? stop_block
              : frame.bindings->RootBlock();
 }
@@ -539,8 +566,18 @@ auto BuildTriggerArray(
   std::vector<mir::ExprId> triggers;
   triggers.reserve(leaves.size());
   for (const ObservedLeaf& leaf : leaves) {
-    auto trigger = BuildTriggerExpr(
-        target_block, frame, unit, lowerer, leaf.entry, leaf.observation);
+    auto trigger = std::visit(
+        Overloaded{
+            [&](const hir::SensitivityEntry& entry)
+                -> diag::Result<mir::ExprId> {
+              return BuildTriggerExpr(
+                  target_block, frame, unit, lowerer, entry, leaf.observation);
+            },
+            [&](const HeldEvent& event) -> diag::Result<mir::ExprId> {
+              return BuildEventTriggerExpr(
+                  target_block, unit, event, leaf.observation);
+            }},
+        leaf.watched);
     if (!trigger) return std::unexpected(std::move(trigger.error()));
     triggers.push_back(*trigger);
   }
@@ -579,7 +616,8 @@ auto BuildValueChangeLeaves(
   std::vector<ObservedLeaf> leaves;
   leaves.reserve(sensitivity.size());
   for (const hir::SensitivityEntry& entry : sensitivity) {
-    leaves.push_back(ObservedLeaf{.entry = entry, .observation = observation});
+    leaves.push_back(
+        ObservedLeaf{.watched = entry, .observation = observation});
   }
   return leaves;
 }
@@ -590,7 +628,7 @@ auto BuildValueChangeWaitStmt(
     std::span<const hir::SensitivityEntry> sensitivity_list)
     -> diag::Result<mir::Stmt> {
   mir::Block& storage_block = WaitStorageBlock(
-      frame, stop_block, sensitivity_list, lowerer.HirExprs(), {});
+      frame, stop_block, sensitivity_list, lowerer.HirExprs(), {}, false);
   const std::vector<ObservedLeaf> leaves = BuildValueChangeLeaves(
       lowerer.Owner().Unit(), frame, storage_block, sensitivity_list);
   return BuildWaitOnStmt(storage_block, stop_block, frame, lowerer, leaves);

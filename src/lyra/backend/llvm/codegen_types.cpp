@@ -105,7 +105,6 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
           // every value above.
           [&](const lir::TupleType& t) { return address(t); },
           [&](const lir::RecordType& t) { return address(t); },
-          [&](const lir::EventType& t) { return address(t); },
           // A wildcard index (LRM 7.8.1) names where an index of such an array
           // goes. What stands there is an object of the library's keeping the
           // index with the type it was written in, held where it lies.

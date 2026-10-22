@@ -244,34 +244,28 @@ auto RecordSampledHistory(
   } else {
     auto event_or = LowerEventControl(lowerer, scope_frame, **clock_or, span);
     if (!event_or) return std::unexpected(std::move(event_or.error()));
-    auto* value_change = std::get_if<hir::EventControl>(&*event_or);
-    if (value_change == nullptr) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "'{}' counting ticks of a named event is not yet supported", name);
-    }
     // The gate belongs to the event, and the event already carries a qualifier
-    // of exactly that shape -- the LRM 9.4.2.3 `iff`, read when what is watched
-    // moves -- so it composes with whatever the event stated rather than
-    // needing a place of its own. A trigger the source already qualified admits
-    // a tick only where both hold, and each trigger reads the gate for itself.
+    // of exactly that shape -- the LRM 9.4.2.3 `iff`, read where an occurrence
+    // happens -- so it composes with whatever the event stated rather than
+    // needing a place of its own. An entry the source already qualified admits
+    // a tick only where both hold, and each entry reads the gate for itself.
     if (gate != nullptr) {
-      for (hir::EventTrigger& trigger : value_change->triggers) {
+      for (hir::EventEntry& entry : event_or->entries) {
         auto gate_or = lowerer.LowerExpr(*gate, scope_frame);
         if (!gate_or) return std::unexpected(std::move(gate_or.error()));
         const hir::ExprId gate_id =
             scope_frame.Exprs().Add(*std::move(gate_or));
-        if (!trigger.condition.has_value()) {
-          trigger.condition = gate_id;
+        if (!entry.condition.has_value()) {
+          entry.condition = gate_id;
           continue;
         }
-        trigger.condition = scope_frame.Exprs().Add(
+        entry.condition = scope_frame.Exprs().Add(
             hir::Expr{
                 .type = lowerer.Owner().Unit().builtins.scalar_bit,
                 .data =
                     hir::BinaryExpr{
                         .op = hir::BinaryOp::kLogicalAnd,
-                        .lhs = *trigger.condition,
+                        .lhs = *entry.condition,
                         .rhs = gate_id},
                 .span = span,
             });
@@ -282,7 +276,7 @@ auto RecordSampledHistory(
     return frame.current_structural_scope->sampled_histories.Add(
         hir::SampledHistoryDecl{
             .subject = scope_frame.Exprs().Add(*std::move(subject_or)),
-            .clock = *value_change,
+            .clock = *event_or,
             .depth = scope_frame.Exprs().Add(*std::move(depth_or)),
         });
   }
@@ -598,9 +592,7 @@ auto LowerSystemCall(
   if (receiver_type.has_value() &&
       types.Get(*receiver_type).Is<hir::EventType>() && name == "triggered") {
     // LRM 15.5.3: `e.triggered` returns true for the duration of the time
-    // slot in which the event was last triggered. Result type is bit (1'b0
-    // / 1'b1) -- slang already typed the expression; we just route the
-    // call through the named-event method.
+    // slot in which the event was last triggered.
     auto type_id = unit_lowerer.InternExpressionType(call, span);
     if (!type_id) return std::unexpected(std::move(type_id.error()));
     return hir::Expr{
