@@ -104,9 +104,11 @@ lives long enough.
   runs in process.
 - The compiled foreign inputs are objects rather than one library. Nothing links them to each other;
   the session is where they meet the design.
-- A wakeup registered while running under a foreign call records the vehicle that carries it, the
-  same way one registered by an awaiting body does -- otherwise the scheduler resumes a frame whose
-  continuation is buried under a native stack, and the foreign call is never returned to.
+- A thread that blocked under a foreign call is resumed by driving the innermost foreign call it has
+  entered, never its frame directly -- otherwise the scheduler resumes a frame whose continuation is
+  buried under a native stack, and the foreign call is never returned to. A call that returns goes
+  on in the frame that made it, on the stack that frame runs on, which for a call made inside
+  another is that call's.
 
 ## Cross-references
 

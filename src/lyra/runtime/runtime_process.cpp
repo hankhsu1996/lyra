@@ -32,7 +32,11 @@ RuntimeProcess::RuntimeProcess(
   coroutine_.BindProcess(*this);
 }
 
-RuntimeProcess::~RuntimeProcess() = default;
+RuntimeProcess::~RuntimeProcess() {
+  while (!foreign_calls_.empty()) {
+    foreign_calls_.pop_back();
+  }
+}
 
 auto RuntimeProcess::TopActivation() const -> Activation* {
   return coroutine_.Token();
@@ -44,14 +48,7 @@ auto RuntimeProcess::Parent() const -> RuntimeProcess* {
 
 auto RuntimeProcess::ParkAt(RuntimeEffects& services, Awaiter& awaiter)
     -> bool {
-  if (!Arrange(services, current_leaf_, awaiter, awaiter.Begin())) {
-    return false;
-  }
-  // The vehicle carrying this thread when it blocks is the one the scheduler
-  // must drive to resume it, kept past the block because a resume runs from
-  // another process's context, where the ambient vehicle is that caller's.
-  resume_target_ = current_foreign_execution_;
-  return true;
+  return Arrange(services, current_leaf_, awaiter, awaiter.Begin());
 }
 
 auto RuntimeProcess::Arrange(
@@ -247,7 +244,7 @@ void RuntimeProcess::ReleaseTerminatedLineage(RuntimeProcess& process) {
 }
 
 auto RuntimeProcess::DriveForeignVehicle(ForeignExecution& fe) -> bool {
-  const ForeignExecutionGuard guard(*this, fe);
+  const ForeignProcessGuard guard(*this);
   // Foreign code reached from here may call back into generated code (LRM
   // 35.7) that keeps values across a park, so each stretch of the call names
   // the call's own store. The scope is one stretch of the call rather than the
@@ -260,17 +257,9 @@ auto RuntimeProcess::DriveForeignVehicle(ForeignExecution& fe) -> bool {
   return fe.IsDone();
 }
 
-auto RuntimeProcess::EnterForeignExecution(
-    Activation* continuation, std::unique_ptr<ForeignExecution> fe) -> bool {
-  ForeignExecution& entered =
-      *foreign_calls_
-           .emplace_back(
-               ForeignCall{
-                   .vehicle = std::move(fe), .continuation = continuation})
-           .vehicle;
-  // The call returned without suspending: nothing snapshotted the vehicle, and
-  // the caller continues inline. If instead it suspended, an inner frame parked
-  // with this vehicle as its resume target, and the scheduler will drive it.
+auto RuntimeProcess::EnterForeignExecution(std::unique_ptr<ForeignExecution> fe)
+    -> bool {
+  ForeignExecution& entered = *foreign_calls_.emplace_back(std::move(fe));
   if (DriveForeignVehicle(entered)) {
     foreign_calls_.pop_back();
     return true;
@@ -368,21 +357,22 @@ auto RuntimeProcess::ResumeWith(RuntimeEffects& effects, Activation* activation)
     // call that re-enters generated code cannot lose either identity on
     // the way back.
     const ProcessExecutionGuard resume_guard(effects, *this);
-    // A leaf that blocked under a foreign call is resumed by driving its
-    // vehicle, which re-enters the native stack and continues the coroutine
-    // from within; a leaf blocked on the runtime's own stack is resumed
-    // directly by a symmetric transfer into its frame.
-    if (resume_target_ != nullptr) {
-      // The foreign call returned: its exported task completed internally to
-      // the vehicle, so what continues the process is the import frame that
-      // entered the call, resumed directly now that no vehicle is in the way.
-      // Otherwise an inner frame re-blocked and re-snapshotted the vehicle, so
-      // the process stays waiting on that new wait.
-      if (DriveForeignVehicle(*resume_target_)) {
-        current_leaf_ = foreign_calls_.back().continuation;
-        resume_target_ = nullptr;
+    // A leaf that blocked under a foreign call is resumed by driving the
+    // innermost call its thread has entered, which re-enters the native stack
+    // and continues the coroutine from within; a leaf blocked on the runtime's
+    // own stack is resumed directly by a symmetric transfer into its frame.
+    if (HasLiveForeignCall()) {
+      // A foreign call that returned goes on in the frame that made it, on the
+      // stack that frame runs on -- the call before it, or, once the outermost
+      // has returned, the runtime's own, where the frame is resumed directly. A
+      // drive that does not return ended where a frame inside that call blocked
+      // again.
+      while (DriveForeignVehicle(*foreign_calls_.back())) {
         foreign_calls_.pop_back();
-        current_leaf_->coroutine.resume();
+        if (!HasLiveForeignCall()) {
+          current_leaf_->coroutine.resume();
+          break;
+        }
       }
     } else {
       activation->coroutine.resume();

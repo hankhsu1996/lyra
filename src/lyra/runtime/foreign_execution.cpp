@@ -267,32 +267,20 @@ void YieldForeignExecution() {
   RunningFiberSlot()->Yield();
 }
 
-ForeignExecutionGuard::ForeignExecutionGuard(
-    RuntimeProcess& process, ForeignExecution& fe)
-    : process_(&process),
-      previous_execution_(
-          std::exchange(process.current_foreign_execution_, &fe)),
-      previous_process_(std::exchange(ForeignProcessSlot(), &process)) {
+ForeignProcessGuard::ForeignProcessGuard(RuntimeProcess& process)
+    : previous_process_(std::exchange(ForeignProcessSlot(), &process)) {
 }
 
-ForeignExecutionGuard::~ForeignExecutionGuard() {
-  process_->current_foreign_execution_ = previous_execution_;
+ForeignProcessGuard::~ForeignProcessGuard() {
   ForeignProcessSlot() = previous_process_;
 }
 
-void DriveOnForeignStack(Activation* frame) {
-  frame->coroutine.resume();
-  while (!frame->coroutine.done()) {
+void DriveOnForeignStack(Activation& frame) {
+  frame.coroutine.resume();
+  while (!frame.coroutine.done()) {
     YieldForeignExecution();
-    frame->coroutine.resume();
+    frame.Process().CurrentLeaf()->coroutine.resume();
   }
-}
-
-auto EnterForeignTask(
-    RuntimeEffects& effects, Activation* continuation,
-    std::unique_ptr<ForeignExecution> fiber) -> bool {
-  return effects.CurrentProcess().EnterForeignExecution(
-      continuation, std::move(fiber));
 }
 
 auto CurrentForeignProcess() -> RuntimeProcess& {
@@ -309,8 +297,7 @@ auto CurrentForeignProcess() -> RuntimeProcess& {
 auto RunForeignTaskOnFiber(
     RuntimeEffects& effects,
     OwnedClosure<support::EffectSignature> foreign_call) -> bool {
-  return !EnterForeignTask(
-      effects, effects.CurrentProcess().CurrentLeaf(),
+  return !effects.CurrentProcess().EnterForeignExecution(
       MakeForeignExecution(std::move(foreign_call)));
 }
 

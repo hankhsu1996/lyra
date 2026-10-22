@@ -21,12 +21,12 @@ auto CurrentSlot() -> AmbientRunContext*& {
 }  // namespace
 
 AmbientRunContext::AmbientRunContext(Scope* root, RuntimeEffects& effects)
-    : effects_(&effects), scope_registry_(root), previous_(CurrentSlot()) {
+    : effects_(&effects), scope_registry_(root) {
   CurrentSlot() = this;
 }
 
 AmbientRunContext::~AmbientRunContext() {
-  CurrentSlot() = previous_;
+  CurrentSlot() = nullptr;
 }
 
 auto AmbientRunContext::Current() -> AmbientRunContext& {

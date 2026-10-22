@@ -172,7 +172,11 @@ protocol on top of it.
       calling back an exported SV task that suspends on a delay, an event, or a wait. The foreign
       call stack is parked across the boundary while simulation time advances and then resumes, so
       an imported task and the exported task it drives both suspend and continue across the
-      boundary. Rides on the timing and suspension machinery (`scheduling.md`, `processes.md`).
+      boundary. The exported task is a task like any other, so a wait in a task it calls suspends
+      the thread as well, and it may itself call an imported task that calls back an export which
+      suspends (LRM 35.8, 35.5.1.5). Such calls nest to any depth, each returns into the call it was
+      made inside, and a run that ends while they are suspended still reaches its final procedures.
+      Rides on the timing and suspension machinery (`scheduling.md`, `processes.md`).
 - [x] D6c -- The disable protocol (LRM 35.9). Nothing that ends an execution crosses a frame the
       compiler did not emit, because such a frame ends only by returning. So an exported
       subroutine's entry lands whatever would have left it and answers instead: a task returns the
