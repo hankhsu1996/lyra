@@ -45,9 +45,12 @@ so a later write to the index or the operand does not reach an update still to c
 **It belongs to no lineage.** LRM 9.4.5 makes no process of the update, so nothing that names
 processes may find it: `wait fork` (LRM 9.6.1) does not wait for it, `disable fork` (LRM 9.6.3) does
 not reach it. It does evaluate the control it carries, where the statement stands and again at each
-candidacy, so it draws from a generator of its own, taken out of the reaching process's as a
-thread's is (LRM 18.14.2): that process's stream moves by one at the statement, and not by however
-often the wait wakes.
+candidacy, so it draws from a generator of its own. Being no thread, it takes nothing from the
+process that reached the statement, whose stream reaching it leaves where it was: its generator is
+the next one of the initialization RNG of that process's instance or package, the one source LRM
+18.14.1 names for what is made with no active thread. Taken from the reaching process, as a thread's
+is, it would move that process's later draws at every such statement, a control that draws nothing
+included.
 
 **It reaches the region itself rather than submitting a closure into it.** Once the event has named
 the slot, the carrier suspends into that slot's NBA region and writes when it resumes. This is the
