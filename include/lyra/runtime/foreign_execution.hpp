@@ -18,10 +18,7 @@ namespace lyra::runtime {
 // DPI foreign task, LRM 35.5.2). Resuming re-enters that native stack on its
 // own stack and lets it run on to its next suspension or its return, so the
 // scheduler drives this vehicle instead of the coroutine handle.
-//
-// A plain coroutine activation names no vehicle: the scheduler resumes its
-// innermost frame with a symmetric transfer. Only an activation that blocked
-// while running under a foreign call names one, snapshotted when it blocked.
+
 class ForeignExecution {
  public:
   ForeignExecution() = default;
@@ -77,54 +74,39 @@ void YieldForeignExecution();
 // foreign call.
 auto CurrentForeignProcess() -> RuntimeProcess&;
 
-// Installs the current foreign call -- vehicle `fe` and its process `process`
-// -- for the dynamic extent of a scope, the two facts an inner frame needs and
-// cannot reach on its own. An activation that blocks inside this extent
-// snapshots `fe` as its resume vehicle, so the scheduler later resumes it by
-// driving `fe` rather than its coroutine handle; the exported-task driver,
-// given no engine handle by foreign C, reads `process` to run its body as that
-// process's thread. Both are saved and restored, so a nested foreign call
-// unwinds to its caller's and a process outside any foreign call resumes its
-// coroutine directly.
-class ForeignExecutionGuard {
+// Installs `process` as the one whose foreign call is running, for the dynamic
+// extent of a scope. The exported-task driver, given no engine handle by
+// foreign C, reads it to run its body as that process's thread. The one it
+// replaces is restored, so a nested foreign call unwinds to its caller's.
+class ForeignProcessGuard {
  public:
-  ForeignExecutionGuard(RuntimeProcess& process, ForeignExecution& fe);
-  ForeignExecutionGuard(const ForeignExecutionGuard&) = delete;
-  auto operator=(const ForeignExecutionGuard&)
-      -> ForeignExecutionGuard& = delete;
-  ForeignExecutionGuard(ForeignExecutionGuard&&) = delete;
-  auto operator=(ForeignExecutionGuard&&) -> ForeignExecutionGuard& = delete;
-  ~ForeignExecutionGuard();
+  explicit ForeignProcessGuard(RuntimeProcess& process);
+  ForeignProcessGuard(const ForeignProcessGuard&) = delete;
+  auto operator=(const ForeignProcessGuard&) -> ForeignProcessGuard& = delete;
+  ForeignProcessGuard(ForeignProcessGuard&&) = delete;
+  auto operator=(ForeignProcessGuard&&) -> ForeignProcessGuard& = delete;
+  ~ForeignProcessGuard();
 
  private:
-  RuntimeProcess* process_;
-  ForeignExecution* previous_execution_;
   RuntimeProcess* previous_process_;
 };
 
 // Runs the execution `frame` names to its end on the stack the current foreign
-// call is using. That stack cannot be parked the way a coroutine is, so between
-// two stretches of the body the vehicle yields to the scheduler and the body
-// continues when the scheduler drives it again (LRM 35.5.1.1); a body that
-// consumes no simulation time is done on the first resume.
-void DriveOnForeignStack(Activation* frame);
-
-// Carries a DPI import task's foreign call (LRM 35.5.2) on `fiber`, entered on
-// the process the run is currently executing, with `continuation` the frame to
-// resume once the call returns. Answers whether the call returned without
-// suspending, so the caller continues inline. Which process enters a foreign
-// call is stated here and nowhere else, because a body compiled as a coroutine
-// and one compiled to an external entry both reach the boundary through this.
-auto EnterForeignTask(
-    RuntimeEffects& effects, Activation* continuation,
-    std::unique_ptr<ForeignExecution> fiber) -> bool;
+// call is using, `frame` having been entered as its thread's innermost frame.
+// That stack cannot be parked the way a coroutine is, so between two stretches
+// of the body the vehicle yields to the scheduler (LRM 35.5.1.5), and when the
+// scheduler drives it again the thread goes on where it stopped -- its
+// innermost frame, which may be a task the body called. A body that consumes
+// no simulation time is done on the first resume.
+void DriveOnForeignStack(Activation& frame);
 
 // A DPI import task's foreign-call step (LRM 35.5.2): runs `foreign_call` on a
 // fiber so an exported task the call reaches can suspend across the boundary,
-// and answers whether the caller must give up control -- which it must only if
-// the call actually suspended, since one that returns without consuming time is
-// over before this returns. What continues the import frame afterwards is the
-// vehicle rather than a wait, because the call is on a stack of its own.
+// enters it on the process the run is currently executing, and answers whether
+// the caller must give up control -- which it must only if the call actually
+// suspended, since one that returns without consuming time is over before this
+// returns. What continues the import frame afterwards is the vehicle rather
+// than a wait, because the call is on a stack of its own.
 auto RunForeignTaskOnFiber(
     RuntimeEffects& effects,
     OwnedClosure<support::EffectSignature> foreign_call) -> bool;

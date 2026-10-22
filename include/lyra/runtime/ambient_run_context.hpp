@@ -18,12 +18,10 @@ class RuntimeEffects;
 // effects facade for the executing process and time queries, and the DPI scope
 // directory built from the design root.
 //
-// It is an RAII stack guard over a thread-local slot: installed once around the
+// It is an RAII guard over a thread-local slot: installed once around the
 // simulation run at the single run entry, and torn down when the run returns.
-// Nested foreign entries (an import called from inside an export) push and pop,
-// so the innermost active run is always current. The context is valid only
-// while a simulation is running on the current thread; a callback on a
-// different thread must install its own.
+// The context is valid only while a simulation is running on the current
+// thread; a callback on a different thread must install its own.
 class AmbientRunContext {
  public:
   AmbientRunContext(Scope* root, RuntimeEffects& effects);
@@ -46,7 +44,6 @@ class AmbientRunContext {
  private:
   RuntimeEffects* effects_;
   DpiScopeRegistry scope_registry_;
-  AmbientRunContext* previous_;
 };
 
 // The scope a module-scoped exported subroutine runs against: the current DPI
@@ -69,13 +66,18 @@ auto FindExportEntry(Scope* scope, const char* subroutine) -> ErasedEntry;
 // payload. A foreign C caller of an exported task (LRM 35.8) is not a
 // coroutine, so it cannot `co_await` the body the way an SV enabler does; its
 // wrapper drives the body here instead, on the stack the foreign call is
-// running on. The body runs as the process that entered that call (LRM 9.5).
-// Whatever left the body leaves from here too, and the entry's own region
-// receives it before it can reach the foreign frame.
+// running on. The body runs as the process that entered that call (LRM 9.5),
+// and is entered as that thread's innermost frame, so a delay inside it parks
+// the body rather than the frame that called out. Whatever left the body leaves
+// from here too, and the entry's own region receives it before it can reach the
+// foreign frame.
 template <class T>
 auto RunExportedTaskToCompletion(Coroutine<T> task) -> T {
-  task.Handle().promise().process = &CurrentForeignProcess();
-  DriveOnForeignStack(task.Token());
+  Activation& body = *task.Token();
+  body.process = &CurrentForeignProcess();
+  EnterActivation(body);
+  DriveOnForeignStack(body);
+  LeaveActivation(body);
   return task.Handle().promise().Take();
 }
 

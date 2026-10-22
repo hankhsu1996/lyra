@@ -19,7 +19,6 @@ namespace lyra::runtime {
 
 class RuntimeEffects;
 class ForeignExecution;
-class ForeignExecutionGuard;
 class Scope;
 
 enum class ProcessExecutionState : std::uint8_t {
@@ -106,8 +105,9 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // not a single owner.
   RuntimeProcess(RuntimeProcess&&) noexcept = delete;
   auto operator=(RuntimeProcess&&) noexcept -> RuntimeProcess& = delete;
-  // Out of line: a foreign call this process holds is carried on a vehicle this
-  // header only names, so destroying one cannot be written here.
+  // Ends the foreign calls still suspended when the run ends, innermost first,
+  // as nested extents end, because a call made inside another is part of it.
+  // Out of line, because the vehicle that carries one is only named here.
   ~RuntimeProcess();
 
   // What is in force while this process runs: the generator its randomization
@@ -214,18 +214,12 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
     return current_leaf_;
   }
 
-  // Enters `fe` -- the foreign call the SV frame `continuation` is making --
-  // and drives it to its first suspension or its return. `continuation` is the
-  // frame to resume once the whole foreign call returns. Returns true if the
+  // Enters `fe` -- the foreign call this thread's innermost frame is making --
+  // and drives it to its first suspension or its return. Returns true if the
   // call returned without suspending (the caller continues inline), false if it
-  // suspended across the boundary (an inner SV frame blocked and snapshotted
-  // `fe` as its resume vehicle, so the scheduler resumes it later).
-  //
-  // A suspended call outlives the frame that made it, and the vehicle has to
-  // stand until the call returns, so this takes it: the process is what the
-  // call belongs to and what resumes it.
-  auto EnterForeignExecution(
-      Activation* continuation, std::unique_ptr<ForeignExecution> fe) -> bool;
+  // suspended across the boundary (a frame inside it blocked, and the scheduler
+  // resumes it later by driving the innermost call).
+  auto EnterForeignExecution(std::unique_ptr<ForeignExecution> fe) -> bool;
 
   // Enter (LRM 9.6.2) a disable target: until the target is left, a `disable`
   // of it reaches this execution, and a check finds it among the targets this
@@ -423,9 +417,6 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // the runtime's ambient, and a caller cannot resume without supplying it.
   auto ResumeWith(RuntimeEffects& effects, Activation* activation) -> bool;
 
-  // The guard is the sole writer of the ambient foreign-execution vehicle,
-  // which it sets and restores around a foreign call.
-  friend class ForeignExecutionGuard;
   // The set that keeps a process is what places and moves it.
   friend class OwnedProcesses;
 
@@ -446,10 +437,10 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   };
 
   // Drives `fe` for one stretch -- into its next suspension or its return --
-  // with the foreign-execution context installed for its duration, so an inner
-  // frame that blocks snapshots `fe` as its resume vehicle. Returns whether the
-  // call has returned. Every drive goes through here so that installation can
-  // never be forgotten.
+  // with this process installed as the one whose foreign call is running, so an
+  // exported subroutine the call reaches runs as it. Returns whether
+  // the call has returned. Every drive goes through here so that installation
+  // can never be forgotten.
   auto DriveForeignVehicle(ForeignExecution& fe) -> bool;
 
   // The one indivisible terminal transition, and the sole writer of the
@@ -498,27 +489,14 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // leaving one restores the frame that called it. Innermost last, the same
   // order as the activations themselves.
   std::vector<Activation*> outer_leaves_;
-  // One foreign call this thread has entered and not yet returned from: the
-  // vehicle carrying it, and the SV frame to resume once it returns -- the
-  // frame that made the call. An exported task the call reaches suspends and
-  // completes inside the vehicle, so its completion is not what continues the
-  // process; this frame is. Both belong to the call rather than to the process,
-  // because a call reached from inside another has its own of each.
-  struct ForeignCall {
-    std::unique_ptr<ForeignExecution> vehicle;
-    Activation* continuation;
-  };
-  // Innermost last. Each is held until its own call returns, which is after the
-  // frame that made it has parked, so nothing shorter-lived can own one.
-  std::vector<ForeignCall> foreign_calls_;
-  // The foreign execution this thread is running under right now, valid only
-  // while a foreign call is on the stack; the guard sets and clears it. Null
-  // outside any foreign call, which is every plain-coroutine process.
-  ForeignExecution* current_foreign_execution_ = nullptr;
-  // The vehicle the scheduler drives to resume the active leaf, snapshotted
-  // from the ambient foreign execution when the leaf blocks and retained until
-  // it blocks again. Null means resume the coroutine frame directly.
-  ForeignExecution* resume_target_ = nullptr;
+  // The vehicles of the foreign calls this thread has entered and not yet
+  // returned from, innermost last; the last is what the scheduler drives to
+  // resume a thread blocked inside them. When one returns, the frame that made
+  // it is the thread's innermost frame again, since every exported subroutine
+  // it reached has left the frame it entered. Each is held until its own call
+  // returns, which is after the frame that made it has parked, so nothing
+  // shorter-lived can own one.
+  std::vector<std::unique_ptr<ForeignExecution>> foreign_calls_;
   // Held by every deferred report this process has pending; null when it has
   // none, which is also the state a flush point leaves it in.
   std::shared_ptr<DeferredReportEpoch> deferred_report_epoch_;

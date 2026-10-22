@@ -1984,7 +1984,6 @@ using lyra::runtime::Emplace;
 using lyra::runtime::EndClosure;
 using lyra::runtime::EndDescribedBlock;
 using lyra::runtime::EnterCancellationTarget;
-using lyra::runtime::EnterForeignTask;
 using lyra::runtime::ErasedAt;
 using lyra::runtime::ErasedDesignation;
 using lyra::runtime::ErasedObjectWrite;
@@ -3384,7 +3383,7 @@ void lyra_rt_run_exported_task_to_completion(void* activation) {
   RuntimeProcess& process = CurrentForeignProcess();
   Activation* const called = process.PushActivation(
       std::move(*static_cast<Coroutine<void>*>(activation)));
-  DriveOnForeignStack(called);
+  DriveOnForeignStack(*called);
   // A run-time error that left the body was stored rather than allowed to
   // travel through the frames that drove it, so it travels on from here, where
   // the entry's own region receives it before it can reach the foreign frame
