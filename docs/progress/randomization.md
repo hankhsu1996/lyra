@@ -46,7 +46,10 @@ Done when:
       static declaration inside a procedural block, a package variable, a `static` class property,
       and a `static` local of a subroutine. Two instances of one module draw alike, and a package
       draws independently of every other, because each container's generator starts from the same
-      default seed and none of them advances another's.
+      default seed and none of them advances another's. What runs with no thread creating it -- a
+      deferred assertion's action, the update a nonblocking assignment's event control carries --
+      draws from the next generator of its instance's initialization RNG, so reaching it moves no
+      procedure's draws.
 
 - [x] Manual seeding and state save / restore: `srandom`, `get_randstate`, and `set_randstate` (LRM
       18.13.3 -- 18.13.5), reached on a process through its process handle (LRM 9.7), whichever

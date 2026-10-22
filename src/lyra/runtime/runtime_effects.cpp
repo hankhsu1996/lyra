@@ -375,12 +375,13 @@ void RuntimeEffects::RunDetached(Coroutine<void> coroutine) {
         "scope from");
   }
   // The carrier evaluates the control it carries, there and again at each
-  // candidacy, so it draws from a generator of its own, taken out of the
-  // reaching process's as a thread's is (LRM 18.14.2): that process's stream
-  // moves by one at the statement, and not by however often the wait wakes.
+  // candidacy, so it draws from a generator of its own. No thread creates it,
+  // so that generator is the next of the context's initialization RNG (LRM
+  // 18.14.1), and the draws of the process that reached the statement do not
+  // move.
+  const ExecutionContext context = reached_by->Context().WithoutLineage();
   auto carrier = std::make_shared<RuntimeProcess>(
-      reached_by->Context().WithoutLineage(), std::move(coroutine),
-      reached_by->Running().rng.Split());
+      context, std::move(coroutine), context.SplitInitializationRng());
   Activation* const activation = carrier->TopActivation();
   // No lineage and no disable membership: the standard makes no process of the
   // update this carries out, so nothing that names processes may find it. What
