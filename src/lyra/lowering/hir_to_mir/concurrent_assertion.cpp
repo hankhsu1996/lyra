@@ -11,10 +11,13 @@
 #include <vector>
 
 #include "lyra/base/diag_message.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/hir/case_keyword.hpp"
 #include "lyra/hir/timing.hpp"
 #include "lyra/lowering/hir_to_mir/assertion_automaton.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
@@ -27,11 +30,13 @@
 #include "lyra/lowering/hir_to_mir/statement/assertions.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/lowering/hir_to_mir/statement/timing.hpp"
+#include "lyra/lowering/hir_to_mir/switch_stmt.hpp"
+#include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
-#include "lyra/support/evaluation_outcome.hpp"
+#include "lyra/support/property_answer.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -136,34 +141,32 @@ void AppendIf(mir::Block& block, mir::ExprId condition, mir::Block then_block) {
 
 // The two dispositions a concurrent assertion carries, read as what this
 // lowering needs of them: an assert or assume owes the tool's own report where
-// the source wrote no fail statement, and a coverage goal owes none and demands
-// a match of a result no tick settled (LRM 16.14.1, 16.14.3, 16.12.2).
-struct AssertionParts {
+// the source wrote no fail statement, and a coverage goal owes none (LRM
+// 16.14.1, 16.14.3).
+struct AssertionDispositions {
   const hir::PropertySpec* spec = nullptr;
   std::optional<hir::StmtId> pass_stmt;
   std::optional<hir::StmtId> fail_stmt;
   std::optional<hir::AssertionDirective> reports_as;
-  bool pending_holds = true;
 };
 
-auto PartsOf(const hir::ConcurrentAssertion& assertion) -> AssertionParts {
+auto DispositionsOf(const hir::ConcurrentAssertion& assertion)
+    -> AssertionDispositions {
   return std::visit(
       Overloaded{
           [](const hir::ConcurrentAssertStmt& check) {
-            return AssertionParts{
+            return AssertionDispositions{
                 .spec = &check.spec,
                 .pass_stmt = check.pass_stmt,
                 .fail_stmt = check.fail_stmt,
-                .reports_as = check.directive,
-                .pending_holds = true};
+                .reports_as = check.directive};
           },
           [](const hir::ConcurrentCoverStmt& cover) {
-            return AssertionParts{
+            return AssertionDispositions{
                 .spec = &cover.spec,
                 .pass_stmt = cover.pass_stmt,
                 .fail_stmt = std::nullopt,
-                .reports_as = std::nullopt,
-                .pending_holds = false};
+                .reports_as = std::nullopt};
           }},
       assertion);
 }
@@ -180,10 +183,11 @@ struct RunsNothing {};
 using ActionArm = std::variant<RunsStatements, RunsDefaultReport, RunsNothing>;
 
 // A pass statement is what a true result selects, and nothing stands in for it.
-auto PassArmOf(const hir::ProceduralBody& body, const AssertionParts& parts)
+auto PassArmOf(
+    const hir::ProceduralBody& body, const AssertionDispositions& dispositions)
     -> ActionArm {
-  if (HasRealArm(body, parts.pass_stmt)) {
-    return RunsStatements{.stmt = *parts.pass_stmt};
+  if (HasRealArm(body, dispositions.pass_stmt)) {
+    return RunsStatements{.stmt = *dispositions.pass_stmt};
   }
   return RunsNothing{};
 }
@@ -192,16 +196,17 @@ auto PassArmOf(const hir::ProceduralBody& body, const AssertionParts& parts)
 // false result selects where the source wrote no else clause (LRM 16.14.1); a
 // null one runs nothing. A coverage goal has neither, because an attempt that
 // does not succeed is not a failure (LRM 16.14.3).
-auto FailArmOf(const hir::ProceduralBody& body, const AssertionParts& parts)
+auto FailArmOf(
+    const hir::ProceduralBody& body, const AssertionDispositions& dispositions)
     -> ActionArm {
-  if (parts.fail_stmt.has_value()) {
-    if (HasRealArm(body, parts.fail_stmt)) {
-      return RunsStatements{.stmt = *parts.fail_stmt};
+  if (dispositions.fail_stmt.has_value()) {
+    if (HasRealArm(body, dispositions.fail_stmt)) {
+      return RunsStatements{.stmt = *dispositions.fail_stmt};
     }
     return RunsNothing{};
   }
-  if (parts.reports_as.has_value()) {
-    return RunsDefaultReport{.directive = *parts.reports_as};
+  if (dispositions.reports_as.has_value()) {
+    return RunsDefaultReport{.directive = *dispositions.reports_as};
   }
   return RunsNothing{};
 }
@@ -249,68 +254,139 @@ auto LowerActionArm(
   return code;
 }
 
-// What the tick left one evaluation in, as the answer the generated transition
-// hands back (Annex F.5.3.2). Which positions carry something the attempt owes
-// and which carry an antecedent is settled where the automaton was built, so
-// this is a chain of constant mask tests and nothing the runtime decides.
-auto BuildOutcome(
-    mir::Block& block, const mir::CompilationUnit& unit,
-    const AssertionAutomaton& automaton, const std::vector<mir::LocalId>& bits,
-    const std::vector<mir::LocalId>& matched,
-    const std::vector<mir::LocalId>& next) -> mir::ExprId {
-  const mir::TypeId type = unit.builtins.machine_word;
-  const auto answer = [&](support::EvaluationOutcome outcome) {
-    return Word(block, type, static_cast<std::uint64_t>(outcome));
-  };
-  const mir::ExprId exhausted = Op(
-      unit, block, unit.builtins.machine_bool, mir::BinaryOp::kEquality,
-      [&] {
-        mir::ExprId combined = Word(block, type, 0);
-        for (const mir::LocalId word : next) {
-          combined =
-              Op(unit, block, type, mir::BinaryOp::kBitwiseOr, combined,
-                 block.ReadLocal(word, type));
-        }
-        return combined;
-      }(),
-      Word(block, type, 0));
-
-  const mir::ExprId as_obligation = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::ConditionalExpr{
-                  .condition =
-                      AnyOf(block, unit, matched, automaton.satisfying),
-                  .then_value = answer(support::EvaluationOutcome::kSatisfied),
-                  .else_value = block.exprs.Add(
-                      mir::Expr{
-                          .data =
-                              mir::ConditionalExpr{
-                                  .condition = exhausted,
-                                  .then_value = answer(
-                                      support::EvaluationOutcome::kFailed),
-                                  .else_value = answer(
-                                      support::EvaluationOutcome::kLive)},
-                          .type = type})},
-          .type = type});
-
-  const mir::ExprId as_trigger = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::ConditionalExpr{
-                  .condition = exhausted,
-                  .then_value = answer(support::EvaluationOutcome::kVacuous),
-                  .else_value = answer(support::EvaluationOutcome::kLive)},
-          .type = type});
-
+auto Choose(
+    mir::Block& block, mir::TypeId type, mir::ExprId condition,
+    mir::ExprId then_value, mir::ExprId else_value) -> mir::ExprId {
   return block.exprs.Add(
       mir::Expr{
           .data =
               mir::ConditionalExpr{
-                  .condition = AnyOf(block, unit, bits, automaton.trigger),
-                  .then_value = as_trigger,
-                  .else_value = as_obligation},
+                  .condition = condition,
+                  .then_value = then_value,
+                  .else_value = else_value},
           .type = type});
+}
+
+auto AnswerWord(
+    mir::Block& block, mir::TypeId type, support::PropertyAnswer answer)
+    -> mir::ExprId {
+  return Word(block, type, static_cast<std::uint64_t>(answer));
+}
+
+// The least answer an implication's instances reached, for the evaluation the
+// code being built answers.
+using ImplicationAnswerOf =
+    std::function<mir::ExprId(mir::Block&, std::uint32_t)>;
+
+// What one part answers for one evaluation (Annex F.5.3.2), from the positions
+// `bits` it is live at once the tick has stepped it and from what its
+// implications' instances answered. The answers are ordered, so negation is the
+// order reversed and a conjunction and a disjunction are the least and the
+// greatest of two (LRM 16.12.3-16.12.5). A term may be read by two later ones
+// -- `iff` reads each operand twice -- so each is held in a local of its own.
+auto BuildPartAnswer(
+    const mir::CompilationUnit& unit, CallableBindings& bindings,
+    mir::Block& block, const AutomatonPart& part,
+    const std::vector<mir::LocalId>& bits,
+    const ImplicationAnswerOf& implication_answer) -> mir::LocalId {
+  const mir::TypeId type = unit.builtins.machine_word;
+  const auto hold = [&](mir::ExprId value) {
+    const mir::LocalId local = bindings.DeclareAnonymous(type);
+    block.AppendStmt(mir::LocalDeclStmt{.target = local, .init = value});
+    return local;
+  };
+  const auto extreme = [&](mir::BinaryOp keeps_lhs, mir::LocalId lhs,
+                           mir::LocalId rhs) {
+    return Choose(
+        block, type,
+        Op(unit, block, unit.builtins.machine_bool, keeps_lhs,
+           block.ReadLocal(lhs, type), block.ReadLocal(rhs, type)),
+        block.ReadLocal(lhs, type), block.ReadLocal(rhs, type));
+  };
+  const auto answer = [&](support::PropertyAnswer value) {
+    return AnswerWord(block, type, value);
+  };
+
+  std::vector<mir::LocalId> held;
+  held.reserve(part.terms.size());
+  for (const AnswerTerm& term : part.terms) {
+    const mir::ExprId value = std::visit(
+        Overloaded{
+            [&](const SequenceTerm& sequence) {
+              const support::PropertyAnswer while_live =
+                  sequence.strength == hir::SequenceStrength::kWeak
+                      ? support::PropertyAnswer::kHolds
+                      : support::PropertyAnswer::kPending;
+              return Choose(
+                  block, type, AnyOf(block, unit, bits, sequence.kept),
+                  answer(support::PropertyAnswer::kHoldsStrongly),
+                  Choose(
+                      block, type, AnyOf(block, unit, bits, sequence.live),
+                      answer(while_live),
+                      answer(support::PropertyAnswer::kFails)));
+            },
+            [&](const NegatedTerm& negated) {
+              return Op(
+                  unit, block, type, mir::BinaryOp::kSub,
+                  answer(support::PropertyAnswer::kHoldsStrongly),
+                  block.ReadLocal(held[negated.operand], type));
+            },
+            [&](const LeastTerm& least) {
+              return extreme(
+                  mir::BinaryOp::kLessThan, held[least.lhs], held[least.rhs]);
+            },
+            [&](const GreatestTerm& greatest) {
+              return extreme(
+                  mir::BinaryOp::kGreaterThan, held[greatest.lhs],
+                  held[greatest.rhs]);
+            },
+            [&](const ImplicationTerm& implication) {
+              const mir::LocalId antecedent = hold(Choose(
+                  block, type, AnyOf(block, unit, bits, implication.antecedent),
+                  answer(support::PropertyAnswer::kHolds),
+                  answer(support::PropertyAnswer::kHoldsStrongly)));
+              const mir::LocalId instances =
+                  hold(implication_answer(block, implication.implication));
+              return extreme(mir::BinaryOp::kLessThan, antecedent, instances);
+            }},
+        term);
+    held.push_back(hold(value));
+  }
+  if (held.empty()) {
+    throw InternalError(
+        "BuildPartAnswer: a part with no term answers for no property");
+  }
+  return held.back();
+}
+
+// Every part a seed may start, as the positions a tick it seeds at has to read.
+auto StartsOf(const ImplicationSeed& seed, const AssertionAutomaton& automaton)
+    -> PositionSet {
+  PositionSet starts(automaton.words, 0);
+  const auto add = [&](std::uint32_t part) {
+    for (std::uint32_t word = 0; word < automaton.words; ++word) {
+      starts[word] |= automaton.parts[part].start[word];
+    }
+  };
+  std::visit(
+      Overloaded{
+          [&](const MatchSeed& match) { add(match.part); },
+          [&](const ConditionSeed& condition) {
+            add(condition.then_part);
+            if (condition.else_part.has_value()) {
+              add(*condition.else_part);
+            }
+          },
+          [&](const CaseSeed& selection) {
+            for (const CaseSeedItem& item : selection.items) {
+              add(item.part);
+            }
+            if (selection.default_part.has_value()) {
+              add(*selection.default_part);
+            }
+          }},
+      seed.starts);
+  return starts;
 }
 
 // The storage holding the attempts a tick steps, as the place a call on it acts
@@ -354,9 +430,8 @@ auto LowerTick(
   call_stmt(body, support::BuiltinFn::kEvaluationAttemptsBeginTick, {});
 
   // What this tick has to read: every position an unstepped evaluation is live
-  // at, and the ones an implication would seed at this same tick. Seeds are
-  // recorded outermost-first, so one forward pass over them is the whole
-  // cascade however deep the implications nest.
+  // at, and the ones a seed would start, since every seed starts its instance
+  // at the tick of the match.
   const std::vector<mir::LocalId> need =
       DeclareWords(bindings, body, word_type, empty);
   for (std::uint32_t word = 0; word < automaton.words; ++word) {
@@ -367,14 +442,9 @@ auto LowerTick(
             {Word(body, word_type, word)}, word_type));
   }
   for (const ImplicationSeed& seed : automaton.seeds) {
-    if (!seed.same_tick) {
-      continue;
-    }
     mir::Block reached;
-    OrInto(unit, reached, word_type, need, seed.consequent_start);
-    AppendIf(
-        body, AnyOf(body, unit, need, seed.antecedent_last),
-        std::move(reached));
+    OrInto(unit, reached, word_type, need, StartsOf(seed, automaton));
+    AppendIf(body, AnyOf(body, unit, need, seed.matches), std::move(reached));
   }
 
   // The design's own Boolean expressions, as of the Preponed region of this
@@ -404,9 +474,8 @@ auto LowerTick(
         DeclareLocal(sampled, BuildMachineBool(unit, reached, true));
     auto assigned = AssignAllHoldInOrder(unit, sampled, all_hold, conjuncts);
     if (!assigned) return std::unexpected(std::move(assigned.error()));
-    // A position with no conjunct is a tick a delay measures across, which
-    // matches whatever the design does there, so its bit is set whenever it is
-    // reached.
+    // A position with no conjunct matches whatever the design does there, so
+    // its bit is set whenever it is reached.
     mir::Block held;
     OrInto(unit, held, word_type, hold, at);
     AppendIf(
@@ -415,9 +484,9 @@ auto LowerTick(
     AppendIf(body, AnyOf(body, unit, need, at), std::move(reached));
   }
 
-  // Every evaluation this tick has not stepped, including the ones an
-  // overlapped implication seeds during the sweep, which is what reads a
-  // consequent at the very tick its antecedent matched (LRM 16.12.7).
+  // Every evaluation this tick has not stepped, including the ones seeded
+  // during the sweep, which is what reads a consequent at the very tick its
+  // antecedent matched (LRM 16.12.7).
   const mir::LocalId cursor = bindings.DeclareAnonymous(index_type);
   body.AppendStmt(
       mir::LocalDeclStmt{
@@ -464,23 +533,110 @@ auto LowerTick(
   }
   call_stmt(
       sweep, support::BuiltinFn::kEvaluationAttemptsStep,
-      {sweep.ReadLocal(cursor, index_type),
-       BuildOutcome(sweep, unit, automaton, bits, matched, next)});
-  for (const ImplicationSeed& seed : automaton.seeds) {
-    mir::Block seeded;
+      {sweep.ReadLocal(cursor, index_type)});
+
+  // An instance of `part` for `implication` of the evaluation just stepped,
+  // read at this same tick.
+  const auto seed_into = [&](mir::Block& block, std::uint32_t implication,
+                             std::uint32_t part) {
     for (std::uint32_t word = 0; word < automaton.words; ++word) {
       call_stmt(
-          seeded, support::BuiltinFn::kEvaluationAttemptsSeedWord,
-          {Word(seeded, word_type, word),
-           Word(seeded, word_type, seed.consequent_start[word])});
+          block, support::BuiltinFn::kEvaluationAttemptsSeedWord,
+          {Word(block, word_type, word),
+           Word(block, word_type, automaton.parts[part].start[word])});
     }
     call_stmt(
-        seeded, support::BuiltinFn::kEvaluationAttemptsSeed,
-        {seeded.ReadLocal(cursor, index_type),
-         BuildMachineBool(unit, seeded, seed.same_tick)});
+        block, support::BuiltinFn::kEvaluationAttemptsSeed,
+        {block.ReadLocal(cursor, index_type),
+         Word(block, word_type, implication), Word(block, word_type, part)});
+  };
+  // A selection reads what it selects by as of the Preponed region of this
+  // tick, as every Boolean of the property does (LRM 16.5.1).
+  const auto lower_sampled =
+      [&](const WalkFrame& at, hir::ExprId expr) -> diag::Result<mir::ExprId> {
+    auto lowered = action.LowerExpr(action.HirBody().exprs.Get(expr), at);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    return at.current_block->exprs.Add(*std::move(lowered));
+  };
+  for (const ImplicationSeed& seed : automaton.seeds) {
+    mir::Block seeded;
+    const WalkFrame at =
+        frame.WithBlock(&seeded).WithReadsAsOf(ReadsAsOf::kPreponed);
+    auto filled = std::visit(
+        Overloaded{
+            [&](const MatchSeed& match) -> diag::Result<void> {
+              seed_into(seeded, seed.implication, match.part);
+              return {};
+            },
+            [&](const ConditionSeed& condition) -> diag::Result<void> {
+              auto value = lower_sampled(at, condition.condition);
+              if (!value) return std::unexpected(std::move(value.error()));
+              mir::Block then_block;
+              seed_into(then_block, seed.implication, condition.then_part);
+              std::optional<mir::BlockId> else_scope;
+              if (condition.else_part.has_value()) {
+                mir::Block else_block;
+                seed_into(else_block, seed.implication, *condition.else_part);
+                else_scope = seeded.child_scopes.Add(std::move(else_block));
+              }
+              seeded.AppendStmt(
+                  mir::IfStmt{
+                      .condition = ReduceToCondition(unit, seeded, *value),
+                      .then_scope =
+                          seeded.child_scopes.Add(std::move(then_block)),
+                      .else_scope = else_scope});
+              return {};
+            },
+            [&](const CaseSeed& selection) -> diag::Result<void> {
+              auto subject = lower_sampled(at, selection.subject);
+              if (!subject) return std::unexpected(std::move(subject.error()));
+              const mir::TypeId subject_type = seeded.exprs.Get(*subject).type;
+              const mir::LocalId subject_local = SnapshotExprToLocal(
+                  action.Owner(), at, seeded, subject_type, *subject);
+              const auto starting =
+                  [&, implication = seed.implication](std::uint32_t part) {
+                    return [&, implication, part](const WalkFrame&) {
+                      mir::Block block;
+                      seed_into(block, implication, part);
+                      return diag::Result<mir::Block>{std::move(block)};
+                    };
+                  };
+              std::vector<SearchedArm> items;
+              items.reserve(selection.items.size());
+              for (const CaseSeedItem& item : selection.items) {
+                SearchedArm arm{.conditions = {}, .body = starting(item.part)};
+                for (const hir::ExprId label : item.labels) {
+                  arm.conditions.emplace_back(
+                      [&, label](
+                          const WalkFrame& tried) -> diag::Result<mir::ExprId> {
+                        auto written = lower_sampled(tried, label);
+                        if (!written) return written;
+                        mir::Block& block = *tried.current_block;
+                        return BuildCaseComparison(
+                            unit, block, hir::CaseKeyword::kCase,
+                            block.LocalPlace(subject_local, subject_type),
+                            OperandAtHandleType(
+                                unit, block, *written, subject_type));
+                      });
+                }
+                items.push_back(std::move(arm));
+              }
+              std::optional<mir::Block> otherwise;
+              if (selection.default_part.has_value()) {
+                otherwise = mir::Block{};
+                seed_into(
+                    *otherwise, seed.implication, *selection.default_part);
+              }
+              auto search =
+                  BuildArmSearch(unit, at, items, std::move(otherwise));
+              if (!search) return std::unexpected(std::move(search.error()));
+              seeded.AppendStmt(*std::move(search));
+              return {};
+            }},
+        seed.starts);
+    if (!filled) return std::unexpected(std::move(filled.error()));
     AppendIf(
-        sweep, AnyOf(sweep, unit, matched, seed.antecedent_last),
-        std::move(seeded));
+        sweep, AnyOf(sweep, unit, matched, seed.matches), std::move(seeded));
   }
   Assign(
       unit, sweep, cursor, index_type,
@@ -495,6 +651,78 @@ auto LowerTick(
                  body.ReadLocal(cursor, index_type), Word(body, index_type, 0)),
           .scope = body.child_scopes.Add(std::move(sweep))});
 
+  // Every evaluation answers, from the last back, so the instances of an
+  // implication have answered before the evaluation holding it does.
+  const mir::LocalId answering = bindings.DeclareAnonymous(index_type);
+  body.AppendStmt(
+      mir::LocalDeclStmt{
+          .target = answering,
+          .init =
+              Op(unit, body, index_type, mir::BinaryOp::kSub,
+                 call(
+                     body, support::BuiltinFn::kEvaluationAttemptsCount, {},
+                     index_type),
+                 Word(body, index_type, 1))});
+  mir::Block resolve;
+  const WalkFrame resolve_frame = frame.WithBlock(&resolve);
+  const std::vector<mir::LocalId> stepped =
+      DeclareWords(bindings, resolve, word_type, empty);
+  for (std::uint32_t word = 0; word < automaton.words; ++word) {
+    Assign(
+        unit, resolve, stepped[word], word_type,
+        call(
+            resolve, support::BuiltinFn::kEvaluationAttemptsBitsAt,
+            {resolve.ReadLocal(answering, index_type),
+             Word(resolve, word_type, word)},
+            word_type));
+  }
+  const ImplicationAnswerOf implication_answer =
+      [&](mir::Block& block, std::uint32_t implication) {
+        return call(
+            block, support::BuiltinFn::kEvaluationAttemptsImplicationAnswer,
+            {block.ReadLocal(answering, index_type),
+             Word(block, word_type, implication)},
+            word_type);
+      };
+  std::vector<ValueArm> arms;
+  arms.reserve(automaton.parts.size());
+  for (std::size_t part = 0; part < automaton.parts.size(); ++part) {
+    arms.push_back(
+        ValueArm{
+            .values = {static_cast<std::int64_t>(part)},
+            .body = [&, part](const WalkFrame&) -> diag::Result<mir::Block> {
+              mir::Block block;
+              const mir::LocalId answer = BuildPartAnswer(
+                  unit, bindings, block, automaton.parts[part], stepped,
+                  implication_answer);
+              call_stmt(
+                  block, support::BuiltinFn::kEvaluationAttemptsResolve,
+                  {block.ReadLocal(answering, index_type),
+                   block.ReadLocal(answer, word_type)});
+              return block;
+            }});
+  }
+  auto dispatched = BuildValueSwitch(
+      resolve_frame,
+      call(
+          resolve, support::BuiltinFn::kEvaluationAttemptsPartOf,
+          {resolve.ReadLocal(answering, index_type)}, word_type),
+      arms, std::nullopt);
+  if (!dispatched) return std::unexpected(std::move(dispatched.error()));
+  resolve.AppendStmt(*std::move(dispatched));
+  Assign(
+      unit, resolve, answering, index_type,
+      Op(unit, resolve, index_type, mir::BinaryOp::kSub,
+         resolve.ReadLocal(answering, index_type),
+         Word(resolve, index_type, 1)));
+  body.AppendStmt(
+      mir::WhileStmt{
+          .condition = Op(
+              unit, body, unit.builtins.machine_bool,
+              mir::BinaryOp::kGreaterEqual,
+              body.ReadLocal(answering, index_type), Word(body, index_type, 0)),
+          .scope = body.child_scopes.Add(std::move(resolve))});
+
   call_stmt(
       body, support::BuiltinFn::kEvaluationAttemptsSettle,
       {body.exprs.Add(BuildCurrentRuntimeCallExpr(action.Owner()))});
@@ -507,8 +735,8 @@ void AppendBlock(mir::Block& into, mir::Block block) {
       mir::BlockStmt{.scope = into.child_scopes.Add(std::move(block))});
 }
 
-// Opens an attempt on the automaton's start, as a tick of a declared assertion
-// and the reaching of an expect statement each do.
+// Opens an attempt on the start of the whole property, as a tick of a declared
+// assertion and the reaching of an expect statement each do.
 void AppendOpenAttempt(
     mir::Block& body, const mir::CompilationUnit& unit,
     const AttemptsPlace& attempts, const AssertionAutomaton& automaton) {
@@ -521,7 +749,7 @@ void AppendOpenAttempt(
                 body, support::BuiltinFn::kEvaluationAttemptsSeedWord,
                 attempts(body),
                 {Word(body, word_type, word),
-                 Word(body, word_type, automaton.start[word])},
+                 Word(body, word_type, automaton.parts.front().start[word])},
                 void_type)});
   }
   body.AppendStmt(
@@ -751,24 +979,24 @@ auto LowerConcurrentAssertion(
     const DeclaredScopes& scopes, const StaticVarBindings& statics,
     hir::ConcurrentAssertionId id, const hir::ConcurrentAssertionDecl& decl)
     -> diag::Result<InstalledConcurrentAssertion> {
-  const AssertionParts parts = PartsOf(decl.assertion);
+  const AssertionDispositions dispositions = DispositionsOf(decl.assertion);
   const AssertionAutomaton automaton =
-      BuildAssertionAutomaton(decl.action, *parts.spec);
+      BuildAssertionAutomaton(decl.action, *dispositions.spec);
 
   ProcessLowerer action(
       lowerer.Owner(), &lowerer, lowerer.HirScope().time_resolution,
       decl.action, std::nullopt, ctor_frame, scopes, statics);
 
   auto pass = LowerActionArm(
-      action, ctor_frame, PassArmOf(decl.action, parts), decl.span);
+      action, ctor_frame, PassArmOf(decl.action, dispositions), decl.span);
   if (!pass) return std::unexpected(std::move(pass.error()));
 
   auto fail = LowerActionArm(
-      action, ctor_frame, FailArmOf(decl.action, parts), decl.span);
+      action, ctor_frame, FailArmOf(decl.action, dispositions), decl.span);
   if (!fail) return std::unexpected(std::move(fail.error()));
 
-  auto advance =
-      LowerAdvance(action, ctor_frame, lowerer, id, *parts.spec, automaton);
+  auto advance = LowerAdvance(
+      action, ctor_frame, lowerer, id, *dispositions.spec, automaton);
   if (!advance) return std::unexpected(std::move(advance.error()));
 
   for (const StaticVarBinding& binding : statics) {
@@ -793,15 +1021,15 @@ auto LowerConcurrentAssertion(
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt});
 
-  auto process =
-      LowerProcess(action, lowerer, ctor_frame, parts.spec->clock, advance_id);
+  auto process = LowerProcess(
+      action, lowerer, ctor_frame, dispositions.spec->clock, advance_id);
   if (!process) return std::unexpected(std::move(process.error()));
 
   std::vector<mir::CallableId> processes;
   processes.push_back(mir_class.callables.Add(*std::move(process)));
-  if (parts.spec->disable.has_value()) {
+  if (dispositions.spec->disable.has_value()) {
     auto watcher = LowerDisableWatcher(
-        action, ctor_frame, lowerer, id, *parts.spec->disable);
+        action, ctor_frame, lowerer, id, *dispositions.spec->disable);
     if (!watcher) return std::unexpected(std::move(watcher.error()));
     processes.push_back(mir_class.callables.Add(*std::move(watcher)));
   }
@@ -811,7 +1039,6 @@ auto LowerConcurrentAssertion(
       .pass_action = pass_id,
       .fail_action = fail_id,
       .words = automaton.words,
-      .pending_holds = parts.pending_holds,
       .written_at = decl.span};
 }
 
@@ -1029,7 +1256,6 @@ void AppendConcurrentAssertionInstall(
               BuildEvaluationAttemptsExpr(block, activate_frame, lowerer, id),
               {block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner())),
                Word(block, unit.builtins.machine_word, installed.words),
-               BuildMachineBool(unit, block, installed.pending_holds),
                arm(installed.pass_action), arm(installed.fail_action)},
               void_type)});
 }

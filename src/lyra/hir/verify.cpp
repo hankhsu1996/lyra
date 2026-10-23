@@ -860,12 +860,15 @@ struct Reacher {
   }
 
   // The expressions a property holds are the Boolean expressions its sequences
-  // are built from (LRM 16.7).
+  // are built from (LRM 16.7), and what an if-else or a case property selects
+  // by (LRM 16.12.6, 16.12.16).
   void ThroughProperty(PropertyExprId id) const {
     if (reaches->properties == nullptr) {
       throw InternalError(
           "hir verify: a property was written where no body holds its tree");
     }
+    const Reacher from_property{
+        .reaches = reaches, .from = std::nullopt, .holder = "a property"};
     std::visit(
         Overloaded{
             [&](const PropertySequence& property) {
@@ -874,6 +877,36 @@ struct Reacher {
             [&](const PropertyImplication& property) {
               ThroughSequence(property.antecedent);
               ThroughProperty(property.consequent);
+            },
+            [&](const PropertyFollowedBy& property) {
+              ThroughSequence(property.antecedent);
+              ThroughProperty(property.consequent);
+            },
+            [&](const PropertyNot& property) {
+              ThroughProperty(property.operand);
+            },
+            [&](const PropertyBinary& property) {
+              ThroughProperty(property.lhs);
+              ThroughProperty(property.rhs);
+            },
+            [&](const PropertyConditional& property) {
+              from_property(property.condition, Slot::kOperand);
+              ThroughProperty(property.then_property);
+              if (property.else_property.has_value()) {
+                ThroughProperty(*property.else_property);
+              }
+            },
+            [&](const PropertyCase& property) {
+              from_property(property.subject, Slot::kOperand);
+              for (const PropertyCaseItem& item : property.items) {
+                for (const ExprId label : item.labels) {
+                  from_property(label, Slot::kOperand);
+                }
+                ThroughProperty(item.property);
+              }
+              if (property.default_property.has_value()) {
+                ThroughProperty(*property.default_property);
+              }
             }},
         reaches->properties->Get(id).data);
   }

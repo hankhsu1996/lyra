@@ -153,14 +153,20 @@ The IDs are stable references and do not imply execution order beyond the depend
       variables and disable a named block, and actions that wait run side by side. An attempt
       still in flight when the run ends runs the statement its answer selects before the final
       procedures, up to its first wait. The operator set carried is a Boolean expression, a delay
-      window and a consecutive repetition with constant bounds, and overlapped and non-overlapped
-      implication nested to any depth; a named sequence or property taking arguments is carried
-      because the front end substitutes the actuals into its body. A sequence standing as a property
-      is read at the strength the statement demands: strong asks that a match exist, weak that no
-      finite prefix has witnessed one cannot (LRM 16.12.2). Over the operator set carried here the
-      two part company only where the trace runs out, so what the strength decides is what an
-      attempt still in flight when the run ends is owed -- an obligation holds, a coverage goal does
-      not -- and it becomes a mid-trace distinction as soon as an unbounded operator arrives.
+      window and a consecutive repetition with constant bounds; overlapped and non-overlapped
+      implication and followed-by (LRM 16.12.7, 16.12.9); and the properties built from properties
+      -- `not`, `and`, `or`, `implies`, `iff`, `if`-`else` and `case` (LRM 16.12.3-16.12.6, 16.12.8,
+      16.12.16) -- each nested in any of the others to any depth, in every statement form carried.
+      `and` and `or` between two sequences standing as a property are these connectives, which hold
+      exactly where the composed sequence would. A named sequence or property taking arguments is
+      carried because the front end substitutes the actuals into its body. A sequence standing as a
+      property is read at the strength written for it, or otherwise the statement's: strong asks
+      that a match exist, weak that no finite prefix has witnessed one cannot (LRM 16.12.2), and
+      `not` exchanges the two. Over the operator set carried here the two part company only where
+      the trace runs out, so what the strength decides is what an attempt still in flight when the
+      run ends comes to: it succeeds where the trace it saw satisfies it, so a weak sequence still
+      able to match holds, a strong one does not, and the negation of a weak one fails, as LRM
+      16.12.3's own example says.
       `disable iff` preempts every attempt its condition is true during, tested on current values
       across the whole interval rather than at that interval's ticks, so a condition that rises and
       falls between two ticks still preempts.
@@ -192,15 +198,21 @@ The IDs are stable references and do not imply execution order beyond the depend
       which is queued rather than evaluated (LRM 16.14.6). Refused by name besides: a local
       variable and a subroutine call attached to a match (LRM 16.10, 16.11), an unbounded `$`
       window, a repetition admitting an empty match, a nonconsecutive or goto repetition, composing
-      sequences with `and` / `or` / `intersect` / `throughout` / `within`, `first_match`, the
-      property connectives and the operators over time, the abort operators, more than one clocking
+      sequences with `and` / `or` / `intersect` / `throughout` / `within` inside a sequence (an
+      antecedent, or an operand of `##`), `first_match`, the operators over time (`nexttime`,
+      `always`, `eventually`, `until` and their strong forms), the abort operators, a recursive
+      property (LRM 16.12.17), more than one clocking
       event (LRM 16.13), a hierarchical name reaching a variable of a named block in a declared
       assertion's action block (LRM 23.6 allows it, and the clause's example reaches one in an
       immediate assertion's), and the fifth statement form, `cover sequence`, which counts every
       match an attempt produces rather than the attempt.
 
 - [ ] AS6 -- Assertion control tasks (LRM 20.11). They act on assertion state -- turning checking
-      on, off, or killing it by scope or by name -- so they need that state to exist first.
+      on, off, or killing it by scope or by name -- so they need that state to exist first. Two of
+      them, `$assertvacuousoff` and `$assertnonvacuouson`, choose by whether a success was vacuous,
+      which LRM 16.14.8 defines operator by operator; an attempt carries only its answer today, so
+      these need it to carry that as well. Until a control task runs, every pass statement runs on a
+      vacuous success too, as 20.11 makes the default.
 - [ ] AS7 -- Checkers (LRM 17): checker declarations and instances, which package assertions with
       their own variables and procedural blocks and bind into a design.
 - [x] AS8 -- The expect statement (LRM 16.17), on both backends, wherever a wait may stand: in a

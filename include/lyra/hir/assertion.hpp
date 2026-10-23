@@ -29,8 +29,7 @@ struct PropertyExprId {
 
 // A window of clock ticks, counted from the tick a sequence element is measured
 // against (LRM 16.7). Both bounds are numbers: the `$` bound names a window
-// with no end, which is what makes an evaluation able to outlive every tick the
-// trace has, and a sequence carrying one is refused where it is read rather
+// with no end, and a sequence carrying one is refused where it is read rather
 // than represented here.
 struct TickRange {
   std::uint32_t min = 1;
@@ -96,9 +95,9 @@ struct PropertySequence {
 };
 
 // Where the consequent's evaluation starts, relative to the end point of the
-// antecedent match that triggered it: at that same tick for `|->`, and at the
-// next one for `|=>` (LRM 16.12.7).
-enum class ImplicationStart : std::uint8_t {
+// antecedent match that triggered it: at that same tick for `|->` and `#-#`,
+// and at the next one for `|=>` and `#=#` (LRM 16.12.7, 16.12.9).
+enum class ConsequentStart : std::uint8_t {
   kSameTick,
   kNextTick,
 };
@@ -110,12 +109,81 @@ enum class ImplicationStart : std::uint8_t {
 struct PropertyImplication {
   SequenceExprId antecedent;
   PropertyExprId consequent;
-  ImplicationStart start;
+  ConsequentStart start;
 
   auto operator==(const PropertyImplication&) const -> bool = default;
 };
 
-using PropertyExprData = std::variant<PropertySequence, PropertyImplication>;
+// `s #-# p` and `s #=# p`: some match of the antecedent is followed by the
+// consequent holding from where the match ends, or from the tick after (LRM
+// 16.12.9). The dual of an implication, which asks it of every match.
+struct PropertyFollowedBy {
+  SequenceExprId antecedent;
+  PropertyExprId consequent;
+  ConsequentStart start;
+
+  auto operator==(const PropertyFollowedBy&) const -> bool = default;
+};
+
+// `not p`: true where its operand is false (LRM 16.12.3). Each sequence under
+// it keeps the strength written for it, and negation exchanges what that
+// strength asks.
+struct PropertyNot {
+  PropertyExprId operand;
+
+  auto operator==(const PropertyNot&) const -> bool = default;
+};
+
+// The connectives combining two properties evaluated from the same start (LRM
+// 16.12.4, 16.12.5, 16.12.8).
+enum class PropertyConnective : std::uint8_t {
+  kAnd,
+  kOr,
+  kImplies,
+  kIff,
+};
+
+struct PropertyBinary {
+  PropertyConnective connective;
+  PropertyExprId lhs;
+  PropertyExprId rhs;
+
+  auto operator==(const PropertyBinary&) const -> bool = default;
+};
+
+// `if (b) p1 else p2`: the condition is read where the property starts, and the
+// property is then the arm it selects. With no else, a false condition makes
+// it true (LRM 16.12.6).
+struct PropertyConditional {
+  ExprId condition;
+  PropertyExprId then_property;
+  std::optional<PropertyExprId> else_property;
+
+  auto operator==(const PropertyConditional&) const -> bool = default;
+};
+
+struct PropertyCaseItem {
+  std::vector<ExprId> labels;
+  PropertyExprId property;
+
+  auto operator==(const PropertyCaseItem&) const -> bool = default;
+};
+
+// `case (e) ... endcase` over properties: the subject is read where the
+// property starts and compared with the labels as a case statement compares
+// them (LRM 12.5), and the property is the first matching item's, otherwise
+// the default's; with neither it is true (LRM 16.12.16).
+struct PropertyCase {
+  ExprId subject;
+  std::vector<PropertyCaseItem> items;
+  std::optional<PropertyExprId> default_property;
+
+  auto operator==(const PropertyCase&) const -> bool = default;
+};
+
+using PropertyExprData = std::variant<
+    PropertySequence, PropertyImplication, PropertyFollowedBy, PropertyNot,
+    PropertyBinary, PropertyConditional, PropertyCase>;
 
 struct PropertyExpr {
   PropertyExprData data;

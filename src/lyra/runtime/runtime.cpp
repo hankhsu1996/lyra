@@ -152,9 +152,8 @@ void Runtime::RunSimulation() {
         state_);
     if (ends_the_simulation) {
       // An evaluation attempt still in flight is one no tick will settle now,
-      // so it takes the answer its statement demanded of a pending result
-      // (Annex F.5.3.2) -- before the finals, which read what its statements
-      // wrote.
+      // so it comes to what the finished trace says of it (Annex F.5.3.1) --
+      // before the finals, which read what its statements wrote.
       for (EvaluationAttempts* attempts : concurrent_assertions_) {
         attempts->SettleAtEndOfRun();
       }

@@ -2659,8 +2659,8 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   // What an assertion has in flight is storage nothing outside this scope
   // names either: an attempt is started by the clock and read by the tick that
   // advances it, both of which are this scope's own (LRM 16.14.1). The type
-  // carries nothing, because how wide a position set is and what a pending
-  // attempt is owed are fixed by filling the storage rather than by naming it.
+  // carries nothing, because how wide a position set is and which statements an
+  // outcome selects are fixed by filling the storage rather than by naming it.
   std::vector<mir::FieldId> concurrent_assertion_fields;
   concurrent_assertion_fields.reserve(hir_scope.concurrent_assertions.size());
   for (std::size_t i = 0; i < hir_scope.concurrent_assertions.size(); ++i) {

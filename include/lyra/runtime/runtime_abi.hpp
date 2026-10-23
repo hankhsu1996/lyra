@@ -1151,20 +1151,23 @@ auto lyra_rt_managedref_sampled_history_at(
 // through the storage's own address. These carry machine words rather than
 // values of the design, which is why one entry serves every assertion.
 //
-// `install` fixes how wide a position set is, what a pending attempt is owed
-// when the run ends, and the statements an outcome selects. `open_attempt`
-// opens an attempt on the staged seed. A tick opens with `begin_tick`, or with
-// `disable_tick` where the disable condition held;
+// `install` fixes how wide a position set is and the statements an outcome
+// selects. `open_attempt` opens an attempt on the staged seed. A tick opens
+// with `begin_tick`, or with `disable_tick` where the disable condition held;
 // `live_word` bounds the Boolean expressions the tick has to read, and
 // `next_unstepped` walks the evaluations it still owes a step, answering -1
 // when none is left. `bits_at`, `set_word` and `step` read one evaluation's
-// position set, replace it with its successor, and record what the tick left
-// it in; `seed_word` stages the set a new evaluation starts from and `seed`
-// opens one on it. `settle` answers every attempt the sweep resolved, and
-// `answer` reads what the one attempt an expect statement holds came to.
+// position set, replace it with its successor, and mark it stepped;
+// `seed_word` stages the set a new evaluation starts from and `seed` opens one
+// on it as an instance of one implication of another. `count`, `part_of`,
+// `implication_answer` and `resolve` answer each evaluation from the last
+// back: how many there are, which part of the property one answers for, the
+// least answer an implication's instances reached, and what it answered.
+// `settle` answers every attempt the tick resolved, and `answer` reads what the
+// one attempt an expect statement holds came to.
 void lyra_rt_evaluation_attempts_install(
-    void* attempts, void* effects, std::uint64_t words, bool pending_holds,
-    void* pass_action, void* fail_action);
+    void* attempts, void* effects, std::uint64_t words, void* pass_action,
+    void* fail_action);
 void lyra_rt_evaluation_attempts_seed_word(
     void* attempts, std::uint64_t word, std::uint64_t bits);
 void lyra_rt_evaluation_attempts_open_attempt(void* attempts);
@@ -1178,10 +1181,18 @@ auto lyra_rt_evaluation_attempts_bits_at(
     -> std::uint64_t;
 void lyra_rt_evaluation_attempts_set_word(
     void* attempts, std::int64_t index, std::uint64_t word, std::uint64_t bits);
-void lyra_rt_evaluation_attempts_step(
-    void* attempts, std::int64_t index, std::uint64_t outcome);
+void lyra_rt_evaluation_attempts_step(void* attempts, std::int64_t index);
 void lyra_rt_evaluation_attempts_seed(
-    void* attempts, std::int64_t index, bool this_tick);
+    void* attempts, std::int64_t index, std::uint64_t implication,
+    std::uint64_t part);
+auto lyra_rt_evaluation_attempts_count(const void* attempts) -> std::int64_t;
+auto lyra_rt_evaluation_attempts_part_of(
+    const void* attempts, std::int64_t index) -> std::uint64_t;
+auto lyra_rt_evaluation_attempts_implication_answer(
+    const void* attempts, std::int64_t index, std::uint64_t implication)
+    -> std::uint64_t;
+void lyra_rt_evaluation_attempts_resolve(
+    void* attempts, std::int64_t index, std::uint64_t answer);
 void lyra_rt_evaluation_attempts_settle(void* attempts, void* effects);
 auto lyra_rt_evaluation_attempts_answer(const void* attempts) -> std::uint64_t;
 

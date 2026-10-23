@@ -1442,14 +1442,15 @@ the detail lives in the entry itself.
   condition to record rather than from the grammar. Three levels, and what may be pooled at each is
   decided by the quantifier over it: an evaluation is a set of positions in an automaton the
   HIR-to-MIR lowering builds, pooling because a sequence's operators are existential; an attempt is
-  a list of evaluations that never pool because implication quantifies universally over match
+  a tree of evaluations that never pool because implication quantifies universally over match
   points; an assertion holds attempts that never pool because each reports its own result. A finite
-  trace admits four answers, so an attempt reports when the trace settles it and is otherwise
-  pending, and weak versus strong is which answer the statement demands. A synthesized process per
-  assertion and clocking event submits each tick's advance to Observed and each resolved attempt's
-  action to Reactive. A coroutine per attempt, one merged position set for the whole assertion, an
-  interpreted transition table, building the automaton at AST-to-HIR, a MIR node kind for a
-  sequence, and evaluating where the process wakes are rejected.
+  trace admits four ordered answers, computed per operator by generated code; an attempt reports
+  once its answer is settled, and at the end of a run by whether it at least holds, and strength is
+  each sequence's own, defaulted by the statement. A synthesized process per assertion and clocking
+  event submits each tick's advance to Observed and each resolved attempt's action to Reactive. A
+  coroutine per attempt, one merged position set for the whole assertion, an interpreted transition
+  table, building the automaton at AST-to-HIR, a MIR node kind for a sequence, and evaluating where
+  the process wakes are rejected.
 
 ### Diagnostics
 

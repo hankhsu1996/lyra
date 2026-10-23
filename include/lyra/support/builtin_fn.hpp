@@ -218,18 +218,22 @@ enum class BuiltinFn : std::uint16_t {
   kSampledHistoryAt,
   // LRM 16.14.1 concurrent assertion evaluation, all reached through the
   // storage that holds one property's attempts. `Install` fixes how wide a
-  // position set is, what a pending attempt is owed when the run ends, and the
-  // statements an outcome selects. `OpenAttempt` opens an attempt on the staged
-  // seed, and `BeginTick` makes every live evaluation one the tick has not
-  // stepped; `DisableTick` is the tick with the disable condition true, which
-  // discards every attempt (LRM 16.12). `LiveWord` bounds the Boolean
-  // expressions the tick has to read, `NextUnstepped` walks the evaluations the
-  // tick still owes a step, and `BitsAt` / `SetWord` / `Step` read a position
-  // set, replace it with its successor, and record what the tick left it in.
-  // `Seed` starts an evaluation of an implication's consequent in the attempt
-  // whose antecedent matched. `Settle` answers every attempt the sweep
-  // resolved, submitting an installed assertion's statements to Reactive, and
-  // `Answer` reads what the one attempt an expect statement holds came to.
+  // position set is and the statements an outcome selects. `OpenAttempt` opens
+  // an attempt on the staged seed, and `BeginTick` makes every evaluation one
+  // the tick has not stepped; `DisableTick` is the tick with the disable
+  // condition true, which discards every attempt (LRM 16.12). `LiveWord`
+  // bounds the Boolean expressions the tick has to read, `NextUnstepped` walks
+  // the evaluations the tick still owes a step, and `BitsAt` / `SetWord` /
+  // `Step` read a position set, replace it with its successor, and mark it
+  // stepped. `Seed` starts an instance of what an implication, a followed-by or
+  // a selection asks, as an instance of one implication of the evaluation
+  // whose antecedent matched. `Count` / `PartOf` / `ImplicationAnswer` /
+  // `Resolve` answer every evaluation from the last back: how many there are,
+  // which part of the property one answers for, the least answer an
+  // implication's instances reached, and its own answer. `Settle` answers every
+  // attempt the tick resolved, submitting an installed assertion's statements
+  // to Reactive, and `Answer` reads what the one attempt an expect statement
+  // holds came to.
   kEvaluationAttemptsInstall,
   kEvaluationAttemptsSeedWord,
   kEvaluationAttemptsOpenAttempt,
@@ -241,6 +245,10 @@ enum class BuiltinFn : std::uint16_t {
   kEvaluationAttemptsSetWord,
   kEvaluationAttemptsStep,
   kEvaluationAttemptsSeed,
+  kEvaluationAttemptsCount,
+  kEvaluationAttemptsPartOf,
+  kEvaluationAttemptsImplicationAnswer,
+  kEvaluationAttemptsResolve,
   kEvaluationAttemptsSettle,
   kEvaluationAttemptsAnswer,
   // LRM 16.17 the wait an expect statement stops at, which watches the clock

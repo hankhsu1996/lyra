@@ -10,6 +10,12 @@
 // why both counters are checked here -- a tool that simply ignored an attempt
 // whose antecedent failed would leave the fail counts right and the pass counts
 // short.
+//
+// An antecedent may match more than once in one attempt, and the consequent is
+// then evaluated once for each match; the implication holds only where every
+// one of those evaluations does (LRM 16.12.7). A consequent may read a sampled
+// value function, whose history is that of every tick of the clock, whether or
+// not the attempt read anything there (LRM 16.9.3).
 module Top;
   logic clk = 0;
   logic a = 0;
@@ -44,6 +50,54 @@ module Top;
     else
       next_fails = next_fails + 1;
 
+  // Ticks k = 0..4 land at 10k + 5, and these are written at 10k, so each tick
+  // reads them sampled. `t` holds at k = 0 only, so the attempt that began
+  // there matches `t ##[1:2] u` at k = 1 and at k = 2, and reads `v` a tick
+  // after each: low at k = 2 and high at k = 3. The first evaluation is still
+  // live when the second starts, so the two only answer apart if they are
+  // kept apart.
+  logic t = 0;
+  logic u = 0;
+  logic v = 0;
+  logic w = 0;
+  localparam logic [0:4] T = 5'b10000;
+  localparam logic [0:4] U = 5'b01100;
+  localparam logic [0:4] V = 5'b00010;
+  localparam logic [0:4] W = 5'b01000;
+
+  initial begin
+    for (int k = 0; k < 5; k++) begin
+      t = T[k];
+      u = U[k];
+      v = V[k];
+      w = W[k];
+      #10;
+    end
+  end
+
+  int every_passes = 0;
+  int every_fails = 0;
+  int past_two_passes = 0;
+  int past_two_fails = 0;
+  int past_one_passes = 0;
+  int past_one_fails = 0;
+
+  a_every_match: assert property (@(posedge clk) t ##[1:2] u |-> ##1 v)
+      every_passes = every_passes + 1;
+    else
+      every_fails = every_fails + 1;
+
+  // Read at k = 3, three ticks after `t`: two ticks before is k = 1, where `w`
+  // was high, and one tick before is k = 2, where it was low.
+  a_past_two: assert property (@(posedge clk) t |-> ##3 $past(w, 2))
+      past_two_passes = past_two_passes + 1;
+    else
+      past_two_fails = past_two_fails + 1;
+  a_past_one: assert property (@(posedge clk) t |-> ##3 $past(w))
+      past_one_passes = past_one_passes + 1;
+    else
+      past_one_fails = past_one_fails + 1;
+
   final begin
     // Five attempts: one matches the antecedent and reads `b` at that same
     // tick, and the four whose antecedent is false are true without reading it.
@@ -60,6 +114,17 @@ module Top;
     if (next_fails !== 1)
       $fatal(1, "the nonoverlapped form failed %0d times, expected 1",
              next_fails);
+    // The attempt at k = 0 fails at k = 2, though its second match holds; the
+    // other four never match the antecedent.
+    if (every_passes !== 4 || every_fails !== 1)
+      $fatal(1, "with two matches, %0d held and %0d failed, expected 4 and 1",
+             every_passes, every_fails);
+    if (past_two_passes !== 5 || past_two_fails !== 0)
+      $fatal(1, "$past(w, 2) held %0d and failed %0d times, expected 5 and 0",
+             past_two_passes, past_two_fails);
+    if (past_one_passes !== 4 || past_one_fails !== 1)
+      $fatal(1, "$past(w) held %0d and failed %0d times, expected 4 and 1",
+             past_one_passes, past_one_fails);
     $display("All checks passed");
   end
 endmodule

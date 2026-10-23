@@ -167,10 +167,10 @@ class RuntimeEffects {
 
   // LRM 16.14.5: a concurrent assertion's attempts outlive the tick that
   // started them, so an attempt can still be in flight when the run ends. What
-  // it is owed then is the answer its statement demanded of a pending result
-  // rather than anything a tick settles (Annex F.5.3.2), and the run's own tail
-  // is what supplies it -- ahead of the design's `final` procedures, which read
-  // what the statements it runs wrote.
+  // it comes to then is what the finished trace says of it rather than anything
+  // a tick settles (Annex F.5.3.1), and the run's own tail is what supplies it
+  // -- ahead of the design's `final` procedures, which read what the statements
+  // it runs wrote.
   void RegisterConcurrentAssertion(EvaluationAttempts& attempts);
 
   // LRM 20.2: a simulation control task ends the run, and its finish number

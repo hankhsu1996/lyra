@@ -4122,10 +4122,10 @@ auto lyra_rt_managedref_sampled_history_at(
 }
 
 void lyra_rt_evaluation_attempts_install(
-    void* attempts, void* effects, std::uint64_t words, bool pending_holds,
-    void* pass_action, void* fail_action) {
+    void* attempts, void* effects, std::uint64_t words, void* pass_action,
+    void* fail_action) {
   static_cast<EvaluationAttempts*>(attempts)->Install(
-      *static_cast<RuntimeEffects*>(effects), words, pending_holds,
+      *static_cast<RuntimeEffects*>(effects), words,
       AdoptClosure<lyra::support::EffectSignature>(pass_action),
       AdoptClosure<lyra::support::EffectSignature>(fail_action));
 }
@@ -4169,14 +4169,35 @@ void lyra_rt_evaluation_attempts_set_word(
   static_cast<EvaluationAttempts*>(attempts)->SetWord(index, word, bits);
 }
 
-void lyra_rt_evaluation_attempts_step(
-    void* attempts, std::int64_t index, std::uint64_t outcome) {
-  static_cast<EvaluationAttempts*>(attempts)->Step(index, outcome);
+void lyra_rt_evaluation_attempts_step(void* attempts, std::int64_t index) {
+  static_cast<EvaluationAttempts*>(attempts)->Step(index);
 }
 
 void lyra_rt_evaluation_attempts_seed(
-    void* attempts, std::int64_t index, bool this_tick) {
-  static_cast<EvaluationAttempts*>(attempts)->Seed(index, this_tick);
+    void* attempts, std::int64_t index, std::uint64_t implication,
+    std::uint64_t part) {
+  static_cast<EvaluationAttempts*>(attempts)->Seed(index, implication, part);
+}
+
+auto lyra_rt_evaluation_attempts_count(const void* attempts) -> std::int64_t {
+  return static_cast<const EvaluationAttempts*>(attempts)->Count();
+}
+
+auto lyra_rt_evaluation_attempts_part_of(
+    const void* attempts, std::int64_t index) -> std::uint64_t {
+  return static_cast<const EvaluationAttempts*>(attempts)->PartOf(index);
+}
+
+auto lyra_rt_evaluation_attempts_implication_answer(
+    const void* attempts, std::int64_t index, std::uint64_t implication)
+    -> std::uint64_t {
+  return static_cast<const EvaluationAttempts*>(attempts)->ImplicationAnswer(
+      index, implication);
+}
+
+void lyra_rt_evaluation_attempts_resolve(
+    void* attempts, std::int64_t index, std::uint64_t answer) {
+  static_cast<EvaluationAttempts*>(attempts)->Resolve(index, answer);
 }
 
 void lyra_rt_evaluation_attempts_settle(void* attempts, void* effects) {
@@ -5262,7 +5283,7 @@ auto lyra_rt_stream_build(
 auto lyra_rt_run_write(
     LyraRunOf run_of, const void* value, const void* stream,
     std::uint64_t filled) -> std::uint64_t {
-  const BitVec run = lyra::value::TakeBuilt<BitVec>(
+  const auto run = lyra::value::TakeBuilt<BitVec>(
       [&](void* storage) { run_of(value, storage); });
   const auto& into = *static_cast<const lyra::value::IntegralView*>(stream);
   lyra::value::Insert(
