@@ -4,7 +4,11 @@ Date: 2026-09-09 Status: accepted, with who allocates and when the handle opens 
 [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md) D7. The storage
 comes from the host's `operator new`, and the object is referred to by its creator while its
 constructor runs. That the definition carries no constructor and that the asking code enters it
-stand.
+stand. D3's C++ backend spelling a construction with the host language's own constructor is
+superseded by
+[an-object-is-created-whole-then-constructed](an-object-is-created-whole-then-constructed.md)
+(2026-10-22), which creates an object whole before any constructor runs, as D1 here had the
+allocation do.
 
 ## Context
 

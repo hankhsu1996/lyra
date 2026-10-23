@@ -1,6 +1,8 @@
 # An object model fixed at compile time, and a library reached through constants
 
-Date: 2026-09-29 Status: accepted; D4 and D5 revised and D9 added 2026-10-02, D7 revised 2026-10-17
+Date: 2026-09-29 Status: accepted; D4 and D5 revised and D9 added 2026-10-02, D7 revised 2026-10-17;
+how an object is built (D7, D9's last clause) superseded 2026-10-22 by
+[an-object-is-created-whole-then-constructed](an-object-is-created-whole-then-constructed.md)
 
 **D8 is reversed by
 [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**, and
@@ -77,9 +79,9 @@ public entry, and named with `sv_`, which no name of the source can take once it
 C++ backend overrides them as C++ does. The execution backend produces what clang produces for that
 output by the Itanium rules: the root is the primary base, so its table pointer is at every object's
 start; each class has a base object, complete object and deleting destructor (D2, D1, D0), the first
-ending the class's members and then its base's part; its table holds the destructor first, then the
-library's virtual functions, then the source's; and a constructor builds its base, takes its class's
-table and builds its members, in that order, before its body runs.
+ending the class's members and then its base's part; and its table holds the destructor first, then
+the library's virtual functions, then the source's. How an object is built is
+[an-object-is-created-whole-then-constructed](an-object-is-created-whole-then-constructed.md)'s.
 
 **D6. The signature of a class a unit publishes states the class's declaration whole.** The
 properties another unit may name, by name and type in the order they hold their slots, then the type
@@ -100,24 +102,14 @@ names extends, and each of those is read off the class that names it. Every laye
 it extends and the interface classes it names and no more, and the order an object's interface class
 parts are placed in is decided where the rest of its layout is (D1).
 
-**D7. An instance of the design hierarchy is built the way a `new` object is.** On the execution
-backend the host's `operator new` is asked for storage of the size of a complete object of the
-class, and the class's constructor is then entered on it directly, with its own typed arguments. The
-constructor's chain builds the part the library defines first -- the part every scope shares, from
-the arguments the class states for its base, or the part every object starts with -- through the
-library's constructor of that part, as the C++ backend's base initializer does. Each constructor
-then runs its class's prologue: the value takes the class's tables, including those of the interface
-class parts, and the class's members come into existence. A base being constructed thus dispatches
-as itself, as C++ gives it through construction virtual tables (Itanium 2.6). A `new` object is
-referred to by its creator from the moment the part every object starts with is built, and the
-new-expression hands that reference to its handle once the constructor has run. Revised 2026-10-17:
-this had made the handle the object's first owner, after the constructor, which left a constructor
-unable to hand `this` on (LRM 8.11) -- to store it, to call a method holding its object, or to fork
-a branch reading a property -- since nothing referred to the object yet. A new object's count starts
-at one in Swift (`RefCount.h`) and in CPython (`new_reference`, before `type_call` runs `tp_init`),
-and an Objective-C `alloc` answers an object its creator owns. The design root is built through its
-unit's object entry, as an instance of another unit is. No construction is entered through a
-constant, and the library allocates no object.
+**D7. An instance of the design hierarchy is built the way a `new` object is.** It is created and
+then constructed, as
+[an-object-is-created-whole-then-constructed](an-object-is-created-whole-then-constructed.md) states
+for every object, which replaced this decision's account of how an object is built (2026-10-22):
+that account had each constructor build its base and then take its class's tables and build its
+members, so a base being constructed dispatched as itself, which LRM 8.17 NOTE 2 does not allow. The
+design root is built through its unit's object entry, as an instance of another unit is. No
+construction is entered through a constant, and the library allocates no object.
 
 **D8. A name reaching a method of a class the referrer cannot name is settled to a body while the
 design elaborates, whether or not the object decides which body runs.** A class a design element

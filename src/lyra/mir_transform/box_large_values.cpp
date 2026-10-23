@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <optional>
-#include <span>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -99,23 +98,15 @@ class BodyBoxing {
     }
   }
 
-  // The code rewritten, read where it lies, with each outside root rewritten
-  // as an argument is, since a constructor enters its base's constructor with
-  // them.
-  auto Rewritten(std::span<const mir::ExprId> outside_roots)
-      -> mir::SourcedCode {
-    std::vector<mir::ExprId> roots(outside_roots.begin(), outside_roots.end());
-    std::optional<mir::Block> body = RewrittenBody(roots);
-    return mir::SourcedCode{
-        .code =
-            mir::CallableCode{
-                .params = code_->params,
-                .receiver = code_->receiver,
-                .result_type = WithParamsBoxed(*unit_, code_->result_type),
-                .locals = BoxedLocals(),
-                .named_locals = code_->named_locals,
-                .body = std::move(body)},
-        .outside_roots = std::move(roots)};
+  // The code rewritten, read where it lies.
+  auto Rewritten() -> mir::CallableCode {
+    return mir::CallableCode{
+        .params = code_->params,
+        .receiver = code_->receiver,
+        .result_type = WithParamsBoxed(*unit_, code_->result_type),
+        .locals = BoxedLocals(),
+        .named_locals = code_->named_locals,
+        .body = RewrittenBody()};
   }
 
   // Whether the rewrite changes the body at all.
@@ -140,8 +131,7 @@ class BodyBoxing {
     return locals;
   }
 
-  auto RewrittenBody(std::vector<mir::ExprId>& outside_roots)
-      -> std::optional<mir::Block> {
+  auto RewrittenBody() -> std::optional<mir::Block> {
     if (!code_->body.has_value()) {
       return std::nullopt;
     }
@@ -157,9 +147,6 @@ class BodyBoxing {
             [this](mir::TypeId type) { return WithParamsBoxed(*unit_, type); }};
     BlockRebuild rebuild(*code_->body, rules);
     std::vector<mir::StmtId> stmts = rebuild.Stmts(code_->body->root_stmts);
-    for (mir::ExprId& argument : outside_roots) {
-      argument = Argument(rebuild, argument);
-    }
     return std::move(rebuild).Finish(std::move(stmts));
   }
 
@@ -320,9 +307,7 @@ auto BoxLargeValues(mir::CompilationUnit unit) -> mir::CompilationUnit {
   return mir::RewriteEachCode(
       std::move(unit),
       [](const mir::CompilationUnit& unit, const mir::CodeSource& at,
-         const mir::CallableCode& code,
-         std::span<const mir::ExprId> outside_roots)
-          -> std::optional<mir::SourcedCode> {
+         const mir::CallableCode& code) -> std::optional<mir::CallableCode> {
         // A foreign body is entered by the convention its declaration states,
         // which nothing here changes.
         if (mir::IsEnteredForeign(unit, at)) {
@@ -332,7 +317,7 @@ auto BoxLargeValues(mir::CompilationUnit unit) -> mir::CompilationUnit {
         if (!boxing.ChangesAnything()) {
           return std::nullopt;
         }
-        return boxing.Rewritten(outside_roots);
+        return boxing.Rewritten();
       });
 }
 

@@ -11,7 +11,6 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/block_id.hpp"
 #include "lyra/mir/callable_code.hpp"
-#include "lyra/mir/code_source.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/operand_use.hpp"
@@ -244,29 +243,21 @@ auto BlockRebuild::WithOperandsCarried(const mir::StmtData& data)
       data);
 }
 
-auto RebuildCode(
-    const mir::CallableCode& code, std::span<const mir::ExprId> outside_roots,
-    const RebuildRules& rules) -> mir::SourcedCode {
-  std::vector<mir::ExprId> roots(outside_roots.begin(), outside_roots.end());
+auto RebuildCode(const mir::CallableCode& code, const RebuildRules& rules)
+    -> mir::CallableCode {
   std::optional<mir::Block> body;
   if (code.body.has_value()) {
     BlockRebuild rebuild(*code.body, rules);
     std::vector<mir::StmtId> stmts = rebuild.Stmts(code.body->root_stmts);
-    for (mir::ExprId& root : roots) {
-      root = rebuild.Evaluation(root);
-    }
     body = std::move(rebuild).Finish(std::move(stmts));
   }
-  return mir::SourcedCode{
-      .code =
-          mir::CallableCode{
-              .params = code.params,
-              .receiver = code.receiver,
-              .result_type = code.result_type,
-              .locals = code.locals,
-              .named_locals = code.named_locals,
-              .body = std::move(body)},
-      .outside_roots = std::move(roots)};
+  return mir::CallableCode{
+      .params = code.params,
+      .receiver = code.receiver,
+      .result_type = code.result_type,
+      .locals = code.locals,
+      .named_locals = code.named_locals,
+      .body = std::move(body)};
 }
 
 }  // namespace lyra::mir_transform

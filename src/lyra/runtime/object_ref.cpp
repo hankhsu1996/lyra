@@ -13,10 +13,8 @@ namespace lyra::runtime {
 namespace {
 
 // Ends an object once its last reference goes, where it was handed over to
-// the code that asked for it. One whose constructor left by an exception was
-// never handed over: unwinding the construction has already ended it and given
-// its storage back, which a reference taken while it was being built cannot
-// change, so its end does nothing.
+// the code that created it. An instance of the design hierarchy never is: its
+// parent owns it alone and ends it, so its own end does nothing.
 struct EndObject {
   bool handed_over = false;
 

@@ -3,14 +3,11 @@
 #include <format>
 #include <map>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <variant>
-#include <vector>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/class.hpp"
@@ -38,17 +35,6 @@ auto DescribeClass(const CompilationUnit& unit, ClassId owner) -> std::string {
                                     "class '{}' in unit '{}'",
                                     support::DisplayOf(*cls.path), unit.name)
                               : std::format("a scope of unit '{}'", unit.name);
-}
-
-// Only a constructor has nodes outside its statements, so any other source
-// answering with some has built nodes nothing will ever reach.
-auto WithoutOutsideRoots(SourcedCode answer) -> CallableCode {
-  if (!answer.outside_roots.empty()) {
-    throw InternalError(
-        "mir: a rewrite answered code with outside roots for a source that "
-        "names none -- please report this as a bug");
-  }
-  return std::move(answer.code);
 }
 
 }  // namespace
@@ -117,56 +103,50 @@ void ForEachCode(const CompilationUnit& unit, const CodeVisit& visit) {
   for (const ClassId owner : unit.classes.Ids()) {
     const Class& cls = unit.GetClass(owner);
     if (cls.constructor.has_value()) {
-      visit(
-          ConstructorSource{.owner = owner}, cls.constructor->code,
-          cls.constructor->base_args);
+      visit(ConstructorSource{.owner = owner}, cls.constructor->code);
     }
     for (const CallableId slot : cls.callables.Ids()) {
       visit(
           CallableTarget{.owner = owner, .slot = slot},
-          cls.callables.Get(slot).code, {});
+          cls.callables.Get(slot).code);
     }
   }
   for (const CallableId slot : unit.callables.Ids()) {
-    visit(UnitCallableTarget{.slot = slot}, unit.callables.Get(slot).code, {});
+    visit(UnitCallableTarget{.slot = slot}, unit.callables.Get(slot).code);
   }
   for (const RecordId record : unit.record_methods.Ids()) {
     for (const RecordMethod& method : unit.GetRecordMethods(record)) {
       visit(
           RecordMethodSource{.record = record, .answers = method.answers},
-          method.code, {});
+          method.code);
     }
   }
   for (const TypeOperation& stated : unit.type_operations) {
     visit(
         TypeOperationSource{.type = stated.type, .answers = stated.answers},
-        stated.code, {});
+        stated.code);
   }
   for (const ClosureId closure : unit.closures.Ids()) {
-    visit(
-        ClosureSource{.closure = closure}, unit.GetClosure(closure).invoke, {});
+    visit(ClosureSource{.closure = closure}, unit.GetClosure(closure).invoke);
   }
   for (const ForeignScopeEntry& entry : unit.foreign_scope_entries) {
     visit(
         ForeignScopeEntrySource{.foreign_name = entry.linkage.foreign_name},
-        entry.definition, {});
+        entry.definition);
   }
 }
 
 auto RewriteEachCode(CompilationUnit unit, const CodeRewrite& rewrite)
     -> CompilationUnit {
-  std::map<CodeSource, SourcedCode> rewritten;
-  ForEachCode(
-      unit, [&](const CodeSource& at, const CallableCode& code,
-                std::span<const ExprId> outside_roots) {
-        if (std::optional<SourcedCode> answer =
-                rewrite(unit, at, code, outside_roots)) {
-          rewritten.emplace(at, *std::move(answer));
-        }
-      });
+  std::map<CodeSource, CallableCode> rewritten;
+  ForEachCode(unit, [&](const CodeSource& at, const CallableCode& code) {
+    if (std::optional<CallableCode> answer = rewrite(unit, at, code)) {
+      rewritten.emplace(at, *std::move(answer));
+    }
+  });
 
   const auto answer_for =
-      [&](const CodeSource& at) -> std::optional<SourcedCode> {
+      [&](const CodeSource& at) -> std::optional<CallableCode> {
     auto found = rewritten.extract(at);
     if (found.empty()) {
       return std::nullopt;
@@ -174,16 +154,14 @@ auto RewriteEachCode(CompilationUnit unit, const CodeRewrite& rewrite)
     return std::move(found.mapped());
   };
   const auto replace = [&](const CodeSource& at, CallableCode& code) {
-    if (std::optional<SourcedCode> answer = answer_for(at)) {
-      code = WithoutOutsideRoots(*std::move(answer));
+    if (std::optional<CallableCode> answer = answer_for(at)) {
+      code = *std::move(answer);
     }
   };
   unit.classes =
       std::move(unit.classes).TransformValues([&](ClassId owner, Class cls) {
-        if (std::optional<SourcedCode> answer =
-                answer_for(ConstructorSource{.owner = owner})) {
-          cls.constructor->code = std::move(answer->code);
-          cls.constructor->base_args = std::move(answer->outside_roots);
+        if (cls.constructor.has_value()) {
+          replace(ConstructorSource{.owner = owner}, cls.constructor->code);
         }
         cls.callables =
             std::move(cls.callables)

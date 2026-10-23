@@ -12,8 +12,8 @@ namespace lyra::runtime {
 // base label the parent gives it (`"loop"`, `"m"`, `"leaf"`) together
 // with any per-dimension indices the elaboration assigns (`{0}` for the
 // first iteration of a generate-for, `{i, j}` for a multi-dim instance
-// array, `{}` for a scalar). Each scope owns one of these from the moment
-// its constructor returns; `%m` and debug output read it.
+// array, `{}` for a scalar). Each scope owns one of these from the first
+// statement of its constructor on; `%m` and debug output read it.
 //
 // Every unit that builds a child scope constructs one, hands it over, and
 // destroys what is left, so each of those is declared here and defined in the

@@ -820,6 +820,14 @@ inline void WriteOne(TargetText& out, const RecordQualifiedName& ref) {
   return MintedWord{.word = "call_once"};
 }
 
+// The member function a class's constructor is, `sv_construct`, entered on an
+// object already created whole, so the object is of its own class while every
+// constructor runs (LRM 8.17) and a construction left partway leaves it to
+// whatever refers to it (LRM 8.29).
+[[nodiscard]] inline auto CppConstructorMemberName() -> MintedWord {
+  return MintedWord{.word = "construct"};
+}
+
 // The constant naming how a closure is run and ended,
 // `sv_closure_definition_<n>`, which the runtime reaches the closure through.
 [[nodiscard]] inline auto CppClosureDefinitionName(mir::ClosureId id)

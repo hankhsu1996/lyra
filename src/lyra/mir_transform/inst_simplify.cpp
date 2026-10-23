@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cstdint>
 #include <optional>
-#include <span>
 #include <unordered_map>
 #include <utility>
 #include <variant>
@@ -314,9 +313,7 @@ auto InstSimplify(mir::CompilationUnit unit) -> mir::CompilationUnit {
   return mir::RewriteEachCode(
       std::move(unit),
       [](const mir::CompilationUnit& unit, const mir::CodeSource&,
-         const mir::CallableCode& code,
-         std::span<const mir::ExprId> outside_roots)
-          -> std::optional<mir::SourcedCode> {
+         const mir::CallableCode& code) -> std::optional<mir::CallableCode> {
         const Simplifier simplifier(unit);
         if (!code.body.has_value() || !simplifier.FiresIn(*code.body)) {
           return std::nullopt;
@@ -342,7 +339,7 @@ auto InstSimplify(mir::CompilationUnit unit) -> mir::CompilationUnit {
                   return simplifier.Node(
                       rebuild, id, taken_at(rebuild.From(), id));
                 }};
-        return RebuildCode(code, outside_roots, rules);
+        return RebuildCode(code, rules);
       });
 }
 

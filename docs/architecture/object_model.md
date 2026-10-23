@@ -43,8 +43,8 @@ reference -- destroys a distinction a consumer has to read.
   compilation-unit boundary.
 - The reference kinds that reach an object instance and the lifetime / reachability each denotes:
   owning, borrowed, shared, and managed.
-- The construction model: allocation, the constructor, and optional base-constructor chaining, as a
-  concept distinct from an ordinary callable.
+- The construction model: creating an object whole, then entering its constructor on it, with the
+  base's construction a step of the constructor, as concepts distinct from an ordinary callable.
 - The dispatch model: the override relation between a method and the base method it overrides, the
   logical dispatch slot, and the virtual and interface call forms.
 - The receiver rule: an instance method carries a receiver; a type-associated (static) function does
@@ -129,13 +129,15 @@ reference -- destroys a distinction a consumer has to read.
    references held under different views differently, and may not lay them out differently; what
    differs between them is which operations are available, and nothing else._
 
-5. **Construction is its own concept.** Allocating an object and running its constructor, with
-   optional base-constructor chaining and a defined initialization ordering, is a construction form
-   distinct from an ordinary callable. A constructor body may reuse callable-body machinery, but a
-   construction is never represented as a plain call to an ordinary method, and base-constructor
-   ordering is stated, never left to a backend convention. _Object-model consequence: every object
-   -- an owned module child and a heap class object alike -- is built through the one construction
-   form._
+5. **An object is created whole, then constructed.** Creation brings the complete object into
+   existence -- every member of every class of its lineage, and the object's own class as what it
+   dispatches and casts as -- and runs no code of the program. Construction is the class's
+   constructor entered on that object, a body that records what the compiler keeps for the object,
+   constructs its base, initializes the class's own members in a defined order, and runs what the
+   source wrote. Neither is represented as a plain call to an ordinary method, and the order is
+   stated, never left to a backend convention. _Object-model consequence: every object -- an owned
+   module child and a heap class object alike -- is built through the one form, and it is of its own
+   class from creation on, so whatever its constructors call answers for that class (LRM 8.17)._
 
 6. **Override is a resolved relation; dispatch is by logical slot.** A method that overrides a base
    method records the overridden method as a resolved declaration reference, never a textual name. A
@@ -237,6 +239,9 @@ reference -- destroys a distinction a consumer has to read.
   acyclic-by-construction) reference instead of the managed reference. (Invariant 4.)
 - Representing construction as a plain call to an ordinary method, or leaving base-constructor
   ordering to a backend convention. (Invariant 5.)
+- An object that takes its class one base at a time while its constructors run -- a target
+  language's constructor standing for the program's -- so that a call made during construction
+  answers for a class the object is not. (Invariant 5.)
 - An override recorded as a textual method name; a backend re-deriving the override family by name
   or signature matching; whether a call is dynamic inferred from the receiver's type rather than
   stated at the call site. (Invariant 6.)

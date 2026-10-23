@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <span>
 #include <utility>
 #include <vector>
 
@@ -165,13 +164,11 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
 
 auto NestingDepthOf(const CompilationUnit& unit) -> std::uint64_t {
   std::uint64_t deepest = 0;
-  ForEachCode(
-      unit, [&](const CodeSource&, const CallableCode& code,
-                std::span<const ExprId>) {
-        if (code.body.has_value()) {
-          deepest = std::max(deepest, NestingDepth(*code.body));
-        }
-      });
+  ForEachCode(unit, [&](const CodeSource&, const CallableCode& code) {
+    if (code.body.has_value()) {
+      deepest = std::max(deepest, NestingDepth(*code.body));
+    }
+  });
   return deepest;
 }
 

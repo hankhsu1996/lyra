@@ -331,7 +331,8 @@ void lyra_rt_closure_box_end(void* closure);
 
 // The handle the program's `new` answers (LRM 8.3), owning `object`: a whole
 // value of a class extending the part every object starts with, allocated and
-// constructed by the caller and held by nothing yet. The handle ends the value
+// created whole by the caller, before its constructor runs, and held by
+// nothing yet. The handle ends the value
 // through its virtual destructor when the last reference to it goes, and is
 // built in storage the caller gives like every value the boundary hands back.
 auto lyra_rt_object_adopt(void* object, void* out) -> void*;
@@ -832,6 +833,11 @@ auto lyra_rt_hierarchical_path(void* self, void* out) -> void*;
 // member there, which the referring artifact can do directly because it owns
 // the enclosing scope's layout.
 auto lyra_rt_parent(void* self) -> void*;
+
+// Gives a scope its place -- its parent, its segment, and the definition of
+// the class it is an object of -- as its constructor's first act.
+void lyra_rt_set_scope_place(
+    void* self, void* parent, const void* segment, const void* definition);
 
 // Attaches a freshly built child to its parent, transferring ownership into the
 // runtime tree; returns the child as a borrowed scope handle.

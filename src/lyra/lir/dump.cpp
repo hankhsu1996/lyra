@@ -488,9 +488,8 @@ class LirDumper {
               return std::format("through {}", FormatOperand(i.callee));
             },
             [](const ConstructTarget&) -> std::string { return "Construct"; },
-            [](const LibraryConstructorTarget& c) -> std::string {
-              return std::format(
-                  "construct {}", support::RuntimeClassName(c.cls));
+            [&](const CreationTarget& c) -> std::string {
+              return std::format("create {}", FormatType(c.cls));
             },
             [](const SymbolTarget& s) -> std::string {
               return std::format("extern {}", s.symbol);

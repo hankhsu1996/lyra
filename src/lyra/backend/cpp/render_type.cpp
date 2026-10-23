@@ -798,10 +798,6 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
 
 void WriteOne(TargetText& out, const CppNewOwner& owner) {
   const mir::Type& type = owner.of.Unit().types.Get(owner.of.Type());
-  if (type.Is<mir::ManagedRefType>()) {
-    out += "lyra::runtime::AdoptObject";
-    return;
-  }
   if (const auto* pointer = type.As<mir::PointerType>()) {
     switch (pointer->ownership) {
       case mir::PointerOwnership::kUnique:
@@ -813,7 +809,28 @@ void WriteOne(TargetText& out, const CppNewOwner& owner) {
     }
   }
   throw InternalError(
-      "backend::cpp: storage a new-expression allocates is owned by a unique "
+      "backend::cpp: storage a new-expression allocates for a value is owned "
+      "by a unique pointer -- please report this as a bug");
+}
+
+void WriteOne(TargetText& out, const CppObjectCreation& creation) {
+  const mir::Type& type = creation.of.Unit().types.Get(creation.of.Type());
+  if (type.Is<mir::ManagedRefType>()) {
+    out += "lyra::runtime::CreateObject";
+    return;
+  }
+  if (const auto* pointer = type.As<mir::PointerType>()) {
+    switch (pointer->ownership) {
+      case mir::PointerOwnership::kUnique:
+        out += "lyra::runtime::CreateOwned";
+        return;
+      case mir::PointerOwnership::kShared:
+      case mir::PointerOwnership::kBorrowed:
+        break;
+    }
+  }
+  throw InternalError(
+      "backend::cpp: an object a new-expression creates is owned by a unique "
       "pointer or a class handle -- please report this as a bug");
 }
 

@@ -585,8 +585,7 @@ auto StartsSplitProcess(const mir::Block& block, const SplitProcesses& split)
 // split process.
 auto RewriteSplitStarts(
     const mir::CompilationUnit& unit, const mir::CallableCode& code,
-    std::span<const mir::ExprId> outside_roots, const SplitProcesses& split)
-    -> mir::SourcedCode {
+    const SplitProcesses& split) -> mir::CallableCode {
   const mir::TypeId part_type = PartType(unit);
   const RebuildRules rules{
       .expr = [&](BlockRebuild& rebuild,
@@ -635,7 +634,7 @@ auto RewriteSplitStarts(
             mir::Direct{.target = parts.entry},
             {erased, code(parts.setup), code(target->slot)}, expr.type);
       }};
-  return RebuildCode(code, outside_roots, rules);
+  return RebuildCode(code, rules);
 }
 
 using ReactionShapes = std::unordered_map<mir::CallableTarget, ReactionShape>;
@@ -685,19 +684,16 @@ auto SplitReactions(mir::CompilationUnit unit) -> mir::CompilationUnit {
   return mir::RewriteEachCode(
       std::move(unit),
       [&](const mir::CompilationUnit& unit, const mir::CodeSource& at,
-          const mir::CallableCode& code,
-          std::span<const mir::ExprId> outside_roots)
-          -> std::optional<mir::SourcedCode> {
+          const mir::CallableCode& code) -> std::optional<mir::CallableCode> {
         if (const auto* method = std::get_if<mir::CallableTarget>(&at)) {
           if (const auto shape = shapes.find(*method); shape != shapes.end()) {
-            return mir::SourcedCode{
-                .code = PassOf(unit, code, shape->second), .outside_roots = {}};
+            return PassOf(unit, code, shape->second);
           }
         }
         if (!code.body.has_value() || !StartsSplitProcess(*code.body, split)) {
           return std::nullopt;
         }
-        return RewriteSplitStarts(unit, code, outside_roots, split);
+        return RewriteSplitStarts(unit, code, split);
       });
 }
 

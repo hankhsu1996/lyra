@@ -50,10 +50,19 @@ auto Segment(std::string name) -> HierarchySegment {
   return HierarchySegment{std::move(name), {}};
 }
 
+// A scope created and then given its place, as a scope's constructor gives it.
+auto PlacedScope(
+    const HierarchySegment& segment, const ObjectDefinition* definition)
+    -> std::unique_ptr<Scope> {
+  auto scope = std::make_unique<Scope>();
+  scope->SetPlace(nullptr, segment, definition);
+  return scope;
+}
+
 // A scope is built of a class stating what only a scope class has. A class
 // stating none is refused as the class of one.
 TEST(ClassDefinitionTest, AScopeIsBuiltOfAScopeClass) {
-  const auto built = std::make_unique<Scope>(nullptr, Segment("u"), &kOuter);
+  const auto built = PlacedScope(Segment("u"), &kOuter);
   EXPECT_EQ(built->Definition(), &kOuter);
   EXPECT_EQ(&built->Info(), &kScopeInfo);
   EXPECT_EQ(built->Parent(), nullptr);
@@ -68,15 +77,12 @@ TEST(ClassDefinitionTest, AScopeIsBuiltOfAScopeClass) {
 // (LRM 23.8). Every instance a resolution covered has one, so a scope with
 // none is a compiler fault.
 TEST(ClassDefinitionTest, AnUpwardNameStartsAtTheNearestInstanceOfItsClass) {
-  const auto root = std::make_unique<Scope>(nullptr, Segment("$root"), &kRoot);
-  Scope* outer = root->AddOwnedChild(
-      std::make_unique<Scope>(nullptr, Segment("top"), &kOuterExtended));
-  Scope* other = root->AddOwnedChild(
-      std::make_unique<Scope>(nullptr, Segment("side"), &kOther));
-  Scope* middle = outer->AddOwnedChild(
-      std::make_unique<Scope>(nullptr, Segment("m"), &kMiddle));
-  Scope* inner = middle->AddOwnedChild(
-      std::make_unique<Scope>(nullptr, Segment("i"), &kInner));
+  const auto root = PlacedScope(Segment("$root"), &kRoot);
+  Scope* outer =
+      root->AddOwnedChild(PlacedScope(Segment("top"), &kOuterExtended));
+  Scope* other = root->AddOwnedChild(PlacedScope(Segment("side"), &kOther));
+  Scope* middle = outer->AddOwnedChild(PlacedScope(Segment("m"), &kMiddle));
+  Scope* inner = middle->AddOwnedChild(PlacedScope(Segment("i"), &kInner));
 
   EXPECT_EQ(inner->EnclosingScope(&kMiddle), middle);
   EXPECT_EQ(inner->EnclosingScope(&kOuterExtended), outer);
@@ -93,7 +99,8 @@ extern const ObjectDefinition kOwnClassScope;
 class OwnClassScope : public Scope {
  public:
   OwnClassScope(const HierarchySegment& segment, std::shared_ptr<int> held)
-      : Scope(nullptr, segment, &kOwnClassScope), held_(std::move(held)) {
+      : held_(std::move(held)) {
+    SetPlace(nullptr, segment, &kOwnClassScope);
   }
 
   [[nodiscard]] auto Phases() const -> const std::string& {

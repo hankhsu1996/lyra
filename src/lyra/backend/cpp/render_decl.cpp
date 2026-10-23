@@ -228,54 +228,32 @@ void RenderClassCallableDef(
       CppClassCallableName(unit, s, id), m.code, out);
 }
 
-// The constructor, declared in the class and defined in the code file, outside
-// the class so the body can build a child whose own body uses this class:
+// The constructor, a member function declared in the class and defined in the
+// code file, outside the class so the body can build a child whose own body
+// uses this class:
 //
-//   C::C(args) : Base(base_args) { C* self = this; body }
+//   auto C::sv_construct(args) -> void { C* self = this; body }
 //
-// The base goes in the initializer list because it has to exist before any
-// statement runs. Everything else, property initialization in LRM 8.7 order
-// included, is a statement of the body, which reaches the object through its
-// receiver as every other body does.
+// It is entered on an object already created whole -- by the C++ constructor
+// the class leaves implicit, which builds every member and gives the object
+// its class -- so every step of the construction, the base's included, is a
+// statement of the body, which reaches the object through its receiver as
+// every other body does.
 void RenderConstructor(
     const mir::CompilationUnit& unit, UnitRenderReport& report,
-    mir::ClassId cls_id, const mir::Class& s, const mir::ConstructorDecl& ctor,
+    mir::ClassId cls_id, const mir::ConstructorDecl& ctor,
     std::string_view specifiers, TargetText& signature, TargetText& code) {
   const mir::CallableCode& ctor_code = ctor.code;
-  if (!ctor_code.receiver.has_value()) {
-    throw InternalError(
-        "RenderConstructor: a constructor is entered on the object it builds, "
-        "yet states no receiver -- please report this as a bug");
-  }
-  const ReceiverSpelling receiver = ReceiverOf(unit, ctor_code);
-  if (std::holds_alternative<ReceiverAsParameter>(receiver)) {
-    throw InternalError(
-        "RenderConstructor: a constructor is handed the object it builds to "
-        "take over -- please report this as a bug");
-  }
-  const ScopeView scope_view = ScopeView::ForCode(unit, ctor_code, report);
-  const CppName cpp_name = CppClassName(unit, cls_id);
-  const std::span<const mir::LocalId> formals = ctor_code.ParamsAfterReceiver();
-
+  const std::optional<ReceiverSpelling> receiver =
+      MemberReceiverOf(unit, ctor_code);
   signature.OpenLine();
-  Write(signature, cpp_name, "(");
-  WriteParameters(unit, ctor_code, formals, signature);
-  signature += ");\n";
-
-  Write(code, specifiers, CppClassPath(unit, cls_id), "::", cpp_name, "(");
-  WriteParameters(unit, ctor_code, formals, code);
-  code += ")";
-  if (s.base.has_value()) {
-    Write(code, " : ", CppClassRef(unit, *s.base), "(");
-    WriteCommaSeparated(scope_view, code, ctor.base_args);
-    code += ")";
-  }
-  code += " ";
-  WriteBody(code, [&] {
-    WriteReceiverBinding(unit, ctor_code, receiver, code);
-    RenderBlockStatements(scope_view, code);
-  });
-  code += "\n";
+  Write(signature, "auto ", CppConstructorMemberName());
+  WriteMemberSignatureTail(
+      unit, ctor_code, receiver, ctor_code.ParamsAfterReceiver(), signature);
+  signature += ";\n";
+  RenderMemberFunctionDef(
+      unit, report, specifiers, CppClassPath(unit, cls_id),
+      CppConstructorMemberName(), ctor_code, code);
 }
 
 // A constant class `s` holds, announced in the class as `static const T name;`
@@ -458,8 +436,7 @@ void RenderClass(
   if (s.constructor.has_value()) {
     const TargetText::Section declared(out);
     const TargetText::Section defined(code);
-    RenderConstructor(
-        unit, report, id, s, *s.constructor, specifiers, out, code);
+    RenderConstructor(unit, report, id, *s.constructor, specifiers, out, code);
   }
 
   // The destructor is virtual, because whoever ends a value holds it as the

@@ -1,7 +1,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <format>
 #include <iterator>
 #include <optional>
 #include <span>
@@ -1489,7 +1488,7 @@ auto CodeGenFunction::LowerCall(
             throw InternalError(
                 "llvm codegen: unknown dynamic-storage operation");
           },
-          [&](const lir::LibraryConstructorTarget& t) { return called(t); },
+          [&](const lir::CreationTarget& t) { return called(t); },
           [&](const lir::SymbolTarget& t) { return called(t); },
           [&](const lir::ForeignTarget& t) { return called(t); },
           [&](const lir::ControlEffectTarget& t) { return called(t); }},
@@ -1709,10 +1708,11 @@ auto CodeGenFunction::ResolveCallee(
             }
             return module_->RuntimeFunction(*constructor, abi);
           },
-          [&](const lir::LibraryConstructorTarget& t)
+          [&](const lir::CreationTarget& t)
               -> diag::Result<llvm::FunctionCallee> {
             return module_->RuntimeFunction(
-                runtime::BaseObjectConstructorSymbolOf(t.cls), abi);
+                module_->CreationSymbol(t.cls, lir::Creation::kCompleteObject),
+                abi);
           },
           // A body another artifact defines is declared here and resolved by
           // the host, and its operands are this program's own values.

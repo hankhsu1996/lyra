@@ -354,6 +354,15 @@ void WriteDirectCallee(
                 CppExternalClassPath(t.unit_name, t.class_path),
                 "::", ToCppName(t.method_name));
           },
+          // A base's constructor on the object being constructed,
+          // `(*self).Base::sv_construct(args)`, qualified as a direct call to a
+          // member is.
+          [&](const mir::ConstructorTarget& t) {
+            callee.Named(
+                ReceiverPlacement::kIntoCalleeName,
+                CppClassRef(view.Unit(), t.cls),
+                "::", CppConstructorMemberName());
+          },
           // A method of a struct or a union, qualified by its type the way a
           // class method is: `v.::Pkg::sv_types::s::IsBitIdentical(w)` on the
           // value it is asked of, `::Pkg::sv_types::s::FromBitstream(b)` for a

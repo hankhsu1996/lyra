@@ -1185,6 +1185,13 @@ void VerifyValuesMeetTheirTypes(
     } else if (
         const auto* free = std::get_if<UnitCallableTarget>(&direct->target)) {
       callee = &unit.callables.Get(free->slot).code;
+    } else if (
+        const auto* constructor =
+            std::get_if<ConstructorTarget>(&direct->target)) {
+      if (const auto* own = std::get_if<IntraUnitClassRef>(&constructor->cls);
+          own != nullptr && unit.GetClass(own->class_id).constructor) {
+        callee = &unit.GetClass(own->class_id).constructor->code;
+      }
     }
     if (callee == nullptr) {
       continue;
@@ -1357,8 +1364,9 @@ void VerifyConstantsAreFolded(
 }
 
 // Storage a uniquely owning pointer or a class handle owns comes into existence
-// only by a new-expression, whose initializer is evaluated into that storage
-// and so has the type allocated.
+// only by a new-expression, whose initializer has the type allocated -- a value
+// evaluated into that storage, or an object's construction, entered on the
+// object once it is created whole.
 void VerifyAllocations(
     const CompilationUnit& unit, const Block& block, const auto& describe) {
   const auto refuse = [&](ExprId id, std::string_view what) {
@@ -1386,6 +1394,14 @@ void VerifyAllocations(
     }
     if (block.exprs.Get(allocation->initializer).type != *allocated) {
       refuse(id, "initializes its storage from a value of another type");
+    }
+    if (unit.types.Get(*allocated).Is<ObjectType>()) {
+      const auto* construction =
+          std::get_if<CallExpr>(&block.exprs.Get(allocation->initializer).data);
+      if (construction == nullptr ||
+          !std::holds_alternative<Construct>(construction->callee)) {
+        refuse(id, "creates an object it does not construct");
+      }
     }
   }
   for (const BlockId id : block.child_scopes.Ids()) {
@@ -1636,7 +1652,7 @@ void VerifyBreaksAndSwitches(
 // for each one costs more than the check itself.
 void VerifyCode(
     const CompilationUnit& unit, Phase phase, const CallableCode& code,
-    std::span<const ExprId> outside_roots, const auto& describe) {
+    const auto& describe) {
   switch (phase) {
     case Phase::kBuilt:
       break;
@@ -1647,8 +1663,8 @@ void VerifyCode(
   if (!code.body.has_value()) {
     return;
   }
-  VerifyNoRunEvaluatesTwice(*code.body, outside_roots, describe);
-  VerifyPlacesAreRead(unit, *code.body, outside_roots, describe);
+  VerifyNoRunEvaluatesTwice(*code.body, {}, describe);
+  VerifyPlacesAreRead(unit, *code.body, {}, describe);
   VerifyWritesLandInWritableStorage(unit, *code.body, describe);
   VerifyValuesMeetTheirTypes(unit, code, *code.body, describe);
   VerifyStorageWithoutAnAddress(unit, *code.body, describe);
@@ -1791,13 +1807,11 @@ using Reached =
 class HandedClosures {
  public:
   explicit HandedClosures(const CompilationUnit& unit) : unit_(&unit) {
-    ForEachCode(
-        unit, [&](const CodeSource&, const CallableCode& code,
-                  std::span<const ExprId>) {
-          if (code.body.has_value()) {
-            IndexSites(code, *code.body);
-          }
-        });
+    ForEachCode(unit, [&](const CodeSource&, const CallableCode& code) {
+      if (code.body.has_value()) {
+        IndexSites(code, *code.body);
+      }
+    });
   }
 
   void Check(const CallableCode& code, const auto& describe) {
@@ -2329,18 +2343,15 @@ void Verify(const CompilationUnit& unit, Phase phase, std::string_view when) {
       return std::format("{}, {}", Describe(unit, at), when);
     };
   };
-  ForEachCode(
-      unit, [&](const CodeSource& at, const CallableCode& code,
-                std::span<const ExprId> outside_roots) {
-        VerifyCode(unit, phase, code, outside_roots, describer(at));
-      });
+  ForEachCode(unit, [&](const CodeSource& at, const CallableCode& code) {
+    VerifyCode(unit, phase, code, describer(at));
+  });
   // Every body is checked on its own first, since a closure handed over in one
   // is followed into the bodies that made what it captured.
   HandedClosures handed(unit);
-  ForEachCode(
-      unit,
-      [&](const CodeSource& at, const CallableCode& code,
-          std::span<const ExprId>) { handed.Check(code, describer(at)); });
+  ForEachCode(unit, [&](const CodeSource& at, const CallableCode& code) {
+    handed.Check(code, describer(at));
+  });
 }
 
 }  // namespace lyra::mir

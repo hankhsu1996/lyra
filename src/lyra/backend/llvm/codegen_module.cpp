@@ -106,8 +106,8 @@ auto CodeGenModule::Run() -> diag::Result<EmittedModule> {
   // a declaration extending it calls those, in this unit or another. Every one
   // extends the library's root, whose destructor is virtual, so each has a
   // table and is described where it is declared. The destructors come first,
-  // so the table naming them names bodies already defined, and the prologue
-  // storing the table's address comes after it.
+  // so the table naming them names bodies already defined, and the creations
+  // storing the table's address come after it.
   const auto emit_storage =
       [&](lir::TypeId type, const Declared& declared,
           std::span<const lir::ConformingBehavior> conforming)
@@ -119,7 +119,7 @@ auto CodeGenModule::Run() -> diag::Result<EmittedModule> {
     if (auto table = EmitTable(type, declared, conforming); !table) {
       return table;
     }
-    return EmitConstructorPrologue(declared, linkage);
+    return EmitCreations(declared, linkage);
   };
   for (const lir::ClassId id : unit_->classes.Ids()) {
     const lir::TypeId type =
@@ -410,8 +410,8 @@ auto CodeGenModule::BuildCallArg(
 auto CodeGenModule::EndOwnedStorage(
     llvm::IRBuilderBase& builder, lir::TypeId owner, llvm::Value* storage)
     -> diag::Result<void> {
-  // A box holds a value its type lays out; an object of a class a unique
-  // pointer owns is ended by its class, which is not carried out here.
+  // A box holds a value its type lays out, and an object of a class is ended by
+  // its class.
   const lir::TypeId pointee = *unit_->types.Get(owner).Pointee();
   const lir::Type& pointed = unit_->types.Get(pointee);
   // A closure of no known type is ended, and its storage given back, through
@@ -427,10 +427,8 @@ auto CodeGenModule::EndOwnedStorage(
     return {};
   }
   if (pointed.Is<lir::ObjectType>() || pointed.Is<lir::CrossUnitClassType>()) {
-    return diag::Fail(
-        diag::DiagCode::kUnsupportedExpressionForm,
-        "ending an object a unique pointer owns is not yet supported with "
-        "'--backend llvm'");
+    EndObject(builder, storage);
+    return {};
   }
   if (!types_.LayoutOf(pointee).ends_with_nothing_to_do) {
     const std::array<llvm::Value*, 1> args{storage};
@@ -920,6 +918,21 @@ constexpr std::uint64_t kDestructorEntries = 2;
 constexpr std::uint64_t kCompleteDestructorEntry = 0;
 constexpr std::uint64_t kDeletingDestructorEntry = 1;
 
+}  // namespace
+
+void CodeGenModule::EndObject(
+    llvm::IRBuilderBase& builder, llvm::Value* object) {
+  llvm::Value* table = builder.CreateLoad(types_.Ptr(), object);
+  llvm::Value* deleting = builder.CreateLoad(
+      types_.Ptr(), builder.CreateConstInBoundsGEP1_64(
+                        types_.Ptr(), table, kDeletingDestructorEntry));
+  builder.CreateCall(
+      llvm::FunctionType::get(types_.Void(), {types_.Ptr()}, false), deleting,
+      {object});
+}
+
+namespace {
+
 // The part the library builds where a class extends one of its classes. Its
 // table's address is at its start, where every class extending it keeps its
 // own.
@@ -1231,6 +1244,36 @@ auto CodeGenModule::EndMembers(
   return {};
 }
 
+auto CodeGenModule::CreationSymbol(lir::TypeId cls, lir::Creation which) const
+    -> std::string {
+  if (const std::optional<std::string> definition =
+          lir::DefinitionSymbol(*unit_, cls)) {
+    return lir::CreationSymbol(*definition, which);
+  }
+  switch (which) {
+    case lir::Creation::kBaseObject:
+      return std::string(
+          runtime::BaseObjectConstructorSymbolOf(
+              unit_->types.Get(cls).Get<lir::RuntimeClassType>().which));
+    case lir::Creation::kCompleteObject:
+      break;
+  }
+  throw InternalError(
+      "llvm codegen: a class of the library is created whole -- please report "
+      "this as a bug");
+}
+
+auto CodeGenModule::BaseObjectDestructorSymbol(lir::TypeId cls) const
+    -> std::string {
+  if (const std::optional<std::string> definition =
+          lir::DefinitionSymbol(*unit_, cls)) {
+    return lir::DestructorSymbol(*definition, lir::Destructor::kBaseObject);
+  }
+  return std::string(
+      runtime::BaseObjectDestructorSymbolOf(
+          unit_->types.Get(cls).Get<lir::RuntimeClassType>().which));
+}
+
 auto CodeGenModule::ValueFunction(const std::string& symbol)
     -> llvm::Function* {
   return llvm::cast<llvm::Function>(
@@ -1241,7 +1284,7 @@ auto CodeGenModule::ValueFunction(const std::string& symbol)
           .getCallee());
 }
 
-auto CodeGenModule::EmitConstructorPrologue(
+auto CodeGenModule::EmitCreations(
     const Declared& declared, lir::Linkage linkage) -> diag::Result<void> {
   auto own = LayOut(declared);
   if (!own) {
@@ -1251,28 +1294,38 @@ auto CodeGenModule::EmitConstructorPrologue(
   if (!whole) {
     return std::unexpected(std::move(whole.error()));
   }
+  const auto define = [&](lir::Creation which) {
+    llvm::Function* fn =
+        ValueFunction(lir::CreationSymbol(declared.definition, which));
+    fn->setLinkage(LinkageOf(linkage));
+    return fn;
+  };
+  llvm::Function* base_object = define(lir::Creation::kBaseObject);
+  {
+    llvm::IRBuilder<> builder(
+        llvm::BasicBlock::Create(*context_, "", base_object));
+    llvm::Value* value = base_object->getArg(0);
+    builder.CreateCall(
+        ValueFunction(
+            CreationSymbol(*declared.base, lir::Creation::kBaseObject)),
+        {value});
+    if (auto begun = BeginMembers(builder, value, *own); !begun) {
+      return begun;
+    }
+    builder.CreateRetVoid();
+  }
+  llvm::Function* complete_object = define(lir::Creation::kCompleteObject);
+  llvm::IRBuilder<> builder(
+      llvm::BasicBlock::Create(*context_, "", complete_object));
+  llvm::Value* value = complete_object->getArg(0);
+  builder.CreateCall(base_object, {value});
   const TablePoints& points = table_points_.at(declared.definition);
-  llvm::Function* fn =
-      ValueFunction(lir::ConstructorPrologueSymbol(declared.definition));
-  fn->setLinkage(LinkageOf(linkage));
-  llvm::IRBuilder<> builder(llvm::BasicBlock::Create(*context_, "", fn));
-  llvm::Value* value = fn->getArg(0);
   const auto table_at = [&](std::uint64_t offset, std::uint64_t point) {
     builder.CreateStore(
         TableAddressPoint(declared.definition, point),
         builder.CreateConstInBoundsGEP1_64(builder.getInt8Ty(), value, offset));
   };
   table_at(0, points.lineage);
-  if (auto begun = BeginMembers(builder, value, *own); !begun) {
-    return begun;
-  }
-  // Each interface class part is placed where a complete object of this
-  // declaration places it. Where the value is of a class extending this one,
-  // that is storage the extending class's own members later take, and its
-  // prologue then places the parts again where it does; until it does, a view
-  // to an interface class is formed through this declaration's table and
-  // dispatches as this declaration, which is what C++ gives a base being
-  // constructed (C++ ABI 2.6, construction virtual tables).
   for (std::size_t k = 0; k < whole->interface_parts.size(); ++k) {
     table_at(whole->interface_parts[k], points.interfaces[k]);
   }
@@ -1310,19 +1363,8 @@ auto CodeGenModule::EmitDestructors(
         if (auto ended = EndMembers(builder, value, *own); !ended) {
           return ended;
         }
-        const std::optional<lir::TypeId> extended = ExtendedClassOf(declared);
         builder.CreateCall(
-            ValueFunction(
-                extended.has_value()
-                    ? lir::DestructorSymbol(
-                          *lir::DefinitionSymbol(*unit_, *extended),
-                          lir::Destructor::kBaseObject)
-                    : std::string(
-                          runtime::BaseObjectDestructorSymbolOf(
-                              unit_->types.Get(*declared.base)
-                                  .Get<lir::RuntimeClassType>()
-                                  .which))),
-            {value});
+            ValueFunction(BaseObjectDestructorSymbol(*declared.base)), {value});
         return {};
       });
   if (!base_object) {

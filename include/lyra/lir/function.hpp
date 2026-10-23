@@ -22,7 +22,6 @@
 #include "lyra/lir/operator.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/runtime_class.hpp"
 
 namespace lyra::lir {
 
@@ -233,12 +232,14 @@ struct IndirectTarget {
 // storage, which already holds its value.
 struct ConstructTarget {};
 
-// The constructor of a class of the runtime library, entered by the constructor
-// of a class extending it on the storage of the value being built, with the
-// arguments that class states for its base -- as a C++ constructor enters its
-// base's. The library may refuse what it is handed, so the call can depart.
-struct LibraryConstructorTarget {
-  support::RuntimeClass cls;
+// Creates a value of the class `cls` whole in the storage the call is handed:
+// the part the runtime library defines, every member of every class of its
+// lineage at the value its type starts with, and `cls`'s tables, once -- as the
+// JVM's `new` gives an object all its fields and its class before any
+// constructor runs. No code of the design runs, so nothing departs from it.
+// `cls` is a class of this unit or one another unit declares.
+struct CreationTarget {
+  TypeId cls;
 };
 
 // A body of this program reached by the symbol it is emitted under rather than
@@ -409,14 +410,14 @@ auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view;
 
 // The target of a call: a runtime builtin, a function of this unit, a dispatch
 // slot the receiving value's own class fills, a code address the program
-// computed, a value constructor named by the call's result type, the
-// constructor of a library class, a body of this program or a foreign symbol
-// the host resolves, a value-cell operation, the end or copy of an owned value,
-// storage of dynamic duration allocated or given back, a control-effect
-// operation, or an operation of the coroutine protocol.
+// computed, a value constructor named by the call's result type, the creation
+// of an object, a body of this program or a foreign symbol the host resolves, a
+// value-cell operation, the end or copy of an owned value, storage of dynamic
+// duration allocated or given back, a control-effect operation, or an
+// operation of the coroutine protocol.
 using CallTarget = std::variant<
     BuiltinTarget, FunctionTarget, DispatchTarget, IndirectTarget,
-    ConstructTarget, LibraryConstructorTarget, SymbolTarget, ForeignTarget,
+    ConstructTarget, CreationTarget, SymbolTarget, ForeignTarget,
     ValueCellTarget, OpenWriteTarget, DesignatedBitsTarget, EndValueTarget,
     CopyValueTarget, DynamicStorageTarget, ControlEffectTarget,
     CoroutineTarget>;

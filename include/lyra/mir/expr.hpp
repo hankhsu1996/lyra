@@ -258,6 +258,17 @@ struct ExternalUnitClassMethodTarget {
   auto operator==(const ExternalUnitClassMethodTarget&) const -> bool = default;
 };
 
+// The constructor of a class some unit declares, entered on the object the
+// call's receiver names: how a constructor constructs its base (LRM 8.7, 8.17),
+// as Java's constructor invokes its superclass's on `this`. The object is
+// already of its own class, so nothing about it changes as the base's
+// constructor runs.
+struct ConstructorTarget {
+  DeclaredClassRef cls;
+
+  auto operator==(const ConstructorTarget&) const -> bool = default;
+};
+
 // Identity of a method a record's declaration has: the structure or the union,
 // and the operation on a whole value the method answers. A record the source
 // declared is identified by its declaration wherever it is named (LRM 6.22),
@@ -337,7 +348,8 @@ using CallPart = std::variant<base::ComponentIndex, ClassFieldTarget>;
 // unit's own namespace (`UnitCallableTarget`), the closed set of runtime
 // library entries (`BuiltinFn`), another compilation unit's namespace
 // (`ExternalUnitCallableTarget`) or one of its classes
-// (`ExternalUnitClassMethodTarget`), a declared struct's or union's methods
+// (`ExternalUnitClassMethodTarget`), a class's constructor, of this unit or
+// another (`ConstructorTarget`), a declared struct's or union's methods
 // (`RecordMethodTarget`), the operations this unit states for a type with no
 // declaration (`TypeOperationTarget`), the bodies another unit's namespace is
 // brought up through (`ExternalBringUpTarget`), and the DPI-C name space
@@ -349,8 +361,8 @@ using CallPart = std::variant<base::ComponentIndex, ClassFieldTarget>;
 using DirectTarget = std::variant<
     CallableTarget, ClosureTarget, UnitCallableTarget, support::BuiltinFn,
     ExternalUnitCallableTarget, ExternalUnitClassMethodTarget,
-    RecordMethodTarget, TypeOperationTarget, ExternalBringUpTarget,
-    ForeignSymbolTarget>;
+    ConstructorTarget, RecordMethodTarget, TypeOperationTarget,
+    ExternalBringUpTarget, ForeignSymbolTarget>;
 
 // A direct call whose callee is settled at compile time. The single shape for
 // every direct invocation: a user method, a built-in, a subroutine of this
@@ -460,7 +472,10 @@ struct CallExpr {
 // as an argument: C++'s `new T(init)`, and SV's `new` (LRM 8.7). `Expr::type`
 // is what owns the storage from there -- a uniquely owning pointer, or a class
 // handle -- and `initializer` has the pointee's type. An object's initializer
-// is the construction of that object from its constructor's arguments.
+// is its construction from its constructor's arguments. The object is first
+// created whole, every member of every class of its lineage in existence and
+// its own class's tables in place, and its constructor is then entered on it,
+// so it is of its own class while every constructor runs (LRM 8.17).
 struct NewExpr {
   ExprId initializer;
 };

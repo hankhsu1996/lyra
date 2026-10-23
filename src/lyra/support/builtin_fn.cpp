@@ -1305,6 +1305,8 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {.name = "loop_blocks_add", .declaration = Method{"Add"}};
     case BuiltinFn::kLoopBlocksAt:
       return {.name = "loop_blocks_at", .declaration = Method{"At"}};
+    case BuiltinFn::kSetScopePlace:
+      return {.name = "set_scope_place", .declaration = Method{"SetPlace"}};
     case BuiltinFn::kAddOwnedChild:
       return {
           .name = "add_owned_child", .declaration = Method{"AddOwnedChild"}};
