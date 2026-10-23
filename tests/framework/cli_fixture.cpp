@@ -1,7 +1,6 @@
 #include "tests/framework/cli_fixture.hpp"
 
 #include <cerrno>
-#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <expected>
@@ -70,14 +69,9 @@ auto ResolveLlvmNm() -> std::filesystem::path {
 
 auto RunLyraFrom(
     const std::filesystem::path& lyra, const std::filesystem::path& dir,
-    std::string_view args, std::chrono::seconds timeout) -> ProcessOutcome {
-  auto sh_or = lyra::driver::FindOnPath("sh");
-  EXPECT_TRUE(sh_or.has_value());
-  if (!sh_or) return {};
-  const std::vector<std::string> argv = {
-      "-c",
-      std::format("cd '{}' && '{}' {}", dir.string(), lyra.string(), args)};
-  return RunChildProcess(*sh_or, argv, timeout);
+    std::string_view args) -> ProcessOutcome {
+  return RunShellScript(
+      std::format("cd '{}' && '{}' {}", dir.string(), lyra.string(), args));
 }
 
 auto FindClang() -> std::optional<std::filesystem::path> {

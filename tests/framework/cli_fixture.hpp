@@ -1,6 +1,5 @@
 #pragma once
 
-#include <chrono>
 #include <expected>
 #include <filesystem>
 #include <nlohmann/json.hpp>
@@ -34,8 +33,7 @@ auto ResolveLlvmNm() -> std::filesystem::path;
 // argument can express.
 auto RunLyraFrom(
     const std::filesystem::path& lyra, const std::filesystem::path& dir,
-    std::string_view args,
-    std::chrono::seconds timeout = std::chrono::seconds{60}) -> ProcessOutcome;
+    std::string_view args) -> ProcessOutcome;
 
 // Clang, where this host has it. What a build costs is a fact about the
 // compiler that ran it, so a test measuring one asks for that compiler by name

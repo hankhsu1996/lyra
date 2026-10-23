@@ -122,6 +122,9 @@ build:asan --features=-symbol_check
 # A test of what the compiler costs as it ships -- time, stack, memory -- would
 # measure this build instead, so the set is the gate's own less those.
 test:asan --test_tag_filters=-nightly,-cost
+# The instrumentation makes every test about twice as slow, so each size's time
+# doubles, as Chromium's test limits do under the sanitizer.
+test:asan --test_timeout=120,600,1800,7200
 # A thread's alternate signal stack has one slot and several owners: the
 # sanitizer maps one when a thread starts, LLVM's signal handling swaps in a
 # larger one of its own from the heap, and the sanitizer runtime of GCC 13

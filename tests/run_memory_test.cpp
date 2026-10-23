@@ -10,6 +10,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <string>
 #include <string_view>
@@ -20,12 +21,11 @@
 
 namespace {
 
+using lyra::test::ExitedWithCode;
 using lyra::test::MakeScratchDir;
 using lyra::test::ResolveLyra;
 using lyra::test::RunChildProcess;
 using lyra::test::RunUnderAddressLimit;
-using lyra::test::TerminationKind;
-using namespace std::chrono_literals;
 
 // Eight thousand instances of a leaf that holds three procedures and is reached
 // through three ports, every procedure waiting on one signal for the whole run.
@@ -115,12 +115,12 @@ void RunsInside(std::string_view design, int limit_kib) {
       "-o",
       program.string(),
       src.string()};
-  const auto built = RunChildProcess(lyra, build, 300s);
-  ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
+  const auto built = RunChildProcess(lyra, build);
+  ASSERT_THAT(built, ExitedWithCode(0))
       << built.stdout_text << built.stderr_text;
 
   const auto ran = RunUnderAddressLimit(program, {}, limit_kib);
-  EXPECT_EQ(ran.termination, TerminationKind::kExitedNormally)
+  EXPECT_THAT(ran, ExitedWithCode(0))
       << "under " << limit_kib << " KiB the program said:\n"
       << ran.stderr_text;
 }

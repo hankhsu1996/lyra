@@ -42,19 +42,22 @@
 #include <string_view>
 #include <system_error>
 #include <utility>
+#include <variant>
 #include <vector>
 #include <yaml-cpp/yaml.h>
 
-#include "lyra/driver/subprocess.hpp"
 #include "tests/framework/cli_fixture.hpp"
 #include "tests/framework/process.hpp"
 #include "tools/cpp/runfiles/runfiles.h"
 
 using bazel::tools::cpp::runfiles::Runfiles;
+using lyra::test::ExitCodeOf;
 using lyra::test::MakeScratchDir;
 using lyra::test::ProcessOutcome;
 using lyra::test::RunChildProcess;
-using lyra::test::TerminationKind;
+using lyra::test::RunShellScript;
+using lyra::test::TestTimedOut;
+using lyra::test::TimedOut;
 using namespace std::chrono_literals;
 
 namespace {
@@ -421,22 +424,23 @@ auto ShellQuoted(std::string_view word) -> std::string {
 auto RunFrom(
     Step step, const std::filesystem::path& dir, const std::string& command)
     -> ProcessOutcome {
-  const auto sh = lyra::driver::FindOnPath("sh");
-  if (!sh.has_value()) {
-    return {};
-  }
-  const std::vector<std::string> argv = {
-      "-c", std::format(
-                "ulimit -v {} && cd {} && {}", kStepAddressLimitKib,
-                ShellQuoted(dir.string()), command)};
-  return RunChildProcess(*sh, argv, TimeLimitOf(step));
+  return RunShellScript(
+      std::format(
+          "ulimit -v {} && cd {} && {}", kStepAddressLimitKib,
+          ShellQuoted(dir.string()), command),
+      {}, TimeLimitOf(step));
 }
 
 auto Said(Step step, const ProcessOutcome& outcome) -> std::string {
-  if (outcome.termination == TerminationKind::kTimedOut) {
+  if (std::holds_alternative<TimedOut>(outcome.end)) {
     return std::format(
         "did not end within {} s\n{}{}", TimeLimitOf(step).count(),
         outcome.stdout_text, outcome.stderr_text);
+  }
+  if (std::holds_alternative<TestTimedOut>(outcome.end)) {
+    return std::format(
+        "was ended because the test ran out of time\n{}{}", outcome.stdout_text,
+        outcome.stderr_text);
   }
   return outcome.stdout_text + outcome.stderr_text;
 }
@@ -483,7 +487,7 @@ auto Carry(
     -> std::optional<Stop> {
   std::ofstream(work / "lyra.toml") << design.declaration;
   const auto built = RunFrom(Step::kBuild, work, BuildCommand(lyra, options));
-  if (built.termination != TerminationKind::kExitedNormally) {
+  if (ExitCodeOf(built) != 0) {
     return Stop{.at = Step::kBuild, .said = Said(Step::kBuild, built)};
   }
 
@@ -501,7 +505,7 @@ auto Carry(
   }
   const auto ran =
       RunFrom(Step::kRun, run, command + " > _execute/stdout.log 2>&1");
-  if (ran.termination != TerminationKind::kExitedNormally) {
+  if (ExitCodeOf(ran) != 0) {
     return Stop{
         .at = Step::kRun,
         .said =
@@ -513,7 +517,7 @@ auto Carry(
     // whatever its first line names.
     const auto checked =
         RunFrom(Step::kCheck, run, ShellQuoted(design.check->string()));
-    if (checked.termination != TerminationKind::kExitedNormally) {
+    if (ExitCodeOf(checked) != 0) {
       return Stop{.at = Step::kCheck, .said = Said(Step::kCheck, checked)};
     }
   }
@@ -534,7 +538,7 @@ auto NotNeeded(
         [&](const std::string& other) { return other != option; });
     const auto checked =
         RunFrom(Step::kBuild, work, LyraCommand(lyra, "check -Wnone", others));
-    if (checked.termination == TerminationKind::kExitedNormally) {
+    if (ExitCodeOf(checked) == 0) {
       not_needed.push_back(option);
     }
   }
