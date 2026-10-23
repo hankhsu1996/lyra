@@ -168,7 +168,7 @@ struct EnumMethodRef {
 // is asked (LRM 7.12.1). As with an enumeration's methods, no runtime library
 // declares these.
 struct ArrayIteratorMethodRef {
-  ArrayIteratorMethod method;
+  ArrayIteratorMethod method{};
   std::optional<WithClause> with_clause;
 
   auto operator==(const ArrayIteratorMethodRef&) const -> bool = default;
@@ -176,9 +176,8 @@ struct ArrayIteratorMethodRef {
 
 // The two shapes a sampled value function that reaches across the ticks of a
 // clocking event takes (LRM 16.9.3). Both name a history, because which event's
-// ticks the call counts is settled where the source is -- written at the call,
-// inferred from the procedure (LRM 16.14.6), or taken from the scope's default
-// clocking (LRM 14.12) -- and none of that survives into a lower layer.
+// ticks the call counts is settled where the source is, by that clause's
+// ordered rules, and none of that survives into a lower layer.
 //
 // `$sampled` is neither. It names no event, so it reads the cell directly and
 // stays an ordinary system subroutine call.

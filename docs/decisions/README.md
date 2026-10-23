@@ -1428,12 +1428,13 @@ the detail lives in the entry itself.
   reads is retained by the cell at the transition boundary every mutation already reports through,
   armed per instance at Activate, so cost follows changes rather than time slots and the time-zero
   rule falls out of the value the cell is armed with. The clocking event is the trigger set a
-  value-change wait already builds and the front end resolves which one it is, so LRM 16.9.3's
-  ordering and 16.14.6's conditions are not restated here. The sampler is a synthesized process
-  because a history must record every tick, not only the ticks something waited for, and it commits
-  in Postponed so that "strictly prior" holds by construction rather than by ordering. A Preponed
-  scan, per-leaf history with replay, a second implementation of the clock inference, a node kind
-  for the sampled read, and an armed observation are rejected.
+  value-change wait already builds; the front end resolves a procedure's clock, so 16.14.6's
+  conditions are not restated here, and an assertion's clock flow is applied where the assertion is
+  lowered. The sampler is a synthesized process because a history must record every tick, not only
+  the ticks something waited for, and it commits in Postponed so that "strictly prior" holds by
+  construction rather than by ordering. A Preponed scan, per-leaf history with replay, a second
+  implementation of the clock inference, a node kind for the sampled read, and an armed observation
+  are rejected.
 - [concurrent-assertion-evaluation](concurrent-assertion-evaluation.md) -- derived from Annex F's
   formal semantics. One start rule covers both placements: an attempt begins where the clock ticks
   and the enabling condition holds, which is 1 for a declarative assertion and "control reached this

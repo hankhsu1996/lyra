@@ -1,5 +1,6 @@
 #include "lyra/lowering/ast_to_hir/reads.hpp"
 
+#include <concepts>
 #include <expected>
 #include <iterator>
 #include <optional>
@@ -19,6 +20,7 @@
 
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/std_classes.hpp"
+#include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -126,14 +128,29 @@ auto RefusedWhenAsked(diag::Diagnostic diagnostic) -> hir::Reads {
 
 }  // namespace
 
+template <typename Lowerer>
 auto CellsOfWaitedExpression(
-    ProcessLowerer& proc, WalkFrame frame, const slang::ast::Expression& expr)
+    Lowerer& lowerer, WalkFrame frame, const slang::ast::Expression& expr)
     -> diag::Result<std::vector<hir::SensitivityEntry>> {
-  return proc.Owner().SensitivityEntriesOf(
-      proc,
-      proc.Owner().Sensitivity().AnalyzeReads(expr, proc.ContainingSymbol()),
-      frame);
+  // A read is analyzed in the symbol whose code holds it: the procedure, or
+  // outside any the scope itself.
+  const slang::ast::Symbol& holder = [&]() -> const slang::ast::Symbol& {
+    if constexpr (std::same_as<Lowerer, ProcessLowerer>) {
+      return lowerer.ContainingSymbol();
+    } else {
+      return frame.reader_scope->asSymbol();
+    }
+  }();
+  return lowerer.Owner().SensitivityEntriesOf(
+      lowerer, lowerer.Owner().Sensitivity().AnalyzeReads(expr, holder), frame);
 }
+
+template auto CellsOfWaitedExpression(
+    ProcessLowerer&, WalkFrame, const slang::ast::Expression&)
+    -> diag::Result<std::vector<hir::SensitivityEntry>>;
+template auto CellsOfWaitedExpression(
+    StructuralScopeLowerer&, WalkFrame, const slang::ast::Expression&)
+    -> diag::Result<std::vector<hir::SensitivityEntry>>;
 
 auto ReadsOfFunctionBody(
     ProcessLowerer& proc, WalkFrame frame,

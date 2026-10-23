@@ -14,6 +14,7 @@
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/statements/MiscStatements.h>
 #include <slang/ast/symbols/BlockSymbols.h>
+#include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/syntax/SyntaxNode.h>
 
 #include "lyra/base/diag_message.hpp"
@@ -21,6 +22,8 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/expr_builders.hpp"
+#include "lyra/lowering/ast_to_hir/inferred_clocking.hpp"
+#include "lyra/lowering/ast_to_hir/reads.hpp"
 #include "lyra/lowering/ast_to_hir/sampled_reads.hpp"
 #include "lyra/lowering/ast_to_hir/statement/timing.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
@@ -154,6 +157,71 @@ auto CarriesLocalVars(const slang::ast::AssertionExpr& expr) -> bool {
   return instance != nullptr && !instance->localVars.empty();
 }
 
+// The event of the clocking block an instance's declaration stands in, which
+// clocks the sequence or property it declares (LRM 16.16 b). Nothing for any
+// other node.
+auto ClockingBlockEventOf(const slang::ast::AssertionExpr& expr)
+    -> const slang::ast::TimingControl* {
+  const auto* instance = InstanceOf(expr);
+  if (instance == nullptr) {
+    return nullptr;
+  }
+  const slang::ast::Scope* scope = instance->symbol.getParentScope();
+  if (scope == nullptr ||
+      scope->asSymbol().kind != slang::ast::SymbolKind::ClockingBlock) {
+    return nullptr;
+  }
+  return &scope->asSymbol().as<slang::ast::ClockingBlockSymbol>().getEvent();
+}
+
+// Whether a clocking event met inside an assertion's body is another clock
+// than the one in force there, which makes the assertion multiclocked (LRM
+// 16.13). One identical to it changes nothing (LRM 16.13.3).
+auto BeginsAnotherClock(
+    const slang::ast::TimingControl& event, const WalkFrame& frame,
+    diag::SourceSpan span) -> diag::Result<bool> {
+  if (frame.assertion_clock == nullptr) {
+    throw InternalError(
+        "BeginsAnotherClock: an assertion's body lowered with no clock");
+  }
+  auto same = IsSameClock(frame, *frame.assertion_clock, event, span);
+  if (!same) return std::unexpected(std::move(same.error()));
+  return !*same;
+}
+
+// An instance standing inside an assertion's body: the body it stands for, and
+// the frame that body is lowered in, which records where the instance stood.
+struct EnteredInstance {
+  const slang::ast::AssertionExpr* body;
+  WalkFrame frame;
+};
+
+// Nothing where no instance's body stands in place of `expr`. An instance whose
+// declaration is clocked otherwise than the assertion is refused rather than
+// read under the wrong clock.
+auto EnterNestedInstance(
+    const slang::ast::AssertionExpr& expr, const WalkFrame& frame,
+    diag::SourceSpan span) -> diag::Result<std::optional<EnteredInstance>> {
+  const slang::ast::AssertionExpr* body = InstanceBodyOf(expr);
+  if (body == nullptr) {
+    return std::optional<EnteredInstance>{};
+  }
+  if (const auto* event = ClockingBlockEventOf(expr); event != nullptr) {
+    auto another = BeginsAnotherClock(*event, frame, span);
+    if (!another) return std::unexpected(std::move(another.error()));
+    if (*another) {
+      return RefuseAssertionForm(
+          span,
+          "a sequence or property clocked by a clocking block other than "
+          "the assertion's clock");
+    }
+  }
+  return std::optional<EnteredInstance>{EnteredInstance{
+      .body = body,
+      .frame = frame.WithExpansionInstance(
+          InstanceOf(expr)->symbol, frame.assertion_clock)}};
+}
+
 auto AddSequence(const WalkFrame& frame, hir::SequenceExpr expr)
     -> hir::SequenceExprId {
   return frame.SequenceExprs().Add(std::move(expr));
@@ -261,8 +329,11 @@ auto LowerSequenceExpr(
   if (CarriesLocalVars(expr)) {
     return RefuseAssertionForm(span, "a local variable");
   }
-  if (const auto* body = InstanceBodyOf(expr); body != nullptr) {
-    return LowerSequenceExpr(proc, frame, *body, span);
+  auto entered_or = EnterNestedInstance(expr, frame, span);
+  if (!entered_or) return std::unexpected(std::move(entered_or.error()));
+  if (entered_or->has_value()) {
+    return LowerSequenceExpr(
+        proc, (*entered_or)->frame, *(*entered_or)->body, span);
   }
 
   switch (expr.kind) {
@@ -308,10 +379,17 @@ auto LowerSequenceExpr(
           "'within'");
     case slang::ast::AssertionExprKind::FirstMatch:
       return RefuseAssertionForm(span, "'first_match'");
-    case slang::ast::AssertionExprKind::Clocking:
+    case slang::ast::AssertionExprKind::Clocking: {
+      const auto& clocking = expr.as<slang::ast::ClockingAssertionExpr>();
       // LRM 16.13.
-      return RefuseAssertionForm(
-          span, "a sequence carrying a clocking event of its own");
+      auto another = BeginsAnotherClock(clocking.clocking, frame, span);
+      if (!another) return std::unexpected(std::move(another.error()));
+      if (*another) {
+        return RefuseAssertionForm(
+            span, "a sequence carrying a clocking event of its own");
+      }
+      return LowerSequenceExpr(proc, frame, clocking.expr, span);
+    }
 
     // The property-only operators. The front end holds a sequence position to
     // sequence forms, so one of these arriving here means what it accepts has
@@ -377,8 +455,11 @@ auto LowerPropertyExpr(
   if (CarriesLocalVars(expr)) {
     return RefuseAssertionForm(span, "a local variable");
   }
-  if (const auto* body = InstanceBodyOf(expr); body != nullptr) {
-    return LowerPropertyExpr(proc, frame, *body, strength, span);
+  auto entered_or = EnterNestedInstance(expr, frame, span);
+  if (!entered_or) return std::unexpected(std::move(entered_or.error()));
+  if (entered_or->has_value()) {
+    return LowerPropertyExpr(
+        proc, (*entered_or)->frame, *(*entered_or)->body, strength, span);
   }
 
   switch (expr.kind) {
@@ -441,10 +522,17 @@ auto LowerPropertyExpr(
     case slang::ast::AssertionExprKind::Abort:
       return RefuseAssertionForm(
           span, "an abort operator ('accept_on', 'reject_on')");
-    case slang::ast::AssertionExprKind::Clocking:
+    case slang::ast::AssertionExprKind::Clocking: {
+      const auto& clocking = expr.as<slang::ast::ClockingAssertionExpr>();
       // LRM 16.13.
-      return RefuseAssertionForm(
-          span, "a property carrying more than one clocking event");
+      auto another = BeginsAnotherClock(clocking.clocking, frame, span);
+      if (!another) return std::unexpected(std::move(another.error()));
+      if (*another) {
+        return RefuseAssertionForm(
+            span, "a property carrying more than one clocking event");
+      }
+      return LowerPropertyExpr(proc, frame, clocking.expr, strength, span);
+    }
     case slang::ast::AssertionExprKind::DisableIff:
       return RefuseAssertionForm(
           span, "a 'disable iff' clause anywhere but on the property itself");
@@ -466,70 +554,88 @@ auto LowerPropertyExpr(
 }
 
 // LRM 16.12 property_spec, unwrapped from the outside in: the clocking event,
-// then the disable condition, then the property. A named property instance is
-// unwrapped alongside them, because the clocking event a property declares is
-// the one the assertion counts ticks of (LRM 16.13.3).
+// then the disable condition, then the property, with what the source left
+// unwritten resolved. A named property instance is unwrapped alongside them,
+// because the clocking event a property declares -- in its body, or by being
+// declared in a clocking block (LRM 16.16 b) -- leads the assertion.
 struct PropertySpecParts {
-  const slang::ast::TimingControl* clock = nullptr;
-  const slang::ast::Expression* disable_condition = nullptr;
-  const slang::ast::AssertionExpr* body = nullptr;
+  // Never null: a statement left with no clock is refused before its parts
+  // exist. It is the clocking event the source wrote, so it is resolved where
+  // the instances it may name are recorded.
+  const slang::ast::TimingControl* clock;
+  const slang::ast::Expression* disable_condition;
+  const slang::ast::AssertionExpr* body;
+  // The frame the clock, the disable condition, the body and the action blocks
+  // are lowered in, which records the instances unwrapped on the way to the
+  // body, each where it stood.
+  WalkFrame body_frame;
 };
 
-auto SplitPropertySpec(const slang::ast::AssertionExpr& spec)
-    -> PropertySpecParts {
-  PropertySpecParts parts;
+// The leading clock starts as the clock in force where the statement stands,
+// and each clocking event met replaces it (LRM 16.13.3). `inherited_disable` is
+// the condition the statement takes where its property states none. A statement
+// left with no clock has no ticks to be evaluated at, and is refused.
+auto SplitPropertySpec(
+    ProcessLowerer& proc, const WalkFrame& frame,
+    const slang::ast::AssertionExpr& spec,
+    const slang::ast::Expression* inherited_disable, diag::SourceSpan span)
+    -> diag::Result<PropertySpecParts> {
+  const slang::ast::TimingControl* clock = ClockInForce(proc, frame);
+  const slang::ast::Expression* written_disable = nullptr;
+  WalkFrame body_frame = frame;
   const slang::ast::AssertionExpr* cursor = &spec;
   while (true) {
     if (cursor->kind == slang::ast::AssertionExprKind::Clocking) {
       const auto& clocking = cursor->as<slang::ast::ClockingAssertionExpr>();
-      if (parts.clock != nullptr) {
-        break;
-      }
-      parts.clock = &clocking.clocking;
+      clock = &clocking.clocking;
       cursor = &clocking.expr;
       continue;
     }
-    if (cursor->kind == slang::ast::AssertionExprKind::DisableIff) {
+    if (cursor->kind == slang::ast::AssertionExprKind::DisableIff &&
+        written_disable == nullptr) {
       const auto& disable = cursor->as<slang::ast::DisableIffAssertionExpr>();
-      if (parts.disable_condition != nullptr) {
-        break;
-      }
-      parts.disable_condition = &disable.condition;
+      written_disable = &disable.condition;
       cursor = &disable.expr;
       continue;
     }
     if (const auto* body = InstanceBodyOf(*cursor);
         body != nullptr && !CarriesLocalVars(*cursor)) {
+      body_frame =
+          body_frame.WithExpansionInstance(InstanceOf(*cursor)->symbol, clock);
+      if (const auto* event = ClockingBlockEventOf(*cursor); event != nullptr) {
+        clock = event;
+      }
       cursor = body;
       continue;
     }
     break;
   }
-  parts.body = cursor;
-  return parts;
-}
-
-auto LowerPropertySpec(
-    ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::AssertionExpr& spec, hir::SequenceStrength strength,
-    diag::SourceSpan span) -> diag::Result<hir::PropertySpec> {
-  const PropertySpecParts parts = SplitPropertySpec(spec);
-
-  // Where the source wrote no clocking event, the one the enclosing procedure
-  // settles is the assertion's (LRM 16.14.6), and the front end has already
-  // applied that rule and the default clocking behind it (LRM 14.12).
-  const slang::ast::TimingControl* clock =
-      parts.clock != nullptr
-          ? parts.clock
-          : proc.Owner().InferredProcedureClock(proc.ContainingSymbol());
   if (clock == nullptr) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedStatementForm,
         "this concurrent assertion names no clocking event and none is settled "
         "where it is written, so there are no ticks for it to be evaluated at");
   }
+  const slang::ast::Expression* disable =
+      written_disable != nullptr
+          ? ResolveWrittenDisable(*frame.reader_scope, *written_disable)
+          : inherited_disable;
+  return PropertySpecParts{
+      .clock = clock,
+      .disable_condition = disable,
+      .body = cursor,
+      .body_frame = std::move(body_frame)};
+}
 
-  auto event_or = LowerEventControl(proc, frame, *clock, span);
+// The disable condition is read outside the assertion's clock: a sampled
+// value function there counts ticks of a clock it writes, which the front end
+// requires (LRM 16.9.3).
+auto LowerPropertySpec(
+    ProcessLowerer& proc, const PropertySpecParts& parts,
+    hir::SequenceStrength strength, diag::SourceSpan span)
+    -> diag::Result<hir::PropertySpec> {
+  const WalkFrame& frame = parts.body_frame;
+  auto event_or = LowerEventControl(proc, frame, *parts.clock, span);
   if (!event_or) return std::unexpected(std::move(event_or.error()));
 
   // LRM 16.12 tests the disable condition across the whole interval from the
@@ -541,11 +647,8 @@ auto LowerPropertySpec(
   if (parts.disable_condition != nullptr) {
     auto cond_or = proc.LowerExpr(*parts.disable_condition, frame);
     if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-    auto sensitivity_or = proc.Owner().SensitivityEntriesOf(
-        proc,
-        proc.Owner().Sensitivity().AnalyzeReads(
-            *parts.disable_condition, proc.ContainingSymbol()),
-        frame);
+    auto sensitivity_or =
+        CellsOfWaitedExpression(proc, frame, *parts.disable_condition);
     if (!sensitivity_or) {
       return std::unexpected(std::move(sensitivity_or.error()));
     }
@@ -554,7 +657,9 @@ auto LowerPropertySpec(
         .sensitivity = *std::move(sensitivity_or)};
   }
 
-  auto body_or = LowerPropertyExpr(proc, frame, *parts.body, strength, span);
+  auto body_or = LowerPropertyExpr(
+      proc, frame.WithAssertionClock(*parts.clock), *parts.body, strength,
+      span);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
 
   return hir::PropertySpec{
@@ -565,19 +670,28 @@ auto LowerPropertySpec(
 
 // LRM 16.17: the process reaching an expect waits for one evaluation of its
 // property, read as a cover property reads its sequence (Annex F.3.4.3.1), and
-// a failure with no else clause is the tool's own `$error` (LRM 20.10).
+// a failure with no else clause is the tool's own `$error` (LRM 20.10). An
+// expect is no concurrent assertion statement, so it inherits no default
+// disable condition (LRM 16.15).
 auto LowerExpectStmt(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::ConcurrentAssertionStatement& as, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
-  auto spec_or = LowerPropertySpec(
-      proc, frame, as.propertySpec, hir::SequenceStrength::kStrong, span);
+  auto parts_or =
+      SplitPropertySpec(proc, frame, as.propertySpec, nullptr, span);
+  if (!parts_or) return std::unexpected(std::move(parts_or.error()));
+  auto spec_or =
+      LowerPropertySpec(proc, *parts_or, hir::SequenceStrength::kStrong, span);
   if (!spec_or) return std::unexpected(std::move(spec_or.error()));
 
-  auto pass_or = LowerActionArm(proc, frame, as.ifTrue);
+  // A sampled value function in an action block counts ticks of the
+  // assertion's leading clock (LRM 16.9.3).
+  const WalkFrame clocked =
+      parts_or->body_frame.WithAssertionClock(*parts_or->clock);
+  auto pass_or = LowerActionArm(proc, clocked, as.ifTrue);
   if (!pass_or) return std::unexpected(std::move(pass_or.error()));
 
-  auto fail_or = LowerActionArm(proc, frame, as.ifFalse);
+  auto fail_or = LowerActionArm(proc, clocked, as.ifFalse);
   if (!fail_or) return std::unexpected(std::move(fail_or.error()));
 
   hir::ProceduralBody& body = *frame.current_procedural_body;
@@ -718,14 +832,23 @@ auto LowerConcurrentAssertion(
           ? hir::SequenceStrength::kStrong
           : hir::SequenceStrength::kWeak;
 
-  auto spec_or =
-      LowerPropertySpec(proc, frame, as.propertySpec, strength, span);
+  // A concurrent assertion inherits its scope's default disable condition
+  // where its property states none (LRM 16.15).
+  auto parts_or = SplitPropertySpec(
+      proc, frame, as.propertySpec,
+      DefaultDisableCondition(*frame.reader_scope), span);
+  if (!parts_or) return std::unexpected(std::move(parts_or.error()));
+  auto spec_or = LowerPropertySpec(proc, *parts_or, strength, span);
   if (!spec_or) return std::unexpected(std::move(spec_or.error()));
 
-  auto pass_or = LowerActionArm(proc, frame, as.ifTrue);
+  // A sampled value function in an action block counts ticks of the
+  // assertion's leading clock (LRM 16.9.3).
+  const WalkFrame clocked =
+      parts_or->body_frame.WithAssertionClock(*parts_or->clock);
+  auto pass_or = LowerActionArm(proc, clocked, as.ifTrue);
   if (!pass_or) return std::unexpected(std::move(pass_or.error()));
 
-  auto fail_or = LowerActionArm(proc, frame, as.ifFalse);
+  auto fail_or = LowerActionArm(proc, clocked, as.ifFalse);
   if (!fail_or) return std::unexpected(std::move(fail_or.error()));
 
   hir::ProceduralBody& body = *frame.current_procedural_body;

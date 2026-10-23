@@ -61,21 +61,23 @@ template <ExprLowerer Lowerer>
 auto BuildPriorTickRead(
     Lowerer& lowerer, const WalkFrame& frame, hir::SampledHistoryId id,
     mir::ExprId ticks_back) -> mir::Expr {
-  if constexpr (!std::same_as<Lowerer, ProcessLowerer>) {
-    throw InternalError(
-        "BuildPriorTickRead: a sampled value function outside a procedure is "
-        "refused where its clock is resolved, so none reaches here");
-  } else {
-    mir::CompilationUnit& unit = lowerer.Owner().Unit();
-    mir::Block& block = *frame.current_block;
-    const mir::ExprId history = BuildSampledHistoryExpr(
-        block, frame, lowerer.EnclosingScopeLowerer(), id);
-    return mir::MakeSampledHistoryAtCallExpr(
-        history, ticks_back,
-        unit.types.Get(block.exprs.Get(history).type)
-            .Get<mir::SampledHistoryType>()
-            .value);
-  }
+  // The history is a member of the scope declaring it, which a process reaches
+  // through the scope enclosing it and a scope's own expression directly.
+  const StructuralScopeLowerer& scope = [&]() -> const StructuralScopeLowerer& {
+    if constexpr (std::same_as<Lowerer, ProcessLowerer>) {
+      return lowerer.EnclosingScopeLowerer();
+    } else {
+      return lowerer;
+    }
+  }();
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  mir::Block& block = *frame.current_block;
+  const mir::ExprId history = BuildSampledHistoryExpr(block, frame, scope, id);
+  return mir::MakeSampledHistoryAtCallExpr(
+      history, ticks_back,
+      unit.types.Get(block.exprs.Get(history).type)
+          .Get<mir::SampledHistoryType>()
+          .value);
 }
 
 }  // namespace

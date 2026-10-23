@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <expected>
 #include <format>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <string>
@@ -1143,6 +1144,17 @@ auto UnitLowerer::NameFilledDuringElaboration(
                                                                : nullptr;
 }
 
+auto UnitLowerer::ReadsParameterFromCell(
+    const slang::ast::ParameterSymbol& param) const -> bool {
+  if (NameFilledDuringElaboration(param) != nullptr) {
+    return true;
+  }
+  const slang::ast::Scope* holder = param.getParentScope();
+  return holder != nullptr && holder->getContainingInstance() != nullptr &&
+         Specialization().ValueSourceOf(InstanceHolding(*holder), param) !=
+             ParameterValueSource::kFixedBySpecialization;
+}
+
 auto UnitLowerer::ResolveValueTarget(
     const WalkFrame& frame, const slang::ast::ValueSymbol& value,
     RouteOrigin origin, diag::SourceSpan span)
@@ -1514,14 +1526,9 @@ auto UnitLowerer::WatchedEntriesOf(
       // same storage in every instance, which is where the symbol sits.
       case Referent::kVariableStorage:
       case Referent::kNetStorage: {
-        std::vector<hir::ValueTarget> cells;
-        for (RouteOrigin& origin : StartsOfNames(frame, read.reached_by)) {
-          auto cell =
-              ResolveValueTarget(frame, target, std::move(origin), span);
-          if (!cell) return std::unexpected(std::move(cell.error()));
-          if (!std::ranges::contains(cells, *cell)) cells.push_back(*cell);
-        }
-        for (const hir::ValueTarget& cell : cells) {
+        auto cells = CellsReachedBy(frame, target, read.reached_by, span);
+        if (!cells) return std::unexpected(std::move(cells.error()));
+        for (const hir::ValueTarget& cell : *cells) {
           if (auto observed = observe_cell(cell); !observed) {
             return std::unexpected(std::move(observed.error()));
           }
@@ -1592,21 +1599,50 @@ template auto UnitLowerer::SensitivityEntriesOf(
     StructuralScopeLowerer&, const std::vector<AccessedPart>&, const WalkFrame&)
     -> diag::Result<std::vector<hir::SensitivityEntry>>;
 
+auto UnitLowerer::CellsReachedBy(
+    const WalkFrame& frame, const slang::ast::ValueSymbol& target,
+    std::span<const slang::ast::Expression* const> names, diag::SourceSpan span)
+    -> diag::Result<std::vector<hir::ValueTarget>> {
+  std::vector<hir::ValueTarget> cells;
+  for (RouteOrigin& origin : StartsOfNames(frame, names)) {
+    auto cell = ResolveValueTarget(frame, target, std::move(origin), span);
+    if (!cell) return std::unexpected(std::move(cell.error()));
+    if (!std::ranges::contains(cells, *cell)) cells.push_back(*cell);
+  }
+  return cells;
+}
+
 auto UnitLowerer::CellsRead(
     const std::vector<AccessedPart>& reads, const WalkFrame& frame)
     -> diag::Result<std::vector<hir::ValueTarget>> {
+  // A wait watches no constant, since nothing changes one, so the cell a
+  // constant is read from is resolved here rather than by the watch below; for
+  // a sampled value that cell answers as a variable's does.
+  std::vector<hir::ValueTarget> cells;
+  std::vector<AccessedPart> watched;
+  for (const AccessedPart& read : reads) {
+    const auto* param = read.symbol->as_if<slang::ast::ParameterSymbol>();
+    if (param == nullptr || !ReadsParameterFromCell(*param)) {
+      watched.push_back(read);
+      continue;
+    }
+    auto held = CellsReachedBy(
+        frame, *param, read.reached_by,
+        frontend::PointSpanOf(read.symbol->location));
+    if (!held) return std::unexpected(std::move(held.error()));
+    std::ranges::move(*held, std::back_inserter(cells));
+  }
   // A variable of a body answers for a sampled value with what it holds (LRM
   // 16.5.1) and is never armed, so every read here is resolved as a cell.
   auto entries = WatchedEntriesOf(
-      reads, frame,
+      watched, frame,
       [](const AccessedPart&) -> diag::Result<std::vector<hir::WatchedPart>> {
         return std::vector<hir::WatchedPart>{hir::WatchedWhole{}};
       },
       [](const slang::ast::ValueSymbol&)
           -> std::optional<hir::ProceduralVarId> { return std::nullopt; });
   if (!entries) return std::unexpected(std::move(entries.error()));
-  std::vector<hir::ValueTarget> cells;
-  cells.reserve(entries->size());
+  cells.reserve(cells.size() + entries->size());
   for (hir::SensitivityEntry& entry : *entries) {
     cells.push_back(
         std::visit(

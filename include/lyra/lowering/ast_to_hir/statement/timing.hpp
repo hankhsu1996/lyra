@@ -35,12 +35,13 @@ auto LowerDelayOrEventControl(
 
 // An `event_control` (LRM 9.4.2), each of whose entries waits for a change in a
 // value or for an event to be triggered (LRM 15.5.2). A clocking event is one
-// of these wherever it came from -- written at a sampled value function,
-// inferred from the procedure, or taken from a default clocking -- because the
-// front end resolves all three to the same timing control, so counting its
-// ticks needs no second vocabulary (LRM 16.9.3).
+// of these by whichever of LRM 16.9.3's rules supplied it, because each is a
+// timing control the front end built, so counting its ticks needs no second
+// vocabulary. One a sampled value function counts ticks of may stand outside
+// any procedure, so it is lowered wherever an expression is.
+template <typename Lowerer>
 auto LowerEventControl(
-    ProcessLowerer& proc, WalkFrame frame, const slang::ast::TimingControl& tc,
+    Lowerer& lowerer, WalkFrame frame, const slang::ast::TimingControl& tc,
     diag::SourceSpan span) -> diag::Result<hir::EventControl>;
 
 // LRM 9.4.5 Table 9-3: a blocking assignment carrying an intra-assignment

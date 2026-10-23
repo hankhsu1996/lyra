@@ -124,9 +124,17 @@ The compiler reads the resolved clocking event from the front end's procedure an
 analysis it already runs for read-set inference -- and translates it exactly as it translates the
 event control of an `@(...)`.
 
-By F3 the rules for finding it are the front end's, so no layer here restates LRM 16.9.3's ordering
-or LRM 16.14.6's three conditions. Where the front end resolves no clock, the construct is refused
-with the diagnostic the standard requires, rather than sampled against a guess.
+By F3 the procedure's rule is the front end's, so no layer here restates LRM 16.14.6's three
+conditions. The rest of LRM 16.9.3's ordering -- the clock flow inside an assertion (LRM 16.13.3),
+an action block's leading clock, and the default clocking outside a procedure -- the front end
+checks and does not record, so it is applied where the assertion is lowered, over clocking events
+the front end built. Where no rule yields a clock, the construct is refused with the diagnostic the
+standard requires, rather than sampled against a guess.
+
+Revised 2026-10-23. This section first said the front end answers all of LRM 16.9.3's ordering. It
+answers only the procedure's rule: its assertion analysis follows clock flow to check a design and
+rewrites nothing. So a sampled value function inside an assertion with no default clocking was
+refused, and with one it counted the default clocking's ticks instead of the assertion's.
 
 ### D3. A sampler is a synthesized process, one per scope and clocking event
 
@@ -219,11 +227,12 @@ would be an upstream leak.
   arguments but not necessarily the same answer. D5 stores what the clause defines rather than the
   inputs from which it could be recomputed.
 
-- **Implementing the clock inference rules here.** LRM 16.9.3's five ordered rules and LRM 16.14.6's
-  three conditions are exactly specifiable and would be a self-contained piece of work. Rejected
-  because the front end already answers them and the answer is a timing control this compiler
-  already knows how to translate; a second implementation of a name-resolution rule is a second
-  thing to keep correct, and the two would be free to disagree with nobody positioned to see it.
+- **Implementing LRM 16.14.6's three conditions here.** They are exactly specifiable and would be a
+  self-contained piece of work. Rejected because the front end already answers them and the answer
+  is a timing control this compiler already knows how to translate; a second implementation of the
+  rule is a second thing to keep correct, and the two would be free to disagree with nobody
+  positioned to see it. The other rules of LRM 16.9.3 are not in this position, because the front
+  end records no answer to them (D2).
 
 - **A node kind for the sampled read, or for `$past`.** It reads as the honest way to say the
   program samples. Rejected by `mir.md`: a node invented for a runtime library's shape or a

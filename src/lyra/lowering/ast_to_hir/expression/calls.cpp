@@ -1,6 +1,5 @@
 #include "lyra/lowering/ast_to_hir/expression/calls.hpp"
 
-#include <concepts>
 #include <cstddef>
 #include <expected>
 #include <optional>
@@ -43,6 +42,7 @@
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/expression/virtual_interface.hpp"
+#include "lyra/lowering/ast_to_hir/inferred_clocking.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/sampled_reads.hpp"
 #include "lyra/lowering/ast_to_hir/statement/timing.hpp"
@@ -164,30 +164,23 @@ auto WrittenArgument(
   return arguments[position];
 }
 
-// The clocking event a sampled value function counts ticks of. The source may
-// write one at the call; where it does not, the front end has already applied
-// the two of LRM 16.9.3's ordered rules that reach a call outside an assertion
-// -- the clock the procedure settles (LRM 16.14.6), and then the enclosing
-// scope's default clocking (LRM 14.12) -- so this reads that answer rather than
-// working the ordering out a second time. A context settling neither is
-// refused, which is the error the standard requires; sampling against a guess
-// would answer wrongly rather than not at all.
+// The clocking event a sampled value function counts ticks of: the one written
+// at the call, or else the clock in force where it is called (LRM 16.9.3). A
+// context settling none is refused, which is the error the standard requires;
+// sampling against a guess would answer wrongly rather than not at all.
 template <typename Lowerer>
 auto ResolveClockingEvent(
-    Lowerer& lowerer, const slang::ast::CallExpression& call,
-    std::size_t clock_arg, std::string_view name, diag::SourceSpan span)
+    Lowerer& lowerer, const WalkFrame& frame,
+    const slang::ast::CallExpression& call, std::size_t clock_arg,
+    std::string_view name, diag::SourceSpan span)
     -> diag::Result<const slang::ast::TimingControl*> {
   const slang::ast::Expression* written = WrittenArgument(call, clock_arg);
-  if (written != nullptr &&
-      written->kind == slang::ast::ExpressionKind::ClockingEvent) {
-    return &written->as<slang::ast::ClockingEventExpression>().timingControl;
-  }
-  if constexpr (std::same_as<Lowerer, ProcessLowerer>) {
-    const auto* clock =
-        lowerer.Owner().InferredProcedureClock(lowerer.ContainingSymbol());
-    if (clock != nullptr) {
-      return clock;
-    }
+  const slang::ast::TimingControl* clock =
+      written != nullptr
+          ? &written->as<slang::ast::ClockingEventExpression>().timingControl
+          : ClockInForce(lowerer, frame);
+  if (clock != nullptr) {
+    return clock;
   }
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedExpressionForm,
@@ -228,7 +221,8 @@ auto RecordSampledHistory(
     const slang::ast::Expression* ticks_back,
     const slang::ast::Expression* gate, std::string_view name,
     diag::SourceSpan span) -> diag::Result<hir::SampledHistoryId> {
-  auto clock_or = ResolveClockingEvent(lowerer, call, clock_arg, name, span);
+  auto clock_or =
+      ResolveClockingEvent(lowerer, frame, call, clock_arg, name, span);
   if (!clock_or) return std::unexpected(std::move(clock_or.error()));
 
   WalkFrame scope_frame = frame;
@@ -237,49 +231,42 @@ auto RecordSampledHistory(
   auto subject_or = lowerer.LowerExpr(*call.arguments()[0], scope_frame);
   if (!subject_or) return std::unexpected(std::move(subject_or.error()));
 
-  if constexpr (!std::same_as<Lowerer, ProcessLowerer>) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
-        "'{}' is not yet supported outside a procedure", name);
-  } else {
-    auto event_or = LowerEventControl(lowerer, scope_frame, **clock_or, span);
-    if (!event_or) return std::unexpected(std::move(event_or.error()));
-    // The gate belongs to the event, and the event already carries a qualifier
-    // of exactly that shape -- the LRM 9.4.2.3 `iff`, read where an occurrence
-    // happens -- so it composes with whatever the event stated rather than
-    // needing a place of its own. An entry the source already qualified admits
-    // a tick only where both hold, and each entry reads the gate for itself.
-    if (gate != nullptr) {
-      for (hir::EventEntry& entry : event_or->entries) {
-        auto gate_or = lowerer.LowerExpr(*gate, scope_frame);
-        if (!gate_or) return std::unexpected(std::move(gate_or.error()));
-        const hir::ExprId gate_id =
-            scope_frame.Exprs().Add(*std::move(gate_or));
-        if (!entry.condition.has_value()) {
-          entry.condition = gate_id;
-          continue;
-        }
-        entry.condition = scope_frame.Exprs().Add(
-            hir::Expr{
-                .type = lowerer.Owner().Unit().builtins.scalar_bit,
-                .data =
-                    hir::BinaryExpr{
-                        .op = hir::BinaryOp::kLogicalAnd,
-                        .lhs = *entry.condition,
-                        .rhs = gate_id},
-                .span = span,
-            });
+  auto event_or = LowerEventControl(lowerer, scope_frame, **clock_or, span);
+  if (!event_or) return std::unexpected(std::move(event_or.error()));
+  // The gate belongs to the event, and the event already carries a qualifier
+  // of exactly that shape -- the LRM 9.4.2.3 `iff`, read where an occurrence
+  // happens -- so it composes with whatever the event stated rather than
+  // needing a place of its own. An entry the source already qualified admits
+  // a tick only where both hold, and each entry reads the gate for itself.
+  if (gate != nullptr) {
+    for (hir::EventEntry& entry : event_or->entries) {
+      auto gate_or = lowerer.LowerExpr(*gate, scope_frame);
+      if (!gate_or) return std::unexpected(std::move(gate_or.error()));
+      const hir::ExprId gate_id = scope_frame.Exprs().Add(*std::move(gate_or));
+      if (!entry.condition.has_value()) {
+        entry.condition = gate_id;
+        continue;
       }
+      entry.condition = scope_frame.Exprs().Add(
+          hir::Expr{
+              .type = lowerer.Owner().Unit().builtins.scalar_bit,
+              .data =
+                  hir::BinaryExpr{
+                      .op = hir::BinaryOp::kLogicalAnd,
+                      .lhs = *entry.condition,
+                      .rhs = gate_id},
+              .span = span,
+          });
     }
-    auto depth_or = LowerTicksBack(lowerer, scope_frame, ticks_back, span);
-    if (!depth_or) return std::unexpected(std::move(depth_or.error()));
-    return frame.current_structural_scope->sampled_histories.Add(
-        hir::SampledHistoryDecl{
-            .subject = scope_frame.Exprs().Add(*std::move(subject_or)),
-            .clock = *event_or,
-            .depth = scope_frame.Exprs().Add(*std::move(depth_or)),
-        });
   }
+  auto depth_or = LowerTicksBack(lowerer, scope_frame, ticks_back, span);
+  if (!depth_or) return std::unexpected(std::move(depth_or.error()));
+  return frame.current_structural_scope->sampled_histories.Add(
+      hir::SampledHistoryDecl{
+          .subject = scope_frame.Exprs().Add(*std::move(subject_or)),
+          .clock = *event_or,
+          .depth = scope_frame.Exprs().Add(*std::move(depth_or)),
+      });
 }
 
 // A sampled value function that reaches across the ticks of a clocking event
@@ -321,10 +308,10 @@ auto LowerSampledHistoryExpr(
   if (!operand_reads) {
     return std::unexpected(std::move(operand_reads.error()));
   }
-  // An operand reading only variables that answer with their current value has
-  // that value at every tick, the past ones included (LRM 16.5.1), so no
-  // history has anything to keep: `$past` is the operand as it stands, and it
-  // never changed.
+  // An operand reading only constants and variables that answer with their
+  // current value has that value at every tick, the past ones included (LRM
+  // 16.5.1), so no history has anything to keep: `$past` is the operand as it
+  // stands, and it never changed.
   if (operand_reads->armed == 0) {
     if (past) {
       auto operand_or = lowerer.LowerExpr(*call.arguments()[0], frame);

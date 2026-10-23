@@ -120,7 +120,8 @@ show all three leaves the text an ordinary forbidden one.
 ## The rulings
 
 Each text below was met in a real design or in Lyra's own tests and was disputed: some tool takes
-it, or some tool refuses it, against what one would expect.
+it, or some tool refuses it, against what one would expect, or two readings of the clause give it
+different meanings.
 
 ### Forbidden, and refused by the front end
 
@@ -384,6 +385,47 @@ is built with a smaller one, at a position that is constant only once the parame
 part-select wider than its vector, such as `w[i +: 70]`, is the same case, since part of it lies
 outside wherever `i` is. A caller who wants the refusal asks for it by name, `-Werror=index-oob`,
 `-Werror=range-oob` and `-Werror=range-width-oob`.
+
+### Allowed, with a meaning the standard does not settle
+
+#### `$inferred_disable` in a property declared in another scope
+
+```systemverilog
+module m (input logic clk, rst_m, rst_g);
+  default disable iff rst_m;
+  property never(r = $inferred_disable);
+    @(posedge clk) disable iff (r) 1'b0;
+  endproperty
+  property outer;
+    never;
+  endproperty
+  if (1) begin : g
+    default disable iff rst_g;
+    a1: assert property (never);
+    a2: assert property (outer);
+  end
+endmodule
+```
+
+16.14.7 defines the value twice. "The inferred disable condition is the disable condition from the
+default disable iff declaration whose scope includes the call to `$inferred_disable`" -- read
+literally, the call stands in the declaration's formal list, which is `m`'s, so `rst_m`. "An
+inferred clocking or disable function call is replaced by the inferred expression as determined at
+the point where the property, sequence, or checker is instantiated" -- for `a1` the instance stands
+in `g`, so `rst_g`; for `a2` the instance of `never` stands inside `outer`, which is declared in
+`m`, so the same sentence read the same way gives `rst_m` there. The front end hands the call on
+unresolved, so its representation settles none of them either, and the clause's example declares and
+asserts in one scope, which separates none of the readings.
+
+Lyra takes the default in force where the assertion stands, however deep the instance, which is
+`rst_g` for both `a1` and `a2`. It is the scope at which every other part of the assertion the
+source leaves unwritten is resolved -- its clock (16.9.3, 16.16) and its own default disable
+condition (16.15) -- so one lookup answers all of them (consequence 4). It is also the reading the
+clause gives `$inferred_clock`, whose value for a nested instance is the clock flow "up to the
+instance location in the property expression", that is, from the assertion; and it is what a
+property written for others to assert means by taking its disable condition as a default. A design
+meaning the declaration's own default writes it as the formal's default instead of
+`$inferred_disable`.
 
 ### Allowed
 

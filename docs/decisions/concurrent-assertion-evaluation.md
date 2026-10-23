@@ -115,9 +115,11 @@ what maturity does with the entry.
 
 ### F6. The clock and the sampled values are already answered
 
-The clocking event a concurrent assertion counts ticks of is found by the rules a sampled value
-function already uses -- the clock the procedure settles (LRM 16.14.6), and otherwise the scope's
-default clocking (LRM 14.12) -- and the front end reports the answer rather than the inputs to it
+The clocking event a concurrent assertion counts ticks of is the one its property leads with, and
+where the source writes none, the one in force where the statement stands -- the clock the procedure
+settles (LRM 16.14.6), and otherwise the scope's default clocking (LRM 14.12). A property or
+sequence declared in a clocking block leads with that block's event (LRM 16.16 b). The front end
+reports the procedure's clock rather than the inputs to it
 ([sampled-value-and-its-clock](sampled-value-and-its-clock.md) D2, F3). What an assertion's Boolean
 expressions read is the sampled value of LRM 16.5.1, which the same decision retains on the cell.
 
