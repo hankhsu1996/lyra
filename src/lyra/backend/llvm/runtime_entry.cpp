@@ -2004,6 +2004,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kEvaluationAttemptsSetWord:
     case support::BuiltinFn::kEvaluationAttemptsStep:
     case support::BuiltinFn::kEvaluationAttemptsSeed:
+    case support::BuiltinFn::kEvaluationAttemptsCount:
+    case support::BuiltinFn::kEvaluationAttemptsPartOf:
+    case support::BuiltinFn::kEvaluationAttemptsImplicationAnswer:
+    case support::BuiltinFn::kEvaluationAttemptsResolve:
     case support::BuiltinFn::kEvaluationAttemptsSettle:
     case support::BuiltinFn::kEvaluationAttemptsAnswer:
     // A delayed continuous assignment's timer holds a closure and a place in a

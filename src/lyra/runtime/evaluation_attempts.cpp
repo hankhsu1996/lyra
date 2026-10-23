@@ -1,7 +1,9 @@
 #include "lyra/runtime/evaluation_attempts.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -10,18 +12,55 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
-#include "lyra/support/evaluation_outcome.hpp"
+#include "lyra/support/property_answer.hpp"
 
 namespace lyra::runtime {
 
+namespace {
+
+// Whether no continuation of the trace can move the answer: the two ends of
+// the order are where every way of combining answers keeps them.
+auto IsSettled(support::PropertyAnswer answer) -> bool {
+  switch (answer) {
+    case support::PropertyAnswer::kFails:
+    case support::PropertyAnswer::kHoldsStrongly:
+      return true;
+    case support::PropertyAnswer::kPending:
+    case support::PropertyAnswer::kHolds:
+      return false;
+  }
+  throw InternalError("EvaluationAttempts: unknown property answer");
+}
+
+auto AnswerOf(std::uint64_t answer) -> support::PropertyAnswer {
+  if (answer >
+      static_cast<std::uint64_t>(support::PropertyAnswer::kHoldsStrongly)) {
+    throw InternalError(
+        "EvaluationAttempts: a property answer outside the four it has");
+  }
+  return static_cast<support::PropertyAnswer>(answer);
+}
+
+}  // namespace
+
+auto EvaluationAttempts::AnswersOf(
+    Evaluation& evaluation, std::uint64_t implication) -> ImplicationAnswers& {
+  for (ImplicationAnswers& answers : evaluation.implications) {
+    if (answers.implication == implication) {
+      return answers;
+    }
+  }
+  return evaluation.implications.emplace_back(
+      ImplicationAnswers{.implication = implication});
+}
+
 void EvaluationAttempts::Install(
-    RuntimeEffects& effects, std::uint64_t words, bool pending_holds,
-    OwnedCall pass_action, OwnedCall fail_action) {
+    RuntimeEffects& effects, std::uint64_t words, OwnedCall pass_action,
+    OwnedCall fail_action) {
   Size(words);
   answered_ = Installed{
       .pass_action = std::move(pass_action),
-      .fail_action = std::move(fail_action),
-      .pending_holds = pending_holds};
+      .fail_action = std::move(fail_action)};
   effects.RegisterConcurrentAssertion(*this);
 }
 
@@ -53,14 +92,16 @@ void EvaluationAttempts::SeedWord(std::uint64_t word, std::uint64_t bits) {
 
 void EvaluationAttempts::OpenAttempt() {
   RequireInstalled();
-  attempts_.push_back(Attempt{});
-  OpenEvaluation(attempts_.size() - 1, false);
+  OpenEvaluation(std::nullopt, 0);
 }
 
 void EvaluationAttempts::BeginTick() {
   RequireInstalled();
   for (Evaluation& evaluation : evaluations_) {
     evaluation.stepped = false;
+    for (ImplicationAnswers& answers : evaluation.implications) {
+      answers.this_tick = support::PropertyAnswer::kHoldsStrongly;
+    }
   }
   cursor_ = 0;
 }
@@ -69,7 +110,6 @@ void EvaluationAttempts::DisableTick() {
   RequireInstalled();
   words_.clear();
   evaluations_.clear();
-  attempts_.clear();
   cursor_ = 0;
 }
 
@@ -97,96 +137,114 @@ auto EvaluationAttempts::NextUnstepped() -> std::int64_t {
 
 auto EvaluationAttempts::BitsAt(std::int64_t index, std::uint64_t word) const
     -> std::uint64_t {
-  return words_[WordSlot(index, word)];
+  return words_[WordIndex(index, word)];
 }
 
 void EvaluationAttempts::SetWord(
     std::int64_t index, std::uint64_t word, std::uint64_t bits) {
-  words_[WordSlot(index, word)] = bits;
+  words_[WordIndex(index, word)] = bits;
 }
 
-void EvaluationAttempts::Step(std::int64_t index, std::uint64_t outcome) {
-  Evaluation& evaluation = EvaluationAt(index);
-  evaluation.stepped = true;
-  switch (static_cast<support::EvaluationOutcome>(outcome)) {
-    case support::EvaluationOutcome::kLive:
-      return;
-    case support::EvaluationOutcome::kSatisfied:
-    case support::EvaluationOutcome::kVacuous:
-      evaluation.live = false;
-      return;
-    case support::EvaluationOutcome::kFailed:
-      evaluation.live = false;
-      attempts_[evaluation.attempt].failed = true;
-      return;
+void EvaluationAttempts::Step(std::int64_t index) {
+  EvaluationAt(index).stepped = true;
+}
+
+void EvaluationAttempts::Seed(
+    std::int64_t index, std::uint64_t implication, std::uint64_t part) {
+  OpenEvaluation(
+      ConsequentOf{.parent = IndexOf(index), .implication = implication}, part);
+}
+
+auto EvaluationAttempts::Count() const -> std::int64_t {
+  RequireInstalled();
+  return static_cast<std::int64_t>(evaluations_.size());
+}
+
+auto EvaluationAttempts::PartOf(std::int64_t index) const -> std::uint64_t {
+  return EvaluationAt(index).part;
+}
+
+auto EvaluationAttempts::ImplicationAnswer(
+    std::int64_t index, std::uint64_t implication) const -> std::uint64_t {
+  for (const ImplicationAnswers& answers : EvaluationAt(index).implications) {
+    if (answers.implication == implication) {
+      return static_cast<std::uint64_t>(
+          std::min(answers.settled, answers.this_tick));
+    }
   }
-  throw InternalError("EvaluationAttempts::Step: unknown evaluation outcome");
+  return static_cast<std::uint64_t>(support::PropertyAnswer::kHoldsStrongly);
 }
 
-void EvaluationAttempts::Seed(std::int64_t index, bool this_tick) {
-  const std::size_t attempt = EvaluationAt(index).attempt;
-  OpenEvaluation(attempt, !this_tick);
+void EvaluationAttempts::Resolve(std::int64_t index, std::uint64_t answer) {
+  Evaluation& evaluation = EvaluationAt(index);
+  evaluation.answer = AnswerOf(answer);
+  if (!evaluation.consequent_of.has_value()) {
+    return;
+  }
+  ImplicationAnswers& answers = AnswersOf(
+      evaluations_[evaluation.consequent_of->parent],
+      evaluation.consequent_of->implication);
+  answers.this_tick = std::min(answers.this_tick, evaluation.answer);
+}
+
+void EvaluationAttempts::Report(
+    support::PropertyAnswer answer, RuntimeEffects& effects) {
+  const bool holds = answer == support::PropertyAnswer::kHoldsStrongly;
+  std::visit(
+      Overloaded{
+          [&](Installed& installed) {
+            OwnedCall* action =
+                holds ? &installed.pass_action : &installed.fail_action;
+            effects.Submit(
+                effects.Now(), Region::kReactive, [action] { (*action)(); });
+          },
+          [&](Held& held) {
+            held.answer = holds ? support::AttemptAnswer::kHolds
+                                : support::AttemptAnswer::kFails;
+          }},
+      answered_);
 }
 
 void EvaluationAttempts::Settle(RuntimeEffects& effects) {
   RequireInstalled();
 
-  std::vector<std::size_t> live_evaluations(attempts_.size(), 0);
-  for (const Evaluation& evaluation : evaluations_) {
-    if (evaluation.live) {
-      ++live_evaluations[evaluation.attempt];
-    }
-  }
-
-  // An attempt that neither failed nor ran out of evaluations is still pending,
-  // and keeps its place; the others are answered here and leave.
-  const auto answer = [&](support::AttemptAnswer answered,
-                          OwnedCall Installed::* selects) {
-    std::visit(
-        Overloaded{
-            [&](Installed& installed) {
-              effects.Submit(
-                  effects.Now(), Region::kReactive,
-                  [action = &(installed.*selects)] { (*action)(); });
-            },
-            [&](Held& held) { held.answer = answered; }},
-        answered_);
-  };
-
-  constexpr auto kAnswered = static_cast<std::size_t>(-1);
-  std::vector<std::size_t> renumbered(attempts_.size(), kAnswered);
-  std::vector<Attempt> kept_attempts;
-  for (std::size_t attempt = 0; attempt < attempts_.size(); ++attempt) {
-    if (attempts_[attempt].failed) {
-      answer(support::AttemptAnswer::kFails, &Installed::fail_action);
-      continue;
-    }
-    if (live_evaluations[attempt] == 0) {
-      answer(support::AttemptAnswer::kHolds, &Installed::pass_action);
-      continue;
-    }
-    renumbered[attempt] = kept_attempts.size();
-    kept_attempts.push_back(attempts_[attempt]);
-  }
-
-  std::vector<Evaluation> kept_evaluations;
+  // Parents come before their instances, so one forward pass knows of each
+  // evaluation whether something above it has already left.
+  constexpr auto kLeaves = static_cast<std::size_t>(-1);
+  std::vector<std::size_t> renumbered(evaluations_.size(), kLeaves);
+  std::vector<Evaluation> kept;
   std::vector<std::uint64_t> kept_words;
   for (std::size_t index = 0; index < evaluations_.size(); ++index) {
-    const Evaluation& evaluation = evaluations_[index];
-    if (!evaluation.live || renumbered[evaluation.attempt] == kAnswered) {
+    Evaluation& evaluation = evaluations_[index];
+    const std::optional<ConsequentOf>& consequent_of = evaluation.consequent_of;
+    if (consequent_of.has_value() &&
+        renumbered[consequent_of->parent] == kLeaves) {
       continue;
     }
-    Evaluation moved = evaluation;
-    moved.attempt = renumbered[evaluation.attempt];
-    kept_evaluations.push_back(moved);
+    if (IsSettled(evaluation.answer)) {
+      if (consequent_of.has_value()) {
+        ImplicationAnswers& answers = AnswersOf(
+            kept[renumbered[consequent_of->parent]],
+            consequent_of->implication);
+        answers.settled = std::min(answers.settled, evaluation.answer);
+      } else {
+        Report(evaluation.answer, effects);
+      }
+      continue;
+    }
+    renumbered[index] = kept.size();
+    Evaluation moved = std::move(evaluation);
+    if (moved.consequent_of.has_value()) {
+      moved.consequent_of->parent = renumbered[moved.consequent_of->parent];
+    }
+    kept.push_back(std::move(moved));
     const auto first = static_cast<std::ptrdiff_t>(index * width_);
     kept_words.insert(
         kept_words.end(), words_.begin() + first,
         words_.begin() + first + static_cast<std::ptrdiff_t>(width_));
   }
 
-  attempts_ = std::move(kept_attempts);
-  evaluations_ = std::move(kept_evaluations);
+  evaluations_ = std::move(kept);
   words_ = std::move(kept_words);
   cursor_ = 0;
 }
@@ -210,13 +268,18 @@ void EvaluationAttempts::SettleAtEndOfRun() {
         "EvaluationAttempts::SettleAtEndOfRun: a held attempt is never "
         "registered for the end of the run");
   }
-  const std::size_t answered = installed->pending_holds ? attempts_.size() : 0;
-  for (std::size_t i = 0; i < answered; ++i) {
-    installed->pass_action();
+  for (const Evaluation& evaluation : evaluations_) {
+    if (evaluation.consequent_of.has_value()) {
+      continue;
+    }
+    if (evaluation.answer >= support::PropertyAnswer::kHolds) {
+      installed->pass_action();
+    } else {
+      installed->fail_action();
+    }
   }
   words_.clear();
   evaluations_.clear();
-  attempts_.clear();
   cursor_ = 0;
 }
 
@@ -228,33 +291,46 @@ void EvaluationAttempts::RequireInstalled() const {
   }
 }
 
-void EvaluationAttempts::OpenEvaluation(std::size_t attempt, bool stepped) {
+void EvaluationAttempts::OpenEvaluation(
+    std::optional<ConsequentOf> consequent_of, std::uint64_t part) {
   evaluations_.push_back(
-      Evaluation{.attempt = attempt, .stepped = stepped, .live = true});
+      Evaluation{
+          .consequent_of = consequent_of,
+          .part = part,
+          .stepped = false,
+          .answer = support::PropertyAnswer::kPending,
+          .implications = {}});
   words_.insert(words_.end(), seed_.begin(), seed_.end());
 }
 
-auto EvaluationAttempts::EvaluationAt(std::int64_t index) -> Evaluation& {
+auto EvaluationAttempts::IndexOf(std::int64_t index) const -> std::size_t {
   RequireInstalled();
   if (index < 0 || std::cmp_greater_equal(index, evaluations_.size())) {
     throw InternalError(
         "EvaluationAttempts: an evaluation index no sweep of this tick "
         "produced");
   }
-  return evaluations_[static_cast<std::size_t>(index)];
+  return static_cast<std::size_t>(index);
 }
 
-auto EvaluationAttempts::WordSlot(std::int64_t index, std::uint64_t word) const
+auto EvaluationAttempts::EvaluationAt(std::int64_t index) -> Evaluation& {
+  return evaluations_[IndexOf(index)];
+}
+
+auto EvaluationAttempts::EvaluationAt(std::int64_t index) const
+    -> const Evaluation& {
+  return evaluations_[IndexOf(index)];
+}
+
+auto EvaluationAttempts::WordIndex(std::int64_t index, std::uint64_t word) const
     -> std::size_t {
-  RequireInstalled();
-  if (index < 0 || std::cmp_greater_equal(index, evaluations_.size()) ||
-      word >= width_) {
+  const std::size_t evaluation = IndexOf(index);
+  if (word >= width_) {
     throw InternalError(
         "EvaluationAttempts: a position word outside the set this assertion "
         "was installed with");
   }
-  return (static_cast<std::size_t>(index) * width_) +
-         static_cast<std::size_t>(word);
+  return (evaluation * width_) + static_cast<std::size_t>(word);
 }
 
 }  // namespace lyra::runtime

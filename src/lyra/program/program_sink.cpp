@@ -599,6 +599,13 @@ void BindValueEntries(const auto& add) {
       &lyra_rt_evaluation_attempts_set_word);
   add("lyra_rt_evaluation_attempts_step", &lyra_rt_evaluation_attempts_step);
   add("lyra_rt_evaluation_attempts_seed", &lyra_rt_evaluation_attempts_seed);
+  add("lyra_rt_evaluation_attempts_count", &lyra_rt_evaluation_attempts_count);
+  add("lyra_rt_evaluation_attempts_part_of",
+      &lyra_rt_evaluation_attempts_part_of);
+  add("lyra_rt_evaluation_attempts_implication_answer",
+      &lyra_rt_evaluation_attempts_implication_answer);
+  add("lyra_rt_evaluation_attempts_resolve",
+      &lyra_rt_evaluation_attempts_resolve);
   add("lyra_rt_evaluation_attempts_settle",
       &lyra_rt_evaluation_attempts_settle);
   add("lyra_rt_evaluation_attempts_answer",

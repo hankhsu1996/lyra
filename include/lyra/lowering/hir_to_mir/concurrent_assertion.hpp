@@ -14,7 +14,7 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class.hpp"
-#include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -39,9 +39,6 @@ struct InstalledConcurrentAssertion {
   mir::CallableId fail_action;
   // How wide a position set of this assertion's automaton is.
   std::uint32_t words = 0;
-  // What an attempt still in flight when the run ends is owed: an obligation is
-  // met by "holds", a coverage goal needed a match (LRM 16.12.2).
-  bool pending_holds = true;
   // Where the source writes the assertion, which each action it runs reports
   // from.
   diag::SourceSpan written_at;
@@ -59,8 +56,8 @@ struct InstalledConcurrentAssertion {
     hir::ConcurrentAssertionId id, const hir::ConcurrentAssertionDecl& decl)
     -> diag::Result<InstalledConcurrentAssertion>;
 
-// Fills the storage where the design activates: the width of a position set,
-// the answer a pending attempt is owed, and the statements an outcome selects.
+// Fills the storage where the design activates: the width of a position set
+// and the statements an outcome selects.
 // Nothing about an assertion needs an earlier phase -- what it reads is reached
 // through cells sealed since Seal -- and Activate is where the sampling those
 // cells answer from is armed.

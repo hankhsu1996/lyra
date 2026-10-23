@@ -68,8 +68,8 @@ An implication is universal, and each of the quantified cases is a satisfaction 
 w |= (R |-> P)  iff  for every j so that w_0,j |= R,  w_j.. |= P
 ```
 
-A conjunction is not preserved by union. An evaluation that dies makes the whole attempt false, and
-once its positions are pooled with a sibling's there is nothing left to say which of them died.
+A conjunction is not preserved by union. An instance that dies makes the implication false, and once
+its positions are pooled with a sibling's there is nothing left to say which of them died.
 
 That is decisive rather than academic. In `a ##[1:2] d |-> b` one attempt can match its antecedent
 at two ticks and so run two evaluations of `b`, one a tick behind the other. If `b` is low at the
@@ -86,10 +86,10 @@ tool checking a **finite** word is told to answer is one of four: "holds strongl
 not hold strongly)", "fails", and "pending". Disabling is a separate relation beside all of them,
 and the top-level definition in F1 is satisfied by either passing or being disabled.
 
-Weak and strong are which of those answers the statement demands, not two ways of evaluating: an
-obligation is met by "holds", a coverage goal needs "holds strongly". Pending is the state of an
-attempt whose answer the trace has not yet settled, which is what an attempt still live at the end
-of a run is in.
+Weak and strong are not two ways of evaluating: a sequence still able to match holds where it is
+weak and is pending where it is strong, and that is the whole difference. Pending and holds are the
+two answers the rest of the trace can still change, so an attempt answering either is still in
+flight, and one the run ends in the middle of answers one of them.
 
 ### F4. Evaluation is in Observed and the action is in Reactive
 
@@ -137,9 +137,17 @@ carrying the one below because the join between them differs:
 
 - **An evaluation is a set of positions.** It asks whether some path matches, so the union of paths
   is exactly the question, and two paths reaching one position are one thing from then on.
-- **An attempt is a list of evaluations.** It starts with one, and every match of an implication's
-  antecedent adds another -- seeded at the consequent's start positions, at that same tick or the
-  next one. The attempt's result conjoins theirs, so no two of them are ever pooled.
+- **An attempt is a tree of evaluations.** It starts with one, answering for the whole property, and
+  every match of an implication's antecedent adds another -- an instance of the consequent, seeded
+  at its start positions at the tick of the match, and counted in that implication of the evaluation
+  whose antecedent matched. F.3.4.3 writes `|=>`, the followed-by operators, `if` and `case` in
+  terms of `|->`, so each of those is counted as an implication too. `R |=> P` is `(R ##1 1) |-> P`
+  (F.3.4.3.3), so the tick after a match is a position of the antecedent, and every instance starts
+  at the tick that seeded it. An implication quantifies universally over its instances, so no two of
+  them are ever pooled. The operands of a negation, a conjunction, a disjunction, an `implies` or an
+  `iff` start together and live as long as the property they compose, so they are positions of one
+  evaluation rather than evaluations of their own. A selection -- `if` or `case` -- reads what it
+  selects by once, at its start, and is then the one arm it seeds.
 - **An assertion holds its attempts.** One begins at every tick, each resolves on its own, and each
   runs its own action.
 
@@ -147,14 +155,48 @@ Advancing is one function at every level: an evaluation's next position set is c
 sampled values of the Boolean expressions its outgoing positions read, and the same function serves
 every evaluation of every attempt, because they differ only in which positions are live.
 
-An attempt reports as soon as the trace settles its answer and not before, which is F3b's four
-answers read as a schedule: it fails the moment any of its evaluations dies with no match, it holds
-once the last of them has finished, and until one of those happens it is pending. Both readings of
-the first two come from the same conjunction -- one failure settles it, and holding waits for all.
+**What an evaluation answers is one of F3b's four answers, and they are ordered.** The two ends are
+settled: no continuation of the trace can satisfy a property that fails, or fail one that holds
+strongly. The two between are what the trace as it stands says, read as F.5.3.1 reads a finished
+trace: pending where it does not satisfy the property, holds where it does. Negation reverses the
+order; a conjunction is the least of two answers and a disjunction the greatest; `implies`, `iff`,
+`if` and the followed-by operators are what F.3.4.3 derives them as. These are not F.5.3.2's
+verdicts on the trace extended by letters satisfying everything or nothing: extended by letters
+satisfying nothing, an implication whose antecedent may still match holds strongly, yet a later
+match can still fail it, so an answer reported on that reading could be withdrawn. A sequence
+answers holds strongly once it matched and fails once no path is left; still live, it holds where it
+is weak and is pending where it is strong (LRM 16.12.2). An implication answers the least of its
+instances' answers and its antecedent's own: holds while the antecedent may still match, holds
+strongly once it cannot -- so a run ending before the tick after a nonoverlapped antecedent's match
+leaves that antecedent still able to match and the implication holding. Its instances' answer is the
+least any of them reached, those that settled and left as well as those still live. The code
+computing each answer is fixed with the property, so it is generated, per part of the property an
+evaluation can answer for, as D4's transition is.
 
-A run that ends with an attempt still pending is the one case no tick resolves, and F3b decides it
-without a rule of its own: the answer the statement demanded is what it gets, so a weak obligation
-holds and a coverage goal, which needed a match, does not.
+An attempt reports once its answer is settled and not before: every way of combining answers keeps
+the two ends of the order, so an answer of fails or holds strongly can no longer change. It fails at
+the first tick its answer is fails and holds at the first tick it holds strongly, and until then it
+is in flight. Combining the operands' answers rather than the whole property's can settle an attempt
+a tick later than the earliest tick no continuation could change it --
+`strong(##1 a) and strong(##1 !a)` fails at the tick `a` is read, not the one before -- and never
+earlier.
+
+A run that ends with an attempt still in flight is the one case no tick resolves, and its answer as
+it stands is the neutral verdict on the finished trace (F.5.3.1), which is what the clause's own
+example reads: `assert property (@clk not a ##1 b)` fails when the clock stops after `a` (LRM
+16.12.3). So the attempt succeeded where its answer is at least holds and failed otherwise, for
+every statement: a weak obligation still able to match holds, a coverage goal's strong sequence
+still able to match is not covered, and a `strong` sequence written in an assertion fails.
+
+That is what the attempt came to; what is run for it is a second question, and the standard answers
+it only through the first. LRM 16.14.1 runs the pass statement of an attempt that succeeds and the
+fail statement of one that fails, and the clause above calls the assertion failed, so the statements
+the answer selects are run, as they are mid-trace. What does not carry over is the region: no time
+step is left to hold a Reactive region, so they are started once the run has stopped and before the
+`final` procedures, which read what they wrote. An attempt whose clock tick shares a time step with
+the `$finish` that ends the run is not evaluated at that tick, since the run never reaches that
+step's Observed region (LRM 16.5, 20.2); it is judged by its answer at the tick before, and one that
+would have begun there never begins.
 
 ### D2. The automaton is built at HIR-to-MIR, and HIR carries the standard's own structure
 
@@ -183,11 +225,11 @@ without the engine learning what a concurrent assertion is.
 
 ### D4. The transition is generated code and the attempts are runtime storage
 
-The part that is fixed at compile time is the transition: a callable taking a position set and
-answering with its successor, whether a match completed, and whether an implication's antecedent
-matched -- built from the design's own Boolean expressions read as of Preponed. The part that varies
-at run time is how many attempts are live and how many evaluations each carries, which is member
-storage holding one position set per evaluation.
+The part that is fixed at compile time is the transition and the answer: code taking a position set
+to its successor, starting the instances its matches seed, and computing what each part of the
+property answers -- built from the design's own Boolean expressions read as of Preponed. The part
+that varies at run time is how many attempts are live and how many evaluations each carries, which
+is member storage holding one position set per evaluation.
 
 Nothing interprets a table. A backend renders the transition the way it renders any other callable,
 and the storage the way it renders any other member -- which is what keeps the whole of this
@@ -215,14 +257,21 @@ a procedural assertion is a statement; one whose `b` is 1 has no position to rec
 declarative assertion is a declaration of the scope. Neither has an evaluation path the other does
 not.
 
-### D6. A property is weak unless the source says otherwise
+### D6. Strength belongs to each sequence, and the statement only gives the default
 
-LRM 16.12.2 reads a bare sequence in an `assert` or `assume` as `weak`, and in a `cover` as
-`strong`. By F3b that is a choice of which answer the statement demands rather than a second way of
-evaluating: the obligation is met by "holds", the coverage goal needs "holds strongly". Nothing in
-the evaluation branches on it -- it decides one comparison, at the two points an answer is read:
-when the trace settles it, and at the end of a run for an attempt still pending
-(`../architecture/scheduling.md`).
+Revised 2026-10-23. LRM 16.12.2 reads a bare sequence in an `assert` or `assume` as `weak`, and in a
+`cover` as `strong`; `strong(s)` and `weak(s)` say it outright, and `not` keeps each sequence's own
+strength while exchanging what that strength demands (LRM 16.12.3). So strength is a fact of each
+sequence, stated where the property is translated into HIR, and what it decides is what that
+sequence answers while still live: holds where weak, pending where strong (D1). The statement
+decides nothing else: an attempt is reported by its answer, mid-trace at the answer's two ends and
+at the end of a run by whether it reaches holds (`../architecture/scheduling.md`).
+
+This replaces a reading in which the statement's demand was one comparison made at the end of a run
+for every pending attempt. That reading was derived while every sequence carried its statement's
+strength and implication was the only operator combining evaluations, and under it a `strong`
+sequence written in an `assert` that a run ended in the middle of passed, where the finished trace
+fails it.
 
 ### D7. No layer gains a node kind
 
@@ -339,18 +388,18 @@ handle) has nothing to watch it and is refused. A sequence standing as the prope
 - LRM anchors: 16.5 (evaluation at a clock tick, in Observed), 16.5.1 (sampled value), 16.6 (Boolean
   expressions and what they may not read), 16.7 (a sequence is a regular expression; an attempt is a
   search for a match), 16.9 (sequence operations), 16.12 (declaring properties, `disable iff`, weak
-  and strong, the operator semantics), 16.12.7 (implication, and the separate evaluation per
-  antecedent match), 16.14 (the assertion statements), 16.14.1 (the action block, and the Reactive
-  region), 16.14.3 (the cover counters), 16.14.5 (`always` semantics outside procedural code),
-  16.14.6 (the procedural assertion queue, maturity, and clock inference), 16.14.6.2 (the flush
-  points).
+  and strong, the operator semantics), 16.12.3-16.12.6, 16.12.8, 16.12.9 and 16.12.16 (the operators
+  composing properties), 16.12.7 (implication, and the separate evaluation per antecedent match),
+  16.14 (the assertion statements), 16.14.1 (the action block, and the Reactive region), 16.14.3
+  (the cover counters), 16.14.5 (`always` semantics outside procedural code), 16.14.6 (the
+  procedural assertion queue, maturity, and clock inference), 16.14.6.2 (the flush points).
 - Annex F is the formal semantics this decision is derived from, and outranks a reading of the
   clauses above where the two seem to differ: F.4.1 (a named sequence or property instance is its
   body with the actuals substituted), F.5.1 (a clocked sequence is defined by rewriting it into an
   unclocked one), F.5.2 (tight satisfaction, where a sequence's operators are existential), F.5.3.1
   (the top-level definition, its enabling condition `b`, and implication's universal quantifier),
-  F.5.3.2 (the four answers a finite trace admits, and what weak and strong demand of them), F.5.3.3
-  (vacuity).
+  F.5.3.2 (the four answers a finite trace admits), F.3.4.3 (the derived property operators),
+  F.5.3.3 (vacuity).
 - [sampled-value-and-its-clock](sampled-value-and-its-clock.md) -- the values an assertion reads,
   the clocking event it counts ticks of, and the synthesized-process shape D3 reuses.
 - [deferred-report-queue](deferred-report-queue.md) -- the pending-entry mechanism D5 is an instance

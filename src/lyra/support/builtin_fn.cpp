@@ -503,6 +503,21 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kEvaluationAttemptsSeed:
       return {
           .name = "evaluation_attempts_seed", .declaration = Method{"Seed"}};
+    case BuiltinFn::kEvaluationAttemptsCount:
+      return {
+          .name = "evaluation_attempts_count", .declaration = Method{"Count"}};
+    case BuiltinFn::kEvaluationAttemptsPartOf:
+      return {
+          .name = "evaluation_attempts_part_of",
+          .declaration = Method{"PartOf"}};
+    case BuiltinFn::kEvaluationAttemptsImplicationAnswer:
+      return {
+          .name = "evaluation_attempts_implication_answer",
+          .declaration = Method{"ImplicationAnswer"}};
+    case BuiltinFn::kEvaluationAttemptsResolve:
+      return {
+          .name = "evaluation_attempts_resolve",
+          .declaration = Method{"Resolve"}};
     case BuiltinFn::kEvaluationAttemptsSettle:
       return {
           .name = "evaluation_attempts_settle",

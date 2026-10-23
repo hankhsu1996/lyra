@@ -14,7 +14,7 @@
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/wait.hpp"
-#include "lyra/support/evaluation_outcome.hpp"
+#include "lyra/support/property_answer.hpp"
 
 namespace lyra::runtime {
 

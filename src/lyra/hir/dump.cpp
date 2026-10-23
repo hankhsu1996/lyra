@@ -2755,6 +2755,21 @@ class HirDumper {
     throw InternalError("DirectiveName: unknown hir::AssertionDirective");
   }
 
+  static auto ConnectiveName(PropertyConnective connective)
+      -> std::string_view {
+    switch (connective) {
+      case PropertyConnective::kAnd:
+        return "And";
+      case PropertyConnective::kOr:
+        return "Or";
+      case PropertyConnective::kImplies:
+        return "Implies";
+      case PropertyConnective::kIff:
+        return "Iff";
+    }
+    throw InternalError("ConnectiveName: unknown hir::PropertyConnective");
+  }
+
   static auto TimingName(AssertionTiming timing) -> std::string_view {
     switch (timing) {
       case AssertionTiming::kSimple:
@@ -2852,10 +2867,81 @@ class HirDumper {
               Line(
                   std::format(
                       "Property[{}] Implication ({})", id.value,
-                      i.start == ImplicationStart::kSameTick ? "|->" : "|=>"));
+                      i.start == ConsequentStart::kSameTick ? "|->" : "|=>"));
               Indent();
               DumpSequenceExpr(p, i.antecedent);
               DumpPropertyExpr(p, i.consequent);
+              Dedent();
+            },
+            [&](const PropertyFollowedBy& f) {
+              Line(
+                  std::format(
+                      "Property[{}] FollowedBy ({})", id.value,
+                      f.start == ConsequentStart::kSameTick ? "#-#" : "#=#"));
+              Indent();
+              DumpSequenceExpr(p, f.antecedent);
+              DumpPropertyExpr(p, f.consequent);
+              Dedent();
+            },
+            [&](const PropertyNot& n) {
+              Line(std::format("Property[{}] Not", id.value));
+              Indent();
+              DumpPropertyExpr(p, n.operand);
+              Dedent();
+            },
+            [&](const PropertyBinary& b) {
+              Line(
+                  std::format(
+                      "Property[{}] {}", id.value,
+                      ConnectiveName(b.connective)));
+              Indent();
+              DumpPropertyExpr(p, b.lhs);
+              DumpPropertyExpr(p, b.rhs);
+              Dedent();
+            },
+            [&](const PropertyConditional& c) {
+              Line(
+                  std::format(
+                      "Property[{}] If Expr[{}] {}", id.value,
+                      c.condition.value, FormatProcExpr(p, c.condition)));
+              Indent();
+              Line("then");
+              Indent();
+              DumpPropertyExpr(p, c.then_property);
+              Dedent();
+              if (c.else_property.has_value()) {
+                Line("else");
+                Indent();
+                DumpPropertyExpr(p, *c.else_property);
+                Dedent();
+              }
+              Dedent();
+            },
+            [&](const PropertyCase& c) {
+              Line(
+                  std::format(
+                      "Property[{}] Case Expr[{}] {}", id.value,
+                      c.subject.value, FormatProcExpr(p, c.subject)));
+              Indent();
+              for (const PropertyCaseItem& item : c.items) {
+                std::string labels;
+                for (const ExprId label : item.labels) {
+                  if (!labels.empty()) {
+                    labels += ", ";
+                  }
+                  labels += FormatProcExpr(p, label);
+                }
+                Line(std::format("item {}", labels));
+                Indent();
+                DumpPropertyExpr(p, item.property);
+                Dedent();
+              }
+              if (c.default_property.has_value()) {
+                Line("default");
+                Indent();
+                DumpPropertyExpr(p, *c.default_property);
+                Dedent();
+              }
               Dedent();
             }},
         p.property_exprs.Get(id).data);

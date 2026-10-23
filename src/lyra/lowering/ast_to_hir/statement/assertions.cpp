@@ -6,6 +6,7 @@
 #include <string_view>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include <slang/ast/SemanticFacts.h>
 #include <slang/ast/Statement.h>
@@ -107,10 +108,9 @@ auto RefuseAssertionForm(diag::SourceSpan span, base::DiagFormat<> what)
           .WithNote("pass '--assertions skip' to leave the assertion out"));
 }
 
-// LRM 16.7's `$` is a window with no end, so an evaluation that enters one can
-// outlive every tick the trace has and is answered by what the statement
-// demands of a pending result rather than by a tick. Nothing here carries that
-// yet, so it is refused where the bound is read.
+// LRM 16.7's `$` is a window with no end, which an automaton spelling a window
+// as one position per tick has no shape for. Nothing here carries that yet, so
+// it is refused where the bound is read.
 auto TickRangeOf(const slang::ast::SequenceRange& range, diag::SourceSpan span)
     -> diag::Result<hir::TickRange> {
   if (!range.max.has_value()) {
@@ -233,9 +233,9 @@ auto AddProperty(const WalkFrame& frame, hir::PropertyExpr expr)
 }
 
 // LRM 16.9.2: a repetition written on a sequence element. Only the consecutive
-// form is carried, and only where every match spans at least one tick -- a
-// repetition admitting an empty match is what makes an evaluation's position
-// set insufficient to say where it is.
+// form is carried, and only where every match spans at least one tick: an
+// empty match spans none, and concatenating or implying from one follows rules
+// of its own (LRM 16.9.2.1, 16.12.7) that the automaton does not yet apply.
 auto ApplyRepetition(
     const WalkFrame& frame, hir::SequenceExpr body,
     const std::optional<slang::ast::SequenceRepetition>& repetition,
@@ -263,6 +263,18 @@ auto LowerSequenceExpr(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::AssertionExpr& expr, diag::SourceSpan enclosing)
     -> diag::Result<hir::SequenceExpr>;
+
+// LRM 16.5.1: an expression an assertion reads is evaluated over the sampled
+// value of each variable it names, so what it reads is armed where the
+// assertion is read, as a sampled value function arms what its operand reads.
+auto LowerSampledExpr(
+    ProcessLowerer& proc, const WalkFrame& frame,
+    const slang::ast::Expression& expr, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  auto armed = ArmSampledReads(proc.Owner(), frame, expr, span);
+  if (!armed) return std::unexpected(std::move(armed.error()));
+  return proc.LowerExpr(expr, frame);
+}
 
 // The head of a concatenation whose source wrote no left operand. LRM 16.7
 // reads `##n s` as `` `true ##n s``, so the delay measures from a tick that
@@ -339,12 +351,7 @@ auto LowerSequenceExpr(
   switch (expr.kind) {
     case slang::ast::AssertionExprKind::Simple: {
       const auto& simple = expr.as<slang::ast::SimpleAssertionExpr>();
-      // LRM 16.5.1: a Boolean is evaluated over the sampled value of each
-      // variable it names, so what it reads is armed where the assertion is
-      // read, as a sampled value function arms what its operand reads.
-      auto armed = ArmSampledReads(proc.Owner(), frame, simple.expr, span);
-      if (!armed) return std::unexpected(std::move(armed.error()));
-      auto cond_or = proc.LowerExpr(simple.expr, frame);
+      auto cond_or = LowerSampledExpr(proc, frame, simple.expr, span);
       if (!cond_or) return std::unexpected(std::move(cond_or.error()));
       hir::SequenceExpr boolean{
           .data =
@@ -369,9 +376,9 @@ auto LowerSequenceExpr(
       return ApplyRepetition(
           frame, *std::move(inner_or), with.repetition, span);
     }
-    // `and` and `or` compose sequences here and properties one level up, and
-    // the front end spells both with this node, so the refusal names the
-    // operator and leaves the level to the source.
+    // `and` and `or` compose sequences here and properties where a property
+    // stands, and the front end spells both with this node; standing here, they
+    // are the composition of sequences (LRM 16.9.5, 16.9.7).
     case slang::ast::AssertionExprKind::Binary:
       return RefuseAssertionForm(
           span,
@@ -413,22 +420,164 @@ auto LowerPropertyExpr(
     const slang::ast::AssertionExpr& expr, hir::SequenceStrength strength,
     diag::SourceSpan enclosing) -> diag::Result<hir::PropertyExpr>;
 
-auto LowerImplication(
-    ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::BinaryAssertionExpr& binary, hir::ImplicationStart start,
+// The sequence an implication or a followed-by is triggered by and the
+// property it then asks of (LRM 16.12.7, 16.12.9).
+struct AntecedentAndConsequent {
+  hir::SequenceExprId antecedent;
+  hir::PropertyExprId consequent;
+};
+
+auto LowerAntecedentAndConsequent(
+    ProcessLowerer& proc, const WalkFrame& frame,
+    const slang::ast::BinaryAssertionExpr& binary,
     hir::SequenceStrength strength, diag::SourceSpan span)
-    -> diag::Result<hir::PropertyExpr> {
+    -> diag::Result<AntecedentAndConsequent> {
   auto antecedent_or = LowerSequenceExpr(proc, frame, binary.left, span);
   if (!antecedent_or) return std::unexpected(std::move(antecedent_or.error()));
   auto consequent_or =
       LowerPropertyExpr(proc, frame, binary.right, strength, span);
   if (!consequent_or) return std::unexpected(std::move(consequent_or.error()));
+  return AntecedentAndConsequent{
+      .antecedent = AddSequence(frame, *std::move(antecedent_or)),
+      .consequent = AddProperty(frame, *std::move(consequent_or))};
+}
+
+auto LowerImplication(
+    ProcessLowerer& proc, const WalkFrame& frame,
+    const slang::ast::BinaryAssertionExpr& binary, hir::ConsequentStart start,
+    hir::SequenceStrength strength, diag::SourceSpan span)
+    -> diag::Result<hir::PropertyExpr> {
+  auto joined_or =
+      LowerAntecedentAndConsequent(proc, frame, binary, strength, span);
+  if (!joined_or) return std::unexpected(std::move(joined_or.error()));
   return hir::PropertyExpr{
       .data =
           hir::PropertyImplication{
-              .antecedent = AddSequence(frame, *std::move(antecedent_or)),
-              .consequent = AddProperty(frame, *std::move(consequent_or)),
+              .antecedent = joined_or->antecedent,
+              .consequent = joined_or->consequent,
               .start = start},
+      .span = span};
+}
+
+auto LowerFollowedBy(
+    ProcessLowerer& proc, const WalkFrame& frame,
+    const slang::ast::BinaryAssertionExpr& binary, hir::ConsequentStart start,
+    hir::SequenceStrength strength, diag::SourceSpan span)
+    -> diag::Result<hir::PropertyExpr> {
+  auto joined_or =
+      LowerAntecedentAndConsequent(proc, frame, binary, strength, span);
+  if (!joined_or) return std::unexpected(std::move(joined_or.error()));
+  return hir::PropertyExpr{
+      .data =
+          hir::PropertyFollowedBy{
+              .antecedent = joined_or->antecedent,
+              .consequent = joined_or->consequent,
+              .start = start},
+      .span = span};
+}
+
+// Both operands are properties evaluated from the same start, a sequence among
+// them standing as a property at the strength the statement gives it. Where
+// both are sequences the front end spells the node as it spells sequence
+// composition; standing as a property, `s1 and s2` holds exactly where both
+// sequences do and `s1 or s2` where either does, so it is this connective
+// (LRM 16.12.4, 16.12.5).
+auto LowerConnective(
+    ProcessLowerer& proc, const WalkFrame& frame,
+    const slang::ast::BinaryAssertionExpr& binary,
+    hir::PropertyConnective connective, hir::SequenceStrength strength,
+    diag::SourceSpan span) -> diag::Result<hir::PropertyExpr> {
+  auto lhs_or = LowerPropertyExpr(proc, frame, binary.left, strength, span);
+  if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
+  auto rhs_or = LowerPropertyExpr(proc, frame, binary.right, strength, span);
+  if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
+  return hir::PropertyExpr{
+      .data =
+          hir::PropertyBinary{
+              .connective = connective,
+              .lhs = AddProperty(frame, *std::move(lhs_or)),
+              .rhs = AddProperty(frame, *std::move(rhs_or))},
+      .span = span};
+}
+
+// A property standing where the source may write none, such as an if
+// property's else arm.
+auto LowerOptionalProperty(
+    ProcessLowerer& proc, const WalkFrame& frame,
+    const slang::ast::AssertionExpr* expr, hir::SequenceStrength strength,
+    diag::SourceSpan span) -> diag::Result<std::optional<hir::PropertyExpr>> {
+  if (expr == nullptr) {
+    return std::optional<hir::PropertyExpr>{};
+  }
+  auto property_or = LowerPropertyExpr(proc, frame, *expr, strength, span);
+  if (!property_or) return std::unexpected(std::move(property_or.error()));
+  return std::optional<hir::PropertyExpr>{*std::move(property_or)};
+}
+
+auto AddOptionalProperty(
+    const WalkFrame& frame, std::optional<hir::PropertyExpr> property)
+    -> std::optional<hir::PropertyExprId> {
+  return std::move(property).transform([&](hir::PropertyExpr written) {
+    return AddProperty(frame, std::move(written));
+  });
+}
+
+auto LowerConditionalProperty(
+    ProcessLowerer& proc, const WalkFrame& frame,
+    const slang::ast::ConditionalAssertionExpr& conditional,
+    hir::SequenceStrength strength, diag::SourceSpan span)
+    -> diag::Result<hir::PropertyExpr> {
+  auto condition_or =
+      LowerSampledExpr(proc, frame, conditional.condition, span);
+  if (!condition_or) return std::unexpected(std::move(condition_or.error()));
+  auto then_or =
+      LowerPropertyExpr(proc, frame, conditional.ifExpr, strength, span);
+  if (!then_or) return std::unexpected(std::move(then_or.error()));
+  auto else_or =
+      LowerOptionalProperty(proc, frame, conditional.elseExpr, strength, span);
+  if (!else_or) return std::unexpected(std::move(else_or.error()));
+  return hir::PropertyExpr{
+      .data =
+          hir::PropertyConditional{
+              .condition = frame.Exprs().Add(*std::move(condition_or)),
+              .then_property = AddProperty(frame, *std::move(then_or)),
+              .else_property = AddOptionalProperty(frame, *std::move(else_or))},
+      .span = span};
+}
+
+auto LowerCaseProperty(
+    ProcessLowerer& proc, const WalkFrame& frame,
+    const slang::ast::CaseAssertionExpr& case_property,
+    hir::SequenceStrength strength, diag::SourceSpan span)
+    -> diag::Result<hir::PropertyExpr> {
+  auto subject_or = LowerSampledExpr(proc, frame, case_property.expr, span);
+  if (!subject_or) return std::unexpected(std::move(subject_or.error()));
+  std::vector<hir::PropertyCaseItem> items;
+  items.reserve(case_property.items.size());
+  for (const auto& group : case_property.items) {
+    hir::PropertyCaseItem item{.labels = {}, .property = {}};
+    item.labels.reserve(group.expressions.size());
+    for (const slang::ast::Expression* label : group.expressions) {
+      auto label_or = LowerSampledExpr(proc, frame, *label, span);
+      if (!label_or) return std::unexpected(std::move(label_or.error()));
+      item.labels.push_back(frame.Exprs().Add(*std::move(label_or)));
+    }
+    auto property_or =
+        LowerPropertyExpr(proc, frame, *group.body, strength, span);
+    if (!property_or) return std::unexpected(std::move(property_or.error()));
+    item.property = AddProperty(frame, *std::move(property_or));
+    items.push_back(std::move(item));
+  }
+  auto default_or = LowerOptionalProperty(
+      proc, frame, case_property.defaultCase, strength, span);
+  if (!default_or) return std::unexpected(std::move(default_or.error()));
+  return hir::PropertyExpr{
+      .data =
+          hir::PropertyCase{
+              .subject = frame.Exprs().Add(*std::move(subject_or)),
+              .items = std::move(items),
+              .default_property =
+                  AddOptionalProperty(frame, *std::move(default_or))},
       .span = span};
 }
 
@@ -468,33 +617,47 @@ auto LowerPropertyExpr(
       switch (binary.op) {
         case slang::ast::BinaryAssertionOperator::OverlappedImplication:
           return LowerImplication(
-              proc, frame, binary, hir::ImplicationStart::kSameTick, strength,
+              proc, frame, binary, hir::ConsequentStart::kSameTick, strength,
               span);
         case slang::ast::BinaryAssertionOperator::NonOverlappedImplication:
           return LowerImplication(
-              proc, frame, binary, hir::ImplicationStart::kNextTick, strength,
+              proc, frame, binary, hir::ConsequentStart::kNextTick, strength,
               span);
-
-        // Operators only a property carries, so the refusal names them rather
-        // than the sequence composition the same node kind also spells.
-        case slang::ast::BinaryAssertionOperator::Iff:
+        case slang::ast::BinaryAssertionOperator::OverlappedFollowedBy:
+          return LowerFollowedBy(
+              proc, frame, binary, hir::ConsequentStart::kSameTick, strength,
+              span);
+        case slang::ast::BinaryAssertionOperator::NonOverlappedFollowedBy:
+          return LowerFollowedBy(
+              proc, frame, binary, hir::ConsequentStart::kNextTick, strength,
+              span);
+        case slang::ast::BinaryAssertionOperator::And:
+          return LowerConnective(
+              proc, frame, binary, hir::PropertyConnective::kAnd, strength,
+              span);
+        case slang::ast::BinaryAssertionOperator::Or:
+          return LowerConnective(
+              proc, frame, binary, hir::PropertyConnective::kOr, strength,
+              span);
         case slang::ast::BinaryAssertionOperator::Implies:
+          return LowerConnective(
+              proc, frame, binary, hir::PropertyConnective::kImplies, strength,
+              span);
+        case slang::ast::BinaryAssertionOperator::Iff:
+          return LowerConnective(
+              proc, frame, binary, hir::PropertyConnective::kIff, strength,
+              span);
         case slang::ast::BinaryAssertionOperator::Until:
         case slang::ast::BinaryAssertionOperator::SUntil:
         case slang::ast::BinaryAssertionOperator::UntilWith:
         case slang::ast::BinaryAssertionOperator::SUntilWith:
           return RefuseAssertionForm(
               span,
-              "a property connective ('implies', 'iff', 'until', 's_until')");
-        case slang::ast::BinaryAssertionOperator::OverlappedFollowedBy:
-        case slang::ast::BinaryAssertionOperator::NonOverlappedFollowedBy:
-          return RefuseAssertionForm(
-              span, "a followed-by operator ('#-#', '#=#')");
+              "a property operator over time ('until', 's_until', "
+              "'until_with', 's_until_with')");
 
-        // Composition the grammar admits on sequences, which the sequence
-        // path already names.
-        case slang::ast::BinaryAssertionOperator::And:
-        case slang::ast::BinaryAssertionOperator::Or:
+        // Composition the grammar admits only on sequences, which the
+        // sequence path names.
         case slang::ast::BinaryAssertionOperator::Intersect:
         case slang::ast::BinaryAssertionOperator::Throughout:
         case slang::ast::BinaryAssertionOperator::Within:
@@ -511,14 +674,44 @@ auto LowerPropertyExpr(
       return LowerSequenceAsProperty(
           proc, frame, named.expr, named_strength, span);
     }
-    case slang::ast::AssertionExprKind::Unary:
+    case slang::ast::AssertionExprKind::Unary: {
+      const auto& unary = expr.as<slang::ast::UnaryAssertionExpr>();
+      switch (unary.op) {
+        // The operand's sequences keep the strength written for them or the
+        // statement's; what `not` exchanges is what a strength asks (LRM
+        // 16.12.3).
+        case slang::ast::UnaryAssertionOperator::Not: {
+          auto operand_or =
+              LowerPropertyExpr(proc, frame, unary.expr, strength, span);
+          if (!operand_or)
+            return std::unexpected(std::move(operand_or.error()));
+          return hir::PropertyExpr{
+              .data =
+                  hir::PropertyNot{
+                      .operand = AddProperty(frame, *std::move(operand_or))},
+              .span = span};
+        }
+        case slang::ast::UnaryAssertionOperator::NextTime:
+        case slang::ast::UnaryAssertionOperator::SNextTime:
+        case slang::ast::UnaryAssertionOperator::Always:
+        case slang::ast::UnaryAssertionOperator::SAlways:
+        case slang::ast::UnaryAssertionOperator::Eventually:
+        case slang::ast::UnaryAssertionOperator::SEventually:
+          break;
+      }
       return RefuseAssertionForm(
           span,
-          "a property operator over time ('not', 'nexttime', 'always', "
+          "a property operator over time ('nexttime', 'always', "
           "'eventually')");
+    }
     case slang::ast::AssertionExprKind::Conditional:
+      return LowerConditionalProperty(
+          proc, frame, expr.as<slang::ast::ConditionalAssertionExpr>(),
+          strength, span);
     case slang::ast::AssertionExprKind::Case:
-      return RefuseAssertionForm(span, "a property selecting between arms");
+      return LowerCaseProperty(
+          proc, frame, expr.as<slang::ast::CaseAssertionExpr>(), strength,
+          span);
     case slang::ast::AssertionExprKind::Abort:
       return RefuseAssertionForm(
           span, "an abort operator ('accept_on', 'reject_on')");
@@ -538,7 +731,7 @@ auto LowerPropertyExpr(
           span, "a 'disable iff' clause anywhere but on the property itself");
 
     // A sequence standing where a property does, which LRM 16.12.2 reads at
-    // the strength the statement demands.
+    // the strength the statement gives it.
     case slang::ast::AssertionExprKind::Simple:
     case slang::ast::AssertionExprKind::SequenceConcat:
     case slang::ast::AssertionExprKind::SequenceWithMatch:
