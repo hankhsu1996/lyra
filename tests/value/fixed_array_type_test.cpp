@@ -78,7 +78,7 @@ struct NothingAsked {
          std::uint64_t) -> std::uint64_t { Unused(); };
   static constexpr auto ReadFromStream =
       [](const ValueType&, const ConstIntegralView&, std::uint64_t,
-         void*) -> std::uint64_t { Unused(); };
+         std::uint64_t, void*) -> std::uint64_t { Unused(); };
   static constexpr auto ResolveTriState = [](const ValueType&, const void*,
                                              const void*, void*) { Unused(); };
   static constexpr auto ResolveWiredAnd = [](const ValueType&, const void*,

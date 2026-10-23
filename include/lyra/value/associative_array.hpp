@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "lyra/value/basic_associative_array.hpp"
+#include "lyra/value/bit_vec.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/element_policy.hpp"
 #include "lyra/value/formation.hpp"
@@ -200,6 +201,16 @@ class AssociativeArray {
   }
   [[nodiscard]] auto BitstreamWidth() const -> Int {
     return Int::FromInt(core_.BitstreamWidth());
+  }
+  // LRM 6.24.3: the elements written below the `filled` most significant
+  // positions of `stream`, the lowest index first, and as a run of bits of
+  // their own.
+  [[nodiscard]] auto WriteToStream(
+      const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
+    return core_.WriteToStream(stream, filled);
+  }
+  [[nodiscard]] auto ToBitVec() const -> BitVec {
+    return StreamOf(*this);
   }
   template <IntegralValue Control>
   [[nodiscard]] auto CountBits(const Control& control_bits) const -> Int {

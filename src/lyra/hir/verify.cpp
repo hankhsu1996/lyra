@@ -281,7 +281,20 @@ void ForEachOperand(const ExprData& data, const auto& reach) {
           },
           [&](const InterfaceInstanceAccessExpr& e) { operand(e.handle); },
           [&](const ConcatExpr& e) { operands(e.operands); },
-          [&](const StreamingConcatExpr& e) { operands(e.operands); },
+          [&](const StreamingConcatExpr& e) {
+            for (const StreamOperand& streamed : e.operands) {
+              operand(streamed.value);
+              if (streamed.with.has_value()) {
+                std::visit(
+                    Overloaded{
+                        [&](ExprId element) { operand(element); },
+                        [&](const RangeBounds& bounds) {
+                          ReachRangeBounds(bounds, reach);
+                        }},
+                    *streamed.with);
+              }
+            }
+          },
           [&](const ReplicationExpr& e) {
             operand(e.count);
             operand(e.concat);

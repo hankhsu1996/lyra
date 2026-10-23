@@ -307,9 +307,7 @@ auto LowerMemFileSystemSubroutineCallStmt(
   for (const mir::ExprId operand : addressing->operands) {
     operands.push_back(operand);
   }
-  operands.push_back(
-      mir::BuildMachineIntLiteral(
-          unit, body, static_cast<std::int64_t>(info.base)));
+  operands.push_back(mir::BuildMachineIntLiteral(unit, body, info.base));
 
   // The addresses start where the source said, or at the memory's lowest
   // address where it said nothing -- which is the same addresses the clause's

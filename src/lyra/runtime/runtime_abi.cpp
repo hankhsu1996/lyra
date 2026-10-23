@@ -72,9 +72,11 @@
 #include "lyra/value/any.hpp"
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/assert.hpp"
+#include "lyra/value/bit_vec.hpp"
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/dpi_open_array.hpp"
+#include "lyra/value/element_sequence.hpp"
 #include "lyra/value/element_type.hpp"
 #include "lyra/value/empty.hpp"
 #include "lyra/value/enumeration.hpp"
@@ -97,10 +99,12 @@
 #include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/scan.hpp"
 #include "lyra/value/string.hpp"
+#include "lyra/value/take_built.hpp"
 #include "lyra/value/tuple_type.hpp"
 #include "lyra/value/unpacked_array.hpp"
 #include "lyra/value/unpacked_range.hpp"
 #include "lyra/value/wide.hpp"
+#include "lyra/value/witnessed_elem.hpp"
 
 namespace lyra::runtime {
 
@@ -1237,27 +1241,6 @@ auto StreamCountBitsOf(
   return out;
 }
 
-// The stream of bits a value makes (LRM 6.24.3), laid out in `out` as the
-// unsigned integral value of `width` bits the caller states it is.
-template <typename Write>
-auto StreamInto(void* out, std::int64_t width, bool is_four_state, Write write)
-    -> void* {
-  value::WrittenWords stream(BitsShape(width, is_four_state));
-  write(stream.MutableView());
-  stream.StoreTo(out);
-  return out;
-}
-
-template <typename T>
-auto StreamOf(
-    const void* value, std::int64_t width, bool is_four_state, void* out)
-    -> void* {
-  return StreamInto(
-      out, width, is_four_state, [&](const value::IntegralView& stream) {
-        value::LibraryTypeOf<T>().WriteToStream(value, stream, 0);
-      });
-}
-
 // A format operand borrowing an integral value, which reads under a conversion
 // through its planes (LRM 21.2.1) as the number its shape makes of them.
 auto IntegralFormatArg(const void* value, value::IntegralShape shape)
@@ -2101,6 +2084,7 @@ using lyra::runtime::WaitRecollecting;
 using lyra::runtime::WaitUntil;
 using lyra::runtime::WatchedPlace;
 using lyra::value::AssociativeIndexOrder;
+using lyra::value::BitVec;
 using lyra::value::Chandle;
 using lyra::value::DpiBitBuffer;
 using lyra::value::DpiLogicBuffer;
@@ -3818,6 +3802,19 @@ auto lyra_rt_string_cell_sampled_get(void* cell) -> const void* {
   return &VariableAt<String>(cell).SampledGet();
 }
 
+auto lyra_rt_bitvec_cell_get(void* cell) -> const void* {
+  return &VariableAt<BitVec>(cell).Get();
+}
+
+void lyra_rt_bitvec_cell_initialize(
+    void* cell, const void* prototype) noexcept {
+  VariableAt<BitVec>(cell).Initialize(Read<BitVec>(prototype));
+}
+
+void lyra_rt_bitvec_cell_set(void* cell, const void* value) {
+  VariableAt<BitVec>(cell).Set(Read<BitVec>(value));
+}
+
 auto lyra_rt_real_cell_get(void* cell) -> const void* {
   return &VariableAt<Real>(cell).Get();
 }
@@ -5212,7 +5209,10 @@ auto lyra_rt_from_bitstream(
     const void* answer_type, void* out) -> void* {
   const lyra::value::LoadedWords stream =
       BitsAt(bits, bits_width, bits_are_four_state);
-  lyra::runtime::TypeAt(answer_type).ReadFromStream(stream.View(), 0, out);
+  const lyra::value::ValueType& type = lyra::runtime::TypeAt(answer_type);
+  type.BuildDefault(out);
+  type.ReadFromStream(
+      stream.View(), 0, static_cast<std::uint64_t>(bits_width), out);
   return out;
 }
 
@@ -5243,6 +5243,28 @@ auto lyra_rt_stream_build(
       stream, taken, bits_width, bits_are_four_state, read.Bytes());
   built_from(read.Bytes(), out);
   return after;
+}
+
+auto lyra_rt_run_write(
+    LyraRunOf run_of, const void* value, const void* stream,
+    std::uint64_t filled) -> std::uint64_t {
+  const BitVec run = lyra::value::TakeBuilt<BitVec>(
+      [&](void* storage) { run_of(value, storage); });
+  const auto& into = *static_cast<const lyra::value::IntegralView*>(stream);
+  lyra::value::Insert(
+      into, run.View(),
+      static_cast<std::int64_t>(into.width - filled - run.View().width));
+  return filled + run.View().width;
+}
+
+auto lyra_rt_run_build(
+    LyraBuiltFromRun built_from, const void* stream, std::uint64_t taken,
+    std::uint64_t until, void* out) -> std::uint64_t {
+  const auto& from =
+      *static_cast<const lyra::value::ConstIntegralView*>(stream);
+  const BitVec run = BitVec::Of(from, taken, until);
+  built_from(&run, out);
+  return until;
 }
 
 auto lyra_rt_stream_read(
@@ -5485,35 +5507,141 @@ auto lyra_rt_managedref_count_bits(
       value, BitsAt(control_bits, control_width, control_is_four_state), out);
 }
 
-auto lyra_rt_string_to_bitstream(
-    const void* value, std::int64_t out_width, bool out_is_four_state,
-    void* out) -> void* {
-  return lyra::runtime::StreamOf<String>(
-      value, out_width, out_is_four_state, out);
+auto lyra_rt_string_to_bitvec(const void* value, void* out) -> void* {
+  return Emplace(out, Read<String>(value).ToBitVec());
 }
-auto lyra_rt_dynarray_to_bitstream(
-    const void* value, std::int64_t out_width, bool out_is_four_state,
-    void* out) -> void* {
-  return lyra::runtime::StreamOf<RuntimeDynamicArray>(
-      value, out_width, out_is_four_state, out);
+auto lyra_rt_dynarray_to_bitvec(const void* value, void* out) -> void* {
+  return Emplace(out, Read<RuntimeDynamicArray>(value).ToBitVec());
 }
-auto lyra_rt_queue_to_bitstream(
-    const void* value, std::int64_t out_width, bool out_is_four_state,
-    void* out) -> void* {
-  return lyra::runtime::StreamOf<RuntimeQueue>(
-      value, out_width, out_is_four_state, out);
+auto lyra_rt_queue_to_bitvec(const void* value, void* out) -> void* {
+  return Emplace(out, Read<RuntimeQueue>(value).ToBitVec());
 }
-auto lyra_rt_assocarray_to_bitstream(
-    const void* value, std::int64_t out_width, bool out_is_four_state,
-    void* out) -> void* {
-  return lyra::runtime::StreamOf<RuntimeAssociativeArray>(
-      value, out_width, out_is_four_state, out);
+auto lyra_rt_assocarray_to_bitvec(const void* value, void* out) -> void* {
+  return Emplace(out, Read<RuntimeAssociativeArray>(value).ToBitVec());
 }
-auto lyra_rt_managedref_to_bitstream(
-    const void* value, std::int64_t out_width, bool out_is_four_state,
+
+auto lyra_rt_dynarray_from_bitvec(
+    const void* run, const void* answer_element_type, void* out) -> void* {
+  return Emplace(
+      out, RuntimeDynamicArray::FromBitVec(
+               lyra::runtime::ElementTypeAt(answer_element_type),
+               Read<BitVec>(run)));
+}
+auto lyra_rt_queue_from_bitvec(
+    const void* run, const void* answer_type, void* out) -> void* {
+  return Emplace(
+      out, RuntimeQueue::FromBitVec(
+               lyra::runtime::QueueTypeAt(answer_type), Read<BitVec>(run)));
+}
+auto lyra_rt_string_from_bitvec(const void* run, void* out) -> void* {
+  return Emplace(out, String::FromBitVec(Read<BitVec>(run)));
+}
+
+auto lyra_rt_bitvec_default(void* out) -> void* {
+  return Emplace(out, BitVec{});
+}
+auto lyra_rt_bitvec_of(
+    const void* bits, std::int64_t bits_width, bool bits_are_four_state,
     void* out) -> void* {
-  return lyra::runtime::StreamOf<ObjectRef>(
-      value, out_width, out_is_four_state, out);
+  return Emplace(
+      out, BitVec::Of(BitsAt(bits, bits_width, bits_are_four_state).View()));
+}
+void lyra_rt_bitvec_extend(
+    void* run, const void* bits, std::int64_t bits_width,
+    bool bits_are_four_state) {
+  static_cast<BitVec*>(run)->Extend(
+      BitsAt(bits, bits_width, bits_are_four_state).View());
+}
+void lyra_rt_bitvec_append(void* run, const void* part) {
+  static_cast<BitVec*>(run)->Append(Read<BitVec>(part));
+}
+void lyra_rt_bitvec_insert_bits(void* run, std::int64_t at, const void* part) {
+  static_cast<BitVec*>(run)->InsertBits(at, Read<BitVec>(part));
+}
+auto lyra_rt_bitvec_reverse_blocks(
+    const void* run, std::int64_t block, void* out) -> void* {
+  return Emplace(out, Read<BitVec>(run).ReverseBlocks(block));
+}
+auto lyra_rt_bitvec_len(const void* run) -> std::int64_t {
+  return Read<BitVec>(run).Len();
+}
+auto lyra_rt_bitvec_extract_bits(
+    const void* run, std::int64_t at, std::int64_t count, void* out) -> void* {
+  return Emplace(out, Read<BitVec>(run).ExtractBits(at, count));
+}
+auto lyra_rt_bitvec_load(
+    const void* run, std::int64_t at, std::int64_t out_width,
+    bool out_is_four_state, void* out) -> void* {
+  lyra::value::WrittenWords bits(
+      lyra::runtime::BitsShape(out_width, out_is_four_state));
+  Read<BitVec>(run).LoadInto(
+      static_cast<std::uint64_t>(at), bits.MutableView());
+  bits.StoreTo(out);
+  return out;
+}
+auto lyra_rt_bitvec_padded_to(const void* run, std::int64_t length, void* out)
+    -> void* {
+  return Emplace(out, Read<BitVec>(run).PaddedTo(length));
+}
+
+auto lyra_rt_dynarray_window_to_bitvec(
+    const void* array, const void* start, std::int64_t count, void* out)
+    -> void* {
+  return Emplace(
+      out, Read<RuntimeDynamicArray>(array).WindowToBitVec(
+               PositionNamedAt(start), lyra::value::WindowCount(count)));
+}
+auto lyra_rt_queue_window_to_bitvec(
+    const void* queue, const void* start, std::int64_t count, void* out)
+    -> void* {
+  return Emplace(
+      out, Read<RuntimeQueue>(queue).WindowToBitVec(
+               PositionNamedAt(start), lyra::value::WindowCount(count)));
+}
+auto lyra_rt_laidout_window_to_bitvec(
+    const void* array, const void* start, std::int64_t count,
+    const void* array_type, void* out) -> void* {
+  const lyra::value::FixedArrayType& type = ArrayTypeAt(array_type);
+  return Emplace(
+      out,
+      lyra::value::detail::StreamOfElements(
+          lyra::value::WitnessedElem(type.ElementType()),
+          type.SliceElements(
+              array, PositionNamedAt(start), lyra::value::WindowCount(count))));
+}
+auto lyra_rt_dynarray_with_window(
+    const void* array, const void* start, std::int64_t count,
+    const void* values, const void* values_type, void* out) -> void* {
+  return Emplace(
+      out, Read<RuntimeDynamicArray>(array).WithWindow(
+               PositionNamedAt(start), lyra::value::WindowCount(count),
+               lyra::runtime::ElementHandles(values, values_type)));
+}
+auto lyra_rt_queue_with_window(
+    const void* queue, const void* start, std::int64_t count,
+    const void* values, const void* values_type, void* out) -> void* {
+  return Emplace(
+      out, Read<RuntimeQueue>(queue).WithWindow(
+               PositionNamedAt(start), lyra::value::WindowCount(count),
+               lyra::runtime::ElementHandles(values, values_type)));
+}
+auto lyra_rt_laidout_with_window(
+    const void* array, const void* start, std::int64_t count,
+    const void* values, const void* values_type, const void* array_type,
+    void* out) -> void* {
+  const lyra::value::FixedArrayType& type = ArrayTypeAt(array_type);
+  const std::optional<std::int64_t> first = PositionNamedAt(start);
+  if (count > 0 && (!first.has_value() || *first < 0 ||
+                    *first + count > static_cast<std::int64_t>(type.Count()))) {
+    throw lyra::SimulationError(
+        "the range a 'with' names reaches outside the array it is unpacked "
+        "into");
+  }
+  type.Type().Copy(array, out);
+  type.AssignSlice(
+      out, first, lyra::value::WindowCount(count),
+      lyra::runtime::ElementHandles(values, values_type));
+  return out;
 }
 
 auto lyra_rt_laidout_size(const void* array, const void* array_type, void* out)
@@ -6427,6 +6555,9 @@ auto lyra_rt_dpi_open_array_value(
 auto lyra_rt_string_cell_open_for_write(void* cell, void* out) -> void* {
   return OpenCellWrite<String>(cell, out);
 }
+auto lyra_rt_bitvec_cell_open_for_write(void* cell, void* out) -> void* {
+  return OpenCellWrite<BitVec>(cell, out);
+}
 auto lyra_rt_real_cell_open_for_write(void* cell, void* out) -> void* {
   return OpenCellWrite<Real>(cell, out);
 }
@@ -6681,6 +6812,9 @@ void lyra_rt_queue_assign_slice(
 auto lyra_rt_string_land(const void* designation) noexcept -> void* {
   return LandDesignation<String>(designation);
 }
+auto lyra_rt_bitvec_land(const void* designation) noexcept -> void* {
+  return LandDesignation<BitVec>(designation);
+}
 auto lyra_rt_real_land(const void* designation) noexcept -> void* {
   return LandDesignation<Real>(designation);
 }
@@ -6717,6 +6851,9 @@ auto lyra_rt_managedref_land(const void* designation) noexcept -> void* {
 // storage goes on naming it (LRM 7.6).
 void lyra_rt_string_assign(void* storage, const void* value) {
   *static_cast<String*>(storage) = Read<String>(value);
+}
+void lyra_rt_bitvec_assign(void* storage, const void* value) {
+  *static_cast<BitVec*>(storage) = Read<BitVec>(value);
 }
 void lyra_rt_real_assign(void* storage, const void* value) {
   *static_cast<Real*>(storage) = Read<Real>(value);
@@ -6773,6 +6910,9 @@ auto lyra_rt_discarded_write(const void* element_type) -> void* {
 void lyra_rt_string_destroy(void* object) {
   std::destroy_at(static_cast<String*>(object));
 }
+void lyra_rt_bitvec_destroy(void* object) {
+  std::destroy_at(static_cast<BitVec*>(object));
+}
 void lyra_rt_dynarray_destroy(void* object) {
   std::destroy_at(static_cast<RuntimeDynamicArray*>(object));
 }
@@ -6826,6 +6966,9 @@ void lyra_rt_object_write_destroy(void* object) {
 // the body gave -- where a value it only reads has to become one it owns.
 auto lyra_rt_string_copy(const void* value, void* out) -> void* {
   return Emplace(out, Read<String>(value));
+}
+auto lyra_rt_bitvec_copy(const void* value, void* out) -> void* {
+  return Emplace(out, Read<BitVec>(value));
 }
 auto lyra_rt_real_copy(const void* value, void* out) -> void* {
   return Emplace(out, Read<Real>(value));
@@ -6895,6 +7038,9 @@ auto lyra_rt_any_reference_copy(const void* value, void* out) -> void* {
 // an object, which the body then ends.
 auto lyra_rt_string_move(void* value, void* out) -> void* {
   return Emplace(out, std::move(*static_cast<String*>(value)));
+}
+auto lyra_rt_bitvec_move(void* value, void* out) -> void* {
+  return Emplace(out, std::move(*static_cast<BitVec*>(value)));
 }
 auto lyra_rt_real_move(void* value, void* out) -> void* {
   return Emplace(out, *static_cast<Real*>(value));
@@ -6978,6 +7124,9 @@ void lyra_rt_any_reference_construct(void* storage) {
 void lyra_rt_string_cell_construct(void* storage) {
   BuildAt<Var<String>>(storage);
 }
+void lyra_rt_bitvec_cell_construct(void* storage) {
+  BuildAt<Var<BitVec>>(storage);
+}
 void lyra_rt_real_cell_construct(void* storage) {
   BuildAt<Var<Real>>(storage);
 }
@@ -7006,6 +7155,9 @@ void lyra_rt_managedref_cell_construct(void* storage) {
 }
 void lyra_rt_string_value_cell_construct(void* storage) {
   BuildAt<ValueCell<String>>(storage);
+}
+void lyra_rt_bitvec_value_cell_construct(void* storage) {
+  BuildAt<ValueCell<BitVec>>(storage);
 }
 void lyra_rt_real_value_cell_construct(void* storage) {
   BuildAt<ValueCell<Real>>(storage);
@@ -7085,6 +7237,9 @@ void lyra_rt_shared_pointer_construct(void* storage) {
 void lyra_rt_string_cell_destroy(void* storage) {
   std::destroy_at(&VariableAt<String>(storage));
 }
+void lyra_rt_bitvec_cell_destroy(void* storage) {
+  std::destroy_at(&VariableAt<BitVec>(storage));
+}
 void lyra_rt_real_cell_destroy(void* storage) {
   std::destroy_at(&VariableAt<Real>(storage));
 }
@@ -7112,6 +7267,9 @@ void lyra_rt_managedref_cell_destroy(void* storage) {
 }
 void lyra_rt_string_value_cell_destroy(void* storage) {
   std::destroy_at(&LocalAt<String>(storage));
+}
+void lyra_rt_bitvec_value_cell_destroy(void* storage) {
+  std::destroy_at(&LocalAt<BitVec>(storage));
 }
 void lyra_rt_laidout_value_cell_destroy(void* storage) {
   std::destroy_at(static_cast<LocalOf<LaidOutValue>::Type*>(storage));

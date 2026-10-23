@@ -43,6 +43,29 @@ namespace lyra::hir {
 
 namespace {
 
+// A range of elements as the source wrote it: two ends, or a start and a width
+// counted up or down.
+auto RangeBoundsText(const RangeBounds& bounds) -> std::string {
+  return std::visit(
+      Overloaded{
+          [](const RangeConstantBounds& b) {
+            return std::format(
+                "kind=Constant left=Expr[{}] right=Expr[{}]",
+                b.left_bound.value, b.right_bound.value);
+          },
+          [](const RangeIndexedUpBounds& b) {
+            return std::format(
+                "kind=IndexedUp base_index=Expr[{}] width=Expr[{}]",
+                b.base_index.value, b.width.value);
+          },
+          [](const RangeIndexedDownBounds& b) {
+            return std::format(
+                "kind=IndexedDown base_index=Expr[{}] width=Expr[{}]",
+                b.base_index.value, b.width.value);
+          }},
+      bounds);
+}
+
 auto StrengthLevelLabel(support::StrengthLevel level) -> std::string_view {
   switch (level) {
     case support::StrengthLevel::kHighImpedance:
@@ -1282,31 +1305,9 @@ class HirDumper {
                   sel.base_value.value, sel.index.value);
             },
             [](const RangeSelectExpr& sel) -> std::string {
-              return std::visit(
-                  Overloaded{
-                      [&](const RangeConstantBounds& b) -> std::string {
-                        return std::format(
-                            "RangeSelectExpr base=Expr[{}] kind=Constant "
-                            "left=Expr[{}] right=Expr[{}]",
-                            sel.base_value.value, b.left_bound.value,
-                            b.right_bound.value);
-                      },
-                      [&](const RangeIndexedUpBounds& b) -> std::string {
-                        return std::format(
-                            "RangeSelectExpr base=Expr[{}] kind=IndexedUp "
-                            "base_index=Expr[{}] width=Expr[{}]",
-                            sel.base_value.value, b.base_index.value,
-                            b.width.value);
-                      },
-                      [&](const RangeIndexedDownBounds& b) -> std::string {
-                        return std::format(
-                            "RangeSelectExpr base=Expr[{}] kind=IndexedDown "
-                            "base_index=Expr[{}] width=Expr[{}]",
-                            sel.base_value.value, b.base_index.value,
-                            b.width.value);
-                      },
-                  },
-                  sel.bounds);
+              return std::format(
+                  "RangeSelectExpr base=Expr[{}] {}", sel.base_value.value,
+                  RangeBoundsText(sel.bounds));
             },
             [](const MemberAccessExpr& sel) -> std::string {
               return std::format(
@@ -1352,7 +1353,21 @@ class HirDumper {
                 if (i != 0) {
                   operands += ", ";
                 }
-                operands += std::format("Expr[{}]", s.operands[i].value);
+                const StreamOperand& operand = s.operands[i];
+                operands += std::format("Expr[{}]", operand.value.value);
+                if (operand.with.has_value()) {
+                  operands += std::visit(
+                      Overloaded{
+                          [](ExprId element) {
+                            return std::format(
+                                " with [Expr[{}]]", element.value);
+                          },
+                          [](const RangeBounds& bounds) {
+                            return std::format(
+                                " with [{}]", RangeBoundsText(bounds));
+                          }},
+                      *operand.with);
+                }
               }
               return std::format(
                   "StreamingConcatExpr block_bits={} operands=[{}]",

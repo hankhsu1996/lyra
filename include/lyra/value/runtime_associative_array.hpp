@@ -8,6 +8,7 @@
 
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/basic_associative_array.hpp"
+#include "lyra/value/bit_vec.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/element_type.hpp"
 #include "lyra/value/formation.hpp"
@@ -159,6 +160,12 @@ class RuntimeAssociativeArray {
   [[nodiscard]] auto HasUnknown() const -> bool;
   [[nodiscard]] auto IsUnknown() const -> Bit;
   [[nodiscard]] auto BitstreamWidth() const -> Int;
+  // LRM 6.24.3: the elements written below the `filled` most significant
+  // positions of `stream`, the lowest index first, and as a run of bits of
+  // their own.
+  [[nodiscard]] auto WriteToStream(
+      const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t;
+  [[nodiscard]] auto ToBitVec() const -> BitVec;
   [[nodiscard]] auto CountBits(const ConstIntegralView& control_bits) const
       -> Int;
 

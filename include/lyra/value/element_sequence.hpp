@@ -6,7 +6,25 @@
 #include <span>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
+#include "lyra/base/simulation_error.hpp"
+#include "lyra/value/element_policy.hpp"
 #include "lyra/value/integral_words.hpp"
+
+namespace lyra::value {
+
+// LRM 11.4.14.4: how many elements a `with` range names. The range behaves as
+// a slice, which names none where it ends before it starts (LRM 7.10.1), and
+// the lowering states that as a count of zero, so a negative one is a lowering
+// defect rather than a value.
+[[nodiscard]] inline auto WindowCount(std::int64_t count) -> std::size_t {
+  if (count < 0) {
+    throw InternalError("a 'with' range names a negative number of elements");
+  }
+  return static_cast<std::size_t>(count);
+}
+
+}  // namespace lyra::value
 
 // The whole-value operations of a container whose elements are a sequence by
 // position -- a queue, a dynamic array, a fixed-size array -- written once over
@@ -122,6 +140,96 @@ template <typename Seq, typename Control>
   }
   return total;
 }
+
+// LRM 6.24.3: the elements' own streams written into `stream` below its
+// `filled` most significant positions, the one at position 0 most significant
+// -- the order a `foreach` walks them in (LRM 11.4.14.1). Answers how many are
+// filled after them.
+template <typename Seq>
+auto SequenceWriteToStream(
+    const Seq& seq, const IntegralView& stream, std::uint64_t filled)
+    -> std::uint64_t {
+  for (std::size_t i = 0; i < seq.Count(); ++i) {
+    filled = seq.Element().WriteToStream(seq.At(i), stream, filled);
+  }
+  return filled;
+}
+
+// LRM 11.4.14.4: the elements `elements` names written end to end into a run
+// of bits of their own, the first most significant.
+template <ElementPolicy Elem>
+[[nodiscard]] auto StreamOfElements(
+    const Elem& elem, std::span<const void* const> elements) -> BitVec {
+  std::uint64_t width = 0;
+  for (const void* element : elements) {
+    width += static_cast<std::uint64_t>(elem.BitstreamWidth(element));
+  }
+  BitVec run = BitVec::Zeros(width);
+  std::uint64_t filled = 0;
+  for (const void* element : elements) {
+    filled = elem.WriteToStream(element, run.MutableView(), filled);
+  }
+  return run;
+}
+
+// LRM 6.24.3, 11.4.14.4: the elements a stream holds from its `taken` most
+// significant position up to `until`, each read in turn into storage of its own
+// holding the element default, in the order a `foreach` walks them. An element
+// whose type fixes its width takes that many positions, so as many are read as
+// fill the run; one whose width the running program decides takes every
+// position left, so it is the only one. A run that an element would end past
+// does not divide into the elements.
+template <ElementPolicy Elem>
+class ElementsRead {
+ public:
+  ElementsRead(
+      const Elem& elem, const ConstIntegralView& stream, std::uint64_t taken,
+      std::uint64_t until)
+      : read_(elem) {
+    while (taken < until) {
+      void* element = read_.Add(elem.Default());
+      taken = elem.ReadFromStream(stream, taken, until, element);
+    }
+    if (taken != until) {
+      throw SimulationError(
+          "a stream of bits does not divide into the elements of the array it "
+          "is read into");
+    }
+  }
+
+  // Where each element read lies, in order.
+  [[nodiscard]] auto Addresses() const -> std::vector<const void*> {
+    return {read_.items.begin(), read_.items.end()};
+  }
+
+ private:
+  // The storage of each element read, given back however the reading ends.
+  struct Owned {
+    explicit Owned(const Elem& of) : elem(&of) {
+    }
+    Owned(const Owned&) = delete;
+    auto operator=(const Owned&) -> Owned& = delete;
+    Owned(Owned&&) = delete;
+    auto operator=(Owned&&) -> Owned& = delete;
+    ~Owned() {
+      for (void* item : items) {
+        FreeElement(*elem, item);
+      }
+    }
+
+    // Storage of its own holding a copy of `from`, kept here.
+    auto Add(const void* from) -> void* {
+      items.reserve(items.size() + 1);
+      items.push_back(CopyElement(*elem, from));
+      return items.back();
+    }
+
+    const Elem* elem;
+    std::vector<void*> items;
+  };
+
+  Owned read_;
+};
 
 // LRM 7.4.5 / 7.4.6: the `count` elements of `seq` from `start`, each the
 // element default where it lies outside the sequence, every one of them where

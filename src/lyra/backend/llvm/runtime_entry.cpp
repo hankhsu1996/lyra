@@ -110,6 +110,10 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "stream_read";
     case RuntimeOp::kStreamBuild:
       return "stream_build";
+    case RuntimeOp::kRunWrite:
+      return "run_write";
+    case RuntimeOp::kRunBuild:
+      return "run_build";
     case RuntimeOp::kInsertBits:
       return "insert_bits";
     case RuntimeOp::kInsertDesignatedBits:
@@ -177,8 +181,9 @@ constexpr DomainSet kBitstreams =
 // neither its bytes nor laid out by a type compiled with the design.
 constexpr DomainSet kLibraryObjects =
     kLibraryContainers | kReals |
-    DomainSet{Domain::kWildcardIndex, Domain::kAny,   Domain::kString,
-              Domain::kChandle,       Domain::kEmpty, Domain::kManagedRef};
+    DomainSet{Domain::kWildcardIndex, Domain::kAny,     Domain::kString,
+              Domain::kBitVec,        Domain::kChandle, Domain::kEmpty,
+              Domain::kManagedRef};
 // What an aggregate net resolves in (LRM 6.7.1), and what any net does.
 constexpr DomainSet kAggregateNets = kLaidOutByType;
 constexpr DomainSet kNetValues = kFourStateIntegral | kAggregateNets;
@@ -193,6 +198,12 @@ constexpr DomainSet kObjectsThatStateThemselves =
 constexpr DomainSet kVariableObjects =
     kObjectsThatStateThemselves | kLaidOutByType;
 constexpr DomainSet kVariableValues = kIntegral | kVariableObjects;
+// What a body's own variable holds: whatever a variable may, and a run of bits,
+// which a streaming operator keeps there while it packs or unpacks one (LRM
+// 11.4.14) and which no declaration names.
+constexpr DomainSet kBodyObjects =
+    kObjectsThatStateThemselves | DomainSet{Domain::kBitVec};
+constexpr DomainSet kBodyValues = kVariableValues | DomainSet{Domain::kBitVec};
 // What a variable a procedural continuous assignment takes over may hold: a
 // singular value (LRM 10.6.1, 10.6.2, 6.4), but no chandle, which no
 // continuous assignment may name (LRM 6.14); and a value laid out by its type,
@@ -228,6 +239,11 @@ constexpr std::array kForWhatAnEntryComparesWhole{RealizedFor{
         kLibraryContainers | kReals |
         DomainSet{Domain::kString, Domain::kChandle, Domain::kManagedRef}}};
 constexpr std::array kForBitstreams{RealizedFor{.domains = kBitstreams}};
+// What answers its stream as a run of bits as long as the value makes it: a
+// container of the library's and a string. A class handle's stream is the
+// object's, which the library does not build.
+constexpr std::array kForRunsOfBits{
+    RealizedFor{.domains = kLibraryContainers | DomainSet{Domain::kString}}};
 constexpr std::array kForUnpackedArrays{RealizedFor{.domains = kLaidOutByType}};
 constexpr std::array kForUnpackedArraysAndQueues{
     RealizedFor{.domains = kLaidOutByType | DomainSet{Domain::kQueue}}};
@@ -298,7 +314,7 @@ constexpr std::array kTakeovers{
 // was told its width where it was built, and one of a value laid out by its
 // type that type.
 constexpr std::array kInstalls{
-    ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kVariableValues}};
+    ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kBodyValues}};
 // A cell holds the bytes of a value no wider than a word where generated code
 // reads them, and the address of any other value of its own laying it out after
 // itself; a net keeps the address of what it shows, whatever that is laid out
@@ -306,8 +322,7 @@ constexpr std::array kInstalls{
 // reading one. A reference read, or sampled, answers where what it names lies,
 // so it is told nothing of it.
 constexpr std::array kLoads{
-    ThroughWrapper{
-        .wrapper = WrapperKind::kCell, .domains = kObjectsThatStateThemselves},
+    ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kBodyObjects},
     ThroughWrapper{.wrapper = WrapperKind::kDriver, .domains = kNetValues},
     ThroughWrapper{
         .wrapper = WrapperKind::kRef,
@@ -355,12 +370,12 @@ constexpr ThroughWrapper kThroughAReferenceToWords{
     .domains = kWideIntegral,
     .told = ToldWidthMetadata{.after = 0}};
 constexpr std::array kStores{
-    ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kVariableValues},
+    ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kBodyValues},
     ThroughWrapper{.wrapper = WrapperKind::kDriver, .domains = kNetValues},
     kThroughAReferenceToBytesOrAnObject, kThroughAReferenceToWords,
     kThroughAReferenceToALaidOutValue};
 constexpr std::array kOpenedWrites{
-    ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kVariableValues},
+    ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kBodyValues},
     ThroughWrapper{.wrapper = WrapperKind::kDriver, .domains = kNetValues},
     kThroughAReferenceToBytesOrAnObject, kThroughAReferenceToWords,
     kThroughAReferenceToALaidOutValue};
@@ -386,8 +401,8 @@ constexpr std::array kForCellsReached{
 // A designation of words is told how wide they are where the write lands.
 constexpr std::array kForLandings{
     RealizedFor{
-        .domains = kOneWordIntegral | kObjectsThatStateThemselves |
-                   kLaidOutByType | DomainSet{Domain::kEmpty}},
+        .domains = kOneWordIntegral | kBodyObjects | kLaidOutByType |
+                   DomainSet{Domain::kEmpty}},
     RealizedFor{
         .domains = kWideIntegral, .told = ToldWidthMetadata{.after = 0}}};
 // A step into an element and a write of a run of elements each act on the
@@ -405,10 +420,12 @@ constexpr std::array kForBitsWritten{
     RealizedFor{.domains = kIntegral, .told = ToldWidthMetadata{.after = 0}}};
 
 // What a construction taking nothing builds holding nothing: a null handle, the
-// one value of no bits, and a value of any type before one is put in it.
+// one value of no bits, a value of any type before one is put in it, and a run
+// of no bits.
 constexpr std::array kForWhatIsBuiltHoldingNothing{RealizedFor{
     .domains = {
-        Domain::kAny, Domain::kChandle, Domain::kEmpty, Domain::kManagedRef}}};
+        Domain::kAny, Domain::kChandle, Domain::kEmpty, Domain::kBitVec,
+        Domain::kManagedRef}}};
 constexpr std::array kForWhatIsTrueOrFalse{RealizedFor{
     .domains = kReals | DomainSet{Domain::kChandle, Domain::kManagedRef}}};
 constexpr std::array kForWhatFormatsItself{RealizedFor{
@@ -420,7 +437,8 @@ constexpr std::array kForWhatAHostValueBuilds{
 constexpr std::array kForWhatEndsWithWork{RealizedFor{
     .domains = kLibraryContainers | DomainSet{
                                         Domain::kWildcardIndex, Domain::kAny,
-                                        Domain::kString, Domain::kManagedRef}}};
+                                        Domain::kString, Domain::kBitVec,
+                                        Domain::kManagedRef}}};
 
 // What refusing a realization the library does not hold says.
 auto Refusal(std::string_view entry, std::string_view realization)
@@ -652,6 +670,7 @@ auto ReachedByKey(support::ValueDomain domain) -> bool {
     case support::ValueDomain::kWildcardIndex:
     case support::ValueDomain::kAny:
     case support::ValueDomain::kString:
+    case support::ValueDomain::kBitVec:
     case support::ValueDomain::kReal:
     case support::ValueDomain::kShortReal:
     case support::ValueDomain::kChandle:
@@ -949,6 +968,9 @@ auto MemberStorageKindOf(
           [&](const lir::RuntimeLibraryType& library)
               -> std::optional<support::MemberStorageKind> {
             switch (library.kind) {
+              // A value of the library's own, held as any value is.
+              case lir::RuntimeLibraryKind::kBitVec:
+                return held_value(type);
               case lir::RuntimeLibraryKind::kCancellationTarget:
                 return support::MemberStorageKind::kCancellationTarget;
               case lir::RuntimeLibraryKind::kTimer:
@@ -1191,6 +1213,9 @@ auto OperandReadingsOf(RuntimeOp op) -> support::OperandReadings {
     // with how wide its stream is and whether the stream holds x or z.
     case RuntimeOp::kStreamWrite:
       return {kMachine, kBits};
+    // The function answering a value's run of bits, then that value.
+    case RuntimeOp::kRunWrite:
+      return {kMachine, kMachine};
     // The value written into, the parts the bits lie in, where the bits
     // start, and the bits.
     case RuntimeOp::kInsertBits:
@@ -1226,6 +1251,7 @@ auto OperandReadingsOf(RuntimeOp op) -> support::OperandReadings {
     case RuntimeOp::kSettleDeparture:
     case RuntimeOp::kStreamRead:
     case RuntimeOp::kStreamBuild:
+    case RuntimeOp::kRunBuild:
     case RuntimeOp::kFromElements:
     case RuntimeOp::kElementDefault:
     case RuntimeOp::kDiscardedWrite:
@@ -1287,6 +1313,8 @@ auto AnswerToldOf(RuntimeOp op) -> support::AnswerTold {
     case RuntimeOp::kMakeDpiOpenArray:
     case RuntimeOp::kSettleDeparture:
     case RuntimeOp::kStreamWrite:
+    case RuntimeOp::kRunWrite:
+    case RuntimeOp::kRunBuild:
     case RuntimeOp::kInsertBits:
     case RuntimeOp::kInsertDesignatedBits:
     case RuntimeOp::kFromElements:
@@ -1390,6 +1418,8 @@ auto RealizationsOf(RuntimeOp op) -> std::span<const RealizedFor> {
     case RuntimeOp::kStreamWrite:
     case RuntimeOp::kStreamBuild:
     case RuntimeOp::kStreamRead:
+    case RuntimeOp::kRunWrite:
+    case RuntimeOp::kRunBuild:
     case RuntimeOp::kInsertBits:
     case RuntimeOp::kElementDefault:
     case RuntimeOp::kDiscardedWrite:
@@ -1582,12 +1612,19 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kHasUnknown:
       return NamedByValue{.realized = kForWhatAnEntryComparesWhole};
     case support::BuiltinFn::kBitstreamWidth:
-    case support::BuiltinFn::kToBitstream:
     case support::BuiltinFn::kCountBits:
       return NamedByValue{.realized = kForBitstreams};
+    case support::BuiltinFn::kToBitVec:
+      return NamedByValue{.realized = kForRunsOfBits};
+    // LRM 11.4.14.4: a run of an array's elements, which an array of the
+    // library's own answers and a fixed-size one is told its type for.
+    case support::BuiltinFn::kWindowToBitVec:
+    case support::BuiltinFn::kWithWindow:
+      return NamedByValue{.realized = kForSequences};
     // What a value laid out by its type answers -- a structure, a union, a
     // fixed-size array -- which code compiled for the type answers, and
     // nothing the library holds does; an integral value's is its own entry.
+    case support::BuiltinFn::kToBitstream:
     case support::BuiltinFn::kIsUnknown:
     case support::BuiltinFn::kResolveTriState:
     case support::BuiltinFn::kResolveWiredAnd:
@@ -1611,6 +1648,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kFromByteArray:
     case support::BuiltinFn::kConcatStrings:
       return NamedByResult{.realized = kForStrings};
+    // LRM 6.24.3: a dynamic array or a queue holding as many elements as fill
+    // a run of bits, which is told the type of the array it builds.
+    case support::BuiltinFn::kFromBitVec:
+      return NamedByResult{.realized = kForDynamicArraysAndQueues};
     case support::BuiltinFn::kFromBits:
     case support::BuiltinFn::kFromInt:
       return NamedByResult{.realized = kForReals};
@@ -1978,6 +2019,18 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // A value built from a stream of bits (LRM 6.24.3), asked of the type it
     // is told it answers, so one function serves every type.
     case support::BuiltinFn::kFromBitstream:
+    // A run of bits is one kind of value with one realization, and a string
+    // built out of one is one function, each entry's own name saying which.
+    case support::BuiltinFn::kStringFromBitVec:
+    case support::BuiltinFn::kBitVecOf:
+    case support::BuiltinFn::kBitVecExtend:
+    case support::BuiltinFn::kBitVecAppend:
+    case support::BuiltinFn::kBitVecInsertBits:
+    case support::BuiltinFn::kBitVecReverseBlocks:
+    case support::BuiltinFn::kBitVecLen:
+    case support::BuiltinFn::kBitVecExtractBits:
+    case support::BuiltinFn::kBitVecLoad:
+    case support::BuiltinFn::kBitVecPaddedTo:
     // The DPI-C boundary marshaling (LRM 35.5.6, Annex H.7.7, H.10). Each of
     // these is one library function and not a family: what a canonical buffer,
     // an `svLogic` scalar and an open-array image hold is fixed by the C ABI,

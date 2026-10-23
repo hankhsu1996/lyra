@@ -16,6 +16,7 @@
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
@@ -168,14 +169,9 @@ auto ReachHeldInterface(
       mir::Expr{
           .data = mir::CastExpr{.operand = held},
           .type = unit.builtins.machine_bool});
-  const mir::ExprId message = body.exprs.Add(
-      mir::MakeStringLiteral(
-          unit.builtins.string,
-          base::DiagMessage("use of a null virtual interface").TakeText()));
-  body.AppendStmt(
-      mir::ExprStmt{
-          .expr = body.exprs.Add(
-              mir::MakeAssertExpr(present, message, unit.builtins.void_type))});
+  mir::AppendRunTimeCheck(
+      unit, body, present,
+      base::DiagMessage("use of a null virtual interface").TakeText());
   // The handle is a value holding the instance's address, so reaching the
   // instance reads that address out and states which unit's object it is.
   const mir::ExprId address = body.exprs.Add(

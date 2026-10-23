@@ -1,7 +1,8 @@
 #pragma once
 
 // Lowering of value-build aggregate expressions (LRM 11.4.12 concatenation,
-// replication, and LRM 10.9 assignment patterns), and the dynamic-array
+// replication, LRM 11.4.14 streaming concatenation, and LRM 10.9 assignment
+// patterns), and the dynamic-array
 // constructor (LRM 7.5.1), whose expression form is a constructor-style build
 // of the same family.
 
@@ -26,10 +27,6 @@ namespace lyra::lowering::hir_to_mir {
 template <ExprLowerer Lowerer>
 auto LowerHirConcatExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ConcatExpr& c,
-    mir::TypeId result_type) -> diag::Result<mir::Expr>;
-template <ExprLowerer Lowerer>
-auto LowerHirStreamingConcatExpr(
-    Lowerer& lowerer, WalkFrame frame, const hir::StreamingConcatExpr& s,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
 // The value of `result_type` whose members, in declaration order, are
 // `elements`, each already at its member's type (LRM 10.9): a packed type joins
@@ -71,6 +68,13 @@ template <ExprLowerer Lowerer>
 auto LowerHirReplicationExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ReplicationExpr& r,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
+
+// The stream a streaming concatenation makes (LRM 11.4.14), which has no type
+// of its own, so it is told none: it is held as its parts allow.
+template <ExprLowerer Lowerer>
+auto LowerHirStreamingConcatExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::StreamingConcatExpr& s)
+    -> diag::Result<mir::Expr>;
 
 // The dynamic-array constructor `new[]` (LRM 7.5.1), which the clause admits on
 // the right-hand side of a variable declaration assignment as well as a

@@ -191,6 +191,7 @@ auto LayoutOfLibraryRecord(lir::RuntimeLibraryKind kind)
       return LayoutOf<runtime::DumpEntry>();
     case lir::RuntimeLibraryKind::kDumpBlock:
       return LayoutOf<runtime::DumpBlock>();
+    case lir::RuntimeLibraryKind::kBitVec:
     case lir::RuntimeLibraryKind::kEnumeration:
     case lir::RuntimeLibraryKind::kPrintItem:
     case lir::RuntimeLibraryKind::kPrintLiteralItem:

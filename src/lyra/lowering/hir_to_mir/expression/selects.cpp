@@ -10,13 +10,17 @@
 #include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
+#include "lyra/lowering/hir_to_mir/bitstream.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
@@ -32,6 +36,7 @@
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 // HIR-to-MIR lowering for the three ways the source selects part of a value:
 // `a[i]`, `a[hi:lo]` with its `+:` and `-:` forms, and `s.member`.
@@ -499,6 +504,145 @@ auto SettleSelectedQueue(
 }
 
 }  // namespace
+
+template <ExprLowerer Lowerer>
+auto LowerStreamWindow(
+    Lowerer& lowerer, const WalkFrame& frame, hir::TypeId array_type,
+    const hir::StreamRange& range) -> diag::Result<StreamWindow> {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  mir::Block& block = *frame.current_block;
+  const PositionMap map = PositionMapOf(lowerer.Owner(), array_type);
+  // A bound written in the array's declared numbering as a position in its own,
+  // formed as a select forms one, so a bound holding x or z names none.
+  const auto position = [&](hir::ExprId index) -> diag::Result<mir::ExprId> {
+    auto lowered = lowerer.LowerExpr(lowerer.HirExprs().Get(index), frame);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    return EvaluatedOnce(
+        frame, WrapIndexAsPosition(
+                   unit, block, map, block.exprs.Add(*std::move(lowered)), 0));
+  };
+  // The far end of `width` elements counted from `base`, up or down the
+  // declared numbering, which runs against the array's own where it is
+  // reversed.
+  const auto far_end = [&](mir::ExprId base, hir::ExprId width,
+                           bool up) -> diag::Result<mir::ExprId> {
+    auto lowered = lowerer.LowerExpr(lowerer.HirExprs().Get(width), frame);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    return EvaluatedOnce(
+        frame, BuildSpanEnd(
+                   unit, block, base, block.exprs.Add(*std::move(lowered)),
+                   up != map.reversed));
+  };
+  // The window's lowest and highest positions in the array's own numbering.
+  struct Ends {
+    mir::ExprId lowest;
+    mir::ExprId highest;
+  };
+  auto ends = std::visit(
+      Overloaded{
+          [&](hir::ExprId element) -> diag::Result<Ends> {
+            auto at = position(element);
+            if (!at) return std::unexpected(std::move(at.error()));
+            return Ends{.lowest = *at, .highest = *at};
+          },
+          [&](const hir::RangeBounds& bounds) -> diag::Result<Ends> {
+            return std::visit(
+                Overloaded{
+                    [&](const hir::RangeConstantBounds& b)
+                        -> diag::Result<Ends> {
+                      auto left = position(b.left_bound);
+                      if (!left)
+                        return std::unexpected(std::move(left.error()));
+                      auto right = position(b.right_bound);
+                      if (!right) {
+                        return std::unexpected(std::move(right.error()));
+                      }
+                      return Ends{.lowest = *left, .highest = *right};
+                    },
+                    [&](const hir::RangeIndexedUpBounds& b)
+                        -> diag::Result<Ends> {
+                      auto base = position(b.base_index);
+                      if (!base)
+                        return std::unexpected(std::move(base.error()));
+                      auto other = far_end(*base, b.width, true);
+                      if (!other) {
+                        return std::unexpected(std::move(other.error()));
+                      }
+                      return map.reversed
+                                 ? Ends{.lowest = *other, .highest = *base}
+                                 : Ends{.lowest = *base, .highest = *other};
+                    },
+                    [&](const hir::RangeIndexedDownBounds& b)
+                        -> diag::Result<Ends> {
+                      auto base = position(b.base_index);
+                      if (!base)
+                        return std::unexpected(std::move(base.error()));
+                      auto other = far_end(*base, b.width, false);
+                      if (!other) {
+                        return std::unexpected(std::move(other.error()));
+                      }
+                      return map.reversed
+                                 ? Ends{.lowest = *base, .highest = *other}
+                                 : Ends{.lowest = *other, .highest = *base};
+                    }},
+                bounds);
+          }},
+      range);
+  if (!ends) return std::unexpected(std::move(ends.error()));
+  // A range behaves as a slice of its array (LRM 11.4.14.4), which names no
+  // element where it ends before it starts or a bound holds x or z (LRM
+  // 7.10.1): the positions between the two ends, read as a count, none where
+  // that is not positive, and x read as no position.
+  const mir::TypeId position_type = mir::PositionType(unit.types);
+  const mir::ExprId spanned = EvaluatedOnce(
+      frame,
+      BuildToInt64Call(
+          unit, block,
+          block.exprs.Add(
+              mir::MakeBinary(
+                  unit, block, mir::BinaryOp::kAdd,
+                  block.exprs.Add(
+                      mir::MakeBinary(
+                          unit, block, mir::BinaryOp::kSub, ends->highest,
+                          ends->lowest, position_type)),
+                  BuildConstantPosition(unit, block, 1), position_type))));
+  return StreamWindow{
+      .start = ends->lowest,
+      .count = EvaluatedOnce(
+          frame, mir::BuildMachineIntConditional(
+                     unit, block,
+                     mir::BuildMachineIntComparison(
+                         unit, block, mir::BinaryOp::kLessEqual, spanned,
+                         mir::BuildMachineIntLiteral(unit, block, 0)),
+                     mir::BuildMachineIntLiteral(unit, block, 0), spanned))};
+}
+
+template <ExprLowerer Lowerer>
+auto LowerStreamWindowRun(
+    Lowerer& lowerer, const WalkFrame& frame, const hir::StreamOperand& operand)
+    -> diag::Result<mir::Expr> {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  mir::Block& block = *frame.current_block;
+  const hir::Expr& array = lowerer.HirExprs().Get(operand.value);
+  const UnitLowerer& unit_lowerer = lowerer.Owner();
+  if (HoldsClassHandle(unit, unit_lowerer.TranslateType(array.type))) {
+    return diag::Fail(
+        array.span, diag::DiagCode::kUnsupportedExpressionForm,
+        "streaming the object a class handle refers to is not yet supported");
+  }
+  auto base = EvaluateSelectedBase(lowerer, frame, array);
+  if (!base) return std::unexpected(std::move(base.error()));
+  const bool queue =
+      unit_lowerer.Hir().types.Get(array.type).Is<hir::QueueType>();
+  auto window = LowerStreamWindow(
+      lowerer, queue ? frame.WithSelectedQueue(&base->path) : frame, array.type,
+      *operand.with);
+  if (!window) return std::unexpected(std::move(window.error()));
+  return mir::MakeBuiltinCall(
+      unit, block, support::BuiltinFn::kWindowToBitVec,
+      PathAsPlace(unit, block, NamedIn(base->path, block)),
+      {window->start, window->count}, unit.builtins.bit_vec);
+}
 
 auto MemberStep(
     UnitLowerer& unit_lowerer, mir::Block& block, const hir::Type& aggregate,
@@ -1020,6 +1164,19 @@ template auto LowerHirInterfaceInstanceAccessExpr(
 template auto LowerHirInterfaceInstanceAccessExpr(
     const StructuralScopeLowerer&, WalkFrame,
     const hir::InterfaceInstanceAccessExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+
+template auto LowerStreamWindow(
+    ProcessLowerer&, const WalkFrame&, hir::TypeId, const hir::StreamRange&)
+    -> diag::Result<StreamWindow>;
+template auto LowerStreamWindow(
+    const StructuralScopeLowerer&, const WalkFrame&, hir::TypeId,
+    const hir::StreamRange&) -> diag::Result<StreamWindow>;
+template auto LowerStreamWindowRun(
+    ProcessLowerer&, const WalkFrame&, const hir::StreamOperand&)
+    -> diag::Result<mir::Expr>;
+template auto LowerStreamWindowRun(
+    const StructuralScopeLowerer&, const WalkFrame&, const hir::StreamOperand&)
     -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

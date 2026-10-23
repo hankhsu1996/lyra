@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <ranges>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -26,10 +27,33 @@ namespace lyra::mir {
 [[nodiscard]] auto BuildMachineIntLiteral(
     const CompilationUnit& unit, Block& block, std::int64_t value) -> ExprId;
 
+// A count the lowering holds -- a number of bits, of elements -- written as
+// such a literal.
+[[nodiscard]] auto BuildMachineCount(
+    const CompilationUnit& unit, Block& block, std::uint64_t count) -> ExprId;
+
 // A machine integer `op` makes of two machine integers.
 [[nodiscard]] auto BuildMachineIntBinary(
     const CompilationUnit& unit, Block& block, BinaryOp op, ExprId lhs,
     ExprId rhs) -> ExprId;
+
+// A statement raising `message` as a run-time error of the simulated program
+// unless the machine boolean `holds` does, after what `block` holds.
+void AppendRunTimeCheck(
+    const CompilationUnit& unit, Block& block, ExprId holds,
+    std::string message);
+
+// Whether the comparison `op` holds of two machine integers, as a machine
+// boolean.
+[[nodiscard]] auto BuildMachineIntComparison(
+    const CompilationUnit& unit, Block& block, BinaryOp op, ExprId lhs,
+    ExprId rhs) -> ExprId;
+
+// `then_value` where the machine boolean `condition` holds and `else_value`
+// otherwise, both machine integers.
+[[nodiscard]] auto BuildMachineIntConditional(
+    const CompilationUnit& unit, Block& block, ExprId condition,
+    ExprId then_value, ExprId else_value) -> ExprId;
 
 // A declared range as whichever layer states one: its left bound and its
 // right.

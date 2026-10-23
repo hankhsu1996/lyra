@@ -576,21 +576,16 @@ auto LowerHirConversionExpr(
     case hir::ConversionKind::kBitstreamCast: {
       auto packed_or = BuildToBitstream(unit, block, named, span);
       if (!packed_or) return std::unexpected(std::move(packed_or.error()));
-      auto value_or =
-          BuildFromBitstream(unit, block, *packed_or, result_type, span);
-      if (!value_or) return std::unexpected(std::move(value_or.error()));
-      return block.exprs.Get(*value_or);
+      return block.exprs.Get(
+          BuildFromBitstreamCast(unit, frame, *packed_or, result_type));
     }
     // LRM 11.4.14 streaming operators, which slang marks as a conversion when
     // one feeds an assignment. The operand is already the stream the operator
     // built, so what is left is the target's own half of the clause: widen to
-    // its width, then read the bits back as a value of it.
-    case hir::ConversionKind::kStreamingConcat: {
-      auto value_or =
-          BuildFromBitstream(unit, block, value(), result_type, span);
-      if (!value_or) return std::unexpected(std::move(value_or.error()));
-      return block.exprs.Get(*value_or);
-    }
+    // what it takes, then read the bits back as a value of it.
+    case hir::ConversionKind::kStreamingConcat:
+      return block.exprs.Get(
+          BuildFromStreamAssigned(unit, frame, value(), result_type));
   }
   throw InternalError("LowerHirConversionExpr: unknown hir::ConversionKind");
 }

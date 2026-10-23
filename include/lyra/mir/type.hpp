@@ -287,15 +287,29 @@ struct DiagnosticType {
   auto operator==(const DiagnosticType&) const -> bool = default;
 };
 
-// A pass-through value type from the runtime library that MIR never inspects:
-// it is constructed and forwarded to a runtime-effect call, and MIR makes no
-// decision on its contents. The branch selects which library type, and the
-// backend maps the branch to the concrete library name. An object-model handle
-// is a different thing -- receiver semantics reason about one -- while these
-// are payloads. One that reads a value where it lies -- a print item, a format
-// operand -- is built over a reference to that value, so the program states
-// what it refers to.
+// A type the runtime library declares and MIR only names: a value of one is
+// built and reached through the library's calls, and MIR decides nothing about
+// what it holds. The one exception is a structure a unit states as a constant
+// -- a class's definition and what it is made of, a construction table, a dump
+// entry -- which MIR composes in the order the library declares its members.
+// The branch selects which library type, and the backend maps the branch to the
+// concrete library name. An object-model handle is a different thing --
+// receiver semantics reason about one. One that reads a value where it lies --
+// a print item, a format operand -- is built over a reference to that value,
+// so the program states what it refers to.
 enum class RuntimeLibraryKind : std::uint8_t {
+  // A run of bits whose length is part of the value rather than of the type,
+  // the first most significant: the stream LRM 6.24.3 and 11.4.14.1 make of a
+  // value whose bit count only the running program has -- a dynamic array, a
+  // queue, an associative array, a string, and anything holding one. A stream
+  // all of whose parts have a width their types fix is an integral value
+  // instead. It is a value, copied and handed on as any value is, as Rust's
+  // `BitVec` and LLVM's `BitVector` are; how far a read of it has reached is
+  // kept by the reader, never by the run. It states no state domain: what a
+  // stream holds is read back only into values of types that state their own
+  // (LRM 6.24.3), so whether it could hold x or z changes nothing a program
+  // sees.
+  kBitVec,
   // The members an enumeration declares, each its whole value at the base type
   // and its name, in declared order: what the questions asked of a value
   // against its members are answered from.

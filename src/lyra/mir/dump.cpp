@@ -497,6 +497,8 @@ class MirDumper {
                   return "RuntimeLibrary(ConstructionTable)";
                 case RuntimeLibraryKind::kInstantiation:
                   return "RuntimeLibrary(Instantiation)";
+                case RuntimeLibraryKind::kBitVec:
+                  return "RuntimeLibrary(BitVec)";
                 case RuntimeLibraryKind::kDpiBitBuffer:
                   return "RuntimeLibrary(DpiBitBuffer)";
                 case RuntimeLibraryKind::kDpiLogicBuffer:

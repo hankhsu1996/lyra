@@ -6,6 +6,7 @@
 #include <memory>
 #include <utility>
 
+#include "lyra/value/bit_vec.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/frame_bound.hpp"
 #include "lyra/value/integral.hpp"
@@ -170,7 +171,8 @@ class StaticElem {
 
   // The element written into a stream below its `filled` most significant
   // positions, answering how many are filled after it. A structure states its
-  // stream as a value of its own, and an array writes its elements in turn.
+  // stream as a value of its own -- a run of bits where a part's width is the
+  // running program's -- and an array writes its elements in turn.
   static auto WriteToStream(
       const void* value, const IntegralView& stream, std::uint64_t filled)
       -> std::uint64_t {
@@ -180,6 +182,12 @@ class StaticElem {
                            Of(value).WriteToStream(stream, filled);
                          }) {
       return Of(value).WriteToStream(stream, filled);
+    } else if constexpr (requires { Of(value).ToBitVec(); }) {
+      const BitVec run = Of(value).ToBitVec();
+      Insert(
+          stream, run.View(),
+          static_cast<std::int64_t>(stream.width - filled - run.View().width));
+      return filled + run.View().width;
     } else {
       return lyra::value::WriteToStream(
           Of(value).ToBitstream(), stream, filled);
@@ -187,15 +195,24 @@ class StaticElem {
   }
 
   // The inverse: the element a stream holds below its `taken` most significant
-  // positions, read into the element `out` where it lies, `T` stating how wide
-  // it is. Answers how many are taken after it.
+  // positions, read into the element lying at `out`, which it replaces. An
+  // element whose type fixes its width takes that many positions, and one
+  // whose width the running program decides takes every position before
+  // `until`. Answers how many are taken after it.
   static auto ReadFromStream(
-      const ConstIntegralView& stream, std::uint64_t taken, T& out)
-      -> std::uint64_t {
+      const ConstIntegralView& stream, std::uint64_t taken, std::uint64_t until,
+      void* out) -> std::uint64_t {
+    T& element = *static_cast<T*>(out);
     if constexpr (IntegralValue<T>) {
-      return lyra::value::ReadFromStream(stream, taken, out);
-    } else if constexpr (requires { out.ReadFromStream(stream, taken); }) {
-      return out.ReadFromStream(stream, taken);
+      return lyra::value::ReadFromStream(stream, taken, element);
+    } else if constexpr (requires {
+                           element.ReadFromStream(stream, taken, until);
+                         }) {
+      return element.ReadFromStream(stream, taken, until);
+    } else if constexpr (requires(const BitVec& run) { T::FromBitVec(run); }) {
+      const BitVec run = BitVec::Of(stream, taken, until);
+      RebuildFrom(element, [&] { return T::FromBitVec(run); });
+      return until;
     } else {
       // A structure's stream is as wide as the structure, so its bits are kept
       // as a frame keeps a value aside, and the structure they make is built
@@ -205,9 +222,16 @@ class StaticElem {
       SmallBox<Bits> bits;
       const std::uint64_t after =
           lyra::value::ReadFromStream(stream, taken, *bits);
-      RebuildFrom(out, [&] { return T::FromBitstream(*bits); });
+      RebuildFrom(element, [&] { return T::FromBitstream(*bits); });
       return after;
     }
+  }
+
+  // How many positions an element takes where every part of it whose width
+  // the running program decides is empty, which is what each of those after
+  // the first such part takes (LRM 11.4.14.4).
+  [[nodiscard]] static auto EmptyStreamWidth() -> std::uint64_t {
+    return static_cast<std::uint64_t>(BitstreamWidth(Default()));
   }
 
  private:

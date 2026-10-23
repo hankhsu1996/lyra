@@ -47,6 +47,13 @@ concept WritesBitStream =
       { value.WriteToStream(written, at) } -> std::same_as<std::uint64_t>;
     };
 
+// A value of `T` read out of a stream of bits, in place of the one there.
+template <typename T>
+concept ReadsBitStream =
+    requires(T& value, const ConstIntegralView& read, std::uint64_t at) {
+      { value.ReadFromStream(read, at, at) } -> std::same_as<std::uint64_t>;
+    };
+
 // A question about a value's stream of bits the language defines for a kind
 // and Lyra does not yet answer, which a legal program can ask.
 [[noreturn]] void StreamNotYetSupported();
@@ -159,9 +166,11 @@ struct ValueWitnessesOf {
     }
   };
   static constexpr auto ReadFromStream =
-      [](const ValueType&, const ConstIntegralView&, std::uint64_t,
-         void*) -> std::uint64_t {
-    if constexpr (kIsBitStreamType<T>) {
+      [](const ValueType&, const ConstIntegralView& stream, std::uint64_t taken,
+         std::uint64_t until, void* out) -> std::uint64_t {
+    if constexpr (ReadsBitStream<T>) {
+      return static_cast<T*>(out)->ReadFromStream(stream, taken, until);
+    } else if constexpr (kIsBitStreamType<T>) {
       StreamNotYetSupported();
     } else {
       LacksOperation();

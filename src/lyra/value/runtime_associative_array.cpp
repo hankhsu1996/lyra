@@ -217,4 +217,13 @@ auto RuntimeAssociativeArray::CountBits(
   return Int::FromInt(core_.has_value() ? core_->CountBits(control_bits) : 0);
 }
 
+auto RuntimeAssociativeArray::WriteToStream(
+    const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
+  return core_.has_value() ? core_->WriteToStream(stream, filled) : filled;
+}
+
+auto RuntimeAssociativeArray::ToBitVec() const -> BitVec {
+  return StreamOf(*this);
+}
+
 }  // namespace lyra::value

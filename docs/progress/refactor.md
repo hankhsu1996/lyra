@@ -3194,6 +3194,38 @@ source, or not yet tried.
       in, and the C++ backend writes what C++ would leave unsequenced in a form that runs it in that
       order. Not blocked.
 
+- [ ] R249 -- On the execution backend a local the compiler makes, holding a value the library keeps
+      -- a string, a queue, the run of bits a streaming operator joins -- is given the storage a
+      declared variable gets, which carries what a process waiting on it needs. MIR states such a
+      local as a plain value, and nothing can wait on it, since no event expression can name a local
+      the source did not declare (LRM 9.4.2), so the execution IR is deciding an observability MIR
+      did not state. Every write to one pays for change detection that wakes nobody. Target: a local
+      MIR states as a plain value is given storage that holds the value and nothing more, as a
+      declared variable that is waitable keeps the form it has. Not blocked.
+
+- [ ] R250 -- MIR has its own types for a string and for a value of no stated type, where a C++ or
+      Rust program would hold either as a library type its compiler only names (`std::string`,
+      `std::any`; Rust's `String`). Whether each is MIR's is decided by whether MIR must understand
+      what is inside it -- whether a generic operation or pass looks inside, or whether changing the
+      library's representation would force a change in MIR -- and not by whether the source can
+      declare it. The first step is listing what MIR states about each beyond calls to the library.
+      Target: each is held to that question, and moved to the types the library declares where MIR
+      needs nothing of its inside. Not blocked.
+
+- [ ] R251 -- A value kind the library declares -- a string, a queue, a dynamic array, the run of
+      bits a streaming operator joins -- is added by answering the same handful of facts about it
+      once per place that asks: its size, whether it ends with work, whether it has a default, which
+      kinds of holder may keep it, how each backend spells it, and a monomorphic copy of every entry
+      that holds one. About a dozen exhaustive visits over the kind and a dozen lists of operation
+      families each restate one of those facts, and the library already states the value contract
+      itself in the kind's type description. What holds a value of a type the compiler lays out is
+      already one set of entries told that description; what holds a library value is not. Target:
+      each library value kind is one declaration -- its class, its value contract, the holders that
+      admit it, its spellings -- that every one of those places reads, so a new kind touches no
+      generic code; and holding it is either derived from that declaration or taken through the type
+      description, chosen by measuring the indirect call. The kind's own operations stay its own
+      entries. Not blocked.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

@@ -240,9 +240,7 @@ auto StepTakenFor(
           [&](const StepToElementRun& run) -> StepTaken {
             return ElementRunStepTaken(
                 use, step,
-                {run.start,
-                 mir::BuildMachineIntLiteral(
-                     unit, block, static_cast<std::int64_t>(run.count))});
+                {run.start, mir::BuildMachineCount(unit, block, run.count)});
           },
           [&](const StepToElement& element) {
             return ElementStepTaken(
@@ -703,17 +701,12 @@ void AppendTagChecks(
     const mir::ExprId holds = BuildTagMatches(
         unit, block, *tag, PlaceForRead(unit, block, before),
         hir::CaseKeyword::kCase);
-    const mir::ExprId text = block.exprs.Add(
-        mir::MakeStringLiteral(
-            unit.builtins.string,
-            base::DiagMessage(
-                "{} a tagged union member inconsistent with the current tag",
-                AccessText(access))
-                .TakeText()));
-    block.AppendStmt(
-        mir::ExprStmt{
-            .expr = block.exprs.Add(
-                mir::MakeAssertExpr(holds, text, unit.builtins.void_type))});
+    mir::AppendRunTimeCheck(
+        unit, block, holds,
+        base::DiagMessage(
+            "{} a tagged union member inconsistent with the current tag",
+            AccessText(access))
+            .TakeText());
   }
 }
 
@@ -1221,9 +1214,7 @@ auto AssignSliceExpr(
           [&](const StepToElementRun& run) -> Write {
             return write(
                 support::BuiltinFn::kAssignElementSlice,
-                {run.start,
-                 mir::BuildMachineIntLiteral(
-                     unit, block, static_cast<std::int64_t>(run.count))});
+                {run.start, mir::BuildMachineCount(unit, block, run.count)});
           },
           [&](const StepToQueueRun& run) -> Write {
             return write(

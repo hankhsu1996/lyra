@@ -380,6 +380,8 @@ auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
       return mirror(lir::RuntimeLibraryKind::kTimeFormat);
     case mir::RuntimeLibraryKind::kHierarchySegment:
       return mirror(lir::RuntimeLibraryKind::kHierarchySegment);
+    case mir::RuntimeLibraryKind::kBitVec:
+      return mirror(lir::RuntimeLibraryKind::kBitVec);
     case mir::RuntimeLibraryKind::kDpiBitBuffer:
       return mirror(lir::RuntimeLibraryKind::kDpiBitBuffer);
     case mir::RuntimeLibraryKind::kDpiLogicBuffer:

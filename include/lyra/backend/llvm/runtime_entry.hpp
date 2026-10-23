@@ -212,10 +212,13 @@ enum class RuntimeOp : std::uint8_t {
   // What stands between a type's own operations and the type the library asks
   // them through: the stream a type's function answers written into the stream
   // the type was handed, a stream's bits laid out as an integral value, and a
-  // value built by its type's function out of such a stream.
+  // value built by its type's function out of such a stream; and the same two
+  // for a type whose stream is a run of bits as long as the value makes it.
   kStreamWrite,
   kStreamRead,
   kStreamBuild,
+  kRunWrite,
+  kRunBuild,
   // Bits written into an integral value where they lie (LRM 11.5.1): into the
   // words of a value held at a place, and into the value a write in progress
   // designates, which hears which of them moved and is named by the domain

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -54,6 +55,11 @@ auto BuildMachineIntLiteral(
       Expr{
           .data = MachineIntLiteral{.value = value},
           .type = unit.builtins.machine_int64});
+}
+
+auto BuildMachineCount(
+    const CompilationUnit& unit, Block& block, std::uint64_t count) -> ExprId {
+  return BuildMachineIntLiteral(unit, block, static_cast<std::int64_t>(count));
 }
 
 auto MakeIntegralLiteral(
@@ -183,6 +189,37 @@ auto BuildMachineIntBinary(
     ExprId rhs) -> ExprId {
   return block.exprs.Add(
       MakeBinary(unit, block, op, lhs, rhs, unit.builtins.machine_int64));
+}
+
+void AppendRunTimeCheck(
+    const CompilationUnit& unit, Block& block, ExprId holds,
+    std::string message) {
+  const ExprId text = block.exprs.Add(
+      MakeStringLiteral(unit.builtins.string, std::move(message)));
+  block.AppendStmt(
+      ExprStmt{
+          .expr = block.exprs.Add(
+              MakeAssertExpr(holds, text, unit.builtins.void_type))});
+}
+
+auto BuildMachineIntComparison(
+    const CompilationUnit& unit, Block& block, BinaryOp op, ExprId lhs,
+    ExprId rhs) -> ExprId {
+  return block.exprs.Add(
+      MakeBinary(unit, block, op, lhs, rhs, unit.builtins.machine_bool));
+}
+
+auto BuildMachineIntConditional(
+    const CompilationUnit& unit, Block& block, ExprId condition,
+    ExprId then_value, ExprId else_value) -> ExprId {
+  return block.exprs.Add(
+      Expr{
+          .data =
+              ConditionalExpr{
+                  .condition = condition,
+                  .then_value = then_value,
+                  .else_value = else_value},
+          .type = unit.builtins.machine_int64});
 }
 
 auto MakeUnary(

@@ -20,8 +20,8 @@ or an event, however deep in arrays, structures and unions, is refused as unsupp
 admits one only in a tagged union (LRM 7.3), and the front end, which refuses the other kinds, lets
 these three through. Default initialization (LRM Table 6-7) and value representation, including a
 wide value carrying X/Z across the 64-bit word boundary, are complete. Chandle is complete.
-Bit-stream casting is complete between fixed-size types; the dynamically sized form is the one gap,
-recorded below. Dynamic casting is complete for every operand family, in both of its spellings.
+Bit-stream casting is complete, between fixed-size types and where either side's bit count is the
+running program's. Dynamic casting is complete for every operand family, in both of its spellings.
 
 ## Tagged union
 
@@ -107,12 +107,17 @@ total width convert into each other without either naming the other's members.
       differently, structure to unpacked array, and the round trip that shows the conversion loses
       nothing. The order is the one every bit-stream operation shares -- first member or element
       most significant.
-  - [ ] A cast where either side's bit count is only known while the program runs, which includes
-        LRM 6.24.3's greedy rule for a dynamically sized destination. It waits on the same thing the
-        streaming operator's dynamic form does -- a type naming bits whose number the program fixes
-        -- and on nothing of its own, so the two close together.
-  - [x] A cast whose operand or casting type is a union, or a class, is refused by the front end:
-        LRM 6.24.3 makes neither a bit-stream type.
+  - [x] A cast where either side's bit count is only known while the program runs: a queue, a
+        dynamic array, a string, or an aggregate holding one, on either side. A dynamically sized
+        part of the destination takes what the parts after it leave and is sized to hold exactly
+        that, and an operand whose bit count differs from a fixed-size casting type's, or does not
+        divide into the destination's elements, is a run-time error (LRM 6.24.3).
+  - [x] A cast whose operand or casting type is a union, or whose casting type is a class, is
+        refused by the front end: LRM 6.24.3 makes a union no bit-stream type, and a class illegal
+        as a destination.
+  - [ ] A cast whose operand is a class handle, which LRM 6.24.3 makes a bit-stream source: the data
+        members of the object it refers to. It is refused, and waits on what a class handle in a
+        streaming operator waits on (`operators.md`).
 
 ## Dynamic casting
 

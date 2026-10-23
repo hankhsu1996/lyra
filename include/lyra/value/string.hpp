@@ -11,6 +11,8 @@
 #include <string_view>
 #include <utility>
 
+#include "lyra/base/simulation_error.hpp"
+#include "lyra/value/bit_vec.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -159,6 +161,58 @@ class String {
   // string element is a byte).
   [[nodiscard]] auto BitstreamWidth() const -> Int {
     return Int::FromInt(static_cast<std::int64_t>(8 * impl_.size()));
+  }
+
+  // LRM 6.24.3: a string streams as a dynamic array of bytes, its first
+  // character most significant, written below the `filled` most significant
+  // positions of `stream`; and the inverse, a byte for every eight positions
+  // up to `until`, a NUL dropped as building a string from bits drops one.
+  [[nodiscard]] auto WriteToStream(
+      const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
+    for (const char c : impl_) {
+      const std::uint64_t word = static_cast<unsigned char>(c);
+      Insert(
+          stream,
+          ConstIntegralView{
+              .value = std::span(&word, 1),
+              .unknown = {},
+              .width = 8,
+              .signedness = Signedness::kUnsigned},
+          static_cast<std::int64_t>(stream.width - filled - 8));
+      filled += 8;
+    }
+    return filled;
+  }
+  auto ReadFromStream(
+      const ConstIntegralView& stream, std::uint64_t taken, std::uint64_t until)
+      -> std::uint64_t {
+    if ((until - taken) % 8 != 0) {
+      throw SimulationError(
+          "a stream of bits does not divide into the characters of the string "
+          "it is read into");
+    }
+    std::string out;
+    for (; taken < until; taken += 8) {
+      std::uint64_t word = 0;
+      Extract(
+          IntegralView{.value = std::span(&word, 1), .unknown = {}, .width = 8},
+          stream, static_cast<std::int64_t>(stream.width - taken - 8));
+      if (word != 0) {
+        out.push_back(static_cast<char>(word));
+      }
+    }
+    impl_ = std::move(out);
+    return until;
+  }
+  // The same as a run of bits of its own, and the string exactly that run
+  // holds.
+  [[nodiscard]] auto ToBitVec() const -> BitVec {
+    return StreamOf(*this);
+  }
+  [[nodiscard]] static auto FromBitVec(const BitVec& run) -> String {
+    String out;
+    ReadWholeStream(out, run);
+    return out;
   }
 
   // LRM 20.9 `$countbits`: a string's bit stream is its characters, each an

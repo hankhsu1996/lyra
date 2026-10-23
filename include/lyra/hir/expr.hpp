@@ -201,6 +201,22 @@ struct ConcatExpr {
   auto operator==(const ConcatExpr&) const -> bool = default;
 };
 
+// LRM 11.4.14.4: the elements of a one-dimensional unpacked array a stream
+// operand takes, written `with [...]`: one element, or a run of them named by
+// its two ends or by a start and a width counted up or down. It is evaluated
+// immediately before its array is streamed, so in a target it may read what
+// the same stream unpacked into an operand before it.
+using StreamRange = std::variant<ExprId, RangeBounds>;
+
+// One operand of a stream: what is streamed, and the range of its elements a
+// `with` names where one is written.
+struct StreamOperand {
+  ExprId value;
+  std::optional<StreamRange> with;
+
+  auto operator==(const StreamOperand&) const -> bool = default;
+};
+
 // LRM 11.4.14: `{<< n {a, b}}` -- the bits of each operand laid end to end, the
 // first operand most significant, and the result then divided into `block_bits`
 // blocks whose order is reversed. `block_bits` is zero for `>>`, which
@@ -212,8 +228,13 @@ struct ConcatExpr {
 // stream, and as a target it says which variables that stream fills and in what
 // order (LRM 11.4.14.3). Which of the two an occurrence is follows from where
 // it stands, so it carries no discriminator.
+//
+// It has no type of its own, as the front end gives it none: the stream between
+// packing and unpacking is never visible (LRM 11.4.14), and where it is a
+// source or a cast's operand, the conversion around it carries the type the
+// stream becomes.
 struct StreamingConcatExpr {
-  std::vector<ExprId> operands;
+  std::vector<StreamOperand> operands;
   std::uint64_t block_bits;
 
   auto operator==(const StreamingConcatExpr&) const -> bool = default;

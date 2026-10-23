@@ -1,7 +1,6 @@
 #include "lyra/lowering/ast_to_hir/expression/aggregates.hpp"
 
 #include <algorithm>
-#include <cstdint>
 #include <expected>
 #include <optional>
 #include <utility>
@@ -12,12 +11,15 @@
 #include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
+#include <slang/ast/expressions/SelectExpressions.h>
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 #include <slang/ast/types/Type.h>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
+#include "lyra/hir/range_bounds.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
@@ -28,29 +30,44 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// What a stream element actually carries: the operand, or -- where
-// LRM 11.4.14.4 names a range with `with` -- the selection over it, which the
-// front end has already bound as an ordinary selector. Everything that reads an
-// element goes through this, so the range is resolved in one place and nothing
-// else knows a `with` was written.
-auto StreamedExpression(
-    const slang::ast::StreamingConcatenationExpression::StreamExpression&
-        stream) -> const slang::ast::Expression& {
-  return stream.withExpr != nullptr ? *stream.withExpr : *stream.operand;
-}
-
-// LRM 11.4.14: whether any part of what a stream packs is 4-state, which is
-// what decides the stream's own domain. A part that is itself a stream answers
-// for its own parts, since the front end gives it no type to be asked.
-auto StreamCarriesUnknown(
-    const slang::ast::StreamingConcatenationExpression& sc) -> bool {
-  return std::ranges::any_of(sc.streams(), [](const auto& stream) {
-    const slang::ast::Expression& operand = StreamedExpression(stream);
-    return operand.kind == slang::ast::ExpressionKind::Streaming
-               ? StreamCarriesUnknown(
-                     operand.as<slang::ast::StreamingConcatenationExpression>())
-               : operand.type->isFourState();
-  });
+// LRM 11.4.14.4: the elements a `with` names, as the front end bound them: a
+// select of one element, or of a run named by its two ends or by a start and a
+// width. Its expressions are the source's, lowered as any operand is.
+template <ExprLowerer Lowerer>
+auto LowerStreamRange(
+    Lowerer& lowerer, WalkFrame frame, const slang::ast::Expression& with,
+    bool over_a_queue) -> diag::Result<hir::StreamRange> {
+  const WalkFrame bound_frame =
+      over_a_queue ? frame.WithinQueueSelect() : frame;
+  const auto lower =
+      [&](const slang::ast::Expression& bound) -> diag::Result<hir::ExprId> {
+    auto lowered = lowerer.LowerExpr(bound, bound_frame);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    return frame.Exprs().Add(*std::move(lowered));
+  };
+  if (with.kind == slang::ast::ExpressionKind::ElementSelect) {
+    auto element =
+        lower(with.as<slang::ast::ElementSelectExpression>().selector());
+    if (!element) return std::unexpected(std::move(element.error()));
+    return hir::StreamRange{*element};
+  }
+  const auto& range = with.as<slang::ast::RangeSelectExpression>();
+  auto left = lower(range.left());
+  if (!left) return std::unexpected(std::move(left.error()));
+  auto right = lower(range.right());
+  if (!right) return std::unexpected(std::move(right.error()));
+  switch (range.getSelectionKind()) {
+    case slang::ast::RangeSelectionKind::Simple:
+      return hir::StreamRange{
+          hir::RangeConstantBounds{.left_bound = *left, .right_bound = *right}};
+    case slang::ast::RangeSelectionKind::IndexedUp:
+      return hir::StreamRange{
+          hir::RangeIndexedUpBounds{.base_index = *left, .width = *right}};
+    case slang::ast::RangeSelectionKind::IndexedDown:
+      return hir::StreamRange{
+          hir::RangeIndexedDownBounds{.base_index = *left, .width = *right}};
+  }
+  throw InternalError("LowerStreamRange: unknown slang RangeSelectionKind");
 }
 
 }  // namespace
@@ -102,62 +119,29 @@ auto LowerStreamingConcatExpr(
     Lowerer& lowerer, WalkFrame frame,
     const slang::ast::StreamingConcatenationExpression& sc,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  auto& unit_lowerer = lowerer.Owner();
-  // LRM 11.4.14.4 admits a dynamically sized value in a stream, whose bit count
-  // only the running program has. A stream is a value here like any other and
-  // its type states a width, so a stream whose width is not fixed has no type
-  // to be given. What the standard defines over it is the same pack and unpack
-  // this builds; what it waits on is naming that width.
-  if (!sc.isFixedSize()) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm,
-        "a streaming operator over a dynamically sized value is not yet "
-        "supported");
-  }
-  // A stream of no bits has no type to be given, and no program reaches one:
-  // the front end refuses both routes to one, a zero replication inside a
-  // stream and a dimension declared with no elements.
-  const std::uint64_t width = sc.getBitstreamWidth();
-  if (width == 0) {
-    throw InternalError(
-        "LowerStreamingConcatExpr: a stream carries at least one bit");
-  }
-  std::vector<hir::ExprId> operand_ids;
-  operand_ids.reserve(sc.streams().size());
+  auto type_id = lowerer.Owner().InternExpressionType(sc, span);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  std::vector<hir::StreamOperand> operands;
+  operands.reserve(sc.streams().size());
   for (const auto& stream : sc.streams()) {
-    const slang::ast::Expression& operand = StreamedExpression(stream);
-    const diag::SourceSpan operand_span = frontend::SpanOf(operand.sourceRange);
-    if (operand.type->getCanonicalType().isClass()) {
-      // LRM 11.4.14.1.
-      return diag::Fail(
-          operand_span, diag::DiagCode::kUnsupportedExpressionForm,
-          "streaming the object a class handle refers to is not yet "
-          "supported");
+    const slang::ast::Expression& operand = *stream.operand;
+    auto value = lowerer.LowerExpr(operand, frame);
+    if (!value) return std::unexpected(std::move(value.error()));
+    hir::StreamOperand lowered{
+        .value = frame.Exprs().Add(*std::move(value)), .with = std::nullopt};
+    if (stream.withExpr != nullptr) {
+      auto range = LowerStreamRange(
+          lowerer, frame, *stream.withExpr, operand.type->isQueue());
+      if (!range) return std::unexpected(std::move(range.error()));
+      lowered.with = *std::move(range);
     }
-    auto operand_or = lowerer.LowerExpr(operand, frame);
-    if (!operand_or) return std::unexpected(std::move(operand_or.error()));
-    operand_ids.push_back(frame.Exprs().Add(*std::move(operand_or)));
+    operands.push_back(std::move(lowered));
   }
-  // LRM 11.4.14: a pack whose data carries any 4-state part yields a 4-state
-  // stream, and a 2-state one otherwise. The stream has no other source of a
-  // type -- the front end gives a streaming concatenation none, because what it
-  // may be used for is fixed by where it stands rather than by what it is.
-  const hir::TypeId atom = StreamCarriesUnknown(sc)
-                               ? unit_lowerer.Unit().builtins.scalar_logic
-                               : unit_lowerer.Unit().builtins.scalar_bit;
-  const hir::TypeId stream_type = unit_lowerer.AddComposedType(
-      hir::Type{hir::PackedArrayType{
-          .dim =
-              hir::PackedRange{
-                  .left = static_cast<std::int64_t>(width) - 1, .right = 0},
-          .element_type = atom,
-          .signedness = hir::Signedness::kUnsigned}});
   return hir::Expr{
-      .type = stream_type,
+      .type = *type_id,
       .data =
           hir::StreamingConcatExpr{
-              .operands = std::move(operand_ids),
-              .block_bits = sc.getSliceSize()},
+              .operands = std::move(operands), .block_bits = sc.getSliceSize()},
       .span = span,
   };
 }

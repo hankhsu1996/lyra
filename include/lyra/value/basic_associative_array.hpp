@@ -267,6 +267,16 @@ class BasicAssociativeArray {
     }
     return total;
   }
+  // LRM 6.24.3: the entries' elements written into `stream` below its `filled`
+  // most significant positions, the lowest index first. Answers how many are
+  // filled after them.
+  [[nodiscard]] auto WriteToStream(
+      const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
+    for (const auto& [key, slot] : map_) {
+      filled = elem_.WriteToStream(slot, stream, filled);
+    }
+    return filled;
+  }
   template <typename Control>
   [[nodiscard]] auto CountBits(const Control& control_bits) const
       -> std::int64_t {

@@ -347,7 +347,8 @@ auto BuildDefaultValueExpr(
           // is observed, a net's resolution, a driver's contribution, a write
           // open on one of them, the history a sampled value reads, what an
           // assertion has in flight, the effects a body runs under, the open
-          // files, the diagnostic stream, and the library values a call names.
+          // files, the diagnostic stream, and a type the library declares, a
+          // value of which a lowering builds where it uses one.
           // What a declaration holds is the value inside one of these, which
           // answers above.
           [&](const mir::ObservableType&) -> mir::Expr {

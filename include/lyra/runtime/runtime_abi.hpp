@@ -1019,6 +1019,9 @@ void lyra_rt_string_cell_initialize(void* cell, const void* prototype) noexcept;
 void lyra_rt_string_cell_set(void* cell, const void* value);
 void lyra_rt_string_cell_arm_sampling(void* cell);
 auto lyra_rt_string_cell_sampled_get(void* cell) -> const void*;
+auto lyra_rt_bitvec_cell_get(void* cell) -> const void*;
+void lyra_rt_bitvec_cell_initialize(void* cell, const void* prototype) noexcept;
+void lyra_rt_bitvec_cell_set(void* cell, const void* value);
 auto lyra_rt_real_cell_get(void* cell) -> const void*;
 void lyra_rt_real_cell_initialize(void* cell, const void* prototype) noexcept;
 void lyra_rt_real_cell_set(void* cell, const void* value);
@@ -1945,6 +1948,19 @@ auto lyra_rt_stream_build(
 auto lyra_rt_stream_read(
     const void* stream, std::uint64_t taken, std::int64_t out_width,
     bool out_is_four_state, void* out) -> std::uint64_t;
+// The same two for a structure whose stream is a run of bits as long as the
+// value makes it (LRM 6.24.3): `run_write` holds the run the function answers
+// and writes it below the stream's `filled` most significant positions, and
+// `run_build` hands the function the run of the stream's positions from
+// `taken` up to `until` to build the structure from.
+using LyraRunOf = void (*)(const void* value, void* run);
+using LyraBuiltFromRun = void (*)(const void* run, void* out);
+auto lyra_rt_run_write(
+    LyraRunOf run_of, const void* value, const void* stream,
+    std::uint64_t filled) -> std::uint64_t;
+auto lyra_rt_run_build(
+    LyraBuiltFromRun built_from, const void* stream, std::uint64_t taken,
+    std::uint64_t until, void* out) -> std::uint64_t;
 // What a type's table holds for an operation the language does not define for
 // the type, which the front end leaves no program to ask: a type generated
 // code states fails it as a type the library defines does.
@@ -2023,20 +2039,61 @@ auto lyra_rt_managedref_bitstream_width(const void* value, void* out) -> void*;
 auto lyra_rt_managedref_count_bits(
     const void* value, const void* control_bits, std::int64_t control_width,
     bool control_is_four_state, void* out) -> void*;
-auto lyra_rt_string_to_bitstream(
-    const void* value, std::int64_t out_width, bool out_is_four_state,
+
+// LRM 6.24.3, 11.4.14: the stream a value whose bit count the running program
+// decides makes, as a run of bits whose length is its own; the array or the
+// string a run holds exactly, an array told the type of its elements or the
+// queue type it is; and what a run is made of and taken apart into.
+auto lyra_rt_string_to_bitvec(const void* value, void* out) -> void*;
+auto lyra_rt_dynarray_to_bitvec(const void* value, void* out) -> void*;
+auto lyra_rt_queue_to_bitvec(const void* value, void* out) -> void*;
+auto lyra_rt_assocarray_to_bitvec(const void* value, void* out) -> void*;
+auto lyra_rt_dynarray_from_bitvec(
+    const void* run, const void* answer_element_type, void* out) -> void*;
+auto lyra_rt_queue_from_bitvec(
+    const void* run, const void* answer_type, void* out) -> void*;
+auto lyra_rt_string_from_bitvec(const void* run, void* out) -> void*;
+auto lyra_rt_bitvec_default(void* out) -> void*;
+auto lyra_rt_bitvec_of(
+    const void* bits, std::int64_t bits_width, bool bits_are_four_state,
     void* out) -> void*;
-auto lyra_rt_dynarray_to_bitstream(
-    const void* value, std::int64_t out_width, bool out_is_four_state,
-    void* out) -> void*;
-auto lyra_rt_queue_to_bitstream(
-    const void* value, std::int64_t out_width, bool out_is_four_state,
-    void* out) -> void*;
-auto lyra_rt_assocarray_to_bitstream(
-    const void* value, std::int64_t out_width, bool out_is_four_state,
-    void* out) -> void*;
-auto lyra_rt_managedref_to_bitstream(
-    const void* value, std::int64_t out_width, bool out_is_four_state,
+void lyra_rt_bitvec_extend(
+    void* run, const void* bits, std::int64_t bits_width,
+    bool bits_are_four_state);
+void lyra_rt_bitvec_append(void* run, const void* part);
+void lyra_rt_bitvec_insert_bits(void* run, std::int64_t at, const void* part);
+auto lyra_rt_bitvec_reverse_blocks(
+    const void* run, std::int64_t block, void* out) -> void*;
+auto lyra_rt_bitvec_len(const void* run) -> std::int64_t;
+auto lyra_rt_bitvec_extract_bits(
+    const void* run, std::int64_t at, std::int64_t count, void* out) -> void*;
+auto lyra_rt_bitvec_load(
+    const void* run, std::int64_t at, std::int64_t out_width,
+    bool out_is_four_state, void* out) -> void*;
+auto lyra_rt_bitvec_padded_to(const void* run, std::int64_t length, void* out)
+    -> void*;
+
+// LRM 11.4.14.4 `with [...]`: the stream of `count` elements of an array from
+// `start`, and the array with those elements taking the values of another,
+// which crosses with its type; a fixed-size array is told its own type.
+auto lyra_rt_dynarray_window_to_bitvec(
+    const void* array, const void* start, std::int64_t count, void* out)
+    -> void*;
+auto lyra_rt_queue_window_to_bitvec(
+    const void* queue, const void* start, std::int64_t count, void* out)
+    -> void*;
+auto lyra_rt_laidout_window_to_bitvec(
+    const void* array, const void* start, std::int64_t count,
+    const void* array_type, void* out) -> void*;
+auto lyra_rt_dynarray_with_window(
+    const void* array, const void* start, std::int64_t count,
+    const void* values, const void* values_type, void* out) -> void*;
+auto lyra_rt_queue_with_window(
+    const void* queue, const void* start, std::int64_t count,
+    const void* values, const void* values_type, void* out) -> void*;
+auto lyra_rt_laidout_with_window(
+    const void* array, const void* start, std::int64_t count,
+    const void* values, const void* values_type, const void* array_type,
     void* out) -> void*;
 
 // Builds one conversion's format specification, and the print item that pairs a
@@ -2143,6 +2200,7 @@ auto lyra_rt_dpi_open_array_value(
 // the write did. A write through a reference to a fixed-size unpacked array is
 // told the array's type, which the elements the reference names do not state.
 auto lyra_rt_string_cell_open_for_write(void* cell, void* out) -> void*;
+auto lyra_rt_bitvec_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_real_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_shortreal_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_chandle_cell_open_for_write(void* cell, void* out) -> void*;
@@ -2251,6 +2309,7 @@ void lyra_rt_queue_assign_slice(
 // lies, which is what is then written. A fixed-size unpacked array is kept by
 // its type, which the landing is told.
 auto lyra_rt_string_land(const void* designation) noexcept -> void*;
+auto lyra_rt_bitvec_land(const void* designation) noexcept -> void*;
 auto lyra_rt_real_land(const void* designation) noexcept -> void*;
 auto lyra_rt_shortreal_land(const void* designation) noexcept -> void*;
 auto lyra_rt_chandle_land(const void* designation) noexcept -> void*;
@@ -2266,6 +2325,7 @@ auto lyra_rt_managedref_land(const void* designation) noexcept -> void*;
 // element, a member, the contents a write opened -- which takes it where it
 // lies rather than being replaced by a new object (LRM 7.6).
 void lyra_rt_string_assign(void* storage, const void* value);
+void lyra_rt_bitvec_assign(void* storage, const void* value);
 void lyra_rt_real_assign(void* storage, const void* value);
 void lyra_rt_shortreal_assign(void* storage, const void* value);
 void lyra_rt_chandle_assign(void* storage, const void* value);
@@ -2301,6 +2361,7 @@ auto lyra_rt_discarded_write(const void* element_type) -> void*;
 // over -- a slot of its own, or what its caller gave for its answer. What a
 // move leaves behind is still an object, which the body then ends.
 void lyra_rt_string_destroy(void* object);
+void lyra_rt_bitvec_destroy(void* object);
 void lyra_rt_dynarray_destroy(void* object);
 void lyra_rt_queue_destroy(void* object);
 void lyra_rt_assocarray_destroy(void* object);
@@ -2318,6 +2379,7 @@ void lyra_rt_shared_pointer_destroy(void* object);
 void lyra_rt_open_write_destroy(void* object);
 void lyra_rt_object_write_destroy(void* object);
 auto lyra_rt_string_copy(const void* value, void* out) -> void*;
+auto lyra_rt_bitvec_copy(const void* value, void* out) -> void*;
 auto lyra_rt_real_copy(const void* value, void* out) -> void*;
 auto lyra_rt_shortreal_copy(const void* value, void* out) -> void*;
 auto lyra_rt_chandle_copy(const void* value, void* out) -> void*;
@@ -2340,6 +2402,7 @@ auto lyra_rt_channel_cancellation_copy(const void* value, void* out) -> void*;
 auto lyra_rt_reference_copy(const void* value, void* out) -> void*;
 auto lyra_rt_any_reference_copy(const void* value, void* out) -> void*;
 auto lyra_rt_string_move(void* value, void* out) -> void*;
+auto lyra_rt_bitvec_move(void* value, void* out) -> void*;
 auto lyra_rt_real_move(void* value, void* out) -> void*;
 auto lyra_rt_shortreal_move(void* value, void* out) -> void*;
 auto lyra_rt_chandle_move(void* value, void* out) -> void*;
@@ -2375,6 +2438,7 @@ void lyra_rt_borrowed_handle_construct(void* storage);
 void lyra_rt_reference_construct(void* storage);
 void lyra_rt_any_reference_construct(void* storage);
 void lyra_rt_string_cell_construct(void* storage);
+void lyra_rt_bitvec_cell_construct(void* storage);
 void lyra_rt_real_cell_construct(void* storage);
 void lyra_rt_shortreal_cell_construct(void* storage);
 void lyra_rt_chandle_cell_construct(void* storage);
@@ -2384,6 +2448,7 @@ void lyra_rt_queue_cell_construct(void* storage);
 void lyra_rt_assocarray_cell_construct(void* storage);
 void lyra_rt_managedref_cell_construct(void* storage);
 void lyra_rt_string_value_cell_construct(void* storage);
+void lyra_rt_bitvec_value_cell_construct(void* storage);
 void lyra_rt_real_value_cell_construct(void* storage);
 void lyra_rt_shortreal_value_cell_construct(void* storage);
 void lyra_rt_chandle_value_cell_construct(void* storage);
@@ -2408,6 +2473,7 @@ void lyra_rt_loop_blocks_construct(void* storage);
 void lyra_rt_channel_cancellation_construct(void* storage);
 void lyra_rt_shared_pointer_construct(void* storage);
 void lyra_rt_string_cell_destroy(void* storage);
+void lyra_rt_bitvec_cell_destroy(void* storage);
 void lyra_rt_real_cell_destroy(void* storage);
 void lyra_rt_shortreal_cell_destroy(void* storage);
 void lyra_rt_chandle_cell_destroy(void* storage);
@@ -2417,6 +2483,7 @@ void lyra_rt_queue_cell_destroy(void* storage);
 void lyra_rt_assocarray_cell_destroy(void* storage);
 void lyra_rt_managedref_cell_destroy(void* storage);
 void lyra_rt_string_value_cell_destroy(void* storage);
+void lyra_rt_bitvec_value_cell_destroy(void* storage);
 void lyra_rt_laidout_value_cell_destroy(void* storage);
 void lyra_rt_dynarray_value_cell_destroy(void* storage);
 void lyra_rt_queue_value_cell_destroy(void* storage);

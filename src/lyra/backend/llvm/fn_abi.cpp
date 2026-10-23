@@ -752,6 +752,11 @@ auto CallArranger::ConstructionOf(
           },
           [&](const lir::RuntimeLibraryType& r) -> Built {
             switch (r.kind) {
+              // A run of bits is constructed holding none; every bit it holds
+              // is laid onto it afterwards (LRM 11.4.14.1).
+              case lir::RuntimeLibraryKind::kBitVec:
+                return entry_over(
+                    support::ValueDomain::kBitVec, result, RuntimeOp::kDefault);
               case lir::RuntimeLibraryKind::kPrintLiteralItem:
                 return entry(RuntimeOp::kMakePrintLiteralItem);
               case lir::RuntimeLibraryKind::kHierarchySegment:

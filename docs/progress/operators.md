@@ -133,19 +133,25 @@ merged node.
       type or a constant, and a `with` clause naming which elements of a one-dimensional unpacked
       array take part (LRM 11.4.14.4) on either side of the assignment, in every range form a select
       admits.
+  - [x] A dynamically sized value wherever it meets a stream: a queue, a dynamic array, a string, an
+        associative array (in index order), and a structure or a fixed-size array holding one,
+        packed into a stream whose width is the running program's; filled from one, a part whose
+        width the program decides taking what the parts after it leave, in whole elements; and
+        standing as the source an unpack consumes. A `with` range is evaluated just before its array
+        is streamed, so it reads a target unpacked ahead of it, a dynamically sized array unpacked
+        through one grows to cover it, and one reaching past a fixed-size array is a run-time error.
+        A dynamically sized target assigned a stream takes the fewest elements as wide as it, and a
+        stream too wide for a fixed-size target, or too narrow for its targets, is a run-time error
+        (LRM 11.4.14, 11.4.14.3, 11.4.14.4).
 
-  The three forms below are rejected, and they are not one gap. Each says what it waits on.
-  - [ ] A dynamically sized value wherever it meets a stream -- packed into one (LRM 11.4.14.4),
-        filled from one, or standing as the source an unpack consumes. What it waits on is a type
-        naming bits whose number the program fixes: the runtime already holds a packed value's width
-        on the value rather than in its type, so the value side is ready and the type side is not.
-        This is the only one of the four whose answer changes what is already built, because the
-        stream's own type is what would move.
-  - [ ] A class handle as a stream expression (LRM 11.4.14.1 streams the object's data members in
-        declaration order, a base's before a derived's). What it waits on is a traversal over an
-        object rather than over a value: a class object is reached through a managed reference and
-        has no value-layer representation, so the product traversal every other aggregate shares
-        does not reach it.
+  The two forms below are rejected, and they are not one gap. Each says what it waits on.
+  - [ ] A class handle in a stream, wherever it stands -- as an operand, or held in a structure or
+        an array (LRM 11.4.14.1 streams the data members of the object it refers to in declaration
+        order, a base's before a derived's, and skips a null handle). Packing waits on the object
+        answering its own stream: which members it has is its class's, decided when the program
+        runs, so the answer is a behaviour every class overrides rather than a traversal of the
+        handle's declared type. Unpacking into a class handle (LRM 11.4.14.3) is refused by the
+        front end, which reads a class as no bit-stream type on the target side.
   - [x] An unpacked union in a stream streams its first-declared member whatever member was last
         written, packing and unpacking (LRM 11.4.14.1).
   - [ ] A structure or an array holding an unpacked union in a stream. The front end refuses it as

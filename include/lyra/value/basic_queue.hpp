@@ -12,7 +12,9 @@
 
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/value/element_policy.hpp"
+#include "lyra/value/element_sequence.hpp"
 #include "lyra/value/formation.hpp"
+#include "lyra/value/integral_words.hpp"
 #include "lyra/value/position.hpp"
 #include "lyra/value/queue_bound.hpp"
 
@@ -202,6 +204,50 @@ class BasicQueue {
   void PushFront(const void* item) {
     InsertCopy(0, item);
     EnforceBound();
+  }
+
+  // LRM 6.24.3: the elements' own streams written into `stream` below its
+  // `filled` most significant positions, the front one most significant.
+  // Answers how many are filled after them.
+  [[nodiscard]] auto WriteToStream(
+      const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
+    return detail::SequenceWriteToStream(*this, stream, filled);
+  }
+
+  // The inverse: as many elements as fill the stream from its `taken` most
+  // significant position up to `until` replace these, held to the bound (LRM
+  // 6.24.3, 11.4.14.4). Answers how many positions are taken after them.
+  auto ReadFromStream(
+      const ConstIntegralView& stream, std::uint64_t taken, std::uint64_t until)
+      -> std::uint64_t {
+    const detail::ElementsRead<Elem> read(elem_, stream, taken, until);
+    Assign(read.Addresses());
+    return until;
+  }
+
+  // LRM 11.4.14.4: the stream of the `count` elements from `start`, each the
+  // element default where it lies outside the queue; and these elements with
+  // those taking `values`, element for element, the queue first grown to hold
+  // them and then held to its bound. A start naming no position names no
+  // element to write.
+  [[nodiscard]] auto WindowToBitVec(
+      std::optional<std::int64_t> start, std::size_t count) const -> BitVec {
+    return detail::StreamOfElements(
+        elem_, detail::SequenceSliceElements(*this, start, count));
+  }
+  [[nodiscard]] auto WithWindow(
+      std::optional<std::int64_t> start, std::size_t count,
+      std::span<const void* const> values) const -> BasicQueue {
+    BasicQueue out(*this);
+    if (count > 0 && start.has_value() && *start >= 0) {
+      const std::size_t reaches = static_cast<std::size_t>(*start) + count;
+      while (out.count_ < reaches) {
+        out.InsertCopy(out.count_, elem_.Default());
+      }
+    }
+    detail::SequenceAssignSlice(out, start, count, values);
+    out.EnforceBound();
+    return out;
   }
 
   // LRM 7.6: the elements `items` names, in order, held to the bound.

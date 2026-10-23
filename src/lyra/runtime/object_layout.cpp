@@ -40,6 +40,7 @@
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/any.hpp"
 #include "lyra/value/any_value.hpp"
+#include "lyra/value/bit_vec.hpp"
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/dpi_canonical.hpp"
@@ -125,6 +126,8 @@ auto WithValueClass(ValueDomain domain, F f)
       return f.template operator()<value::Any>();
     case ValueDomain::kString:
       return f.template operator()<value::String>();
+    case ValueDomain::kBitVec:
+      return f.template operator()<value::BitVec>();
     case ValueDomain::kReal:
       return f.template operator()<value::Real>();
     case ValueDomain::kShortReal:
@@ -147,13 +150,25 @@ auto WithValueClass(ValueDomain domain, F f)
   throw InternalError("object layout: unknown value domain");
 }
 
-// A variable may be of every value class but the empty one, which is only ever
-// a tagged union's payload (LRM 7.3.2), and an index held with its type, which
-// is no type a declaration can name (LRM 7.8.1).
+// A variable a declaration names may be of every value class but the empty
+// one, which is only ever a tagged union's payload (LRM 7.3.2), an index held
+// with its type, which is no type a declaration can name (LRM 7.8.1), and a
+// run of bits, which is the stream a streaming operator makes and no
+// declaration names either (LRM 11.4.14.1).
 template <typename T>
 struct AdmitsVariable : std::bool_constant<
                             !std::is_same_v<T, value::Empty> &&
-                            !std::is_same_v<T, value::AnyValue>> {};
+                            !std::is_same_v<T, value::AnyValue> &&
+                            !std::is_same_v<T, value::BitVec>> {};
+
+// A local of a body -- held inline, in a cell, or among the variables the body
+// opens -- may be of every value class a variable may, and a run of bits
+// besides, which a streaming operator keeps in a local while it packs or
+// unpacks one (LRM 11.4.14).
+template <typename T>
+struct AdmitsLocal
+    : std::bool_constant<
+          AdmitsVariable<T>::value || std::is_same_v<T, value::BitVec>> {};
 
 // A history is kept over every variable type but the chandle, whose value is
 // the pointer it carries (LRM 6.14), which no sampled read can answer across.
@@ -276,10 +291,10 @@ auto LayoutOf(
     -> ObjectLayout {
   switch (storage.kind) {
     case MemberStorageKind::kInlineValue:
-      return StorageOver<std::type_identity_t, AdmitsVariable>(storage.domain);
+      return StorageOver<std::type_identity_t, AdmitsLocal>(storage.domain);
     case MemberStorageKind::kValueCell:
       return WithValueClass(storage.domain, [&]<typename T>() -> ObjectLayout {
-        if constexpr (AdmitsVariable<T>::value) {
+        if constexpr (AdmitsLocal<T>::value) {
           return HolderLayout<typename LocalOf<T>::Type, T>(held);
         } else {
           return NotRealized<ObjectLayout>();
@@ -287,7 +302,7 @@ auto LayoutOf(
       });
     case MemberStorageKind::kObservableCell:
       return WithValueClass(storage.domain, [&]<typename T>() -> ObjectLayout {
-        if constexpr (AdmitsVariable<T>::value) {
+        if constexpr (AdmitsLocal<T>::value) {
           return HolderLayout<typename VariableOf<T>::Type, T>(held);
         } else {
           return NotRealized<ObjectLayout>();

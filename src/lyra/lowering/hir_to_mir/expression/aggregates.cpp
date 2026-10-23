@@ -184,27 +184,45 @@ auto LowerHirConcatExpr(
 
 template <ExprLowerer Lowerer>
 auto LowerHirStreamingConcatExpr(
-    Lowerer& lowerer, WalkFrame frame, const hir::StreamingConcatExpr& s,
-    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+    Lowerer& lowerer, WalkFrame frame, const hir::StreamingConcatExpr& s)
+    -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   // LRM 11.4.14.1: each operand contributes its own bits, appended to the right
   // of what the operands before it contributed, so the first is most
-  // significant -- which is the order the join already composes in.
-  std::vector<mir::ExprId> runs;
-  runs.reserve(s.operands.size());
-  for (const auto& id : s.operands) {
-    const hir::Expr& operand = lowerer.HirExprs().Get(id);
-    auto lowered = lowerer.LowerAsPlace(operand, frame);
+  // significant -- which is the order a join composes in. A `with` takes the
+  // elements it names of its array (LRM 11.4.14.4).
+  std::vector<mir::ExprId> parts;
+  parts.reserve(s.operands.size());
+  for (const hir::StreamOperand& operand : s.operands) {
+    if (operand.with.has_value()) {
+      auto window = LowerStreamWindowRun(lowerer, frame, operand);
+      if (!window) return std::unexpected(std::move(window.error()));
+      parts.push_back(block.exprs.Add(*std::move(window)));
+      continue;
+    }
+    const hir::Expr& value = lowerer.HirExprs().Get(operand.value);
+    auto lowered = lowerer.LowerAsPlace(value, frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    auto run_or = BuildToBitstream(
-        unit, block, block.exprs.Add(*std::move(lowered)), operand.span);
-    if (!run_or) return std::unexpected(std::move(run_or.error()));
-    runs.push_back(block.AsValue(unit.types, *run_or));
+    auto part = BuildToBitstream(
+        unit, block, block.exprs.Add(*std::move(lowered)), value.span);
+    if (!part) return std::unexpected(std::move(part.error()));
+    parts.push_back(block.AsValue(unit.types, *part));
   }
-  const mir::ExprId stream = BuildReorderedStream(
-      unit, block, BuildBitsJoin(unit, frame, runs), s.block_bits);
-  return BuildValueConversion(unit, block, stream, result_type);
+  // A run of bits as long as the running program makes it where any part is
+  // one, and otherwise an integral value as wide as the parts together.
+  const bool any_part_is_run =
+      std::ranges::any_of(parts, [&](mir::ExprId part) {
+        return block.exprs.Get(part).type == unit.builtins.bit_vec;
+      });
+  const mir::ExprId joined =
+      any_part_is_run
+          ? BuildRunJoin(
+                unit, block,
+                frame.bindings->DeclareAnonymous(unit.builtins.bit_vec), parts)
+          : BuildBitsJoin(unit, frame, parts);
+  return block.exprs.Get(
+      BuildReorderedStream(unit, block, joined, s.block_bits));
 }
 
 template <ExprLowerer Lowerer>
@@ -597,11 +615,11 @@ template auto LowerHirConcatExpr(
     const StructuralScopeLowerer&, WalkFrame, const hir::ConcatExpr&,
     mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirStreamingConcatExpr(
-    ProcessLowerer&, WalkFrame, const hir::StreamingConcatExpr&, mir::TypeId)
+    ProcessLowerer&, WalkFrame, const hir::StreamingConcatExpr&)
     -> diag::Result<mir::Expr>;
 template auto LowerHirStreamingConcatExpr(
-    const StructuralScopeLowerer&, WalkFrame, const hir::StreamingConcatExpr&,
-    mir::TypeId) -> diag::Result<mir::Expr>;
+    const StructuralScopeLowerer&, WalkFrame, const hir::StreamingConcatExpr&)
+    -> diag::Result<mir::Expr>;
 template auto LowerHirAssignmentPatternExpr(
     ProcessLowerer&, WalkFrame, const hir::AssignmentPatternExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;

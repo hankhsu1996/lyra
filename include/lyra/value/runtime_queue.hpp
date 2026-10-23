@@ -6,6 +6,7 @@
 #include <span>
 
 #include "lyra/value/basic_queue.hpp"
+#include "lyra/value/bit_vec.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/element_type.hpp"
 #include "lyra/value/formation.hpp"
@@ -132,6 +133,28 @@ class RuntimeQueue {
   [[nodiscard]] auto BitstreamWidth() const -> Int;
   [[nodiscard]] auto CountBits(const ConstIntegralView& control_bits) const
       -> Int;
+  // LRM 6.24.3: the elements' own streams laid end to end below the `filled`
+  // most significant positions of `stream`, the one at position 0 first, and
+  // the inverse, as many elements as fill the stream up to `until`; and the
+  // stream as a run of bits of its own.
+  [[nodiscard]] auto WriteToStream(
+      const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t;
+  auto ReadFromStream(
+      const ConstIntegralView& stream, std::uint64_t taken, std::uint64_t until)
+      -> std::uint64_t;
+  [[nodiscard]] auto ToBitVec() const -> BitVec;
+  // LRM 11.4.14.4: the stream of the `count` elements from `start`, an element
+  // outside streaming as the element default; and these elements with those
+  // taking `values`, grown first to hold them.
+  [[nodiscard]] auto WindowToBitVec(
+      std::optional<std::int64_t> start, std::size_t count) const -> BitVec;
+  [[nodiscard]] auto WithWindow(
+      std::optional<std::int64_t> start, std::size_t count,
+      std::span<const void* const> values) const -> RuntimeQueue;
+  // LRM 6.24.3: a queue of `type` holding as many elements as fill `run`
+  // exactly, held to its bound.
+  [[nodiscard]] static auto FromBitVec(const QueueType& type, const BitVec& run)
+      -> RuntimeQueue;
 
  private:
   using Held = BasicQueue<WitnessedElem, WitnessedBound>;

@@ -254,6 +254,48 @@ auto IsReachedByAddress(RuntimeLibraryKind kind) -> bool {
     case RuntimeLibraryKind::kCancellationTarget:
     case RuntimeLibraryKind::kTimer:
       return true;
+    case RuntimeLibraryKind::kBitVec:
+    case RuntimeLibraryKind::kPrintItem:
+    case RuntimeLibraryKind::kPrintLiteralItem:
+    case RuntimeLibraryKind::kPrintValueItem:
+    case RuntimeLibraryKind::kFormatSpec:
+    case RuntimeLibraryKind::kFormatArg:
+    case RuntimeLibraryKind::kTimeFormat:
+    case RuntimeLibraryKind::kDpiBitBuffer:
+    case RuntimeLibraryKind::kDpiLogicBuffer:
+    case RuntimeLibraryKind::kDpiOpenArray:
+    case RuntimeLibraryKind::kEnumeration:
+    case RuntimeLibraryKind::kTrigger:
+    case RuntimeLibraryKind::kObservation:
+    case RuntimeLibraryKind::kReadReport:
+    case RuntimeLibraryKind::kWait:
+    case RuntimeLibraryKind::kHierarchySegment:
+    case RuntimeLibraryKind::kChannelCancellation:
+    case RuntimeLibraryKind::kDpiBitChunk:
+    case RuntimeLibraryKind::kDpiLogicChunk:
+    case RuntimeLibraryKind::kDpiOpenArrayHandle:
+    case RuntimeLibraryKind::kControlEffect:
+    case RuntimeLibraryKind::kObjectDefinition:
+    case RuntimeLibraryKind::kScopeInfo:
+    case RuntimeLibraryKind::kScopeCallable:
+    case RuntimeLibraryKind::kConstructionTable:
+    case RuntimeLibraryKind::kInstantiation:
+    case RuntimeLibraryKind::kDumpEntry:
+    case RuntimeLibraryKind::kDumpBlock:
+      return false;
+  }
+  throw InternalError("mir: unknown runtime library kind");
+}
+
+// Whether a value of the library's of `kind` lives in storage of its own that
+// its holder keeps a claim on, as a run of bits does; every other kind is a
+// payload built for the call that reads it, or storage the runtime keeps.
+auto IsLibraryValue(RuntimeLibraryKind kind) -> bool {
+  switch (kind) {
+    case RuntimeLibraryKind::kBitVec:
+      return true;
+    case RuntimeLibraryKind::kCancellationTarget:
+    case RuntimeLibraryKind::kTimer:
     case RuntimeLibraryKind::kPrintItem:
     case RuntimeLibraryKind::kPrintLiteralItem:
     case RuntimeLibraryKind::kPrintValueItem:
@@ -410,6 +452,7 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           [](const ErasedValueType&) { return false; },
           [](const RealType&) { return true; },
           [](const ShortRealType&) { return true; },
+          [](const RuntimeLibraryType& t) { return IsLibraryValue(t.kind); },
 
           // A class handle is one of these and a chandle is not, which LRM 8.4
           // Table 8-1 states directly: an unreferenced object is collected
@@ -465,7 +508,6 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           [](const RuntimeEffectsType&) { return false; },
           [](const FilesType&) { return false; },
           [](const DiagnosticType&) { return false; },
-          [](const RuntimeLibraryType&) { return false; },
 
           // A wildcard index (LRM 7.8.1) is a rule about which indices an array
           // admits rather than a type any value has, and `void` and a tagged
@@ -556,8 +598,8 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const ClosureType&) -> Element { return std::nullopt; },
           [](const ErasedCallableType&) -> Element { return std::nullopt; },
 
-          // A handle to a runtime facility, and a payload the library
-          // owns the shape of.
+          // A handle to a runtime facility, and a type the library declares,
+          // whose shape is the library's.
           [](const RuntimeEffectsType&) -> Element { return std::nullopt; },
           [](const FilesType&) -> Element { return std::nullopt; },
           [](const DiagnosticType&) -> Element { return std::nullopt; },

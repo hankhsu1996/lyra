@@ -175,7 +175,8 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           // it is not wrapped: a handle onto storage of another lifetime
           // (pointer, reference, vector), an object (a class instance
           // or an instantiated child), a runtime facade (effects, files,
-          // diagnostics, a runtime-library type), a coroutine result, a machine
+          // diagnostics), a type the runtime library declares, a coroutine
+          // result, a machine
           // primitive (a plain boolean, integer, float, C string, array, or
           // code address), a closure, the wildcard index type (LRM 7.8.1),
           // `void`, the observable, net-cell, net-driver, sampled-history and
@@ -199,6 +200,10 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           [&](const RuntimeEffectsType&) { return bare(); },
           [&](const FilesType&) { return bare(); },
           [&](const DiagnosticType&) { return bare(); },
+          // A type the library declares is a payload built for one call,
+          // storage the runtime keeps, or the run of bits a streaming operator
+          // holds while it packs or unpacks (LRM 11.4.14), which no
+          // declaration names, so nothing waits on any of them.
           [&](const RuntimeLibraryType&) { return bare(); },
           [&](const CoroutineType&) { return bare(); },
           [&](const VariableRefType&) { return bare(); },

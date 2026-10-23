@@ -81,6 +81,8 @@ auto RuntimeLibraryKindName(RuntimeLibraryKind kind) -> const char* {
       return "time format";
     case RuntimeLibraryKind::kHierarchySegment:
       return "hierarchy segment";
+    case RuntimeLibraryKind::kBitVec:
+      return "bit vector";
     case RuntimeLibraryKind::kDpiBitBuffer:
       return "DPI canonical bit buffer";
     case RuntimeLibraryKind::kDpiLogicBuffer:
@@ -432,8 +434,8 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const ClosureType&) -> Element { return std::nullopt; },
           [](const ErasedCallableType&) -> Element { return std::nullopt; },
 
-          // A handle to a runtime facility, and a payload the library
-          // owns the shape of.
+          // A handle to a runtime facility, and a type the library declares,
+          // whose shape is the library's.
           [](const RuntimeEffectsType&) -> Element { return std::nullopt; },
           [](const FilesType&) -> Element { return std::nullopt; },
           [](const DiagnosticType&) -> Element { return std::nullopt; },
@@ -474,6 +476,7 @@ auto Type::IsAddressOnly() const -> bool {
       case RuntimeLibraryKind::kCancellationTarget:
       case RuntimeLibraryKind::kTimer:
         return true;
+      case RuntimeLibraryKind::kBitVec:
       case RuntimeLibraryKind::kEnumeration:
       case RuntimeLibraryKind::kPrintItem:
       case RuntimeLibraryKind::kPrintLiteralItem:
@@ -585,6 +588,9 @@ auto Type::HeldAs() const -> std::optional<Holding> {
           },
           [](const RuntimeLibraryType& library) -> Held {
             switch (library.kind) {
+              // A value of the library's own, held as any value is.
+              case RuntimeLibraryKind::kBitVec:
+                return ValueDomain::kBitVec;
               // Built for one use by the call that answers with one.
               case RuntimeLibraryKind::kPrintItem:
               case RuntimeLibraryKind::kPrintLiteralItem:

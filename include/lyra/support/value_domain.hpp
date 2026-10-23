@@ -46,6 +46,8 @@ enum class ValueDomain : std::uint8_t {
   // A value of any type, kept with its type and the identity it is tested by.
   kAny,
   kString,
+  // A run of bits whose length is the value's.
+  kBitVec,
   kReal,
   kShortReal,
   kChandle,

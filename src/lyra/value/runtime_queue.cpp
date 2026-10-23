@@ -204,4 +204,37 @@ auto RuntimeQueue::CountBits(const ConstIntegralView& control_bits) const
       core_.has_value() ? detail::SequenceCountBits(*core_, control_bits) : 0);
 }
 
+auto RuntimeQueue::WriteToStream(
+    const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
+  return core_.has_value() ? core_->WriteToStream(stream, filled) : filled;
+}
+
+auto RuntimeQueue::ReadFromStream(
+    const ConstIntegralView& stream, std::uint64_t taken, std::uint64_t until)
+    -> std::uint64_t {
+  return Core().ReadFromStream(stream, taken, until);
+}
+
+auto RuntimeQueue::ToBitVec() const -> BitVec {
+  return StreamOf(*this);
+}
+
+auto RuntimeQueue::FromBitVec(const QueueType& type, const BitVec& run)
+    -> RuntimeQueue {
+  RuntimeQueue out = FromElements(type, {});
+  ReadWholeStream(out, run);
+  return out;
+}
+
+auto RuntimeQueue::WindowToBitVec(
+    std::optional<std::int64_t> start, std::size_t count) const -> BitVec {
+  return Core().WindowToBitVec(start, count);
+}
+
+auto RuntimeQueue::WithWindow(
+    std::optional<std::int64_t> start, std::size_t count,
+    std::span<const void* const> values) const -> RuntimeQueue {
+  return RuntimeQueue(Core().WithWindow(start, count, values));
+}
+
 }  // namespace lyra::value

@@ -112,6 +112,11 @@ class WitnessedElem {
       -> std::uint64_t {
     return Type().WriteToStream(value, stream, filled);
   }
+  auto ReadFromStream(
+      const ConstIntegralView& stream, std::uint64_t taken, std::uint64_t until,
+      void* out) const -> std::uint64_t {
+    return Type().ReadFromStream(stream, taken, until, out);
+  }
 
  private:
   [[nodiscard]] auto Type() const -> const ValueType& {

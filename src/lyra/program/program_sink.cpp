@@ -303,6 +303,8 @@ void BindEngineEntries(const auto& add) {
 void BindWriteEntries(const auto& add) {
   add("lyra_rt_string_cell_open_for_write",
       &lyra_rt_string_cell_open_for_write);
+  add("lyra_rt_bitvec_cell_open_for_write",
+      &lyra_rt_bitvec_cell_open_for_write);
   add("lyra_rt_real_cell_open_for_write", &lyra_rt_real_cell_open_for_write);
   add("lyra_rt_shortreal_cell_open_for_write",
       &lyra_rt_shortreal_cell_open_for_write);
@@ -401,6 +403,7 @@ void BindWriteEntries(const auto& add) {
   add("lyra_rt_laidout_assign_slice", &lyra_rt_laidout_assign_slice);
   add("lyra_rt_queue_assign_slice", &lyra_rt_queue_assign_slice);
   add("lyra_rt_string_land", &lyra_rt_string_land);
+  add("lyra_rt_bitvec_land", &lyra_rt_bitvec_land);
   add("lyra_rt_real_land", &lyra_rt_real_land);
   add("lyra_rt_shortreal_land", &lyra_rt_shortreal_land);
   add("lyra_rt_chandle_land", &lyra_rt_chandle_land);
@@ -486,6 +489,9 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_string_cell_get", &lyra_rt_string_cell_get);
   add("lyra_rt_string_cell_initialize", &lyra_rt_string_cell_initialize);
   add("lyra_rt_string_cell_set", &lyra_rt_string_cell_set);
+  add("lyra_rt_bitvec_cell_get", &lyra_rt_bitvec_cell_get);
+  add("lyra_rt_bitvec_cell_initialize", &lyra_rt_bitvec_cell_initialize);
+  add("lyra_rt_bitvec_cell_set", &lyra_rt_bitvec_cell_set);
   add("lyra_rt_string_cell_arm_sampling", &lyra_rt_string_cell_arm_sampling);
   add("lyra_rt_string_cell_sampled_get", &lyra_rt_string_cell_sampled_get);
   add("lyra_rt_real_cell_get", &lyra_rt_real_cell_get);
@@ -659,6 +665,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_dpi_open_array_handle", &lyra_rt_dpi_open_array_handle);
   add("lyra_rt_dpi_open_array_value", &lyra_rt_dpi_open_array_value);
   add("lyra_rt_string_destroy", &lyra_rt_string_destroy);
+  add("lyra_rt_bitvec_destroy", &lyra_rt_bitvec_destroy);
   add("lyra_rt_dynarray_destroy", &lyra_rt_dynarray_destroy);
   add("lyra_rt_queue_destroy", &lyra_rt_queue_destroy);
   add("lyra_rt_assocarray_destroy", &lyra_rt_assocarray_destroy);
@@ -677,6 +684,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_open_write_destroy", &lyra_rt_open_write_destroy);
   add("lyra_rt_object_write_destroy", &lyra_rt_object_write_destroy);
   add("lyra_rt_string_assign", &lyra_rt_string_assign);
+  add("lyra_rt_bitvec_assign", &lyra_rt_bitvec_assign);
   add("lyra_rt_real_assign", &lyra_rt_real_assign);
   add("lyra_rt_shortreal_assign", &lyra_rt_shortreal_assign);
   add("lyra_rt_chandle_assign", &lyra_rt_chandle_assign);
@@ -691,6 +699,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_element_default", &lyra_rt_element_default);
   add("lyra_rt_discarded_write", &lyra_rt_discarded_write);
   add("lyra_rt_string_copy", &lyra_rt_string_copy);
+  add("lyra_rt_bitvec_copy", &lyra_rt_bitvec_copy);
   add("lyra_rt_real_copy", &lyra_rt_real_copy);
   add("lyra_rt_shortreal_copy", &lyra_rt_shortreal_copy);
   add("lyra_rt_chandle_copy", &lyra_rt_chandle_copy);
@@ -713,6 +722,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_reference_copy", &lyra_rt_reference_copy);
   add("lyra_rt_any_reference_copy", &lyra_rt_any_reference_copy);
   add("lyra_rt_string_move", &lyra_rt_string_move);
+  add("lyra_rt_bitvec_move", &lyra_rt_bitvec_move);
   add("lyra_rt_real_move", &lyra_rt_real_move);
   add("lyra_rt_shortreal_move", &lyra_rt_shortreal_move);
   add("lyra_rt_chandle_move", &lyra_rt_chandle_move);
@@ -1064,6 +1074,8 @@ void BindMemberOperationEntries(const auto& add) {
   add("lyra_rt_stream_write", &lyra_rt_stream_write);
   add("lyra_rt_stream_read", &lyra_rt_stream_read);
   add("lyra_rt_stream_build", &lyra_rt_stream_build);
+  add("lyra_rt_run_write", &lyra_rt_run_write);
+  add("lyra_rt_run_build", &lyra_rt_run_build);
   add("lyra_rt_type_lacks_operation", &lyra_rt_type_lacks_operation);
   add("lyra_rt_wildcard_index_copy", &lyra_rt_wildcard_index_copy);
   add("lyra_rt_wildcard_index_move", &lyra_rt_wildcard_index_move);
@@ -1120,11 +1132,29 @@ void BindMemberOperationEntries(const auto& add) {
   add("lyra_rt_managedref_bitstream_width",
       &lyra_rt_managedref_bitstream_width);
   add("lyra_rt_managedref_count_bits", &lyra_rt_managedref_count_bits);
-  add("lyra_rt_string_to_bitstream", &lyra_rt_string_to_bitstream);
-  add("lyra_rt_dynarray_to_bitstream", &lyra_rt_dynarray_to_bitstream);
-  add("lyra_rt_queue_to_bitstream", &lyra_rt_queue_to_bitstream);
-  add("lyra_rt_assocarray_to_bitstream", &lyra_rt_assocarray_to_bitstream);
-  add("lyra_rt_managedref_to_bitstream", &lyra_rt_managedref_to_bitstream);
+  add("lyra_rt_string_to_bitvec", &lyra_rt_string_to_bitvec);
+  add("lyra_rt_dynarray_to_bitvec", &lyra_rt_dynarray_to_bitvec);
+  add("lyra_rt_queue_to_bitvec", &lyra_rt_queue_to_bitvec);
+  add("lyra_rt_assocarray_to_bitvec", &lyra_rt_assocarray_to_bitvec);
+  add("lyra_rt_dynarray_from_bitvec", &lyra_rt_dynarray_from_bitvec);
+  add("lyra_rt_queue_from_bitvec", &lyra_rt_queue_from_bitvec);
+  add("lyra_rt_string_from_bitvec", &lyra_rt_string_from_bitvec);
+  add("lyra_rt_bitvec_default", &lyra_rt_bitvec_default);
+  add("lyra_rt_bitvec_of", &lyra_rt_bitvec_of);
+  add("lyra_rt_bitvec_extend", &lyra_rt_bitvec_extend);
+  add("lyra_rt_bitvec_append", &lyra_rt_bitvec_append);
+  add("lyra_rt_bitvec_insert_bits", &lyra_rt_bitvec_insert_bits);
+  add("lyra_rt_bitvec_reverse_blocks", &lyra_rt_bitvec_reverse_blocks);
+  add("lyra_rt_bitvec_len", &lyra_rt_bitvec_len);
+  add("lyra_rt_bitvec_extract_bits", &lyra_rt_bitvec_extract_bits);
+  add("lyra_rt_bitvec_load", &lyra_rt_bitvec_load);
+  add("lyra_rt_bitvec_padded_to", &lyra_rt_bitvec_padded_to);
+  add("lyra_rt_dynarray_window_to_bitvec", &lyra_rt_dynarray_window_to_bitvec);
+  add("lyra_rt_queue_window_to_bitvec", &lyra_rt_queue_window_to_bitvec);
+  add("lyra_rt_laidout_window_to_bitvec", &lyra_rt_laidout_window_to_bitvec);
+  add("lyra_rt_dynarray_with_window", &lyra_rt_dynarray_with_window);
+  add("lyra_rt_queue_with_window", &lyra_rt_queue_with_window);
+  add("lyra_rt_laidout_with_window", &lyra_rt_laidout_with_window);
 }
 
 // What a declaration's storage publishes: building one member's storage where
@@ -1135,6 +1165,7 @@ void BindStorageEntries(const auto& add) {
   add("lyra_rt_reference_construct", &lyra_rt_reference_construct);
   add("lyra_rt_any_reference_construct", &lyra_rt_any_reference_construct);
   add("lyra_rt_string_cell_construct", &lyra_rt_string_cell_construct);
+  add("lyra_rt_bitvec_cell_construct", &lyra_rt_bitvec_cell_construct);
   add("lyra_rt_real_cell_construct", &lyra_rt_real_cell_construct);
   add("lyra_rt_shortreal_cell_construct", &lyra_rt_shortreal_cell_construct);
   add("lyra_rt_chandle_cell_construct", &lyra_rt_chandle_cell_construct);
@@ -1145,6 +1176,8 @@ void BindStorageEntries(const auto& add) {
   add("lyra_rt_managedref_cell_construct", &lyra_rt_managedref_cell_construct);
   add("lyra_rt_string_value_cell_construct",
       &lyra_rt_string_value_cell_construct);
+  add("lyra_rt_bitvec_value_cell_construct",
+      &lyra_rt_bitvec_value_cell_construct);
   add("lyra_rt_real_value_cell_construct", &lyra_rt_real_value_cell_construct);
   add("lyra_rt_shortreal_value_cell_construct",
       &lyra_rt_shortreal_value_cell_construct);
@@ -1187,6 +1220,7 @@ void BindStorageEntries(const auto& add) {
       &lyra_rt_channel_cancellation_construct);
   add("lyra_rt_shared_pointer_construct", &lyra_rt_shared_pointer_construct);
   add("lyra_rt_string_cell_destroy", &lyra_rt_string_cell_destroy);
+  add("lyra_rt_bitvec_cell_destroy", &lyra_rt_bitvec_cell_destroy);
   add("lyra_rt_real_cell_destroy", &lyra_rt_real_cell_destroy);
   add("lyra_rt_shortreal_cell_destroy", &lyra_rt_shortreal_cell_destroy);
   add("lyra_rt_chandle_cell_destroy", &lyra_rt_chandle_cell_destroy);
@@ -1196,6 +1230,7 @@ void BindStorageEntries(const auto& add) {
   add("lyra_rt_assocarray_cell_destroy", &lyra_rt_assocarray_cell_destroy);
   add("lyra_rt_managedref_cell_destroy", &lyra_rt_managedref_cell_destroy);
   add("lyra_rt_string_value_cell_destroy", &lyra_rt_string_value_cell_destroy);
+  add("lyra_rt_bitvec_value_cell_destroy", &lyra_rt_bitvec_value_cell_destroy);
   add("lyra_rt_laidout_value_cell_destroy",
       &lyra_rt_laidout_value_cell_destroy);
   add("lyra_rt_dynarray_value_cell_destroy",
