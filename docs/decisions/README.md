@@ -1479,7 +1479,6 @@ the detail lives in the entry itself.
   diagnostics in Lyra and an exception for text every tool takes are rejected. Revised 2026-10-16:
   the front end's severity is shipped as given, so a forbidden text it accepts with a warning runs
   with it, and lowering judges no legality.
-
 - [the-classes-of-std-are-written-in-systemverilog](the-classes-of-std-are-written-in-systemverilog.md)
   -- `std`'s `semaphore` and `mailbox` are defined by SystemVerilog Lyra reads into every
   compilation as a compilation unit of its own and compiles in the name of `std`, held by a test to
@@ -1490,6 +1489,12 @@ the detail lives in the entry itself.
   in HIR, a package of Lyra's own, tickets, a type's address or MIR identity as the class, one
   object both owning and referring, a bound in the text, copying a message in after `get` returns, a
   second mailbox definition, and compiling the definitions only where named are rejected.
+- [the-front-end-fork-keeps-a-branch-per-release](the-front-end-fork-keeps-a-branch-per-release.md)
+  -- the slang fork keeps one branch per upstream release it is based on, `lyra/v<major>`, which
+  only grows and which the host protects; moving to a release starts a new branch, so every commit
+  Lyra has pinned stays fetchable, and a check holds the pin to the branch of the release
+  `MODULE.bazel` names. One branch rebased onto each release, patch files in Lyra, and a tag per pin
+  are rejected.
 
 ### Conformance testing
 
