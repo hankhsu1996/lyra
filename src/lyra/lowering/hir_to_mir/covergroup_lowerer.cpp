@@ -2693,8 +2693,10 @@ auto LowerCovergroupNewExpr(
         block.AsValue(unit.types, block.exprs.Add(*std::move(embedding))),
         HandleTo(unit_lowerer, *published.embedding)));
   }
+  const hir::CovergroupRef lineage_first =
+      FirstOf(unit_lowerer, created.covergroup);
   const hir::PublishedCovergroup& first =
-      PublishedOf(unit_lowerer, FirstOf(unit_lowerer, created.covergroup));
+      PublishedOf(unit_lowerer, lineage_first);
   auto actuals =
       BindCovergroupActuals(lowerer, frame, first.formals, created.arguments);
   if (!actuals) return std::unexpected(std::move(actuals.error()));

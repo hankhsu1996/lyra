@@ -232,9 +232,17 @@ auto Joined(const std::vector<std::string>& command) -> std::string {
   return out;
 }
 
+// What one compile left behind: its reading, and the bytes of each file it
+// wrote, by the file's name, which the bytes of the reading are taken from once
+// both runs are in.
+struct Left {
+  Reading reading;
+  std::map<std::string, std::uint64_t> file_bytes;
+};
+
 auto Compile(
     const std::filesystem::path& lyra, const std::vector<std::string>& command,
-    const std::filesystem::path& dir) -> std::expected<Reading, std::string> {
+    const std::filesystem::path& dir) -> std::expected<Left, std::string> {
   std::filesystem::remove_all(dir);
   std::filesystem::create_directories(dir);
   const auto ran = RunChildProcess(lyra, command, 600s);
@@ -251,12 +259,14 @@ auto Compile(
         std::format("{} wrote no report of itself", Joined(command)));
   }
 
-  Reading reading;
+  Left left;
+  Reading& reading = left.reading;
   for (const nlohmann::json& unit : stats.at("units")) {
     reading[std::string(kUnits)] += 1;
     for (const nlohmann::json& artifact : unit.at("artifacts")) {
       reading[std::string(kFiles)] += 1;
-      reading[std::string(kBytes)] += artifact.at("bytes").get<std::uint64_t>();
+      left.file_bytes[artifact.at("name").get<std::string>()] =
+          artifact.at("bytes").get<std::uint64_t>();
       // What the unit wrote as text lies where the run wrote its project; a
       // path that writes none leaves nothing to read there.
       std::ifstream text_file(
@@ -292,7 +302,25 @@ auto Compile(
       reading[std::string(kBodiesLowered)] += 1;
     }
   }
-  return reading;
+  return left;
+}
+
+// The bytes each run left in files the two runs did not write alike. A file
+// both write under one name and at one size -- a library every design compiles,
+// which no size reaches -- is no part of what the size adds, and counting it
+// holds the rest to a fraction of something fixed, so a departure hides behind
+// a library that grows.
+void TakeBytesTheSizeReached(Left& small, Left& large) {
+  for (const auto& [left, other] :
+       {std::pair{&small, &large}, std::pair{&large, &small}}) {
+    std::uint64_t& bytes = left->reading[std::string(kBytes)];
+    for (const auto& [name, size] : left->file_bytes) {
+      const auto found = other->file_bytes.find(name);
+      if (found == other->file_bytes.end() || found->second != size) {
+        bytes += size;
+      }
+    }
+  }
 }
 
 // What departed, in the words a record names it by, each with the numbers that
@@ -396,15 +424,17 @@ auto CheckGrowth(
       path, WrittenAt(growth.design, 2 * growth.size, *scratch / "large.sv"),
       2 * growth.size, *scratch / "large");
 
-  const auto small = Compile(lyra, small_command, *scratch / "small");
+  auto small = Compile(lyra, small_command, *scratch / "small");
   if (!small.has_value()) {
     return small.error();
   }
-  const auto large = Compile(lyra, large_command, *scratch / "large");
+  auto large = Compile(lyra, large_command, *scratch / "large");
   if (!large.has_value()) {
     return large.error();
   }
-  const Departed departed = DepartedInWhatWasLeft(growth, *small, *large);
+  TakeBytesTheSizeReached(*small, *large);
+  const Departed departed =
+      DepartedInWhatWasLeft(growth, small->reading, large->reading);
 
   std::set<std::string> found;
   for (const auto& [name, numbers] : departed) {
