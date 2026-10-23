@@ -28,6 +28,7 @@ struct Pattern;
 namespace slang::ast {
 class Symbol;
 class Scope;
+class TimingControl;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
@@ -48,6 +49,16 @@ struct ScopeFrameId {
 struct ActiveIterationClause {
   const slang::ast::Symbol* element;
   hir::WithClauseId clause;
+};
+
+// A named sequence or property instance whose body is being lowered, and the
+// clock in force where the instance stands, which a `$inferred_clock` among
+// its formals' defaults stands for (LRM 16.14.7); none where no clock is. The
+// clock is the one the source wrote, resolved wherever it is used, against
+// the instances recorded beside it.
+struct ExpansionInstance {
+  const slang::ast::Symbol* declaration;
+  const slang::ast::TimingControl* clock;
 };
 
 // A procedural scope while its own contents are still being walked. Its
@@ -158,6 +169,19 @@ struct WalkFrame {
   // taken from a queue, which is the one place `$` has a value (LRM 7.10.1:
   // the queue's last index).
   bool within_queue_select = false;
+
+  // The clocking event of the concurrent assertion whose property or action
+  // block is being lowered, which is the clock a sampled value function there
+  // counts ticks of (LRM 16.9.3, by the clock flow of 16.13.3). Null outside
+  // them, and in the assertion's own clock and disable condition, where a
+  // sampled value function writes its clock; there the enclosing procedure or
+  // the scope's default clocking answers instead.
+  const slang::ast::TimingControl* assertion_clock = nullptr;
+
+  // The sequence and property instances whose bodies enclose what is being
+  // lowered, outermost first, as the front end's clock inference keeps them.
+  // Empty outside an assertion.
+  std::vector<ExpansionInstance> expansion_stack;
 
   // The active LRM 7.12 array-method `with`-clause iterators whose bodies are
   // being lowered, each enclosing clause kept so an inner body can still name
@@ -333,6 +357,26 @@ struct WalkFrame {
   [[nodiscard]] auto OutsideQueueSelect() const -> WalkFrame {
     WalkFrame next = *this;
     next.within_queue_select = false;
+    return next;
+  }
+
+  // Enters the property or an action block of a concurrent assertion clocked by
+  // `clock`.
+  [[nodiscard]] auto WithAssertionClock(
+      const slang::ast::TimingControl& clock) const -> WalkFrame {
+    WalkFrame next = *this;
+    next.assertion_clock = &clock;
+    return next;
+  }
+
+  // Enters the body of the instance of `declaration`, standing where `clock`
+  // is in force.
+  [[nodiscard]] auto WithExpansionInstance(
+      const slang::ast::Symbol& declaration,
+      const slang::ast::TimingControl* clock) const -> WalkFrame {
+    WalkFrame next = *this;
+    next.expansion_stack.push_back(
+        ExpansionInstance{.declaration = &declaration, .clock = clock});
     return next;
   }
 

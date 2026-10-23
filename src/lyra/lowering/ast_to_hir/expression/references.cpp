@@ -582,12 +582,8 @@ auto LowerHierarchicalValue(
     // whose value differs between the objects built from its scope is held by
     // each of them, and is reached there as a variable is.
     case Referent::kParameterConstant: {
-      const auto& param = target.as<slang::ast::ParameterSymbol>();
-      if (const auto* holder = param.getParentScope();
-          holder != nullptr && holder->getContainingInstance() != nullptr &&
-          unit_lowerer.Specialization().ValueSourceOf(
-              InstanceHolding(*holder), param) !=
-              ParameterValueSource::kFixedBySpecialization) {
+      if (unit_lowerer.ReadsParameterFromCell(
+              target.as<slang::ast::ParameterSymbol>())) {
         auto type_id = unit_lowerer.InternExpressionType(hve, span);
         if (!type_id) return std::unexpected(std::move(type_id.error()));
         auto reached = unit_lowerer.ResolveValueTarget(

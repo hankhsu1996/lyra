@@ -24,8 +24,9 @@ namespace lyra::lowering::ast_to_hir {
 
 // The storage elaboration sealed that `expr` reads, which a wait on it watches
 // for as long as it lasts.
+template <typename Lowerer>
 auto CellsOfWaitedExpression(
-    ProcessLowerer& proc, WalkFrame frame, const slang::ast::Expression& expr)
+    Lowerer& lowerer, WalkFrame frame, const slang::ast::Expression& expr)
     -> diag::Result<std::vector<hir::SensitivityEntry>>;
 
 // The cells a call of `function` reads and writes, and the calls an implicit

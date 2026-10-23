@@ -121,23 +121,26 @@ The IDs are stable references and do not imply execution order beyond the depend
       region of the tick's own time step, which is what makes every tick a reader can see strictly
       prior to it whatever order the two ran in; and because the history starts full, a read
       reaching further back than the ticks that have happened answers with the default sampled value
-      without anything counting them. Which event a call counts ticks of is whichever the source
-      wrote, the clock the procedure settles, or the scope's default clocking, and `$past`'s gating
+      without anything counting them. Which event a call counts ticks of follows LRM 16.9.3's
+      ordered rules: whichever the source wrote; inside a concurrent assertion's property and its
+      action blocks, the assertion's clock; in a procedure, the clock the procedure settles; and
+      otherwise the scope's default clocking, a continuous assignment's included. `$past`'s gating
       expression qualifies that event rather than the expression, so two reads of one expression
-      under differently gated clocks count different ticks. A clocking declaration is carried only
-      as far as naming an event a scope may select as its default; its clockvars, skews, drives and
-      the cycle-delay operator are refused.
+      under differently gated clocks count different ticks. A constant -- a parameter, one each
+      instance is handed its own value of included, a loop generate's index, an enumeration name, a
+      package's localparam -- is its own sampled value at every tick. A clocking event that names an
+      event ticks at its triggers, as any event control on it does. A clocking declaration is
+      carried only as far as naming an event a scope may select as its default; its clockvars,
+      skews, drives and the cycle-delay operator are refused.
 
       An automatic variable, and a `ref` formal that is not `ref static`, answers with its current
       value, and a past value of one is its current value too (LRM 16.5.1), so no cell is armed for
       it and an expression reading only such variables keeps no history.
 
-      Three things are refused rather than answered. A sampled value of a `ref static` formal,
-      whose actual's Preponed value is what it should answer with. A history function over an
+      Two things are refused rather than answered. A sampled value of a `ref static` formal,
+      whose actual's Preponed value is what it should answer with. And a history function over an
       expression reading both an automatic variable and one the design element holds, which needs
-      the history kept per variable rather than per expression. And a call outside a procedure
-      reaches only the default clocking rule, which is not wired. A clocking event that names an
-      event ticks at its triggers, as any event control on it does.
+      the history kept per variable rather than per expression.
 
 - [ ] AS5 -- Concurrent assertions (LRM 16.5-16.13): sequences, properties, their named
       declarations, `disable iff`, and the clocking a property is evaluated against. Evaluation is
@@ -161,6 +164,23 @@ The IDs are stable references and do not imply execution order beyond the depend
       `disable iff` preempts every attempt its condition is true during, tested on current values
       across the whole interval rather than at that interval's ticks, so a condition that rises and
       falls between two ticks still preempts.
+
+      What the source leaves unwritten is resolved as LRM 16.15 and 16.16 resolve it. An assertion
+      with no clock of its own takes the clock its procedure settles (LRM 16.14.6), or otherwise the
+      default clocking, and one whose property or sequence is declared in a clocking block takes
+      that block's event; of two clocking events written one against the other, the second is in
+      force (LRM 16.13.3). An assertion whose property states no
+      disable condition takes the `default disable iff` in force where it stands: its module's,
+      interface's or program's, or a generate block's that overrides it, never one from the scope
+      the module is instantiated in; `disable iff (1'b0)` cancels it. `$inferred_clock`, a default a property's formal
+      may take, names the clock in force where the property is instantiated (LRM 16.14.7), and
+      `$inferred_disable` the default disable condition in force where the assertion stands, at
+      every depth of nested instances, which is the reading the language conformance rulings record
+      for what the clause leaves open; it is carried as a disable condition, which is where it
+      stands in every form the clause shows, and refused elsewhere.
+      `$global_clock` and the `_gclk` functions are refused: the global clocking is found by
+      climbing the instance hierarchy (LRM 14.14), and the future half needs the next tick's value
+      (LRM 16.9.4).
 
       Of the five statement forms the clause admits, three are carried. `restrict` is the fourth and
       is accepted rather than checked, in either placement: it states a constraint for a formal tool

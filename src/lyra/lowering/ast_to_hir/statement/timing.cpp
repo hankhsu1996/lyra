@@ -18,7 +18,9 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/lowering/ast_to_hir/inferred_clocking.hpp"
 #include "lyra/lowering/ast_to_hir/reads.hpp"
+#include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -43,24 +45,26 @@ auto LowerEventEdge(slang::ast::EdgeKind kind) -> support::EventEdge {
 // event. What it reads is no part of the wait's sensitivity -- the standard
 // evaluates it where the occurrence happens and not when the qualifier itself
 // moves, so a change in the qualifier alone reaches nothing.
+template <typename Lowerer>
 auto LowerEventCondition(
-    ProcessLowerer& proc, WalkFrame frame,
+    Lowerer& lowerer, WalkFrame frame,
     const slang::ast::SignalEventControl& sig)
     -> diag::Result<std::optional<hir::Expr>> {
   if (sig.iffCondition == nullptr) {
     return std::nullopt;
   }
-  auto cond_or = proc.LowerExpr(*sig.iffCondition, frame);
+  auto cond_or = lowerer.LowerExpr(*sig.iffCondition, frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
   return std::optional<hir::Expr>{*std::move(cond_or)};
 }
 
 // What a value entry waits for: a change in the value of its operand.
+template <typename Lowerer>
 auto LowerValueChange(
-    ProcessLowerer& proc, WalkFrame frame,
+    Lowerer& lowerer, WalkFrame frame,
     const slang::ast::SignalEventControl& sig, diag::SourceSpan span)
     -> diag::Result<hir::ValueChange> {
-  auto expr_or = proc.LowerExpr(sig.expr, frame);
+  auto expr_or = lowerer.LowerExpr(sig.expr, frame);
   if (!expr_or) return std::unexpected(std::move(expr_or.error()));
 
   // An edge is a transition of the expression's least significant bit, so it
@@ -69,7 +73,7 @@ auto LowerValueChange(
   // which reacts to the whole value (LRM 9.4.2) and so needs one whose change
   // is answered. What is left out is an operand that is no value at all and one
   // whose value nothing yet compares.
-  const auto& expr_type = proc.Owner().Unit().types.Get(expr_or->type);
+  const auto& expr_type = lowerer.Owner().Unit().types.Get(expr_or->type);
   if (sig.edge == slang::ast::EdgeKind::None &&
       !expr_type.IsValueChangeObservable()) {
     return diag::Fail(
@@ -79,7 +83,7 @@ auto LowerValueChange(
 
   // What the expression reads is what makes the wait a candidate; the edge
   // belongs to the expression, whose value decides.
-  auto cells = CellsOfWaitedExpression(proc, frame, sig.expr);
+  auto cells = CellsOfWaitedExpression(lowerer, frame, sig.expr);
   if (!cells) return std::unexpected(std::move(cells.error()));
 
   return hir::ValueChange{
@@ -94,11 +98,12 @@ auto LowerValueChange(
 // reads, which is no occurrence (LRM 15.5.1). An edge needs an integral
 // operand, which an event is not, so binding refuses one and no polarity
 // reaches this far.
+template <typename Lowerer>
 auto LowerNamedEventTrigger(
-    ProcessLowerer& proc, WalkFrame frame,
+    Lowerer& lowerer, WalkFrame frame,
     const slang::ast::SignalEventControl& sig)
     -> diag::Result<hir::NamedEventTrigger> {
-  auto expr_or = proc.LowerExpr(sig.expr, frame);
+  auto expr_or = lowerer.LowerExpr(sig.expr, frame);
   if (!expr_or) return std::unexpected(std::move(expr_or.error()));
   return hir::NamedEventTrigger{
       .event = frame.Exprs().Add(*std::move(expr_or))};
@@ -106,19 +111,20 @@ auto LowerNamedEventTrigger(
 
 // The entry `sig` is: what it waits for, decided by the type of its operand
 // (LRM 9.4.2, 15.5.2), which slang gives the same shape, and its qualifier.
+template <typename Lowerer>
 auto LowerEventEntry(
-    ProcessLowerer& proc, WalkFrame frame,
+    Lowerer& lowerer, WalkFrame frame,
     const slang::ast::SignalEventControl& sig, diag::SourceSpan span)
     -> diag::Result<hir::EventEntry> {
   using Occurrence = std::variant<hir::ValueChange, hir::NamedEventTrigger>;
   auto occurrence = [&]() -> diag::Result<Occurrence> {
     if (sig.expr.type->isEvent()) {
-      return LowerNamedEventTrigger(proc, frame, sig);
+      return LowerNamedEventTrigger(lowerer, frame, sig);
     }
-    return LowerValueChange(proc, frame, sig, span);
+    return LowerValueChange(lowerer, frame, sig, span);
   }();
   if (!occurrence) return std::unexpected(std::move(occurrence.error()));
-  auto condition = LowerEventCondition(proc, frame, sig);
+  auto condition = LowerEventCondition(lowerer, frame, sig);
   if (!condition) return std::unexpected(std::move(condition.error()));
   return hir::EventEntry{
       .occurrence = *std::move(occurrence),
@@ -126,28 +132,6 @@ auto LowerEventEntry(
                        ? std::optional<hir::ExprId>{frame.Exprs().Add(
                              **std::move(condition))}
                        : std::nullopt};
-}
-
-// LRM 9.4.2.1 `@(a or b)` / `@(a, b)`: every entry watches for its own event
-// and the wait ends on the first of them.
-auto LowerEventListControl(
-    ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::EventListControl& list, diag::SourceSpan span)
-    -> diag::Result<hir::EventControl> {
-  hir::EventControl control;
-  for (const auto* event : list.events) {
-    // The front end flattens a nested list into this one and refuses any other
-    // control written as an entry.
-    if (event->kind != slang::ast::TimingControlKind::SignalEvent) {
-      throw InternalError(
-          "an event list entry reached lowering that is no signal event");
-    }
-    auto entry = LowerEventEntry(
-        proc, frame, event->as<slang::ast::SignalEventControl>(), span);
-    if (!entry) return std::unexpected(std::move(entry.error()));
-    control.entries.push_back(*std::move(entry));
-  }
-  return control;
 }
 
 // LRM 9.4.1 `#N`. The amount is an ordinary expression, read where the control
@@ -234,18 +218,31 @@ auto LowerTriggerTiming(
 // statement, inside an assignment, after a nonblocking trigger's operator,
 // behind a repeat count, and as the event a sampled value function counts ticks
 // of -- reaches it here, so what one is written to mean is settled once.
+//
+// LRM 9.4.2.1 `@(a or b)` / `@(a, b)`: every entry watches for its own event
+// and the wait ends on the first of them. A clocking event names its entries
+// through what `$inferred_clock` stands for, so they are taken resolved.
+template <typename Lowerer>
 auto LowerEventControl(
-    ProcessLowerer& proc, WalkFrame frame, const slang::ast::TimingControl& tc,
+    Lowerer& lowerer, WalkFrame frame, const slang::ast::TimingControl& tc,
     diag::SourceSpan span) -> diag::Result<hir::EventControl> {
-  if (tc.kind == slang::ast::TimingControlKind::EventList) {
-    return LowerEventListControl(
-        proc, frame, tc.as<slang::ast::EventListControl>(), span);
+  auto events = ResolvedClockEntries(frame, tc, span);
+  if (!events) return std::unexpected(std::move(events.error()));
+  hir::EventControl control;
+  for (const slang::ast::SignalEventControl* event : *events) {
+    auto entry = LowerEventEntry(lowerer, frame, *event, span);
+    if (!entry) return std::unexpected(std::move(entry.error()));
+    control.entries.push_back(*std::move(entry));
   }
-  auto entry = LowerEventEntry(
-      proc, frame, tc.as<slang::ast::SignalEventControl>(), span);
-  if (!entry) return std::unexpected(std::move(entry.error()));
-  return hir::EventControl{.entries = {*std::move(entry)}};
+  return control;
 }
+
+template auto LowerEventControl(
+    ProcessLowerer&, WalkFrame, const slang::ast::TimingControl&,
+    diag::SourceSpan) -> diag::Result<hir::EventControl>;
+template auto LowerEventControl(
+    StructuralScopeLowerer&, WalkFrame, const slang::ast::TimingControl&,
+    diag::SourceSpan) -> diag::Result<hir::EventControl>;
 
 auto LowerDelayOrEventControl(
     ProcessLowerer& proc, WalkFrame frame, const slang::ast::TimingControl& tc,

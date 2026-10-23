@@ -1022,12 +1022,10 @@ class UnitLowerer {
     return facts_.Sensitivity();
   }
 
-  // The clocking event settled where `containing` is written, for a construct
-  // that names none of its own -- the clock the enclosing procedure settles
-  // (LRM 16.14.6), and otherwise that scope's default clocking (LRM 14.12).
-  // Only a procedure settles one, so a construct written anywhere else has
-  // none, which is what a sampled value function and a concurrent assertion
-  // both read before reporting the error the standard requires.
+  // The clocking event the procedure `containing` settles for a construct that
+  // names none of its own -- its inferred clock (LRM 16.14.6), and otherwise
+  // its scope's default clocking (LRM 14.12). Nothing where `containing` is no
+  // procedure.
   [[nodiscard]] auto InferredProcedureClock(
       const slang::ast::Symbol& containing) const
       -> const slang::ast::TimingControl*;
@@ -1410,6 +1408,13 @@ class UnitLowerer {
   [[nodiscard]] auto NameFilledDuringElaboration(
       const slang::ast::Symbol& named) const -> const slang::ast::ValueSymbol*;
 
+  // Whether a read of `param` reads a cell rather than a folded value: its
+  // value differs between the objects built from the scope declaring it, so
+  // each of them holds it, and a name reaches it there as it reaches a
+  // variable. A parameter the specialization of its unit fixes folds instead.
+  [[nodiscard]] auto ReadsParameterFromCell(
+      const slang::ast::ParameterSymbol& param) const -> bool;
+
   // Where a static class property's cell lives (LRM 8.9). It belongs to the
   // type rather than to any object of it, so it is reached without a receiver,
   // and how many such cells exist follows from what replicates the class
@@ -1621,6 +1626,13 @@ class UnitLowerer {
       const WalkFrame& frame,
       std::span<const slang::ast::Expression* const> names)
       -> std::vector<RouteOrigin>;
+
+  // The cells a read of `target` reaches, once each: one per place the names
+  // it was reached by start from.
+  [[nodiscard]] auto CellsReachedBy(
+      const WalkFrame& frame, const slang::ast::ValueSymbol& target,
+      std::span<const slang::ast::Expression* const> names,
+      diag::SourceSpan span) -> diag::Result<std::vector<hir::ValueTarget>>;
 
   // The entries a set of reads watches, with `parts_of` saying which parts of
   // a bit vector a read of one watches and `declared_by` which variable of the

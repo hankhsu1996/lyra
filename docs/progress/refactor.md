@@ -1726,19 +1726,6 @@ enough to warrant its own focused review.
       comparing expressions rather than about sampling. Not blocked. Found by reading the emitted
       C++ for a case that reads one variable four ways.
 
-- [ ] R113 -- A variable of automatic lifetime named by an event control or by a sampled value
-      function is resolved as though it named a signal of the enclosing scope, and refused as a
-      hierarchical name that reaches none. The message describes neither the construct nor what is
-      missing, on both targets and for every kind of value, and the two constructs meet it through
-      one resolver.
-
-      The standard asks for little here: LRM 9.4.2 puts no restriction on what an event control
-      watches, and LRM 16.5.1 makes an automatic variable's sampled value its current value and a
-      past value of one the current value too -- so what is owed on the sampling side is a plain
-      read rather than any storage. Target: such a name resolves to the storage it is, and whatever
-      remains unsupported is refused by naming the construct. Not blocked. Found by probing the
-      reason a progress entry gave for this being refused, which the standard contradicts.
-
 - [ ] R114 -- A kind of value a storage family was never published for is reported to the user as a
       missing runtime library symbol. The check is real and fires at the right moment, but its
       audience is this compiler and its own library, and what it prints is a list of internal entry
