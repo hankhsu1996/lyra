@@ -46,6 +46,8 @@ enum class PointerOwnership : std::uint8_t { kUnique, kShared, kBorrowed };
 enum class Mutability : std::uint8_t { kMutable, kReadOnly };
 
 enum class RuntimeLibraryKind : std::uint8_t {
+  // A run of bits whose length is the value's.
+  kBitVec,
   kEnumeration,
   kPrintItem,
   kPrintLiteralItem,

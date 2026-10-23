@@ -16,6 +16,7 @@
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/value/any.hpp"
+#include "lyra/value/bit_vec.hpp"
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/dpi_open_array.hpp"
@@ -56,6 +57,8 @@ auto LayoutOfIntegral(const IntegralType& integral) -> support::Layout {
 // address, and is counted as the word a frame names one by.
 auto LayoutOfLibraryObject(RuntimeLibraryKind kind) -> support::Layout {
   switch (kind) {
+    case RuntimeLibraryKind::kBitVec:
+      return LayoutOfClass<value::BitVec>();
     case RuntimeLibraryKind::kPrintItem:
       return LayoutOfClass<value::PrintItem>();
     case RuntimeLibraryKind::kPrintLiteralItem:

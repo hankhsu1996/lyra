@@ -1,6 +1,8 @@
 # A write names a place or a join of lvalues
 
-Date: 2026-10-09 Status: accepted
+Date: 2026-10-09 Status: accepted. D2 is revised 2026-10-22: a share is handed to the write as it is
+cut, so a blocking assignment has stored it before the next is cut. D1 is revised 2026-10-22: a
+stream target is its own form beside a join.
 
 ## Context
 
@@ -65,27 +67,38 @@ the join "a packed vector of bits", and which slang's `load` covers.
 
 ## Decision
 
-**D1. In the lowering, what a write names is an lvalue: one place, or a join of lvalues.** A join is
-recursive, as the grammar is, and has a kind that says how a value is cut among its members and how
-what they hold is joined:
+**D1. In the lowering, what a write names is an lvalue: one place, a join of lvalues, or a stream
+target.** A join is recursive, as the grammar is, and has a kind that says how a value is cut among
+its members and how what they hold is joined:
 
 - _packed_ -- a concatenation, or an assignment pattern of an integral type. The members share the
   bits of one vector, the first member most significant, each as many as it is wide.
 - _unpacked_ -- an assignment pattern of a structure or a fixed-size array. Member `i` takes member
-  or element `i`.
-- _streamed_ -- a streaming concatenation. The value is read as a stream of bits, the order of its
-  blocks is reversed where the operator says so, and the members are filled from the most
-  significant end.
+  or element `i`. The names are slang's, which is the one implementation that names this role for
+  this language.
 
-The names are slang's, which is the one implementation that names this role for this language.
+A stream target is no join. It answers only the first of the two questions a join's kind answers: it
+holds no value to read back, since a streaming concatenation is never the operand of a write that
+reads first, and its members are only what LRM 11.4.14.3 and 11.4.14.4 let a stream unpack into -- a
+variable, a one-dimensional unpacked array a `with` ranges, or a stream nested in it. The value is
+read as a stream of bits, the order of its blocks is reversed where the operator says so, and the
+members are filled from the most significant end. Held as a kind of join, it let a `with` range
+stand anywhere a join's member could, and every other form of write refused it by hand.
 
 **D2. Every kind of write asks the lvalue for its shares and makes its own kind of write to each.**
-A share is one place and the value it takes. An assignment stores each; a nonblocking one freezes
-them all into one update, so a control on it is read once; a continuous assignment attaches a driver
-to each place that is a net and stores each share on every evaluation; an output actual stores them
-when the call returns; a takeover is begun on each place and one evaluation of the source drives
-each its share, ending when no place says that evaluation still owns it. No kind of write asks which
-form the source wrote. A value written to a join is held once before it is cut.
+A share is one place and the value it takes, and it is handed to the write in order, as it is cut.
+An assignment stores each at once, so a member cut later reads what an earlier one was given; a
+nonblocking one freezes them all into one update, so a control on it is read once and every member
+reads the values from before it; a continuous assignment attaches a driver to each place that is a
+net and stores each share on every evaluation; an output actual stores them when the call returns; a
+takeover is begun on each place and one evaluation of the source drives each its share, ending when
+no place says that evaluation still owns it. No kind of write asks which form the source wrote. A
+value written to a join is held once before it is cut.
+
+The order matters only to a stream: a `with` range on one of its members is evaluated just before
+that member is unpacked and may read a member unpacked ahead of it (LRM 11.4.14.4), which Erlang's
+bit syntax and Rust's `deku` both do the same way -- a later segment's size names a value an earlier
+one bound.
 
 **D3. A write that reads first settles every place once and reads what they hold together.** An
 assignment operator, an increment and an `inout` actual take the join's value from its members --
@@ -130,7 +143,8 @@ rustc's early return for an ordinary left side.
   earlier member's store.
 - A takeover on part of a net, and on any part of a variable a caller asks for, is taken over inside
   a join as outside one.
-- A dynamically sized value in a stream target is refused as it is anywhere a stream meets one,
-  since no type yet names a bit count the program fixes.
+- A dynamically sized value in a stream target takes what the members after it leave, and an array a
+  `with` range names is a member whose share is that range of it
+  ([a-value-states-its-own-bits](a-value-states-its-own-bits.md) D6).
 - A seed argument that is not a variable is refused with the clause that requires one (LRM 20.14.1),
   where it reached an internal error.

@@ -28,6 +28,20 @@ auto ReadsOnly(
   const auto reads_if_present = [&](const std::optional<ExprId>& operand) {
     return !operand.has_value() || reads(*operand);
   };
+  const auto bounds_read = [&](const RangeBounds& bounds) {
+    return std::visit(
+        Overloaded{
+            [&](const RangeConstantBounds& b) {
+              return reads(b.left_bound) && reads(b.right_bound);
+            },
+            [&](const RangeIndexedUpBounds& b) {
+              return reads(b.base_index) && reads(b.width);
+            },
+            [&](const RangeIndexedDownBounds& b) {
+              return reads(b.base_index) && reads(b.width);
+            }},
+        bounds);
+  };
   return std::visit(
       Overloaded{
           [&](const PrimaryExpr& p) { return accepts(p.data); },
@@ -53,23 +67,24 @@ auto ReadsOnly(
             return reads(e.base_value) && reads(e.index);
           },
           [&](const RangeSelectExpr& e) {
-            return reads(e.base_value) &&
-                   std::visit(
-                       Overloaded{
-                           [&](const RangeConstantBounds& b) {
-                             return reads(b.left_bound) && reads(b.right_bound);
-                           },
-                           [&](const RangeIndexedUpBounds& b) {
-                             return reads(b.base_index) && reads(b.width);
-                           },
-                           [&](const RangeIndexedDownBounds& b) {
-                             return reads(b.base_index) && reads(b.width);
-                           }},
-                       e.bounds);
+            return reads(e.base_value) && bounds_read(e.bounds);
           },
           [&](const MemberAccessExpr& e) { return reads(e.base_value); },
           [&](const ConcatExpr& e) { return all_read(e.operands); },
-          [&](const StreamingConcatExpr& e) { return all_read(e.operands); },
+          [&](const StreamingConcatExpr& e) {
+            return std::ranges::all_of(
+                e.operands, [&](const StreamOperand& operand) {
+                  return reads(operand.value) &&
+                         (!operand.with.has_value() ||
+                          std::visit(
+                              Overloaded{
+                                  [&](ExprId element) {
+                                    return reads(element);
+                                  },
+                                  bounds_read},
+                              *operand.with));
+                });
+          },
           [&](const ReplicationExpr& e) {
             return reads(e.count) && reads(e.concat);
           },

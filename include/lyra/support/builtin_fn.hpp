@@ -91,6 +91,40 @@ enum class BuiltinFn : std::uint16_t {
   // this entry's business.
   kToBitstream,
   kFromBitstream,
+  // The same two where the value's bit count is the running program's: its
+  // stream as a run of bits whose length is the run's own (LRM 6.24.3,
+  // 11.4.14.1), and the value of the type it builds that a run holds exactly,
+  // every part whose width the program decides taking what the parts after it
+  // leave (LRM 11.4.14.4). A string is built from a run by an entry of its own,
+  // since it is no array whose elements an entry is told the type of.
+  kToBitVec,
+  kFromBitVec,
+  kStringFromBitVec,
+  // What a run of bits is made of and taken apart into (LRM 11.4.14): a run of
+  // an integral value's bits; another value's bits laid after the run's, an
+  // integral value's and another run's being two entries; another run's bits
+  // written into the run's own from a position, which builds a run whose
+  // width is known first in one pass; its blocks reversed (LRM 11.4.14.2); how
+  // many bits it holds, as a machine count; the run of `count` bits `at`
+  // positions from its most significant end; the bits there as a value of the
+  // integral type the call is made at; and the run widened to a width by zero
+  // bits on its right, which left-aligns it in a target that wide.
+  kBitVecOf,
+  kBitVecExtend,
+  kBitVecAppend,
+  kBitVecInsertBits,
+  kBitVecReverseBlocks,
+  kBitVecLen,
+  kBitVecExtractBits,
+  kBitVecLoad,
+  kBitVecPaddedTo,
+  // LRM 11.4.14.4 `with [...]`: the stream of `count` elements of an array
+  // from a position, an element outside the array streaming as the element
+  // default; and the array with those elements taking the values of another,
+  // a dynamic array or a queue grown first to hold them and a fixed-size one
+  // refusing a range outside it.
+  kWindowToBitVec,
+  kWithWindow,
   // Reversing the order of the fixed-size blocks a vector divides into, from
   // its least significant bit up, leaving the bits inside each block where they
   // are (LRM 11.4.14.2). The last block is whatever is left over and is not

@@ -6,6 +6,7 @@
 
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/value/basic_dynamic_array.hpp"
+#include "lyra/value/bit_vec.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/element_policy.hpp"
 #include "lyra/value/element_sequence.hpp"
@@ -135,6 +136,23 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>> {
         MutableElements(), ReadPosition(start), SliceCount(count), value);
   }
 
+  // LRM 11.4.14.4: the stream of the `count` elements from `lo`, an element
+  // outside the array streaming as the element default; and this array with
+  // those elements taking `values`, grown first to hold them.
+  [[nodiscard]] auto WindowToBitVec(
+      const Position& lo, std::int64_t count) const -> BitVec {
+    return core_.WindowToBitVec(ReadPosition(lo), WindowCount(count));
+  }
+  template <OrdinalElements C>
+  [[nodiscard]] auto WithWindow(
+      const Position& lo, std::int64_t count, const C& values) const
+      -> DynamicArray {
+    DynamicArray out;
+    out.core_ = core_.WithWindow(
+        ReadPosition(lo), WindowCount(count), detail::OrdinalAddresses(values));
+    return out;
+  }
+
   [[nodiscard]] auto operator==(const DynamicArray& other) const ->
       typename StaticElem<T>::Equality {
     return StaticElem<T>::Equality::Filled(
@@ -158,6 +176,27 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>> {
   }
   [[nodiscard]] auto BitstreamWidth() const -> Int {
     return Int::FromInt(detail::SequenceBitstreamWidth(core_));
+  }
+  // LRM 6.24.3: the elements' own streams laid end to end below the `filled`
+  // most significant positions of `stream`, the one at index 0 first, and the
+  // inverse, as many elements as fill the stream up to `until`.
+  [[nodiscard]] auto WriteToStream(
+      const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
+    return core_.WriteToStream(stream, filled);
+  }
+  auto ReadFromStream(
+      const ConstIntegralView& stream, std::uint64_t taken, std::uint64_t until)
+      -> std::uint64_t {
+    return core_.ReadFromStream(stream, taken, until);
+  }
+  // The same as a run of bits of its own, and the array exactly that run holds.
+  [[nodiscard]] auto ToBitVec() const -> BitVec {
+    return StreamOf(*this);
+  }
+  [[nodiscard]] static auto FromBitVec(const BitVec& run) -> DynamicArray {
+    DynamicArray out;
+    ReadWholeStream(out, run);
+    return out;
   }
   template <IntegralValue Control>
   [[nodiscard]] auto CountBits(const Control& control_bits) const -> Int {

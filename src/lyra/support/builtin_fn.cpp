@@ -188,6 +188,76 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kReverseBlocks:
       return IntegralEntry(IntegralOp::kReverseBlocks, Method{"ReverseBlocks"});
+    case BuiltinFn::kToBitVec:
+      return {.name = "to_bitvec", .declaration = Method{"ToBitVec"}};
+    case BuiltinFn::kFromBitVec:
+      return {
+          .name = "from_bitvec",
+          .declaration = StaticFactory{"FromBitVec"},
+          .operands = {kMachine},
+          .answer_told = AnswerTold::kBuiltArray};
+    case BuiltinFn::kStringFromBitVec:
+      return {
+          .name = "string_from_bitvec",
+          .declaration = StaticFactory{"FromBitVec"},
+          .operands = {kMachine}};
+    case BuiltinFn::kBitVecOf:
+      return {
+          .name = "bitvec_of",
+          .declaration = StaticFactory{"Of"},
+          .operands = {kBits}};
+    case BuiltinFn::kBitVecExtend:
+      return {
+          .name = "bitvec_extend",
+          .declaration = Method{"Extend"},
+          .mutates_receiver = true,
+          .operands = {kMachine, kBits}};
+    case BuiltinFn::kBitVecAppend:
+      return {
+          .name = "bitvec_append",
+          .declaration = Method{"Append"},
+          .mutates_receiver = true,
+          .operands = {kMachine, kMachine}};
+    case BuiltinFn::kBitVecInsertBits:
+      return {
+          .name = "bitvec_insert_bits",
+          .declaration = Method{"InsertBits"},
+          .mutates_receiver = true,
+          .operands = {kMachine, kMachine, kMachine}};
+    case BuiltinFn::kBitVecReverseBlocks:
+      return {
+          .name = "bitvec_reverse_blocks",
+          .declaration = Method{"ReverseBlocks"},
+          .operands = {kMachine, kMachine}};
+    case BuiltinFn::kBitVecLen:
+      return {.name = "bitvec_len", .declaration = Method{"Len"}};
+    case BuiltinFn::kBitVecExtractBits:
+      return {
+          .name = "bitvec_extract_bits",
+          .declaration = Method{"ExtractBits"},
+          .operands = {kMachine, kMachine, kMachine}};
+    case BuiltinFn::kBitVecLoad:
+      return {
+          .name = "bitvec_load",
+          .declaration = Method{"Load"},
+          .takes_a_type_argument = true,
+          .operands = {kMachine, kMachine},
+          .answer_told = AnswerTold::kIntegralExtent};
+    case BuiltinFn::kBitVecPaddedTo:
+      return {
+          .name = "bitvec_padded_to",
+          .declaration = Method{"PaddedTo"},
+          .operands = {kMachine, kMachine}};
+    case BuiltinFn::kWindowToBitVec:
+      return {
+          .name = "window_to_bitvec",
+          .declaration = Method{"WindowToBitVec"},
+          .operands = {kMachine, kPosition, kMachine}};
+    case BuiltinFn::kWithWindow:
+      return {
+          .name = "with_window",
+          .declaration = Method{"WithWindow"},
+          .operands = {kMachine, kPosition, kMachine, kTyped}};
     case BuiltinFn::kDelete:
       return {
           .name = "delete",

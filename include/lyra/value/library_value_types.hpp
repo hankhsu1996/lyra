@@ -4,6 +4,7 @@
 
 #include "lyra/value/any.hpp"
 #include "lyra/value/any_value.hpp"
+#include "lyra/value/bit_vec.hpp"
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/empty.hpp"
 #include "lyra/value/integral_fwd.hpp"
@@ -27,6 +28,7 @@ extern "C" {
 extern const ValueType lyra_rt_wildcard_index_value_type;
 extern const ValueType lyra_rt_any_value_type;
 extern const ValueType lyra_rt_string_value_type;
+extern const ValueType lyra_rt_bitvec_value_type;
 extern const ValueType lyra_rt_real_value_type;
 extern const ValueType lyra_rt_shortreal_value_type;
 extern const ValueType lyra_rt_chandle_value_type;
@@ -48,6 +50,8 @@ template <typename T>
     return lyra_rt_any_value_type;
   } else if constexpr (std::is_same_v<T, String>) {
     return lyra_rt_string_value_type;
+  } else if constexpr (std::is_same_v<T, BitVec>) {
+    return lyra_rt_bitvec_value_type;
   } else if constexpr (std::is_same_v<T, Real>) {
     return lyra_rt_real_value_type;
   } else if constexpr (std::is_same_v<T, ShortReal>) {

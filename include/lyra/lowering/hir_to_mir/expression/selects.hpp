@@ -45,6 +45,28 @@ namespace lyra::lowering::hir_to_mir {
     UnitLowerer& unit_lowerer, mir::Block& block, const hir::Type& aggregate,
     base::ComponentIndex index, mir::TypeId part_type) -> DescentStep;
 
+// LRM 11.4.14.4: the elements a `with` names of an array of `array_type`:
+// where the first of them lies in the array's own numbering, and how many
+// there are, as a machine count, each evaluated once however often it is read.
+// `frame` is where the range is evaluated, as a select of the array, so a `$`
+// in it names a queue's last element.
+struct StreamWindow {
+  mir::ExprId start;
+  mir::ExprId count;
+};
+template <ExprLowerer Lowerer>
+[[nodiscard]] auto LowerStreamWindow(
+    Lowerer& lowerer, const WalkFrame& frame, hir::TypeId array_type,
+    const hir::StreamRange& range) -> diag::Result<StreamWindow>;
+
+// The stream of the elements `operand`'s `with` names of the array it streams,
+// as a run of bits, an element outside the array streaming as the element
+// default (LRM 11.4.14.4). The array and its range are evaluated once.
+template <ExprLowerer Lowerer>
+[[nodiscard]] auto LowerStreamWindowRun(
+    Lowerer& lowerer, const WalkFrame& frame, const hir::StreamOperand& operand)
+    -> diag::Result<mir::Expr>;
+
 // `arr[i]` read as a value: the read the element step takes from `base_id`, a
 // value of `base_type`.
 [[nodiscard]] auto BuildElementAccessCallExpr(

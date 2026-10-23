@@ -177,8 +177,9 @@ class CodeGenValueTypes {
     kAsWhetherItHolds,
   };
   // The body of a witness whose method answers a comparison; of the one whose
-  // method answers the value's stream of bits; of the one whose method takes a
-  // stream; and of the one whose method takes a count's control bits.
+  // method answers the value's stream of bits, and of the one whose method
+  // takes a stream, each at a width the type fixes or as a run of bits; and of
+  // the one whose method takes a count's control bits.
   auto ScalarAnswerBody(
       lir::TypeId type, std::string_view witness,
       const support::MachineSignature& stands_in_for, lir::FunctionId method,
@@ -188,6 +189,14 @@ class CodeGenValueTypes {
       const support::MachineSignature& stands_in_for, lir::FunctionId method)
       -> llvm::Constant*;
   auto StreamReadBody(
+      lir::TypeId type, std::string_view witness,
+      const support::MachineSignature& stands_in_for, lir::FunctionId method)
+      -> llvm::Constant*;
+  auto RunWriteBody(
+      lir::TypeId type, std::string_view witness,
+      const support::MachineSignature& stands_in_for, lir::FunctionId method)
+      -> llvm::Constant*;
+  auto RunBuildBody(
       lir::TypeId type, std::string_view witness,
       const support::MachineSignature& stands_in_for, lir::FunctionId method)
       -> llvm::Constant*;

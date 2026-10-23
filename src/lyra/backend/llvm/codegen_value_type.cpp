@@ -88,16 +88,19 @@ struct BuiltAsItsDefault {};
 // as whether it holds, writes a stream into an integral value it is handed
 // and reads one out of one, and is handed a count's control bits as one too,
 // while a type's own function takes and answers each as a value of
-// the type its own code states.
+// the type its own code states -- a stream a run of bits, where the type's is
+// as long as the value makes it.
 struct TakenAsStated {};
 struct AnswerScalar {};
 struct AnswerWhetherItHolds {};
 struct AnswerIntoStream {};
 struct StreamOutOfValue {};
+struct RunIntoStream {};
+struct StreamOutOfRun {};
 struct ControlOutOfValue {};
 using IntegralCrossing = std::variant<
     TakenAsStated, AnswerScalar, AnswerWhetherItHolds, AnswerIntoStream,
-    StreamOutOfValue, ControlOutOfValue>;
+    StreamOutOfValue, RunIntoStream, StreamOutOfRun, ControlOutOfValue>;
 
 // An operation a type answers with a function of its own, and how that
 // function takes and answers its integral values.
@@ -106,8 +109,17 @@ struct OwnOperationWitness {
   IntegralCrossing crossing = TakenAsStated{};
 };
 
+// A stream a type writes or reads by whichever of two functions of its own it
+// states: one at the width its type fixes, or one whose stream is a run of
+// bits as long as the value makes it (LRM 6.24.3).
+struct EitherStreamForm {
+  OwnOperationWitness fixed;
+  OwnOperationWitness run;
+};
+
 using WitnessFilling = std::variant<
-    LifecycleStep, OwnOperationWitness, NeverAsked, BuiltAsItsDefault>;
+    LifecycleStep, OwnOperationWitness, EitherStreamForm, NeverAsked,
+    BuiltAsItsDefault>;
 
 // One witness of a type's table: the storage's own lifecycle, the operations
 // the language defines on the whole value (LRM 11.4.5, 20.6.2, 20.9, 6.24.3,
@@ -198,14 +210,26 @@ auto Witnesses() {
               .crossing = ControlOutOfValue{}}),
       WitnessOf(
           "write_to_stream", &ValueWitnessTable::write_to_stream,
-          OwnOperationWitness{
-              .answers = BuiltinFn::kToBitstream,
-              .crossing = AnswerIntoStream{}}),
+          EitherStreamForm{
+              .fixed =
+                  OwnOperationWitness{
+                      .answers = BuiltinFn::kToBitstream,
+                      .crossing = AnswerIntoStream{}},
+              .run =
+                  OwnOperationWitness{
+                      .answers = BuiltinFn::kToBitVec,
+                      .crossing = RunIntoStream{}}}),
       WitnessOf(
           "read_from_stream", &ValueWitnessTable::read_from_stream,
-          OwnOperationWitness{
-              .answers = BuiltinFn::kFromBitstream,
-              .crossing = StreamOutOfValue{}}),
+          EitherStreamForm{
+              .fixed =
+                  OwnOperationWitness{
+                      .answers = BuiltinFn::kFromBitstream,
+                      .crossing = StreamOutOfValue{}},
+              .run =
+                  OwnOperationWitness{
+                      .answers = BuiltinFn::kFromBitVec,
+                      .crossing = StreamOutOfRun{}}}),
       WitnessOf(
           "resolve_tri_state", &ValueWitnessTable::resolve_tri_state,
           OwnOperationWitness{.answers = BuiltinFn::kResolveTriState}),
@@ -602,7 +626,35 @@ auto CodeGenValueTypes::StreamReadBody(
       b, RuntimeOp::kStreamBuild, b.getInt64Ty(),
       {owner_->UnitFunction(method), body->getArg(1), body->getArg(2),
        b.getInt64(stream.width), b.getInt1(stream.IsFourState()),
+       body->getArg(4)}));
+  return body;
+}
+
+auto CodeGenValueTypes::RunWriteBody(
+    lir::TypeId type, std::string_view witness,
+    const support::MachineSignature& stands_in_for, lir::FunctionId method)
+    -> llvm::Constant* {
+  llvm::Function* const body = DeclareBody(type, witness, stands_in_for);
+  llvm::IRBuilder<> b(
+      llvm::BasicBlock::Create(owner_->Module().getContext(), "", body));
+  b.CreateRet(ForwardToEntry(
+      b, RuntimeOp::kRunWrite, b.getInt64Ty(),
+      {owner_->UnitFunction(method), body->getArg(1), body->getArg(2),
        body->getArg(3)}));
+  return body;
+}
+
+auto CodeGenValueTypes::RunBuildBody(
+    lir::TypeId type, std::string_view witness,
+    const support::MachineSignature& stands_in_for, lir::FunctionId method)
+    -> llvm::Constant* {
+  llvm::Function* const body = DeclareBody(type, witness, stands_in_for);
+  llvm::IRBuilder<> b(
+      llvm::BasicBlock::Create(owner_->Module().getContext(), "", body));
+  b.CreateRet(ForwardToEntry(
+      b, RuntimeOp::kRunBuild, b.getInt64Ty(),
+      {owner_->UnitFunction(method), body->getArg(1), body->getArg(2),
+       body->getArg(3), body->getArg(4)}));
   return body;
 }
 
@@ -892,6 +944,14 @@ auto CodeGenValueTypes::GetAddrOfLaidOutType(lir::TypeId type)
               return StreamReadBody(
                   type, witness.name, witness.stands_in_for, method->function);
             },
+            [&](RunIntoStream) -> llvm::Constant* {
+              return RunWriteBody(
+                  type, witness.name, witness.stands_in_for, method->function);
+            },
+            [&](StreamOutOfRun) -> llvm::Constant* {
+              return RunBuildBody(
+                  type, witness.name, witness.stands_in_for, method->function);
+            },
             [&](ControlOutOfValue) -> llvm::Constant* {
               return ControlReadBody(
                   type, witness.name, witness.stands_in_for, method->function);
@@ -914,6 +974,17 @@ auto CodeGenValueTypes::GetAddrOfLaidOutType(lir::TypeId type)
                       Function(type, step));
                 },
                 [&](const OwnOperationWitness& own) -> llvm::Constant* {
+                  return answered_by(witness, own.answers, own.crossing);
+                },
+                [&](const EitherStreamForm& either) -> llvm::Constant* {
+                  const OwnOperationWitness& own =
+                      std::ranges::any_of(
+                          operations,
+                          [&](const OwnOperation& stated) {
+                            return stated.answers == either.run.answers;
+                          })
+                          ? either.run
+                          : either.fixed;
                   return answered_by(witness, own.answers, own.crossing);
                 },
                 [&](NeverAsked) -> llvm::Constant* {

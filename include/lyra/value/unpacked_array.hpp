@@ -271,6 +271,32 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
         MutableElements(), ReadPosition(start), SliceCount(count), value);
   }
 
+  // LRM 11.4.14.4: the stream of the `count` elements from `start`, an element
+  // outside the array streaming as the element default; and this array with
+  // those elements taking `values`, where a range reaching outside the array
+  // is an error.
+  [[nodiscard]] auto WindowToBitVec(
+      const Position& start, std::int64_t count) const -> BitVec {
+    return detail::StreamOfElements(
+        StaticElem<T>{}, detail::SequenceSliceElements(
+                             Run(), ReadPosition(start), WindowCount(count)));
+  }
+  template <OrdinalElements C>
+  [[nodiscard]] auto WithWindow(
+      const Position& start, std::int64_t count, const C& values) const
+      -> UnpackedArray {
+    const std::optional<std::int64_t> first = ReadPosition(start);
+    if (count > 0 && (!first.has_value() || *first < 0 ||
+                      *first + count > static_cast<std::int64_t>(N))) {
+      throw SimulationError(
+          "the range a 'with' names reaches outside the array it is unpacked "
+          "into");
+    }
+    UnpackedArray out = *this;
+    AssignRun(out.MutableElements(), first, WindowCount(count), values);
+    return out;
+  }
+
   // The slice of `elements` from `start` as an array of this type: what a
   // container of any unpacked kind answers its own slice with.
   [[nodiscard]] static auto SliceOf(
@@ -423,10 +449,22 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
     }
     return filled;
   }
-  auto ReadFromStream(const ConstIntegralView& stream, std::uint64_t taken)
+  // An element whose width the running program decides takes every position
+  // up to `until` but those the elements after it take where they are empty,
+  // so the first such element takes what the rest leave (LRM 11.4.14.4).
+  auto ReadFromStream(
+      const ConstIntegralView& stream, std::uint64_t taken, std::uint64_t until)
       -> std::uint64_t {
+    const std::uint64_t empty = StaticElem<T>::EmptyStreamWidth();
     for (std::size_t i = 0; i < N; ++i) {
-      taken = StaticElem<T>::ReadFromStream(stream, taken, Items()[i]);
+      const std::uint64_t after = empty * (N - 1 - i);
+      if (until - taken < after) {
+        throw SimulationError(
+            "a stream of bits holds fewer bits than the value it is read into "
+            "takes");
+      }
+      taken = StaticElem<T>::ReadFromStream(
+          stream, taken, until - after, &Items()[i]);
     }
     return taken;
   }
@@ -435,7 +473,23 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
   template <IntegralValue Bits>
   [[nodiscard]] static auto FromBitstream(const Bits& bits) -> UnpackedArray {
     UnpackedArray out;
-    out.ReadFromStream(bits.AsWords().View(), 0);
+    out.ReadFromStream(bits.AsWords().View(), 0, Bits::kWidth);
+    return out;
+  }
+
+  // The same where an element's width is the running program's: the stream as
+  // a run of bits of its own, and the array exactly such a run holds.
+  [[nodiscard]] auto ToBitVec() const -> BitVec {
+    return StreamOf(*this);
+  }
+  [[nodiscard]] static auto FromBitVec(const BitVec& run) -> UnpackedArray {
+    UnpackedArray out;
+    if (out.ReadFromStream(run.View(), 0, run.View().width) !=
+        run.View().width) {
+      throw SimulationError(
+          "a stream of bits does not divide into the elements of the array it "
+          "is read into");
+    }
     return out;
   }
 

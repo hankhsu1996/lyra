@@ -34,6 +34,8 @@ auto ValueDomainName(ValueDomain domain) -> std::string_view {
       return "any";
     case ValueDomain::kString:
       return "string";
+    case ValueDomain::kBitVec:
+      return "bitvec";
     case ValueDomain::kReal:
       return "real";
     case ValueDomain::kShortReal:
@@ -72,6 +74,7 @@ auto IsIntegralLayout(ValueDomain domain) -> bool {
     case ValueDomain::kWildcardIndex:
     case ValueDomain::kAny:
     case ValueDomain::kString:
+    case ValueDomain::kBitVec:
     case ValueDomain::kReal:
     case ValueDomain::kShortReal:
     case ValueDomain::kChandle:

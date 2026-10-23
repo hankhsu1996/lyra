@@ -190,10 +190,38 @@ class BasicDynamicArray {
   // Answers how many are filled after them.
   [[nodiscard]] auto WriteToStream(
       const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
-    for (std::size_t i = 0; i < count_; ++i) {
-      filled = elem_.WriteToStream(At(i), stream, filled);
-    }
-    return filled;
+    return detail::SequenceWriteToStream(*this, stream, filled);
+  }
+
+  // The inverse: as many elements as fill the stream from its `taken` most
+  // significant position up to `until` replace these (LRM 6.24.3, 11.4.14.4).
+  // Answers how many positions are taken after them.
+  auto ReadFromStream(
+      const ConstIntegralView& stream, std::uint64_t taken, std::uint64_t until)
+      -> std::uint64_t {
+    const detail::ElementsRead<Elem> read(elem_, stream, taken, until);
+    *this = BasicDynamicArray(elem_).Extended(read.Addresses());
+    return until;
+  }
+
+  // LRM 11.4.14.4: the stream of the `count` elements from `start`, each the
+  // element default where it lies outside the array; and these elements with
+  // those taking `values`, element for element, the array first grown to hold
+  // them. A start naming no position names no element to write.
+  [[nodiscard]] auto WindowToBitVec(
+      std::optional<std::int64_t> start, std::size_t count) const -> BitVec {
+    return detail::StreamOfElements(
+        elem_, detail::SequenceSliceElements(*this, start, count));
+  }
+  [[nodiscard]] auto WithWindow(
+      std::optional<std::int64_t> start, std::size_t count,
+      std::span<const void* const> values) const -> BasicDynamicArray {
+    const std::size_t reaches = count > 0 && start.has_value() && *start >= 0
+                                    ? static_cast<std::size_t>(*start) + count
+                                    : 0;
+    BasicDynamicArray out(elem_, std::max(count_, reaches), this);
+    detail::SequenceAssignSlice(out, start, count, values);
+    return out;
   }
 
   // LRM 7.4.5 / 7.4.6: the `count` elements from `start`, each the element

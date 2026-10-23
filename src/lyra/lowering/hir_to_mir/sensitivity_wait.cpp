@@ -250,9 +250,8 @@ template <typename Lowerer>
 auto LeafPartOf(
     mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
     Lowerer& lowerer, const hir::WatchedPart& part) -> diag::Result<LeafPart> {
-  const auto int_literal = [&](std::uint64_t value) {
-    return mir::BuildMachineIntLiteral(
-        unit, block, static_cast<std::int64_t>(value));
+  const auto count = [&](std::uint64_t value) {
+    return mir::BuildMachineCount(unit, block, value);
   };
   return std::visit(
       Overloaded{
@@ -269,14 +268,14 @@ auto LeafPartOf(
             if (!named.positions.has_value()) {
               return LeafPart{
                   .steps = steps,
-                  .first = int_literal(0),
-                  .width = int_literal(0),
+                  .first = count(0),
+                  .width = count(0),
                   .exact = named.exact};
             }
             return LeafPart{
                 .steps = steps,
                 .first = BuildToInt64Call(unit, block, named.positions->first),
-                .width = int_literal(named.positions->width),
+                .width = count(named.positions->width),
                 .exact = named.exact};
           },
       },

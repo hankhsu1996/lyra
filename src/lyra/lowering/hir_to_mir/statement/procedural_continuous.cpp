@@ -100,9 +100,7 @@ auto TakeoverPart(
     }
     return mir::BuildMachineIntBinary(
         unit, block, mir::BinaryOp::kMul, BuildToInt64Call(unit, block, start),
-        mir::BuildMachineIntLiteral(
-            unit, block,
-            static_cast<std::int64_t>(PositionCountOf(unit, element))));
+        mir::BuildMachineCount(unit, block, PositionCountOf(unit, element)));
   };
   mir::TypeId within = OwnerValueType(unit, block, place.owner);
   mir::ExprId first = mir::BuildMachineIntLiteral(unit, block, 0);
@@ -128,8 +126,7 @@ auto TakeoverPart(
                    members.first(component.position.value)) {
                 at += PositionCountOf(unit, member);
               }
-              return mir::BuildMachineIntLiteral(
-                  unit, block, static_cast<std::int64_t>(at));
+              return mir::BuildMachineCount(unit, block, at);
             },
             [&](const StepToUnionMember&) -> diag::Result<mir::ExprId> {
               return union_member();
@@ -155,9 +152,8 @@ auto TakeoverPart(
   return TakenPart{
       .holder = TakeoverHolder(place),
       .first = first,
-      .count = mir::BuildMachineIntLiteral(
-          unit, block,
-          static_cast<std::int64_t>(PositionCountOf(unit, within)))};
+      .count =
+          mir::BuildMachineCount(unit, block, PositionCountOf(unit, within))};
 }
 
 // Every part a takeover's target names, in the order the source wrote them: a

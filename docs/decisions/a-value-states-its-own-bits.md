@@ -4,7 +4,8 @@ Date: 2026-09-11 Status: accepted. D2 is superseded 2026-10-11 by D6 of
 [an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md):
 the entry that builds is told the type it answers and handed the stream alone, because the premise
 of D2's second paragraph -- a shape the runtime holds as a value -- was withdrawn when a value's
-shape became its type's.
+shape became its type's. D4 and D6 are revised 2026-10-22: the operator has no type in HIR, and a
+stream whose width is not fixed is no longer refused but is a run of bits whose length is its own.
 
 ## Why this decision matters
 
@@ -85,7 +86,11 @@ operator.
 
 HIR gains a streaming concatenation -- its operands and its block size, with zero standing for `>>`
 because the front end has already folded a written slice type or constant to a bit count. Which
-direction an occurrence is used in follows from where it stands, so it carries no discriminator.
+direction an occurrence is used in follows from where it stands, so it carries no discriminator. It
+has no type of its own, as the front end gives it none: the stream between packing and unpacking is
+never visible (LRM 11.4.14), and where the operator is a source or a cast's operand, the conversion
+around it carries the type the stream becomes. What the stream is held as is a representation, which
+HIR-to-MIR decides from the operator's parts.
 
 MIR carries no streaming node. A source-level `{...}` is an operation over values that already
 exist, which every one of MIR's peer languages reaches through a library call and none of them
@@ -99,12 +104,31 @@ then that value to the destination -- and the lowering is those two steps agains
 cast reaching MIR would be the shape `mir.md` already forbids: a conversion that reshapes a value is
 a library call, never a cast node.
 
-### D6. A stream whose width is not fixed is refused, and the refusal is about naming, not traversal
+### D6. A stream whose width is not fixed is a run of bits whose length is its own
 
-A stream is a value, and its type states a width. Where a stream expression is dynamically sized
-there is no width to state, so no type names it and the lowering refuses. The traversal is
-unaffected -- the entries recurse over whatever a value holds -- so what the dynamic form waits on
-is a way to name bits whose number the program fixes, and nothing else.
+A stream is a value. Where every part of it has a width its type fixes, its type is an integral one
+of that width, and nothing about it changes. Where some part's width is the running program's -- a
+dynamic array, a queue, an associative array, a string, or an aggregate holding one -- its type is a
+run of bits whose length is the value's own, which the source never names, laid end to end from its
+parts, re-ordered in blocks, cut at a position, and read back a fixed-width part at a time. Which of
+the two a stream is follows from its parts' types -- integral exactly where every part's stream is
+-- decided where the stream is built, so the fixed form costs nothing it did not before. This is
+slang's division carried to run time -- the type answers what is statically knowable, the value
+answers about itself -- in LLVM's shape for a value whose width is per value (`APInt`, `BitVector`)
+and Rust's `bitvec` for the operations. The run is a type the library declares and MIR only names:
+every one of those operations is a call, no MIR operation or pass looks inside a run, and a
+different representation in the library would change nothing in MIR -- which is what makes a type
+MIR's own or the library's, as `std::string` is the library's to a C++ compiler. It is still a
+value, made, copied, handed on and ended as any value is; how a type is held and whether it is a
+value are separate questions.
+
+Reading a run back is where the two directions differ, and the type decides it alone: a part whose
+width the program decides takes what the parts after it leave when they are empty, in whole
+elements, so the first such part takes all that is left and any later one stays empty (LRM 6.24.3,
+11.4.14.4). A cast takes exactly the bits its operand holds or is a run-time error (LRM 6.24.3); an
+assignment is lenient, giving a dynamically sized destination the fewest elements as wide as the
+stream and a fixed-size one the stream left-aligned, and erring only where the stream is too wide
+for it (LRM 11.4.14).
 
 ## Rejected alternatives
 
@@ -128,8 +152,17 @@ is a way to name bits whose number the program fixes, and nothing else.
   reference is the one role for every family.)_
 
 - **Let a dynamically sized stream take the statically known part as its type.** It types the
-  expression with a width the value will not have, which is worse than refusing: every consumer
-  downstream reads a width that is a lie, and the first one to allocate against it is wrong.
+  expression with a width the value will not have: every consumer downstream reads a width that is a
+  lie, and the first one to allocate against it is wrong.
+
+- **Take the other side's fixed width, as Verilator does.** It converts against whichever side has a
+  width its type fixes, so it cannot express a stream whose both sides are the program's -- a queue
+  of strings into a string, which UVM writes -- and that is a condition of the language, not a gap
+  to fill later.
+
+- **Make every stream a run of bits, fixed ones included.** One shape, but a reversal of the bits of
+  a fixed-width vector would then cost an allocation and a call each, where today it is the vector's
+  own operation.
 
 ## Consequences
 
@@ -139,7 +172,8 @@ is a way to name bits whose number the program fixes, and nothing else.
 - The execution backend needs no new mechanism: both entries dispatch on a value's domain the way
   every other value entry does, and the build entry is named by what it answers with, as every other
   factory is.
-- Both backends run the whole cut. No path record gains an entry.
+- Both backends carry every form; the one both refuse is a class handle in a stream, which their
+  path records name.
 - A streaming target list is distributed by the assignment that consumes it rather than by a place:
   a stream stands for a sequence of destinations but not for storage laid out like them, so what
   each target takes is a share of a sequence rather than a share of a value.

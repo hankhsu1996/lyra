@@ -107,16 +107,20 @@ struct ValueWitnessTable {
       const ConstIntegralView& control_bits, void* out);
   // The value's bits written into a stream below its `filled` most
   // significant positions, and the value of this type the stream holds below
-  // its `taken` most significant ones, built in `out`. The type fixes how
-  // many positions a value of it takes and what each part of it holds, which
-  // is everything a sequence of bits carries nothing of. Each answers how many
-  // positions are filled, or taken, after it.
+  // its `taken` most significant ones, read into the value of the type `out`
+  // holds, which it replaces. The type fixes what each part of a value of it
+  // holds, which is everything a sequence of bits carries nothing of; a part
+  // whose type fixes its width takes that many positions, and one whose width
+  // the running program decides takes every position before `until`, the
+  // first such part of a value taking what the rest leave (LRM 6.24.3,
+  // 11.4.14.4). Each answers how many positions are filled, or taken, after
+  // it.
   std::uint64_t (*write_to_stream)(
       const ValueType& type, const void* value, const IntegralView& stream,
       std::uint64_t filled);
   std::uint64_t (*read_from_stream)(
       const ValueType& type, const ConstIntegralView& stream,
-      std::uint64_t taken, void* out);
+      std::uint64_t taken, std::uint64_t until, void* out);
 
   void (*resolve_tri_state)(
       const ValueType& type, const void* lhs, const void* rhs, void* out);
@@ -276,9 +280,9 @@ class ValueType {
     return witnesses_->write_to_stream(*this, value, stream, filled);
   }
   auto ReadFromStream(
-      const ConstIntegralView& stream, std::uint64_t taken, void* out) const
-      -> std::uint64_t {
-    return witnesses_->read_from_stream(*this, stream, taken, out);
+      const ConstIntegralView& stream, std::uint64_t taken, std::uint64_t until,
+      void* out) const -> std::uint64_t {
+    return witnesses_->read_from_stream(*this, stream, taken, until, out);
   }
 
   void ResolveTriState(const void* lhs, const void* rhs, void* out) const {

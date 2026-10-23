@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "lyra/base/component_index.hpp"
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/source_span.hpp"
@@ -235,7 +236,8 @@ constexpr std::array kWholeValueEntries{
     support::BuiltinFn::kBitIdentical,    support::BuiltinFn::kHasUnknown,
     support::BuiltinFn::kIsUnknown,       support::BuiltinFn::kBitstreamWidth,
     support::BuiltinFn::kCountBits,       support::BuiltinFn::kToBitstream,
-    support::BuiltinFn::kFromBitstream,   support::BuiltinFn::kResolveTriState,
+    support::BuiltinFn::kFromBitstream,   support::BuiltinFn::kToBitVec,
+    support::BuiltinFn::kFromBitVec,      support::BuiltinFn::kResolveTriState,
     support::BuiltinFn::kResolveWiredAnd, support::BuiltinFn::kResolveWiredOr,
     support::BuiltinFn::kDominating,      support::BuiltinFn::kFilledLike,
     support::BuiltinFn::kPositionCount,   support::BuiltinFn::kTakePositions,
@@ -300,14 +302,6 @@ constexpr std::array<support::BuiltinFn, 4> kNetFolds{
     support::BuiltinFn::kResolveWiredOr,
     support::BuiltinFn::kDominating,
 };
-
-// A machine truth `op` answers of two machine integers.
-auto MachineTruth(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::BinaryOp op,
-    mir::ExprId lhs, mir::ExprId rhs) -> mir::ExprId {
-  return block.exprs.Add(
-      mir::MakeBinary(unit, block, op, lhs, rhs, unit.builtins.machine_bool));
-}
 
 // `then_value` where `condition` holds and `else_value` where it does not,
 // both of `type`.
@@ -463,6 +457,75 @@ class OperationBodies {
             members_[i]));
   }
 
+  // A local of `code` holding a value of `type`, declared after what `block`
+  // holds and starting at `initial`.
+  auto Declared(
+      mir::CallableCode& code, mir::Block& block, mir::TypeId type,
+      mir::ExprId initial) -> mir::LocalId {
+    const mir::LocalId local = code.AddLocal(type);
+    block.AppendStmt(mir::LocalDeclStmt{.target = local, .init = initial});
+    return local;
+  }
+
+  // Such a local holding a machine count; what it holds now; it moved to
+  // `value`; and a count the lowering holds, written as one.
+  auto DeclaredCount(
+      mir::CallableCode& code, mir::Block& block, mir::ExprId initial)
+      -> mir::LocalId {
+    return Declared(code, block, Unit().builtins.machine_int64, initial);
+  }
+  auto CountNow(mir::Block& block, mir::LocalId count) -> mir::ExprId {
+    return block.ReadLocal(count, Unit().builtins.machine_int64);
+  }
+  void SetCount(mir::Block& block, mir::LocalId count, mir::ExprId value) {
+    block.AppendStmt(
+        mir::ExprStmt{
+            .expr = block.exprs.Add(BuildStoreExpr(
+                Unit(), block,
+                AccessPath{
+                    .owner =
+                        block.LocalPlace(count, Unit().builtins.machine_int64),
+                    .descent = {}},
+                value))});
+  }
+  auto CountLiteral(mir::Block& block, std::uint64_t count) -> mir::ExprId {
+    return mir::BuildMachineCount(Unit(), block, count);
+  }
+
+  // The bits a part whose width the program decides takes of the run of
+  // `length` bits read from `at`, where the parts after it take `after` where
+  // they are empty (LRM 11.4.14.4); a run too short for them is an error.
+  auto PartAllotment(
+      mir::CallableCode& code, mir::Block& block, mir::LocalId length,
+      mir::LocalId at, mir::ExprId after) -> mir::LocalId {
+    const mir::LocalId allotted = DeclaredCount(
+        code, block,
+        mir::BuildMachineIntBinary(
+            Unit(), block, mir::BinaryOp::kSub,
+            mir::BuildMachineIntBinary(
+                Unit(), block, mir::BinaryOp::kSub, CountNow(block, length),
+                CountNow(block, at)),
+            after));
+    mir::AppendRunTimeCheck(
+        Unit(), block,
+        mir::BuildMachineIntComparison(
+            Unit(), block, mir::BinaryOp::kGreaterEqual,
+            CountNow(block, allotted), CountLiteral(block, 0)),
+        base::DiagMessage(
+            "a stream of bits holds fewer bits than the value it is read into "
+            "takes")
+            .TakeText());
+    return allotted;
+  }
+
+  // A value of `type` built by `value` after what `block` holds, kept in a
+  // local of `code` so that what follows cannot change what it reads.
+  auto Held(
+      mir::CallableCode& code, mir::Block& block, mir::TypeId type,
+      mir::ExprId value) -> mir::ExprId {
+    return block.ReadLocal(Declared(code, block, type, value), type);
+  }
+
   // LRM 11.4.5 `==` of two values of `part`, a member or an element, at this
   // type's equality answer type.
   auto PartEqual(
@@ -599,20 +662,18 @@ class OperationBodies {
     const mir::LocalId hi = held(
         mir::BuildMachineIntBinary(
             Unit(), block, mir::BinaryOp::kAdd, read(lo),
-            mir::BuildMachineIntLiteral(
-                Unit(), block,
-                static_cast<std::int64_t>(PositionCountOf(Unit(), part)))));
+            CountLiteral(block, PositionCountOf(Unit(), part))));
     const std::array reaches{
-        MachineTruth(
+        mir::BuildMachineIntComparison(
             Unit(), block, mir::BinaryOp::kLessThan, read(run.first), read(hi)),
-        MachineTruth(
+        mir::BuildMachineIntComparison(
             Unit(), block, mir::BinaryOp::kGreaterThan, read(run.end),
             read(lo))};
     const mir::ExprId start = mir::BuildMachineIntBinary(
         Unit(), block, mir::BinaryOp::kSub,
         Chosen(
             block,
-            MachineTruth(
+            mir::BuildMachineIntComparison(
                 Unit(), block, mir::BinaryOp::kGreaterThan, read(run.first),
                 read(lo)),
             read(run.first), read(lo), number),
@@ -621,7 +682,7 @@ class OperationBodies {
         Unit(), block, mir::BinaryOp::kSub,
         Chosen(
             block,
-            MachineTruth(
+            mir::BuildMachineIntComparison(
                 Unit(), block, mir::BinaryOp::kLessThan, read(run.end),
                 read(hi)),
             read(run.end), read(hi), number),
@@ -682,6 +743,8 @@ class StructBodies : public OperationBodies {
   auto CountBits() -> mir::CallableCode;
   auto ToBitstream() -> mir::CallableCode;
   auto FromBitstream() -> mir::CallableCode;
+  auto ToBitVec() -> mir::CallableCode;
+  auto FromBitVec() -> mir::CallableCode;
   auto Fold(support::BuiltinFn fold) -> mir::CallableCode;
   auto FilledLike() -> mir::CallableCode;
   auto DeclaredDefault() -> mir::CallableCode;
@@ -882,14 +945,89 @@ auto StructBodies::FromBitstream() -> mir::CallableCode {
               Lowerer(), block, Referent(block, p[0], stream),
               shape.width - taken,
               mir::PackedVectorOf(Unit().types, width, shape.state_kind)));
-          auto read = BuildFromBitstream(
-              Unit(), block, bits, member, diag::SourceSpan{});
-          if (!read) {
+          members.push_back(BuildFromBitstream(Unit(), block, bits, member));
+        }
+        return Built(block, std::move(members));
+      });
+}
+
+// LRM 6.24.3: where a member's width is the running program's, the members'
+// streams laid end to end into a run of bits, the first most significant.
+auto StructBodies::ToBitVec() -> mir::CallableCode {
+  const mir::TypeId run = Unit().builtins.bit_vec;
+  return BodyOf(
+      support::BuiltinFn::kToBitVec, {WholeType()}, run,
+      [&](mir::CallableCode& code, mir::Block& block,
+          const std::vector<mir::LocalId>& p) {
+        std::vector<mir::ExprId> streams;
+        for (std::size_t i = 0; i < Members().size(); ++i) {
+          auto member = BuildToBitstream(
+              Unit(), block, Member(block, p[0], i), diag::SourceSpan{});
+          if (!member) {
             throw InternalError(
-                "StructBodies::FromBitstream: a member of a structure whose "
-                "stream is fixed has none");
+                "StructBodies::ToBitVec: a member of a structure holding a "
+                "stream has none");
           }
-          members.push_back(*read);
+          streams.push_back(block.AsValue(Unit().types, *member));
+        }
+        return BuildRunJoin(Unit(), block, code.AddLocal(run), streams);
+      });
+}
+
+// The inverse, out of a run holding exactly the structure's bits: a member
+// whose type fixes its width takes that many, and one whose width is the
+// program's takes what the members after it leave where they are empty, so
+// the first such member takes the rest (LRM 11.4.14.4).
+auto StructBodies::FromBitVec() -> mir::CallableCode {
+  const mir::TypeId run = Unit().builtins.bit_vec;
+  return BodyOf(
+      support::BuiltinFn::kFromBitVec, {run}, WholeType(),
+      [&](mir::CallableCode& code, mir::Block& block,
+          const std::vector<mir::LocalId>& p) {
+        const mir::LocalId length = DeclaredCount(
+            code, block,
+            BuildRunLength(Unit(), block, Referent(block, p[0], run)));
+        const mir::LocalId at =
+            DeclaredCount(code, block, CountLiteral(block, 0));
+        std::uint64_t after = 0;
+        for (const mir::TypeId member : Members()) {
+          after += StreamFillOf(Unit(), member).empty_width;
+        }
+        std::vector<mir::ExprId> members;
+        for (const mir::TypeId member : Members()) {
+          after -= StreamFillOf(Unit(), member).empty_width;
+          if (const std::optional<StreamShape> fixed =
+                  FixedStreamShapeOf(Unit(), member)) {
+            members.push_back(Held(
+                code, block, member,
+                BuildFromBitstream(
+                    Unit(), block,
+                    BuildRunLoad(
+                        Unit(), block, Referent(block, p[0], run),
+                        CountNow(block, at), *fixed),
+                    member)));
+            SetCount(
+                block, at,
+                mir::BuildMachineIntBinary(
+                    Unit(), block, mir::BinaryOp::kAdd, CountNow(block, at),
+                    CountLiteral(block, fixed->width)));
+            continue;
+          }
+          const mir::LocalId allotted = PartAllotment(
+              code, block, length, at, CountLiteral(block, after));
+          members.push_back(Held(
+              code, block, member,
+              BuildFromBitVec(
+                  Unit(), block,
+                  BuildRunExtract(
+                      Unit(), block, Referent(block, p[0], run),
+                      CountNow(block, at), CountNow(block, allotted)),
+                  member)));
+          SetCount(
+              block, at,
+              mir::BuildMachineIntBinary(
+                  Unit(), block, mir::BinaryOp::kAdd, CountNow(block, at),
+                  CountNow(block, allotted)));
         }
         return Built(block, std::move(members));
       });
@@ -942,9 +1080,7 @@ auto StructBodies::PositionCount() -> mir::CallableCode {
   return Body(
       support::BuiltinFn::kPositionCount, {}, Unit().builtins.machine_int64,
       [&](mir::Block& block, const std::vector<mir::LocalId>&) {
-        return mir::BuildMachineIntLiteral(
-            Unit(), block,
-            static_cast<std::int64_t>(PositionCountOf(Unit(), WholeType())));
+        return CountLiteral(block, PositionCountOf(Unit(), WholeType()));
       });
 }
 
@@ -961,9 +1097,7 @@ auto StructBodies::TakePositions() -> mir::CallableCode {
         for (std::size_t i = 0; i < Members().size(); ++i) {
           members.push_back(PartTaken(
               code, block, Members()[i], Member(block, p[0], i),
-              Member(block, p[1], i),
-              mir::BuildMachineIntLiteral(
-                  Unit(), block, static_cast<std::int64_t>(at)),
+              Member(block, p[1], i), mir::BuildMachineCount(Unit(), block, at),
               run));
           at += PositionCountOf(Unit(), Members()[i]);
         }
@@ -1128,13 +1262,8 @@ auto UnionBodies::FromBitstream() -> mir::CallableCode {
       [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
         const mir::ExprId bits = block.exprs.Add(BuildPackedBitsRead(
             Lowerer(), block, Referent(block, p[0], stream), 0, stream));
-        auto first = BuildFromBitstream(Unit(), block, bits, FirstType(), {});
-        if (!first) {
-          throw InternalError(
-              "UnionBodies::FromBitstream: the first member of a union whose "
-              "stream is fixed has none");
-        }
-        return Holding(block, *first);
+        return Holding(
+            block, BuildFromBitstream(Unit(), block, bits, FirstType()));
       });
 }
 
@@ -1365,6 +1494,8 @@ class ArrayBodies : public OperationBodies {
   auto CountBits() -> mir::CallableCode;
   auto ToBitstream() -> mir::CallableCode;
   auto FromBitstream() -> mir::CallableCode;
+  auto ToBitVec() -> mir::CallableCode;
+  auto FromBitVec() -> mir::CallableCode;
   auto Fold(support::BuiltinFn fold) -> mir::CallableCode;
   auto FilledLike() -> mir::CallableCode;
   auto TakePositions() -> mir::CallableCode;
@@ -1693,14 +1824,97 @@ auto ArrayBodies::FromBitstream() -> mir::CallableCode {
                   .to = StepToBits{.start = ElementStart(body, position)},
                   .part_type = ElementBits()},
               Referent(body, p[0], stream)));
-          auto element =
-              BuildFromBitstream(Unit(), body, bits, ElementType(), {});
-          if (!element) {
-            throw InternalError(
-                "ArrayBodies::FromBitstream: an element of an array whose "
-                "stream is fixed has none");
-          }
-          return *element;
+          return BuildFromBitstream(Unit(), body, bits, ElementType());
+        });
+      });
+}
+
+// LRM 6.24.3: where an element's width is the running program's, the elements'
+// streams laid end to end into a run of bits, the one at position 0 first.
+auto ArrayBodies::ToBitVec() -> mir::CallableCode {
+  const mir::TypeId run = Unit().builtins.bit_vec;
+  return BodyOf(
+      support::BuiltinFn::kToBitVec, {WholeType()}, run,
+      [&](mir::CallableCode& code, mir::Block& block,
+          const std::vector<mir::LocalId>& p) {
+        // The run is as wide as the array's stream before any element is
+        // written, so each element's bits are written where they lie and none
+        // is copied again for the elements after it.
+        const mir::LocalId bits = Declared(
+            code, block, run,
+            BuildRunOfZeros(
+                Unit(), block,
+                BuildToInt64Call(
+                    Unit(), block,
+                    BuildBitWidth(
+                        Unit(), block, Referent(block, p[0], WholeType())))));
+        const mir::LocalId at =
+            DeclaredCount(code, block, CountLiteral(block, 0));
+        ForEachPosition(
+            code, block, [&](mir::Block& body, mir::ExprId position) {
+              auto element = BuildToBitstream(
+                  Unit(), body, Element(body, p[0], position), {});
+              if (!element) {
+                throw InternalError(
+                    "ArrayBodies::ToBitVec: an element of an array holding a "
+                    "stream has none");
+              }
+              const mir::LocalId part = Declared(
+                  code, body, run,
+                  BuildRunOf(
+                      Unit(), body, body.AsValue(Unit().types, *element)));
+              InsertIntoRun(
+                  Unit(), body, bits, CountNow(body, at),
+                  body.ReadLocal(part, run));
+              SetCount(
+                  body, at,
+                  mir::BuildMachineIntBinary(
+                      Unit(), body, mir::BinaryOp::kAdd, CountNow(body, at),
+                      BuildRunLength(Unit(), body, body.ReadLocal(part, run))));
+            });
+        return block.ReadLocal(bits, run);
+      });
+}
+
+// The inverse, out of a run holding exactly the array's bits: each element
+// takes what the elements after it leave where they are empty, so the first
+// takes the rest (LRM 11.4.14.4).
+auto ArrayBodies::FromBitVec() -> mir::CallableCode {
+  const mir::TypeId run = Unit().builtins.bit_vec;
+  const std::uint64_t empty = StreamFillOf(Unit(), ElementType()).empty_width;
+  return BodyOf(
+      support::BuiltinFn::kFromBitVec, {run}, WholeType(),
+      [&](mir::CallableCode& code, mir::Block& block,
+          const std::vector<mir::LocalId>& p) {
+        const mir::LocalId length = DeclaredCount(
+            code, block,
+            BuildRunLength(Unit(), block, Referent(block, p[0], run)));
+        const mir::LocalId at =
+            DeclaredCount(code, block, CountLiteral(block, 0));
+        const mir::LocalId after = DeclaredCount(
+            code, block, CountLiteral(block, (count_ - 1) * empty));
+        return Built(code, block, [&](mir::Block& body, mir::ExprId) {
+          const mir::LocalId allotted =
+              PartAllotment(code, body, length, at, CountNow(body, after));
+          const mir::ExprId element = Held(
+              code, body, ElementType(),
+              BuildFromBitVec(
+                  Unit(), body,
+                  BuildRunExtract(
+                      Unit(), body, Referent(body, p[0], run),
+                      CountNow(body, at), CountNow(body, allotted)),
+                  ElementType()));
+          SetCount(
+              body, at,
+              mir::BuildMachineIntBinary(
+                  Unit(), body, mir::BinaryOp::kAdd, CountNow(body, at),
+                  CountNow(body, allotted)));
+          SetCount(
+              body, after,
+              mir::BuildMachineIntBinary(
+                  Unit(), body, mir::BinaryOp::kSub, CountNow(body, after),
+                  CountLiteral(body, empty)));
+          return element;
         });
       });
 }
@@ -1742,8 +1956,8 @@ auto ArrayBodies::TakePositions() -> mir::CallableCode {
       [&](mir::CallableCode& code, mir::Block& block,
           const std::vector<mir::LocalId>& p) {
         const HeldRun run = HoldRun(code, block, p[2], p[3]);
-        const auto per_element =
-            static_cast<std::int64_t>(PositionCountOf(Unit(), ElementType()));
+        const std::uint64_t per_element =
+            PositionCountOf(Unit(), ElementType());
         return Built(code, block, [&](mir::Block& body, mir::ExprId position) {
           return PartTaken(
               code, body, ElementType(), Element(body, p[0], position),
@@ -1751,17 +1965,22 @@ auto ArrayBodies::TakePositions() -> mir::CallableCode {
               mir::BuildMachineIntBinary(
                   Unit(), body, mir::BinaryOp::kMul,
                   BuildToInt64Call(Unit(), body, position),
-                  mir::BuildMachineIntLiteral(Unit(), body, per_element)),
+                  CountLiteral(body, per_element)),
               run);
         });
       });
 }
 
-// Which of the operations a type may lack it has: a stream and one of fixed
-// width (LRM 6.24.3), a net's folds (LRM 6.7.1).
+// Which of the operations a type may lack it has: a stream, one of fixed width,
+// and, where its width is the running program's, a stream written out where
+// the type holds no class handle, whose object's stream is not yet built (LRM
+// 11.4.14.1), and one read back where the type may be a destination (LRM
+// 6.24.3); a net's folds (LRM 6.7.1).
 struct OperationsHad {
   bool stream;
   bool fixed_stream;
+  bool run_written;
+  bool run_read;
   bool net_folds;
 };
 
@@ -1800,6 +2019,20 @@ void StateStreamAndFolds(Bodies& bodies, const OperationsHad& had, Add add) {
   }
 }
 
+// Hands `add` the bodies of a stream as a run of bits where `had` says the
+// type holds a stream whose width the running program decides (LRM 6.24.3):
+// a structure or an array holding a dynamic array, a queue, an associative
+// array or a string somewhere.
+template <typename Bodies, typename Add>
+void StateRunBodies(Bodies& bodies, const OperationsHad& had, Add add) {
+  if (had.run_written) {
+    add(support::BuiltinFn::kToBitVec, bodies.ToBitVec());
+  }
+  if (had.run_read) {
+    add(support::BuiltinFn::kFromBitVec, bodies.FromBitVec());
+  }
+}
+
 // Whether a stream of `shape` is one a value is written into and read out of,
 // which takes a fixed width of at least one bit.
 auto IsFixedStream(const std::optional<StreamShape>& shape) -> bool {
@@ -1814,6 +2047,8 @@ auto OperationsHadByUnion(
   return OperationsHad{
       .stream = HasBitStreamOver(unit, mir::RecordKind::kUnion, members),
       .fixed_stream = IsFixedStream(FixedStreamShapeOf(unit, members.front())),
+      .run_written = false,
+      .run_read = false,
       .net_folds = IsValidForNetOver(unit, mir::RecordKind::kUnion, members)};
 }
 
@@ -1841,15 +2076,31 @@ auto StructMethodsOf(
     methods.push_back(
         mir::RecordMethod{.answers = answers, .code = std::move(code)});
   };
+  const bool stream = EveryPart(unit, members, HasBitStream);
+  const bool fixed_stream =
+      IsFixedStream(FixedStreamShapeOfParts(unit, members));
   const OperationsHad had{
-      .stream = EveryPart(unit, members, HasBitStream),
-      .fixed_stream = IsFixedStream(FixedStreamShapeOfParts(unit, members)),
+      .stream = stream,
+      .fixed_stream = fixed_stream,
+      .run_written = stream && !fixed_stream &&
+                     std::ranges::none_of(
+                         members,
+                         [&](mir::TypeId member) {
+                           return HoldsClassHandle(unit, member);
+                         }),
+      .run_read = stream && !fixed_stream &&
+                  std::ranges::all_of(
+                      members,
+                      [&](mir::TypeId member) {
+                        return IsStreamDestination(unit, member);
+                      }),
       .net_folds = EveryPart(unit, members, IsValidForNet)};
   StateWholeValue(bodies, add);
   // What the library holding an array of the structure asks of it, where it
   // takes positions element by element; a union, held whole, needs none.
   add(support::BuiltinFn::kPositionCount, bodies.PositionCount());
   StateStreamAndFolds(bodies, had, add);
+  StateRunBodies(bodies, had, add);
   return methods;
 }
 
@@ -1899,15 +2150,20 @@ auto ArrayOperationsOf(UnitLowerer& lowerer, mir::TypeId type)
   };
   // Read off the type itself, which is interned whole before any body is
   // built.
+  const bool stream = HasBitStream(unit, type);
+  const bool fixed_stream = IsFixedStream(FixedStreamShapeOf(unit, type));
   const OperationsHad had{
-      .stream = HasBitStream(unit, type),
-      .fixed_stream = IsFixedStream(FixedStreamShapeOf(unit, type)),
+      .stream = stream,
+      .fixed_stream = fixed_stream,
+      .run_written = stream && !fixed_stream && !HoldsClassHandle(unit, type),
+      .run_read = stream && !fixed_stream && IsStreamDestination(unit, type),
       .net_folds = IsValidForNet(unit, type)};
   const mir::UnpackedArrayType array =
       unit.types.Get(type).Get<mir::UnpackedArrayType>();
   ArrayBodies bodies(lowerer, type, array.element_type, array.count);
   StateWholeValue(bodies, add);
   StateStreamAndFolds(bodies, had, add);
+  StateRunBodies(bodies, had, add);
   return operations;
 }
 

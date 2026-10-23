@@ -243,6 +243,9 @@ struct BuiltinMirTypes {
   // characters.
   TypeId machine_c_string;
   TypeId string;
+  // The run of bits a stream is where some part's width is the running
+  // program's (LRM 6.24.3, 11.4.14).
+  TypeId bit_vec;
   TypeId void_type;
   // A `real`, which a `realtime` is as well (LRM 6.12).
   TypeId real;
@@ -442,6 +445,8 @@ struct CompilationUnit {
                 Type{MachineFloatType{.width = MachineFloatWidth::k64}}),
             .machine_c_string = types.Intern(Type{MachineCStringType{}}),
             .string = types.Intern(Type{StringType{}}),
+            .bit_vec = types.Intern(
+                Type{RuntimeLibraryType{.kind = RuntimeLibraryKind::kBitVec}}),
             .void_type = types.Intern(Type{VoidType{}}),
             .real = types.Intern(Type{RealType{}}),
             .time = types.Intern(

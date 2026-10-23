@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -8,11 +9,13 @@
 
 #include "lyra/value/array_ordering.hpp"
 #include "lyra/value/basic_queue.hpp"
+#include "lyra/value/bit_vec.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/element_policy.hpp"
 #include "lyra/value/element_sequence.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral.hpp"
+#include "lyra/value/integral_words.hpp"
 #include "lyra/value/take_built.hpp"
 
 namespace lyra::value {
@@ -149,6 +152,27 @@ class Queue : public OrdinalArrayMethods<Queue<T, kBound>> {
   [[nodiscard]] auto BitstreamWidth() const -> Int {
     return Int::FromInt(detail::SequenceBitstreamWidth(core_));
   }
+  // LRM 6.24.3: the elements' own streams laid end to end below the `filled`
+  // most significant positions of `stream`, the one at index 0 first, and the
+  // inverse, as many elements as fill the stream up to `until`.
+  [[nodiscard]] auto WriteToStream(
+      const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
+    return core_.WriteToStream(stream, filled);
+  }
+  auto ReadFromStream(
+      const ConstIntegralView& stream, std::uint64_t taken, std::uint64_t until)
+      -> std::uint64_t {
+    return core_.ReadFromStream(stream, taken, until);
+  }
+  // The same as a run of bits of its own, and the queue exactly that run holds.
+  [[nodiscard]] auto ToBitVec() const -> BitVec {
+    return StreamOf(*this);
+  }
+  [[nodiscard]] static auto FromBitVec(const BitVec& run) -> Queue {
+    Queue out;
+    ReadWholeStream(out, run);
+    return out;
+  }
   template <IntegralValue Control>
   [[nodiscard]] auto CountBits(const Control& control_bits) const -> Int {
     return Int::FromInt(detail::SequenceCountBits(core_, control_bits));
@@ -192,6 +216,21 @@ class Queue : public OrdinalArrayMethods<Queue<T, kBound>> {
       -> std::optional<SliceWindow> {
     return core_.AssignSlice(
         ReadPosition(lo), ReadPosition(hi), detail::OrdinalAddresses(value));
+  }
+
+  // LRM 11.4.14.4: the stream of the `count` elements from `lo`, an element
+  // outside the queue streaming as the element default; and this queue with
+  // those elements taking `values`, grown first to hold them.
+  [[nodiscard]] auto WindowToBitVec(
+      const Position& lo, std::int64_t count) const -> BitVec {
+    return core_.WindowToBitVec(ReadPosition(lo), WindowCount(count));
+  }
+  template <OrdinalElements C>
+  [[nodiscard]] auto WithWindow(
+      const Position& lo, std::int64_t count, const C& values) const -> Queue {
+    return Queue(core_.WithWindow(
+        ReadPosition(lo), WindowCount(count),
+        detail::OrdinalAddresses(values)));
   }
 
   // LRM 7.10.2.7 / 7.10.2.6: append / prepend a single element.

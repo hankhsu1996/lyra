@@ -150,7 +150,7 @@ auto LowerAsPlaceImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
             return LowerHirConcatExpr(lowerer, frame, c, result_type);
           },
           [&](const hir::StreamingConcatExpr& s) -> diag::Result<mir::Expr> {
-            return LowerHirStreamingConcatExpr(lowerer, frame, s, result_type);
+            return LowerHirStreamingConcatExpr(lowerer, frame, s);
           },
           [&](const hir::ReplicationExpr& r) -> diag::Result<mir::Expr> {
             return LowerHirReplicationExpr(lowerer, frame, r, result_type);

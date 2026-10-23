@@ -312,9 +312,7 @@ auto LowerFileReadCall(
       operands.push_back(*count_or);
     } else {
       operands.push_back(
-          mir::BuildMachineIntLiteral(
-              unit, body,
-              static_cast<std::int64_t>(memory->dim.ElementCount())));
+          mir::BuildMachineCount(unit, body, memory->dim.ElementCount()));
     }
   }
 

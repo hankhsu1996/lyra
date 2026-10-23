@@ -183,4 +183,38 @@ auto RuntimeDynamicArray::CountBits(const ConstIntegralView& control_bits) const
       core_.has_value() ? detail::SequenceCountBits(*core_, control_bits) : 0);
 }
 
+auto RuntimeDynamicArray::WriteToStream(
+    const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
+  return core_.has_value() ? core_->WriteToStream(stream, filled) : filled;
+}
+
+auto RuntimeDynamicArray::ReadFromStream(
+    const ConstIntegralView& stream, std::uint64_t taken, std::uint64_t until)
+    -> std::uint64_t {
+  return Core().ReadFromStream(stream, taken, until);
+}
+
+auto RuntimeDynamicArray::ToBitVec() const -> BitVec {
+  return StreamOf(*this);
+}
+
+auto RuntimeDynamicArray::FromBitVec(
+    const value::ElementType& element, const BitVec& run)
+    -> RuntimeDynamicArray {
+  RuntimeDynamicArray out = FromElements(element, {});
+  ReadWholeStream(out, run);
+  return out;
+}
+
+auto RuntimeDynamicArray::WindowToBitVec(
+    std::optional<std::int64_t> start, std::size_t count) const -> BitVec {
+  return Core().WindowToBitVec(start, count);
+}
+
+auto RuntimeDynamicArray::WithWindow(
+    std::optional<std::int64_t> start, std::size_t count,
+    std::span<const void* const> values) const -> RuntimeDynamicArray {
+  return RuntimeDynamicArray(Core().WithWindow(start, count, values));
+}
+
 }  // namespace lyra::value

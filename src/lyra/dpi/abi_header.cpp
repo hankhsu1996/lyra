@@ -71,22 +71,47 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
           },
           // C has no references (LRM 35.5.6 passes by pointer).
           [&](const mir::ReferenceType&) { return crosses_no_boundary(); },
-          [](const mir::RuntimeLibraryType& r) -> std::string {
-            if (r.kind == mir::RuntimeLibraryKind::kDpiBitChunk) {
-              return "svBitVecVal";
+          [&](const mir::RuntimeLibraryType& r) -> std::string {
+            switch (r.kind) {
+              case mir::RuntimeLibraryKind::kDpiBitChunk:
+                return "svBitVecVal";
+              case mir::RuntimeLibraryKind::kDpiLogicChunk:
+                return "svLogicVecVal";
+              // LRM Annex H.8.6: an open array is passed by handle in either
+              // direction, and the handle carries a `const` qualifier because
+              // the foreign side may not modify it.
+              case mir::RuntimeLibraryKind::kDpiOpenArrayHandle:
+                return "const svOpenArrayHandle";
+              case mir::RuntimeLibraryKind::kBitVec:
+              case mir::RuntimeLibraryKind::kEnumeration:
+              case mir::RuntimeLibraryKind::kPrintItem:
+              case mir::RuntimeLibraryKind::kPrintLiteralItem:
+              case mir::RuntimeLibraryKind::kPrintValueItem:
+              case mir::RuntimeLibraryKind::kFormatSpec:
+              case mir::RuntimeLibraryKind::kFormatArg:
+              case mir::RuntimeLibraryKind::kChannelCancellation:
+              case mir::RuntimeLibraryKind::kTimeFormat:
+              case mir::RuntimeLibraryKind::kTrigger:
+              case mir::RuntimeLibraryKind::kObservation:
+              case mir::RuntimeLibraryKind::kReadReport:
+              case mir::RuntimeLibraryKind::kWait:
+              case mir::RuntimeLibraryKind::kHierarchySegment:
+              case mir::RuntimeLibraryKind::kDpiBitBuffer:
+              case mir::RuntimeLibraryKind::kDpiLogicBuffer:
+              case mir::RuntimeLibraryKind::kDpiOpenArray:
+              case mir::RuntimeLibraryKind::kCancellationTarget:
+              case mir::RuntimeLibraryKind::kControlEffect:
+              case mir::RuntimeLibraryKind::kTimer:
+              case mir::RuntimeLibraryKind::kObjectDefinition:
+              case mir::RuntimeLibraryKind::kScopeInfo:
+              case mir::RuntimeLibraryKind::kScopeCallable:
+              case mir::RuntimeLibraryKind::kConstructionTable:
+              case mir::RuntimeLibraryKind::kInstantiation:
+              case mir::RuntimeLibraryKind::kDumpEntry:
+              case mir::RuntimeLibraryKind::kDumpBlock:
+                return crosses_no_boundary();
             }
-            if (r.kind == mir::RuntimeLibraryKind::kDpiLogicChunk) {
-              return "svLogicVecVal";
-            }
-            // LRM Annex H.8.6: an open array is passed by handle in either
-            // direction, and the handle carries a `const` qualifier because the
-            // foreign side may not modify it.
-            if (r.kind == mir::RuntimeLibraryKind::kDpiOpenArrayHandle) {
-              return "const svOpenArrayHandle";
-            }
-            throw InternalError(
-                "RenderTypeAsC: this runtime library type does not cross the "
-                "DPI-C boundary");
+            throw InternalError("RenderTypeAsC: unknown runtime library kind");
           },
           // Every other type is one no foreign signature names, so the
           // boundary lowering should have refused the declaration before a

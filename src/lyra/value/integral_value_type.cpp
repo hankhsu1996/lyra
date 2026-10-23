@@ -111,9 +111,10 @@ struct IntegralWitnesses {
   }
 
   // A two-state type reads each x or z of the stream as 0 (LRM 11.4.14.3).
+  // Its width is its type's, so where the stream ends past it is no concern.
   static auto ReadFromStream(
       const ValueType& type, const ConstIntegralView& stream,
-      std::uint64_t taken, void* out) -> std::uint64_t {
+      std::uint64_t taken, std::uint64_t, void* out) -> std::uint64_t {
     const IntegralShape shape = Of(type).Shape();
     WrittenWords bits(shape);
     Extract(

@@ -4,6 +4,7 @@
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/value/any.hpp"
 #include "lyra/value/any_value.hpp"
+#include "lyra/value/bit_vec.hpp"
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/empty.hpp"
 #include "lyra/value/object_ref.hpp"
@@ -35,6 +36,8 @@ constinit const ValueType lyra_rt_wildcard_index_value_type =
 constinit const ValueType lyra_rt_any_value_type = LibraryValueType<Any>();
 constinit const ValueType lyra_rt_string_value_type =
     LibraryValueType<String>();
+constinit const ValueType lyra_rt_bitvec_value_type =
+    LibraryValueType<BitVec>();
 constinit const ValueType lyra_rt_real_value_type = LibraryValueType<Real>();
 constinit const ValueType lyra_rt_shortreal_value_type =
     LibraryValueType<ShortReal>();
