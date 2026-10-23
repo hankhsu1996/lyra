@@ -3,38 +3,46 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <charconv>
 #include <chrono>
 #include <csignal>
+#include <cstdlib>
 #include <cstring>
 #include <expected>
 #include <fcntl.h>
 #include <filesystem>
 #include <format>
+#include <gmock/gmock.h>
 #include <optional>
+#include <ostream>
 #include <poll.h>
 #include <span>
 #include <spawn.h>
 #include <string>
+#include <string_view>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <system_error>
 #include <unistd.h>
+#include <utility>
+#include <variant>
 #include <vector>
 
+#include "lyra/base/overloaded.hpp"
 #include "lyra/driver/subprocess.hpp"
 
 namespace lyra::test {
 namespace {
 
-auto DecodeWaitStatus(int status, ProcessOutcome& result) -> void {
+auto DecodeWaitStatus(int status) -> ProcessEnd {
   if (WIFSIGNALED(status)) {
-    result.termination = TerminationKind::kSignaled;
-    result.signal_number = WTERMSIG(status);
-  } else if (WIFEXITED(status)) {
-    result.exit_code = WEXITSTATUS(status);
-    result.termination = (result.exit_code == 0)
-                             ? TerminationKind::kExitedNormally
-                             : TerminationKind::kExitedNonZero;
+    return Signalled{.signal = WTERMSIG(status)};
   }
+  if (WIFEXITED(status)) {
+    return Exited{.code = WEXITSTATUS(status)};
+  }
+  return CouldNotRun{
+      .reason = std::format("waitpid reported status {:#x}", status)};
 }
 
 auto WaitPidNoHang(pid_t pid, int* status) -> std::expected<pid_t, int> {
@@ -64,6 +72,51 @@ void ReapKilledChild(pid_t pid) {
 // limit whatever the child does.
 constexpr std::chrono::seconds kKillDelay{5};
 
+// How long before the test's own end a child still running is out of time: the
+// delay it is given once asked, and the time the test takes to report it.
+constexpr std::chrono::seconds kReportMargin{15};
+
+// When this process started, near enough: the runner counts a test's time from
+// its start, and nothing this process does comes before its statics.
+const std::chrono::steady_clock::time_point kStarted =
+    std::chrono::steady_clock::now();
+
+// When a child has to be out of the way for the test to report it, where the
+// runner states the test's limit (Bazel's TEST_TIMEOUT, in seconds).
+auto TestDeadline() -> std::optional<std::chrono::steady_clock::time_point> {
+  const char* stated = std::getenv("TEST_TIMEOUT");
+  if (stated == nullptr) {
+    return std::nullopt;
+  }
+  const std::string_view text = stated;
+  int seconds = 0;
+  const auto [end, error] =
+      std::from_chars(text.data(), text.data() + text.size(), seconds);
+  if (error != std::errc{} || end != text.data() + text.size()) {
+    return std::nullopt;
+  }
+  return kStarted + std::chrono::seconds{seconds} - kReportMargin;
+}
+
+auto Earlier(
+    std::optional<std::chrono::steady_clock::time_point> a,
+    std::optional<std::chrono::steady_clock::time_point> b)
+    -> std::optional<std::chrono::steady_clock::time_point> {
+  if (a && b) {
+    return std::min(*a, *b);
+  }
+  return a ? a : b;
+}
+
+void CloseAll(std::span<struct pollfd> fds) {
+  for (auto& fd : fds) {
+    if (fd.fd >= 0) {
+      close(fd.fd);
+      fd.fd = -1;
+    }
+  }
+}
+
 auto ComputePollTimeoutMs(
     std::optional<std::chrono::steady_clock::time_point> deadline) -> int {
   if (!deadline) {
@@ -83,7 +136,7 @@ auto ComputePollTimeoutMs(
 
 auto RunChildProcess(
     const std::filesystem::path& exe, std::span<const std::string> args,
-    std::chrono::seconds timeout,
+    std::optional<std::chrono::seconds> timeout,
     const std::optional<std::filesystem::path>& working_directory)
     -> ProcessOutcome {
   // Every end is closed on exec, so a child started at the same moment from
@@ -94,17 +147,17 @@ auto RunChildProcess(
   std::array<int, 2> stderr_pipe{};
   if (pipe2(stdout_pipe.data(), O_CLOEXEC) != 0) {
     return {
-        .termination = TerminationKind::kSpawnFailed,
+        .end = CouldNotRun{.reason = "failed to create stdout pipe"},
         .stdout_text = {},
-        .stderr_text = "failed to create stdout pipe"};
+        .stderr_text = {}};
   }
   if (pipe2(stderr_pipe.data(), O_CLOEXEC) != 0) {
     close(stdout_pipe[0]);
     close(stdout_pipe[1]);
     return {
-        .termination = TerminationKind::kSpawnFailed,
+        .end = CouldNotRun{.reason = "failed to create stderr pipe"},
         .stdout_text = {},
-        .stderr_text = "failed to create stderr pipe"};
+        .stderr_text = {}};
   }
 
   posix_spawn_file_actions_t actions{};
@@ -146,23 +199,28 @@ auto RunChildProcess(
     close(stdout_pipe[0]);
     close(stderr_pipe[0]);
     return {
-        .termination = TerminationKind::kSpawnFailed,
+        .end =
+            CouldNotRun{
+                .reason = std::format(
+                    "posix_spawn failed: {}", std::strerror(spawn_result))},
         .stdout_text = {},
-        .stderr_text =
-            std::format("posix_spawn failed: {}", std::strerror(spawn_result))};
+        .stderr_text = {}};
   }
 
   ProcessOutcome outcome;
   int status = 0;
   bool child_reaped = false;
-  bool timed_out = false;
-  // A child past its limit is asked to end, then killed if it has not once the
-  // delay is over, as `timeout -k` and Bazel's own test runner do. Nothing is
-  // waited on once it is killed.
-  std::optional<std::chrono::steady_clock::time_point> deadline;
-  if (timeout != std::chrono::seconds{0}) {
-    deadline = std::chrono::steady_clock::now() + timeout;
+  // The caller's limit and the test's own end are kept apart, because only
+  // running past the first says anything about the child. A child past either
+  // is asked to end, then killed if it has not once the delay is over, as
+  // `timeout -k` and Bazel's own test runner do.
+  std::optional<std::chrono::steady_clock::time_point> own_deadline;
+  if (timeout) {
+    own_deadline = std::chrono::steady_clock::now() + *timeout;
   }
+  std::optional<std::chrono::steady_clock::time_point> deadline =
+      Earlier(own_deadline, TestDeadline());
+  std::optional<ProcessEnd> ended_for_time;
 
   std::array<struct pollfd, 2> fds{};
   fds[0] = {.fd = stdout_pipe[0], .events = POLLIN, .revents = 0};
@@ -178,15 +236,9 @@ auto RunChildProcess(
     if (ready < 0 && errno != EINTR) {
       kill(-pid, SIGKILL);
       ReapKilledChild(pid);
-      outcome.termination = TerminationKind::kWaitFailed;
-      outcome.stderr_text =
-          std::format("poll failed: {}", std::strerror(errno));
-      for (auto& fd : fds) {
-        if (fd.fd >= 0) {
-          close(fd.fd);
-          fd.fd = -1;
-        }
-      }
+      outcome.end = CouldNotRun{
+          .reason = std::format("poll failed: {}", std::strerror(errno))};
+      CloseAll(fds);
       return outcome;
     }
 
@@ -208,15 +260,10 @@ auto RunChildProcess(
     if (!child_reaped) {
       auto wait_result = WaitPidNoHang(pid, &status);
       if (!wait_result) {
-        outcome.termination = TerminationKind::kWaitFailed;
-        outcome.stderr_text = std::format(
-            "waitpid failed: {}", std::strerror(wait_result.error()));
-        for (auto& fd : fds) {
-          if (fd.fd >= 0) {
-            close(fd.fd);
-            fd.fd = -1;
-          }
-        }
+        outcome.end = CouldNotRun{
+            .reason = std::format(
+                "waitpid failed: {}", std::strerror(wait_result.error()))};
+        CloseAll(fds);
         return outcome;
       }
       if (*wait_result == pid) {
@@ -224,11 +271,14 @@ auto RunChildProcess(
       }
     }
 
-    if (deadline && std::chrono::steady_clock::now() >= *deadline) {
-      if (!timed_out) {
+    const auto now = std::chrono::steady_clock::now();
+    if (deadline && now >= *deadline) {
+      if (!ended_for_time) {
         kill(-pid, SIGTERM);
-        timed_out = true;
-        deadline = std::chrono::steady_clock::now() + kKillDelay;
+        ended_for_time = own_deadline && now >= *own_deadline
+                             ? ProcessEnd{TimedOut{}}
+                             : ProcessEnd{TestTimedOut{}};
+        deadline = now + kKillDelay;
       } else {
         kill(-pid, SIGKILL);
         if (!child_reaped) {
@@ -240,29 +290,101 @@ auto RunChildProcess(
     }
   }
 
-  if (timed_out) {
-    outcome.termination = TerminationKind::kTimedOut;
-    return outcome;
-  }
-
-  DecodeWaitStatus(status, outcome);
+  outcome.end = ended_for_time ? *ended_for_time : DecodeWaitStatus(status);
   return outcome;
+}
+
+auto RunShellScript(
+    std::string_view script, std::span<const std::string> positional,
+    std::optional<std::chrono::seconds> timeout) -> ProcessOutcome {
+  const auto sh = driver::FindOnPath("sh");
+  if (!sh) {
+    return {
+        .end = CouldNotRun{.reason = std::string{sh.error().Text()}},
+        .stdout_text = {},
+        .stderr_text = {}};
+  }
+  std::vector<std::string> shell_args = {"-c", std::string{script}};
+  shell_args.insert(shell_args.end(), positional.begin(), positional.end());
+  return RunChildProcess(*sh, shell_args, timeout);
 }
 
 auto RunUnderAddressLimit(
     const std::filesystem::path& program, std::span<const std::string> args,
-    int kibibytes, std::chrono::seconds timeout) -> ProcessOutcome {
-  const auto sh = driver::FindOnPath("sh");
-  if (!sh) {
-    return {};
+    int kibibytes) -> ProcessOutcome {
+  std::vector<std::string> positional = {program.string()};
+  positional.insert(positional.end(), args.begin(), args.end());
+  return RunShellScript(
+      std::format(R"(ulimit -v {} && exec "$0" "$@")", kibibytes), positional);
+}
+
+auto ExitCodeOf(const ProcessOutcome& outcome) -> std::optional<int> {
+  if (const auto* exited = std::get_if<Exited>(&outcome.end)) {
+    return exited->code;
   }
-  // The program and its arguments reach the shell as its own positional
-  // parameters, so none of them is read as shell text.
-  std::vector<std::string> shell_args = {
-      "-c", std::format(R"(ulimit -v {} && exec "$0" "$@")", kibibytes),
-      program.string()};
-  shell_args.insert(shell_args.end(), args.begin(), args.end());
-  return RunChildProcess(*sh, shell_args, timeout);
+  return std::nullopt;
+}
+
+auto Describe(const ProcessEnd& end) -> std::string {
+  return std::visit(
+      Overloaded{
+          [](const CouldNotRun& failed) {
+            return std::format("could not be run: {}", failed.reason);
+          },
+          [](const Exited& exited) {
+            return std::format("exited with {}", exited.code);
+          },
+          [](const Signalled& signalled) {
+            return std::format("ended by signal {}", signalled.signal);
+          },
+          [](const TimedOut&) { return std::string{"ran out of its time"}; },
+          [](const TestTimedOut&) {
+            return std::string{"was ended because its test ran out of time"};
+          },
+      },
+      end);
+}
+
+void PrintTo(const ProcessOutcome& outcome, std::ostream* out) {
+  *out << "a child that " << Describe(outcome.end);
+}
+
+namespace {
+
+class ExitedWithCodeMatcher {
+ public:
+  using is_gtest_matcher = void;
+
+  explicit ExitedWithCodeMatcher(testing::Matcher<int> code)
+      : code_(std::move(code)) {
+  }
+
+  auto MatchAndExplain(
+      const ProcessOutcome& outcome,
+      testing::MatchResultListener* listener) const -> bool {
+    const std::optional<int> code = ExitCodeOf(outcome);
+    return code && testing::ExplainMatchResult(code_, *code, listener);
+  }
+
+  void DescribeTo(std::ostream* out) const {
+    *out << "exited with a code that ";
+    code_.DescribeTo(out);
+  }
+
+  void DescribeNegationTo(std::ostream* out) const {
+    *out << "did not exit with a code that ";
+    code_.DescribeTo(out);
+  }
+
+ private:
+  testing::Matcher<int> code_;
+};
+
+}  // namespace
+
+auto ExitedWithCode(const testing::Matcher<int>& code)
+    -> testing::Matcher<const ProcessOutcome&> {
+  return ExitedWithCodeMatcher(code);
 }
 
 }  // namespace lyra::test

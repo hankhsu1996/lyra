@@ -69,6 +69,16 @@ cc_library(
 )
 
 cc_test(
+    name = "process_test",
+    srcs = ["process_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        ":framework",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "base_fixed_array_test",
     srcs = ["base/fixed_array_test.cpp"],
     copts = LYRA_COPTS,
@@ -590,7 +600,6 @@ cc_test(
     tags = ["cost"],
     deps = [
         ":framework",
-        "//:driver",
         "@googletest//:gtest_main",
     ],
 )

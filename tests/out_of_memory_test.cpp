@@ -9,6 +9,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <string>
 #include <string_view>
@@ -19,12 +20,12 @@
 
 namespace {
 
+using lyra::test::ExitCodeOf;
+using lyra::test::ExitedWithCode;
 using lyra::test::MakeScratchDir;
 using lyra::test::ResolveLyra;
 using lyra::test::RunChildProcess;
 using lyra::test::RunUnderAddressLimit;
-using lyra::test::TerminationKind;
-using namespace std::chrono_literals;
 
 // Three things that ask for memory at three moments, each large enough that a
 // run of limits lands in it: storage held by instances, which is asked for as
@@ -102,8 +103,8 @@ TEST(OutOfMemory, IsSaidInWordsWhereverTheRequestWasMade) {
       "-o",
       program.string(),
       src.string()};
-  const auto built = RunChildProcess(lyra, build, 300s);
-  ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
+  const auto built = RunChildProcess(lyra, build);
+  ASSERT_THAT(built, ExitedWithCode(0))
       << built.stdout_text << built.stderr_text;
 
   // From what the program needs to start at all to past what the whole run
@@ -115,16 +116,13 @@ TEST(OutOfMemory, IsSaidInWordsWhereverTheRequestWasMade) {
   int finished = 0;
   for (int limit = kLowestKib; limit <= kHighestKib; limit += kStepKib) {
     const auto ran = RunUnderAddressLimit(program, {}, limit);
-    if (ran.termination == TerminationKind::kExitedNormally) {
+    if (ExitCodeOf(ran) == 0) {
       ++finished;
       continue;
     }
     ++refused;
-    EXPECT_EQ(ran.termination, TerminationKind::kExitedNonZero)
-        << "under " << limit << " KiB the program ended by signal "
-        << ran.signal_number << "\n"
-        << ran.stderr_text;
-    EXPECT_EQ(ran.exit_code, 1) << "under " << limit << " KiB";
+    EXPECT_THAT(ran, ExitedWithCode(1)) << "under " << limit << " KiB\n"
+                                        << ran.stderr_text;
     EXPECT_NE(ran.stderr_text.find(kSaidInWords), std::string::npos)
         << "under " << limit << " KiB the program said:\n"
         << ran.stderr_text;
@@ -195,17 +193,14 @@ TEST(OutOfMemory, TheCompilerSaysItInWordsWhereverItWasRefused) {
         "-o",
         (at / "sim").string(),
         src.string()};
-    const auto built = RunUnderAddressLimit(lyra, build, limit, 120s);
-    if (built.termination == TerminationKind::kExitedNormally) {
+    const auto built = RunUnderAddressLimit(lyra, build, limit);
+    if (ExitCodeOf(built) == 0) {
       ++finished;
       continue;
     }
     ++refused;
-    EXPECT_EQ(built.termination, TerminationKind::kExitedNonZero)
-        << "under " << limit << " KiB the compiler ended by signal "
-        << built.signal_number << "\n"
-        << built.stderr_text;
-    EXPECT_EQ(built.exit_code, 1) << "under " << limit << " KiB";
+    EXPECT_THAT(built, ExitedWithCode(1)) << "under " << limit << " KiB\n"
+                                          << built.stderr_text;
     EXPECT_NE(built.stderr_text.find(kCompilerSaidInWords), std::string::npos)
         << "under " << limit << " KiB the compiler said:\n"
         << built.stderr_text;

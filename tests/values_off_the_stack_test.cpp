@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <string>
 #include <string_view>
@@ -19,11 +20,10 @@
 
 namespace {
 
+using lyra::test::ExitedWithCode;
 using lyra::test::MakeScratchDir;
 using lyra::test::ResolveLyra;
 using lyra::test::RunChildProcess;
-using lyra::test::TerminationKind;
-using namespace std::chrono_literals;
 
 // A design whose every value is twice the stack it is run on: one of each kind
 // a frame would otherwise keep or an operation make whole -- a sum, a shift, a
@@ -242,17 +242,14 @@ TEST(ValuesOffTheStack, ValuesLargerThanTheStackAreKeptOffIt) {
         "--cxx", "clang++",        "--top",
         "Test",  "--cache-dir",    (*tmp_or / "cache").string(),
         "-o",    program.string(), src.string()};
-    const auto built = RunChildProcess(lyra, build, 600s);
-    ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
+    const auto built = RunChildProcess(lyra, build);
+    ASSERT_THAT(built, ExitedWithCode(0))
         << backend << ": " << built.stderr_text;
-    ASSERT_EQ(built.exit_code, 0) << backend << ": " << built.stderr_text;
 
     const std::vector<std::string> run = {
         "-c", std::format("ulimit -s 512 && exec '{}'", program.string())};
-    const auto ran = RunChildProcess(*sh_or, run, 300s);
-    EXPECT_EQ(ran.termination, TerminationKind::kExitedNormally)
-        << backend << ": " << ran.stderr_text;
-    EXPECT_EQ(ran.exit_code, 0)
+    const auto ran = RunChildProcess(*sh_or, run);
+    EXPECT_THAT(ran, ExitedWithCode(0))
         << backend << ": " << ran.stdout_text << ran.stderr_text;
   }
 }

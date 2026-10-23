@@ -13,12 +13,14 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <iterator>
 #include <map>
@@ -27,6 +29,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/driver/subprocess.hpp"
@@ -35,14 +38,18 @@
 
 namespace {
 
+using lyra::test::Describe;
+using lyra::test::ExitedWithCode;
 using lyra::test::MakeScratchDir;
 using lyra::test::ReadJson;
 using lyra::test::ResolveLyra;
 using lyra::test::RunChildProcess;
 using lyra::test::RunLyraFrom;
+using lyra::test::RunShellScript;
 using lyra::test::RunUnderAddressLimit;
-using lyra::test::TerminationKind;
+using lyra::test::TimedOut;
 using lyra::test::WriteTrivialSource;
+using testing::Ne;
 using namespace std::chrono_literals;
 
 TEST(LyraEmit, ReEmitIntoSameDirectorySucceeds) {
@@ -60,10 +67,8 @@ TEST(LyraEmit, ReEmitIntoSameDirectorySucceeds) {
   // The bundled runtime is copied from a read-only source; emitting twice into
   // the same directory must still succeed (the copy is made writable).
   for (int i = 0; i < 2; ++i) {
-    const auto emit = RunChildProcess(lyra, args, 60s);
-    ASSERT_EQ(emit.termination, TerminationKind::kExitedNormally)
-        << "iteration " << i << ": " << emit.stderr_text;
-    ASSERT_EQ(emit.exit_code, 0)
+    const auto emit = RunChildProcess(lyra, args);
+    ASSERT_THAT(emit, ExitedWithCode(0))
         << "iteration " << i << ": " << emit.stderr_text;
   }
   EXPECT_TRUE(
@@ -186,10 +191,8 @@ auto EmitChildSignature(
   const auto out_dir = dir / "out";
   const std::vector<std::string> args = {
       "emit", "cpp", "--top", "Test", "-o", out_dir.string(), src.string()};
-  const auto emit = RunChildProcess(lyra, args, 60s);
-  EXPECT_EQ(emit.termination, TerminationKind::kExitedNormally)
-      << variant << ": " << emit.stderr_text;
-  EXPECT_EQ(emit.exit_code, 0) << variant << ": " << emit.stderr_text;
+  const auto emit = RunChildProcess(lyra, args);
+  EXPECT_THAT(emit, ExitedWithCode(0)) << variant << ": " << emit.stderr_text;
   return ReadDeclarationsOf(out_dir, "Leaf");
 }
 
@@ -278,7 +281,8 @@ TEST(LyraManifest, DeclaresWhatIsRunFromAnyDirectoryWithin) {
 
   for (const auto& from : {*tmp_or, *tmp_or / "sub"}) {
     const auto run = RunLyraFrom(lyra, from, "run --backend llvm");
-    ASSERT_EQ(run.exit_code, 0) << from.string() << ": " << run.stderr_text;
+    ASSERT_THAT(run, ExitedWithCode(0))
+        << from.string() << ": " << run.stderr_text;
     EXPECT_NE(run.stdout_text.find("tb trace 1"), std::string::npos)
         << from.string() << ": " << run.stdout_text;
     EXPECT_NE(run.stdout_text.find("alu width 8"), std::string::npos)
@@ -299,7 +303,7 @@ TEST(LyraManifest, TheCellsBelongToTheDeclaredLibrary) {
 
   const auto run =
       RunLyraFrom(lyra, *tmp_or, "run --backend llvm --top soc_cfg");
-  ASSERT_EQ(run.exit_code, 0) << run.stderr_text;
+  ASSERT_THAT(run, ExitedWithCode(0)) << run.stderr_text;
   EXPECT_NE(run.stdout_text.find("tb trace 1"), std::string::npos)
       << run.stdout_text;
   EXPECT_NE(run.stdout_text.find("alu width 8"), std::string::npos)
@@ -318,7 +322,7 @@ TEST(LyraManifest, CommandLineJoinsMaterialAndReplacesSelection) {
 
   const auto joined =
       RunLyraFrom(lyra, *tmp_or, "run --backend llvm -D LYRA_WIDTH=16");
-  ASSERT_EQ(joined.exit_code, 0) << joined.stderr_text;
+  ASSERT_THAT(joined, ExitedWithCode(0)) << joined.stderr_text;
   // The declaration's own define survived, and the command line's won over the
   // default the header would otherwise have supplied.
   EXPECT_NE(joined.stdout_text.find("tb trace 1"), std::string::npos)
@@ -329,13 +333,13 @@ TEST(LyraManifest, CommandLineJoinsMaterialAndReplacesSelection) {
   // Where both define one macro, the command line's is the one that stands.
   const auto overridden =
       RunLyraFrom(lyra, *tmp_or, "run --backend llvm -D TRACE=5");
-  ASSERT_EQ(overridden.exit_code, 0) << overridden.stderr_text;
+  ASSERT_THAT(overridden, ExitedWithCode(0)) << overridden.stderr_text;
   EXPECT_NE(overridden.stdout_text.find("tb trace 5"), std::string::npos)
       << overridden.stdout_text;
 
   const auto narrowed =
       RunLyraFrom(lyra, *tmp_or, "run --backend llvm --top alu");
-  ASSERT_EQ(narrowed.exit_code, 0) << narrowed.stderr_text;
+  ASSERT_THAT(narrowed, ExitedWithCode(0)) << narrowed.stderr_text;
   EXPECT_NE(narrowed.stdout_text.find("alu width 8"), std::string::npos)
       << narrowed.stdout_text;
   EXPECT_EQ(narrowed.stdout_text.find("tb trace"), std::string::npos)
@@ -354,7 +358,7 @@ TEST(LyraManifest, NamingASourceUsesNoDeclaration) {
   WriteDeclaredLibrary(*tmp_or);
 
   const auto checked = RunLyraFrom(lyra, *tmp_or, "check rtl/soc_tb.sv");
-  EXPECT_NE(checked.exit_code, 0) << checked.stdout_text;
+  EXPECT_THAT(checked, ExitedWithCode(Ne(0))) << checked.stdout_text;
   EXPECT_NE(checked.stderr_text.find("unknown module 'alu'"), std::string::npos)
       << checked.stderr_text;
 }
@@ -407,7 +411,7 @@ TEST(LyraManifest, RefusesWhatAFileCannotDeclare) {
     std::ofstream(path) << refusal.body;
     const auto checked = RunLyraFrom(
         lyra, *tmp_or, std::format("check --config '{}'", path.string()));
-    EXPECT_NE(checked.exit_code, 0) << refusal.name << ": accepted";
+    EXPECT_THAT(checked, ExitedWithCode(Ne(0))) << refusal.name << ": accepted";
     EXPECT_NE(checked.stderr_text.find(refusal.expected), std::string::npos)
         << refusal.name << ": " << checked.stderr_text;
   }
@@ -540,7 +544,7 @@ TEST(LyraManifest, ALibraryIsReadAsItDeclaresItselfWhoeverUsesIt) {
   for (const std::string_view backend : {"llvm", "cpp"}) {
     const auto run = RunLyraFrom(
         lyra, *tmp_or / "soc", std::format("run --backend {}", backend));
-    ASSERT_EQ(run.exit_code, 0) << backend << ": " << run.stderr_text;
+    ASSERT_THAT(run, ExitedWithCode(0)) << backend << ": " << run.stderr_text;
     for (const std::string_view line :
          {"prim fifo: who prim flavour 1 soc macro 0", "soc fifo",
           "base cell 42", "base found flavour 7", "soc found flavour 2",
@@ -552,7 +556,7 @@ TEST(LyraManifest, ALibraryIsReadAsItDeclaresItselfWhoeverUsesIt) {
 
   const auto told =
       RunLyraFrom(lyra, *tmp_or / "soc", "run --backend llvm -D FLAVOUR=3");
-  ASSERT_EQ(told.exit_code, 0) << told.stderr_text;
+  ASSERT_THAT(told, ExitedWithCode(0)) << told.stderr_text;
   EXPECT_NE(told.stdout_text.find("flavour 3"), std::string::npos)
       << told.stdout_text;
 
@@ -560,7 +564,7 @@ TEST(LyraManifest, ALibraryIsReadAsItDeclaresItselfWhoeverUsesIt) {
   // one that used it.
   const auto alone =
       RunLyraFrom(lyra, *tmp_or / "prim", "run --backend llvm --top fifo");
-  ASSERT_EQ(alone.exit_code, 0) << alone.stderr_text;
+  ASSERT_THAT(alone, ExitedWithCode(0)) << alone.stderr_text;
   EXPECT_NE(
       alone.stdout_text.find("prim fifo: who prim flavour 1 soc macro 0"),
       std::string::npos)
@@ -568,7 +572,7 @@ TEST(LyraManifest, ALibraryIsReadAsItDeclaresItselfWhoeverUsesIt) {
 
   const auto reached =
       RunLyraFrom(lyra, *tmp_or / "soc", "check --config reach.toml");
-  EXPECT_NE(reached.exit_code, 0) << reached.stdout_text;
+  EXPECT_THAT(reached, ExitedWithCode(Ne(0))) << reached.stdout_text;
   EXPECT_NE(
       reached.stderr_text.find("unknown module 'base_cell'"), std::string::npos)
       << reached.stderr_text;
@@ -624,7 +628,8 @@ TEST(LyraManifest, RefusesADependencyThatIsNotOneLibrary) {
             "[library]\nname = \"app\"\n\n[dependencies]\n{}",
             refusal.dependencies));
     const auto checked = RunLyraFrom(lyra, *tmp_or / "app", "check");
-    EXPECT_NE(checked.exit_code, 0) << refusal.dependencies << ": accepted";
+    EXPECT_THAT(checked, ExitedWithCode(Ne(0)))
+        << refusal.dependencies << ": accepted";
     EXPECT_NE(checked.stderr_text.find(refusal.expected), std::string::npos)
         << refusal.dependencies << ": " << checked.stderr_text;
   }
@@ -666,7 +671,7 @@ TEST(LyraCommandLine, ATextCanTellItIsReadByLyra) {
 
   const auto declared =
       RunLyraFrom(lyra, *tmp_or / "app", "run --backend llvm");
-  ASSERT_EQ(declared.exit_code, 0) << declared.stderr_text;
+  ASSERT_THAT(declared, ExitedWithCode(0)) << declared.stderr_text;
   for (const std::string_view line :
        {"Top is read by lyra 1", "leaf is read by lyra 1"}) {
     EXPECT_NE(declared.stdout_text.find(line), std::string::npos)
@@ -675,20 +680,20 @@ TEST(LyraCommandLine, ATextCanTellItIsReadByLyra) {
 
   const auto named = RunLyraFrom(
       lyra, *tmp_or / "app", "run --backend llvm --top Alone alone.sv");
-  ASSERT_EQ(named.exit_code, 0) << named.stderr_text;
+  ASSERT_THAT(named, ExitedWithCode(0)) << named.stderr_text;
   EXPECT_NE(
       named.stdout_text.find("Alone is read by lyra 1"), std::string::npos)
       << named.stdout_text;
 
   const auto given =
       RunLyraFrom(lyra, *tmp_or / "app", "run --backend llvm -D __lyra__=0");
-  ASSERT_EQ(given.exit_code, 0) << given.stderr_text;
+  ASSERT_THAT(given, ExitedWithCode(0)) << given.stderr_text;
   EXPECT_NE(given.stdout_text.find("leaf is read by lyra 1"), std::string::npos)
       << given.stdout_text;
 
   const auto taken =
       RunLyraFrom(lyra, *tmp_or / "app", "run --backend llvm -U __lyra__");
-  ASSERT_EQ(taken.exit_code, 0) << taken.stderr_text;
+  ASSERT_THAT(taken, ExitedWithCode(0)) << taken.stderr_text;
   for (const std::string_view line :
        {"Top is read by another tool", "leaf is read by another tool"}) {
     EXPECT_NE(taken.stdout_text.find(line), std::string::npos)
@@ -745,7 +750,7 @@ TEST(LyraCommandLine, TextTheFrontEndRefusesIsRefusedUnlessToleranceIsAsked) {
       "endmodule\n");
   const auto strict =
       RunLyraFrom(lyra, *tmp_or, "check --top Test tolerated.sv");
-  EXPECT_NE(strict.exit_code, 0)
+  EXPECT_THAT(strict, ExitedWithCode(Ne(0)))
       << "the front end's default reading accepted it";
   EXPECT_NE(
       strict.stderr_text.find("error: misplaced trailing"), std::string::npos)
@@ -753,7 +758,7 @@ TEST(LyraCommandLine, TextTheFrontEndRefusesIsRefusedUnlessToleranceIsAsked) {
 
   const auto tolerated = RunLyraFrom(
       lyra, *tmp_or, "run --backend llvm --compat all --top Test tolerated.sv");
-  ASSERT_EQ(tolerated.exit_code, 0) << tolerated.stderr_text;
+  ASSERT_THAT(tolerated, ExitedWithCode(0)) << tolerated.stderr_text;
   EXPECT_NE(
       tolerated.stdout_text.find("sum 5 valid 1 held 6"), std::string::npos)
       << tolerated.stdout_text;
@@ -771,11 +776,11 @@ TEST(LyraCommandLine, TextTheFrontEndRefusesIsRefusedUnlessToleranceIsAsked) {
       "endmodule\n");
   const auto twice = RunLyraFrom(
       lyra, *tmp_or, "run --backend llvm --compat all --top Test twice.sv");
-  ASSERT_EQ(twice.exit_code, 0) << twice.stderr_text;
+  ASSERT_THAT(twice, ExitedWithCode(0)) << twice.stderr_text;
   EXPECT_EQ(twice.stdout_text, "the last definition\n");
   const auto warned =
       RunLyraFrom(lyra, *tmp_or, "check --compat all --top Test twice.sv");
-  EXPECT_EQ(warned.exit_code, 0) << warned.stderr_text;
+  EXPECT_THAT(warned, ExitedWithCode(0)) << warned.stderr_text;
   EXPECT_NE(
       warned.stderr_text.find("warning: duplicate definition"),
       std::string::npos)
@@ -820,7 +825,8 @@ TEST(LyraCommandLine, TextTheFrontEndRefusesIsRefusedUnlessToleranceIsAsked) {
     const auto refused = RunLyraFrom(
         lyra, *tmp_or,
         std::format("run --backend llvm --compat all --top Test {}", source));
-    EXPECT_NE(refused.exit_code, 0) << source << ": " << refused.stdout_text;
+    EXPECT_THAT(refused, ExitedWithCode(Ne(0)))
+        << source << ": " << refused.stdout_text;
     EXPECT_EQ(refused.stderr_text.find("internal error"), std::string::npos)
         << source << ": " << refused.stderr_text;
     const std::string place =
@@ -871,7 +877,7 @@ TEST(LyraRun, ATextTheFrontEndAcceptsRunsAsItAnalyzedIt) {
       "endmodule\n");
   const auto checked =
       RunLyraFrom(lyra, *tmp_or, "check --top Test message_first.sv");
-  EXPECT_EQ(checked.exit_code, 0) << checked.stderr_text;
+  EXPECT_THAT(checked, ExitedWithCode(0)) << checked.stderr_text;
   EXPECT_NE(
       checked.stderr_text.find(
           "warning: finish argument must have value of 0, 1, or 2"),
@@ -880,7 +886,7 @@ TEST(LyraRun, ATextTheFrontEndAcceptsRunsAsItAnalyzedIt) {
 
   const auto fatal = RunLyraFrom(
       lyra, *tmp_or, "run --backend llvm --top Test message_first.sv");
-  EXPECT_NE(fatal.exit_code, 0) << fatal.stderr_text;
+  EXPECT_THAT(fatal, ExitedWithCode(Ne(0))) << fatal.stderr_text;
   EXPECT_NE(
       fatal.stderr_text.find("fatal:           7\nnote: in 'Test' at time 3"),
       std::string::npos)
@@ -901,14 +907,14 @@ TEST(LyraRun, ATextTheFrontEndAcceptsRunsAsItAnalyzedIt) {
       "endmodule\n");
   const auto out_of_range =
       RunLyraFrom(lyra, *tmp_or, "check --top Test level_out_of_range.sv");
-  EXPECT_EQ(out_of_range.exit_code, 0) << out_of_range.stderr_text;
+  EXPECT_THAT(out_of_range, ExitedWithCode(0)) << out_of_range.stderr_text;
   EXPECT_NE(
       out_of_range.stderr_text.find("warning: finish argument must have value"),
       std::string::npos)
       << out_of_range.stderr_text;
   const auto finished = RunLyraFrom(
       lyra, *tmp_or, "run --backend llvm --top Test level_out_of_range.sv");
-  ASSERT_EQ(finished.exit_code, 0) << finished.stderr_text;
+  ASSERT_THAT(finished, ExitedWithCode(0)) << finished.stderr_text;
   EXPECT_NE(
       finished.stderr_text.find("note: '$finish' at time 4"), std::string::npos)
       << "the run did not end at level 1: " << finished.stderr_text;
@@ -928,7 +934,7 @@ TEST(LyraRun, ATextTheFrontEndAcceptsRunsAsItAnalyzedIt) {
       "endmodule\n");
   const auto ordered = RunLyraFrom(
       lyra, *tmp_or, "run --backend llvm --top Test level_evaluated_first.sv");
-  EXPECT_NE(ordered.exit_code, 0) << ordered.stderr_text;
+  EXPECT_THAT(ordered, ExitedWithCode(Ne(0))) << ordered.stderr_text;
   EXPECT_NE(ordered.stdout_text.find("level\ncount\n"), std::string::npos)
       << "the finish number was not evaluated first: " << ordered.stdout_text;
 
@@ -947,7 +953,7 @@ TEST(LyraRun, ATextTheFrontEndAcceptsRunsAsItAnalyzedIt) {
       "endmodule\n");
   const auto analyzed = RunLyraFrom(
       lyra, *tmp_or, "run --backend llvm --top Test read_as_analyzed.sv");
-  ASSERT_EQ(analyzed.exit_code, 0) << analyzed.stderr_text;
+  ASSERT_THAT(analyzed, ExitedWithCode(0)) << analyzed.stderr_text;
   EXPECT_NE(analyzed.stdout_text.find("same 1 0\n"), std::string::npos)
       << analyzed.stdout_text;
   EXPECT_NE(analyzed.stdout_text.find("apart 0 1\n"), std::string::npos)
@@ -1115,7 +1121,8 @@ TEST(LyraRun, AForceOnPartOfAnAggregateHoldsOnlyThatPart) {
         lyra, *tmp_or,
         std::format(
             "run --backend {} --compat all --top Test aggregate.sv", backend));
-    ASSERT_EQ(forced.exit_code, 0) << backend << "\n" << forced.stderr_text;
+    ASSERT_THAT(forced, ExitedWithCode(0)) << backend << "\n"
+                                           << forced.stderr_text;
     EXPECT_NE(forced.stdout_text.find("All checks passed"), std::string::npos)
         << backend << "\n"
         << forced.stdout_text;
@@ -1132,7 +1139,7 @@ TEST(LyraRun, AForceOnPartOfAnAggregateHoldsOnlyThatPart) {
                                     declared, target));
     const auto run = RunLyraFrom(
         lyra, *tmp_or, "run --backend llvm --compat all --top Test refused.sv");
-    EXPECT_NE(run.exit_code, 0) << target;
+    EXPECT_THAT(run, ExitedWithCode(Ne(0))) << target;
     EXPECT_NE(run.stderr_text.find(message), std::string::npos)
         << target << "\n"
         << run.stderr_text;
@@ -1304,17 +1311,18 @@ TEST(LyraRun, AForceOnPartOfAVariableHoldsOnlyThatPart) {
       "  end\n"
       "endmodule\n");
   const auto strict = RunLyraFrom(lyra, *tmp_or, "check --top Test part.sv");
-  EXPECT_NE(strict.exit_code, 0) << "the default reading accepted it";
+  EXPECT_THAT(strict, ExitedWithCode(Ne(0)))
+      << "the default reading accepted it";
 
   const auto forced = RunLyraFrom(
       lyra, *tmp_or, "run --backend llvm --compat all --top Test part.sv");
-  ASSERT_EQ(forced.exit_code, 0) << forced.stderr_text;
+  ASSERT_THAT(forced, ExitedWithCode(0)) << forced.stderr_text;
   EXPECT_NE(forced.stdout_text.find("All checks passed"), std::string::npos)
       << forced.stdout_text;
 
   const auto forced_cpp = RunLyraFrom(
       lyra, *tmp_or, "run --backend cpp --compat all --top Test part.sv");
-  ASSERT_EQ(forced_cpp.exit_code, 0) << forced_cpp.stderr_text;
+  ASSERT_THAT(forced_cpp, ExitedWithCode(0)) << forced_cpp.stderr_text;
   EXPECT_NE(forced_cpp.stdout_text.find("All checks passed"), std::string::npos)
       << forced_cpp.stdout_text;
 
@@ -1331,7 +1339,7 @@ TEST(LyraRun, AForceOnPartOfAVariableHoldsOnlyThatPart) {
       "endmodule\n");
   const auto stream = RunLyraFrom(
       lyra, *tmp_or, "run --backend llvm --compat all --top Test stream.sv");
-  EXPECT_NE(stream.exit_code, 0) << stream.stdout_text;
+  EXPECT_THAT(stream, ExitedWithCode(Ne(0))) << stream.stdout_text;
   EXPECT_NE(
       stream.stderr_text.find(
           "error: this statement has no behaviour to simulate"),
@@ -1382,7 +1390,7 @@ TEST(LyraTopSelection, RefusesATopWhosePortNeedsAnInstantiation) {
     const auto args = std::format("'{}'", source.string());
 
     const auto strict = RunLyraFrom(lyra, *tmp_or, "check " + args);
-    EXPECT_EQ(strict.exit_code, 1)
+    EXPECT_THAT(strict, ExitedWithCode(1))
         << refusal.name << ": " << strict.stderr_text;
     EXPECT_NE(
         strict.stderr_text.find(refusal.refused_by_the_front_end),
@@ -1391,12 +1399,12 @@ TEST(LyraTopSelection, RefusesATopWhosePortNeedsAnInstantiation) {
 
     const auto checked =
         RunLyraFrom(lyra, *tmp_or, "check --compat all " + args);
-    EXPECT_EQ(checked.exit_code, 0)
+    EXPECT_THAT(checked, ExitedWithCode(0))
         << refusal.name << ": " << checked.stderr_text;
 
     const auto lowered =
         RunLyraFrom(lyra, *tmp_or, "dump hir --compat all " + args);
-    EXPECT_EQ(lowered.exit_code, 1)
+    EXPECT_THAT(lowered, ExitedWithCode(1))
         << refusal.name << ": " << lowered.stderr_text;
     EXPECT_NE(
         lowered.stderr_text.find(refusal.refused_by_the_lowering),
@@ -1437,7 +1445,7 @@ TEST(LyraEmit, AConstructNotYetSupportedIsRefusedBeforeAnythingIsWritten) {
     const auto emitted = RunLyraFrom(
         lyra, *tmp_or,
         std::format("emit cpp --top Test -o {} {}", out, source));
-    EXPECT_NE(emitted.exit_code, 0) << position.name;
+    EXPECT_THAT(emitted, ExitedWithCode(Ne(0))) << position.name;
     EXPECT_NE(
         emitted.stderr_text.find("is not yet supported"), std::string::npos)
         << position.name << ": " << emitted.stderr_text;
@@ -1446,7 +1454,7 @@ TEST(LyraEmit, AConstructNotYetSupportedIsRefusedBeforeAnythingIsWritten) {
 
     const auto ran = RunLyraFrom(
         lyra, *tmp_or, std::format("run --backend llvm --top Test {}", source));
-    EXPECT_NE(ran.exit_code, 0) << position.name;
+    EXPECT_THAT(ran, ExitedWithCode(Ne(0))) << position.name;
     EXPECT_EQ(ran.stderr_text, emitted.stderr_text)
         << position.name << ": the two backends answered differently";
   }
@@ -1464,7 +1472,7 @@ TEST(LyraManifest, ReportsNoInputAndWhyThereIsNone) {
   std::filesystem::create_directory(*tmp_or / ".git");
 
   const auto searched = RunLyraFrom(lyra, *tmp_or, "check");
-  EXPECT_NE(searched.exit_code, 0) << searched.stdout_text;
+  EXPECT_THAT(searched, ExitedWithCode(Ne(0))) << searched.stdout_text;
   EXPECT_NE(searched.stderr_text.find("no input files"), std::string::npos)
       << searched.stderr_text;
   EXPECT_NE(
@@ -1473,7 +1481,7 @@ TEST(LyraManifest, ReportsNoInputAndWhyThereIsNone) {
 
   std::ofstream(*tmp_or / "lyra.toml") << "[library]\nname = \"hollow\"\n";
   const auto declared = RunLyraFrom(lyra, *tmp_or, "check");
-  EXPECT_NE(declared.exit_code, 0) << declared.stdout_text;
+  EXPECT_THAT(declared, ExitedWithCode(Ne(0))) << declared.stdout_text;
   EXPECT_NE(declared.stderr_text.find("library 'hollow'"), std::string::npos)
       << declared.stderr_text;
   EXPECT_NE(
@@ -1516,9 +1524,8 @@ TEST(LyraRun, ADesignErrorEndsTheRunThroughItsFinalProcedures) {
 
   const std::vector<std::string> args = {"run",   "--backend", "llvm",
                                          "--top", "Test",      src.string()};
-  const auto run = RunChildProcess(lyra, args, 120s);
-  ASSERT_EQ(run.termination, TerminationKind::kExitedNonZero)
-      << run.stdout_text << run.stderr_text;
+  const auto run = RunChildProcess(lyra, args);
+  ASSERT_THAT(run, ExitedWithCode(Ne(0))) << run.stdout_text << run.stderr_text;
   EXPECT_NE(
       run.stderr_text.find("a dynamic array's new[] is negative"),
       std::string::npos)
@@ -1560,9 +1567,8 @@ TEST(LyraRun, AnErrorInTimeZeroInitializationIsReported) {
 
   const std::vector<std::string> args = {"run",   "--backend", "llvm",
                                          "--top", "Test",      src.string()};
-  const auto run = RunChildProcess(lyra, args, 120s);
-  EXPECT_EQ(run.termination, TerminationKind::kExitedNonZero)
-      << run.stdout_text << run.stderr_text;
+  const auto run = RunChildProcess(lyra, args);
+  EXPECT_THAT(run, ExitedWithCode(Ne(0))) << run.stdout_text << run.stderr_text;
   EXPECT_NE(
       run.stderr_text.find("inconsistent with the current tag"),
       std::string::npos)
@@ -1622,7 +1628,7 @@ TEST(LyraRun, TheRunsOptionsChooseWhatIsDumped) {
         source.string(),
         "--"};
     args.insert(args.end(), options.begin(), options.end());
-    return RunChildProcess(lyra, args, 120s);
+    return RunChildProcess(lyra, args);
   };
   const auto read = [](const std::filesystem::path& file) {
     std::ifstream in(file);
@@ -1636,8 +1642,7 @@ TEST(LyraRun, TheRunsOptionsChooseWhatIsDumped) {
   {
     const auto file = dir / "whole.txt";
     const auto ran = run(quiet, {"+lyra+dump=" + file.string()});
-    ASSERT_EQ(ran.termination, TerminationKind::kExitedNormally)
-        << ran.stdout_text << ran.stderr_text;
+    ASSERT_THAT(ran, ExitedWithCode(0)) << ran.stdout_text << ran.stderr_text;
     const std::string text = read(file);
     EXPECT_TRUE(has(text, "0ns Test.a = 0001")) << text;
     EXPECT_TRUE(has(text, "0ns Test.b = 0010")) << text;
@@ -1647,8 +1652,7 @@ TEST(LyraRun, TheRunsOptionsChooseWhatIsDumped) {
     const auto file = dir / "scoped.txt";
     const auto ran =
         run(quiet, {"+lyra+dump=" + file.string(), "+lyra+dump+scope=Test.b"});
-    ASSERT_EQ(ran.termination, TerminationKind::kExitedNormally)
-        << ran.stdout_text << ran.stderr_text;
+    ASSERT_THAT(ran, ExitedWithCode(0)) << ran.stdout_text << ran.stderr_text;
     const std::string text = read(file);
     EXPECT_TRUE(has(text, "0ns Test.b = 0010")) << text;
     EXPECT_FALSE(has(text, "Test.a")) << text;
@@ -1661,8 +1665,7 @@ TEST(LyraRun, TheRunsOptionsChooseWhatIsDumped) {
         run(quiet, {"+lyra+dump=" + file.string(), "+lyra+dump+window=5ns:15ns",
                     "+lyra+dump+window=6ns:8ns", "+lyra+dump+window=12ns:18ns",
                     "+lyra+dump+window=18ns:25ns"});
-    ASSERT_EQ(ran.termination, TerminationKind::kExitedNormally)
-        << ran.stdout_text << ran.stderr_text;
+    ASSERT_THAT(ran, ExitedWithCode(0)) << ran.stdout_text << ran.stderr_text;
     const std::string text = read(file);
     EXPECT_TRUE(has(text, "5ns $dumpvars")) << text;
     EXPECT_FALSE(has(text, "15ns $dumpoff")) << text;
@@ -1675,15 +1678,13 @@ TEST(LyraRun, TheRunsOptionsChooseWhatIsDumped) {
     const auto file = dir / "none.txt";
     const auto ran =
         run(quiet, {"+lyra+dump=" + file.string(), "+lyra+dump+none"});
-    ASSERT_EQ(ran.termination, TerminationKind::kExitedNormally)
-        << ran.stdout_text << ran.stderr_text;
+    ASSERT_THAT(ran, ExitedWithCode(0)) << ran.stdout_text << ran.stderr_text;
     EXPECT_FALSE(std::filesystem::exists(file));
   }
   {
     const auto file = dir / "taken.txt";
     const auto ran = run(owning, {"+lyra+dump=" + file.string()});
-    ASSERT_EQ(ran.termination, TerminationKind::kExitedNormally)
-        << ran.stdout_text << ran.stderr_text;
+    ASSERT_THAT(ran, ExitedWithCode(0)) << ran.stdout_text << ran.stderr_text;
     EXPECT_FALSE(std::filesystem::exists(file));
     const std::string text = read(dir / "own.txt");
     EXPECT_TRUE(has(text, "10ns Test.a = 0011")) << text;
@@ -1694,8 +1695,7 @@ TEST(LyraRun, TheRunsOptionsChooseWhatIsDumped) {
     const auto file = dir / "forced.txt";
     const auto ran =
         run(owning, {"+lyra+dump=" + file.string(), "+lyra+dump+force"});
-    ASSERT_EQ(ran.termination, TerminationKind::kExitedNormally)
-        << ran.stdout_text << ran.stderr_text;
+    ASSERT_THAT(ran, ExitedWithCode(0)) << ran.stdout_text << ran.stderr_text;
     EXPECT_FALSE(std::filesystem::exists(dir / "own.txt"));
     const std::string text = read(file);
     EXPECT_TRUE(has(text, "10ns Test.a = 0011")) << text;
@@ -1733,9 +1733,8 @@ TEST(LyraRun, PrintTimescaleNamesTheDesignElementAsDeclared) {
       "--cache-dir",
       (*tmp_or / "cache").string(),
       src.string()};
-  const auto run = RunChildProcess(lyra, args, 120s);
-  ASSERT_EQ(run.termination, TerminationKind::kExitedNormally)
-      << run.stdout_text << run.stderr_text;
+  const auto run = RunChildProcess(lyra, args);
+  ASSERT_THAT(run, ExitedWithCode(0)) << run.stdout_text << run.stderr_text;
   constexpr std::string_view kNamed = "Time scale of (Halved) is 1ns / 1ps\n";
   const std::size_t first = run.stdout_text.find(kNamed);
   ASSERT_NE(first, std::string::npos) << "stdout: " << run.stdout_text;
@@ -1769,9 +1768,8 @@ TEST(LyraRun, AnErrorInANonblockingUpdateIsReportedWhereItLands) {
 
   const std::vector<std::string> args = {"run",   "--backend", "llvm",
                                          "--top", "Test",      src.string()};
-  const auto run = RunChildProcess(lyra, args, 120s);
-  EXPECT_EQ(run.termination, TerminationKind::kExitedNonZero)
-      << run.stdout_text << run.stderr_text;
+  const auto run = RunChildProcess(lyra, args);
+  EXPECT_THAT(run, ExitedWithCode(Ne(0))) << run.stdout_text << run.stderr_text;
   EXPECT_NE(
       run.stderr_text.find(
           "write to a tagged union member inconsistent with the current tag"),
@@ -1810,8 +1808,8 @@ TEST(LyraRun, AnErrorInANonblockingEventControlStopsTheProcedure) {
     const std::vector<std::string> args = {
         "run",   "--backend", std::string(backend),
         "--top", "Test",      src.string()};
-    const auto run = RunChildProcess(lyra, args, 120s);
-    EXPECT_EQ(run.termination, TerminationKind::kExitedNonZero)
+    const auto run = RunChildProcess(lyra, args);
+    EXPECT_THAT(run, ExitedWithCode(Ne(0)))
         << backend << ": " << run.stdout_text << run.stderr_text;
     EXPECT_NE(run.stderr_text.find("null object handle"), std::string::npos)
         << backend << ": " << run.stderr_text;
@@ -1847,9 +1845,8 @@ TEST(LyraRun, ARunWhoseTimeNeverAdvancesNamesTheProceduresKeepingItThere) {
 
   const std::vector<std::string> args = {"run",   "--backend", "llvm",
                                          "--top", "Test",      src.string()};
-  const auto run = RunChildProcess(lyra, args, 120s);
-  ASSERT_EQ(run.termination, TerminationKind::kExitedNonZero)
-      << run.stdout_text << run.stderr_text;
+  const auto run = RunChildProcess(lyra, args);
+  ASSERT_THAT(run, ExitedWithCode(Ne(0))) << run.stdout_text << run.stderr_text;
   EXPECT_NE(run.stderr_text.find("time never advances"), std::string::npos)
       << run.stderr_text;
   EXPECT_NE(
@@ -1881,8 +1878,8 @@ TEST(LyraRun, ARunWhoseTimeNeverAdvancesNamesTheProceduresKeepingItThere) {
                          << "endmodule\n";
   const std::vector<std::string> clocked_args = {
       "run", "--backend", "llvm", "--top", "Test", clocked.string()};
-  const auto stuck = RunChildProcess(lyra, clocked_args, 120s);
-  ASSERT_EQ(stuck.termination, TerminationKind::kExitedNonZero)
+  const auto stuck = RunChildProcess(lyra, clocked_args);
+  ASSERT_THAT(stuck, ExitedWithCode(Ne(0)))
       << stuck.stdout_text << stuck.stderr_text;
   const auto generator = stuck.stderr_text.find(
       "clocked.sv:8:3: note: this procedure in 'Test' ran");
@@ -1898,8 +1895,8 @@ TEST(LyraRun, ARunWhoseTimeNeverAdvancesNamesTheProceduresKeepingItThere) {
 // A procedure that never stops to wait cannot be told from one that is only
 // taking long, so nothing ends such a run but whoever is waiting on it. What
 // that reader is owed when they do is where the run was. The program is ended
-// by the time limit every harness here waits with, so what it says is what a
-// harness that gave up on it reports.
+// the way a harness ends a child it has given up on, so what it says is what
+// such a harness reports.
 TEST(LyraRun, ARunStoppedFromOutsideSaysWhichProcedureWasRunning) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -1922,10 +1919,12 @@ TEST(LyraRun, ARunStoppedFromOutsideSaysWhichProcedureWasRunning) {
       lyra, *tmp_or,
       std::format(
           "build --backend llvm --top Test -o '{}' test.sv", program.string()));
-  ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
+  ASSERT_THAT(built, ExitedWithCode(0)) << built.stderr_text;
 
   const auto run = RunChildProcess(program, {}, 2s);
-  EXPECT_EQ(run.termination, TerminationKind::kTimedOut) << run.stderr_text;
+  EXPECT_TRUE(std::holds_alternative<TimedOut>(run.end))
+      << Describe(run.end) << "\n"
+      << run.stderr_text;
   EXPECT_NE(run.stderr_text.find("interrupted at time 7"), std::string::npos)
       << run.stderr_text;
   EXPECT_NE(
@@ -1961,8 +1960,8 @@ TEST(LyraRun, ReachingThroughANullObjectHandleIsReported) {
 
   const std::vector<std::string> class_args = {
       "run", "--backend", "llvm", "--top", "Test", user_class.string()};
-  const auto through_class = RunChildProcess(lyra, class_args, 120s);
-  EXPECT_EQ(through_class.termination, TerminationKind::kExitedNonZero)
+  const auto through_class = RunChildProcess(lyra, class_args);
+  EXPECT_THAT(through_class, ExitedWithCode(Ne(0)))
       << through_class.stdout_text << through_class.stderr_text;
   EXPECT_NE(
       through_class.stderr_text.find("null object handle"), std::string::npos)
@@ -1985,8 +1984,8 @@ TEST(LyraRun, ReachingThroughANullObjectHandleIsReported) {
 
   const std::vector<std::string> process_args = {
       "run", "--backend", "llvm", "--top", "Test", builtin_class.string()};
-  const auto through_process = RunChildProcess(lyra, process_args, 120s);
-  EXPECT_EQ(through_process.termination, TerminationKind::kExitedNonZero)
+  const auto through_process = RunChildProcess(lyra, process_args);
+  EXPECT_THAT(through_process, ExitedWithCode(Ne(0)))
       << through_process.stdout_text << through_process.stderr_text;
   EXPECT_NE(
       through_process.stderr_text.find("null object handle"), std::string::npos)
@@ -2056,7 +2055,7 @@ TEST(LyraBuild, UnitsLoweredAtOnceNameLinesTheFileHas) {
             "build --rebuild --backend llvm -j 4 --cache-dir cache --top Top "
             "-o '{}' many_units.sv",
             program.string()));
-    ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
+    ASSERT_THAT(built, ExitedWithCode(0)) << built.stderr_text;
     const std::string text = ReadWholeFile(program);
     const std::uint64_t largest = LargestLineNamed(text, "many_units.sv");
     ASSERT_GT(largest, 0U) << "the program names no line of its source";
@@ -2127,22 +2126,22 @@ TEST(LyraBuild, TheLlvmProgramRunsOnItsOwn) {
     args.insert(args.end(), how.begin(), how.end());
     args.push_back(src.string());
     const std::string label = how.empty() ? "default" : "-O2 --lto -j 4";
-    const auto built = RunChildProcess(lyra, args, 120s);
-    ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
+    const auto built = RunChildProcess(lyra, args);
+    ASSERT_THAT(built, ExitedWithCode(0))
         << label << ": " << built.stdout_text << built.stderr_text;
 
     std::filesystem::rename(program, moved);
 
-    const auto passed = RunChildProcess(moved, {}, 60s);
-    EXPECT_EQ(passed.termination, TerminationKind::kExitedNormally)
+    const auto passed = RunChildProcess(moved, {});
+    EXPECT_THAT(passed, ExitedWithCode(0))
         << label << ": " << passed.stdout_text << passed.stderr_text;
     EXPECT_NE(
         passed.stdout_text.find("y=42 after=0 back=11"), std::string::npos)
         << label << " stdout: " << passed.stdout_text;
 
     const std::vector<std::string> failing = {"+fail"};
-    const auto failed = RunChildProcess(moved, failing, 60s);
-    EXPECT_EQ(failed.termination, TerminationKind::kExitedNonZero)
+    const auto failed = RunChildProcess(moved, failing);
+    EXPECT_THAT(failed, ExitedWithCode(Ne(0)))
         << label << ": " << failed.stdout_text << failed.stderr_text;
     EXPECT_NE(failed.stderr_text.find("asked"), std::string::npos)
         << label << ": " << failed.stderr_text;
@@ -2202,7 +2201,7 @@ TEST(LyraBuild, AProgramBuiltToCheckItsMemoryReportsAReadOfFreedStorage) {
         "--dpi-link",     foreign.string()};
     args.insert(args.end(), how.begin(), how.end());
     args.push_back(src.string());
-    return RunChildProcess(lyra, args, 180s);
+    return RunChildProcess(lyra, args);
   };
 
   for (const auto& [label, how] :
@@ -2212,10 +2211,10 @@ TEST(LyraBuild, AProgramBuiltToCheckItsMemoryReportsAReadOfFreedStorage) {
             std::vector<std::string>{
                 "--sanitize", "address", "-O2", "--lto"}}}) {
     const auto built = build(how);
-    ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
+    ASSERT_THAT(built, ExitedWithCode(0))
         << label << ": " << built.stdout_text << built.stderr_text;
-    const auto ran = RunChildProcess(program, {}, 60s);
-    EXPECT_EQ(ran.termination, TerminationKind::kExitedNonZero)
+    const auto ran = RunChildProcess(program, {});
+    EXPECT_THAT(ran, ExitedWithCode(Ne(0)))
         << label << ": " << ran.stdout_text << ran.stderr_text;
     EXPECT_NE(
         ran.stderr_text.find("ERROR: AddressSanitizer: heap-use-after-free"),
@@ -2240,9 +2239,8 @@ TEST(LyraBuild, AProgramBuiltToCheckItsMemoryReportsAReadOfFreedStorage) {
       "--sanitize",
       "address",
       src.string()};
-  const auto run = RunChildProcess(lyra, run_args, 180s);
-  EXPECT_EQ(run.termination, TerminationKind::kExitedNonZero)
-      << run.stdout_text << run.stderr_text;
+  const auto run = RunChildProcess(lyra, run_args);
+  EXPECT_THAT(run, ExitedWithCode(Ne(0))) << run.stdout_text << run.stderr_text;
   EXPECT_NE(run.stderr_text.find(" in gone "), std::string::npos)
       << run.stderr_text;
 
@@ -2252,18 +2250,17 @@ TEST(LyraBuild, AProgramBuiltToCheckItsMemoryReportsAReadOfFreedStorage) {
           (*tmp_or / "absent" / "llvm-symbolizer").string(),
       lyra.string()};
   named_args.insert(named_args.end(), run_args.begin(), run_args.end());
-  const auto named = RunChildProcess("/usr/bin/env", named_args, 180s);
+  const auto named = RunChildProcess("/usr/bin/env", named_args);
   EXPECT_NE(
       named.stderr_text.find("invalid path to external symbolizer"),
       std::string::npos)
       << named.stderr_text;
 
   const auto built = build({});
-  ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
+  ASSERT_THAT(built, ExitedWithCode(0))
       << built.stdout_text << built.stderr_text;
-  const auto ran = RunChildProcess(program, {}, 60s);
-  EXPECT_EQ(ran.termination, TerminationKind::kExitedNormally)
-      << ran.stdout_text << ran.stderr_text;
+  const auto ran = RunChildProcess(program, {});
+  EXPECT_THAT(ran, ExitedWithCode(0)) << ran.stdout_text << ran.stderr_text;
   EXPECT_NE(ran.stdout_text.find("waited at 1"), std::string::npos)
       << ran.stdout_text;
 }
@@ -2300,13 +2297,12 @@ TEST(LyraBuild, AValueEndsWithTheExpressionThatMadeIt) {
       "--top",          "Test",        "-o",
       program.string(), "--cache-dir", (*tmp_or / "cache").string(),
       src.string()};
-  const auto built = RunChildProcess(lyra, args, 120s);
-  ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
+  const auto built = RunChildProcess(lyra, args);
+  ASSERT_THAT(built, ExitedWithCode(0))
       << built.stdout_text << built.stderr_text;
 
   const auto ran = RunUnderAddressLimit(program, {}, 524288);
-  EXPECT_EQ(ran.termination, TerminationKind::kExitedNormally)
-      << ran.stdout_text << ran.stderr_text;
+  EXPECT_THAT(ran, ExitedWithCode(0)) << ran.stdout_text << ran.stderr_text;
   EXPECT_NE(ran.stdout_text.find("low=64"), std::string::npos)
       << "stdout: " << ran.stdout_text;
 }
@@ -2347,8 +2343,8 @@ TEST(LyraBuild, AToolThatFailsLoudlyIsReportedWithinABound) {
       "--cache-dir",
       (*tmp_or / "cache").string(),
       src.string()};
-  const auto built = RunChildProcess(lyra, args, 120s);
-  EXPECT_EQ(built.exit_code, 1)
+  const auto built = RunChildProcess(lyra, args);
+  EXPECT_THAT(built, ExitedWithCode(1))
       << "the build did not end as a reported failure";
 
   const std::string& said = built.stderr_text;
@@ -2394,8 +2390,9 @@ TEST(LyraCommandLine, RefusesAnOptionTheCommandDoesNotActOn) {
       {.args = {"cache", "clear", "--rebuild"},
        .expected = "'--rebuild' means nothing to 'cache clear'"}};
   for (const Refusal& refusal : refusals) {
-    const auto refused = RunChildProcess(lyra, refusal.args, 60s);
-    EXPECT_NE(refused.exit_code, 0) << refusal.expected << ": accepted";
+    const auto refused = RunChildProcess(lyra, refusal.args);
+    EXPECT_THAT(refused, ExitedWithCode(Ne(0)))
+        << refusal.expected << ": accepted";
     EXPECT_NE(refused.stderr_text.find(refusal.expected), std::string::npos)
         << refused.stderr_text;
     EXPECT_NE(refused.stderr_text.find("taken by"), std::string::npos)
@@ -2408,14 +2405,13 @@ TEST(LyraCommandLine, RefusesAnOptionTheCommandDoesNotActOn) {
       "--cache-dir", (*tmp_or / "store").string(),
       "-o",          (*tmp_or / "program").string(),
       src.string()};
-  const auto built = RunChildProcess(lyra, acted_on, 120s);
-  EXPECT_EQ(built.exit_code, 0) << built.stderr_text;
+  const auto built = RunChildProcess(lyra, acted_on);
+  EXPECT_THAT(built, ExitedWithCode(0)) << built.stderr_text;
 
   // Each option refused is an error of its own.
   const auto both = RunChildProcess(
-      lyra, std::vector<std::string>{"cache", "clear", "--rebuild", "-O2"},
-      60s);
-  EXPECT_NE(both.exit_code, 0);
+      lyra, std::vector<std::string>{"cache", "clear", "--rebuild", "-O2"});
+  EXPECT_THAT(both, ExitedWithCode(Ne(0)));
   EXPECT_NE(
       both.stderr_text.find("error: '-O' means nothing to 'cache clear'"),
       std::string::npos)
@@ -2468,20 +2464,17 @@ TEST(LyraCommandLine, NamesWhichOptionalRewritesOfMirRun) {
                    "start with '+' or '-'"}};
   for (const Refusal& refusal : refusals) {
     const auto refused = RunChildProcess(
-        lyra,
-        std::vector<std::string>{
-            "dump", "mir", "--mir-enable-passes=" + refusal.value,
-            src.string()},
-        60s);
-    EXPECT_NE(refused.exit_code, 0) << refusal.expected << ": accepted";
+        lyra, std::vector<std::string>{
+                  "dump", "mir", "--mir-enable-passes=" + refusal.value,
+                  src.string()});
+    EXPECT_THAT(refused, ExitedWithCode(Ne(0)))
+        << refusal.expected << ": accepted";
     EXPECT_NE(refused.stderr_text.find(refusal.expected), std::string::npos)
         << refused.stderr_text;
   }
   const auto not_lowered = RunChildProcess(
-      lyra,
-      std::vector<std::string>{
-          "dump", "hir", "--mir-verify-each", src.string()},
-      60s);
+      lyra, std::vector<std::string>{
+                "dump", "hir", "--mir-verify-each", src.string()});
   EXPECT_NE(
       not_lowered.stderr_text.find(
           "'--mir-verify-each' means nothing to 'dump hir'"),
@@ -2490,21 +2483,18 @@ TEST(LyraCommandLine, NamesWhichOptionalRewritesOfMirRun) {
 
   for (const char* backend : {"cpp", "llvm"}) {
     const auto every = RunChildProcess(
-        lyra,
-        std::vector<std::string>{
-            "run", "--backend", backend, store, "--mir-verify-each",
-            src.string()},
-        120s);
-    EXPECT_EQ(every.exit_code, 0) << every.stderr_text;
+        lyra, std::vector<std::string>{
+                  "run", "--backend", backend, store, "--mir-verify-each",
+                  src.string()});
+    EXPECT_THAT(every, ExitedWithCode(0)) << every.stderr_text;
     EXPECT_NE(every.stdout_text.find("q=5a"), std::string::npos)
         << every.stdout_text;
     const auto skipped = RunChildProcess(
         lyra,
         std::vector<std::string>{
             "run", "--backend", backend, store, "--mir-verify-each",
-            "--mir-enable-passes=-InstSimplify,-SplitReactions", src.string()},
-        120s);
-    EXPECT_EQ(skipped.exit_code, 0) << skipped.stderr_text;
+            "--mir-enable-passes=-InstSimplify,-SplitReactions", src.string()});
+    EXPECT_THAT(skipped, ExitedWithCode(0)) << skipped.stderr_text;
     EXPECT_EQ(skipped.stdout_text, every.stdout_text);
   }
 
@@ -2513,13 +2503,11 @@ TEST(LyraCommandLine, NamesWhichOptionalRewritesOfMirRun) {
   const auto spans_of = [&](const std::string& passes) {
     const auto trace_path = *tmp_or / "trace.json";
     const auto traced = RunChildProcess(
-        lyra,
-        std::vector<std::string>{
-            "dump", "mir", "--mir-enable-passes=" + passes,
-            "--time-trace=" + trace_path.string(), "--time-trace-granularity=0",
-            src.string()},
-        60s);
-    EXPECT_EQ(traced.exit_code, 0) << traced.stderr_text;
+        lyra, std::vector<std::string>{
+                  "dump", "mir", "--mir-enable-passes=" + passes,
+                  "--time-trace=" + trace_path.string(),
+                  "--time-trace-granularity=0", src.string()});
+    EXPECT_THAT(traced, ExitedWithCode(0)) << traced.stderr_text;
     const nlohmann::json trace = ReadJson(trace_path);
     std::set<std::string> names;
     for (const auto& event : trace.at("traceEvents")) {
@@ -2546,8 +2534,8 @@ TEST(LyraCommandLine, RefusesAWordThatIsNoCommand) {
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
 
   const auto unknown =
-      RunChildProcess(lyra, std::vector<std::string>{"frobnicate"}, 60s);
-  EXPECT_NE(unknown.exit_code, 0);
+      RunChildProcess(lyra, std::vector<std::string>{"frobnicate"});
+  EXPECT_THAT(unknown, ExitedWithCode(Ne(0)));
   EXPECT_NE(
       unknown.stderr_text.find("error: 'frobnicate' is not a command\n"),
       std::string::npos)
@@ -2558,15 +2546,14 @@ TEST(LyraCommandLine, RefusesAWordThatIsNoCommand) {
       std::string::npos)
       << unknown.stderr_text;
 
-  const auto none = RunChildProcess(lyra, std::vector<std::string>{}, 60s);
-  EXPECT_NE(none.exit_code, 0);
+  const auto none = RunChildProcess(lyra, std::vector<std::string>{});
+  EXPECT_THAT(none, ExitedWithCode(Ne(0)));
   EXPECT_NE(
       none.stderr_text.find("error: no command is given\n"), std::string::npos)
       << none.stderr_text;
 
-  const auto half =
-      RunChildProcess(lyra, std::vector<std::string>{"dump"}, 60s);
-  EXPECT_NE(half.exit_code, 0);
+  const auto half = RunChildProcess(lyra, std::vector<std::string>{"dump"});
+  EXPECT_THAT(half, ExitedWithCode(Ne(0)));
   EXPECT_NE(
       half.stderr_text.find(
           "error: 'dump' requires 'ast', 'hir', 'mir', 'lir' or 'llvm'"),
@@ -2619,31 +2606,31 @@ TEST(LyraBuild, KeepsAProgramByWhatBuiltIt) {
 
   write_design(1);
   auto first = RunLyraFrom(lyra, work, "build " + common + " design.sv");
-  ASSERT_EQ(first.exit_code, 0) << first.stderr_text;
+  ASSERT_THAT(first, ExitedWithCode(0)) << first.stderr_text;
   EXPECT_TRUE(std::filesystem::is_regular_file(work / "Test"))
       << "an anonymous design with one top names its program after the top";
   EXPECT_EQ(KeptActions(store), kActionsBuildingOneModule);
 
   auto again = RunLyraFrom(lyra, work, "build " + common + " design.sv");
-  ASSERT_EQ(again.exit_code, 0) << again.stderr_text;
+  ASSERT_THAT(again, ExitedWithCode(0)) << again.stderr_text;
   EXPECT_EQ(KeptActions(store), kActionsBuildingOneModule)
       << "an unchanged design built again performed a step anew";
 
   auto wider = RunLyraFrom(lyra, work, "build -j 4 " + common + " design.sv");
-  ASSERT_EQ(wider.exit_code, 0) << wider.stderr_text;
+  ASSERT_THAT(wider, ExitedWithCode(0)) << wider.stderr_text;
   EXPECT_EQ(KeptActions(store), kActionsBuildingOneModule)
       << "a design built wider performed a step anew";
 
   auto optimized =
       RunLyraFrom(lyra, work, "build -O2 " + common + " design.sv");
-  ASSERT_EQ(optimized.exit_code, 0) << optimized.stderr_text;
+  ASSERT_THAT(optimized, ExitedWithCode(0)) << optimized.stderr_text;
   EXPECT_EQ(KeptActions(store), 2 * kActionsBuildingOneModule)
       << "a design compiled at another level was handed what was kept for the "
          "first";
 
   write_design(2);
   auto changed = RunLyraFrom(lyra, work, "run " + common + " design.sv");
-  ASSERT_EQ(changed.exit_code, 0) << changed.stderr_text;
+  ASSERT_THAT(changed, ExitedWithCode(0)) << changed.stderr_text;
   EXPECT_NE(changed.stdout_text.find("value=2"), std::string::npos)
       << "a changed design ran the program kept for the old one: "
       << changed.stdout_text;
@@ -2657,23 +2644,23 @@ TEST(LyraBuild, KeepsAProgramByWhatBuiltIt) {
 
   auto cleared = RunLyraFrom(
       lyra, work, std::format("cache clear --cache-dir '{}'", store.string()));
-  ASSERT_EQ(cleared.exit_code, 0) << cleared.stderr_text;
+  ASSERT_THAT(cleared, ExitedWithCode(0)) << cleared.stderr_text;
   EXPECT_EQ(KeptActions(store), 0U);
   EXPECT_EQ(CountEntries(store / "cas"), 0U);
-  const auto held = RunChildProcess(work / "Test", {}, 30s);
-  EXPECT_EQ(held.exit_code, 0) << held.stderr_text;
+  const auto held = RunChildProcess(work / "Test", {});
+  EXPECT_THAT(held, ExitedWithCode(0)) << held.stderr_text;
   EXPECT_NE(held.stdout_text.find("value=1"), std::string::npos)
       << "stdout: " << held.stdout_text;
 
   auto after_clear = RunLyraFrom(lyra, work, "run " + common + " design.sv");
-  ASSERT_EQ(after_clear.exit_code, 0) << after_clear.stderr_text;
+  ASSERT_THAT(after_clear, ExitedWithCode(0)) << after_clear.stderr_text;
   EXPECT_NE(after_clear.stdout_text.find("value=2"), std::string::npos)
       << "stdout: " << after_clear.stdout_text;
 
   const auto into_directory = RunLyraFrom(
       lyra, work,
       std::format("build {} -o '{}' design.sv", common, store.string()));
-  EXPECT_NE(into_directory.exit_code, 0);
+  EXPECT_THAT(into_directory, ExitedWithCode(Ne(0)));
   EXPECT_NE(
       into_directory.stderr_text.find("is a directory"), std::string::npos)
       << into_directory.stderr_text;
@@ -2703,24 +2690,24 @@ TEST(LyraCommandLine, LeavesBehindOnlyWhatItWasAskedFor) {
         std::format(
             "cd '{}' && TMPDIR='{}' XDG_CACHE_HOME='{}' '{}' {}", work.string(),
             temporary.string(), cache_home.string(), lyra.string(), args)};
-    return RunChildProcess(*sh_or, argv, 120s);
+    return RunChildProcess(*sh_or, argv);
   };
   const auto store = cache_home / "lyra";
 
   const auto checked = run("check design.sv");
-  ASSERT_EQ(checked.exit_code, 0) << checked.stderr_text;
+  ASSERT_THAT(checked, ExitedWithCode(0)) << checked.stderr_text;
   EXPECT_FALSE(std::filesystem::exists(store))
       << "a command that keeps nothing created the store";
 
   const auto ran = run("run --backend llvm design.sv");
-  ASSERT_EQ(ran.exit_code, 0) << ran.stderr_text;
+  ASSERT_THAT(ran, ExitedWithCode(0)) << ran.stderr_text;
   EXPECT_EQ(CountEntries(temporary), 0U)
       << "a run left what it built in the temporary directory";
   EXPECT_EQ(KeptActions(store), kActionsBuildingOneModule)
       << "what the run built is kept in the platform's cache directory";
 
   const auto built = run("build --backend llvm -o program design.sv");
-  ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
+  ASSERT_THAT(built, ExitedWithCode(0)) << built.stderr_text;
   EXPECT_EQ(CountEntries(temporary), 0U)
       << "a build left what it built in the temporary directory";
   EXPECT_TRUE(std::filesystem::is_regular_file(work / "program"));
@@ -2754,8 +2741,8 @@ TEST(LyraCommandLine, RefusesAPlaceItCannotWriteBeforeReadingTheDesign) {
   for (std::vector<std::string> args : named) {
     const std::string label = std::format("{} ... {}", args[0], args.back());
     args.push_back(broken.string());
-    const auto refused = RunChildProcess(lyra, args, 60s);
-    EXPECT_EQ(refused.exit_code, 1) << label;
+    const auto refused = RunChildProcess(lyra, args);
+    EXPECT_THAT(refused, ExitedWithCode(1)) << label;
     EXPECT_NE(refused.stderr_text.find(under_a_file), std::string::npos)
         << label << ": " << refused.stderr_text;
     EXPECT_EQ(refused.stderr_text.find("Missing"), std::string::npos)
@@ -2781,8 +2768,8 @@ TEST(LyraCommandLine, RefusesAPlaceItCannotWriteBeforeReadingTheDesign) {
       "--cache-dir",
       (*tmp_or / "cache").string(),
       src.string()};
-  const auto built = RunChildProcess(lyra, args, 120s);
-  ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
+  const auto built = RunChildProcess(lyra, args);
+  ASSERT_THAT(built, ExitedWithCode(0)) << built.stderr_text;
   EXPECT_TRUE(std::filesystem::is_regular_file(made / "program"));
   EXPECT_FALSE(ReadJson(made / "traces" / "trace.json").is_discarded());
   EXPECT_FALSE(ReadJson(made / "numbers" / "stats.json").is_discarded());
@@ -2827,9 +2814,6 @@ auto EndABuildAtItsTool(
   WriteTrivialSource(root / "test.sv");
   WriteCompilerThatNeverFinishes(compiler, started);
 
-  auto sh_or = lyra::driver::FindOnPath("sh");
-  EXPECT_TRUE(sh_or.has_value());
-  if (!sh_or) return {};
   const std::string script = std::format(
       "TMPDIR='{0}' '{1}' build --rebuild --backend llvm --cxx '{2}' "
       "--cache-dir '{3}' --top Test -o '{4}' '{5}' &\n"
@@ -2851,9 +2835,8 @@ auto EndABuildAtItsTool(
       temporary.string(), lyra.string(), compiler.string(),
       (root / "cache").string(), (out / "program").string(),
       (root / "test.sv").string(), started.string(), signal);
-  const std::vector<std::string> argv = {"-c", script};
   EndedBuild ended{
-      .outcome = RunChildProcess(*sh_or, argv, 120s),
+      .outcome = RunShellScript(script),
       .left_in_temporary = 0,
       .left_beside_the_program = 0};
   ended.left_in_temporary = CountEntries(temporary);
@@ -2874,7 +2857,8 @@ TEST(LyraBuild, ABuildThatIsEndedLeavesNothingItStarted) {
   for (const std::string_view signal : {"TERM", "HUP"}) {
     SCOPED_TRACE(signal);
     const auto ended = EndABuildAtItsTool(lyra, *tmp_or / signal, signal);
-    EXPECT_NE(ended.outcome.exit_code, 0) << ended.outcome.stderr_text;
+    EXPECT_THAT(ended.outcome, ExitedWithCode(Ne(0)))
+        << ended.outcome.stderr_text;
     EXPECT_EQ(ended.left_in_temporary, 0U);
     EXPECT_EQ(ended.left_beside_the_program, 0U);
     EXPECT_EQ(
@@ -2896,8 +2880,8 @@ TEST(LyraBuild, ABuildThatIsEndedLeavesNothingItStarted) {
                 (root / "temporary").string(), lyra.string(),
                 (root / "cache").string(), (root / "next").string(),
                 (root / "test.sv").string())};
-  const auto built = RunChildProcess(*sh_or, next, 120s);
-  ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
+  const auto built = RunChildProcess(*sh_or, next);
+  ASSERT_THAT(built, ExitedWithCode(0)) << built.stderr_text;
   EXPECT_EQ(CountEntries(root / "temporary"), 0U)
       << "the next build left the killed one's directory where it was";
 }
@@ -2982,8 +2966,8 @@ TEST(LyraRun, CallingInWhereNoExportMayBeReachedIsReportedAndRunsNothing) {
       "Test", "--dpi-link", foreign.string(), src.string()};
   {
     SCOPED_TRACE("after the run ended");
-    const auto run = RunChildProcess(lyra, args, 120s);
-    EXPECT_EQ(run.termination, TerminationKind::kExitedNonZero)
+    const auto run = RunChildProcess(lyra, args);
+    EXPECT_THAT(run, ExitedWithCode(Ne(0)))
         << run.stdout_text << run.stderr_text;
     EXPECT_NE(
         run.stderr_text.find("entered the disabled state"), std::string::npos)
@@ -2997,8 +2981,8 @@ TEST(LyraRun, CallingInWhereNoExportMayBeReachedIsReportedAndRunsNothing) {
     SCOPED_TRACE(plusarg);
     std::vector<std::string> plainly = args;
     plainly.insert(plainly.end(), {"--", plusarg});
-    const auto run = RunChildProcess(lyra, plainly, 120s);
-    EXPECT_EQ(run.termination, TerminationKind::kExitedNonZero)
+    const auto run = RunChildProcess(lyra, plainly);
+    EXPECT_THAT(run, ExitedWithCode(Ne(0)))
         << run.stdout_text << run.stderr_text;
     EXPECT_NE(run.stderr_text.find("not declared 'context'"), std::string::npos)
         << run.stderr_text;
@@ -3138,8 +3122,8 @@ TEST(LyraRun, AnErrorBelowAForeignCallerStopsWhereItEnteredTheDesign) {
         src.string(),
         "--",
         std::format("+depth={}", depth)};
-    const auto run = RunChildProcess(lyra, args, 120s);
-    EXPECT_EQ(run.termination, TerminationKind::kExitedNonZero)
+    const auto run = RunChildProcess(lyra, args);
+    EXPECT_THAT(run, ExitedWithCode(Ne(0)))
         << run.stdout_text << run.stderr_text;
     EXPECT_EQ(
         CountOccurrences(
@@ -3217,9 +3201,8 @@ TEST(LyraRun, AKilledProcessTellsItsForeignFramesTheyWereDisabled) {
   const std::vector<std::string> args = {
       "run",  "--backend",  "llvm",           "--top",
       "Test", "--dpi-link", foreign.string(), src.string()};
-  const auto run = RunChildProcess(lyra, args, 120s);
-  EXPECT_EQ(run.termination, TerminationKind::kExitedNormally)
-      << run.stdout_text << run.stderr_text;
+  const auto run = RunChildProcess(lyra, args);
+  EXPECT_THAT(run, ExitedWithCode(0)) << run.stdout_text << run.stderr_text;
   EXPECT_NE(run.stdout_text.find("step answered 1"), std::string::npos)
       << run.stdout_text;
 }
@@ -3294,8 +3277,8 @@ TEST(LyraBuild, ARunReportsWhereItsCostWent) {
         "--stats-file",
         stats_path.string(),
         src.string()};
-    const auto built = RunChildProcess(lyra, args, 120s);
-    ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
+    const auto built = RunChildProcess(lyra, args);
+    ASSERT_THAT(built, ExitedWithCode(0))
         << built.stdout_text << built.stderr_text;
 
     const nlohmann::json stats = ReadJson(stats_path);
@@ -3383,9 +3366,8 @@ TEST(LyraEmit, TheStatisticsNameEveryFileAUnitWrote) {
                                          "-o",           out_dir.string(),
                                          "--stats-file", stats_path.string(),
                                          src.string()};
-  const auto emit = RunChildProcess(lyra, args, 60s);
-  ASSERT_EQ(emit.termination, TerminationKind::kExitedNormally)
-      << emit.stdout_text << emit.stderr_text;
+  const auto emit = RunChildProcess(lyra, args);
+  ASSERT_THAT(emit, ExitedWithCode(0)) << emit.stdout_text << emit.stderr_text;
 
   const nlohmann::json stats = ReadJson(stats_path);
   ASSERT_FALSE(stats.is_discarded());
@@ -3428,13 +3410,13 @@ TEST(LyraBuild, ACommandThatIsSoonOverShowsNoStatus) {
         std::string("emit cpp -o project"), std::string("dump mir")}) {
     const auto ran =
         RunLyraFrom(lyra, *tmp_or, std::format("{} {}", command, design));
-    ASSERT_EQ(ran.exit_code, 0) << command << ": " << ran.stderr_text;
+    ASSERT_THAT(ran, ExitedWithCode(0)) << command << ": " << ran.stderr_text;
     EXPECT_EQ(ran.stderr_text, "") << command;
   }
 
   const auto refused = RunLyraFrom(
       lyra, *tmp_or, std::format("check --progress=loud {}", design));
-  EXPECT_NE(refused.exit_code, 0);
+  EXPECT_THAT(refused, ExitedWithCode(Ne(0)));
   EXPECT_NE(
       refused.stderr_text.find(
           "'loud' given to '--progress' is not one of 'auto', 'plain' or "
@@ -3473,7 +3455,7 @@ TEST(LyraBuild, ALongBuildSaysWhichPhaseItIsIn) {
       (root / "cache").string(), (root / "program").string(),
       (root / "test.sv").string(), said.string());
   const std::vector<std::string> argv = {"-c", script};
-  const auto ended = RunChildProcess(*sh_or, argv, 120s);
+  const auto ended = RunChildProcess(*sh_or, argv);
   EXPECT_EQ(ended.stdout_text, "[10s] Linking\n");
 }
 

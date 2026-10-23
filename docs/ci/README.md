@@ -387,12 +387,14 @@ under each compiler that builds Lyra, both under remote execution where the key 
 evaluate a call's arguments and an operator's operands in opposite orders, which C++ leaves to the
 compiler, so a read in one operand of storage another one frees is reported under one of them only.
 
-Two things about it follow from what is instrumented. A program the corpus builds is checked because
-it asks to be, never because the compiler around it is: the runtime library it links is the one
-built for the sanitizer it names, and what such a program finds that is not fixed at once is held in
-`tests/paths/llvm.address.defects.yaml`, since the same case passes in every other run. And the
-targets tagged `cost` are left out of its set: each bounds what the compiler, or a program it built,
-costs as it ships -- time, stack, memory -- which is not what a sanitizer build is.
+Three things about it follow from what is instrumented. A program the corpus builds is checked
+because it asks to be, never because the compiler around it is: the runtime library it links is the
+one built for the sanitizer it names, and what such a program finds that is not fixed at once is
+held in `tests/paths/llvm.address.defects.yaml`, since the same case passes in every other run. And
+the targets tagged `cost` are left out of its set: each bounds what the compiler, or a program it
+built, costs as it ships -- time, stack, memory -- which is not what a sanitizer build is. And every
+size's time limit is doubled, since the instrumentation makes each test about twice as slow and
+Bazel's override of the limits is meant for a condition known to be slow.
 
 `external-designs-nightly.yml` runs `external_design_tests`, one job per case, with the compiler
 built optimized. It **gates its own run**: a case that stops somewhere other than where it is

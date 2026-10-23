@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <format>
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <string>
 
@@ -21,12 +22,11 @@
 
 namespace {
 
+using lyra::test::ExitedWithCode;
 using lyra::test::MakeScratchDir;
 using lyra::test::ResolveLyra;
 using lyra::test::ResolveShippedExamples;
 using lyra::test::RunLyraFrom;
-using lyra::test::TerminationKind;
-using namespace std::chrono_literals;
 
 TEST(ShippedExamples, EachRunsFromItsOwnDirectoryWithNothingNamed) {
   const auto lyra = ResolveLyra();
@@ -44,10 +44,9 @@ TEST(ShippedExamples, EachRunsFromItsOwnDirectoryWithNothingNamed) {
   for (const auto& entry : std::filesystem::directory_iterator(examples)) {
     if (!entry.is_directory()) continue;
     const std::string name = entry.path().filename().string();
-    const auto run = RunLyraFrom(lyra, entry.path(), command, 240s);
-    EXPECT_EQ(run.termination, TerminationKind::kExitedNormally)
-        << name << " ended with status " << run.exit_code << ": "
-        << run.stdout_text << run.stderr_text;
+    const auto run = RunLyraFrom(lyra, entry.path(), command);
+    EXPECT_THAT(run, ExitedWithCode(0))
+        << name << ": " << run.stdout_text << run.stderr_text;
     ++ran;
   }
   EXPECT_GT(ran, 0U) << "no example under " << examples.string();

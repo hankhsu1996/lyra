@@ -35,13 +35,12 @@
 #include "tools/cpp/runfiles/runfiles.h"
 
 using bazel::tools::cpp::runfiles::Runfiles;
+using lyra::test::ExitCodeOf;
 using lyra::test::HoldToRecord;
 using lyra::test::LoadByName;
 using lyra::test::MakeScratchDir;
 using lyra::test::ReadJson;
 using lyra::test::RunChildProcess;
-using lyra::test::TerminationKind;
-using namespace std::chrono_literals;
 
 namespace {
 
@@ -81,8 +80,8 @@ auto ReadWholeFile(const std::filesystem::path& path) -> std::string {
 auto Run(
     const std::filesystem::path& lyra, const std::vector<std::string>& command)
     -> std::expected<void, std::string> {
-  const auto ran = RunChildProcess(lyra, command, 300s);
-  if (ran.termination != TerminationKind::kExitedNormally) {
+  const auto ran = RunChildProcess(lyra, command);
+  if (ExitCodeOf(ran) != 0) {
     std::string said = "lyra";
     for (const std::string& word : command) {
       said += ' ';

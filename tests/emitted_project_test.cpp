@@ -13,11 +13,13 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <string>
 #include <string_view>
@@ -31,11 +33,12 @@
 
 namespace {
 
+using lyra::test::ExitedWithCode;
 using lyra::test::MakeScratchDir;
 using lyra::test::ResolveLyra;
 using lyra::test::RunChildProcess;
-using lyra::test::TerminationKind;
 using lyra::test::WriteTrivialSource;
+using testing::Ne;
 using namespace std::chrono_literals;
 
 // A design that crosses the DPI-C boundary in both directions (LRM 35): the
@@ -78,10 +81,9 @@ TEST(LyraEmittedProject, ProducesPortableBuildableProject) {
 
   const std::vector<std::string> args = {
       "emit", "cpp", "--top", "Test", "-o", out_dir.string(), src.string()};
-  const auto emitted = RunChildProcess(lyra, args, 120s);
-  ASSERT_EQ(emitted.termination, TerminationKind::kExitedNormally)
+  const auto emitted = RunChildProcess(lyra, args);
+  ASSERT_THAT(emitted, ExitedWithCode(0))
       << emitted.stdout_text << emitted.stderr_text;
-  ASSERT_EQ(emitted.exit_code, 0) << emitted.stderr_text;
   ASSERT_TRUE(std::filesystem::exists(out_dir / "build.sh"));
 
   // The directory builds standalone, with no Lyra checkout, through the
@@ -91,14 +93,13 @@ TEST(LyraEmittedProject, ProducesPortableBuildableProject) {
   ASSERT_TRUE(sh_or.has_value()) << sh_or.error().Text();
   const std::vector<std::string> rebuild = {
       "-c", "cd '" + out_dir.string() + "' && sh build.sh"};
-  const auto built = RunChildProcess(*sh_or, rebuild, 120s);
-  ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
+  const auto built = RunChildProcess(*sh_or, rebuild);
+  ASSERT_THAT(built, ExitedWithCode(0))
       << built.stdout_text << built.stderr_text;
-  ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
   ASSERT_TRUE(std::filesystem::exists(program)) << program.string();
 
-  const auto run = RunChildProcess(program, {}, 30s);
-  EXPECT_EQ(run.exit_code, 0) << run.stderr_text;
+  const auto run = RunChildProcess(program, {});
+  EXPECT_THAT(run, ExitedWithCode(0)) << run.stderr_text;
   EXPECT_NE(run.stdout_text.find("ran 42"), std::string::npos)
       << "stdout: " << run.stdout_text;
 
@@ -112,11 +113,11 @@ TEST(LyraEmittedProject, ProducesPortableBuildableProject) {
   const std::vector<std::string> rebuild_other = {
       "-c", "cd '" + out_dir.string() + "' && sh build.sh --cxx '" +
                 other_or->string() + "'"};
-  const auto other_built = RunChildProcess(*sh_or, rebuild_other, 120s);
-  ASSERT_EQ(other_built.exit_code, 0) << other_built.stderr_text;
+  const auto other_built = RunChildProcess(*sh_or, rebuild_other);
+  ASSERT_THAT(other_built, ExitedWithCode(0)) << other_built.stderr_text;
 
-  const auto other_run = RunChildProcess(program, {}, 30s);
-  EXPECT_EQ(other_run.exit_code, 0) << other_run.stderr_text;
+  const auto other_run = RunChildProcess(program, {});
+  EXPECT_THAT(other_run, ExitedWithCode(0)) << other_run.stderr_text;
   EXPECT_NE(other_run.stdout_text.find("ran 42"), std::string::npos)
       << "stdout: " << other_run.stdout_text;
 }
@@ -146,14 +147,15 @@ TEST(LyraEmittedProject, RebuildsAfterSwitchingOptimization) {
                                      "Test", "-o",  out_dir.string()};
     if (!mode.empty()) args.emplace_back(mode);
     args.push_back(src.string());
-    const auto emitted = RunChildProcess(lyra, args, 120s);
-    ASSERT_EQ(emitted.exit_code, 0) << mode << ": " << emitted.stderr_text;
+    const auto emitted = RunChildProcess(lyra, args);
+    ASSERT_THAT(emitted, ExitedWithCode(0))
+        << mode << ": " << emitted.stderr_text;
 
-    const auto built = RunChildProcess(*sh_or, rebuild, 120s);
-    ASSERT_EQ(built.exit_code, 0) << mode << ": " << built.stderr_text;
+    const auto built = RunChildProcess(*sh_or, rebuild);
+    ASSERT_THAT(built, ExitedWithCode(0)) << mode << ": " << built.stderr_text;
 
-    const auto run = RunChildProcess(program, {}, 30s);
-    EXPECT_EQ(run.exit_code, 0) << mode << ": " << run.stderr_text;
+    const auto run = RunChildProcess(program, {});
+    EXPECT_THAT(run, ExitedWithCode(0)) << mode << ": " << run.stderr_text;
     EXPECT_NE(run.stdout_text.find("ran 42"), std::string::npos)
         << mode << " stdout: " << run.stdout_text;
   }
@@ -275,12 +277,12 @@ TEST_P(LinkTimeOptimizationRefused, StillBuildsAProgram) {
                                              "--cxx",     wrapper.string(),
                                              "-o",        out_dir.string(),
                                              src.string()};
-      const auto emitted = RunChildProcess(lyra, emit, 120s);
-      ASSERT_EQ(emitted.exit_code, 0) << emitted.stderr_text;
+      const auto emitted = RunChildProcess(lyra, emit);
+      ASSERT_THAT(emitted, ExitedWithCode(0)) << emitted.stderr_text;
       const std::vector<std::string> recipe = {
           "-c", "cd '" + out_dir.string() + "' && sh build.sh -j 0"};
-      const auto built = RunChildProcess(*sh_or, recipe, 600s);
-      ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
+      const auto built = RunChildProcess(*sh_or, recipe);
+      ASSERT_THAT(built, ExitedWithCode(0)) << built.stderr_text;
       program = out_dir / "program";
       break;
     }
@@ -303,8 +305,8 @@ TEST_P(LinkTimeOptimizationRefused, StillBuildsAProgram) {
           "-o",
           program.string(),
           src.string()};
-      const auto built = RunChildProcess(lyra, build, 600s);
-      ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
+      const auto built = RunChildProcess(lyra, build);
+      ASSERT_THAT(built, ExitedWithCode(0)) << built.stderr_text;
       break;
     }
   }
@@ -312,7 +314,7 @@ TEST_P(LinkTimeOptimizationRefused, StillBuildsAProgram) {
       << "the build never attempted link-time optimization";
   EXPECT_EQ(std::filesystem::exists(plain_marker), watching.refuses)
       << "the build's fallback to the plain build";
-  const auto ran = RunChildProcess(program, {}, 30s);
+  const auto ran = RunChildProcess(program, {});
   EXPECT_NE(ran.stdout_text.find("ran 42"), std::string::npos)
       << "stdout: " << ran.stdout_text;
 }
@@ -375,7 +377,7 @@ TEST(
       << "  return text;\n"
       << "}\n";
   const auto reports_the_read = [](const lyra::test::ProcessOutcome& ran) {
-    return ran.termination == lyra::test::TerminationKind::kExitedNonZero &&
+    return testing::Matches(ExitedWithCode(Ne(0)))(ran) &&
            ran.stderr_text.find(
                "ERROR: AddressSanitizer: heap-use-after-free") !=
                std::string::npos &&
@@ -387,13 +389,13 @@ TEST(
       "emit",      "cpp", "--sanitize",     "address",    "--top",
       "Test",      "-o",  out_dir.string(), "--dpi-link", foreign.string(),
       src.string()};
-  const auto emitted = RunChildProcess(lyra, emit, 120s);
-  ASSERT_EQ(emitted.exit_code, 0) << emitted.stderr_text;
+  const auto emitted = RunChildProcess(lyra, emit);
+  ASSERT_THAT(emitted, ExitedWithCode(0)) << emitted.stderr_text;
   const std::vector<std::string> recipe = {
       "-c", "cd '" + out_dir.string() + "' && sh build.sh -j 0"};
-  const auto built = RunChildProcess(*sh_or, recipe, 600s);
-  ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
-  const auto ran = RunChildProcess(out_dir / "program", {}, 30s);
+  const auto built = RunChildProcess(*sh_or, recipe);
+  ASSERT_THAT(built, ExitedWithCode(0)) << built.stderr_text;
+  const auto ran = RunChildProcess(out_dir / "program", {});
   EXPECT_TRUE(reports_the_read(ran)) << "recipe: " << ran.stderr_text;
 
   const auto program = *tmp_or / "program";
@@ -414,9 +416,9 @@ TEST(
       "--dpi-link",
       foreign.string(),
       src.string()};
-  const auto in_process = RunChildProcess(lyra, build, 600s);
-  ASSERT_EQ(in_process.exit_code, 0) << in_process.stderr_text;
-  const auto ran_in_process = RunChildProcess(program, {}, 30s);
+  const auto in_process = RunChildProcess(lyra, build);
+  ASSERT_THAT(in_process, ExitedWithCode(0)) << in_process.stderr_text;
+  const auto ran_in_process = RunChildProcess(program, {});
   EXPECT_TRUE(reports_the_read(ran_in_process))
       << "in-process: " << ran_in_process.stderr_text;
 }
@@ -440,14 +442,14 @@ TEST(LyraEmittedProject, BuildsEvenWhenThePrecompiledHeaderIsRefused) {
 
   const std::vector<std::string> emit = {
       "emit", "cpp", "--top", "Test", "-o", out_dir.string(), src.string()};
-  const auto emitted = RunChildProcess(lyra, emit, 120s);
-  ASSERT_EQ(emitted.exit_code, 0) << emitted.stderr_text;
+  const auto emitted = RunChildProcess(lyra, emit);
+  ASSERT_THAT(emitted, ExitedWithCode(0)) << emitted.stderr_text;
   auto sh_or = lyra::driver::FindOnPath("sh");
   ASSERT_TRUE(sh_or.has_value()) << sh_or.error().Text();
   const std::vector<std::string> recipe = {
       "-c", "cd '" + out_dir.string() + "' && sh build.sh"};
-  const auto first = RunChildProcess(*sh_or, recipe, 120s);
-  ASSERT_EQ(first.exit_code, 0) << first.stderr_text;
+  const auto first = RunChildProcess(*sh_or, recipe);
+  ASSERT_THAT(first, ExitedWithCode(0)) << first.stderr_text;
 
   const auto headers = out_dir / "runtime" / "include";
   ASSERT_TRUE(std::filesystem::exists(headers)) << headers.string();
@@ -461,11 +463,11 @@ TEST(LyraEmittedProject, BuildsEvenWhenThePrecompiledHeaderIsRefused) {
   }
   ASSERT_GT(moved, 0U) << "no header to move under " << headers.string();
 
-  const auto second = RunChildProcess(*sh_or, recipe, 120s);
-  EXPECT_EQ(second.exit_code, 0)
+  const auto second = RunChildProcess(*sh_or, recipe);
+  EXPECT_THAT(second, ExitedWithCode(0))
       << "the recipe was failed by the header it had prepared for itself:\n"
       << second.stderr_text;
-  const auto ran = RunChildProcess(out_dir / "program", {}, 30s);
+  const auto ran = RunChildProcess(out_dir / "program", {});
   EXPECT_NE(ran.stdout_text.find("ran 42"), std::string::npos)
       << "stdout: " << ran.stdout_text;
 
@@ -481,8 +483,8 @@ TEST(LyraEmittedProject, BuildsEvenWhenThePrecompiledHeaderIsRefused) {
         "build",          "--top",       "Test",         "-o",
         program.string(), "--cache-dir", store.string(), design.string()};
   };
-  const auto prepared = RunChildProcess(lyra, build(src), 120s);
-  ASSERT_EQ(prepared.exit_code, 0) << prepared.stderr_text;
+  const auto prepared = RunChildProcess(lyra, build(src));
+  ASSERT_THAT(prepared, ExitedWithCode(0)) << prepared.stderr_text;
   // A kept result is named by its digest alone, so the prepared header is
   // found by what the compiler writes at the start of one: clang's mark, or
   // GCC's.
@@ -504,12 +506,12 @@ TEST(LyraEmittedProject, BuildsEvenWhenThePrecompiledHeaderIsRefused) {
   std::ofstream(other) << "module Test;\n"
                        << "  initial $display(\"ran %0d again\", 6 * 7);\n"
                        << "endmodule\n";
-  const auto rebuilt = RunChildProcess(lyra, build(other), 120s);
-  EXPECT_EQ(rebuilt.exit_code, 0)
+  const auto rebuilt = RunChildProcess(lyra, build(other));
+  EXPECT_THAT(rebuilt, ExitedWithCode(0))
       << "a build was failed by the header it was handed:\n"
       << rebuilt.stderr_text;
-  const auto run = RunChildProcess(program, {}, 30s);
-  EXPECT_EQ(run.exit_code, 0) << run.stderr_text;
+  const auto run = RunChildProcess(program, {});
+  EXPECT_THAT(run, ExitedWithCode(0)) << run.stderr_text;
   EXPECT_NE(run.stdout_text.find("ran 42"), std::string::npos)
       << "stdout: " << run.stdout_text;
 }
@@ -541,16 +543,16 @@ TEST(LyraEmittedProject, TakesTheWidthItIsGiven) {
       "--cache-dir",
       (*tmp_or / "store").string(),
       src.string()};
-  const auto built = RunChildProcess(lyra, build, 120s);
-  ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
-  const auto ran = RunChildProcess(built_program, {}, 30s);
+  const auto built = RunChildProcess(lyra, build);
+  ASSERT_THAT(built, ExitedWithCode(0)) << built.stderr_text;
+  const auto ran = RunChildProcess(built_program, {});
   EXPECT_NE(ran.stdout_text.find("ran 42"), std::string::npos)
       << "stdout: " << ran.stdout_text;
 
   const std::vector<std::string> emit = {
       "emit", "cpp", "--top", "Test", "-o", out_dir.string(), src.string()};
-  const auto emitted = RunChildProcess(lyra, emit, 120s);
-  ASSERT_EQ(emitted.exit_code, 0) << emitted.stderr_text;
+  const auto emitted = RunChildProcess(lyra, emit);
+  ASSERT_THAT(emitted, ExitedWithCode(0)) << emitted.stderr_text;
   auto sh_or = lyra::driver::FindOnPath("sh");
   ASSERT_TRUE(sh_or.has_value()) << sh_or.error().Text();
   // Zero asks the recipe for one compile per processor, which is the spelling
@@ -560,11 +562,11 @@ TEST(LyraEmittedProject, TakesTheWidthItIsGiven) {
     const std::vector<std::string> rebuild = {
         "-c",
         std::format("cd '{}' && sh build.sh -j {}", out_dir.string(), width)};
-    const auto built = RunChildProcess(*sh_or, rebuild, 120s);
-    ASSERT_EQ(built.exit_code, 0) << width << ": " << built.stderr_text;
+    const auto built = RunChildProcess(*sh_or, rebuild);
+    ASSERT_THAT(built, ExitedWithCode(0)) << width << ": " << built.stderr_text;
 
-    const auto run = RunChildProcess(program, {}, 30s);
-    EXPECT_EQ(run.exit_code, 0) << width << ": " << run.stderr_text;
+    const auto run = RunChildProcess(program, {});
+    EXPECT_THAT(run, ExitedWithCode(0)) << width << ": " << run.stderr_text;
     EXPECT_NE(run.stdout_text.find("ran 42"), std::string::npos)
         << width << " stdout: " << run.stdout_text;
   }
@@ -593,13 +595,14 @@ TEST(LyraEmittedProject, BuildsTwiceIntoOneDirectory) {
   const std::vector<std::string> recipe = {
       "-c", "cd '" + out_dir.string() + "' && sh build.sh"};
   for (const std::string_view pass : {"first", "second"}) {
-    const auto emitted = RunChildProcess(lyra, emit, 120s);
-    ASSERT_EQ(emitted.exit_code, 0) << pass << ": " << emitted.stderr_text;
-    const auto built = RunChildProcess(*sh_or, recipe, 120s);
-    ASSERT_EQ(built.exit_code, 0) << pass << ": " << built.stderr_text;
+    const auto emitted = RunChildProcess(lyra, emit);
+    ASSERT_THAT(emitted, ExitedWithCode(0))
+        << pass << ": " << emitted.stderr_text;
+    const auto built = RunChildProcess(*sh_or, recipe);
+    ASSERT_THAT(built, ExitedWithCode(0)) << pass << ": " << built.stderr_text;
 
-    const auto run = RunChildProcess(program, {}, 30s);
-    EXPECT_EQ(run.exit_code, 0) << pass << ": " << run.stderr_text;
+    const auto run = RunChildProcess(program, {});
+    EXPECT_THAT(run, ExitedWithCode(0)) << pass << ": " << run.stderr_text;
     EXPECT_NE(run.stdout_text.find("ran 42"), std::string::npos)
         << pass << " stdout: " << run.stdout_text;
   }
@@ -620,10 +623,8 @@ TEST(LyraEmittedProject, PortableProjectBuildsItsDpiSources) {
   const std::vector<std::string> args = {
       "emit",           "cpp",        "--top",          "Test",      "-o",
       out_dir.string(), "--dpi-link", foreign.string(), src.string()};
-  const auto emit = RunChildProcess(lyra, args, 60s);
-  ASSERT_EQ(emit.termination, TerminationKind::kExitedNormally)
-      << emit.stdout_text << emit.stderr_text;
-  ASSERT_EQ(emit.exit_code, 0) << emit.stderr_text;
+  const auto emit = RunChildProcess(lyra, args);
+  ASSERT_THAT(emit, ExitedWithCode(0)) << emit.stdout_text << emit.stderr_text;
 
   // The emitted directory carries the whole foreign boundary: the generated
   // prototypes, the standard header they are spelled in, and a copy of the
@@ -637,13 +638,12 @@ TEST(LyraEmittedProject, PortableProjectBuildsItsDpiSources) {
   ASSERT_TRUE(sh_or.has_value()) << sh_or.error().Text();
   const std::vector<std::string> build = {
       "-c", "cd '" + out_dir.string() + "' && sh build.sh"};
-  const auto built = RunChildProcess(*sh_or, build, 120s);
-  ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
+  const auto built = RunChildProcess(*sh_or, build);
+  ASSERT_THAT(built, ExitedWithCode(0))
       << built.stdout_text << built.stderr_text;
-  ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
 
-  const auto run = RunChildProcess(out_dir / "program", {}, 30s);
-  EXPECT_EQ(run.exit_code, 0) << run.stderr_text;
+  const auto run = RunChildProcess(out_dir / "program", {});
+  EXPECT_THAT(run, ExitedWithCode(0)) << run.stderr_text;
   EXPECT_NE(run.stdout_text.find("dpi 21"), std::string::npos)
       << "stdout: " << run.stdout_text;
 }

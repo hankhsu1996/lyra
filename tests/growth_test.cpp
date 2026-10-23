@@ -52,13 +52,12 @@
 #include "tools/cpp/runfiles/runfiles.h"
 
 using bazel::tools::cpp::runfiles::Runfiles;
+using lyra::test::ExitCodeOf;
 using lyra::test::HoldToRecord;
 using lyra::test::LoadByName;
 using lyra::test::MakeScratchDir;
 using lyra::test::ReadJson;
 using lyra::test::RunChildProcess;
-using lyra::test::TerminationKind;
-using namespace std::chrono_literals;
 
 namespace {
 
@@ -245,8 +244,8 @@ auto Compile(
     const std::filesystem::path& dir) -> std::expected<Left, std::string> {
   std::filesystem::remove_all(dir);
   std::filesystem::create_directories(dir);
-  const auto ran = RunChildProcess(lyra, command, 600s);
-  if (ran.termination != TerminationKind::kExitedNormally) {
+  const auto ran = RunChildProcess(lyra, command);
+  if (ExitCodeOf(ran) != 0) {
     return std::unexpected(
         std::format(
             "{} did not compile:\n{}{}", Joined(command), ran.stdout_text,

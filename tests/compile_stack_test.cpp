@@ -12,22 +12,22 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "lyra/driver/subprocess.hpp"
 #include "tests/framework/cli_fixture.hpp"
 #include "tests/framework/process.hpp"
 
 namespace {
 
+using lyra::test::ExitedWithCode;
 using lyra::test::MakeScratchDir;
 using lyra::test::ResolveLyra;
 using lyra::test::RunChildProcess;
-using lyra::test::TerminationKind;
-using namespace std::chrono_literals;
+using testing::Not;
 
 // A sum and a logical or of three thousand operands each, two-state and
 // four-state, checked against what their short forms give. The runs of one
@@ -92,14 +92,10 @@ endmodule
 auto CheckUnderStackLimit(
     const std::filesystem::path& lyra, const std::filesystem::path& src,
     std::string_view limit) -> lyra::test::ProcessOutcome {
-  auto sh_or = lyra::driver::FindOnPath("sh");
-  EXPECT_TRUE(sh_or.has_value());
-  if (!sh_or) return {};
-  const std::vector<std::string> args = {
-      "-c", std::format(
-                "{} && exec '{}' check --top Test '{}'", limit, lyra.string(),
-                src.string())};
-  return RunChildProcess(*sh_or, args, 60s);
+  return lyra::test::RunShellScript(
+      std::format(
+          "{} && exec '{}' check --top Test '{}'", limit, lyra.string(),
+          src.string()));
 }
 
 TEST(CompileStack, ARunOfThousandsOfOperandsEvaluatesLikeItsShortForm) {
@@ -119,10 +115,8 @@ TEST(CompileStack, ARunOfThousandsOfOperandsEvaluatesLikeItsShortForm) {
       "--cache-dir",
       (*tmp_or / "cache").string(),
       src.string()};
-  const auto ran = RunChildProcess(lyra, args, 300s);
-  ASSERT_EQ(ran.termination, TerminationKind::kExitedNormally)
-      << ran.stderr_text;
-  EXPECT_EQ(ran.exit_code, 0) << ran.stdout_text << ran.stderr_text;
+  const auto ran = RunChildProcess(lyra, args);
+  EXPECT_THAT(ran, ExitedWithCode(0)) << ran.stdout_text << ran.stderr_text;
 }
 
 // The command takes what a long expression needs for itself where it was
@@ -136,8 +130,7 @@ TEST(CompileStack, IsTakenWhereTheCommandWasStartedWithLess) {
   WriteLongSum(src, 3000);
 
   const auto checked = CheckUnderStackLimit(lyra, src, "ulimit -S -s 256");
-  EXPECT_EQ(checked.termination, TerminationKind::kExitedNormally)
-      << checked.stderr_text;
+  EXPECT_THAT(checked, ExitedWithCode(0)) << checked.stderr_text;
 }
 
 // Where it is allowed no more, running out is said in words before the run
@@ -151,7 +144,7 @@ TEST(CompileStack, RunningOutIsSaidInWords) {
   WriteLongSum(src, 3000);
 
   const auto checked = CheckUnderStackLimit(lyra, src, "ulimit -s 256");
-  EXPECT_NE(checked.termination, TerminationKind::kExitedNormally);
+  EXPECT_THAT(checked, Not(ExitedWithCode(0)));
   EXPECT_NE(
       checked.stderr_text.find("error: the compiler ran out of stack"),
       std::string::npos)
@@ -176,10 +169,8 @@ TEST(CompileStack, ASimulationRunningOutIsSaidInWords) {
       "--cache-dir",
       (*tmp_or / "cache").string(),
       src.string()};
-  const auto ran = RunChildProcess(lyra, args, 300s);
-  EXPECT_FALSE(
-      ran.termination == TerminationKind::kExitedNormally && ran.exit_code == 0)
-      << ran.stdout_text;
+  const auto ran = RunChildProcess(lyra, args);
+  EXPECT_THAT(ran, Not(ExitedWithCode(0))) << ran.stdout_text;
   EXPECT_NE(
       ran.stderr_text.find("error: the simulation ran out of stack"),
       std::string::npos)

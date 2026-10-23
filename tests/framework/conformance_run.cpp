@@ -34,24 +34,6 @@ constexpr std::string_view kInternalErrorReport = "internal error:";
 // well above the slowest honest build.
 constexpr std::chrono::seconds kStuckAfter{300};
 
-auto TerminationName(TerminationKind kind) -> std::string_view {
-  switch (kind) {
-    case TerminationKind::kExitedNormally:
-      return "exited 0";
-    case TerminationKind::kExitedNonZero:
-      return "exited non-zero";
-    case TerminationKind::kSignaled:
-      return "killed by a signal";
-    case TerminationKind::kTimedOut:
-      return "timed out";
-    case TerminationKind::kSpawnFailed:
-      return "could not be spawned";
-    case TerminationKind::kWaitFailed:
-      return "could not be waited on";
-  }
-  return "terminated in an unknown way";
-}
-
 auto Render(
     std::string_view what, const ConformanceCase& test_case,
     std::string_view path_name, const std::vector<std::string>& argv,
@@ -64,10 +46,9 @@ auto Render(
     rendered += arg;
   }
   return std::format(
-      "{}\n\ncase: {}\npath: {}\nargv: {}\ntermination: {} ({})\n"
+      "{}\n\ncase: {}\npath: {}\nargv: {}\nended: {}\n"
       "stdout:\n{}\nstderr:\n{}",
-      what, test_case.id, path_name, rendered,
-      TerminationName(outcome.termination), outcome.exit_code,
+      what, test_case.id, path_name, rendered, Describe(outcome.end),
       outcome.stdout_text, outcome.stderr_text);
 }
 
@@ -255,8 +236,7 @@ auto CheckParkedCase(
     return Render(what, test_case, "elaboration only", argv, outcome);
   };
 
-  const bool elaborated =
-      outcome.termination == TerminationKind::kExitedNormally;
+  const bool elaborated = ExitCodeOf(outcome) == 0;
 
   // A case the standard requires a tool to reject is parked the same way any
   // other is, and elaborating one is supposed to fail.
@@ -293,12 +273,12 @@ auto RunConformanceCase(
     return Render(what, test_case, path.name, argv, outcome);
   };
 
-  if (outcome.termination != TerminationKind::kExitedNormally &&
-      outcome.termination != TerminationKind::kExitedNonZero) {
+  const std::optional<int> exit_code = ExitCodeOf(outcome);
+  if (!exit_code) {
     return report("the run did not reach an exit status of its own");
   }
 
-  const bool succeeded = outcome.exit_code == 0;
+  const bool succeeded = *exit_code == 0;
   const bool checked =
       outcome.stdout_text.find(kAllChecksPassed) != std::string::npos;
   const auto mentions = [&](std::string_view text) {
