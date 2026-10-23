@@ -38,7 +38,8 @@ auto ImportUnpackedFields(
         UnpackedAggregateField{
             .name = field.name,
             .type = importer.Import(field.type),
-            .default_init = field.default_init});
+            .default_init = field.default_init,
+            .random = field.random});
   }
   return copied;
 }

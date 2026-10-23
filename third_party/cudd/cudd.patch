@@ -1,0 +1,65 @@
+diff -ruN a/config.h b/config.h
+--- a/config.h	1969-12-31 16:00:00.000000000 -0800
++++ b/config.h	2026-10-23 12:05:59.749812158 -0700
+@@ -0,0 +1,26 @@
++/* CUDD's configuration on a 64-bit POSIX host with IEEE 754 arithmetic,
++   stating only what its library sources read. */
++#ifndef CUDD_CONFIG_H_
++#define CUDD_CONFIG_H_
++
++#define HAVE_ASSERT_H 1
++#define HAVE_GETRLIMIT 1
++#define HAVE_GETRUSAGE 1
++#define HAVE_IEEE_754 1
++#define HAVE_INTTYPES_H 1
++#define HAVE_POWL 1
++#define HAVE_STDDEF_H 1
++#define HAVE_STDINT_H 1
++#define HAVE_STDLIB_H 1
++#define HAVE_STRING_H 1
++#define HAVE_SYSCONF 1
++#define HAVE_SYS_RESOURCE_H 1
++#define HAVE_SYS_TIMES_H 1
++#define HAVE_SYS_TIME_H 1
++#define HAVE_SYS_WAIT_H 1
++#define HAVE_UNISTD_H 1
++#define PACKAGE_VERSION "3.0.0"
++#define SIZEOF_INT 4
++#define SIZEOF_VOID_P 8
++
++#endif
+diff -ruN a/cudd/cudd.h b/cudd/cudd.h
+--- a/cudd/cudd.h	2026-10-23 12:05:49.965833722 -0700
++++ b/cudd/cudd.h	2026-10-23 12:05:59.749812158 -0700
+@@ -58,6 +58,8 @@
+ /*---------------------------------------------------------------------------*/
+ 
+ #include <inttypes.h>
++#include <stddef.h>
++#include <stdio.h>
+ 
+ /*---------------------------------------------------------------------------*/
+ /* Constant declarations                                                     */
+diff -ruN a/mtr/mtrInt.h b/mtr/mtrInt.h
+--- a/mtr/mtrInt.h	2026-10-23 12:05:49.973833702 -0700
++++ b/mtr/mtrInt.h	2026-10-23 12:05:59.749812158 -0700
+@@ -52,6 +52,7 @@
+ 
+ #include "config.h"
+ #include "mtr.h"
++#include <stdint.h>
+ 
+ /*---------------------------------------------------------------------------*/
+ /* Constant declarations                                                     */
+diff -ruN a/util/cstringstream.h b/util/cstringstream.h
+--- a/util/cstringstream.h	2026-10-23 12:05:49.977833692 -0700
++++ b/util/cstringstream.h	2026-10-23 12:05:59.749812158 -0700
+@@ -47,6 +47,8 @@
+ #ifndef CSTRINGSTREAM_H_
+ #define CSTRINGSTREAM_H_
+ 
++#include <stddef.h>
++
+ #ifdef __cplusplus
+ extern "C" {
+ #endif

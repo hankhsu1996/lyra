@@ -350,6 +350,52 @@ void ForEachOperand(const ExprData& data, const auto& reach) {
           },
           [&](const CovergroupOptionExpr& e) {
             ReachReceiver(e.receiver, operand);
+          },
+          [&](const RandomizeExpr& e) {
+            std::visit(
+                Overloaded{
+                    [&](const RandomizedClassObject& o) {
+                      operand(o.object);
+                      std::visit(
+                          Overloaded{
+                              [](const DeclaredRandomVariables&) {},
+                              [&](const ListedRandomVariables& l) {
+                                operands(l.variables);
+                              }},
+                          o.variables);
+                    },
+                    [&](const RandomizedScopeVariables& v) {
+                      operands(v.variables);
+                    }},
+                e.target);
+            if (e.with.has_value()) {
+              reach.ThroughConstraint(*e.with);
+            }
+          },
+          [&](const RandModeSetExpr& e) {
+            std::visit(
+                Overloaded{
+                    [&](const RandomVariableMode& m) { operand(m.variable); },
+                    [&](const ObjectModes& m) { operand(m.object); }},
+                e.target);
+            operand(e.on);
+          },
+          [&](const RandModeGetExpr& e) { operand(e.target.variable); },
+          [&](const ConstraintModeSetExpr& e) {
+            std::visit(
+                Overloaded{
+                    [&](const ConstraintBlockMode& m) { operand(m.object); },
+                    [](const StaticConstraintBlockMode&) {},
+                    [&](const ObjectModes& m) { operand(m.object); }},
+                e.target);
+            operand(e.on);
+          },
+          [&](const ConstraintModeGetExpr& e) {
+            std::visit(
+                Overloaded{
+                    [&](const ConstraintBlockMode& m) { operand(m.object); },
+                    [](const StaticConstraintBlockMode&) {}},
+                e.target);
           }},
       data);
 }
@@ -432,7 +478,10 @@ void ForEachExpr(const StmtData& data, const auto& reach) {
             operand(s.source);
             ReachSensitivity(s.sensitivity_list, reach);
           },
-          [&](const ProceduralContinuousEndStmt& s) { operand(s.target); }},
+          [&](const ProceduralContinuousEndStmt& s) { operand(s.target); },
+          [&](const ConstraintStmt& s) {
+            reach.ThroughConstraint(s.constraints);
+          }},
       data);
 }
 
@@ -507,7 +556,8 @@ void ForEachChildStmt(const StmtData& data, const auto& enter) {
           [](const DisableForkStmt&) {},
           [](const DisableStmt&) {},
           [](const ProceduralContinuousAssignStmt&) {},
-          [](const ProceduralContinuousEndStmt&) {}},
+          [](const ProceduralContinuousEndStmt&) {},
+          [](const ConstraintStmt&) {}},
       data);
 }
 
@@ -527,6 +577,9 @@ auto KindOf(const Primary& primary) -> std::string_view {
             return "a null literal";
           },
           [](const ThisHandle&) -> std::string_view { return "a this handle"; },
+          [](const RandomizedObject&) -> std::string_view {
+            return "the object a randomize call randomizes";
+          },
           [](const QueueLastIndex&) -> std::string_view {
             return "a queue's last index";
           },
@@ -678,6 +731,21 @@ auto Describe(const ExprData& data) -> std::string {
           },
           [](const CovergroupOptionExpr&) -> std::string {
             return "a covergroup option";
+          },
+          [](const RandomizeExpr&) -> std::string {
+            return "a randomize call";
+          },
+          [](const RandModeSetExpr&) -> std::string {
+            return "a rand_mode call";
+          },
+          [](const RandModeGetExpr&) -> std::string {
+            return "a rand_mode query";
+          },
+          [](const ConstraintModeSetExpr&) -> std::string {
+            return "a constraint_mode call";
+          },
+          [](const ConstraintModeGetExpr&) -> std::string {
+            return "a constraint_mode query";
           }},
       data);
 }
@@ -760,6 +828,9 @@ auto KindOf(const StmtData& data) -> std::string_view {
           },
           [](const ProceduralContinuousEndStmt&) -> std::string_view {
             return "a deassign or release statement";
+          },
+          [](const ConstraintStmt&) -> std::string_view {
+            return "a constraint block's constraints";
           }},
       data);
 }
@@ -782,6 +853,9 @@ struct ArenaReaches {
   // The trees a property is written in, which only a procedural body has.
   const base::Arena<SequenceExpr, SequenceExprId>* sequences = nullptr;
   const base::Arena<PropertyExpr, PropertyExprId>* properties = nullptr;
+  // The constraints written in it (LRM 18.5, 18.7), which only a procedural
+  // body has.
+  const base::Arena<Constraint, ConstraintId>* constraints = nullptr;
   std::vector<std::vector<Place>> at;
   std::vector<std::pair<ExprId, Place>> outside;
 
@@ -790,6 +864,7 @@ struct ArenaReaches {
         patterns(&body.patterns),
         sequences(&body.sequence_exprs),
         properties(&body.property_exprs),
+        constraints(&body.constraints),
         at(body.exprs.size()) {
   }
 
@@ -909,6 +984,56 @@ struct Reacher {
               }
             }},
         reaches->properties->Get(id).data);
+  }
+
+  // The expressions a constraint holds, however deep in its tree (LRM 18.5).
+  void ThroughConstraint(ConstraintId id) const {
+    if (reaches->constraints == nullptr) {
+      throw InternalError(
+          "hir verify: a constraint was written where no body holds its tree");
+    }
+    const Reacher from_constraint{
+        .reaches = reaches, .from = std::nullopt, .holder = "a constraint"};
+    const auto operand = [&](ExprId e) { from_constraint(e, Slot::kOperand); };
+    std::visit(
+        Overloaded{
+            [&](const ConstraintList& c) {
+              for (const ConstraintId item : c.items) {
+                ThroughConstraint(item);
+              }
+            },
+            [&](const ExpressionConstraint& c) { operand(c.condition); },
+            [&](const DistConstraint& c) {
+              operand(c.subject);
+              for (const DistItem& item : c.items) {
+                operand(item.low);
+                if (item.high.has_value()) operand(*item.high);
+                if (item.weight.has_value()) operand(*item.weight);
+              }
+              if (c.default_weight.has_value()) operand(*c.default_weight);
+            },
+            [&](const ImplicationConstraint& c) {
+              operand(c.predicate);
+              ThroughConstraint(c.body);
+            },
+            [&](const ConditionalConstraint& c) {
+              operand(c.predicate);
+              ThroughConstraint(c.then_body);
+              if (c.else_body.has_value()) ThroughConstraint(*c.else_body);
+            },
+            [&](const UniquenessConstraint& c) {
+              for (const ExprId item : c.items) operand(item);
+            },
+            [&](const ForeachConstraint& c) {
+              operand(c.array);
+              ThroughConstraint(c.body);
+            },
+            [&](const SolveBeforeConstraint& c) {
+              for (const ExprId e : c.solve) operand(e);
+              for (const ExprId e : c.after) operand(e);
+            },
+            [&](const DisableSoftConstraint& c) { operand(c.target); }},
+        reaches->constraints->Get(id).data);
   }
 
   void ThroughSequence(SequenceExprId id) const {

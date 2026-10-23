@@ -13,6 +13,7 @@
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/runtime_class.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::lir {
@@ -78,6 +79,12 @@ auto SymbolPart::Name(std::string_view name) -> SymbolPart {
 
 auto SymbolPart::Ordinal(std::uint32_t value) -> SymbolPart {
   return SymbolPart{std::format("$i{};", value)};
+}
+
+auto SymbolPart::LibraryVirtual(support::LibraryVirtual function)
+    -> SymbolPart {
+  const std::string_view name = support::LibraryVirtualName(function);
+  return SymbolPart{std::format("$l{}:{}", name.size(), name)};
 }
 
 auto SymbolPartOf(std::optional<std::string_view> name, std::uint32_t ordinal)

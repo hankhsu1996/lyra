@@ -339,6 +339,20 @@ auto FormatExternalDispatchSlot(const ExternalDispatchSlot& slot)
       support::DisplayOf(slot.class_path), slot.behavior.value);
 }
 
+auto SubroutineKindName(SubroutineKind kind) -> std::string_view {
+  switch (kind) {
+    case SubroutineKind::kTask:
+      return "task";
+    case SubroutineKind::kFunction:
+      return "function";
+    case SubroutineKind::kConstraintBlock:
+      return "constraint";
+    case SubroutineKind::kStaticConstraintBlock:
+      return "static constraint";
+  }
+  throw InternalError("SubroutineKindName: unknown subroutine kind");
+}
+
 auto FormatOverriddenBehavior(const OverriddenBehavior& taken) -> std::string {
   return std::visit(
       Overloaded{
@@ -360,7 +374,7 @@ auto FormatMethodCallee(const MethodCallee& callee) -> std::string {
           [](const ExternalMethodCallee& c) {
             return std::format(
                 "{} {}{}", FormatExternalClassMethod(c.target),
-                c.interface.kind == SubroutineKind::kTask ? "task" : "function",
+                SubroutineKindName(c.interface.kind),
                 c.slot.has_value()
                     ? std::format(
                           " virtual={}", FormatExternalDispatchSlot(*c.slot))
@@ -715,6 +729,9 @@ class HirDumper {
             },
             [](const NullLiteral&) -> std::string { return "NullLiteral"; },
             [](const ThisHandle&) -> std::string { return "ThisHandle"; },
+            [](const RandomizedObject&) -> std::string {
+              return "RandomizedObject";
+            },
             [](const QueueLastIndex&) -> std::string {
               return "QueueLastIndex";
             },
@@ -1141,9 +1158,8 @@ class HirDumper {
             [](const ExternalUnitSubroutineRef& e) -> std::string {
               return std::format(
                   "ExternalUnitSubroutine {} \"{}::{}\"",
-                  e.interface.kind == SubroutineKind::kTask ? "task"
-                                                            : "function",
-                  e.unit_name, e.subroutine_name);
+                  SubroutineKindName(e.interface.kind), e.unit_name,
+                  e.subroutine_name);
             },
             [this](const ExternalUnitMethodRef& e) -> std::string {
               const ScopeClassSignature& published =
@@ -1163,8 +1179,7 @@ class HirDumper {
                   e.receiver);
               return std::format(
                   "ExternalUnitMethod {} \"{}::{}\" recv={}",
-                  callable.interface.kind == SubroutineKind::kTask ? "task"
-                                                                   : "function",
+                  SubroutineKindName(callable.interface.kind),
                   support::DisplayOf(published.class_path), callable.name,
                   receiver);
             },
@@ -1254,6 +1269,35 @@ class HirDumper {
         },
         p.data);
     return std::format("{} : Type[{}]", formatted, p.subject_type.value);
+  }
+
+  static auto FormatExprIds(std::span<const ExprId> ids) -> std::string {
+    std::string out;
+    for (const ExprId id : ids) {
+      if (!out.empty()) out += ", ";
+      out += std::format("Expr[{}]", id.value);
+    }
+    return out;
+  }
+
+  static auto FormatModeTarget(const auto& target) -> std::string {
+    return std::visit(
+        Overloaded{
+            [](const RandomVariableMode& m) -> std::string {
+              return std::format("variable=Expr[{}]", m.variable.value);
+            },
+            [](const ObjectModes& m) -> std::string {
+              return std::format("object=Expr[{}]", m.object.value);
+            },
+            [](const ConstraintBlockMode& m) -> std::string {
+              return std::format(
+                  "object=Expr[{}] block={}", m.object.value, m.name);
+            },
+            [](const StaticConstraintBlockMode& m) -> std::string {
+              return std::format(
+                  "static_block={}::{}", FormatClassRef(m.introducer), m.block);
+            }},
+        target);
   }
 
   [[nodiscard]] auto FormatExpr(const Expr& e) const -> std::string {
@@ -1552,6 +1596,54 @@ class HirDumper {
                   "CovergroupOptionExpr covergroup={} {} {}",
                   FormatCovergroupRef(o.covergroup),
                   FormatCovergroupReach(o.receiver, o.item), o.field);
+            },
+            [](const RandomizeExpr& r) -> std::string {
+              const std::string with =
+                  r.with.has_value()
+                      ? std::format(" with=Constraint[{}]", r.with->value)
+                      : std::string{};
+              return std::visit(
+                  Overloaded{
+                      [&](const RandomizedClassObject& o) -> std::string {
+                        const std::string chosen = std::visit(
+                            Overloaded{
+                                [](const DeclaredRandomVariables&)
+                                    -> std::string { return "declared"; },
+                                [](const ListedRandomVariables& l)
+                                    -> std::string {
+                                  return std::format(
+                                      "listed=[{}]",
+                                      FormatExprIds(l.variables));
+                                }},
+                            o.variables);
+                        return std::format(
+                            "RandomizeExpr object=Expr[{}] {}{}",
+                            o.object.value, chosen, with);
+                      },
+                      [&](const RandomizedScopeVariables& v) -> std::string {
+                        return std::format(
+                            "RandomizeExpr scope listed=[{}]{}",
+                            FormatExprIds(v.variables), with);
+                      }},
+                  r.target);
+            },
+            [](const RandModeSetExpr& m) -> std::string {
+              return std::format(
+                  "RandModeSetExpr {} on=Expr[{}]", FormatModeTarget(m.target),
+                  m.on.value);
+            },
+            [](const RandModeGetExpr& m) -> std::string {
+              return std::format(
+                  "RandModeGetExpr variable=Expr[{}]", m.target.variable.value);
+            },
+            [](const ConstraintModeSetExpr& m) -> std::string {
+              return std::format(
+                  "ConstraintModeSetExpr {} on=Expr[{}]",
+                  FormatModeTarget(m.target), m.on.value);
+            },
+            [](const ConstraintModeGetExpr& m) -> std::string {
+              return std::format(
+                  "ConstraintModeGetExpr {}", FormatModeTarget(m.target));
             },
         },
         e.data);
@@ -2407,8 +2499,7 @@ class HirDumper {
     Line(
         std::format(
             "{}[{}] {} \"{}\" : Type[{}]{}", label, index,
-            d.kind == SubroutineKind::kTask ? "task" : "function", d.name,
-            d.result_type.value, flags));
+            SubroutineKindName(d.kind), d.name, d.result_type.value, flags));
     Indent();
     for (std::size_t i = 0; i < d.params.size(); ++i) {
       const auto& param = d.params[i];
@@ -3286,8 +3377,125 @@ class HirDumper {
                       id.value, FormatTakeoverLevel(pce.level),
                       pce.target.value));
             },
+            [&](const ConstraintStmt& c) {
+              Line(std::format("Stmt[{}] ConstraintStmt", id.value));
+              Indent();
+              DumpConstraint(p, c.constraints);
+              Dedent();
+            },
         },
         s.data);
+  }
+
+  void DumpConstraint(const ProceduralBody& p, ConstraintId id) {
+    const Constraint& c = p.constraints.Get(id);
+    const auto expr = [&](ExprId e) {
+      Line(std::format("Expr[{}] {}", e.value, FormatProcExpr(p, e)));
+    };
+    std::visit(
+        Overloaded{
+            [&](const ConstraintList& l) {
+              Line(std::format("Constraint[{}] List", id.value));
+              Indent();
+              for (const ConstraintId item : l.items) {
+                DumpConstraint(p, item);
+              }
+              Dedent();
+            },
+            [&](const ExpressionConstraint& e) {
+              Line(
+                  std::format(
+                      "Constraint[{}] Expression{}", id.value,
+                      e.is_soft ? " soft" : ""));
+              Indent();
+              expr(e.condition);
+              Dedent();
+            },
+            [&](const DistConstraint& d) {
+              Line(
+                  std::format(
+                      "Constraint[{}] Dist{}", id.value,
+                      d.is_soft ? " soft" : ""));
+              Indent();
+              expr(d.subject);
+              for (const DistItem& item : d.items) {
+                Line(
+                    std::format(
+                        "item low=Expr[{}]{}{}", item.low.value,
+                        item.high.has_value()
+                            ? std::format(" high=Expr[{}]", item.high->value)
+                            : std::string{},
+                        item.weight.has_value()
+                            ? std::format(
+                                  " weight{}=Expr[{}]",
+                                  item.weight_per_range ? "/" : "=",
+                                  item.weight->value)
+                            : std::string{}));
+              }
+              if (d.default_weight.has_value()) {
+                Line(
+                    std::format(
+                        "default weight/=Expr[{}]", d.default_weight->value));
+              }
+              Dedent();
+            },
+            [&](const ImplicationConstraint& i) {
+              Line(std::format("Constraint[{}] Implication", id.value));
+              Indent();
+              expr(i.predicate);
+              DumpConstraint(p, i.body);
+              Dedent();
+            },
+            [&](const ConditionalConstraint& c) {
+              Line(std::format("Constraint[{}] Conditional", id.value));
+              Indent();
+              expr(c.predicate);
+              DumpConstraint(p, c.then_body);
+              if (c.else_body.has_value()) {
+                Line("else:");
+                DumpConstraint(p, *c.else_body);
+              }
+              Dedent();
+            },
+            [&](const UniquenessConstraint& u) {
+              Line(std::format("Constraint[{}] Unique", id.value));
+              Indent();
+              for (const ExprId item : u.items) {
+                expr(item);
+              }
+              Dedent();
+            },
+            [&](const ForeachConstraint& f) {
+              std::string loop_vars;
+              for (const std::optional<ProceduralVarId>& var : f.loop_vars) {
+                if (!loop_vars.empty()) loop_vars += ", ";
+                loop_vars += var.has_value()
+                                 ? std::format("ProceduralVar[{}]", var->value)
+                                 : std::string{"-"};
+              }
+              Line(
+                  std::format(
+                      "Constraint[{}] Foreach loop_vars=[{}]", id.value,
+                      loop_vars));
+              Indent();
+              expr(f.array);
+              DumpConstraint(p, f.body);
+              Dedent();
+            },
+            [&](const SolveBeforeConstraint& sb) {
+              Line(
+                  std::format(
+                      "Constraint[{}] SolveBefore solve=[{}] after=[{}]",
+                      id.value, FormatExprIds(sb.solve),
+                      FormatExprIds(sb.after)));
+            },
+            [&](const DisableSoftConstraint& d) {
+              Line(
+                  std::format(
+                      "Constraint[{}] DisableSoft target=Expr[{}]", id.value,
+                      d.target.value));
+            }},
+        c.data);
   }
 
   static auto FormatLoopBodies(std::span<const LoopBody> bodies)

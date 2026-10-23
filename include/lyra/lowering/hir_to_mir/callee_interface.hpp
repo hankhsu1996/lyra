@@ -123,11 +123,19 @@ auto ParamTypeOf(
 
 // The parameter a subroutine takes after its formals: where a call of a
 // function is to report what it reads (LRM 9.4.2), which an ordinary call hands
-// none of. A task is never called from an expression a
-// wait watches, so it takes none. This is the sole statement of which
-// subroutines take one, so a definition, its prototype and every call agree.
+// none of. A task is never called from an expression a wait watches, so it
+// takes none. This is the sole statement of which subroutines take one, so a
+// definition, its prototype and every call agree.
 auto ReportParamTypeOf(
     const mir::CompilationUnit& unit, hir::SubroutineKind kind)
+    -> std::optional<mir::TypeId>;
+
+// The one parameter a constraint block takes: the problem of the call of
+// `randomize()` it states its constraints to (LRM 18.5), as a reference to it,
+// which no other subroutine takes. This is the sole statement of it, so a
+// block, its prototype and every call of it agree.
+auto ConstraintProblemParamTypeOf(
+    mir::CompilationUnit& unit, hir::SubroutineKind kind)
     -> std::optional<mir::TypeId>;
 
 // A subroutine declaration's formals, read into the shape a completion derives

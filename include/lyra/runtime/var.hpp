@@ -30,6 +30,7 @@
 #include "lyra/value/integral.hpp"
 #include "lyra/value/object_ref.hpp"
 #include "lyra/value/small_box.hpp"
+#include "lyra/value/value_type.hpp"
 #include "lyra/value/wide.hpp"
 
 namespace lyra::value {
@@ -896,6 +897,13 @@ void SetThrough(
   }
   lent.Report(PartPath{}, replace());
 }
+
+// A write of a whole value laid out by `type` -- the bytes of an integral
+// value, a structure, a union, a tuple, a fixed-size unpacked array -- through
+// `lent`, told to whoever waits on what it names as any write through it is.
+void WriteLaidOutThrough(
+    const ErasedReference& lent, const value::ValueType& type,
+    const void* value);
 
 // The variable a reference to the whole of it names, as the cell of class `C`
 // it is, which the reference's own type decides.

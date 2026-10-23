@@ -104,7 +104,8 @@ struct OverridesExternalSlot {
 
 // A method that overrides a virtual function a class of the runtime library
 // declares for the classes extending it: what a scope does in one of the
-// phases the library drives it through.
+// phases the library drives it through, or what an object does for its
+// `randomize()` (LRM 18.6).
 struct OverridesLibraryVirtual {
   support::LibraryVirtual function;
 

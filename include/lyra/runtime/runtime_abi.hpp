@@ -324,6 +324,149 @@ void lyra_rt_process_srandom(
 auto lyra_rt_process_get_randstate(const void* self, void* out) -> void*;
 void lyra_rt_process_set_randstate(const void* self, const void* state);
 
+// LRM 18.13.3 -- 18.13.5 on the generator of a class object (LRM 18.14.3),
+// which crosses as the object itself, however the call reached it.
+void lyra_rt_object_srandom(
+    void* object, const void* seed, std::int64_t seed_width,
+    bool seed_is_signed, bool seed_is_four_state);
+auto lyra_rt_object_get_randstate(void* object, void* out) -> void*;
+void lyra_rt_object_pre_randomize(void* object);
+void lyra_rt_object_post_randomize(void* object);
+void lyra_rt_object_set_randstate(void* object, const void* state);
+
+// A call of `randomize()` (LRM 18.6, 18.7, 18.11, 18.12), as the steps its
+// caller runs. The problem crosses as the address of the handle to it the
+// first step answered; a variable as a reference to it, and the value it holds
+// now with that value's type; a term as a machine integer. Whether a mode is
+// to be on, and how an operation reads its operands, cross as the predicates
+// they are.
+auto lyra_rt_randomize_object(void* object, void* out) -> void*;
+auto lyra_rt_randomize_object_listed(void* object, void* out) -> void*;
+auto lyra_rt_randomize_scope(void* runtime, void* out) -> void*;
+void lyra_rt_randomize_list(
+    const void* problem, const void* reference, const void* value,
+    const void* value_type);
+void lyra_rt_randomize_constrain(const void* problem);
+auto lyra_rt_randomize_finish(const void* problem, void* out) -> void*;
+void lyra_rt_constraint_members(
+    const void* problem, const void* reference, const void* enumeration);
+void lyra_rt_constraint_rand(
+    const void* problem, const void* reference, const void* value,
+    const void* value_type);
+void lyra_rt_constraint_randc(
+    const void* problem, const void* reference, const void* value,
+    const void* value_type);
+auto lyra_rt_constraint_variable(
+    const void* problem, const void* reference, const void* value,
+    const void* value_type) -> std::int64_t;
+auto lyra_rt_constraint_constant(
+    const void* problem, const void* value, const void* value_type)
+    -> std::int64_t;
+void lyra_rt_randomize_nested(
+    const void* problem, const void* reference, const void* value,
+    const void* value_type);
+auto lyra_rt_constraint_block_enabled(void* object, const void* name) -> bool;
+auto lyra_rt_static_constraint_block_enabled(const void* key) -> bool;
+auto lyra_rt_constraint_negate(const void* problem, std::int64_t a)
+    -> std::int64_t;
+auto lyra_rt_constraint_bitwise_not(const void* problem, std::int64_t a)
+    -> std::int64_t;
+auto lyra_rt_constraint_reduce_and(const void* problem, std::int64_t a)
+    -> std::int64_t;
+auto lyra_rt_constraint_reduce_or(const void* problem, std::int64_t a)
+    -> std::int64_t;
+auto lyra_rt_constraint_reduce_xor(const void* problem, std::int64_t a)
+    -> std::int64_t;
+auto lyra_rt_constraint_logical_not(const void* problem, std::int64_t a)
+    -> std::int64_t;
+auto lyra_rt_constraint_add(const void* problem, std::int64_t a, std::int64_t b)
+    -> std::int64_t;
+auto lyra_rt_constraint_subtract(
+    const void* problem, std::int64_t a, std::int64_t b) -> std::int64_t;
+auto lyra_rt_constraint_multiply(
+    const void* problem, std::int64_t a, std::int64_t b) -> std::int64_t;
+auto lyra_rt_constraint_divide(
+    const void* problem, std::int64_t a, std::int64_t b, bool is_signed)
+    -> std::int64_t;
+auto lyra_rt_constraint_remainder(
+    const void* problem, std::int64_t a, std::int64_t b, bool is_signed)
+    -> std::int64_t;
+auto lyra_rt_constraint_bitwise_and(
+    const void* problem, std::int64_t a, std::int64_t b) -> std::int64_t;
+auto lyra_rt_constraint_bitwise_or(
+    const void* problem, std::int64_t a, std::int64_t b) -> std::int64_t;
+auto lyra_rt_constraint_bitwise_xor(
+    const void* problem, std::int64_t a, std::int64_t b) -> std::int64_t;
+auto lyra_rt_constraint_shift_left(
+    const void* problem, std::int64_t a, std::int64_t amount) -> std::int64_t;
+auto lyra_rt_constraint_shift_right(
+    const void* problem, std::int64_t a, std::int64_t amount, bool arithmetic)
+    -> std::int64_t;
+auto lyra_rt_constraint_equal(
+    const void* problem, std::int64_t a, std::int64_t b) -> std::int64_t;
+auto lyra_rt_constraint_less(
+    const void* problem, std::int64_t a, std::int64_t b, bool is_signed)
+    -> std::int64_t;
+auto lyra_rt_constraint_logical_and(
+    const void* problem, std::int64_t a, std::int64_t b) -> std::int64_t;
+auto lyra_rt_constraint_logical_or(
+    const void* problem, std::int64_t a, std::int64_t b) -> std::int64_t;
+auto lyra_rt_constraint_concatenate(
+    const void* problem, std::int64_t high, std::int64_t low) -> std::int64_t;
+auto lyra_rt_constraint_select(
+    const void* problem, std::int64_t condition, std::int64_t then_term,
+    std::int64_t else_term) -> std::int64_t;
+auto lyra_rt_constraint_resize(
+    const void* problem, std::int64_t a, std::int64_t bits, bool sign_extend)
+    -> std::int64_t;
+auto lyra_rt_constraint_slice(
+    const void* problem, std::int64_t a, std::int64_t offset, std::int64_t bits)
+    -> std::int64_t;
+void lyra_rt_constraint_require(const void* problem, std::int64_t condition);
+void lyra_rt_constraint_prefer(const void* problem, std::int64_t condition);
+void lyra_rt_constraint_disable_soft(
+    const void* problem, std::int64_t variable);
+void lyra_rt_constraint_solve_before(
+    const void* problem, std::int64_t before, std::int64_t after);
+auto lyra_rt_constraint_distribution(
+    const void* problem, std::int64_t subject, std::int64_t guard,
+    bool is_signed, bool soft) -> std::int64_t;
+void lyra_rt_constraint_distribution_item(
+    const void* problem, std::int64_t distribution, std::int64_t low,
+    std::int64_t high, std::int64_t weight, bool per_value);
+void lyra_rt_constraint_distribution_default(
+    const void* problem, std::int64_t distribution, std::int64_t weight);
+auto lyra_rt_constraint_unique_set(const void* problem) -> std::int64_t;
+void lyra_rt_constraint_unique_member(
+    const void* problem, std::int64_t set, std::int64_t term);
+void lyra_rt_constraint_unique_array(
+    const void* problem, std::int64_t set, const void* reference,
+    const void* value, const void* value_type);
+void lyra_rt_constraint_unique_require(
+    const void* problem, std::int64_t set, std::int64_t guard);
+auto lyra_rt_constraint_array_size(
+    const void* problem, const void* reference, const void* value,
+    const void* value_type) -> std::int64_t;
+void lyra_rt_constraint_want(const void* problem, std::int64_t variable);
+auto lyra_rt_randomize_settle_first(const void* problem) -> bool;
+
+// LRM 18.8 and 18.9. A variable crosses as a reference to it, which names the
+// object or the run owning it; a block by its name on an object, or a static
+// block by its key; the answer of a query is an `int` laid out in `out`.
+void lyra_rt_rand_mode_set(
+    const void* declared, const void* value, const void* value_type,
+    const void* part, bool on);
+auto lyra_rt_rand_mode_get(
+    const void* declared, const void* value, const void* value_type,
+    const void* part, void* out) -> void*;
+void lyra_rt_object_rand_mode_set(void* object, bool on);
+void lyra_rt_constraint_mode_set(void* object, const void* name, bool on);
+auto lyra_rt_constraint_mode_get(void* object, const void* name, void* out)
+    -> void*;
+void lyra_rt_object_constraint_mode_set(void* object, bool on);
+void lyra_rt_static_constraint_mode_set(const void* key, bool on);
+auto lyra_rt_static_constraint_mode_get(const void* key, void* out) -> void*;
+
 // Ends a closure held through a box of a closure of no known type, and gives
 // the storage back: what ending such a box is, since only the definition the
 // closure opens with knows what it holds.

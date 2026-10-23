@@ -43,6 +43,14 @@ struct ThisHandle {
   auto operator==(const ThisHandle&) const -> bool = default;
 };
 
+// The object a `randomize() with` call randomizes (LRM 18.7), which a name in
+// the call's constraint block reaches its class's properties through before
+// the scope around the call: the handle the call was made on, evaluated once
+// where the call is.
+struct RandomizedObject {
+  auto operator==(const RandomizedObject&) const -> bool = default;
+};
+
 // LRM 7.10.1 `$` in a queue's index or slice bound: the index of the last
 // element of the queue the innermost select enclosing it is taken from. It
 // names no queue itself; which one it asks follows from where it stands.
@@ -62,8 +70,8 @@ struct QueueLastIndex {
 // a read), not by an extra type tag.
 using Primary = std::variant<
     IntegerLiteral, StringLiteral, RealLiteral, NullLiteral, ThisHandle,
-    QueueLastIndex, ProceduralVarRef, ClassPropertyRef, StaticPropertyRef,
-    RoutedValueRef, RoutedObjectRef, IterationBindingRef, PatternVarRef,
-    ExternalUnitValueRef>;
+    RandomizedObject, QueueLastIndex, ProceduralVarRef, ClassPropertyRef,
+    StaticPropertyRef, RoutedValueRef, RoutedObjectRef, IterationBindingRef,
+    PatternVarRef, ExternalUnitValueRef>;
 
 }  // namespace lyra::hir

@@ -94,6 +94,28 @@ http_archive(
     urls = ["https://github.com/gtkwave/libfst/archive/c716c1f67e21a06aaf8722830b371516e70dc657.tar.gz"],
 )
 
+# `randomize()` solves constraints with CUDD's decision diagrams, which
+# count every solution and so draw exactly uniformly among them, and CaDiCaL,
+# which decides whether a condition can hold where a diagram would grow too
+# large. Built by files of this repository for the reason libfst is.
+http_archive(
+    name = "cudd",
+    build_file = "//third_party/cudd:cudd.BUILD",
+    patch_args = ["-p1"],
+    patches = ["//third_party/cudd:cudd.patch"],
+    sha256 = "5fe145041c594689e6e7cf4cd623d5f2b7c36261708be8c9a72aed72cf67acce",
+    strip_prefix = "cudd-cudd-3.0.0",
+    urls = ["https://github.com/cuddorg/cudd/releases/download/3.0.0/cudd-3.0.0.tar.gz"],
+)
+
+http_archive(
+    name = "cadical",
+    build_file = "//third_party/cadical:cadical.BUILD",
+    sha256 = "282b1c9422fde8631cb721b86450ae94df4e8de0545c17a69a301aaa4bf92fcf",
+    strip_prefix = "cadical-rel-3.0.0",
+    urls = ["https://github.com/arminbiere/cadical/archive/refs/tags/rel-3.0.0.tar.gz"],
+)
+
 http_archive(
     name = "zlib",
     build_file = "//third_party/zlib:zlib.BUILD",

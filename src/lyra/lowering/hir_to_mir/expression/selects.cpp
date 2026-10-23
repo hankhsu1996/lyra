@@ -411,6 +411,13 @@ auto StorageFoundBy(Lowerer& lowerer, const hir::Expr& expr) -> StorageFound {
           // instance or the type, which outlives every read (LRM 19.10).
           [](const hir::CovergroupOptionExpr&) {
             return StorageFound::kBeyondTheSteps;
+          },
+          [](const hir::RandomizeExpr&) { return StorageFound::kNone; },
+          [](const hir::RandModeSetExpr&) { return StorageFound::kNone; },
+          [](const hir::RandModeGetExpr&) { return StorageFound::kNone; },
+          [](const hir::ConstraintModeSetExpr&) { return StorageFound::kNone; },
+          [](const hir::ConstraintModeGetExpr&) {
+            return StorageFound::kNone;
           }},
       expr.data);
 }

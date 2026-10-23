@@ -1568,6 +1568,290 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "process_set_randstate",
           .declaration = RuntimeFunction("ProcessSetRandstate")};
+    case BuiltinFn::kObjectPreRandomize:
+      return {
+          .name = "object_pre_randomize",
+          .declaration = RuntimeFunction("ObjectPreRandomize"),
+          .reaches_an_object = true};
+    case BuiltinFn::kObjectPostRandomize:
+      return {
+          .name = "object_post_randomize",
+          .declaration = RuntimeFunction("ObjectPostRandomize"),
+          .reaches_an_object = true};
+    case BuiltinFn::kObjectSrandom:
+      return {
+          .name = "object_srandom",
+          .declaration = RuntimeFunction("ObjectSrandom"),
+          .reaches_an_object = true,
+          .operands = {kMachine, kNumber}};
+    case BuiltinFn::kObjectGetRandstate:
+      return {
+          .name = "object_get_randstate",
+          .declaration = RuntimeFunction("ObjectGetRandstate"),
+          .reaches_an_object = true};
+    case BuiltinFn::kObjectSetRandstate:
+      return {
+          .name = "object_set_randstate",
+          .declaration = RuntimeFunction("ObjectSetRandstate"),
+          .reaches_an_object = true};
+    case BuiltinFn::kRandomizeObject:
+      return {
+          .name = "randomize_object",
+          .declaration = RuntimeFunction("RandomizeObject"),
+          .reaches_an_object = true};
+    case BuiltinFn::kRandomizeObjectListed:
+      return {
+          .name = "randomize_object_listed",
+          .declaration = RuntimeFunction("RandomizeObjectListed"),
+          .reaches_an_object = true};
+    case BuiltinFn::kConstraintBlockEnabled:
+      return {
+          .name = "constraint_block_enabled",
+          .declaration = RuntimeFunction("ConstraintBlockEnabled"),
+          .reaches_an_object = true};
+    case BuiltinFn::kObjectRandModeSet:
+      return {
+          .name = "object_rand_mode_set",
+          .declaration = RuntimeFunction("ObjectRandModeSet"),
+          .reaches_an_object = true};
+    case BuiltinFn::kConstraintModeSet:
+      return {
+          .name = "constraint_mode_set",
+          .declaration = RuntimeFunction("ConstraintModeSet"),
+          .reaches_an_object = true};
+    case BuiltinFn::kConstraintModeGet:
+      return {
+          .name = "constraint_mode_get",
+          .declaration = RuntimeFunction("ConstraintModeGet"),
+          .reaches_an_object = true};
+    case BuiltinFn::kObjectConstraintModeSet:
+      return {
+          .name = "object_constraint_mode_set",
+          .declaration = RuntimeFunction("ObjectConstraintModeSet"),
+          .reaches_an_object = true};
+    case BuiltinFn::kRandomizeScope:
+      return {
+          .name = "randomize_scope",
+          .declaration = RuntimeFunction("RandomizeScope"),
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kRandomizeList:
+      return {
+          .name = "randomize_list",
+          .declaration = RuntimeFunction("RandomizeList"),
+          .operands = {kMachine, kMachine, kTyped}};
+    case BuiltinFn::kConstraintMembers:
+      return {
+          .name = "constraint_members",
+          .declaration = RuntimeFunction("ConstraintMembers")};
+    case BuiltinFn::kConstraintRand:
+      return {
+          .name = "constraint_rand",
+          .declaration = RuntimeFunction("ConstraintRand"),
+          .operands = {kMachine, kMachine, kTyped}};
+    case BuiltinFn::kConstraintRandc:
+      return {
+          .name = "constraint_randc",
+          .declaration = RuntimeFunction("ConstraintRandc"),
+          .operands = {kMachine, kMachine, kTyped}};
+    case BuiltinFn::kConstraintVariable:
+      return {
+          .name = "constraint_variable",
+          .declaration = RuntimeFunction("ConstraintVariable"),
+          .operands = {kMachine, kMachine, kTyped}};
+    case BuiltinFn::kConstraintConstant:
+      return {
+          .name = "constraint_constant",
+          .declaration = RuntimeFunction("ConstraintConstant"),
+          .operands = {kMachine, kTyped}};
+    case BuiltinFn::kConstraintNegate:
+      return {
+          .name = "constraint_negate",
+          .declaration = RuntimeFunction("ConstraintNegate")};
+    case BuiltinFn::kConstraintBitwiseNot:
+      return {
+          .name = "constraint_bitwise_not",
+          .declaration = RuntimeFunction("ConstraintBitwiseNot")};
+    case BuiltinFn::kConstraintReduceAnd:
+      return {
+          .name = "constraint_reduce_and",
+          .declaration = RuntimeFunction("ConstraintReduceAnd")};
+    case BuiltinFn::kConstraintReduceOr:
+      return {
+          .name = "constraint_reduce_or",
+          .declaration = RuntimeFunction("ConstraintReduceOr")};
+    case BuiltinFn::kConstraintReduceXor:
+      return {
+          .name = "constraint_reduce_xor",
+          .declaration = RuntimeFunction("ConstraintReduceXor")};
+    case BuiltinFn::kConstraintLogicalNot:
+      return {
+          .name = "constraint_logical_not",
+          .declaration = RuntimeFunction("ConstraintLogicalNot")};
+    case BuiltinFn::kConstraintAdd:
+      return {
+          .name = "constraint_add",
+          .declaration = RuntimeFunction("ConstraintAdd")};
+    case BuiltinFn::kConstraintSubtract:
+      return {
+          .name = "constraint_subtract",
+          .declaration = RuntimeFunction("ConstraintSubtract")};
+    case BuiltinFn::kConstraintMultiply:
+      return {
+          .name = "constraint_multiply",
+          .declaration = RuntimeFunction("ConstraintMultiply")};
+    case BuiltinFn::kConstraintDivide:
+      return {
+          .name = "constraint_divide",
+          .declaration = RuntimeFunction("ConstraintDivide")};
+    case BuiltinFn::kConstraintRemainder:
+      return {
+          .name = "constraint_remainder",
+          .declaration = RuntimeFunction("ConstraintRemainder")};
+    case BuiltinFn::kConstraintBitwiseAnd:
+      return {
+          .name = "constraint_bitwise_and",
+          .declaration = RuntimeFunction("ConstraintBitwiseAnd")};
+    case BuiltinFn::kConstraintBitwiseOr:
+      return {
+          .name = "constraint_bitwise_or",
+          .declaration = RuntimeFunction("ConstraintBitwiseOr")};
+    case BuiltinFn::kConstraintBitwiseXor:
+      return {
+          .name = "constraint_bitwise_xor",
+          .declaration = RuntimeFunction("ConstraintBitwiseXor")};
+    case BuiltinFn::kConstraintShiftLeft:
+      return {
+          .name = "constraint_shift_left",
+          .declaration = RuntimeFunction("ConstraintShiftLeft")};
+    case BuiltinFn::kConstraintShiftRight:
+      return {
+          .name = "constraint_shift_right",
+          .declaration = RuntimeFunction("ConstraintShiftRight")};
+    case BuiltinFn::kConstraintEqual:
+      return {
+          .name = "constraint_equal",
+          .declaration = RuntimeFunction("ConstraintEqual")};
+    case BuiltinFn::kConstraintLess:
+      return {
+          .name = "constraint_less",
+          .declaration = RuntimeFunction("ConstraintLess")};
+    case BuiltinFn::kConstraintLogicalAnd:
+      return {
+          .name = "constraint_logical_and",
+          .declaration = RuntimeFunction("ConstraintLogicalAnd")};
+    case BuiltinFn::kConstraintLogicalOr:
+      return {
+          .name = "constraint_logical_or",
+          .declaration = RuntimeFunction("ConstraintLogicalOr")};
+    case BuiltinFn::kConstraintConcatenate:
+      return {
+          .name = "constraint_concatenate",
+          .declaration = RuntimeFunction("ConstraintConcatenate")};
+    case BuiltinFn::kConstraintSelect:
+      return {
+          .name = "constraint_select",
+          .declaration = RuntimeFunction("ConstraintSelect")};
+    case BuiltinFn::kConstraintResize:
+      return {
+          .name = "constraint_resize",
+          .declaration = RuntimeFunction("ConstraintResize")};
+    case BuiltinFn::kConstraintSlice:
+      return {
+          .name = "constraint_slice",
+          .declaration = RuntimeFunction("ConstraintSlice")};
+    case BuiltinFn::kConstraintRequire:
+      return {
+          .name = "constraint_require",
+          .declaration = RuntimeFunction("ConstraintRequire")};
+    case BuiltinFn::kConstraintPrefer:
+      return {
+          .name = "constraint_prefer",
+          .declaration = RuntimeFunction("ConstraintPrefer")};
+    case BuiltinFn::kConstraintDisableSoft:
+      return {
+          .name = "constraint_disable_soft",
+          .declaration = RuntimeFunction("ConstraintDisableSoft")};
+    case BuiltinFn::kConstraintSolveBefore:
+      return {
+          .name = "constraint_solve_before",
+          .declaration = RuntimeFunction("ConstraintSolveBefore")};
+    case BuiltinFn::kConstraintDistribution:
+      return {
+          .name = "constraint_distribution",
+          .declaration = RuntimeFunction("ConstraintDistribution")};
+    case BuiltinFn::kConstraintDistributionItem:
+      return {
+          .name = "constraint_distribution_item",
+          .declaration = RuntimeFunction("ConstraintDistributionItem")};
+    case BuiltinFn::kConstraintDistributionDefault:
+      return {
+          .name = "constraint_distribution_default",
+          .declaration = RuntimeFunction("ConstraintDistributionDefault")};
+    case BuiltinFn::kConstraintUniqueSet:
+      return {
+          .name = "constraint_unique_set",
+          .declaration = RuntimeFunction("ConstraintUniqueSet")};
+    case BuiltinFn::kConstraintUniqueMember:
+      return {
+          .name = "constraint_unique_member",
+          .declaration = RuntimeFunction("ConstraintUniqueMember")};
+    case BuiltinFn::kConstraintUniqueArray:
+      return {
+          .name = "constraint_unique_array",
+          .declaration = RuntimeFunction("ConstraintUniqueArray"),
+          .operands = {kMachine, kMachine, kMachine, kTyped}};
+    case BuiltinFn::kConstraintUniqueRequire:
+      return {
+          .name = "constraint_unique_require",
+          .declaration = RuntimeFunction("ConstraintUniqueRequire")};
+    case BuiltinFn::kConstraintArraySize:
+      return {
+          .name = "constraint_array_size",
+          .declaration = RuntimeFunction("ConstraintArraySize"),
+          .operands = {kMachine, kMachine, kTyped}};
+    case BuiltinFn::kRandomizeSettleFirst:
+      return {
+          .name = "randomize_settle_first",
+          .declaration = RuntimeFunction("RandomizeSettleFirst")};
+    case BuiltinFn::kConstraintWant:
+      return {
+          .name = "constraint_want",
+          .declaration = RuntimeFunction("ConstraintWant")};
+    case BuiltinFn::kRandomizeConstrain:
+      return {
+          .name = "randomize_constrain",
+          .declaration = RuntimeFunction("RandomizeConstrain")};
+    case BuiltinFn::kRandomizeFinish:
+      return {
+          .name = "randomize_finish",
+          .declaration = RuntimeFunction("RandomizeFinish")};
+    case BuiltinFn::kRandomizeNested:
+      return {
+          .name = "randomize_nested",
+          .declaration = RuntimeFunction("RandomizeNested"),
+          .operands = {kMachine, kMachine, kTyped}};
+    case BuiltinFn::kStaticConstraintBlockEnabled:
+      return {
+          .name = "static_constraint_block_enabled",
+          .declaration = RuntimeFunction("StaticConstraintBlockEnabled")};
+    case BuiltinFn::kRandModeSet:
+      return {
+          .name = "rand_mode_set",
+          .declaration = RuntimeFunction("RandModeSet"),
+          .operands = {kMachine, kTyped}};
+    case BuiltinFn::kRandModeGet:
+      return {
+          .name = "rand_mode_get",
+          .declaration = RuntimeFunction("RandModeGet"),
+          .operands = {kMachine, kTyped}};
+    case BuiltinFn::kStaticConstraintModeSet:
+      return {
+          .name = "static_constraint_mode_set",
+          .declaration = RuntimeFunction("StaticConstraintModeSet")};
+    case BuiltinFn::kStaticConstraintModeGet:
+      return {
+          .name = "static_constraint_mode_get",
+          .declaration = RuntimeFunction("StaticConstraintModeGet")};
     case BuiltinFn::kRegisterAlways:
       return {
           .name = "register_always",

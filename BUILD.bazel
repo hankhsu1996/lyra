@@ -165,6 +165,8 @@ cc_library(
         ":support",
         ":value",
         "@boost.context//:boost.context",
+        "@cadical",
+        "@cudd",
         "@libfst",
     ],
 )

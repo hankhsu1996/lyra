@@ -15,6 +15,7 @@
 #include "lyra/hir/constant_value.hpp"
 #include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/integral_constant.hpp"
+#include "lyra/hir/random_qualifier.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/imported_runtime_class.hpp"
@@ -139,11 +140,14 @@ struct PackedUnionType {
 // member's own declaration initializer (LRM 7.2.2) as a folded constant value
 // -- type metadata, like an enum member's value -- which takes precedence over
 // the member type's Table 7-1 default when the enclosing struct is
-// default-constructed; absent when the member has no initializer.
+// default-constructed; absent when the member has no initializer. `random` is
+// how a member of a structure is declared random, which it is wherever the
+// structure is (LRM 18.4).
 struct UnpackedAggregateField {
   std::string name;
   TypeId type;
   std::optional<ConstantValue> default_init;
+  RandomQualifier random = RandomQualifier::kNone;
 
   auto operator==(const UnpackedAggregateField&) const -> bool = default;
 };

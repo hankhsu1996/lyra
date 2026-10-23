@@ -8,9 +8,8 @@ state a system function consumes that is not a pure function of its arguments, s
 how that state reaches a call site. Nothing in it is blocked.
 
 **Part two, constraint-based randomization**, is `rand` and `randc` members, constraint blocks, and
-`randomize()`. It needs a constraint solver and it needs the object model finished, so its items
-stay unchecked until that lands. It is recorded here rather than in a file of its own because a
-reader asking "what does randomization do" should find one answer.
+`randomize()`, solved by a constraint solver the runtime carries. It is recorded here rather than in
+a file of its own because a reader asking "what does randomization do" should find one answer.
 
 Done when:
 
@@ -58,11 +57,8 @@ Done when:
       to the implementation; only a state this implementation produced can be restored, and setting
       any other ends the run with an error, since the standard leaves it undefined and the string is
       one the design computed. `process::self()` called where no process runs -- in a declaration
-      assignment, which runs before any procedure starts -- answers a null handle. The object-side
-      form of the same three methods lands with part two, because until `randomize()` exists nothing
-      draws from an object's RNG for a saved state to be about; until then calling one of them on an
-      object is refused as not yet supported, as is calling `randomize`, `pre_randomize`,
-      `post_randomize`, `rand_mode` or `constraint_mode` on one.
+      assignment, which runs before any procedure starts -- answers a null handle. The same three
+      methods reach an object's own generator, the one its `randomize()` draws from (LRM 18.15).
 
 - [x] The probabilistic distribution functions -- `$dist_uniform`, `$dist_normal`,
       `$dist_exponential`, `$dist_poisson`, `$dist_chi_square`, `$dist_t`, `$dist_erlang` (LRM
@@ -95,46 +91,63 @@ Done when:
 
 ## Part Two -- Constraint-Based Randomization
 
-Blocked on the object model: every item below is a property of a class instance, solved against that
-instance's own state, so none of it is reachable until class members, inheritance, and managed
-object lifetime are in place.
+- [x] Random variables: the `rand` and `randc` modifiers on class properties, static ones included
+      (LRM 18.4). A `rand` variable is uniformly distributed over the values its constraints allow;
+      a `randc` variable runs through a random permutation of its range, every value once before any
+      repeats, skipping a value its constraints rule out at one call and taking it at a later one,
+      and beginning a new permutation when its constraints change. Integral and enumerated
+      variables, an enumerated one taking only the values its enumeration names and a `randc` one
+      running through them, fixed-size and dynamic arrays and queues of them at any depth, an
+      unpacked structure whose members are declared random, and an object handle, whose object's
+      variables and constraints join the call, an array of handles each of its objects. A `randc`
+      variable wider than 64 bits is refused where it is declared.
 
-- [ ] Random variables: the `rand` and `randc` modifiers on class properties (LRM 18.4). A `rand`
-      variable is uniformly distributed over its range; a `randc` variable cycles through a random
-      permutation of its range without repeating, recomputing the permutation when its constraints
-      change. Both apply to integral and real variables, to arrays and their elements, and to object
-      handles, each with its own rule for what "randomize this" means.
+- [ ] Random variables of a real type, an associative array declared random, and an array of
+      structures declared random: refused when a call reaches one, with "randomizing a random
+      variable of this type is not yet supported". A replication in a constraint, and a member of a
+      tagged union in one, are refused where the class is compiled.
 
-- [ ] Constraint blocks (LRM 18.5), which is the bulk of the surface: the block itself and its
-      inheritance rules, external and pure constraint prototypes, set membership and weighted
-      distributions, implication and `if`-`else`, iterative constraints over arrays, global
-      constraints reaching into contained objects, variable ordering with `solve ... before`, static
-      constraint blocks, function calls inside constraints, constraint guards, and soft constraints
-      with their priority rules.
+- [x] Constraint blocks (LRM 18.5): inheritance and overriding by name, pure and external
+      prototypes, static blocks whose mode is the class's, expressions over every integral operator,
+      members of packed structures and unions, set membership with ranges and the elements of
+      unpacked arrays, weighted distributions (`:=`, `:/`, a default weight), implication and
+      `if`-`else`, `foreach` over fixed-size and dynamic arrays and queues, array sizes chosen
+      before their elements and named in `solve ... before` and `disable soft`, the reduction
+      methods with and without a `with` clause, `unique` over variables and array elements, global
+      constraints through random handles, `solve ... before`, soft constraints with the later
+      winning a conflict and `disable soft`, and functions, whose arguments' variables are chosen
+      first and whose answer is read as a value.
 
-- [ ] The `randomize()` method and the object RNG (LRM 18.15). Each object owns an RNG used
-      exclusively by its own `randomize()`, seeded from the process that created the object -- or,
-      for an object built by a static declaration initializer, from the initialization RNG of the
-      unit instance the declaration sits in. Object stability means a call on one instance is
-      independent of calls on every other instance and of every other randomization function.
-      `pre_randomize` and `post_randomize` run around each call (LRM 18.6.2).
+- [x] The `randomize()` method and the object RNG (LRM 18.6, 18.15). Each object owns a generator
+      split from whatever made it, used only by its own `randomize()`. `pre_randomize` and
+      `post_randomize` run around each call, on the object and on every object a random handle
+      reaches; a call that finds no answer returns 0, runs no `post_randomize` and leaves every
+      variable as it was.
 
-- [ ] Inline constraints added at the call site, and the checker form: `randomize(null)` assigns
-      nothing and returns only whether the current values satisfy every constraint (LRM 18.11.1).
+- [x] Inline constraints added at the call site, a call listing the variables it chooses, an array
+      among them standing for its elements and its size, every handle it does not list held, and the
+      checker form `randomize(null)` (LRM 18.7, 18.11).
 
-- [ ] Scope randomization, `std::randomize()` (LRM 18.12), which randomizes variables of the current
-      scope with optional inline constraints and needs no class. It behaves as a class `randomize()`
-      does, so it needs the solver, but it draws from the calling process's RNG rather than from an
-      object's.
+- [ ] A call listing a random handle: refused where it is compiled, since the object it reaches
+      would choose its variables by its own modes while the call's listing governs the rest.
 
-- [ ] Mode control: `rand_mode` to disable a random variable so it behaves as an ordinary one (LRM
-      18.8), and `constraint_mode` to turn a named constraint block off and on (LRM 18.9).
+- [x] Scope randomization, `std::randomize()` with and without inline constraints (LRM 18.12),
+      drawing from the calling process's generator.
 
-- [ ] The constraint solver itself. It must select uniformly over legal value combinations, honor
-      the declared variable ordering, solve `randc` variables ahead of the rest, and report failure
-      rather than guess. It runs while the simulation runs, because a constraint may reference state
-      whose value is only known then, so it belongs to what an emitted program carries with it
-      rather than to the compiler.
+- [x] Mode control: `rand_mode` on a variable, on one element of an array, which keeps its mode when
+      the array is resized, on every member of a structure, or on every variable of an object, and
+      its query (LRM 18.8), and `constraint_mode` on a block, a static block, or every block of an
+      object, and its query (LRM 18.9).
+
+- [x] The constraint solver. An object's values depend on its own generator alone, whatever other
+      calls drew before. It draws exactly uniformly where the constraints fit a decision diagram of
+      bounded size, reuses that diagram when a later call states the same constraints, and reports
+      failure only where no answer exists.
+
+- [ ] Constraints past the diagram's bound are drawn legally but not uniformly: where one side of a
+      bit holds far more solutions than the other, the two are taken equally often. The bound is
+      fixed; how large it should be by default, and whether a user sets it, waits on measuring how
+      often a diagram is reused in real testbenches.
 
 ## Open Questions
 

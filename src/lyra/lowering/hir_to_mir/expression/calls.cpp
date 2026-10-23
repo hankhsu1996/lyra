@@ -348,9 +348,15 @@ auto LowerBuiltinMethodCall(
     for (const hir::ExprId operand : RequiredOperands(c)) {
       auto arg_or = lowerer.LowerExpr(hir_exprs.Get(operand), at);
       if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+      mir::ExprId lowered = into.exprs.Add(*std::move(arg_or));
+      // An entry acting on an object it is handed as its first operand is
+      // handed the value reaching that object, read where a variable holds
+      // it, as an access's receiver is.
+      if (entry.reaches_an_object && !b.receiver.has_value() && args.empty()) {
+        lowered = into.AsValue(unit.types, lowered);
+      }
       args.push_back(StatedAsRead(
-          unit, into, entry.operands.At(leading + args.size()),
-          into.exprs.Add(*std::move(arg_or))));
+          unit, into, entry.operands.At(leading + args.size()), lowered));
     }
     return args;
   };

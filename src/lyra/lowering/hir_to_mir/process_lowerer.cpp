@@ -20,6 +20,7 @@
 #include "lyra/lowering/hir_to_mir/concurrent_assertion.hpp"
 #include "lyra/lowering/hir_to_mir/covergroup_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
+#include "lyra/lowering/hir_to_mir/randomization.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
@@ -156,6 +157,9 @@ auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
           [&](const hir::ProceduralContinuousEndStmt& pce) {
             return LowerProceduralContinuousEndStmt(
                 *this, frame, stmt.label, pce);
+          },
+          [&](const hir::ConstraintStmt& c) {
+            return LowerConstraintStmt(*this, frame, stmt.label, c);
           },
       },
       stmt.data);
@@ -338,12 +342,14 @@ auto DeclaredAhead(const hir::SubroutineDecl& decl)
 }
 
 // Whether a subroutine's body can wait, which a task's can and a function's
-// cannot (LRM 13.4.4).
+// and a constraint block's cannot (LRM 13.4.4, 18.5).
 auto CanWait(hir::SubroutineKind kind) -> bool {
   switch (kind) {
     case hir::SubroutineKind::kTask:
       return true;
     case hir::SubroutineKind::kFunction:
+    case hir::SubroutineKind::kConstraintBlock:
+    case hir::SubroutineKind::kStaticConstraintBlock:
       return false;
   }
   throw InternalError("CanWait: unknown SubroutineKind");
@@ -517,6 +523,38 @@ auto ProcessLowerer::LowerSubroutine(
 
 auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
     -> diag::Result<mir::CallableCode> {
+  switch (src.kind) {
+    case hir::SubroutineKind::kTask:
+    case hir::SubroutineKind::kFunction:
+      break;
+    // A constraint block is handed the problem of the call of `randomize()`
+    // calling it (LRM 18.5), after its object, and states its constraints to
+    // it; the handle is held in a local for the body to name.
+    case hir::SubroutineKind::kConstraintBlock:
+    case hir::SubroutineKind::kStaticConstraintBlock:
+      return LowerSubroutine(
+          src,
+          [&](mir::CallableCode&, CallableBindings& bindings, WalkFrame& frame,
+              std::vector<mir::LocalId>& params) -> diag::Result<void> {
+            mir::CompilationUnit& unit = owner_->Unit();
+            const mir::TypeId handed =
+                *ConstraintProblemParamTypeOf(unit, src.kind);
+            const mir::LocalId param = bindings.DeclareAnonymous(handed);
+            params.push_back(param);
+            mir::Block& block = *frame.current_block;
+            const mir::LocalId held =
+                bindings.DeclareAnonymous(unit.builtins.constraint_problem);
+            block.AppendStmt(
+                mir::LocalDeclStmt{
+                    .target = held,
+                    .init = block.Read(block.exprs.Add(
+                        mir::MakeDerefExpr(
+                            block.ReadLocal(param, handed),
+                            unit.builtins.constraint_problem)))});
+            frame = frame.WithConstraintProblem(held);
+            return {};
+          });
+  }
   const std::optional<mir::TypeId> report_type =
       ReportParamTypeOf(owner_->Unit(), src.kind);
   // A task is never run by a waited evaluation, so it has one form.

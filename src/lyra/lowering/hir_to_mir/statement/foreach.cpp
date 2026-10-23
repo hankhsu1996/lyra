@@ -179,17 +179,16 @@ struct Level {
 // names to leave every dimension (LRM 12.8).
 struct Nest {
   ProcessLowerer* process = nullptr;
-  const hir::ForeachStmt* stmt = nullptr;
+  const ForeachPass* pass = nullptr;
   std::vector<Level> levels;
   std::optional<SettledPath> array;
   BreakTarget* leaves = nullptr;
 };
 
-// The source's body, lowered into a scope of its own.
+// What one pass runs, lowered into a scope of its own.
 auto LowerBody(const Nest& nest, const WalkFrame& frame)
     -> diag::Result<mir::Block> {
-  return LowerStmtIntoChildScope(
-      *nest.process, frame.WithBreakLeaving(*nest.leaves), nest.stmt->body);
+  return (*nest.pass)(frame, *nest.leaves);
 }
 
 // The loop variable of `level`, as the path to the storage its declaration gave
@@ -316,27 +315,41 @@ auto BuildLevelLoopStmt(
 auto LowerForeachStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::ForeachStmt& f) -> diag::Result<mir::Stmt> {
+  return LowerForeachLoops(
+      process, std::move(frame), std::move(label), f.array, f.loop_vars,
+      [&](const WalkFrame& at, BreakTarget& leaves) {
+        return LowerStmtIntoChildScope(
+            process, at.WithBreakLeaving(leaves), f.body);
+      });
+}
+
+auto LowerForeachLoops(
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    hir::ExprId array_id,
+    std::span<const std::optional<hir::ProceduralVarId>> loop_vars_listed,
+    const ForeachPass& pass) -> diag::Result<mir::Stmt> {
   UnitLowerer& unit_lowerer = process.Owner();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   const hir::ProceduralBody& hir_body = process.HirBody();
-  const hir::Expr& array = hir_body.exprs.Get(f.array);
+  const hir::Expr& array = hir_body.exprs.Get(array_id);
 
   std::vector<Level> levels;
   std::optional<hir::TypeId> iterated = array.type;
   bool reads_array = false;
-  for (std::size_t position = 0; position < f.loop_vars.size(); ++position) {
+  for (std::size_t position = 0; position < loop_vars_listed.size();
+       ++position) {
     if (!iterated.has_value()) {
       throw InternalError(
-          "LowerForeachStmt: a foreach lists more dimensions than its array "
+          "LowerForeachLoops: a foreach lists more dimensions than its array "
           "has, which the front end rejects (LRM 12.7.3)");
     }
     const hir::TypeId container = *iterated;
     const Dimension dimension = DimensionOf(unit_lowerer, container);
     iterated = dimension.element;
-    if (!f.loop_vars[position].has_value()) {
+    if (!loop_vars_listed[position].has_value()) {
       continue;
     }
-    const hir::ProceduralVarId var = *f.loop_vars[position];
+    const hir::ProceduralVarId var = *loop_vars_listed[position];
     reads_array = reads_array || ReadsTheArray(dimension.indices);
     levels.push_back(
         Level{
@@ -386,7 +399,7 @@ auto LowerForeachStmt(
   BreakTarget leaves(*frame.bindings);
   const Nest nest{
       .process = &process,
-      .stmt = &f,
+      .pass = &pass,
       .levels = std::move(levels),
       .array = std::move(settled_array),
       .leaves = &leaves};

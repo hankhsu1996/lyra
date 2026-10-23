@@ -11,6 +11,7 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/assertion.hpp"
 #include "lyra/hir/case_keyword.hpp"
+#include "lyra/hir/constraint_id.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/pattern.hpp"
 #include "lyra/hir/procedural_scope.hpp"
@@ -272,6 +273,14 @@ struct ForStmt {
   auto operator==(const ForStmt&) const -> bool = default;
 };
 
+// What a constraint block states (LRM 18.5): its whole body, one constraint
+// tree, which the randomization of an object of its class describes.
+struct ConstraintStmt {
+  ConstraintId constraints;
+
+  auto operator==(const ConstraintStmt&) const -> bool = default;
+};
+
 // LRM 12.7.3 `foreach (array[i, , k]) body`. `array` is the array the source
 // names. `loop_vars` has one entry per dimension the source's list reaches,
 // outermost first, absent at a position the list leaves empty: that dimension
@@ -452,7 +461,8 @@ using StmtData = std::variant<
     ConcurrentCoverStmt, ExpectStmt, ForStmt, ForeachStmt, WhileStmt,
     RepeatStmt, DoWhileStmt, ForeverStmt, BreakStmt, ContinueStmt, ReturnStmt,
     TimedStmt, EventTriggerStmt, WaitStmt, WaitForkStmt, DisableForkStmt,
-    DisableStmt, ProceduralContinuousAssignStmt, ProceduralContinuousEndStmt>;
+    DisableStmt, ProceduralContinuousAssignStmt, ProceduralContinuousEndStmt,
+    ConstraintStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

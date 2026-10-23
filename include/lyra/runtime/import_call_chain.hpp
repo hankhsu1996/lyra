@@ -1,7 +1,7 @@
 #pragma once
 
 #include <cstddef>
-#include <deque>
+#include <list>
 #include <vector>
 
 #include "lyra/value/string.hpp"
@@ -100,7 +100,9 @@ class ImportCallChain {
   };
 
   std::vector<ImportCall> calls_;
-  std::deque<value::String> kept_;
+  // Each string stays where it was put, and outside a foreign call the list
+  // is empty and holds no memory.
+  std::list<value::String> kept_;
 };
 
 }  // namespace lyra::runtime

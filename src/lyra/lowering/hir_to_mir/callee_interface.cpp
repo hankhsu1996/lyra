@@ -98,7 +98,11 @@ auto ReportParamTypeOf(
   switch (kind) {
     case hir::SubroutineKind::kFunction:
       return unit.builtins.read_report_ptr;
+    // A task is no evaluation, and a constraint block is called only by the
+    // randomization of its object, which is none either.
     case hir::SubroutineKind::kTask:
+    case hir::SubroutineKind::kConstraintBlock:
+    case hir::SubroutineKind::kStaticConstraintBlock:
       return std::nullopt;
   }
   throw InternalError("ReportParamTypeOf: unknown subroutine kind");
@@ -131,6 +135,23 @@ auto ConstructorFormalsOf(UnitLowerer& unit_lowerer, const hir::ClassRef& cls)
             return CalleeFormalsOf(unit_lowerer, *published->constructor);
           }},
       cls);
+}
+
+auto ConstraintProblemParamTypeOf(
+    mir::CompilationUnit& unit, hir::SubroutineKind kind)
+    -> std::optional<mir::TypeId> {
+  switch (kind) {
+    case hir::SubroutineKind::kTask:
+    case hir::SubroutineKind::kFunction:
+      return std::nullopt;
+    case hir::SubroutineKind::kConstraintBlock:
+    case hir::SubroutineKind::kStaticConstraintBlock:
+      return unit.types.Intern(
+          mir::Type{mir::ReferenceType{
+              .referent = unit.builtins.constraint_problem,
+              .mutability = mir::Mutability::kReadOnly}});
+  }
+  throw InternalError("ConstraintProblemParamTypeOf: unknown subroutine kind");
 }
 
 auto CalleeFormalsOf(UnitLowerer& unit_lowerer, const hir::SubroutineDecl& decl)
@@ -238,6 +259,10 @@ auto BuildPrototype(
   if (const std::optional<mir::TypeId> report =
           ReportParamTypeOf(unit_lowerer.Unit(), kind)) {
     params.push_back(bindings.DeclareAnonymous(*report));
+  }
+  if (const std::optional<mir::TypeId> problem =
+          ConstraintProblemParamTypeOf(unit_lowerer.Unit(), kind)) {
+    params.push_back(bindings.DeclareAnonymous(*problem));
   }
   code.params = std::move(params);
   code.result_type = call_type;

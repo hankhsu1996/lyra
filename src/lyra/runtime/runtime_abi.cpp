@@ -23,7 +23,9 @@
 #include "lyra/runtime/ambient_run_context.hpp"
 #include "lyra/runtime/any.hpp"
 #include "lyra/runtime/cancellation.hpp"
+#include "lyra/runtime/class_object.hpp"
 #include "lyra/runtime/closure.hpp"
+#include "lyra/runtime/constraint_problem.hpp"
 #include "lyra/runtime/construction_table.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/delay.hpp"
@@ -49,6 +51,7 @@
 #include "lyra/runtime/process_control.hpp"
 #include "lyra/runtime/property_wait.hpp"
 #include "lyra/runtime/random.hpp"
+#include "lyra/runtime/randomize.hpp"
 #include "lyra/runtime/reaction.hpp"
 #include "lyra/runtime/read_report.hpp"
 #include "lyra/runtime/runtime.hpp"
@@ -851,15 +854,11 @@ auto OpenTailCellWrite(void* cell, void* out) -> void* {
           VariableAt<T>(cell)});
 }
 
-// The same over a value laid out by its type -- a structure, a union, a tuple,
-// a fixed-size unpacked array -- which a reference names as its bytes where it
-// lies: no object of the runtime's stands for one there, since a component, a
-// member or an element of one is bytes of what holds it.
-// Nothing in those bytes says what they are, so an access that has to know is
-// told the type.
-void LaidOutRefSet(
-    void* reference, const value::ValueType& type, const void* value) {
-  const ErasedReference& lent = ErasedAt(reference);
+}  // namespace
+
+void WriteLaidOutThrough(
+    const ErasedReference& lent, const value::ValueType& type,
+    const void* value) {
   const auto assign = [&] { type.Assign(lent.storage, value); };
   SetThrough(
       lent,
@@ -871,6 +870,19 @@ void LaidOutRefSet(
         assign();
         return Change::Whole();
       });
+}
+
+namespace {
+
+// The same over a value laid out by its type -- a structure, a union, a tuple,
+// a fixed-size unpacked array -- which a reference names as its bytes where it
+// lies: no object of the runtime's stands for one there, since a component, a
+// member or an element of one is bytes of what holds it.
+// Nothing in those bytes says what they are, so an access that has to know is
+// told the type.
+void LaidOutRefSet(
+    void* reference, const value::ValueType& type, const void* value) {
+  WriteLaidOutThrough(ErasedAt(reference), type, value);
 }
 
 // A net and one of its drivers, behind the addresses the ABI carries them as.
@@ -2443,6 +2455,390 @@ auto lyra_rt_process_get_randstate(const void* self, void* out) -> void* {
 
 void lyra_rt_process_set_randstate(const void* self, const void* state) {
   ProcessSetRandstate(ProcessOf(self), Read<String>(state));
+}
+
+void lyra_rt_object_srandom(
+    void* object, const void* seed, std::int64_t seed_width,
+    bool seed_is_signed, bool seed_is_four_state) {
+  lyra::runtime::ObjectSrandom(
+      static_cast<GcObject*>(object),
+      NumberAt(seed, seed_width, seed_is_signed, seed_is_four_state).View());
+}
+
+void lyra_rt_object_pre_randomize(void* object) {
+  lyra::runtime::ObjectPreRandomize(static_cast<GcObject*>(object));
+}
+
+void lyra_rt_object_post_randomize(void* object) {
+  lyra::runtime::ObjectPostRandomize(static_cast<GcObject*>(object));
+}
+
+auto lyra_rt_object_get_randstate(void* object, void* out) -> void* {
+  return Emplace(
+      out, lyra::runtime::ObjectGetRandstate(static_cast<GcObject*>(object)));
+}
+
+void lyra_rt_object_set_randstate(void* object, const void* state) {
+  lyra::runtime::ObjectSetRandstate(
+      static_cast<GcObject*>(object), Read<String>(state));
+}
+
+auto lyra_rt_randomize_object(void* object, void* out) -> void* {
+  return Emplace(
+      out, lyra::runtime::RandomizeObject(static_cast<GcObject*>(object)));
+}
+
+auto lyra_rt_randomize_object_listed(void* object, void* out) -> void* {
+  return Emplace(
+      out,
+      lyra::runtime::RandomizeObjectListed(static_cast<GcObject*>(object)));
+}
+
+auto lyra_rt_randomize_scope(void* runtime, void* out) -> void* {
+  return Emplace(
+      out,
+      lyra::runtime::RandomizeScope(*static_cast<RuntimeEffects*>(runtime)));
+}
+
+void lyra_rt_randomize_list(
+    const void* problem, const void* reference, const void* value,
+    const void* value_type) {
+  const ObjectRef& p = Read<ObjectRef>(problem);
+  const lyra::runtime::ErasedReference& variable = ErasedAt(reference);
+  lyra::runtime::RandomizeListErased(
+      p, variable, value, lyra::runtime::TypeAt(value_type),
+      lyra::runtime::NamedMembers(p, variable), std::nullopt);
+}
+
+void lyra_rt_randomize_constrain(const void* problem) {
+  lyra::runtime::RandomizeConstrain(Read<ObjectRef>(problem));
+}
+
+auto lyra_rt_randomize_finish(const void* problem, void* out) -> void* {
+  return Emplace(out, lyra::runtime::RandomizeFinish(Read<ObjectRef>(problem)));
+}
+
+void lyra_rt_constraint_members(
+    const void* problem, const void* reference, const void* enumeration) {
+  lyra::runtime::ConstraintMembersOf(
+      Read<ObjectRef>(problem), ErasedAt(reference),
+      Read<Enumeration>(enumeration));
+}
+
+void lyra_rt_constraint_rand(
+    const void* problem, const void* reference, const void* value,
+    const void* value_type) {
+  const ObjectRef& p = Read<ObjectRef>(problem);
+  const lyra::runtime::ErasedReference& variable = ErasedAt(reference);
+  lyra::runtime::ConstraintDeclareErased(
+      p, variable, value, lyra::runtime::TypeAt(value_type),
+      lyra::runtime::ConstraintProblem::Declared::kRand,
+      lyra::runtime::DeclaredWhole(p, variable));
+}
+
+void lyra_rt_constraint_randc(
+    const void* problem, const void* reference, const void* value,
+    const void* value_type) {
+  const ObjectRef& p = Read<ObjectRef>(problem);
+  const lyra::runtime::ErasedReference& variable = ErasedAt(reference);
+  lyra::runtime::ConstraintDeclareErased(
+      p, variable, value, lyra::runtime::TypeAt(value_type),
+      lyra::runtime::ConstraintProblem::Declared::kRandc,
+      lyra::runtime::DeclaredWhole(p, variable));
+}
+
+auto lyra_rt_constraint_variable(
+    const void* problem, const void* reference, const void* value,
+    const void* value_type) -> std::int64_t {
+  return lyra::runtime::ConstraintVariableErased(
+      Read<ObjectRef>(problem), ErasedAt(reference), value,
+      lyra::runtime::TypeAt(value_type));
+}
+
+auto lyra_rt_constraint_constant(
+    const void* problem, const void* value, const void* value_type)
+    -> std::int64_t {
+  return lyra::runtime::ConstraintConstantErased(
+      Read<ObjectRef>(problem), value, lyra::runtime::TypeAt(value_type));
+}
+
+void lyra_rt_randomize_nested(
+    const void* problem, const void* reference, const void* value,
+    const void* value_type) {
+  const lyra::runtime::ErasedReference& handle = ErasedAt(reference);
+  lyra::runtime::RandomizeNestedErased(
+      Read<ObjectRef>(problem), handle, value,
+      lyra::runtime::TypeAt(value_type),
+      lyra::runtime::RandomVariablePath{
+          .declared = handle.storage, .positions = {}},
+      true);
+}
+
+auto lyra_rt_constraint_block_enabled(void* object, const void* name) -> bool {
+  return lyra::runtime::ConstraintBlockEnabled(
+      static_cast<GcObject*>(object), Read<String>(name));
+}
+
+auto lyra_rt_static_constraint_block_enabled(const void* key) -> bool {
+  return lyra::runtime::StaticConstraintBlockEnabled(Read<String>(key));
+}
+
+auto lyra_rt_constraint_negate(const void* problem, std::int64_t a)
+    -> std::int64_t {
+  return lyra::runtime::ConstraintNegate(Read<ObjectRef>(problem), a);
+}
+
+auto lyra_rt_constraint_bitwise_not(const void* problem, std::int64_t a)
+    -> std::int64_t {
+  return lyra::runtime::ConstraintBitwiseNot(Read<ObjectRef>(problem), a);
+}
+
+auto lyra_rt_constraint_reduce_and(const void* problem, std::int64_t a)
+    -> std::int64_t {
+  return lyra::runtime::ConstraintReduceAnd(Read<ObjectRef>(problem), a);
+}
+
+auto lyra_rt_constraint_reduce_or(const void* problem, std::int64_t a)
+    -> std::int64_t {
+  return lyra::runtime::ConstraintReduceOr(Read<ObjectRef>(problem), a);
+}
+
+auto lyra_rt_constraint_reduce_xor(const void* problem, std::int64_t a)
+    -> std::int64_t {
+  return lyra::runtime::ConstraintReduceXor(Read<ObjectRef>(problem), a);
+}
+
+auto lyra_rt_constraint_logical_not(const void* problem, std::int64_t a)
+    -> std::int64_t {
+  return lyra::runtime::ConstraintLogicalNot(Read<ObjectRef>(problem), a);
+}
+
+auto lyra_rt_constraint_add(const void* problem, std::int64_t a, std::int64_t b)
+    -> std::int64_t {
+  return lyra::runtime::ConstraintAdd(Read<ObjectRef>(problem), a, b);
+}
+
+auto lyra_rt_constraint_subtract(
+    const void* problem, std::int64_t a, std::int64_t b) -> std::int64_t {
+  return lyra::runtime::ConstraintSubtract(Read<ObjectRef>(problem), a, b);
+}
+
+auto lyra_rt_constraint_multiply(
+    const void* problem, std::int64_t a, std::int64_t b) -> std::int64_t {
+  return lyra::runtime::ConstraintMultiply(Read<ObjectRef>(problem), a, b);
+}
+
+auto lyra_rt_constraint_bitwise_and(
+    const void* problem, std::int64_t a, std::int64_t b) -> std::int64_t {
+  return lyra::runtime::ConstraintBitwiseAnd(Read<ObjectRef>(problem), a, b);
+}
+
+auto lyra_rt_constraint_bitwise_or(
+    const void* problem, std::int64_t a, std::int64_t b) -> std::int64_t {
+  return lyra::runtime::ConstraintBitwiseOr(Read<ObjectRef>(problem), a, b);
+}
+
+auto lyra_rt_constraint_bitwise_xor(
+    const void* problem, std::int64_t a, std::int64_t b) -> std::int64_t {
+  return lyra::runtime::ConstraintBitwiseXor(Read<ObjectRef>(problem), a, b);
+}
+
+auto lyra_rt_constraint_equal(
+    const void* problem, std::int64_t a, std::int64_t b) -> std::int64_t {
+  return lyra::runtime::ConstraintEqual(Read<ObjectRef>(problem), a, b);
+}
+
+auto lyra_rt_constraint_logical_and(
+    const void* problem, std::int64_t a, std::int64_t b) -> std::int64_t {
+  return lyra::runtime::ConstraintLogicalAnd(Read<ObjectRef>(problem), a, b);
+}
+
+auto lyra_rt_constraint_logical_or(
+    const void* problem, std::int64_t a, std::int64_t b) -> std::int64_t {
+  return lyra::runtime::ConstraintLogicalOr(Read<ObjectRef>(problem), a, b);
+}
+
+auto lyra_rt_constraint_divide(
+    const void* problem, std::int64_t a, std::int64_t b, bool is_signed)
+    -> std::int64_t {
+  return lyra::runtime::ConstraintDivide(
+      Read<ObjectRef>(problem), a, b, is_signed);
+}
+
+auto lyra_rt_constraint_remainder(
+    const void* problem, std::int64_t a, std::int64_t b, bool is_signed)
+    -> std::int64_t {
+  return lyra::runtime::ConstraintRemainder(
+      Read<ObjectRef>(problem), a, b, is_signed);
+}
+
+auto lyra_rt_constraint_shift_left(
+    const void* problem, std::int64_t a, std::int64_t amount) -> std::int64_t {
+  return lyra::runtime::ConstraintShiftLeft(
+      Read<ObjectRef>(problem), a, amount);
+}
+
+auto lyra_rt_constraint_shift_right(
+    const void* problem, std::int64_t a, std::int64_t amount, bool arithmetic)
+    -> std::int64_t {
+  return lyra::runtime::ConstraintShiftRight(
+      Read<ObjectRef>(problem), a, amount, arithmetic);
+}
+
+auto lyra_rt_constraint_less(
+    const void* problem, std::int64_t a, std::int64_t b, bool is_signed)
+    -> std::int64_t {
+  return lyra::runtime::ConstraintLess(
+      Read<ObjectRef>(problem), a, b, is_signed);
+}
+
+auto lyra_rt_constraint_concatenate(
+    const void* problem, std::int64_t high, std::int64_t low) -> std::int64_t {
+  return lyra::runtime::ConstraintConcatenate(
+      Read<ObjectRef>(problem), high, low);
+}
+
+auto lyra_rt_constraint_select(
+    const void* problem, std::int64_t condition, std::int64_t then_term,
+    std::int64_t else_term) -> std::int64_t {
+  return lyra::runtime::ConstraintSelect(
+      Read<ObjectRef>(problem), condition, then_term, else_term);
+}
+
+auto lyra_rt_constraint_resize(
+    const void* problem, std::int64_t a, std::int64_t bits, bool sign_extend)
+    -> std::int64_t {
+  return lyra::runtime::ConstraintResize(
+      Read<ObjectRef>(problem), a, bits, sign_extend);
+}
+
+auto lyra_rt_constraint_slice(
+    const void* problem, std::int64_t a, std::int64_t offset, std::int64_t bits)
+    -> std::int64_t {
+  return lyra::runtime::ConstraintSlice(
+      Read<ObjectRef>(problem), a, offset, bits);
+}
+
+void lyra_rt_constraint_require(const void* problem, std::int64_t condition) {
+  lyra::runtime::ConstraintRequire(Read<ObjectRef>(problem), condition);
+}
+
+void lyra_rt_constraint_prefer(const void* problem, std::int64_t condition) {
+  lyra::runtime::ConstraintPrefer(Read<ObjectRef>(problem), condition);
+}
+
+void lyra_rt_constraint_disable_soft(
+    const void* problem, std::int64_t variable) {
+  lyra::runtime::ConstraintDisableSoft(Read<ObjectRef>(problem), variable);
+}
+
+void lyra_rt_constraint_solve_before(
+    const void* problem, std::int64_t before, std::int64_t after) {
+  lyra::runtime::ConstraintSolveBefore(Read<ObjectRef>(problem), before, after);
+}
+
+auto lyra_rt_constraint_distribution(
+    const void* problem, std::int64_t subject, std::int64_t guard,
+    bool is_signed, bool soft) -> std::int64_t {
+  return lyra::runtime::ConstraintDistribution(
+      Read<ObjectRef>(problem), subject, guard, is_signed, soft);
+}
+
+void lyra_rt_constraint_distribution_item(
+    const void* problem, std::int64_t distribution, std::int64_t low,
+    std::int64_t high, std::int64_t weight, bool per_value) {
+  lyra::runtime::ConstraintDistributionItem(
+      Read<ObjectRef>(problem), distribution, low, high, weight, per_value);
+}
+
+void lyra_rt_constraint_distribution_default(
+    const void* problem, std::int64_t distribution, std::int64_t weight) {
+  lyra::runtime::ConstraintDistributionDefault(
+      Read<ObjectRef>(problem), distribution, weight);
+}
+
+auto lyra_rt_constraint_unique_set(const void* problem) -> std::int64_t {
+  return lyra::runtime::ConstraintUniqueSet(Read<ObjectRef>(problem));
+}
+
+void lyra_rt_constraint_unique_member(
+    const void* problem, std::int64_t set, std::int64_t term) {
+  lyra::runtime::ConstraintUniqueMember(Read<ObjectRef>(problem), set, term);
+}
+
+void lyra_rt_constraint_unique_array(
+    const void* problem, std::int64_t set, const void* reference,
+    const void* value, const void* value_type) {
+  lyra::runtime::ConstraintUniqueArrayErased(
+      Read<ObjectRef>(problem), set, ErasedAt(reference), value,
+      lyra::runtime::TypeAt(value_type));
+}
+
+void lyra_rt_constraint_unique_require(
+    const void* problem, std::int64_t set, std::int64_t guard) {
+  lyra::runtime::ConstraintUniqueRequire(Read<ObjectRef>(problem), set, guard);
+}
+
+auto lyra_rt_constraint_array_size(
+    const void* problem, const void* reference, const void* value,
+    const void* value_type) -> std::int64_t {
+  return lyra::runtime::ConstraintArraySizeErased(
+      Read<ObjectRef>(problem), ErasedAt(reference),
+      lyra::runtime::TypeAt(value_type).PartCount(value));
+}
+
+void lyra_rt_constraint_want(const void* problem, std::int64_t variable) {
+  lyra::runtime::ConstraintWant(Read<ObjectRef>(problem), variable);
+}
+
+auto lyra_rt_randomize_settle_first(const void* problem) -> bool {
+  return lyra::runtime::RandomizeSettleFirst(Read<ObjectRef>(problem));
+}
+
+void lyra_rt_rand_mode_set(
+    const void* declared, const void* value, const void* value_type,
+    const void* part, bool on) {
+  lyra::runtime::RandModeSetErased(
+      ErasedAt(declared), value, lyra::runtime::TypeAt(value_type),
+      ErasedAt(part), on);
+}
+
+auto lyra_rt_rand_mode_get(
+    const void* declared, const void* value, const void* value_type,
+    const void* part, void* out) -> void* {
+  return Emplace(
+      out, lyra::runtime::RandModeGetErased(
+               ErasedAt(declared), value, lyra::runtime::TypeAt(value_type),
+               ErasedAt(part)));
+}
+
+void lyra_rt_object_rand_mode_set(void* object, bool on) {
+  lyra::runtime::ObjectRandModeSet(static_cast<GcObject*>(object), on);
+}
+
+void lyra_rt_constraint_mode_set(void* object, const void* name, bool on) {
+  lyra::runtime::ConstraintModeSet(
+      static_cast<GcObject*>(object), Read<String>(name), on);
+}
+
+auto lyra_rt_constraint_mode_get(void* object, const void* name, void* out)
+    -> void* {
+  return Emplace(
+      out, lyra::runtime::ConstraintModeGet(
+               static_cast<GcObject*>(object), Read<String>(name)));
+}
+
+void lyra_rt_object_constraint_mode_set(void* object, bool on) {
+  lyra::runtime::ObjectConstraintModeSet(static_cast<GcObject*>(object), on);
+}
+
+void lyra_rt_static_constraint_mode_set(const void* key, bool on) {
+  lyra::runtime::StaticConstraintModeSet(Read<String>(key), on);
+}
+
+auto lyra_rt_static_constraint_mode_get(const void* key, void* out) -> void* {
+  return Emplace(
+      out, lyra::runtime::StaticConstraintModeGet(Read<String>(key)));
 }
 
 void lyra_rt_closure_box_end(void* closure) {

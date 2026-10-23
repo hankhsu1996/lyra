@@ -15,7 +15,9 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/runtime/any.hpp"
 #include "lyra/runtime/cancellation.hpp"
+#include "lyra/runtime/class_object.hpp"
 #include "lyra/runtime/closure.hpp"
+#include "lyra/runtime/constraint_problem.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/evaluation_attempts.hpp"
 #include "lyra/runtime/file_table.hpp"
@@ -445,10 +447,14 @@ auto LayoutOf(support::RuntimeClass klass) -> ObjectLayout {
       return Of<Scope>();
     case support::RuntimeClass::kObject:
       return Of<GcObject>();
+    case support::RuntimeClass::kClassObject:
+      return Of<ClassObject>();
     case support::RuntimeClass::kProcess:
       return Of<RuntimeProcess>();
     case support::RuntimeClass::kSynchronizationObject:
       return Of<SynchronizationObject>();
+    case support::RuntimeClass::kConstraintProblem:
+      return Of<ConstraintProblem>();
   }
   throw InternalError("object layout: unknown runtime class");
 }
@@ -465,11 +471,15 @@ auto TypeInfoSymbolOf(support::RuntimeClass klass) -> std::string {
       return std::string("_ZTI") + typeid(Scope).name();
     case support::RuntimeClass::kObject:
       return std::string("_ZTI") + typeid(GcObject).name();
+    case support::RuntimeClass::kClassObject:
+      return std::string("_ZTI") + typeid(ClassObject).name();
     case support::RuntimeClass::kProcess:
     case support::RuntimeClass::kSynchronizationObject:
+    case support::RuntimeClass::kConstraintProblem:
       throw InternalError(
-          "object layout: a process or an event's object is read as a class a "
-          "value extends -- please report this as a bug");
+          "object layout: a process, an event's object or a randomization's "
+          "problem is read as a class a value extends -- please report this as "
+          "a bug");
   }
   throw InternalError("object layout: unknown runtime class");
 }
@@ -485,13 +495,17 @@ auto BaseObjectConstructorSymbolOf(support::RuntimeClass klass)
       return "_ZN4lyra7runtime5ScopeC2Ev";
     case support::RuntimeClass::kObject:
       return "_ZN4lyra7runtime8GcObjectC2Ev";
+    case support::RuntimeClass::kClassObject:
+      return "_ZN4lyra7runtime11ClassObjectC2Ev";
     case support::RuntimeClass::kProcess:
     case support::RuntimeClass::kSynchronizationObject:
+    case support::RuntimeClass::kConstraintProblem:
       break;
   }
   throw InternalError(
-      "object layout: a process or an event's object is read as a class a "
-      "value extends -- please report this as a bug");
+      "object layout: a process, an event's object or a randomization's "
+      "problem is read as a class a value extends -- please report this as a "
+      "bug");
 }
 
 auto BaseObjectDestructorSymbolOf(support::RuntimeClass klass)
@@ -501,19 +515,23 @@ auto BaseObjectDestructorSymbolOf(support::RuntimeClass klass)
       return "_ZN4lyra7runtime5ScopeD2Ev";
     case support::RuntimeClass::kObject:
       return "_ZN4lyra7runtime8GcObjectD2Ev";
+    case support::RuntimeClass::kClassObject:
+      return "_ZN4lyra7runtime11ClassObjectD2Ev";
     case support::RuntimeClass::kProcess:
     case support::RuntimeClass::kSynchronizationObject:
+    case support::RuntimeClass::kConstraintProblem:
       break;
   }
   throw InternalError(
-      "object layout: a process or an event's object is read as a class a "
-      "value extends -- please report this as a bug");
+      "object layout: a process, an event's object or a randomization's "
+      "problem is read as a class a value extends -- please report this as a "
+      "bug");
 }
 
-// The Itanium mangling of each member function of `lyra::runtime::Scope`. A
-// pointer to a member function names no symbol, so these are written out; a
-// wrong one fails every program's link, since every class extending the scope
-// that does not override one names it.
+// The Itanium mangling of each virtual member function the library's classes
+// declare. A pointer to a member function names no symbol, so these are
+// written out; a wrong one fails every program's link, since every class
+// extending the scope or the class object that does not override one names it.
 auto VirtualFunctionSymbolOf(support::LibraryVirtual function)
     -> std::string_view {
   switch (function) {
@@ -525,6 +543,19 @@ auto VirtualFunctionSymbolOf(support::LibraryVirtual function)
       return "_ZN4lyra7runtime5Scope19sv_create_processesEv";
     case support::LibraryVirtual::kScopeDescribe:
       return "_ZN4lyra7runtime5Scope11sv_describeEv";
+    case support::LibraryVirtual::kClassRandVariables:
+      return "_ZN4lyra7runtime11ClassObject17sv_rand_variablesERKNS_"
+             "5value9ObjectRefE";
+    case support::LibraryVirtual::kClassConstrain:
+      return "_ZN4lyra7runtime11ClassObject12sv_constrainERKNS_"
+             "5value9ObjectRefE";
+    case support::LibraryVirtual::kClassRandObjects:
+      return "_ZN4lyra7runtime11ClassObject15sv_rand_objectsERKNS_"
+             "5value9ObjectRefE";
+    case support::LibraryVirtual::kClassPreRandomize:
+      return "_ZN4lyra7runtime11ClassObject16sv_pre_randomizeEv";
+    case support::LibraryVirtual::kClassPostRandomize:
+      return "_ZN4lyra7runtime11ClassObject17sv_post_randomizeEv";
   }
   throw InternalError("object layout: unknown library virtual");
 }

@@ -439,6 +439,36 @@ cc_test(
 )
 
 cc_test(
+    name = "runtime_constraint_problem_test",
+    srcs = ["runtime/constraint_problem_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:runtime",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "runtime_natural_test",
+    srcs = ["runtime/natural_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:runtime",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "runtime_constraint_sampler_test",
+    srcs = ["runtime/constraint_sampler_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:runtime",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "runtime_dump_writer_test",
     srcs = ["runtime/dump_writer_test.cpp"],
     copts = LYRA_COPTS,

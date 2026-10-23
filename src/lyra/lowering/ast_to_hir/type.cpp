@@ -37,6 +37,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
+#include "lyra/lowering/ast_to_hir/constraint_block.hpp"
 #include "lyra/lowering/ast_to_hir/covergroup_decl.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
@@ -216,6 +217,36 @@ auto LowerMemberDefault(
   return std::optional<hir::ConstantValue>{*std::move(value_or)};
 }
 
+// How a property or a structure member of type `type` is declared random
+// (LRM 18.4). A `randc` one runs through a permutation of its values, held
+// for a value of up to 64 bits, which LRM 18.4.2 lets an implementation limit
+// it to; an array's elements are each such a value.
+auto RandomQualifierOf(
+    const slang::ast::Type& type, slang::ast::RandMode mode,
+    diag::SourceSpan span) -> diag::Result<hir::RandomQualifier> {
+  switch (mode) {
+    case slang::ast::RandMode::None:
+      return hir::RandomQualifier::kNone;
+    case slang::ast::RandMode::Rand:
+      return hir::RandomQualifier::kRand;
+    case slang::ast::RandMode::RandC: {
+      const slang::ast::Type* value = &type.getCanonicalType();
+      while (value->isUnpackedArray()) {
+        value = &value->getArrayElementType()->getCanonicalType();
+      }
+      if (value->isIntegral() && value->getBitWidth() > 64) {
+        return diag::Fail(
+            span, diag::DiagCode::kUnsupportedClassFeature,
+            "a 'randc' variable of {} bits is wider than the 64 bits "
+            "supported",
+            value->getBitWidth());
+      }
+      return hir::RandomQualifier::kRandc;
+    }
+  }
+  throw InternalError("RandomQualifierOf: unknown rand mode");
+}
+
 auto LowerUnpackedAggregateFields(
     std::span<const slang::ast::FieldSymbol* const> fields,
     diag::SourceSpan decl_span, UnitLowerer& unit_lowerer)
@@ -231,11 +262,15 @@ auto LowerUnpackedAggregateFields(
     if (!default_or) {
       return std::unexpected(std::move(default_or.error()));
     }
+    auto random =
+        RandomQualifierOf(field->getType(), field->randMode, decl_span);
+    if (!random) return std::unexpected(std::move(random.error()));
     out.push_back(
         hir::UnpackedAggregateField{
             .name = std::string(field->name),
             .type = *field_type_or,
             .default_init = *std::move(default_or),
+            .random = *random,
         });
   }
   return out;
@@ -646,12 +681,12 @@ auto SynthesizeDefaultConstructor(
       .reads = {}};
 }
 
-// The class declaring `method`. A method defined out of block (LRM 8.24) and
-// the stub standing for a pure virtual one (LRM 8.21) sit in that class as
-// well.
-auto DeclaringClassOf(const slang::ast::SubroutineSymbol& method)
+// The class declaring `member`, a method or a constraint block. A method
+// defined out of block (LRM 8.24) and the stub standing for a pure virtual one
+// (LRM 8.21) sit in that class as well.
+auto DeclaringClassOf(const slang::ast::Symbol& member)
     -> const slang::ast::ClassType& {
-  return method.getParentScope()->asSymbol().as<slang::ast::ClassType>();
+  return member.getParentScope()->asSymbol().as<slang::ast::ClassType>();
 }
 
 // The definition a slang override link names. A link may point at the base's
@@ -898,6 +933,72 @@ auto OverriddenMethod(
         "slang normally materializes");
   }
   return stub;
+}
+
+// A constraint block (LRM 18.5) as the method of its class it is: called with
+// the problem of the call of `randomize()` that reaches it, its body the one
+// constraint tree it states. Every block is virtual, and one of a name a class
+// it extends declares overrides that one (LRM 18.5.2); a static block's mode is
+// its class's rather than the object's, and it still constrains the object it
+// is called on (LRM 18.5.10). A `pure` block states only that every class
+// extending it defines one (LRM 18.5.1).
+auto LowerConstraintBlockDecl(
+    UnitLowerer& unit_lowerer, const slang::ast::ClassType& cls,
+    const slang::ast::ConstraintBlockSymbol& block,
+    const WalkFrame& class_frame, diag::SourceSpan span)
+    -> diag::Result<hir::SubroutineDecl> {
+  auto void_type =
+      unit_lowerer.InternType(cls.getCompilation().getVoidType(), span);
+  if (!void_type) return std::unexpected(std::move(void_type.error()));
+  hir::ProceduralBody body = unit_lowerer.MakeProceduralBody(block);
+  ProcessLowerer lowerer(unit_lowerer, block);
+  OpenProceduralScope root{
+      unit_lowerer.LookupProceduralScope(block),
+      hir::ProceduralScopeKind::kSubroutineRoot, NameInAPath(block)};
+  const WalkFrame frame =
+      class_frame.WithProceduralBody(&body).WithOpenScope(&root);
+  const bool is_pure = block.flags.has(slang::ast::ConstraintBlockFlags::Pure);
+  const bool is_static =
+      block.flags.has(slang::ast::ConstraintBlockFlags::Static);
+  hir::StmtId root_stmt{};
+  if (is_pure) {
+    root_stmt = body.stmts.Add(
+        hir::Stmt{
+            .label = std::nullopt, .data = hir::EmptyStmt{}, .span = span});
+  } else {
+    auto constraints = lowerer.LowerConstraint(block.getConstraints(), frame);
+    if (!constraints) return std::unexpected(std::move(constraints.error()));
+    root_stmt = body.stmts.Add(
+        hir::Stmt{
+            .label = std::nullopt,
+            .data =
+                hir::ConstraintStmt{
+                    .constraints =
+                        body.constraints.Add(*std::move(constraints))},
+            .span = span});
+  }
+  body.root_scope = frame.SealScope(std::move(root));
+
+  std::optional<hir::OverriddenBehavior> overrides;
+  if (const auto* base = OverriddenConstraintBlock(cls, block.name)) {
+    auto taken = unit_lowerer.MakeOverriddenBehavior(*base, span);
+    if (!taken) return std::unexpected(std::move(taken.error()));
+    overrides = *std::move(taken);
+  }
+  return hir::SubroutineDecl{
+      .name = std::string{block.name},
+      .kind = is_static ? hir::SubroutineKind::kStaticConstraintBlock
+                        : hir::SubroutineKind::kConstraintBlock,
+      .result_type = *void_type,
+      .params = {},
+      .result_var = std::nullopt,
+      .body = std::move(body),
+      .root_stmt = root_stmt,
+      .is_virtual = true,
+      .is_prototype = is_pure,
+      .is_static = false,
+      .overrides = std::move(overrides),
+      .reads = {}};
 }
 
 // Lowers one method a class defines. SystemVerilog has two spellings for that
@@ -1255,7 +1356,7 @@ auto UnitLowerer::StateConformance(
 }
 
 auto UnitLowerer::MakeOverriddenBehavior(
-    const slang::ast::SubroutineSymbol& method, diag::SourceSpan span)
+    const slang::ast::Symbol& method, diag::SourceSpan span)
     -> diag::Result<hir::OverriddenBehavior> {
   auto declaring = ResolveClassRef(DeclaringClassOf(method), span);
   if (!declaring) return std::unexpected(std::move(declaring.error()));
@@ -1563,6 +1664,8 @@ auto UnitLowerer::InternLocalClass(
     }
     auto prop_type = InternType(prop.getType(), span);
     if (!prop_type) return std::unexpected(std::move(prop_type.error()));
+    auto random = RandomQualifierOf(prop.getType(), prop.randMode, span);
+    if (!random) return std::unexpected(std::move(random.error()));
     // LRM 8.9 / 8.10 keyword position: `static <T> x` marks a type-associated
     // property, whose storage the type owns rather than each object of it.
     // How many such cells exist is a separate question, answered by how many
@@ -1573,7 +1676,9 @@ auto UnitLowerer::InternLocalClass(
     if (prop.lifetime == slang::ast::VariableLifetime::Static) {
       const hir::StaticPropertyId static_id = decl.static_properties.Add(
           hir::ClassStaticProperty{
-              .name = std::string(prop.name), .type = *prop_type});
+              .name = std::string(prop.name),
+              .type = *prop_type,
+              .random = *random});
       RegisterClassPropertyStaticId(prop, static_id);
       // A `local` one is named nowhere outside the class (LRM 8.18), so it is
       // published to nobody.
@@ -1588,7 +1693,8 @@ auto UnitLowerer::InternLocalClass(
         hir::ClassField{
             .name = std::string(prop.name),
             .type = *prop_type,
-            .is_published = prop.visibility != slang::ast::Visibility::Local});
+            .is_published = prop.visibility != slang::ast::Visibility::Local,
+            .random = *random});
     RegisterClassPropertyFieldId(prop, field_id);
   }
   // Every callable the class body declares, resolved to the subroutine that
@@ -1649,6 +1755,19 @@ auto UnitLowerer::InternLocalClass(
   }
   for (const auto* proto : pure_prototypes) {
     RegisterMethodId(*proto->getSubroutine(), decl.methods.Declare());
+  }
+  // A constraint block is a member of the class as a method is (LRM 18.5),
+  // overridden by a block of its name in a class extending this one (LRM
+  // 18.5.2), so it takes a method's identity, after every method, and is
+  // published as one.
+  std::vector<const slang::ast::ConstraintBlockSymbol*> constraint_blocks;
+  for (const auto& block :
+       cls.membersOfType<slang::ast::ConstraintBlockSymbol>()) {
+    if (block.getParentScope() != &cls) {
+      continue;
+    }
+    constraint_blocks.push_back(&block);
+    RegisterMethodId(block, decl.methods.Declare());
   }
 
   // What this class would publish to another unit, taken in the one order its
@@ -1726,6 +1845,32 @@ auto UnitLowerer::InternLocalClass(
       return std::unexpected(std::move(added.error()));
     }
   }
+  auto void_type = InternType(cls.getCompilation().getVoidType(), span);
+  if (!void_type) return std::unexpected(std::move(void_type.error()));
+  for (const auto* block : constraint_blocks) {
+    const bool is_pure =
+        block->flags.has(slang::ast::ConstraintBlockFlags::Pure);
+    const bool is_static =
+        block->flags.has(slang::ast::ConstraintBlockFlags::Static);
+    hir::MethodDispatch dispatch = hir::IntroducesVirtual{.is_pure = is_pure};
+    if (OverriddenConstraintBlock(cls, block->name) != nullptr) {
+      dispatch = hir::OverridesVirtual{.is_pure = is_pure};
+    }
+    own_signature.methods.push_back(
+        hir::PublishedMethod{
+            .prototype =
+                hir::PublishedCallable{
+                    .name = std::string{block->name},
+                    .interface =
+                        hir::ExternalCalleeInterface{
+                            .kind = is_static
+                                        ? hir::SubroutineKind::
+                                              kStaticConstraintBlock
+                                        : hir::SubroutineKind::kConstraintBlock,
+                            .params = {}},
+                    .result_type = *void_type},
+            .dispatch = dispatch});
+  }
   // Each covergroup the class embeds is made by a method of the class that a
   // class extending it overrides where its covergroup extends this one (LRM
   // 19.4.1), after the methods the source declares.
@@ -1749,6 +1894,7 @@ auto UnitLowerer::InternLocalClass(
           .decl = std::move(decl_owner),
           .defined_methods = std::move(defined_methods),
           .pure_prototypes = std::move(pure_prototypes),
+          .constraint_blocks = std::move(constraint_blocks),
           .constructor_sym = constructor_sym});
   return id;
 }
@@ -1828,7 +1974,14 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
     auto method_decl =
         LowerDefinedClassMethod(*this, cls, *method, class_frame, span);
     if (!method_decl) return std::unexpected(std::move(method_decl.error()));
-    decl.methods.Define(LookupMethodId(*method), *std::move(method_decl));
+    const hir::MethodId id = LookupMethodId(*method);
+    decl.methods.Define(id, *std::move(method_decl));
+    // What `randomize()` calls around itself on an object of the class (LRM
+    // 18.6.2): the one the class declares, where it declares one.
+    if (method->flags.has(slang::ast::MethodFlags::PrePostRandomize)) {
+      (method->name == "pre_randomize" ? decl.pre_randomize
+                                       : decl.post_randomize) = id;
+    }
   }
 
   // A pure virtual method's signature occupies a class-owned method slot the
@@ -1855,6 +2008,13 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
     }
     decl.methods.Define(
         LookupMethodId(*proto->getSubroutine()), *std::move(proto_decl));
+  }
+
+  for (const auto* block : pending.constraint_blocks) {
+    auto block_decl =
+        LowerConstraintBlockDecl(*this, cls, *block, class_frame, span);
+    if (!block_decl) return std::unexpected(std::move(block_decl.error()));
+    decl.methods.Define(LookupMethodId(*block), *std::move(block_decl));
   }
 
   // The class's `new` (LRM 8.7), lowered once every method identity exists so

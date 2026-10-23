@@ -44,10 +44,14 @@ auto RuntimeClassCppType(support::RuntimeClass klass) -> std::string_view {
       return "lyra::runtime::Scope";
     case support::RuntimeClass::kObject:
       return "lyra::runtime::GcObject";
+    case support::RuntimeClass::kClassObject:
+      return "lyra::runtime::ClassObject";
     case support::RuntimeClass::kProcess:
       return "lyra::runtime::RuntimeProcess";
     case support::RuntimeClass::kSynchronizationObject:
       return "lyra::runtime::SynchronizationObject";
+    case support::RuntimeClass::kConstraintProblem:
+      return "lyra::runtime::ConstraintProblem";
   }
   throw InternalError("backend::cpp: unknown runtime class");
 }
@@ -904,7 +908,7 @@ void WriteOne(TargetText& out, const CppClassRef& ref) {
             out += RuntimeClassCppType(support::RuntimeClass::kScope);
           },
           [&](const mir::ManagedObjectRootRef&) {
-            out += RuntimeClassCppType(support::RuntimeClass::kObject);
+            out += RuntimeClassCppType(support::RuntimeClass::kClassObject);
           }},
       ref.Ref());
 }

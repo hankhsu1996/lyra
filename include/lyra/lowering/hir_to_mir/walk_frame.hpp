@@ -213,6 +213,16 @@ struct WalkFrame {
   // by-value arguments that statement evaluates. Null elsewhere.
   const ArgumentsEvaluatedEarlier* arguments_evaluated_earlier = nullptr;
 
+  // The local holding the problem of the call of `randomize()` a constraint is
+  // stated to (LRM 18.5, 18.7), in a constraint block's body or the
+  // constraints written with a call. Absent anywhere no constraint is lowered.
+  std::optional<mir::LocalId> constraint_problem;
+
+  // The local holding the object a `randomize() with` call randomizes, which a
+  // name in the constraints written with the call reaches its class's
+  // properties through (LRM 18.7). Absent outside those constraints.
+  std::optional<mir::LocalId> randomized_object;
+
   // How far out of `self` that instance sits, in class-chain steps. Answered
   // per alternative rather than by testing for one, so a body that reaches its
   // instance some further way has to say how far out it sits.
@@ -342,6 +352,20 @@ struct WalkFrame {
       -> WalkFrame {
     WalkFrame next = *this;
     next.normal_cleanups = &cleanup;
+    return next;
+  }
+
+  [[nodiscard]] auto WithConstraintProblem(mir::LocalId problem) const
+      -> WalkFrame {
+    WalkFrame next = *this;
+    next.constraint_problem = problem;
+    return next;
+  }
+
+  [[nodiscard]] auto WithRandomizedObject(mir::LocalId object) const
+      -> WalkFrame {
+    WalkFrame next = *this;
+    next.randomized_object = object;
     return next;
   }
 

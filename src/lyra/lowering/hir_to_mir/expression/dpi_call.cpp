@@ -1163,6 +1163,11 @@ void ReturnTheFallbackAnswer(
       return;
     case hir::SubroutineKind::kFunction:
       break;
+    case hir::SubroutineKind::kConstraintBlock:
+    case hir::SubroutineKind::kStaticConstraintBlock:
+      throw InternalError(
+          "ReturnTheFallbackAnswer: a constraint block is exported to C -- "
+          "please report this as a bug");
   }
   const mir::TypeId carrier =
       CarrierTypeId(unit, support::ScalarCarrier{ret_abi});

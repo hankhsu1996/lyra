@@ -40,4 +40,17 @@ auto DrawRng::FromStateText(std::string_view text) -> std::optional<DrawRng> {
   return DrawRng{addend, congruential, xor_low, xor_high};
 }
 
+auto DrawBelow(DrawRng& rng, std::uint64_t span) -> std::uint64_t {
+  // Rejection rather than a modulo of the raw draw: the low values would
+  // otherwise come up more often whenever the span does not divide the
+  // generator's range, which is every span that is not a power of two. A span
+  // covering the whole range divides it exactly, so nothing is ever rejected.
+  const std::uint64_t limit = (std::uint64_t{1} << 32U) / span * span;
+  std::uint64_t draw = rng.NextValue();
+  while (draw >= limit) {
+    draw = rng.NextValue();
+  }
+  return draw % span;
+}
+
 }  // namespace lyra::runtime

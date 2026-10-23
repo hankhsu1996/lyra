@@ -259,6 +259,9 @@ struct BuiltinMirTypes {
   // What a source event is: a managed reference to the synchronization object
   // the runtime library defines (LRM 6.17), or to none.
   TypeId event;
+  // The problem a call of `randomize()` fills (LRM 18.6): a managed reference
+  // to the object the runtime library defines for it.
+  TypeId constraint_problem;
   TypeId files;
   TypeId diagnostic;
   // An enumeration's member table: its members in declared order, which the
@@ -470,6 +473,12 @@ struct CompilationUnit {
                         Type{RuntimeClassType{
                             .which = support::RuntimeClass::
                                 kSynchronizationObject}})}}),
+            .constraint_problem = types.Intern(
+                Type{ManagedRefType{
+                    .pointee = types.Intern(
+                        Type{RuntimeClassType{
+                            .which =
+                                support::RuntimeClass::kConstraintProblem}})}}),
             .files = types.Intern(Type{FilesType{}}),
             .diagnostic = types.Intern(Type{DiagnosticType{}}),
             .enumeration = types.Intern(

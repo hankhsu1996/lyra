@@ -460,7 +460,7 @@ auto UnitLowerer::BaseType(const mir::ClassRef& base) -> lir::TypeId {
             return library_class(support::RuntimeClass::kScope);
           },
           [&](const mir::ManagedObjectRootRef&) {
-            return library_class(support::RuntimeClass::kObject);
+            return library_class(support::RuntimeClass::kClassObject);
           }},
       base);
 }
@@ -468,9 +468,18 @@ auto UnitLowerer::BaseType(const mir::ClassRef& base) -> lir::TypeId {
 auto UnitLowerer::ClassBodySymbol(
     lir::SymbolPart class_part, const mir::Class& cls, mir::CallableId id) const
     -> std::string {
+  // An override of a library class's function is named by the function it
+  // overrides, which a derived class of another unit calls it by.
+  const std::optional<mir::VirtualDispatchRole>& role =
+      cls.callables.Get(id).virtual_dispatch;
+  const auto* library = role.has_value()
+                            ? std::get_if<mir::OverridesLibraryVirtual>(&*role)
+                            : nullptr;
   return lir::ClassCallableSymbol(
       lir::QualifierOf(out_, cls.path), std::move(class_part),
-      lir::SymbolPartOf(mir::NameOf(cls.named_callables, id), id.value));
+      library != nullptr
+          ? lir::SymbolPart::LibraryVirtual(library->function)
+          : lir::SymbolPartOf(mir::NameOf(cls.named_callables, id), id.value));
 }
 
 auto UnitLowerer::TakeClassIdentities(const mir::Class& cls)

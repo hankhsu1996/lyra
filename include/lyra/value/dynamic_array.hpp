@@ -99,6 +99,9 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>> {
   [[nodiscard]] auto RawAt(std::size_t i) const -> const T& {
     return *static_cast<const T*>(core_.At(i));
   }
+  [[nodiscard]] auto RawAt(std::size_t i) -> T& {
+    return *static_cast<T*>(core_.At(i));
+  }
 
   // LRM 7.4.5: an invalid-index write lands where no read reaches, which is no
   // element of the array.

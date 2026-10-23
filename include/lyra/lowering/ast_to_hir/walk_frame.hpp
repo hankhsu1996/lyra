@@ -206,6 +206,10 @@ struct WalkFrame {
   // they were written in its class, so a member named without a handle reaches
   // it through this variable. Absent everywhere else.
   std::optional<CovergroupEmbedding> embedding;
+  // The class of the object a `randomize() with` call randomizes, while the
+  // constraints written with the call are lowered: a name of a property of it
+  // reaches that object, and `this` names it (LRM 18.7). Null elsewhere.
+  const slang::ast::ClassType* randomized_class = nullptr;
 
   // The lexical procedural scope whose contents are currently being walked.
   // Owned by the caller that opened it; null on a frame that is not inside a
@@ -405,6 +409,13 @@ struct WalkFrame {
     WalkFrame next = *this;
     next.active_iteration_clauses.push_back(
         ActiveIterationClause{.element = &element, .clause = clause});
+    return next;
+  }
+
+  [[nodiscard]] auto WithRandomizedClass(const slang::ast::ClassType& cls) const
+      -> WalkFrame {
+    WalkFrame next = *this;
+    next.randomized_class = &cls;
     return next;
   }
 

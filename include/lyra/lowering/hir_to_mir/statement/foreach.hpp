@@ -1,10 +1,15 @@
 #pragma once
 
+#include <functional>
 #include <optional>
+#include <span>
 #include <string>
 
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/expr_id.hpp"
+#include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -28,5 +33,19 @@ namespace lyra::lowering::hir_to_mir {
 auto LowerForeachStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::ForeachStmt& f) -> diag::Result<mir::Stmt>;
+
+// What a `foreach` runs once per tuple of indices, lowered into a scope of its
+// own under `frame`, where a `break` leaves every loop through `leaves`.
+using ForeachPass =
+    std::function<diag::Result<mir::Block>(const WalkFrame&, BreakTarget&)>;
+
+// The loops of a `foreach` over the array `array` binding `loop_vars`, the
+// same loops a `foreach` statement has, each pass running `pass`: what a
+// `foreach` constraint (LRM 18.5.7) states once per tuple of indices too.
+auto LowerForeachLoops(
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    hir::ExprId array,
+    std::span<const std::optional<hir::ProceduralVarId>> loop_vars,
+    const ForeachPass& pass) -> diag::Result<mir::Stmt>;
 
 }  // namespace lyra::lowering::hir_to_mir
