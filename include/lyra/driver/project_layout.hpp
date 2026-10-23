@@ -56,6 +56,10 @@ inline constexpr std::string_view kRuntimeIncludeDir = "runtime/include";
 inline constexpr std::string_view kRuntimeLibDir = "runtime/lib";
 inline constexpr std::string_view kRuntimeLibFile = "libcpp_runtime.a";
 inline constexpr std::string_view kRuntimeCacheDir = "runtime/cache";
+// The notices of the third-party code the runtime carries, which a program the
+// project builds carries too.
+inline constexpr std::string_view kThirdPartyLicensesFile =
+    "THIRD_PARTY_LICENSES";
 // Where a project keeps the runtime's own sources, which its compiler builds
 // beside the design where it optimizes the two as one program or checks the
 // program's memory, with a list of those a build compiles, each with the macros

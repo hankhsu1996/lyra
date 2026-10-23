@@ -20,9 +20,12 @@
 #include "lyra/runtime/constraint_bdd.hpp"
 #include "lyra/runtime/constraint_circuit.hpp"
 #include "lyra/runtime/constraint_sampler.hpp"
+#include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/natural.hpp"
 #include "lyra/runtime/object_change.hpp"
+#include "lyra/runtime/randomization.hpp"
 #include "lyra/runtime/rng.hpp"
+#include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -31,12 +34,6 @@
 namespace lyra::runtime {
 
 namespace {
-
-// How many nodes a decision diagram may grow to before a draw gives up on
-// counting every assignment and falls back to cutting them by parities. A
-// node is a few dozen bytes with its tables, so this bounds a draw to some
-// tens of megabytes.
-constexpr std::size_t kDiagramBudget = std::size_t{1} << 18U;
 
 auto WidthOf(const value::ValueType& type) -> std::uint64_t {
   const value::IntegralValueType* integral = type.AsIntegral();
@@ -154,8 +151,9 @@ void WriteBits(
 }  // namespace
 
 ConstraintProblem::ConstraintProblem(
-    DrawRng& generator, value::ObjectRef object, bool listed)
-    : generator_(&generator), object_(std::move(object)) {
+    RuntimeEffects& runtime, DrawRng& generator, value::ObjectRef object,
+    bool listed)
+    : runtime_(&runtime), generator_(&generator), object_(std::move(object)) {
   if (listed) {
     listed_.emplace();
   }
@@ -192,7 +190,7 @@ auto ConstraintProblem::Truth(std::int64_t term) -> CircuitLiteral {
 }
 
 auto ConstraintProblem::Chosen(
-    Declared declared, bool enabled, const void* at) const -> bool {
+    RandomQualifier declared, bool enabled, const void* at) const -> bool {
   if (settled_.contains(at)) {
     return false;
   }
@@ -200,10 +198,10 @@ auto ConstraintProblem::Chosen(
     return listed_->contains(at);
   }
   switch (declared) {
-    case Declared::kState:
+    case RandomQualifier::kNone:
       return false;
-    case Declared::kRand:
-    case Declared::kRandc:
+    case RandomQualifier::kRand:
+    case RandomQualifier::kRandc:
       return enabled;
   }
   throw InternalError("ConstraintProblem: unknown declaration of a variable");
@@ -273,8 +271,8 @@ void ConstraintProblem::List(
   }
 }
 
-auto ConstraintProblem::ListArray(const ErasedReference& whole, Resizer resize)
-    -> std::int64_t {
+auto ConstraintProblem::ListArray(
+    const ErasedReference& whole, ArrayResizer resize) -> std::int64_t {
   listed_->insert(whole.storage);
   return DeclareArray(whole, std::move(resize), true);
 }
@@ -292,7 +290,7 @@ auto ConstraintProblem::MembersOf(const ErasedReference& lent) const
 
 void ConstraintProblem::Declare(
     const ErasedReference& lent, const void* value,
-    const value::ValueType& type, Declared declared, bool enabled,
+    const value::ValueType& type, RandomQualifier declared, bool enabled,
     ConstraintCycle* cycle, const value::Enumeration* members,
     std::optional<std::int64_t> within) {
   if (const auto it = variable_at_.find(lent.storage);
@@ -300,7 +298,7 @@ void ConstraintProblem::Declare(
     Variable& variable = variables_[it->second];
     // A listed variable keeps its cyclic mode (LRM 18.11), which only its
     // declaration knows.
-    if (variable.random && declared == Declared::kRandc &&
+    if (variable.random && declared == RandomQualifier::kRandc &&
         variable.cycle == nullptr) {
       variable.cycle = cycle;
     }
@@ -309,14 +307,14 @@ void ConstraintProblem::Declare(
   const std::size_t index = variables_.size();
   AddVariable(
       lent, value, type, Chosen(declared, enabled, lent.storage),
-      declared == Declared::kRandc ? cycle : nullptr, members);
+      declared == RandomQualifier::kRandc ? cycle : nullptr, members);
   if (within.has_value()) {
     arrays_.at(static_cast<std::size_t>(*within)).elements.push_back(index);
   }
 }
 
 auto ConstraintProblem::DeclareArray(
-    const ErasedReference& whole, Resizer resize, bool enabled)
+    const ErasedReference& whole, ArrayResizer resize, bool enabled)
     -> std::int64_t {
   if (const auto it = array_at_.find(whole.storage); it != array_at_.end()) {
     return static_cast<std::int64_t>(it->second);
@@ -324,7 +322,7 @@ auto ConstraintProblem::DeclareArray(
   // A size the sizes were settled to is held from then on, and so is one a
   // listing call does not name (LRM 18.11).
   const bool chosen =
-      !settled_first_ && Chosen(Declared::kRand, enabled, whole.storage);
+      !settled_first_ && Chosen(RandomQualifier::kRand, enabled, whole.storage);
   array_at_.emplace(whole.storage, arrays_.size());
   arrays_.push_back(
       RandomArray{
@@ -590,8 +588,8 @@ auto ConstraintProblem::Named(
     return variables_[it->second].term;
   }
   return AddVariable(
-      lent, value, type, Chosen(Declared::kState, false, lent.storage), nullptr,
-      MembersOf(lent));
+      lent, value, type, Chosen(RandomQualifier::kNone, false, lent.storage),
+      nullptr, MembersOf(lent));
 }
 
 auto ConstraintProblem::Constant(
@@ -857,7 +855,7 @@ void ConstraintProblem::UniqueRequire(std::int64_t set, std::int64_t guard) {
 }
 
 auto ConstraintProblem::ChooseDistributions(CircuitLiteral& condition) -> bool {
-  const ConstraintSampler sampler(circuit_, kDiagramBudget);
+  ConstraintSampler sampler(circuit_, runtime_->Randomize().NodeBudget());
   for (const WeightedChoice& choice : distributions_) {
     // The values each item names, of nonzero weight, and those no item names
     // where a default weighs them.
@@ -973,7 +971,7 @@ auto ConstraintSignature(
 }  // namespace
 
 auto ConstraintProblem::ChooseCycles(CircuitLiteral& condition) -> bool {
-  const ConstraintSampler sampler(circuit_, kDiagramBudget);
+  ConstraintSampler sampler(circuit_, runtime_->Randomize().NodeBudget());
   // The constraints on each cyclic variable, read before any is pinned: every
   // hard or soft constraint reading one of its bits.
   std::vector<std::uint64_t> signatures(variables_.size(), 0);
@@ -1066,6 +1064,7 @@ auto ConstraintProblem::ChooseCycles(CircuitLiteral& condition) -> bool {
           DrawnVariable{.inputs = variable.inputs, .members = members}};
       const std::optional<std::vector<bool>> drawn =
           sampler.Draw(untaken, one, CallGenerator());
+      drew_past_budget_ = drew_past_budget_ || sampler.DrewPastBudget();
       if (!drawn.has_value()) {
         return std::nullopt;
       }
@@ -1196,7 +1195,7 @@ auto ConstraintProblem::Solve() -> bool {
     if (vars.empty()) {
       continue;
     }
-    const ConstraintSampler sampler(circuit_, kDiagramBudget);
+    ConstraintSampler sampler(circuit_, runtime_->Randomize().NodeBudget());
     CircuitLiteral condition = condition_of[g];
 
     for (std::size_t s = soft_.size(); s-- > 0;) {
@@ -1260,6 +1259,7 @@ auto ConstraintProblem::Solve() -> bool {
       }
       const std::optional<std::vector<bool>> value =
           sampler.Draw(condition, drawn, CallGenerator());
+      drew_past_budget_ = drew_past_budget_ || sampler.DrewPastBudget();
       if (!value.has_value()) {
         return false;
       }
@@ -1270,6 +1270,18 @@ auto ConstraintProblem::Solve() -> bool {
             circuit_.And(condition, (*value)[i] ? input : input.Negated());
       }
     }
+  }
+  // Every answer meets the constraints, but one drawn past what the run can
+  // count is not drawn uniformly (LRM 18.5.9), which the run says once.
+  if (drew_past_budget_ && runtime_->Randomize().FirstPastBudget()) {
+    const std::array notes{base::DiagMessage(
+        "raise the limit with '+lyra+randomize+nodes=<count>'")};
+    runtime_->Diagnostic().Report(
+        Severity::kWarning,
+        base::DiagMessage(
+            "'randomize' drew values without a uniform distribution; its "
+            "constraints have too many solutions to count"),
+        notes);
   }
   return true;
 }

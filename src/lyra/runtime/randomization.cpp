@@ -1,11 +1,44 @@
 #include "lyra/runtime/randomization.hpp"
 
+#include <charconv>
+#include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
+#include <string_view>
+#include <system_error>
 
 #include "lyra/runtime/constraint_cycle.hpp"
 
 namespace lyra::runtime {
+
+namespace {
+
+constexpr std::string_view kNodeBudgetOption = "lyra+randomize+nodes=";
+
+}  // namespace
+
+RandomizeSettings::RandomizeSettings(std::span<const std::string> plusargs) {
+  for (const std::string& argument : plusargs) {
+    const std::string_view text(argument);
+    if (!text.starts_with(kNodeBudgetOption)) {
+      continue;
+    }
+    const std::string_view count = text.substr(kNodeBudgetOption.size());
+    std::size_t parsed = 0;
+    const auto [end, error] =
+        std::from_chars(count.data(), count.data() + count.size(), parsed);
+    if (error == std::errc{} && end == count.data() + count.size()) {
+      node_budget_ = parsed;
+    }
+  }
+}
+
+auto RandomizeSettings::FirstPastBudget() -> bool {
+  const bool first = !past_budget_reported_;
+  past_budget_reported_ = true;
+  return first;
+}
 
 auto RandomizationModes::RandEnabled(const RandomVariablePath& variable) const
     -> bool {

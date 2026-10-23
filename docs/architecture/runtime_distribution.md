@@ -1,10 +1,18 @@
 # Runtime Distribution
 
 Every program a backend produces links the **Lyra C++ runtime**: a static library and, for the C++
-backend's sources, its headers. The emitted code depends on nothing else from the Lyra toolchain --
-no third-party libraries. The runtime is, in effect, a small library that ships with the compiler
-and that emitted programs link against. The LLVM backend's modules reach it through the C ABI the
-library publishes rather than through its headers.
+backend's sources, its headers. The emitted code depends on nothing else from the Lyra toolchain;
+the third-party code the runtime uses is inside the library. The runtime is, in effect, a small
+library that ships with the compiler and that emitted programs link against. The LLVM backend's
+modules reach it through the C ABI the library publishes rather than through its headers.
+
+## The notices a program carries
+
+Some of that third-party code is under a license asking whoever distributes a program built from it
+to pass its notice on. The build gathers each such library's license, as the library states it, into
+one text that ships beside the runtime. Every program carries the same text inside its runtime and
+prints it when run with `+lyra+licenses`, and `emit cpp` writes it beside a project as
+`THIRD_PARTY_LICENSES`. Someone distributing a program Lyra built distributes that text with it.
 
 ## What form the runtime ships in
 

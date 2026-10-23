@@ -47,7 +47,12 @@ class ConstraintSampler {
   // where nothing makes it true.
   [[nodiscard]] auto Draw(
       CircuitLiteral condition, std::span<const DrawnVariable> drawn,
-      DrawRng& rng) const -> std::optional<std::vector<bool>>;
+      DrawRng& rng) -> std::optional<std::vector<bool>>;
+
+  // Whether some draw so far was made past the budget, and so not uniformly.
+  [[nodiscard]] auto DrewPastBudget() const -> bool {
+    return drew_past_budget_;
+  }
 
  private:
   [[nodiscard]] auto DrawBySearch(
@@ -56,6 +61,7 @@ class ConstraintSampler {
 
   const ConstraintCircuit* circuit_;
   std::size_t node_budget_;
+  bool drew_past_budget_ = false;
 };
 
 }  // namespace lyra::runtime

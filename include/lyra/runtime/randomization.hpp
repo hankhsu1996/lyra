@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -12,6 +13,36 @@
 #include "lyra/runtime/constraint_cycle.hpp"
 
 namespace lyra::runtime {
+
+// How the source declared a variable a constraint reads (LRM 18.4): not
+// random, `rand`, or `randc`.
+enum class RandomQualifier : std::uint8_t { kNone, kRand, kRandc };
+
+// Makes a random array `count` elements big, answering how to make it what it
+// was again.
+using ArrayResizer = std::function<std::function<void()>(std::size_t count)>;
+
+// What a run's command line says of how `randomize()` draws, and whether the
+// run has already told the user a call drew past what it can count.
+class RandomizeSettings {
+ public:
+  // How many live nodes counting a constraint's solutions may take before a
+  // call draws without counting them, unless the command line says otherwise.
+  static constexpr std::size_t kDefaultNodeBudget = std::size_t{1} << 18U;
+
+  explicit RandomizeSettings(std::span<const std::string> plusargs);
+
+  [[nodiscard]] auto NodeBudget() const -> std::size_t {
+    return node_budget_;
+  }
+  // Whether this is the run's first call drawing past the budget, the one it
+  // reports.
+  [[nodiscard]] auto FirstPastBudget() -> bool;
+
+ private:
+  std::size_t node_budget_ = kDefaultNodeBudget;
+  bool past_budget_reported_ = false;
+};
 
 // A random variable as its owner keeps its mode and its cycle: the variable the
 // class declares, by the address of its storage, which is its identity for as

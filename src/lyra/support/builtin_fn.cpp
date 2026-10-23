@@ -1598,12 +1598,14 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "randomize_object",
           .declaration = RuntimeFunction("RandomizeObject"),
-          .reaches_an_object = true};
+          .reaches_an_object = true,
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kRandomizeObjectListed:
       return {
           .name = "randomize_object_listed",
           .declaration = RuntimeFunction("RandomizeObjectListed"),
-          .reaches_an_object = true};
+          .reaches_an_object = true,
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kConstraintBlockEnabled:
       return {
           .name = "constraint_block_enabled",

@@ -155,7 +155,7 @@ cc_library(
 
 cc_library(
     name = "runtime",
-    srcs = glob(["src/lyra/runtime/*.cpp"]),
+    srcs = glob(["src/lyra/runtime/*.cpp"]) + [":third_party_licenses_text"],
     hdrs = glob(["include/lyra/runtime/*.hpp"]),
     copts = LYRA_COPTS,
     includes = ["include"],
@@ -169,6 +169,43 @@ cc_library(
         "@cudd",
         "@libfst",
     ],
+)
+
+# The notices of the third-party code every program carries inside the
+# runtime it links, each library's name above its license as the library
+# states it; the runtime prints them and `emit cpp` writes them beside a
+# project. Boost.Context's license asks for no notice in a program.
+genrule(
+    name = "third_party_licenses",
+    srcs = [
+        "@cadical//:LICENSE",
+        "@cudd//:LICENSE",
+        "@libfst//:LICENSE",
+        "@zlib//:LICENSE",
+    ],
+    outs = ["THIRD_PARTY_LICENSES"],
+    cmd = "{ " + "; printf '\\n'; ".join([
+        "printf '%s\\n\\n' '{}'; cat $(location {})".format(name, label)
+        for name, label in [
+            ("CaDiCaL", "@cadical//:LICENSE"),
+            ("CUDD", "@cudd//:LICENSE"),
+            ("libfst", "@libfst//:LICENSE"),
+            ("zlib", "@zlib//:LICENSE"),
+        ]
+    ]) + "; } > $@",
+)
+
+genrule(
+    name = "third_party_licenses_text",
+    srcs = [":third_party_licenses"],
+    outs = ["third_party_licenses_text.cpp"],
+    cmd = "{ " +
+          "printf '#include \"lyra/runtime/third_party_licenses.hpp\"\\n\\n'; " +
+          "printf 'namespace lyra::runtime {\\n\\n'; " +
+          "printf 'auto ThirdPartyLicenses() -> std::string_view {\\n'; " +
+          "printf '  return R\"lyra('; cat $<; printf ')lyra\";\\n}\\n\\n'; " +
+          "printf '}  // namespace lyra::runtime\\n'; " +
+          "} > $@",
 )
 
 cc_static_library(
@@ -520,6 +557,7 @@ cc_binary(
         ":cpp_runtime_address_sanitized",
         ":runtime_sources",
         ":runtime_surface",
+        ":third_party_licenses",
         "//third_party/systemverilog:svdpi.h",
     ],
     visibility = ["//visibility:public"],

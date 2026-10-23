@@ -4,6 +4,9 @@
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
+# The license, which a program carrying the library carries beside it.
+exports_files(["LICENSE"])
+
 cc_library(
     name = "cadical",
     srcs = glob(

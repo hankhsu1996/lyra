@@ -133,10 +133,11 @@ by which completion a solver happened to find.
   so a class of another unit can call its base's without knowing what the base declares.
 - A real random variable, an associative array declared random and an array of structures declared
   random are refused when a call reaches them; the solver has integral terms only.
-- A program carries CUDD (BSD-3-Clause) and CaDiCaL (MIT) inside its runtime, and a program built to
-  optimize at the link compiles both again, once per cache.
+- A program carries CUDD (BSD-3-Clause) and CaDiCaL (MIT) inside its runtime, with their notices,
+  and a program built to optimize at the link compiles both again, once per cache.
 - A condition too large for a diagram is drawn with a known bias toward the side of a bit holding
-  fewer completions.
+  fewer completions, which the run reports the first time a call draws so; the run's command line
+  may raise the bound.
 
 ## Cross-references
 

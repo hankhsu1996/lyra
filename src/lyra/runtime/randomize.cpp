@@ -67,10 +67,11 @@ auto ModesOf(const ErasedReference& variable) -> RandomizationModes& {
       variable.holder);
 }
 
-auto Begin(GcObject* object, bool listed) -> value::ObjectRef {
+auto Begin(GcObject* object, bool listed, RuntimeEffects& runtime)
+    -> value::ObjectRef {
   ClassObject& randomized = AsClassObject(object);
   auto made = std::make_unique<ConstraintProblem>(
-      randomized.Generator(), SelfHandle(object), listed);
+      runtime, randomized.Generator(), SelfHandle(object), listed);
   ConstraintProblem* problem = made.get();
   value::ObjectRef handle = AdoptObject(made.release());
   // `pre_randomize()` runs on the object and then on every random object it
@@ -95,17 +96,19 @@ auto Begin(GcObject* object, bool listed) -> value::ObjectRef {
 
 }  // namespace
 
-auto RandomizeObject(GcObject* object) -> value::ObjectRef {
-  return Begin(object, false);
+auto RandomizeObject(GcObject* object, RuntimeEffects& runtime)
+    -> value::ObjectRef {
+  return Begin(object, false, runtime);
 }
 
-auto RandomizeObjectListed(GcObject* object) -> value::ObjectRef {
-  return Begin(object, true);
+auto RandomizeObjectListed(GcObject* object, RuntimeEffects& runtime)
+    -> value::ObjectRef {
+  return Begin(object, true, runtime);
 }
 
 auto RandomizeScope(RuntimeEffects& runtime) -> value::ObjectRef {
   auto made = std::make_unique<ConstraintProblem>(
-      runtime.Running().rng, value::ObjectRef{}, true);
+      runtime, runtime.Running().rng, value::ObjectRef{}, true);
   return AdoptObject(made.release());
 }
 
@@ -150,7 +153,7 @@ auto RandomizeFinish(const value::ObjectRef& problem) -> value::Int {
 // writing what it held. Nothing for a type that is no array of a size the
 // program chooses.
 auto ResizeOf(const ErasedReference& whole, const value::ValueType& type)
-    -> std::optional<ConstraintProblem::Resizer> {
+    -> std::optional<ArrayResizer> {
   if (&type == &value::lyra_rt_dynarray_value_type) {
     return [whole, &type](std::size_t count) -> std::function<void()> {
       const auto& current =
@@ -211,12 +214,12 @@ auto CycleOf(
 void DeclareParts(
     ConstraintProblem& problem, RandomizationModes& modes,
     const ErasedReference& variable, const void* value,
-    const value::ValueType& type, ConstraintProblem::Declared declared,
+    const value::ValueType& type, RandomQualifier declared,
     const DeclaredPart& part) {
   const bool chosen = part.enabled && modes.RandEnabled(part.path);
   if (const value::IntegralValueType* integral = type.AsIntegral()) {
     ConstraintCycle* cycle =
-        declared == ConstraintProblem::Declared::kRandc
+        declared == RandomQualifier::kRandc
             ? &CycleOf(modes, part, integral->Shape().width)
             : nullptr;
     problem.Declare(
@@ -229,8 +232,7 @@ void DeclareParts(
         "randomizing a random variable of this type is not yet supported");
   }
   std::optional<std::int64_t> array = part.within;
-  if (std::optional<ConstraintProblem::Resizer> resize =
-          ResizeOf(variable, type)) {
+  if (std::optional<ArrayResizer> resize = ResizeOf(variable, type)) {
     array = problem.DeclareArray(variable, *std::move(resize), chosen);
   }
   const value::ValueType& element = type.PartType(value);
@@ -248,8 +250,8 @@ void DeclareParts(
 
 void ConstraintDeclareErased(
     const value::ObjectRef& problem, const ErasedReference& variable,
-    const void* value, const value::ValueType& type,
-    ConstraintProblem::Declared declared, const DeclaredPart& part) {
+    const void* value, const value::ValueType& type, RandomQualifier declared,
+    const DeclaredPart& part) {
   DeclareParts(
       ProblemOf(problem), ModesOf(variable), variable, value, type, declared,
       part);
@@ -291,8 +293,7 @@ void RandomizeListErased(
         "randomizing a listed variable of this type is not yet supported");
   }
   std::optional<std::int64_t> array = within;
-  if (std::optional<ConstraintProblem::Resizer> resize =
-          ResizeOf(variable, type)) {
+  if (std::optional<ArrayResizer> resize = ResizeOf(variable, type)) {
     array = p.ListArray(variable, *std::move(resize));
   }
   const value::ValueType& part = type.PartType(value);
@@ -309,13 +310,13 @@ void RandomizeListErased(
 
 auto RandomizeListArrayErased(
     const value::ObjectRef& problem, const ErasedReference& array,
-    ConstraintProblem::Resizer resize) -> std::int64_t {
+    ArrayResizer resize) -> std::int64_t {
   return ProblemOf(problem).ListArray(array, std::move(resize));
 }
 
 auto ConstraintDeclareArrayErased(
     const value::ObjectRef& problem, const ErasedReference& array,
-    ConstraintProblem::Resizer resize, bool enabled) -> std::int64_t {
+    ArrayResizer resize, bool enabled) -> std::int64_t {
   return ProblemOf(problem).DeclareArray(array, std::move(resize), enabled);
 }
 

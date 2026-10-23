@@ -6,6 +6,7 @@
 #include <functional>
 #include <iostream>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -100,8 +101,9 @@ void DiagnosticDispatcher::EmitFatal(
 }
 
 void DiagnosticDispatcher::Report(
-    Severity severity, const base::DiagMessage& message) {
-  Emit(severity, ToolSeverityText(severity), {}, message.Text());
+    Severity severity, const base::DiagMessage& message,
+    std::span<const base::DiagMessage> notes) {
+  Emit(severity, ToolSeverityText(severity), {}, message.Text(), notes);
 }
 
 void DiagnosticDispatcher::Line(std::string_view line) {
@@ -114,7 +116,7 @@ auto DiagnosticDispatcher::ReportedFatal() const -> bool {
 
 void DiagnosticDispatcher::Emit(
     Severity severity, std::string_view word, std::string_view origin,
-    std::string_view body) {
+    std::string_view body, std::span<const base::DiagMessage> notes) {
   if (severity == Severity::kFatal) {
     reported_fatal_ = true;
   }
@@ -152,6 +154,9 @@ void DiagnosticDispatcher::Emit(
   text += std::format("{}: {}\n", word, body);
   if (context) {
     text += std::format("note: {}\n", context->where);
+  }
+  for (const base::DiagMessage& note : notes) {
+    text += std::format("note: {}\n", note.Text());
   }
   Write(text);
 }

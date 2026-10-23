@@ -136,6 +136,10 @@ auto RuntimeEffects::Dumps() -> ValueDumps& {
   return AsRuntime(*this).dumps_;
 }
 
+auto RuntimeEffects::Randomize() -> RandomizeSettings& {
+  return AsRuntime(*this).randomize_settings_;
+}
+
 auto RuntimeEffects::PlusArgs() -> PlusArgsSource& {
   return AsRuntime(*this).plusargs_;
 }

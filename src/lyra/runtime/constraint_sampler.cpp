@@ -136,7 +136,7 @@ auto ConstraintSampler::Satisfiable(CircuitLiteral condition) const -> bool {
 
 auto ConstraintSampler::Draw(
     CircuitLiteral condition, std::span<const DrawnVariable> drawn,
-    DrawRng& rng) const -> std::optional<std::vector<bool>> {
+    DrawRng& rng) -> std::optional<std::vector<bool>> {
   if (condition == kFalseLiteral) {
     return std::nullopt;
   }
@@ -153,6 +153,7 @@ auto ConstraintSampler::Draw(
           .condition = CanonicalConditionOf(*circuit_, condition, order),
           .node_budget = node_budget_});
   if (diagram == nullptr) {
+    drew_past_budget_ = true;
     return DrawBySearch(condition, drawn, rng);
   }
   if (diagram->Empty()) {

@@ -13,6 +13,7 @@
 #include "lyra/runtime/constraint_cycle.hpp"
 #include "lyra/runtime/natural.hpp"
 #include "lyra/runtime/object_ref.hpp"
+#include "lyra/runtime/randomization.hpp"
 #include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/enumeration.hpp"
@@ -20,6 +21,8 @@
 #include "lyra/value/value_type.hpp"
 
 namespace lyra::runtime {
+
+class RuntimeEffects;
 
 // One question a `randomize()` asks (LRM 18.6.1, 18.12): which values the
 // variables it may choose take so that every constraint in force holds. Code
@@ -47,22 +50,18 @@ namespace lyra::runtime {
 // landed, and where there is none nothing is (LRM 18.6.3).
 class ConstraintProblem final : public GcObject {
  public:
-  // How the source declared a variable a constraint reads (LRM 18.4).
-  enum class Declared : std::uint8_t { kState, kRand, kRandc };
-
-  // A problem drawing from `generator`, for a call of `randomize()` on
-  // `object`, or of `std::randomize()` where it holds none. Where `listed` is
-  // set, the variables the call lists are the ones chosen, and nothing else is.
-  ConstraintProblem(DrawRng& generator, value::ObjectRef object, bool listed);
+  // A problem of a call made in `runtime` drawing from `generator`, for a call
+  // of `randomize()` on `object`, or of `std::randomize()` where it holds none.
+  // Where `listed` is set, the variables the call lists are the ones chosen,
+  // and nothing else is.
+  ConstraintProblem(
+      RuntimeEffects& runtime, DrawRng& generator, value::ObjectRef object,
+      bool listed);
   ConstraintProblem(const ConstraintProblem&) = delete;
   auto operator=(const ConstraintProblem&) -> ConstraintProblem& = delete;
   ConstraintProblem(ConstraintProblem&&) = delete;
   auto operator=(ConstraintProblem&&) -> ConstraintProblem& = delete;
   ~ConstraintProblem() override;
-
-  // Makes the random array the storage `whole` names `count` elements big,
-  // answering how to make it what it was again.
-  using Resizer = std::function<std::function<void()>(std::size_t count)>;
 
   // The variable `lent` names is of an enumerated type, or is an array of
   // one, declaring `members`: what it takes where the call chooses it, and
@@ -81,8 +80,8 @@ class ConstraintProblem final : public GcObject {
       const ErasedReference& lent, const void* value,
       const value::ValueType& type, const value::Enumeration* members,
       std::optional<std::int64_t> within);
-  [[nodiscard]] auto ListArray(const ErasedReference& whole, Resizer resize)
-      -> std::int64_t;
+  [[nodiscard]] auto ListArray(
+      const ErasedReference& whole, ArrayResizer resize) -> std::int64_t;
 
   // The storage `lent` names, holding `value` now, of the integral type
   // `type`, declared random as `declared` says with its mode `enabled`;
@@ -95,7 +94,7 @@ class ConstraintProblem final : public GcObject {
   // array is below.
   void Declare(
       const ErasedReference& lent, const void* value,
-      const value::ValueType& type, Declared declared, bool enabled,
+      const value::ValueType& type, RandomQualifier declared, bool enabled,
       ConstraintCycle* cycle, const value::Enumeration* members,
       std::optional<std::int64_t> within = std::nullopt);
 
@@ -104,7 +103,7 @@ class ConstraintProblem final : public GcObject {
   // size is chosen is whether a constraint names it and its mode is
   // `enabled`.
   [[nodiscard]] auto DeclareArray(
-      const ErasedReference& whole, Resizer resize, bool enabled)
+      const ErasedReference& whole, ArrayResizer resize, bool enabled)
       -> std::int64_t;
   // The term for the size of the array the storage `whole` names, holding
   // `count` elements now: a variable where the array was declared random and
@@ -255,7 +254,7 @@ class ConstraintProblem final : public GcObject {
   };
   struct RandomArray {
     ErasedReference whole;
-    Resizer resize;
+    ArrayResizer resize;
     bool enabled;
     std::vector<std::size_t> elements;
     std::optional<std::size_t> size;
@@ -276,7 +275,7 @@ class ConstraintProblem final : public GcObject {
   [[nodiscard]] auto ChooseDistributions(CircuitLiteral& condition) -> bool;
 
   [[nodiscard]] auto Chosen(
-      Declared declared, bool enabled, const void* at) const -> bool;
+      RandomQualifier declared, bool enabled, const void* at) const -> bool;
   // A new variable, answering its term.
   auto AddVariable(
       const ErasedReference& lent, const void* value,
@@ -306,6 +305,9 @@ class ConstraintProblem final : public GcObject {
   [[nodiscard]] auto SameWidth(std::int64_t a, std::int64_t b) const
       -> const CircuitBits&;
 
+  // The run the call is made in, whose command line bounds how far a call
+  // counts solutions and to which a draw past that is reported.
+  RuntimeEffects* runtime_;
   DrawRng* generator_;
   // What the call draws from: a generator split from `generator_` at the
   // first draw, after `pre_randomize` has run and may have seeded it (LRM
@@ -348,6 +350,8 @@ class ConstraintProblem final : public GcObject {
   std::vector<std::function<void()>> undo_;
   bool settled_first_ = false;
   bool failed_ = false;
+  // Whether some draw of the call was made past the budget.
+  bool drew_past_budget_ = false;
   // The value drawn for each input of the circuit, once solved.
   std::vector<bool> answer_;
   // The value each `randc` variable took, which landing takes from its cycle.

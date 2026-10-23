@@ -340,8 +340,9 @@ void lyra_rt_object_set_randstate(void* object, const void* state);
 // now with that value's type; a term as a machine integer. Whether a mode is
 // to be on, and how an operation reads its operands, cross as the predicates
 // they are.
-auto lyra_rt_randomize_object(void* object, void* out) -> void*;
-auto lyra_rt_randomize_object_listed(void* object, void* out) -> void*;
+auto lyra_rt_randomize_object(void* object, void* runtime, void* out) -> void*;
+auto lyra_rt_randomize_object_listed(void* object, void* runtime, void* out)
+    -> void*;
 auto lyra_rt_randomize_scope(void* runtime, void* out) -> void*;
 void lyra_rt_randomize_list(
     const void* problem, const void* reference, const void* value,

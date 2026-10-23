@@ -1792,7 +1792,10 @@ auto LowerRandomizeExpr(
             problem = outer.Bind(
                 unit.builtins.constraint_problem,
                 outer.Call(
-                    begin, {outer.Block().ReadLocal(*object, handle_type)},
+                    begin,
+                    {outer.Block().ReadLocal(*object, handle_type),
+                     outer.Block().exprs.Add(
+                         BuildCurrentRuntimeCallExpr(lowerer.Owner()))},
                     unit.builtins.constraint_problem));
             return {};
           },

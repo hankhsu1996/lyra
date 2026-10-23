@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -65,8 +66,11 @@ class DiagnosticDispatcher {
 
   // A report the tool writes for the design, which reaches no severity task and
   // so names no source location of its own. What it can name is the procedure
-  // it is made under, and it does.
-  void Report(Severity severity, const base::DiagMessage& message);
+  // it is made under, and it does. `notes` follow it, each a line of its own,
+  // after the one saying where and when.
+  void Report(
+      Severity severity, const base::DiagMessage& message,
+      std::span<const base::DiagMessage> notes = {});
 
   // A whole line about the run rather than about the design, opening with its
   // own word: what a simulation control task did (LRM 20.2, Table 20-1), what
@@ -81,7 +85,7 @@ class DiagnosticDispatcher {
  private:
   void Emit(
       Severity severity, std::string_view word, std::string_view origin,
-      std::string_view body);
+      std::string_view body, std::span<const base::DiagMessage> notes = {});
   // Every report goes to the process's error stream, which C++ ties to its
   // standard output, so a report follows what the design printed before it.
   static void Write(std::string_view text);

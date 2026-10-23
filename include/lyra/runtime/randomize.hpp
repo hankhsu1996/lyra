@@ -7,7 +7,6 @@
 #include <optional>
 #include <type_traits>
 
-#include "lyra/runtime/constraint_problem.hpp"
 #include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/randomization.hpp"
@@ -47,17 +46,21 @@ template <value::LyraValue T>
 // A class's `randomize()` draws from the object's own generator (LRM 18.14.3);
 // `std::randomize()` from the running thread's (LRM 18.14.2) and always names
 // the variables it chooses.
-[[nodiscard]] auto RandomizeObject(GcObject* object) -> value::ObjectRef;
-[[nodiscard]] auto RandomizeObjectListed(GcObject* object) -> value::ObjectRef;
+[[nodiscard]] auto RandomizeObject(GcObject* object, RuntimeEffects& runtime)
+    -> value::ObjectRef;
+[[nodiscard]] auto RandomizeObjectListed(
+    GcObject* object, RuntimeEffects& runtime) -> value::ObjectRef;
 [[nodiscard]] auto RandomizeScope(RuntimeEffects& runtime) -> value::ObjectRef;
 
-[[nodiscard]] inline auto RandomizeObject(const value::ObjectRef& handle)
+[[nodiscard]] inline auto RandomizeObject(
+    const value::ObjectRef& handle, RuntimeEffects& runtime)
     -> value::ObjectRef {
-  return RandomizeObject(ObjectRootOf(handle));
+  return RandomizeObject(ObjectRootOf(handle), runtime);
 }
-[[nodiscard]] inline auto RandomizeObjectListed(const value::ObjectRef& handle)
+[[nodiscard]] inline auto RandomizeObjectListed(
+    const value::ObjectRef& handle, RuntimeEffects& runtime)
     -> value::ObjectRef {
-  return RandomizeObjectListed(ObjectRootOf(handle));
+  return RandomizeObjectListed(ObjectRootOf(handle), runtime);
 }
 
 // Each variable a call lists crosses as a reference to it, and as the value it
@@ -72,7 +75,7 @@ void RandomizeListErased(
     const value::Enumeration* members, std::optional<std::int64_t> within);
 [[nodiscard]] auto RandomizeListArrayErased(
     const value::ObjectRef& problem, const ErasedReference& array,
-    ConstraintProblem::Resizer resize) -> std::int64_t;
+    ArrayResizer resize) -> std::int64_t;
 
 void RandomizeConstrain(const value::ObjectRef& problem);
 [[nodiscard]] auto RandomizeFinish(const value::ObjectRef& problem)
@@ -120,8 +123,8 @@ struct DeclaredPart {
 // are on, `part` saying what it takes from the variable it lies in.
 void ConstraintDeclareErased(
     const value::ObjectRef& problem, const ErasedReference& variable,
-    const void* value, const value::ValueType& type,
-    ConstraintProblem::Declared declared, const DeclaredPart& part);
+    const void* value, const value::ValueType& type, RandomQualifier declared,
+    const DeclaredPart& part);
 
 // The variable `variable` names is of an enumerated type, or an array of one,
 // declaring `members` (LRM 18.5), stated before the variable is declared or
@@ -146,7 +149,7 @@ void ConstraintMembers(
 // as big as a constraint chose (LRM 18.4).
 [[nodiscard]] auto ConstraintDeclareArrayErased(
     const value::ObjectRef& problem, const ErasedReference& array,
-    ConstraintProblem::Resizer resize, bool enabled) -> std::int64_t;
+    ArrayResizer resize, bool enabled) -> std::int64_t;
 
 // Whether the mode of the random variable `path` names, which `variable` names
 // the storage of now, is on (LRM 18.8).
@@ -162,8 +165,7 @@ concept FixedSize =
 // as it reaches and grown by elements at their default (LRM 7.5.1), written as
 // an assignment to it is, and put back by writing what it held.
 template <value::LyraValue T>
-[[nodiscard]] auto ResizeOf(const ErasedReference& whole)
-    -> ConstraintProblem::Resizer {
+[[nodiscard]] auto ResizeOf(const ErasedReference& whole) -> ArrayResizer {
   return [whole](std::size_t count) -> std::function<void()> {
     const T& current = *static_cast<const T*>(whole.storage);
     auto before = std::make_shared<T>(current);
@@ -193,8 +195,7 @@ template <value::LyraValue T>
 template <value::LyraValue T>
 void ConstraintDeclare(
     const value::ObjectRef& problem, const ErasedReference& variable,
-    const T& value, ConstraintProblem::Declared declared,
-    const DeclaredPart& part) {
+    const T& value, RandomQualifier declared, const DeclaredPart& part) {
   if constexpr (value::OrdinalElements<T>) {
     const bool on = part.enabled && RandEnabledErased(variable, part.path);
     std::optional<std::int64_t> array = part.within;
@@ -220,7 +221,7 @@ void ConstraintRand(
     const value::ObjectRef& problem, const VariableRef<T>& variable,
     const T& value) {
   ConstraintDeclare(
-      problem, variable.Erased(), value, ConstraintProblem::Declared::kRand,
+      problem, variable.Erased(), value, RandomQualifier::kRand,
       DeclaredWhole(problem, variable.Erased()));
 }
 
@@ -262,7 +263,7 @@ void ConstraintRandc(
     const value::ObjectRef& problem, const VariableRef<T>& variable,
     const T& value) {
   ConstraintDeclare(
-      problem, variable.Erased(), value, ConstraintProblem::Declared::kRandc,
+      problem, variable.Erased(), value, RandomQualifier::kRandc,
       DeclaredWhole(problem, variable.Erased()));
 }
 

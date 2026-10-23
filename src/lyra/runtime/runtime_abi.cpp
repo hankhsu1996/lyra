@@ -2483,15 +2483,19 @@ void lyra_rt_object_set_randstate(void* object, const void* state) {
       static_cast<GcObject*>(object), Read<String>(state));
 }
 
-auto lyra_rt_randomize_object(void* object, void* out) -> void* {
+auto lyra_rt_randomize_object(void* object, void* runtime, void* out) -> void* {
   return Emplace(
-      out, lyra::runtime::RandomizeObject(static_cast<GcObject*>(object)));
+      out, lyra::runtime::RandomizeObject(
+               static_cast<GcObject*>(object),
+               *static_cast<RuntimeEffects*>(runtime)));
 }
 
-auto lyra_rt_randomize_object_listed(void* object, void* out) -> void* {
+auto lyra_rt_randomize_object_listed(void* object, void* runtime, void* out)
+    -> void* {
   return Emplace(
-      out,
-      lyra::runtime::RandomizeObjectListed(static_cast<GcObject*>(object)));
+      out, lyra::runtime::RandomizeObjectListed(
+               static_cast<GcObject*>(object),
+               *static_cast<RuntimeEffects*>(runtime)));
 }
 
 auto lyra_rt_randomize_scope(void* runtime, void* out) -> void* {
@@ -2532,7 +2536,7 @@ void lyra_rt_constraint_rand(
   const lyra::runtime::ErasedReference& variable = ErasedAt(reference);
   lyra::runtime::ConstraintDeclareErased(
       p, variable, value, lyra::runtime::TypeAt(value_type),
-      lyra::runtime::ConstraintProblem::Declared::kRand,
+      lyra::runtime::RandomQualifier::kRand,
       lyra::runtime::DeclaredWhole(p, variable));
 }
 
@@ -2543,7 +2547,7 @@ void lyra_rt_constraint_randc(
   const lyra::runtime::ErasedReference& variable = ErasedAt(reference);
   lyra::runtime::ConstraintDeclareErased(
       p, variable, value, lyra::runtime::TypeAt(value_type),
-      lyra::runtime::ConstraintProblem::Declared::kRandc,
+      lyra::runtime::RandomQualifier::kRandc,
       lyra::runtime::DeclaredWhole(p, variable));
 }
 

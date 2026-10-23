@@ -162,6 +162,11 @@ void CheckStoppedAtLimit(DdManager* dd) {
 auto ConstraintBdd::Build(
     const CanonicalCondition& condition, std::size_t node_budget)
     -> std::optional<ConstraintBdd> {
+  // The package swaps one process-wide allocation hook in and out around its
+  // allocations, whichever manager makes them, so two builds never run at
+  // once.
+  static std::mutex building;
+  const std::scoped_lock lock(building);
   const std::uint32_t variables = condition.drawn + condition.others;
   const Manager manager(variables, node_budget);
   DdManager* const dd = manager.Get();

@@ -144,10 +144,18 @@ Done when:
       bounded size, reuses that diagram when a later call states the same constraints, and reports
       failure only where no answer exists.
 
+- [ ] Nothing bounds the memory a call may take while it counts a constraint's solutions. The bound
+      on the diagram's size is approximate, and running out of memory stops the simulation with an
+      error only where the allocation itself fails; a system that hands out memory it does not have
+      may instead stop the program from outside.
+
+- [x] A run says, once, that a call drew past the diagram's bound, and how to raise the bound for
+      that run.
+
 - [ ] Constraints past the diagram's bound are drawn legally but not uniformly: where one side of a
-      bit holds far more solutions than the other, the two are taken equally often. The bound is
-      fixed; how large it should be by default, and whether a user sets it, waits on measuring how
-      often a diagram is reused in real testbenches.
+      bit holds far more solutions than the other, the two are taken equally often. How large the
+      bound should be by default waits on measuring how often a diagram is reused in real
+      testbenches, and a summary of how often each call drew past it is not yet written.
 
 ## Open Questions
 
