@@ -13,11 +13,15 @@ bazel_dep(name = "rules_cc", version = "0.2.25")
 # The constraints a platform is named by
 bazel_dep(name = "platforms", version = "1.1.0")
 
-# Slang SystemVerilog Compiler Library
+# Slang SystemVerilog Compiler Library, read from a fork. The fork keeps one
+# branch per upstream release it is based on, `lyra/v<major>`, which only ever
+# grows, so every commit Lyra has named stays fetchable; this commit is on the
+# branch of the release `version` names, and moving to a new release starts a
+# new branch rather than rewriting this one.
 bazel_dep(name = "slang", version = "11.0")
 git_override(
     module_name = "slang",
-    commit = "d0eec47ef77182027bf3fe1da71fc9ee80b072d7",
+    commit = "65dea19fe24664358137f7dd4135f410d554733e",
     remote = "https://github.com/hankhsu1996/slang.git",
 )
 

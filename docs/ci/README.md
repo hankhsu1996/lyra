@@ -312,7 +312,8 @@ because no case names a path.
 
 ## Gating workflows
 
-Each runs on push to `main` and on pull requests.
+Each runs on pull requests, and all but `exception-policy.yml`, `architecture.yml` and
+`runtime-abi.yml` on push to `main` as well.
 
 | Workflow               | What it enforces                                                                                       |
 | ---------------------- | ------------------------------------------------------------------------------------------------------ |
@@ -324,6 +325,8 @@ Each runs on push to `main` and on pull requests.
 | `exception-policy.yml` | The thrown-type policy, on the same diff                                                               |
 | `architecture.yml`     | Layer boundaries between the IRs and the backends                                                      |
 | `docs-policy.yml`      | The doc claims a machine can settle (paths, links, indexes)                                            |
+| `pinned-sources.yml`   | The front end's pinned commit is on the fork's branch for its release                                  |
+| `runtime-abi.yml`      | Each runtime entry is declared, defined and published alike                                            |
 
 `bazel-build.yml` runs its two commands as steps of one job rather than as two jobs. The separate
 durations are worth having, but a second runner would not inherit the first's analysis: Bazel holds
