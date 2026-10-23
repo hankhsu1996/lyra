@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -17,6 +18,7 @@
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/construction_table_layout.hpp"
+#include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/external_scope_class.hpp"
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/published_scope.hpp"
@@ -50,6 +52,10 @@ struct ClassTranslation {
   // declaration names another class's method identity and these are settled
   // before any declaration is.
   base::Translation<hir::MethodId, mir::CallableId> methods;
+  // The callable identity of the method making each covergroup the class
+  // embeds (LRM 19.4.1), after every method the source declares, in the order
+  // the class lists them.
+  std::vector<mir::CallableId> factories;
 };
 
 // One field of the class a scope publishes: the type it holds, and the name a
@@ -265,6 +271,19 @@ class UnitLowerer {
     return class_translations_.Get(owner).methods.Get(method);
   }
 
+  // The callable identity of the method a class makes the covergroup it embeds
+  // at `index` of its list with (LRM 19.4.1).
+  [[nodiscard]] auto TranslateFactory(
+      hir::ClassId owner, std::size_t index) const -> mir::CallableId {
+    return class_translations_.Get(owner).factories.at(index);
+  }
+
+  // The class a covergroup this unit declares is written as (LRM 19.3).
+  [[nodiscard]] auto CovergroupClassId(hir::CovergroupId covergroup) const
+      -> mir::ClassId {
+    return covergroup_classes_.Get(covergroup);
+  }
+
   [[nodiscard]] auto ClassObjectType(hir::ClassId hir_id) const -> mir::TypeId {
     return class_translations_.Get(hir_id).object_type;
   }
@@ -313,6 +332,13 @@ class UnitLowerer {
 
   auto MakeExternalClassRef(const hir::ExternalClassRef& ref)
       -> mir::DeclaredClassRef;
+
+  // The object type of the class a covergroup is written as (LRM 19.3): the
+  // class this unit writes for one it declares, or the class a covergroup of
+  // another unit is, recorded as a dependency the way a class of another unit
+  // is.
+  auto CovergroupObjectType(const hir::CovergroupRef& covergroup)
+      -> mir::TypeId;
 
   // Convenience that dispatches a HIR class reference to its MIR peer: an
   // intra-unit reference translates through the class registry, and a
@@ -508,6 +534,7 @@ class UnitLowerer {
   mir::CompilationUnit unit_;
   base::Translation<hir::TypeId, mir::TypeId> type_translations_;
   base::Translation<hir::ClassId, ClassTranslation> class_translations_;
+  base::Translation<hir::CovergroupId, mir::ClassId> covergroup_classes_;
   // This unit's record of each of those classes, by the HIR record of it.
   std::map<hir::ExternalScopeClassId, ScopeClassLayout> external_scope_layouts_;
   // Keyed by path, because a signature names a unit's scope class by path and

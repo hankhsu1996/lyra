@@ -159,6 +159,11 @@ void Runtime::RunSimulation() {
         attempts->SettleAtEndOfRun();
       }
       ExecuteFinalProcesses();
+      // What the design asked to have done once it is over -- writing the
+      // coverage database (LRM 19.9) -- reads the same state the finals do.
+      for (OwnedCall& effect : at_run_end_) {
+        RunAsLanding(*this, effect);
+      }
     }
   } catch (const std::exception&) {
     // A control effect is not derived from this hierarchy (LRM 9.6.2), so one

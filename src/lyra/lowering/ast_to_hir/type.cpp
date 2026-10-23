@@ -37,6 +37,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
+#include "lyra/lowering/ast_to_hir/covergroup_decl.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 #include "lyra/lowering/ast_to_hir/name_in_a_path.hpp"
@@ -428,6 +429,14 @@ auto TranslateType(
       }
       return hir::Type{
           hir::ClassHandleType{.class_ref = *std::move(class_ref_or)}};
+    }
+    // A variable of a covergroup's type holds an instance of it (LRM 19.3).
+    case slang::ast::SymbolKind::CovergroupType: {
+      auto covergroup = unit_lowerer.ResolveCovergroupRef(
+          canonical.as<slang::ast::CovergroupType>(), decl_span);
+      if (!covergroup) return std::unexpected(std::move(covergroup.error()));
+      return hir::Type{
+          hir::CovergroupHandleType{.covergroup = *std::move(covergroup)}};
     }
     case slang::ast::SymbolKind::VoidType:
       return hir::Type{hir::VoidType{}};
@@ -1362,6 +1371,11 @@ auto UnitLowerer::MakeClassPropertyTarget(
     const slang::ast::ClassType& owner,
     const slang::ast::ClassPropertySymbol& prop, diag::SourceSpan span)
     -> diag::Result<hir::ClassPropertyTarget> {
+  if (const auto* held = InheritedCovergroupProperty(prop)) {
+    return MakeClassPropertyTarget(
+        held->getParentScope()->asSymbol().as<slang::ast::ClassType>(), *held,
+        span);
+  }
   auto owner_ref = ResolveClassRef(owner, span);
   if (!owner_ref) return std::unexpected(std::move(owner_ref.error()));
   const hir::ClassRef& class_ref = *owner_ref;
@@ -1542,6 +1556,11 @@ auto UnitLowerer::InternLocalClass(
     if (prop.getParentScope() != &cls) {
       continue;
     }
+    // The variable of a covergroup extending a base's names the base's
+    // instance, which it replaces (LRM 19.4.1), and so is no storage here.
+    if (InheritedCovergroupProperty(prop) != nullptr) {
+      continue;
+    }
     auto prop_type = InternType(prop.getType(), span);
     if (!prop_type) return std::unexpected(std::move(prop_type.error()));
     // LRM 8.9 / 8.10 keyword position: `static <T> x` marks a type-associated
@@ -1707,6 +1726,18 @@ auto UnitLowerer::InternLocalClass(
       return std::unexpected(std::move(added.error()));
     }
   }
+  // Each covergroup the class embeds is made by a method of the class that a
+  // class extending it overrides where its covergroup extends this one (LRM
+  // 19.4.1), after the methods the source declares.
+  for (const auto& covergroup :
+       cls.membersOfType<slang::ast::CovergroupType>()) {
+    auto factory = PublishedFactoryOf(covergroup, span);
+    if (!factory) return std::unexpected(std::move(factory.error()));
+    own_signature.methods.push_back(*std::move(factory));
+    auto embedded = InternLocalCovergroup(covergroup, span);
+    if (!embedded) return std::unexpected(std::move(embedded.error()));
+    decl.embedded_covergroups.push_back(*embedded);
+  }
   own_class_signatures_.emplace(&cls, std::move(own_signature));
 
   pending_class_bodies_[&replicating].push_back(
@@ -1837,14 +1868,14 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
   if (constructor_sym != nullptr) {
     // LRM 8.7 gives a constructor the argument conventions of any other
     // subroutine call, but a construction yields the object it built and so
-    // carries nothing a value could travel back to the caller in, and its
-    // actuals are bound as values rather than as aliases.
+    // carries nothing a value could travel back to the caller in.
     for (const auto* formal : constructor_sym->getArguments()) {
-      if (formal->direction != slang::ast::ArgumentDirection::In) {
+      if (formal->direction == slang::ast::ArgumentDirection::Out ||
+          formal->direction == slang::ast::ArgumentDirection::InOut) {
         return diag::Fail(
             span, diag::DiagCode::kUnsupportedClassFeature,
-            "a constructor with an 'output', 'inout' or 'ref' argument is not "
-            "yet supported");
+            "a constructor with an 'output' or 'inout' argument is not yet "
+            "supported");
       }
     }
     auto ctor_or = LowerConstructorDecl(

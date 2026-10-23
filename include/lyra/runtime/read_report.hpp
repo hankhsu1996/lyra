@@ -6,7 +6,6 @@
 #include <string_view>
 #include <vector>
 
-#include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/part_path.hpp"
 #include "lyra/runtime/trigger.hpp"
@@ -76,9 +75,7 @@ class ReadReport {
   // constructs afresh, so it is not watched. Reaching it through a handle
   // naming no object is the design's own failure (LRM 8.4).
   void AddObject(GcObject* object);
-  void AddObject(const value::ObjectRef& object) {
-    AddObject(ObjectRootOf(object));
-  }
+  void AddObject(const value::ObjectRef& object);
 
   // A place the evaluation writes: which part of it and which bits of that
   // part, as a read names them. Only an implicit list reads these, and it

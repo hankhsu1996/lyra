@@ -268,20 +268,14 @@ auto ReadingOfValueChange(
 // 15.5.5.2) and an assignment to the event afterwards reaches only a later
 // wait (LRM 15.5.5.1). Where the waiting process decides the wait, reading the
 // count states the object in the report, so the wait is put on it.
-template <ExprLowerer Lowerer>
-auto ReadingOfNamedEventTrigger(
-    Lowerer& lowerer, const WalkFrame& frame, ClosureBuilder& closure,
-    const WalkFrame& evaluation, const hir::NamedEventTrigger& trigger)
-    -> diag::Result<EntryReading> {
-  auto& unit = lowerer.Owner().Unit();
+auto ReadingOfHeldEvent(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, ClosureBuilder& closure,
+    const WalkFrame& evaluation, mir::ExprId event) -> EntryReading {
+  auto& unit = unit_lowerer.Unit();
   mir::Block& block = *frame.current_block;
-  auto event_or =
-      lowerer.LowerExpr(lowerer.HirExprs().Get(trigger.event), frame);
-  if (!event_or) return std::unexpected(std::move(event_or.error()));
-  const mir::LocalId handle =
-      DeclareLocal(frame, block.exprs.Add(*std::move(event_or)));
+  const mir::LocalId handle = DeclareLocal(frame, event);
   const BodyBindingRef held = SnapshotBindingIntoClosure(
-      lowerer.Owner(), frame, closure,
+      unit_lowerer, frame, closure,
       block.ReadLocal(handle, unit.builtins.event));
   mir::Block& body = closure.Body();
   const mir::TypeId count = unit.builtins.machine_int64;
@@ -307,6 +301,19 @@ auto ReadingOfNamedEventTrigger(
   };
 }
 
+template <ExprLowerer Lowerer>
+auto ReadingOfNamedEventTrigger(
+    Lowerer& lowerer, const WalkFrame& frame, ClosureBuilder& closure,
+    const WalkFrame& evaluation, const hir::NamedEventTrigger& trigger)
+    -> diag::Result<EntryReading> {
+  auto event_or =
+      lowerer.LowerExpr(lowerer.HirExprs().Get(trigger.event), frame);
+  if (!event_or) return std::unexpected(std::move(event_or.error()));
+  return ReadingOfHeldEvent(
+      lowerer.Owner(), frame, closure, evaluation,
+      frame.current_block->exprs.Add(*std::move(event_or)));
+}
+
 // One entry of an event control, armed where its wait is built: what its leaves
 // watch, and the observation it is watched through (LRM 9.4.2), which every
 // leaf of the entry names, since what is being watched for is one thing.
@@ -315,19 +322,26 @@ struct ArmedEntry {
   mir::LocalId observation;
 };
 
-// Arms `entry`. Its observation holds the entry's watch and, where the source
-// wrote one, its `iff` qualifier. The watch keeps what it last read, and is
-// asked either to arm -- to take what it reads now as that -- or whether an
-// occurrence of the entry happened between what it keeps and what it reads
-// now; either way what it read becomes what it keeps. It compares as what it
-// reads does, so the runtime asking it knows no type.
+// Reads an entry's occurrence, in the closure that watches it and that
+// closure's evaluation frame.
+using OccurrenceReader = std::function<diag::Result<EntryReading>(
+    ClosureBuilder& closure, const WalkFrame& evaluation)>;
+
+// Arms an entry whose occurrence `read` reads. Its observation holds the
+// entry's watch and, where the source wrote one, its `iff` qualifier
+// `condition`. The watch keeps what it last read, and is asked either to arm
+// -- to take what it reads now as that -- or whether an occurrence of the
+// entry happened between what it keeps and what it reads now; either way what
+// it read becomes what it keeps. It compares as what it reads does, so the
+// runtime asking it knows no type.
 //
 // Where the waiting process decides the wait, `report` holds a pointer to the
 // report each evaluation states what it reaches in.
 template <ExprLowerer Lowerer>
-auto ArmEntry(
-    Lowerer& lowerer, WalkFrame frame, const hir::EventEntry& entry,
-    std::optional<mir::LocalId> report) -> diag::Result<ArmedEntry> {
+auto ArmOccurrence(
+    Lowerer& lowerer, WalkFrame frame, const OccurrenceReader& read,
+    std::optional<hir::ExprId> condition, std::optional<mir::LocalId> report)
+    -> diag::Result<ArmedEntry> {
   auto& unit = lowerer.Owner().Unit();
   mir::Block& block = *frame.current_block;
 
@@ -335,16 +349,7 @@ auto ArmEntry(
   const mir::LocalId arming = closure.AddParam(unit.builtins.machine_bool);
   const WalkFrame evaluation =
       ClosureFrameReportingTo(lowerer.Owner(), frame, closure, report);
-  auto reading = std::visit(
-      Overloaded{
-          [&](const hir::ValueChange& change) {
-            return ReadingOfValueChange(lowerer, frame, evaluation, change);
-          },
-          [&](const hir::NamedEventTrigger& trigger) {
-            return ReadingOfNamedEventTrigger(
-                lowerer, frame, closure, evaluation, trigger);
-          }},
-      entry.occurrence);
+  auto reading = read(closure, evaluation);
   if (!reading) return std::unexpected(std::move(reading.error()));
   mir::Block& body = closure.Body();
   const mir::TypeId watched = body.exprs.Get(reading->now).type;
@@ -380,17 +385,40 @@ auto ArmEntry(
       unit, block,
       closure.Build(body.ReadLocal(occurred, unit.builtins.machine_bool)))};
   support::BuiltinFn observation = support::BuiltinFn::kObservationOfWatch;
-  if (entry.condition.has_value()) {
-    auto condition =
-        BuildConditionClosure(lowerer, frame, block, *entry.condition);
-    if (!condition) return std::unexpected(std::move(condition.error()));
-    arguments.push_back(*condition);
+  if (condition.has_value()) {
+    auto qualifier = BuildConditionClosure(lowerer, frame, block, *condition);
+    if (!qualifier) return std::unexpected(std::move(qualifier.error()));
+    arguments.push_back(*qualifier);
     observation = support::BuiltinFn::kObservationOfWatchQualified;
   }
   return ArmedEntry{
       .watches = reading->watches,
       .observation = DeclareObservation(
           unit, frame, block, observation, std::move(arguments))};
+}
+
+// Arms `entry`, an entry of an event control the source wrote.
+template <ExprLowerer Lowerer>
+auto ArmEntry(
+    Lowerer& lowerer, WalkFrame frame, const hir::EventEntry& entry,
+    std::optional<mir::LocalId> report) -> diag::Result<ArmedEntry> {
+  return ArmOccurrence(
+      lowerer, frame,
+      [&](ClosureBuilder& closure,
+          const WalkFrame& evaluation) -> diag::Result<EntryReading> {
+        return std::visit(
+            Overloaded{
+                [&](const hir::ValueChange& change) {
+                  return ReadingOfValueChange(
+                      lowerer, frame, evaluation, change);
+                },
+                [&](const hir::NamedEventTrigger& trigger) {
+                  return ReadingOfNamedEventTrigger(
+                      lowerer, frame, closure, evaluation, trigger);
+                }},
+            entry.occurrence);
+      },
+      entry.condition, report);
 }
 
 // LRM 9.4.1 `#N`. The wait is built at the stop by a free-function call whose
@@ -441,26 +469,6 @@ auto BuildDelayWaitStmt(
           {runtime_id, duration_id, unit_power_id, precision_power_id},
           unit.builtins.wait));
   return BuildStopStmt(process.Owner(), frame.WithBlock(&block), wait_id);
-}
-
-// LRM 15.5.1: triggering reaches RuntimeEffects to wake what waits on the
-// object the event names. The engine handle rides after the event, the way
-// every runtime effect threads it.
-auto BuildTriggerCallExpr(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId event_id)
-    -> mir::Expr {
-  const mir::ExprId runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = support::BuiltinFn::kTrigger,
-                      .receiver = event_id},
-              .arguments = {runtime_id},
-          },
-      .type = unit_lowerer.Unit().builtins.void_type};
 }
 
 // The expressions an event control evaluates when what it watches moves: what
@@ -663,6 +671,49 @@ auto BuildChangeDecidedEventWaitStmt(
 }
 
 }  // namespace
+
+// LRM 15.5.1: triggering reaches RuntimeEffects to wake what waits on the
+// object the event names. The engine handle rides after the event, the way
+// every runtime effect threads it.
+auto BuildTriggerCallExpr(
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId event_id)
+    -> mir::Expr {
+  const mir::ExprId runtime_id =
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::Direct{
+                      .target = support::BuiltinFn::kTrigger,
+                      .receiver = event_id},
+              .arguments = {runtime_id},
+          },
+      .type = unit_lowerer.Unit().builtins.void_type};
+}
+
+template <ExprLowerer Lowerer>
+auto BuildEventObjectWaitStmt(
+    Lowerer& lowerer, WalkFrame frame, mir::Block& block, mir::ExprId event)
+    -> diag::Result<mir::Stmt> {
+  auto armed = ArmOccurrence(
+      lowerer, frame,
+      [&](ClosureBuilder& closure,
+          const WalkFrame& evaluation) -> diag::Result<EntryReading> {
+        return ReadingOfHeldEvent(
+            lowerer.Owner(), frame, closure, evaluation, event);
+      },
+      std::nullopt, std::nullopt);
+  if (!armed) return std::unexpected(std::move(armed.error()));
+  const std::array leaves{ObservedLeaf{
+      .watched = std::get<HeldEvent>(armed->watches),
+      .observation = armed->observation}};
+  return BuildWaitOnStmt(block, block, frame, lowerer, leaves);
+}
+
+template auto BuildEventObjectWaitStmt(
+    ProcessLowerer&, WalkFrame, mir::Block&, mir::ExprId)
+    -> diag::Result<mir::Stmt>;
 
 auto ChangeDecides(
     const base::Arena<hir::Expr, hir::ExprId>& exprs,

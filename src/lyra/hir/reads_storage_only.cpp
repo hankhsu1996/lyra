@@ -121,7 +121,10 @@ auto ReadsOnly(
           [](const InterfaceInstanceAccessExpr&) { return false; },
           [](const DynamicArrayNewExpr&) { return false; },
           [](const ClassNewExpr&) { return false; },
-          [](const DynamicCastExpr&) { return false; }},
+          [](const DynamicCastExpr&) { return false; },
+          [](const CovergroupNewExpr&) { return false; },
+          [](const CovergroupMethodCallExpr&) { return false; },
+          [](const CovergroupOptionExpr&) { return false; }},
       exprs.Get(id).data);
 }
 

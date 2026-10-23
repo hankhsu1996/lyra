@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
 #include <utility>
@@ -25,6 +26,18 @@ class BreakTarget;
 class CallableBindings;
 struct SettledPath;
 struct WalkFrame;
+
+// What a scope the walk is inside owes on its normal ways out -- falling off
+// its end, or a `return`, `break` or `continue` jumping out of it -- and the
+// next such scope around it. Each way out emits `emit` where it leaves, as
+// clang's code generation keeps a normal cleanup on its scope stack and emits
+// it on every normal edge out of the scope. A departure leaves without it. A
+// scope pushes one only where it owes something, and what it owes is its own
+// business: whoever leaves through it runs it without knowing what it is.
+struct NormalCleanup {
+  std::function<void(const WalkFrame& at)> emit;
+  const NormalCleanup* outer = nullptr;
+};
 
 // The arguments of a call made later than its statement is reached, in a body
 // of its own: a deferred assertion's action, whose by-value arguments are
@@ -184,6 +197,13 @@ struct WalkFrame {
   // stack, and it is null outside any loop of this body.
   BreakTarget* break_leaves = nullptr;
 
+  // What the scopes of this body the walk is inside owe on their normal ways
+  // out, innermost first, each owned on the stack of its scope's lowering.
+  // `loop_normal_cleanups` is what of that stood outside the body of the loop
+  // a `break` leaves, so a `break` or `continue` runs what is in front of it.
+  const NormalCleanup* normal_cleanups = nullptr;
+  const NormalCleanup* loop_normal_cleanups = nullptr;
+
   // How this body reaches the instance of the structural scope its outward
   // references count from. Settled once where the body's frame is built, so
   // nothing that resolves a reference asks what kind of body it is in.
@@ -313,6 +333,15 @@ struct WalkFrame {
   [[nodiscard]] auto WithBreakLeaving(BreakTarget& loop) const -> WalkFrame {
     WalkFrame next = *this;
     next.break_leaves = &loop;
+    next.loop_normal_cleanups = normal_cleanups;
+    return next;
+  }
+
+  // Enters a scope that owes `cleanup` on its normal ways out.
+  [[nodiscard]] auto WithNormalCleanup(const NormalCleanup& cleanup) const
+      -> WalkFrame {
+    WalkFrame next = *this;
+    next.normal_cleanups = &cleanup;
     return next;
   }
 
@@ -321,8 +350,11 @@ struct WalkFrame {
     WalkFrame next = *this;
     next.bindings = callable_bindings;
     // A label is one body's, so no break of another body leaves a loop of
-    // this one, which LRM 12.8 forbids across a fork-join block as well.
+    // this one, which LRM 12.8 forbids across a fork-join block as well; nor
+    // does any jump of it leave a block of this one.
     next.break_leaves = nullptr;
+    next.normal_cleanups = nullptr;
+    next.loop_normal_cleanups = nullptr;
     return next;
   }
 

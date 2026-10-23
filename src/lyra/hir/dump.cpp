@@ -252,6 +252,40 @@ auto FormatClassRef(const ClassRef& ref) -> std::string {
       ref);
 }
 
+auto FormatCovergroupRef(const CovergroupRef& ref) -> std::string {
+  return std::visit(
+      Overloaded{
+          [](const LocalCovergroupRef& r) -> std::string {
+            return std::format("Covergroup[{}]", r.covergroup.value);
+          },
+          [](const ExternalCovergroupRef& r) -> std::string {
+            return std::format(
+                "Covergroup[external={}::{}]", r.unit_name,
+                support::DisplayOf(r.path));
+          }},
+      ref);
+}
+
+auto CovergroupMethodLabel(CovergroupMethod method) -> std::string_view {
+  switch (method) {
+    case CovergroupMethod::kSample:
+      return "sample";
+    case CovergroupMethod::kGetCoverage:
+      return "get_coverage";
+    case CovergroupMethod::kGetInstCoverage:
+      return "get_inst_coverage";
+    case CovergroupMethod::kSetInstName:
+      return "set_inst_name";
+    case CovergroupMethod::kStart:
+      return "start";
+    case CovergroupMethod::kStop:
+      return "stop";
+  }
+  throw InternalError("CovergroupMethodLabel: unknown covergroup method");
+}
+
+// Where a covergroup member is reached: through an instance, or through the
+// type where no instance is named, and on one of its items where one is.
 auto FormatClassPropertyTarget(const ClassPropertyTarget& target)
     -> std::string {
   return std::visit(
@@ -513,6 +547,11 @@ class HirDumper {
               return std::format(
                   "ImportedClassHandleType(class={})",
                   support::ImportedRuntimeClassName(c.klass));
+            },
+            [](const CovergroupHandleType& c) -> std::string {
+              return std::format(
+                  "CovergroupHandleType(covergroup={})",
+                  FormatCovergroupRef(c.covergroup));
             },
             [](const UnitObjectType& u) -> std::string {
               return std::format(
@@ -1159,6 +1198,9 @@ class HirDumper {
     for (const ClassId id : scope.replicated_classes) {
       class_scope_chains_.emplace(id, scope_stack_);
     }
+    for (const CovergroupId id : scope.replicated_covergroups) {
+      covergroup_scope_chains_.emplace(id, scope_stack_);
+    }
     for (const auto& g : scope.generates) {
       for (const auto& block : g.blocks) {
         RecordClassScopeChainsIn(block.scope);
@@ -1475,6 +1517,42 @@ class HirDumper {
                   FormatAssignmentValidity(c.validity),
                   FormatInvalidAssignmentHandling(c.on_invalid));
             },
+            [](const CovergroupNewExpr& n) -> std::string {
+              std::string args;
+              for (std::size_t i = 0; i < n.arguments.size(); ++i) {
+                if (i != 0) args += ", ";
+                args += std::format("Expr[{}]", n.arguments[i].value);
+              }
+              const std::string embedding =
+                  n.embedding.has_value()
+                      ? std::format(" embedding=Expr[{}]", n.embedding->value)
+                      : std::string{};
+              return std::format(
+                  "CovergroupNewExpr covergroup={} args=[{}]{} {}",
+                  FormatCovergroupRef(n.covergroup), args, embedding,
+                  FormatDeclaringInstance(n.declaring_instance));
+            },
+            [](const CovergroupMethodCallExpr& c) -> std::string {
+              std::string args;
+              for (std::size_t i = 0; i < c.arguments.size(); ++i) {
+                if (i != 0) args += ", ";
+                args += c.arguments[i].has_value()
+                            ? std::format("Expr[{}]", c.arguments[i]->value)
+                            : std::string{"default"};
+              }
+              return std::format(
+                  "CovergroupMethodCallExpr covergroup={} {} method={} "
+                  "args=[{}]",
+                  FormatCovergroupRef(c.covergroup),
+                  FormatCovergroupReach(c.receiver, c.item),
+                  CovergroupMethodLabel(c.method), args);
+            },
+            [](const CovergroupOptionExpr& o) -> std::string {
+              return std::format(
+                  "CovergroupOptionExpr covergroup={} {} {}",
+                  FormatCovergroupRef(o.covergroup),
+                  FormatCovergroupReach(o.receiver, o.item), o.field);
+            },
         },
         e.data);
     return std::format("type=Type[{}] {}", e.type.value, formatted);
@@ -1519,6 +1597,17 @@ class HirDumper {
       Dedent();
     }
 
+    if (u.covergroups.size() > 0) {
+      Line("Covergroups:");
+      Indent();
+      for (const CovergroupId id : u.covergroups.Ids()) {
+        DumpCovergroup(
+            id, support::DisplayOf(u.covergroups.PathOf(id)),
+            u.covergroups.Get(id));
+      }
+      Dedent();
+    }
+
     if (!u.external_scope_classes.empty()) {
       Line("ExternalScopeClasses:");
       Indent();
@@ -1549,6 +1638,236 @@ class HirDumper {
     Dedent();
 
     Dedent();
+  }
+
+  static auto FormatBinElement(const BinElement& element) -> std::string {
+    const auto end = [](const std::optional<ExprId>& e) -> std::string {
+      return e.has_value() ? std::format("Expr[{}]", e->value) : "$";
+    };
+    return std::visit(
+        Overloaded{
+            [](const BinValue& v) -> std::string {
+              return std::format("Expr[{}]", v.value.value);
+            },
+            [&](const BinRange& r) -> std::string {
+              return std::format("[{}:{}]", end(r.low), end(r.high));
+            },
+            [](const BinTolerance& r) -> std::string {
+              return std::format(
+                  "[Expr[{}] {} Expr[{}]]", r.center.value,
+                  r.in_percent ? "+%-" : "+/-", r.tolerance.value);
+            }},
+        element);
+  }
+
+  static auto FormatBinElements(const std::vector<BinElement>& elements)
+      -> std::string {
+    std::string text;
+    for (const BinElement& element : elements) {
+      if (!text.empty()) text += ", ";
+      text += FormatBinElement(element);
+    }
+    return text;
+  }
+
+  static auto BinKindLabel(BinKind kind) -> std::string_view {
+    switch (kind) {
+      case BinKind::kBins:
+        return "bins";
+      case BinKind::kIgnoreBins:
+        return "ignore_bins";
+      case BinKind::kIllegalBins:
+        return "illegal_bins";
+    }
+    throw InternalError("BinKindLabel: unknown kind of bins");
+  }
+
+  static auto FormatGuard(const std::optional<ExprId>& iff) -> std::string {
+    return iff.has_value() ? std::format(" iff=Expr[{}]", iff->value) : "";
+  }
+
+  void DumpOptions(const std::vector<OptionSetting>& options) {
+    for (const OptionSetting& option : options) {
+      Line(
+          std::format(
+              "{}.{} = Expr[{}]", option.type_option ? "type_option" : "option",
+              option.field, option.value.value));
+    }
+  }
+
+  void DumpBinConstruct(const BinConstruct& bin) {
+    const std::string form = std::visit(
+        Overloaded{
+            [](const ValueBins& v) -> std::string {
+              const std::string array = std::visit(
+                  Overloaded{
+                      [](const OneBin&) -> std::string { return ""; },
+                      [](const BinPerValue&) -> std::string { return "[]"; },
+                      [](const FixedBins& f) -> std::string {
+                        return std::format("[Expr[{}]]", f.count.value);
+                      }},
+                  v.array);
+              std::string text = std::format(
+                  "values{}{} {{{}}}", array, v.wildcard ? " wildcard" : "",
+                  FormatBinElements(v.elements));
+              if (v.set.has_value()) {
+                text += std::format(" set=Expr[{}]", v.set->value);
+              }
+              if (v.filter.has_value()) {
+                text += std::format(
+                    " with item=ProceduralVar[{}] Expr[{}]",
+                    v.filter->item.value, v.filter->keeps.value);
+              }
+              return text;
+            },
+            [](const TransitionBins& tr) -> std::string {
+              std::string text = std::format(
+                  "transitions{}{}", tr.per_sequence ? "[]" : "",
+                  tr.wildcard ? " wildcard" : "");
+              for (const auto& sequence : tr.sequences) {
+                text += " (";
+                for (std::size_t s = 0; s < sequence.size(); ++s) {
+                  if (s != 0) text += " => ";
+                  text += FormatBinElements(sequence[s].values);
+                }
+                text += ")";
+              }
+              return text;
+            },
+            [](const DefaultBins& d) -> std::string {
+              return d.per_value ? "default[]" : "default";
+            },
+            [](const DefaultSequenceBins&) -> std::string {
+              return "default sequence";
+            }},
+        bin.form);
+    Line(
+        std::format(
+            "{} \"{}\" {}{}", BinKindLabel(bin.kind), bin.name, form,
+            FormatGuard(bin.iff)));
+  }
+
+  static auto FormatSelect(const CrossSelect& select) -> std::string {
+    return std::visit(
+        Overloaded{
+            [](const SelectAll&) -> std::string { return "all"; },
+            [](const SelectBinsOf& b) -> std::string {
+              std::string text = std::format(
+                  "binsof({}{})", b.point,
+                  b.bin.has_value() ? "." + *b.bin : std::string{});
+              if (!b.intersect.empty()) {
+                text += std::format(
+                    " intersect {{{}}}", FormatBinElements(b.intersect));
+              }
+              return text;
+            },
+            [](const SelectNot& n) -> std::string {
+              return std::format("!Select[{}]", n.operand.value);
+            },
+            [](const SelectAnd& a) -> std::string {
+              return std::format(
+                  "Select[{}] && Select[{}]", a.left.value, a.right.value);
+            },
+            [](const SelectOr& o) -> std::string {
+              return std::format(
+                  "Select[{}] || Select[{}]", o.left.value, o.right.value);
+            },
+            [](const SelectWith& w) -> std::string {
+              return std::format(
+                  "Select[{}] with Expr[{}]", w.candidates.value,
+                  w.filter.value);
+            },
+            [](const SelectSet& s) -> std::string {
+              return std::format("set Expr[{}]", s.tuples.value);
+            }},
+        select);
+  }
+
+  void DumpCovergroup(
+      CovergroupId id, std::string_view name, const CovergroupDecl& c) {
+    const auto chain = covergroup_scope_chains_.find(id);
+    if (chain == covergroup_scope_chains_.end()) {
+      throw InternalError(
+          "HirDumper::DumpCovergroup: every covergroup a unit declares is "
+          "named by one of its scopes");
+    }
+    const std::vector<const StructuralScope*> outer =
+        std::exchange(scope_stack_, chain->second);
+    Line(std::format("[{}] covergroup \"{}\"", id.value, name));
+    Indent();
+    const auto vars = [](const std::vector<SubroutineParam>& listed) {
+      std::string text;
+      for (const SubroutineParam& param : listed) {
+        if (!text.empty()) text += ", ";
+        text += std::format(
+            "{} ProceduralVar[{}]", FormatParamDirection(param.direction),
+            param.var.value);
+      }
+      return text;
+    };
+    Line(std::format("Formals: [{}]", vars(c.formals)));
+    if (!c.sample_formals.empty()) {
+      Line(std::format("SampleFormals: [{}]", vars(c.sample_formals)));
+    }
+    if (c.embedding.has_value()) {
+      Line(std::format("Embedding: ProceduralVar[{}]", c.embedding->value));
+    }
+    if (c.base.has_value()) {
+      Line(std::format("Extends: {}", FormatCovergroupRef(*c.base)));
+    }
+    std::visit(
+        Overloaded{
+            [&](const SampledByCall&) { Line("Sampled: by call"); },
+            [&](const SampledOnEvent& e) {
+              Line(
+                  std::format(
+                      "Sampled: on event of {} entries",
+                      e.event.entries.size()));
+            },
+            [&](const SampledAtBlocks& b) {
+              Line(std::format("Sampled: at {} block events", b.events.size()));
+            }},
+        c.sampling);
+    DumpOptions(c.options);
+    for (const Coverpoint& point : c.coverpoints) {
+      Line(
+          std::format(
+              "coverpoint \"{}\" : Expr[{}]{}", point.name,
+              point.expression.value, FormatGuard(point.iff)));
+      Indent();
+      DumpOptions(point.options);
+      for (const BinConstruct& bin : point.bins) DumpBinConstruct(bin);
+      Dedent();
+    }
+    for (const Cross& cross : c.crosses) {
+      std::string targets;
+      for (const std::string& target : cross.targets) {
+        if (!targets.empty()) targets += ", ";
+        targets += target;
+      }
+      Line(
+          std::format(
+              "cross \"{}\" [{}]{}", cross.name, targets,
+              FormatGuard(cross.iff)));
+      Indent();
+      DumpOptions(cross.options);
+      for (const CrossSelectId id : cross.selects.Ids()) {
+        Line(
+            std::format(
+                "Select[{}] {}", id.value,
+                FormatSelect(cross.selects.Get(id))));
+      }
+      for (const CrossBin& bin : cross.bins) {
+        Line(
+            std::format(
+                "{} \"{}\" Select[{}]{}", BinKindLabel(bin.kind), bin.name,
+                bin.select.value, FormatGuard(bin.iff)));
+      }
+      Dedent();
+    }
+    DumpProceduralBodyContents(c.body, c.procedural_scopes);
+    Dedent();
+    scope_stack_ = outer;
   }
 
   void DumpClass(ClassId id, std::string_view name, const ClassDecl& c) {
@@ -1628,6 +1947,23 @@ class HirDumper {
         *reach);
   }
 
+  static auto FormatCovergroupReach(
+      const CovergroupReceiver& receiver,
+      const std::optional<std::string>& item) -> std::string {
+    std::string reach = std::visit(
+        Overloaded{
+            [](const CovergroupInstanceReceiver& r) {
+              return std::format("instance=Expr[{}]", r.instance.value);
+            },
+            [](const CovergroupTypeReceiver& r) {
+              return std::format(
+                  "type {}", FormatDeclaringInstance(r.declaring_instance));
+            }},
+        receiver);
+    if (item.has_value()) reach += std::format(" item={}", *item);
+    return reach;
+  }
+
   static auto FormatIndices(const std::vector<std::uint32_t>& indices)
       -> std::string {
     std::string out;
@@ -1670,6 +2006,10 @@ class HirDumper {
                 return std::format(
                     "StaticProperty[{}] of Class[{}]", property.prop.value,
                     property.owner.value);
+              },
+              [](const CovergroupBlockEvent& event) {
+                return std::format(
+                    "BlockEvent of Covergroup[{}]", event.covergroup.value);
               },
               [](const InstanceMemberId& id) {
                 return std::format("InstanceMember[{}]", id.value);
@@ -2922,6 +3262,8 @@ class HirDumper {
   int indent_ = 0;
   std::vector<const StructuralScope*> scope_stack_;
   std::map<ClassId, std::vector<const StructuralScope*>> class_scope_chains_;
+  std::map<CovergroupId, std::vector<const StructuralScope*>>
+      covergroup_scope_chains_;
   const CompilationUnit* unit_ = nullptr;
 };
 

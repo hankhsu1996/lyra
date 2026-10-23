@@ -16,6 +16,7 @@
 #include "lyra/lowering/hir_to_mir/declared_variable.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -25,6 +26,17 @@
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
+
+// Emits, where a jump from `frame` stands, what each scope it leaves owes on
+// a normal way out, innermost first, out to `until` -- what was owed outside
+// the scope the jump stays inside, and nothing for a `return`, which leaves
+// every scope of the body.
+void EmitNormalCleanups(const WalkFrame& frame, const NormalCleanup* until) {
+  for (const NormalCleanup* at = frame.normal_cleanups; at != until;
+       at = at->outer) {
+    at->emit(frame);
+  }
+}
 
 // Binds a promoted variable to the cell its scope's entry made, so every
 // reference to it -- its own initializer's among them -- reaches that cell.
@@ -147,8 +159,15 @@ auto LowerReturnStmt(
   // (or the implicit result variable) plus each output / inout formal,
   // assembled by the subroutine's lowering so the copy-out rides the result
   // (LRM 13.5).
-  const std::optional<mir::ExprId> payload =
+  std::optional<mir::ExprId> payload =
       process.BuildReturnPayload(frame, explicit_value);
+  // The value is part of the return, so it is evaluated before what leaving
+  // the scopes owes runs, as rustc writes the return place before the drops.
+  if (payload.has_value() && frame.normal_cleanups != nullptr) {
+    const mir::TypeId type = block.exprs.Get(*payload).type;
+    payload = block.ReadLocal(DeclareLocal(frame, *payload), type);
+  }
+  EmitNormalCleanups(frame, nullptr);
   return mir::Stmt{
       .label = std::move(label), .data = mir::ReturnStmt{.value = payload}};
 }
@@ -160,13 +179,15 @@ auto LowerBreakStmt(std::optional<std::string> label, const WalkFrame& frame)
         "LowerBreakStmt: a break stands in no loop of its body, which the "
         "front end rejects (LRM 12.8)");
   }
+  EmitNormalCleanups(frame, frame.loop_normal_cleanups);
   return mir::Stmt{
       .label = std::move(label),
       .data = mir::BreakStmt{.target = frame.break_leaves->Name()}};
 }
 
-auto LowerContinueStmt(std::optional<std::string> label)
+auto LowerContinueStmt(std::optional<std::string> label, const WalkFrame& frame)
     -> diag::Result<mir::Stmt> {
+  EmitNormalCleanups(frame, frame.loop_normal_cleanups);
   return mir::Stmt{.label = std::move(label), .data = mir::ContinueStmt{}};
 }
 

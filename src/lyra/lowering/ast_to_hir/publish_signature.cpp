@@ -294,7 +294,7 @@ auto ConstructOf(const ScopePublicationRecord& record, hir::GenerateId id)
 
 }  // namespace
 
-void UnitLowerer::PublishClassSignatures() {
+auto UnitLowerer::PublishTypeSignatures() -> diag::Result<void> {
   // Every class this unit declares is one another unit may name: a package's
   // by its declarations (LRM 26.2), and a design element's through a
   // hierarchical name reaching an object of it (LRM 23.6). One a design element
@@ -311,7 +311,10 @@ void UnitLowerer::PublishClassSignatures() {
     hir::TypeImportMemo published;
     hir::TypeImporter importer(
         unit_.types,
-        hir::TypePoolOwner{.unit_name = unit_.name, .classes = &unit_.classes},
+        hir::TypePoolOwner{
+            .unit_name = unit_.name,
+            .classes = &unit_.classes,
+            .covergroups = &unit_.covergroups},
         signature_.types, published);
     const hir::ClassSignature& own = it->second;
     // The order is part of what is published: a property's slot and a virtual
@@ -336,21 +339,48 @@ void UnitLowerer::PublishClassSignatures() {
             .methods = hir::ImportMethods(importer, own.methods),
             .takes_declaring_instance = own.takes_declaring_instance});
   };
+  // A covergroup declared in a design element is one of each instance as a
+  // class is, so it too is published once, by its path.
+  const auto publish_covergroup =
+      [&](const slang::ast::CovergroupType& covergroup) -> diag::Result<void> {
+    auto published = PublishedCovergroupOf(
+        covergroup, frontend::PointSpanOf(covergroup.location));
+    if (!published) return std::unexpected(std::move(published.error()));
+    if (!published_paths.insert(published->path).second) return {};
+    hir::TypeImportMemo memo;
+    hir::TypeImporter importer(
+        unit_.types,
+        hir::TypePoolOwner{
+            .unit_name = unit_.name,
+            .classes = &unit_.classes,
+            .covergroups = &unit_.covergroups},
+        signature_.types, memo);
+    signature_.covergroups.push_back(importer.Import(*published));
+    return {};
+  };
   // A parameterized class is one class per specialization the design uses
   // (LRM 8.25), each published on its own by the unit holding it.
-  const auto publish = [&](const slang::ast::Symbol& member) {
+  const auto publish =
+      [&](const slang::ast::Symbol& member) -> diag::Result<void> {
+    if (const auto* covergroup = member.as_if<slang::ast::CovergroupType>()) {
+      return publish_covergroup(*covergroup);
+    }
     if (const auto* cls = member.as_if<slang::ast::ClassType>()) {
       publish_class(*cls);
     }
+    return {};
   };
-  WalkOwnDeclarations(publish);
+  return WalkOwnDeclarations(publish);
 }
 
 auto UnitLowerer::PublishNamespaceSubroutines() -> diag::Result<void> {
   hir::TypeImportMemo published;
   hir::TypeImporter importer(
       unit_.types,
-      hir::TypePoolOwner{.unit_name = unit_.name, .classes = &unit_.classes},
+      hir::TypePoolOwner{
+          .unit_name = unit_.name,
+          .classes = &unit_.classes,
+          .covergroups = &unit_.covergroups},
       signature_.types, published);
   auto& namespace_unit = signature_.unit.emplace<hir::PublishedNamespace>();
   for (const ScopePublicationRecord::Callable& callable :
@@ -410,7 +440,9 @@ auto UnitLowerer::PublishedCallableOf(
 }
 
 auto UnitLowerer::PublishSignature() -> diag::Result<void> {
-  PublishClassSignatures();
+  if (auto r = PublishTypeSignatures(); !r) {
+    return std::unexpected(std::move(r.error()));
+  }
   // Only a design element instantiated into the hierarchy has ports and an
   // object; a namespace unit publishes its declarations by name and roots
   // neither.
@@ -425,7 +457,10 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
   hir::TypeImportMemo published;
   hir::TypeImporter importer(
       unit_.types,
-      hir::TypePoolOwner{.unit_name = unit_.name, .classes = &unit_.classes},
+      hir::TypePoolOwner{
+          .unit_name = unit_.name,
+          .classes = &unit_.classes,
+          .covergroups = &unit_.covergroups},
       signature_.types, published);
 
   // What an instance is handed is the parameters its instantiation may assign
@@ -774,6 +809,16 @@ auto UnitLowerer::PublishScopeClass(
                     "interned before the scope's signature is published");
               }
               return cell(*property.symbol, own->second.class_path);
+            },
+            [&](const ScopePublicationRecord::CovergroupEvent& event)
+                -> diag::Result<hir::PublishedMember> {
+              // Named by a space, which no identifier holds (LRM 5.6.1), so
+              // no name of the source reaches it.
+              return hir::PublishedMember{
+                  .name = "block event",
+                  .holder = DefPathOf(*event.symbol, Specialization()),
+                  .type = unit_.types.Intern(hir::Type{hir::EventType{}}),
+                  .storage = hir::VariableStorage{}};
             },
             [&](const ScopePublicationRecord::Instance& instance)
                 -> diag::Result<hir::PublishedMember> {

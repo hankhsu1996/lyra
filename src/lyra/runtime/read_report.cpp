@@ -82,6 +82,10 @@ void ReadReport::Add(
       place, Observation::OnReaching(), steps, lsb_bit_offset, bit_width);
 }
 
+void ReadReport::AddObject(const value::ObjectRef& object) {
+  AddObject(ObjectRootOf(object));
+}
+
 void ReadReport::AddObject(GcObject* object) {
   if (object != nullptr) {
     std::shared_ptr<GcObject> owned = object->weak_from_this().lock();

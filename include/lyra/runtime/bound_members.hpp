@@ -123,6 +123,13 @@ void BindAlias(VariableRef<T>& alias, const VariableRef<T>& bound) {
   current_runtime().Bound().Alias(alias.AsMember(), bound.Erased());
 }
 
+// What generated code calls to bind a reference an object holds, which names
+// what it is bound to for as long as the object lasts and is recorded nowhere.
+template <value::LyraValue T>
+void BindReference(VariableRef<T>& member, const VariableRef<T>& bound) {
+  member = bound;
+}
+
 // Whether a procedural continuous assignment through `reference` acts on a
 // member rather than on the variable it names. A member is a port standing for
 // what its connection drives, a value of its own (LRM 23.3.3.2), so a takeover

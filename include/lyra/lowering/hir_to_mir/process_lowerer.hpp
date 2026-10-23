@@ -136,12 +136,13 @@ class ProcessLowerer {
   // same way as for a process body.
   auto Run(const hir::SubroutineDecl& src) -> diag::Result<mir::CallableCode>;
 
-  // Binds each of the constructor's input formals where its lifetime puts it,
-  // appending the parameter it arrives through to `params`. Split from
-  // body-statement lowering so the caller can evaluate base-constructor
-  // arguments -- which LRM 8.7 orders before the body and which may reference
-  // the ctor's formals -- in the same procedural-var registry the body will
-  // use. A non-input formal is a compiler-bug invariant.
+  // Binds each of the constructor's formals -- an input where its lifetime puts
+  // it, a `ref` as the reference it arrives as (LRM 13.5.2) -- appending the
+  // parameter it arrives through to `params`. Split from body-statement
+  // lowering so the caller can evaluate base-constructor arguments -- which LRM
+  // 8.7 orders before the body and which may reference the ctor's formals -- in
+  // the same procedural-var registry the body will use. An `output` or `inout`
+  // formal is a compiler-bug invariant.
   void RegisterConstructorFormals(
       const hir::SubroutineDecl& ctor, const WalkFrame& frame,
       std::vector<mir::LocalId>& params);
@@ -296,6 +297,13 @@ class ProcessLowerer {
       hir::ProceduralVarId hir_id, ProceduralVarBinding binding) {
     bindings_.Define(hir_id, binding);
   }
+
+  // A `ref` formal `var`, declared `declared`: it names its actual's storage,
+  // which reports its own writes (LRM 13.5.2), so it is the parameter itself,
+  // of `type`, in `bindings`.
+  auto DeclareReferenceFormal(
+      CallableBindings& bindings, hir::ProceduralVarId var,
+      const hir::ProceduralVarDecl& declared, mir::TypeId type) -> mir::LocalId;
 
   // Where the named var keeps its storage. Every var a reference can name is
   // bound before anything reads it -- a static when the body opens, an

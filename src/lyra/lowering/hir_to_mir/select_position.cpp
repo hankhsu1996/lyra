@@ -117,6 +117,7 @@ auto PositionMapOf(const UnitLowerer& unit_lowerer, hir::TypeId receiver)
           [&](const hir::ImportedClassHandleType&) {
             return numbers_no_parts();
           },
+          [&](const hir::CovergroupHandleType&) { return numbers_no_parts(); },
           [&](const hir::UnitObjectType&) { return numbers_no_parts(); },
           [&](const hir::UnitObjectsType&) { return numbers_no_parts(); },
           [&](const hir::VirtualInterfaceType&) { return numbers_no_parts(); },

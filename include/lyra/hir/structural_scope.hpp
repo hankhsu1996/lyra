@@ -19,6 +19,7 @@
 #include "lyra/hir/class_id.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/continuous_assign.hpp"
+#include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/dumped_declaration.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/external_scope_class.hpp"
@@ -138,6 +139,15 @@ struct PublishedStatic {
   auto operator==(const PublishedStatic&) const -> bool = default;
 };
 
+// The cell a covergroup the scope declares keeps for its type, which the
+// beginning or end of a block it is sampled at tells every instance of the
+// covergroup this instance of the scope holds (LRM 19.3, 6.22).
+struct CovergroupBlockEvent {
+  CovergroupId covergroup;
+
+  auto operator==(const CovergroupBlockEvent&) const -> bool = default;
+};
+
 // A declaration a scope published, named the way the scope that holds it names
 // it. Which arena it lives in is what says how its storage is built: a data
 // object owns a cell the scope installs, a static-lifetime local owns one the
@@ -149,7 +159,7 @@ struct PublishedStatic {
 // in what this scope does with it.
 using PublishedDecl = std::variant<
     StructuralDataObjectId, PublishedStatic, LocalStaticPropertyTarget,
-    InstanceMemberId, InterfacePortId>;
+    CovergroupBlockEvent, InstanceMemberId, InterfacePortId>;
 
 // What a scope published: `signature` is the class the unit's signature states
 // for it, in this unit's own types, which is what the scope's published class
@@ -742,6 +752,10 @@ struct StructuralScope {
   // known. Every class a unit holds is named by exactly one scope, the
   // namespace unit's root scope included, so nothing is reached by elimination.
   std::vector<ClassId> replicated_classes;
+  // The covergroups that are types of this scope's instance in the same sense
+  // (LRM 19.3), a class's embedded ones among them (LRM 19.4): each is made
+  // into a class replicated with this scope.
+  std::vector<CovergroupId> replicated_covergroups;
   std::vector<ForeignExportDecl> foreign_exports;
   // Every scope's identity is minted before any body is lowered, so a `disable`
   // naming one (LRM 9.6.2) -- possibly from another process lowered first --

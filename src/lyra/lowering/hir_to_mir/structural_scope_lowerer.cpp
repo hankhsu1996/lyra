@@ -39,6 +39,7 @@
 #include "lyra/lowering/hir_to_mir/concurrent_assertion.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/continuous_assign.hpp"
+#include "lyra/lowering/hir_to_mir/covergroup_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
@@ -2538,6 +2539,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   // The cells of the published static properties of the classes this scope
   // declares, keyed by the class, which takes them over.
   std::map<hir::ClassId, std::vector<PlacedProperty>> placed_class_statics;
+  std::map<hir::CovergroupId, mir::ClassFieldTarget> covergroup_events;
   // What each published generate construct built, and what each published
   // disable target ends.
   std::vector<std::optional<mir::ClassFieldTarget>> generate_handles(
@@ -2569,6 +2571,12 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
             [&](const hir::LocalStaticPropertyTarget& property) {
               placed_class_statics[property.owner].push_back(
                   PlacedProperty{.property = property.prop, .field = field});
+            },
+            // The event the blocks of the instance trigger for a covergroup's
+            // type is kept here, as a static property of a class it declares
+            // would be (LRM 19.3, 6.22).
+            [&](const hir::CovergroupBlockEvent& event) {
+              covergroup_events.emplace(event.covergroup, field);
             },
             [&](hir::InstanceMemberId id) {
               instance_fields[id.value] = field;
@@ -2715,6 +2723,23 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   }
   generate_bindings_ = {hir_scope.generates.size(), std::move(generates)};
 
+  // The covergroups this scope replicates settle their shapes against this
+  // one for the reason its classes do. One sampled where a block of the
+  // instance begins or ends waits on the event the instance keeps for its
+  // type, which those blocks trigger.
+  BlockEventTriggers block_events;
+  for (const hir::CovergroupId covergroup : hir_scope.replicated_covergroups) {
+    CovergroupLowerer& lowerer =
+        covergroup_lowerers_.emplace_back(unit_lowerer, covergroup, this);
+    const auto event = covergroup_events.find(covergroup);
+    lowerer.DeclareShape(
+        &shape, event == covergroup_events.end()
+                    ? std::nullopt
+                    : std::optional<StaticStorageHome>{
+                          InstanceFieldHome{.field = event->second}});
+    lowerer.AddTypeBlockEvents(block_events);
+  }
+
   // Every procedural scope becomes a name node -- an object carrying the
   // segment a construct inside it reports as its hierarchical name (LRM
   // 21.2.1.5) -- whatever the source called it and whether or not anything was
@@ -2766,7 +2791,8 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
                                 mir::Type{mir::ObjectType{
                                     .of = mir::IntraUnitClassRef{node_class}}}),
                             .ownership = mir::PointerOwnership::kBorrowed}}))},
-        .disable_target = std::nullopt};
+        .disable_target = std::nullopt,
+        .block_events = BlockEventsOf(block_events, scope_id)};
 
     // What a `disable` of this scope invalidates (LRM 9.6.2). Its targets are
     // the blocks and tasks a name reaches, so a scope the source named owns one
@@ -3565,6 +3591,12 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         ctor_frame,
         StorageBringUp{.install = install_frame, .value = init_frame});
     if (!class_r) return std::unexpected(std::move(class_r.error()));
+  }
+  for (CovergroupLowerer& covergroup_lowerer : covergroup_lowerers_) {
+    auto covergroup_r = covergroup_lowerer.PopulateBodies(
+        ctor_frame,
+        StorageBringUp{.install = install_frame, .value = init_frame});
+    if (!covergroup_r) return std::unexpected(std::move(covergroup_r.error()));
   }
 
   // One process per assertion and clocking event, for the same reason a

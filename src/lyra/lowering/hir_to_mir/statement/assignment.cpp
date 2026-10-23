@@ -140,6 +140,10 @@ auto LowerSystemSubroutineCallStmtForm(
               -> std::optional<diag::Result<mir::Stmt>> {
             return std::nullopt;
           },
+          [](const support::CoverageDatabaseSystemSubroutineInfo&)
+              -> std::optional<diag::Result<mir::Stmt>> {
+            return std::nullopt;
+          },
           [&](const support::MemFileSystemSubroutineInfo& mem_file)
               -> std::optional<diag::Result<mir::Stmt>> {
             // A void task (LRM 21.4 / 21.5): its only form is a statement, so

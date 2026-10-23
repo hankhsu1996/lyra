@@ -682,20 +682,34 @@ auto MakeTailCell(const Told& told) -> std::shared_ptr<TailCell<HeldAs>> {
 template <class Part>
 class KeptPart {
  public:
-  explicit KeptPart(const Part& part) : before_(part) {
-  }
+  explicit KeptPart(const Part& part);
+  KeptPart(const KeptPart&) = delete;
+  auto operator=(const KeptPart&) -> KeptPart& = delete;
+  KeptPart(KeptPart&&) = delete;
+  auto operator=(KeptPart&&) -> KeptPart& = delete;
+  ~KeptPart();
 
   // What the write did to `part`, none where it left it as it was.
-  [[nodiscard]] auto ChangeTo(const Part& part) -> std::optional<Change> {
-    if (before_->IsBitIdentical(part)) {
-      return std::nullopt;
-    }
-    return Change::Whole();
-  }
+  [[nodiscard]] auto ChangeTo(const Part& part) -> std::optional<Change>;
 
  private:
   value::SmallBox<Part> before_;
 };
+
+template <class Part>
+KeptPart<Part>::KeptPart(const Part& part) : before_(part) {
+}
+
+template <class Part>
+KeptPart<Part>::~KeptPart() = default;
+
+template <class Part>
+auto KeptPart<Part>::ChangeTo(const Part& part) -> std::optional<Change> {
+  if (before_->IsBitIdentical(part)) {
+    return std::nullopt;
+  }
+  return Change::Whole();
+}
 
 // A bit-addressed part keeps only the words it lies in, as a change reaching
 // its bits, so a wait is compared on them by position. Some of a bit-addressed

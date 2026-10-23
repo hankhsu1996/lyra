@@ -1497,6 +1497,17 @@ the detail lives in the entry itself.
   Lyra has pinned stays fetchable, and a check holds the pin to the branch of the release
   `MODULE.bazel` names. One branch rebased onto each release, patch files in Lyra, and a tag per pin
   are rejected.
+- [a-covergroup-is-a-class-over-a-coverage-library](a-covergroup-is-a-class-over-a-coverage-library.md)
+  -- a covergroup is a class over a coverage library in SystemVerilog, written straight into MIR by
+  one lowering of the declaration HIR keeps as the source states it: bins are data built at `new`
+  and matched by the library, the record outlives the instance and holds the options as fields, a
+  clocking event samples inside its occurrence, a block event is triggered by the block's own code,
+  a `ref` argument is a property bound at construction, the database is UCIS XML written at the end
+  of a run that made an instance, and an extending covergroup is a class whose instance replaces the
+  base's, made through a virtual method of the embedding class. A class written in HIR beside facts,
+  a hidden argument telling a base constructor it builds the most derived object, compiled bins, a
+  C++ library, sampling from a woken process, a weak embedding reference and the port bindings are
+  rejected.
 
 ### Conformance testing
 

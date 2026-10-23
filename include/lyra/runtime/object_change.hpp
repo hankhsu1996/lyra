@@ -12,10 +12,7 @@ class Observable;
 // address the entries below take.
 [[nodiscard]] auto ObjectRootOf(const value::ManagedRef& handle) -> GcObject*;
 
-[[nodiscard]] inline auto ObjectRootOf(const value::ObjectRef& ref)
-    -> GcObject* {
-  return ObjectRootOf(ref.Handle());
-}
+[[nodiscard]] auto ObjectRootOf(const value::ObjectRef& ref) -> GcObject*;
 
 // The event source of an object, which a wait reaching the object enrols on
 // (LRM 9.4.2), given whatever reaches it: a handle, or the running method's
@@ -23,10 +20,7 @@ class Observable;
 // design's own failure (LRM 8.4).
 [[nodiscard]] auto EventSourceOf(GcObject* object) -> Observable*;
 
-[[nodiscard]] inline auto EventSourceOf(const value::ObjectRef& ref)
-    -> Observable* {
-  return EventSourceOf(ObjectRootOf(ref));
-}
+[[nodiscard]] auto EventSourceOf(const value::ObjectRef& ref) -> Observable*;
 
 // A write in progress into a property of an object (LRM 8.4), held by whoever
 // writes for as long as the write lasts. Ending it tells the object that one of

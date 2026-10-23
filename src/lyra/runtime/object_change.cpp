@@ -11,11 +11,19 @@ auto ObjectRootOf(const value::ManagedRef& handle) -> GcObject* {
   return static_cast<GcObject*>(handle.Share().get());
 }
 
+auto ObjectRootOf(const value::ObjectRef& ref) -> GcObject* {
+  return ObjectRootOf(ref.Handle());
+}
+
 auto EventSourceOf(GcObject* object) -> Observable* {
   if (object == nullptr) {
     value::RaiseNullObjectHandleAccess();
   }
   return &object->EventSource();
+}
+
+auto EventSourceOf(const value::ObjectRef& ref) -> Observable* {
+  return EventSourceOf(ObjectRootOf(ref));
 }
 
 ErasedObjectWrite::ErasedObjectWrite(GcObject* object) : object_(object) {

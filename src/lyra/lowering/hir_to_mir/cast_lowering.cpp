@@ -331,9 +331,12 @@ auto BuildValueConversion(
           [&](const mir::CoroutineType& t) { return none(t); },
           // LRM 13.5.2: a `ref` formal binds an actual of an equivalent type,
           // and a `const ref` one takes it read-only, so what the actual
-          // refers to is the formal's referent as it is.
+          // refers to is the formal's referent as it is -- a reference held
+          // as a member lending the one it holds.
           [&](const mir::VariableRefType& t) {
-            if (!unit.types.Get(operand_expr.type).Is<mir::VariableRefType>()) {
+            const mir::Type& from = unit.types.Get(operand_expr.type);
+            if (!from.Is<mir::VariableRefType>() &&
+                !from.Is<mir::ReferenceWrapperType>()) {
               return none(t);
             }
             return mir::MakeSameRepresentationCast(

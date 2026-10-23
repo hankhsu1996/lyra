@@ -45,6 +45,19 @@ auto BuildObjectDeref(
   return block.Deref(unit.types, reaches, object);
 }
 
+auto BuildObjectPointer(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId reaches)
+    -> mir::ExprId {
+  const mir::ExprId object = BuildObjectDeref(unit, block, reaches);
+  return block.exprs.Add(
+      mir::MakeAddressOfExpr(
+          object, unit.types.Intern(
+                      mir::Type{mir::PointerType{
+                          .pointee = block.exprs.Get(object).type,
+                          .ownership = mir::PointerOwnership::kBorrowed,
+                          .mutability = mir::Mutability::kMutable}})));
+}
+
 auto ObjectAs(mir::Block& block, mir::ExprId object, mir::TypeId pointer)
     -> mir::ExprId {
   // A pointer named where it is held is read: what is cast is its value.
@@ -267,6 +280,15 @@ auto BuildReferenceArg(
           .data =
               mir::CallExpr{.callee = mir::Construct{}, .arguments = {cell}},
           .type = ref_type});
+}
+
+auto BuildThisHandle(const WalkFrame& frame) -> mir::Expr {
+  const BodyBindingRef share =
+      frame.bindings->EnsureCarrier(ReceiverShareOrigin{});
+  return mir::MakeCopyExpr(
+      frame.current_block->exprs.Add(
+          frame.bindings->MakeBindingPlace(share, *frame.current_block)),
+      frame.bindings->TypeOf(share));
 }
 
 }  // namespace lyra::lowering::hir_to_mir

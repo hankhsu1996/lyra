@@ -6,10 +6,16 @@
 #include <span>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
+#include "lyra/hir/class_decl.hpp"
+#include "lyra/hir/class_ref.hpp"
+#include "lyra/hir/compilation_unit.hpp"
+#include "lyra/hir/external_class.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
@@ -96,6 +102,35 @@ auto ReportParamTypeOf(
       return std::nullopt;
   }
   throw InternalError("ReportParamTypeOf: unknown subroutine kind");
+}
+
+auto ConstructorFormalsOf(UnitLowerer& unit_lowerer, const hir::ClassRef& cls)
+    -> std::vector<CalleeFormal> {
+  return std::visit(
+      Overloaded{
+          [&](const hir::LocalClassRef& local) {
+            return CalleeFormalsOf(
+                unit_lowerer,
+                unit_lowerer.Hir().classes.Get(local.class_id).constructor);
+          },
+          [&](const hir::ExternalClassRef& external) {
+            const hir::ExternalClass* published = hir::FindExternalClass(
+                unit_lowerer.Hir().external_classes, external.unit_name,
+                external.class_path);
+            if (published == nullptr) {
+              throw InternalError(
+                  "ConstructorFormalsOf: a class another unit declares is "
+                  "constructed through what that unit published, which this "
+                  "unit records");
+            }
+            if (!published->constructor.has_value()) {
+              throw InternalError(
+                  "ConstructorFormalsOf: an interface class is never "
+                  "constructed (LRM 8.26.5)");
+            }
+            return CalleeFormalsOf(unit_lowerer, *published->constructor);
+          }},
+      cls);
 }
 
 auto CalleeFormalsOf(UnitLowerer& unit_lowerer, const hir::SubroutineDecl& decl)

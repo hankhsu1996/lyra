@@ -28,6 +28,7 @@
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/external_scope_class.hpp"
 #include "lyra/hir/published_callable.hpp"
@@ -36,6 +37,7 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/lowering/ast_to_hir/covergroup_access.hpp"
 #include "lyra/lowering/ast_to_hir/expression/dynamic_cast.hpp"
 #include "lyra/lowering/ast_to_hir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/expression/query.hpp"
@@ -93,6 +95,14 @@ auto ClassifyMethodReceiver(
   if (call.lookupInfo.viaSuper) return hir::SuperReceiver{};
   const auto* this_class = call.thisClass();
   if (this_class == nullptr || NamesCurrentInstance(*this_class)) {
+    // A covergroup a class embeds calls the embedding object's methods as if
+    // it were that object (LRM 19.4).
+    if (const auto* const* method =
+            std::get_if<const slang::ast::SubroutineSymbol*>(&call.subroutine);
+        method != nullptr && ReachedThroughEmbedding(frame, **method)) {
+      return hir::HandleReceiver{
+          .expr = EmbeddingObject(frame, frontend::SpanOf(call.sourceRange))};
+    }
     return hir::SelfReceiver{};
   }
   auto receiver_or = lowerer.LowerExpr(*this_class, frame);
@@ -831,6 +841,13 @@ auto LowerSystemCall(
       return std::unexpected(std::move(recorded.error()));
     }
   }
+  // The coverage database is the coverage library's (LRM 19.9).
+  if (std::holds_alternative<support::CoverageDatabaseSystemSubroutineInfo>(
+          desc->semantic)) {
+    if (auto named = unit_lowerer.NameCoverageLibrary(span); !named) {
+      return std::unexpected(std::move(named.error()));
+    }
+  }
 
   // The call is of the type the front end gave it, which is the standard's
   // type for the function and, for one whose result follows its operand (LRM
@@ -888,6 +905,12 @@ auto LowerSubroutineCall(
             },
         .span = span,
     };
+  }
+
+  // A covergroup's, a coverpoint's or a cross's built-in method (LRM 19.8).
+  if (IsCovergroupMember(*sym)) {
+    return LowerCovergroupMethodCall(
+        lowerer, frame, call, std::move(arg_ids), span);
   }
 
   // A class method the front end supplies itself has no body, so there is no

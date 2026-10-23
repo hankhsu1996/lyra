@@ -18,6 +18,7 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/concurrent_assertion.hpp"
+#include "lyra/lowering/hir_to_mir/covergroup_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -125,7 +126,7 @@ auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
             return LowerBreakStmt(stmt.label, frame);
           },
           [&](const hir::ContinueStmt&) {
-            return LowerContinueStmt(stmt.label);
+            return LowerContinueStmt(stmt.label, frame);
           },
           [&](const hir::ReturnStmt& r) {
             return LowerReturnStmt(*this, frame, stmt.label, r);
@@ -165,11 +166,33 @@ namespace {
 auto LowerStraightLineBodyInto(ProcessLowerer& process, WalkFrame frame)
     -> diag::Result<void> {
   const hir::ProceduralBody& body = process.HirBody();
-  auto lowered =
-      process.LowerStmt(body.stmts.Get(process.HirRootStmt()), frame);
+  const hir::Stmt& root = body.stmts.Get(process.HirRootStmt());
+  // A body whose root statement is the block of its own scope begins and ends
+  // as that block does.
+  const auto* block = std::get_if<hir::BlockStmt>(&root.data);
+  if (block != nullptr && block->scope == body.root_scope) {
+    auto lowered = process.LowerStmt(root, frame);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    frame.current_block->AppendStmt(*std::move(lowered));
+    return {};
+  }
+  // Any other body is its scope's one statement, so what a covergroup samples
+  // at the scope (LRM 19.3) is triggered around it here, its end on every
+  // normal way out.
+  const ScopeBlockEvents& events =
+      process.Scopes().Get(body.root_scope).block_events;
+  AppendBlockEventTriggers(process, frame, events.at_begin);
+  const NormalCleanup end{
+      .emit =
+          [&](const WalkFrame& at) {
+            AppendBlockEventTriggers(process, at, events.at_end);
+          },
+      .outer = frame.normal_cleanups};
+  auto lowered = process.LowerStmt(
+      root, events.at_end.empty() ? frame : frame.WithNormalCleanup(end));
   if (!lowered) return std::unexpected(std::move(lowered.error()));
-  auto& body_block = *frame.current_block;
-  body_block.AppendStmt(*std::move(lowered));
+  frame.current_block->AppendStmt(*std::move(lowered));
+  end.emit(frame);
   return {};
 }
 
@@ -375,6 +398,15 @@ auto ProcessLowerer::EnterSubroutineBody(
                     : CallableForm::kInstanceMember);
 }
 
+auto ProcessLowerer::DeclareReferenceFormal(
+    CallableBindings& bindings, hir::ProceduralVarId var,
+    const hir::ProceduralVarDecl& declared, mir::TypeId type) -> mir::LocalId {
+  const mir::LocalId parameter = bindings.DeclareProcedural(
+      ProceduralOrigin{.var = var}, declared.name, type);
+  MapProceduralVar(var, AutomaticVarBinding{.type = type});
+  return parameter;
+}
+
 template <typename AfterFormals>
 auto ProcessLowerer::LowerSubroutine(
     const hir::SubroutineDecl& src, AfterFormals after_formals)
@@ -402,7 +434,6 @@ auto ProcessLowerer::LowerSubroutine(
     const std::optional<mir::TypeId> param_type =
         ParamTypeOf(owner_->Unit(), owner_->TranslateType(hir_var.type), dir);
 
-    const BindingOriginId origin = ProceduralOrigin{.var = param.var};
     if (!param_type.has_value()) {
       code.Body().AppendStmt(LowerVarStart(
           *this, body_frame, param.var, hir_var.name,
@@ -411,13 +442,9 @@ auto ProcessLowerer::LowerSubroutine(
       continue;
     }
 
-    // A `ref` formal names its actual's storage, which reports its own writes
-    // (LRM 13.5.2), so it is the parameter itself.
     if (unit.types.Get(*param_type).Is<mir::VariableRefType>()) {
-      const mir::LocalId mir_var =
-          bindings.DeclareProcedural(origin, hir_var.name, *param_type);
-      MapProceduralVar(param.var, AutomaticVarBinding{.type = *param_type});
-      params.push_back(mir_var);
+      params.push_back(
+          DeclareReferenceFormal(bindings, param.var, hir_var, *param_type));
       continue;
     }
 
@@ -556,13 +583,29 @@ void ProcessLowerer::RegisterConstructorFormals(
     std::vector<mir::LocalId>& params) {
   OpenActivationScope(*this, frame, DeclaredAhead(ctor));
   for (const auto& param : ctor.params) {
-    if (param.direction != hir::ParamDirection::kInput) {
-      throw InternalError(
-          "ProcessLowerer::RegisterConstructorFormals: a non-input "
-          "constructor formal reached MIR lowering; AST-to-HIR rejects these");
+    switch (param.direction) {
+      case hir::ParamDirection::kInput:
+        params.push_back(DeclareParameterVar(
+            *this, frame, param.var, ctor.body.procedural_vars.Get(param.var)));
+        break;
+      case hir::ParamDirection::kRef:
+      case hir::ParamDirection::kConstRef: {
+        const hir::ProceduralVarDecl& declared =
+            ctor.body.procedural_vars.Get(param.var);
+        params.push_back(DeclareReferenceFormal(
+            *frame.bindings, param.var, declared,
+            *ParamTypeOf(
+                owner_->Unit(), owner_->TranslateType(declared.type),
+                param.direction)));
+        break;
+      }
+      case hir::ParamDirection::kOutput:
+      case hir::ParamDirection::kInOut:
+        throw InternalError(
+            "ProcessLowerer::RegisterConstructorFormals: a construction "
+            "carries nothing back to an 'output' or 'inout' actual, and "
+            "AST-to-HIR refuses a constructor declaring one");
     }
-    params.push_back(DeclareParameterVar(
-        *this, frame, param.var, ctor.body.procedural_vars.Get(param.var)));
   }
 }
 

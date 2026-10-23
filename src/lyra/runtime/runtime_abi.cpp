@@ -2523,6 +2523,16 @@ void lyra_rt_run_detached(void* runtime, void* carrier) {
       std::move(*static_cast<Coroutine<void>*>(carrier)));
 }
 
+void lyra_rt_run_observing(void* runtime, void* started) {
+  static_cast<RuntimeEffects*>(runtime)->RunObserving(
+      std::move(*static_cast<Coroutine<void>*>(started)));
+}
+
+void lyra_rt_submit_at_run_end(void* runtime, void* closure) {
+  static_cast<RuntimeEffects*>(runtime)->SubmitAtRunEnd(
+      AdoptClosure<lyra::support::EffectSignature>(closure));
+}
+
 void lyra_rt_submit_postponed(void* runtime, void* closure) {
   static_cast<RuntimeEffects*>(runtime)->SubmitPostponed(
       AdoptClosure<lyra::support::EffectSignature>(closure));
@@ -3567,6 +3577,10 @@ void lyra_rt_bind_member(void* member, const void* bound) {
 void lyra_rt_bind_alias(void* alias, const void* bound) {
   lyra::runtime::current_runtime().Bound().Alias(
       *static_cast<ErasedReference*>(alias), ErasedAt(bound));
+}
+
+void lyra_rt_bind_reference(void* member, const void* bound) {
+  *static_cast<ErasedReference*>(member) = ErasedAt(bound);
 }
 
 void lyra_rt_drives_continuously(const void* reference) {

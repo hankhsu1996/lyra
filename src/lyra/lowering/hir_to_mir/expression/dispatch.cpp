@@ -14,6 +14,7 @@
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
+#include "lyra/lowering/hir_to_mir/covergroup_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/expression/aggregates.hpp"
 #include "lyra/lowering/hir_to_mir/expression/assignment.hpp"
 #include "lyra/lowering/hir_to_mir/expression/calls.hpp"
@@ -28,6 +29,7 @@
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -191,13 +193,10 @@ auto LowerAsPlaceImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
               args.push_back(BuildImplicitInstanceArgument(
                   lowerer, frame, *n.declaring_instance));
             }
-            for (const hir::ExprId arg_hid : n.arguments) {
-              auto arg_or =
-                  lowerer.LowerExpr(lowerer.HirExprs().Get(arg_hid), frame);
-              if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-              args.push_back(
-                  frame.current_block->exprs.Add(*std::move(arg_or)));
-            }
+            auto actuals = EmitConstructionActuals(
+                lowerer, frame, n.class_ref, n.arguments);
+            if (!actuals) return std::unexpected(std::move(actuals.error()));
+            args.insert(args.end(), actuals->begin(), actuals->end());
             args.push_back(BuildReportHandedOn(lowerer.Owner().Unit(), frame));
             const mir::TypeId object_type =
                 *mir::AllocatedType(lowerer.Owner().Unit().types, result_type);
@@ -214,6 +213,22 @@ auto LowerAsPlaceImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
           [&](const hir::DynamicCastExpr& c) -> diag::Result<mir::Expr> {
             return LowerHirDynamicCastExpr(
                 lowerer, frame, c, result_type, expr.span);
+          },
+          [&](const hir::CovergroupNewExpr& n) -> diag::Result<mir::Expr> {
+            return LowerCovergroupNewExpr(lowerer, frame, n, result_type);
+          },
+          [&](const hir::CovergroupMethodCallExpr& call)
+              -> diag::Result<mir::Expr> {
+            return LowerCovergroupMethodCallExpr(lowerer, frame, call);
+          },
+          [&](const hir::CovergroupOptionExpr& option)
+              -> diag::Result<mir::Expr> {
+            auto path = CovergroupOptionPath(lowerer, frame, option);
+            if (!path) return std::unexpected(std::move(path.error()));
+            mir::CompilationUnit& unit = lowerer.Owner().Unit();
+            mir::Block& block = *frame.current_block;
+            const mir::ExprId place = PathAsPlace(unit, block, *path);
+            return mir::MakeCopyExpr(place, block.exprs.Get(place).type);
           },
       },
       expr.data);
@@ -364,6 +379,13 @@ auto LowerAccessPathImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
           [&](const hir::ClassNewExpr&) { return names_no_storage(); },
           [&](const hir::TaggedUnionExpr&) { return names_no_storage(); },
           [&](const hir::DynamicCastExpr&) { return names_no_storage(); },
+          [&](const hir::CovergroupNewExpr&) { return names_no_storage(); },
+          [&](const hir::CovergroupMethodCallExpr&) {
+            return names_no_storage();
+          },
+          [&](const hir::CovergroupOptionExpr& option) {
+            return CovergroupOptionPath(lowerer, frame, option);
+          },
       },
       expr.data);
 }

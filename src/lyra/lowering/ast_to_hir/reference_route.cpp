@@ -1211,10 +1211,10 @@ auto UnitLowerer::StartReaching(const slang::ast::Scope& target)
       *start);
 }
 
-auto UnitLowerer::RouteToClassScope(
-    const WalkFrame& frame, const slang::ast::ClassType& cls)
+auto UnitLowerer::RouteToReplicatingScope(
+    const WalkFrame& frame, const slang::ast::Symbol& type)
     -> std::optional<ScopeRoute> {
-  const slang::ast::Scope& scope = ReplicatingScope(cls);
+  const slang::ast::Scope& scope = ReplicatingScope(type);
   auto origin = StartReaching(scope);
   if (!origin.has_value()) return std::nullopt;
   return RouteToScope(frame, scope, *std::move(origin));
@@ -1227,22 +1227,28 @@ auto UnitLowerer::DeclaringInstanceFrom(
   auto takes = TakesDeclaringInstance(cls, span);
   if (!takes) return std::unexpected(std::move(takes.error()));
   if (!*takes) return std::nullopt;
-  if (HeldByAnotherDesignElement(cls)) {
-    auto route = RouteToClassScope(frame, cls);
+  return ReachDeclaringInstance(cls, frame, span);
+}
+
+auto UnitLowerer::ReachDeclaringInstance(
+    const slang::ast::Symbol& type, const WalkFrame& frame,
+    diag::SourceSpan span) -> diag::Result<hir::DeclaringInstanceReach> {
+  if (HeldByAnotherDesignElement(type)) {
+    auto route = RouteToReplicatingScope(frame, type);
     const auto* on = route.has_value()
                          ? std::get_if<InExternalScope>(&route->place)
                          : nullptr;
     if (on == nullptr) {
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedClassFeature,
-          "reaching, from here, the instance that holds a class another "
+          "reaching, from here, the instance that holds a type another "
           "instance declares is not yet supported");
     }
     const hir::TypeId object_type = ScopeClassTypeOf(on->scope_class);
     return hir::DeclaringInstanceReach{
         MakeRoutedObjectRef(frame.Current(), *std::move(route), object_type)};
   }
-  auto hops = DeclaringScopeHopsFrom(cls, frame, span);
+  auto hops = DeclaringScopeHopsFrom(type, frame, span);
   if (!hops) return std::unexpected(std::move(hops.error()));
   return hir::DeclaringInstanceReach{*hops};
 }
@@ -1290,7 +1296,7 @@ auto UnitLowerer::ResolveStaticPropertyTarget(
           "declares is not yet supported from here",
           prop.name);
     };
-    auto route = RouteToClassScope(frame, owner_class);
+    auto route = RouteToReplicatingScope(frame, owner_class);
     const auto* on = route.has_value()
                          ? std::get_if<InExternalScope>(&route->place)
                          : nullptr;

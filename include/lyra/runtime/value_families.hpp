@@ -104,4 +104,17 @@ extern template class Coroutine<value::Chandle>;
 extern template class Coroutine<value::ObjectRef>;
 extern template class Coroutine<value::Tuple<>>;
 
+// What a write keeps of the part it lands on, and the step to an element an
+// associative array indexes by one of these (LRM 7.8).
+extern template class KeptPart<value::String>;
+extern template class KeptPart<value::Real>;
+extern template class KeptPart<value::ShortReal>;
+extern template class KeptPart<value::Chandle>;
+extern template class KeptPart<value::ObjectRef>;
+
+extern template auto StepTo<value::String>(const value::String& key)
+    -> PartPath;
+extern template auto StepTo<value::ObjectRef>(const value::ObjectRef& key)
+    -> PartPath;
+
 }  // namespace lyra::runtime

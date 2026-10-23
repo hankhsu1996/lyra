@@ -782,6 +782,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kBindAlias:
       return {
           .name = "bind_alias", .declaration = RuntimeFunction("BindAlias")};
+    case BuiltinFn::kBindReference:
+      return {
+          .name = "bind_reference",
+          .declaration = RuntimeFunction("BindReference")};
     case BuiltinFn::kDrivesContinuously:
       return {
           .name = "drives_continuously",
@@ -845,6 +849,12 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = Method{"RunDetached"},
           .takes_the_runtime_handle = true,
           .callables = {kStartedPastTheCaller}};
+    case BuiltinFn::kRunObserving:
+      return {
+          .name = "run_observing",
+          .declaration = Method{"RunObserving"},
+          .takes_the_runtime_handle = true,
+          .callables = {kStartedPastTheCaller}};
     case BuiltinFn::kResumeInNbaRegion:
       return {
           .name = "resume_in_nba_region",
@@ -853,6 +863,12 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "submit_postponed",
           .declaration = Method{"SubmitPostponed"},
+          .takes_the_runtime_handle = true,
+          .callables = {kEffectFnOncePastTheCaller}};
+    case BuiltinFn::kSubmitAtRunEnd:
+      return {
+          .name = "submit_at_run_end",
+          .declaration = Method{"SubmitAtRunEnd"},
           .takes_the_runtime_handle = true,
           .callables = {kEffectFnOncePastTheCaller}};
     case BuiltinFn::kSubmitObserved:

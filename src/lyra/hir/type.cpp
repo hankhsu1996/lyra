@@ -79,6 +79,19 @@ auto HashClassRef(std::size_t seed, const ClassRef& ref) -> std::size_t {
       ref);
 }
 
+auto HashCovergroupRef(std::size_t seed, const CovergroupRef& ref)
+    -> std::size_t {
+  return std::visit(
+      Overloaded{
+          [seed](const LocalCovergroupRef& local) {
+            return Combine(seed, local.covergroup.value);
+          },
+          [seed](const ExternalCovergroupRef& external) {
+            return Combine(Combine(seed, external.unit_name), external.path);
+          }},
+      ref);
+}
+
 // The identities a field list names. Field names are left to equality: two
 // aggregates whose members have the same types in the same order are rare
 // enough that separating them by name buys nothing.
@@ -143,6 +156,9 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [seed](const ImportedClassHandleType& t) {
             return Combine(seed, static_cast<std::size_t>(t.klass));
           },
+          [seed](const CovergroupHandleType& t) {
+            return HashCovergroupRef(seed, t.covergroup);
+          },
           [seed](const UnitObjectType& t) {
             return Combine(Combine(seed, t.unit_name), t.class_path);
           },
@@ -201,6 +217,7 @@ auto Type::IsIntegral() const -> bool {
           [](const ChandleType&) { return false; },
           [](const ClassHandleType&) { return false; },
           [](const ImportedClassHandleType&) { return false; },
+          [](const CovergroupHandleType&) { return false; },
           [](const UnitObjectType&) { return false; },
           [](const UnitObjectsType&) { return false; },
           [](const VirtualInterfaceType&) { return false; },
@@ -236,6 +253,7 @@ auto Type::IsValueChangeObservable() const -> bool {
           // on a property of the object, which the object answers.
           [](const ClassHandleType&) { return true; },
           [](const ImportedClassHandleType&) { return true; },
+          [](const CovergroupHandleType&) { return true; },
           [](const ChandleType&) { return true; },
           // Which instance a virtual interface holds is a value it is compared
           // by (LRM 25.9), so a wait on it waits for a different instance.
@@ -297,6 +315,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const ImportedClassHandleType&) -> Element {
             return std::nullopt;
           },
+          [](const CovergroupHandleType&) -> Element { return std::nullopt; },
           [](const UnitObjectType&) -> Element { return std::nullopt; },
           [](const UnitObjectsType&) -> Element { return std::nullopt; },
           [](const VirtualInterfaceType&) -> Element { return std::nullopt; },

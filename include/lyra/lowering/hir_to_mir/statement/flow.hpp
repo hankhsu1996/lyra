@@ -66,7 +66,7 @@ auto LowerReturnStmt(
 auto LowerBreakStmt(std::optional<std::string> label, const WalkFrame& frame)
     -> diag::Result<mir::Stmt>;
 
-auto LowerContinueStmt(std::optional<std::string> label)
+auto LowerContinueStmt(std::optional<std::string> label, const WalkFrame& frame)
     -> diag::Result<mir::Stmt>;
 
 }  // namespace lyra::lowering::hir_to_mir

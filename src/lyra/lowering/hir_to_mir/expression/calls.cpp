@@ -24,6 +24,7 @@
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/covergroup_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/expression/array_iterator_method.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/expression/enum_method.hpp"
@@ -272,6 +273,13 @@ auto LowerSystemSubroutineCall(
                 "$readmem / $writemem reached expression lowering; a void "
                 "task only lowers through the statement-form dispatch");
           },
+          [](const support::CoverageDatabaseSystemSubroutineInfo&)
+              -> diag::Result<mir::Expr> {
+            throw InternalError(
+                "a coverage database function is the coverage library's, "
+                "called before system subroutines are dispatched -- please "
+                "report this as a bug");
+          },
       },
       desc.semantic);
 }
@@ -509,6 +517,14 @@ auto LowerHirCallExpr(
   return std::visit(
       Overloaded{
           [&](const hir::SystemSubroutineRef& sys) -> diag::Result<mir::Expr> {
+            // A coverage database function is the coverage library's function
+            // of the same name (LRM 19.9), called as a user function is.
+            if (const auto* database =
+                    std::get_if<support::CoverageDatabaseSystemSubroutineInfo>(
+                        &support::LookupSystemSubroutine(sys.id).semantic)) {
+              return LowerCoverageDatabaseCall(
+                  lowerer, frame, database->call, c);
+            }
             auto lowered =
                 LowerSystemSubroutineCall(lowerer, frame, c, sys, span);
             // Every operator around the call was typed against the type the

@@ -32,6 +32,7 @@
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
+#include "lyra/lowering/hir_to_mir/synthesized_function.hpp"
 #include "lyra/lowering/hir_to_mir/unit_object_access.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -384,22 +385,11 @@ auto BuildReceiverPointer(
   if (handle == nullptr) {
     return block.exprs.Add(MakeSelfRefExpr(frame));
   }
-  const mir::TypePool& types = lowerer.Owner().Unit().types;
   auto handle_or =
       lowerer.LowerExpr(lowerer.HirExprs().Get(handle->expr), frame);
   if (!handle_or) return std::unexpected(std::move(handle_or.error()));
-  const mir::TypeId handle_type = handle_or->type;
-  const mir::TypeId object_type =
-      types.Get(handle_type).Get<mir::ManagedRefType>().pointee;
-  const mir::ExprId handle_id = block.exprs.Add(*std::move(handle_or));
-  const mir::ExprId object_id = block.Deref(types, handle_id, object_type);
-  return block.exprs.Add(
-      mir::MakeAddressOfExpr(
-          object_id, types.Intern(
-                         mir::Type{mir::PointerType{
-                             .pointee = object_type,
-                             .ownership = mir::PointerOwnership::kBorrowed,
-                             .mutability = mir::Mutability::kMutable}})));
+  return BuildObjectPointer(
+      lowerer.Owner().Unit(), block, block.exprs.Add(*std::move(handle_or)));
 }
 
 // Evaluates the ambient handle a callee's first parameter binds, in the block
@@ -584,6 +574,54 @@ auto SeenAsAny(
           reference));
 }
 
+}  // namespace
+
+template <ExprLowerer Lowerer>
+auto EmitBoundActual(
+    Lowerer& lowerer, const WalkFrame& frame, const hir::Expr& actual,
+    hir::ParamDirection direction, mir::TypeId type)
+    -> diag::Result<mir::ExprId> {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  mir::Block& block = *frame.current_block;
+  switch (direction) {
+    case hir::ParamDirection::kRef:
+    case hir::ParamDirection::kConstRef: {
+      auto named = lowerer.LowerLhsExpr(actual, frame);
+      if (!named) return std::unexpected(std::move(named.error()));
+      const mir::TypeId reference = *ParamTypeOf(unit, type, direction);
+      return TakenAsAny(lowerer.Owner(), type, actual.type)
+                 ? SeenAsAny(
+                       lowerer.Owner(), frame, actual.type, *named, reference)
+                 : AtType(
+                       unit, block, PathReference(unit, block, *named),
+                       reference);
+    }
+    case hir::ParamDirection::kInput: {
+      auto lowered = lowerer.LowerExpr(actual, frame);
+      if (!lowered) return std::unexpected(std::move(lowered.error()));
+      const mir::ExprId value = block.exprs.Add(*std::move(lowered));
+      return TakenAsAny(lowerer.Owner(), type, actual.type)
+                 ? MadeAny(lowerer.Owner(), block, actual.type, value, type)
+                 : value;
+    }
+    case hir::ParamDirection::kOutput:
+    case hir::ParamDirection::kInOut:
+      throw InternalError(
+          "EmitBoundActual: an 'output' or 'inout' actual is a place written "
+          "back once the call completes, never an argument bound alone");
+  }
+  throw InternalError("EmitBoundActual: unknown parameter direction");
+}
+
+template auto EmitBoundActual(
+    ProcessLowerer&, const WalkFrame&, const hir::Expr&, hir::ParamDirection,
+    mir::TypeId) -> diag::Result<mir::ExprId>;
+template auto EmitBoundActual(
+    const StructuralScopeLowerer&, const WalkFrame&, const hir::Expr&,
+    hir::ParamDirection, mir::TypeId) -> diag::Result<mir::ExprId>;
+
+namespace {
+
 // Emits the call boundary into `frame`: the callee with whatever leads the
 // arguments the source wrote, and each actual bound by its direction -- an
 // `input` value, an `inout`'s incoming value, an `output`'s nothing, a `ref`
@@ -656,35 +694,13 @@ auto EmitSubroutineCall(
         break;
       }
 
-      // A ref / const-ref formal aliases what the actual designates (LRM
-      // 13.5.2), which is the whole of a variable or a class property or a
-      // part of one; either way a write through it is a write of what holds
-      // that storage, told to whoever waits on it when it lands.
       case hir::ParamDirection::kRef:
-      case hir::ParamDirection::kConstRef: {
-        auto arg_or = lowerer.LowerLhsExpr(hir_arg, frame);
-        if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-        const mir::TypeId reference =
-            *ParamTypeOf(unit, formal.type, formal.direction);
-        call_args.push_back(
-            TakenAsAny(lowerer.Owner(), formal.type, hir_arg.type)
-                ? SeenAsAny(
-                      lowerer.Owner(), frame, hir_arg.type, *arg_or, reference)
-                : AtType(
-                      unit, block, PathReference(unit, block, *arg_or),
-                      reference));
-        break;
-      }
-
+      case hir::ParamDirection::kConstRef:
       case hir::ParamDirection::kInput: {
-        auto arg_or = lowerer.LowerExpr(hir_arg, frame);
-        if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-        const mir::ExprId value = block.exprs.Add(*std::move(arg_or));
-        call_args.push_back(
-            TakenAsAny(lowerer.Owner(), formal.type, hir_arg.type)
-                ? MadeAny(
-                      lowerer.Owner(), block, hir_arg.type, value, formal.type)
-                : value);
+        auto bound = EmitBoundActual(
+            lowerer, frame, hir_arg, formal.direction, formal.type);
+        if (!bound) return std::unexpected(std::move(bound.error()));
+        call_args.push_back(*bound);
         break;
       }
     }
@@ -768,6 +784,68 @@ auto LowerWritingBackCall(
 }
 
 }  // namespace
+
+auto BuildMethodCall(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    const hir::MethodCallee& callee, std::optional<mir::ExprId> receiver,
+    std::span<const mir::ExprId> arguments, hir::TypeId result_type)
+    -> mir::ExprId {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  mir::Block& block = *frame.current_block;
+  const MethodCalleeFacts facts = ReadMethodCallee(unit_lowerer, callee);
+  if (facts.kind != hir::SubroutineKind::kFunction) {
+    throw InternalError(
+        "BuildMethodCall: a call no source expression stands for is of a "
+        "function");
+  }
+  if (arguments.size() != facts.formals.size()) {
+    throw InternalError("BuildMethodCall: argument / formal count mismatch");
+  }
+  // A method of an object dispatches where it fills a slot and is called by
+  // name otherwise; a type-associated one is called by name on nothing.
+  mir::Callee named = facts.target.direct;
+  if (receiver.has_value()) {
+    const mir::ExprId object =
+        BuildObjectPointer(unit, block, block.AsValue(unit.types, *receiver));
+    if (facts.target.slot.has_value()) {
+      named = mir::Virtual{
+          .receiver = BuildObjectDeref(
+              unit, block,
+              AsIntroducer(unit.types, block, object, *facts.target.slot)),
+          .slot = *facts.target.slot};
+    } else {
+      named = mir::Direct{
+          .target = facts.target.direct.target,
+          .receiver = BuildObjectDeref(unit, block, object)};
+    }
+  }
+  std::vector<mir::ExprId> bound;
+  bound.reserve(arguments.size());
+  for (std::size_t i = 0; i < arguments.size(); ++i) {
+    const CalleeFormal& formal = facts.formals[i];
+    switch (formal.direction) {
+      case hir::ParamDirection::kInput:
+        bound.push_back(ConvertToType(
+            unit, block, block.AsValue(unit.types, arguments[i]), formal.type));
+        break;
+      case hir::ParamDirection::kRef:
+      case hir::ParamDirection::kConstRef:
+        bound.push_back(AtType(
+            unit, block, arguments[i],
+            *ParamTypeOf(unit, formal.type, formal.direction)));
+        break;
+      case hir::ParamDirection::kOutput:
+      case hir::ParamDirection::kInOut:
+        throw InternalError(
+            "BuildMethodCall: a formal written back once the call completes");
+    }
+  }
+  const mir::TypeId result = unit_lowerer.TranslateType(result_type);
+  return BuildFunctionCall(
+      unit, frame, std::move(named), std::move(bound),
+      result == unit.builtins.void_type ? std::nullopt
+                                        : std::optional<mir::TypeId>{result});
+}
 
 auto LowerSubroutineCallStmtForm(
     ProcessLowerer& lowerer, WalkFrame frame,
@@ -939,6 +1017,36 @@ auto EmitReportingCall(
                   .type = call_result_type})});
   return {};
 }
+
+template <ExprLowerer Lowerer>
+auto EmitConstructionActuals(
+    Lowerer& lowerer, const WalkFrame& frame, const hir::ClassRef& cls,
+    std::span<const hir::ExprId> actuals)
+    -> diag::Result<std::vector<mir::ExprId>> {
+  const std::vector<CalleeFormal> formals =
+      ConstructorFormalsOf(lowerer.Owner(), cls);
+  if (actuals.size() != formals.size()) {
+    throw InternalError(
+        "EmitConstructionActuals: argument / formal count mismatch");
+  }
+  std::vector<mir::ExprId> args;
+  args.reserve(actuals.size());
+  for (std::size_t i = 0; i < actuals.size(); ++i) {
+    auto bound = EmitBoundActual(
+        lowerer, frame, lowerer.HirExprs().Get(actuals[i]),
+        formals[i].direction, formals[i].type);
+    if (!bound) return std::unexpected(std::move(bound.error()));
+    args.push_back(*bound);
+  }
+  return args;
+}
+
+template auto EmitConstructionActuals(
+    ProcessLowerer&, const WalkFrame&, const hir::ClassRef&,
+    std::span<const hir::ExprId>) -> diag::Result<std::vector<mir::ExprId>>;
+template auto EmitConstructionActuals(
+    const StructuralScopeLowerer&, const WalkFrame&, const hir::ClassRef&,
+    std::span<const hir::ExprId>) -> diag::Result<std::vector<mir::ExprId>>;
 
 template auto EmitReportingCall(
     ProcessLowerer&, const WalkFrame&, hir::ExprId, mir::LocalId)

@@ -21,6 +21,8 @@
 #include "lyra/hir/class_id.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/continuous_assign.hpp"
+#include "lyra/hir/covergroup.hpp"
+#include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/interface_member_access.hpp"
@@ -219,6 +221,14 @@ void ReachRangeBounds(const RangeBounds& bounds, const auto& reach) {
 
 // Calls `reach` with each expression `data` holds, all of them in the arena
 // that holds `data`.
+void ReachReceiver(const CovergroupReceiver& receiver, const auto& operand) {
+  std::visit(
+      Overloaded{
+          [&](const CovergroupInstanceReceiver& r) { operand(r.instance); },
+          [](const CovergroupTypeReceiver&) {}},
+      receiver);
+}
+
 void ForEachOperand(const ExprData& data, const auto& reach) {
   const auto operand = [&](ExprId id) { reach(id, Slot::kOperand); };
   const auto operands = [&](std::span<const ExprId> ids) {
@@ -327,6 +337,19 @@ void ForEachOperand(const ExprData& data, const auto& reach) {
           [&](const DynamicCastExpr& e) {
             operand(e.destination);
             operand(e.source);
+          },
+          [&](const CovergroupNewExpr& e) {
+            operands(e.arguments);
+            optional_operand(e.embedding);
+          },
+          [&](const CovergroupMethodCallExpr& e) {
+            ReachReceiver(e.receiver, operand);
+            for (const std::optional<ExprId>& argument : e.arguments) {
+              optional_operand(argument);
+            }
+          },
+          [&](const CovergroupOptionExpr& e) {
+            ReachReceiver(e.receiver, operand);
           }},
       data);
 }
@@ -646,6 +669,15 @@ auto Describe(const ExprData& data) -> std::string {
           },
           [](const DynamicCastExpr&) -> std::string {
             return "a dynamic cast";
+          },
+          [](const CovergroupNewExpr&) -> std::string {
+            return "a covergroup construction";
+          },
+          [](const CovergroupMethodCallExpr&) -> std::string {
+            return "a covergroup method call";
+          },
+          [](const CovergroupOptionExpr&) -> std::string {
+            return "a covergroup option";
           }},
       data);
 }
@@ -1025,6 +1057,140 @@ void VerifyClass(
       lines);
 }
 
+void ReachBinElements(std::span<const BinElement> elements, const auto& reach) {
+  for (const BinElement& element : elements) {
+    std::visit(
+        Overloaded{
+            [&](const BinValue& value) { reach(value.value, Slot::kOperand); },
+            [&](const BinRange& range) {
+              if (range.low.has_value()) reach(*range.low, Slot::kOperand);
+              if (range.high.has_value()) reach(*range.high, Slot::kOperand);
+            },
+            [&](const BinTolerance& tolerance) {
+              reach(tolerance.center, Slot::kOperand);
+              reach(tolerance.tolerance, Slot::kOperand);
+            }},
+        element);
+  }
+}
+
+void ReachOptions(std::span<const OptionSetting> options, const auto& reach) {
+  for (const OptionSetting& option : options) {
+    reach(option.value, Slot::kOperand);
+  }
+}
+
+void ReachMatches(const MatchesRequired& matches, const auto& reach) {
+  std::visit(
+      Overloaded{
+          [](const OneMatch&) {}, [](const EveryMatch&) {},
+          [&](ExprId count) { reach(count, Slot::kOperand); }},
+      matches);
+}
+
+void ReachBin(const BinConstruct& bin, const auto& reach) {
+  if (bin.iff.has_value()) reach(*bin.iff, Slot::kOperand);
+  std::visit(
+      Overloaded{
+          [&](const ValueBins& values) {
+            std::visit(
+                Overloaded{
+                    [](const OneBin&) {}, [](const BinPerValue&) {},
+                    [&](const FixedBins& fixed) {
+                      reach(fixed.count, Slot::kOperand);
+                    }},
+                values.array);
+            ReachBinElements(values.elements, reach);
+            if (values.set.has_value()) reach(*values.set, Slot::kOperand);
+            if (values.filter.has_value()) {
+              reach(values.filter->keeps, Slot::kOperand);
+            }
+          },
+          [&](const TransitionBins& transitions) {
+            for (const auto& sequence : transitions.sequences) {
+              for (const TransitionStep& step : sequence) {
+                ReachBinElements(step.values, reach);
+                if (step.least.has_value()) reach(*step.least, Slot::kOperand);
+                if (step.most.has_value()) reach(*step.most, Slot::kOperand);
+              }
+            }
+          },
+          [](const DefaultBins&) {}, [](const DefaultSequenceBins&) {}},
+      bin.form);
+}
+
+void ReachCross(const Cross& cross, const auto& reach) {
+  if (cross.iff.has_value()) reach(*cross.iff, Slot::kOperand);
+  ReachOptions(cross.options, reach);
+  for (const CrossBin& bin : cross.bins) {
+    if (bin.iff.has_value()) reach(*bin.iff, Slot::kOperand);
+  }
+  for (const CrossSelectId id : cross.selects.Ids()) {
+    std::visit(
+        Overloaded{
+            [](const SelectAll&) {},
+            [&](const SelectBinsOf& select) {
+              ReachBinElements(select.intersect, reach);
+            },
+            [](const SelectNot&) {}, [](const SelectAnd&) {},
+            [](const SelectOr&) {},
+            [&](const SelectWith& select) {
+              reach(select.filter, Slot::kOperand);
+              ReachMatches(select.matches, reach);
+            },
+            [&](const SelectSet& select) {
+              reach(select.tuples, Slot::kOperand);
+              ReachMatches(select.matches, reach);
+            }},
+        cross.selects.Get(id));
+  }
+}
+
+// A covergroup holds every expression it evaluates in its own body, outside any
+// statement: what it samples, its bins, its options and its sampling event.
+void VerifyCovergroup(
+    const CompilationUnit& unit, CovergroupId id,
+    std::vector<std::string>& lines) {
+  const CovergroupDecl& group = unit.covergroups.Get(id);
+  VerifyBody(
+      group.body, {},
+      [&](ArenaReaches& reaches) {
+        const auto from_group =
+            ReachFrom(reaches, std::nullopt, "a covergroup");
+        ReachOptions(group.options, from_group);
+        std::visit(
+            Overloaded{
+                [](const SampledByCall&) {},
+                [&](const SampledOnEvent& on) {
+                  ReachEventControl(on.event, from_group);
+                },
+                [](const SampledAtBlocks&) {}},
+            group.sampling);
+        const auto from_coverpoint =
+            ReachFrom(reaches, std::nullopt, "a coverpoint");
+        for (const Coverpoint& point : group.coverpoints) {
+          from_coverpoint(point.expression, Slot::kOperand);
+          if (point.iff.has_value()) {
+            from_coverpoint(*point.iff, Slot::kOperand);
+          }
+          ReachOptions(point.options, from_coverpoint);
+          for (const BinConstruct& bin : point.bins) {
+            ReachBin(bin, from_coverpoint);
+          }
+        }
+        const auto from_cross = ReachFrom(reaches, std::nullopt, "a cross");
+        for (const Cross& cross : group.crosses) {
+          ReachCross(cross, from_cross);
+        }
+      },
+      [&] {
+        return std::format(
+            "covergroup '{}' in unit '{}'",
+            support::DisplayOf(unit.covergroups.PathOf(id)), unit.name);
+      },
+      lines);
+}
+
 void ReachFromDataObjects(ArenaReaches& reaches, const StructuralScope& scope) {
   const auto from_variable =
       ReachFrom(reaches, std::nullopt, "a variable's declaration");
@@ -1362,6 +1528,9 @@ void Verify(const CompilationUnit& unit) {
       lines);
   for (const ClassId id : unit.classes.Ids()) {
     VerifyClass(unit, id, lines);
+  }
+  for (const CovergroupId id : unit.covergroups.Ids()) {
+    VerifyCovergroup(unit, id, lines);
   }
   std::string report;
   for (const std::string& line : lines) {

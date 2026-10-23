@@ -1,11 +1,14 @@
 #pragma once
 
+#include <map>
 #include <optional>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/registry.hpp"
 #include "lyra/base/translation.hpp"
+#include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/mir/class_id.hpp"
@@ -51,6 +54,32 @@ struct ScopeNameNode {
   mir::FieldId borrowed_handle{};
 };
 
+// An event a scope's beginning or end triggers for a covergroup sampled there
+// (LRM 19.3): the one kept for the covergroup's type, where `home` keeps it,
+// or, in a method of a class embedding the covergroup, the event of the record
+// of the instance the object's property `holder` holds, where it holds one.
+struct TypeEventCell {
+  StaticStorageHome home;
+};
+
+struct HeldCovergroupEvent {
+  mir::ClassFieldTarget holder;
+  mir::TypeId handle_type;
+  hir::CovergroupRef covergroup;
+};
+
+using BlockEventTrigger = std::variant<TypeEventCell, HeldCovergroupEvent>;
+
+// The events one scope triggers as it is entered and as it is left.
+struct ScopeBlockEvents {
+  std::vector<BlockEventTrigger> at_begin;
+  std::vector<BlockEventTrigger> at_end;
+};
+
+// The events each scope of one declaration scope triggers, for the scopes some
+// covergroup is sampled at.
+using BlockEventTriggers = std::map<hir::ProceduralScopeId, ScopeBlockEvents>;
+
 // What one procedural scope owns at run time: a name node, and the cell a
 // `disable` naming the scope invalidates (LRM 9.6.2). The second belongs to a
 // scope the source named and to no other, since what a `disable` reaches is
@@ -65,9 +94,14 @@ struct ScopeNameNode {
 // owns no node. A `disable` written inside such a body still names its own
 // block or task, so the target is owned wherever that scope's static-lifetime
 // state is owned.
+//
+// A scope a covergroup is sampled at the beginning or end of also triggers an
+// event as it is entered and as it is left by its end or by a `return`,
+// `break` or `continue` out of it, but not by a `disable` (LRM 19.3, 9.6.2).
 struct DeclaredScope {
   std::optional<ScopeNameNode> name_node;
   std::optional<StaticStorageHome> disable_target;
+  ScopeBlockEvents block_events = {};
 
   // The handle a body reads off its `self` to reach this scope's name node.
   [[nodiscard]] auto NameBorrowedHandle() const -> std::optional<mir::FieldId> {
@@ -80,6 +114,14 @@ struct DeclaredScope {
 // that scope's own id.
 using DeclaredScopes = base::Translation<hir::ProceduralScopeId, DeclaredScope>;
 
+// The events `triggers` names for the scope `id`, and none where it names none.
+[[nodiscard]] inline auto BlockEventsOf(
+    const BlockEventTriggers& triggers, hir::ProceduralScopeId id)
+    -> ScopeBlockEvents {
+  const auto found = triggers.find(id);
+  return found == triggers.end() ? ScopeBlockEvents{} : found->second;
+}
+
 // The finished answer for a declaration scope outside the design hierarchy: no
 // scope answers for a name there, and a scope the source named owns the target
 // a `disable` invalidates. Every scope still has an entry, so a body there
@@ -87,8 +129,8 @@ using DeclaredScopes = base::Translation<hir::ProceduralScopeId, DeclaredScope>;
 [[nodiscard]] inline auto ScopesOwningDisableTargets(
     const base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>&
         scopes,
-    const StaticStorageOwner& owner, mir::TypeId target_type)
-    -> DeclaredScopes {
+    const StaticStorageOwner& owner, mir::TypeId target_type,
+    const BlockEventTriggers& triggers = {}) -> DeclaredScopes {
   std::vector<DeclaredScope> declared;
   declared.reserve(scopes.size());
   for (const hir::ProceduralScopeId id : scopes.Ids()) {
@@ -99,7 +141,9 @@ using DeclaredScopes = base::Translation<hir::ProceduralScopeId, DeclaredScope>;
     }
     declared.push_back(
         DeclaredScope{
-            .name_node = std::nullopt, .disable_target = std::move(target)});
+            .name_node = std::nullopt,
+            .disable_target = std::move(target),
+            .block_events = BlockEventsOf(triggers, id)});
   }
   return {scopes.size(), std::move(declared)};
 }

@@ -286,6 +286,13 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
             return mir::Type{mir::ManagedRefType{
                 .pointee = ImportedRuntimeObjectType(src.klass)}};
           },
+          // A covergroup instance is an object of the class the covergroup is
+          // written as (LRM 19.3), reached through a managed reference as an
+          // object of any class is.
+          [&](const hir::CovergroupHandleType& src) -> mir::Type {
+            return mir::Type{mir::ManagedRefType{
+                .pointee = CovergroupObjectType(src.covergroup)}};
+          },
           // An object of another unit is named by its class whether or not
           // this unit reaches into it, as a pointer to a class whose
           // definition is unseen is still a pointer to that class: what this

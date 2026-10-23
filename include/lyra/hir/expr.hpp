@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <variant>
 #include <vector>
 
@@ -10,6 +11,7 @@
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/conversion.hpp"
+#include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/inc_dec_op.hpp"
 #include "lyra/hir/interface_member_access.hpp"
@@ -313,6 +315,64 @@ struct ClassNewExpr {
   auto operator==(const ClassNewExpr&) const -> bool = default;
 };
 
+// LRM 19.3 `new` of a covergroup: an instance made from `arguments`, one per
+// formal of the covergroup. One a class embeds (LRM 19.4) is made by an object
+// of that class, `embedding`; one a structural scope declares is a type of
+// that scope's instance, reached as `declaring_instance` is for a class.
+struct CovergroupNewExpr {
+  CovergroupRef covergroup;
+  std::vector<ExprId> arguments;
+  std::optional<ExprId> embedding;
+  std::optional<DeclaringInstanceReach> declaring_instance;
+
+  auto operator==(const CovergroupNewExpr&) const -> bool = default;
+};
+
+// What a covergroup's method or option is reached through (LRM 19.8, 19.10):
+// an instance, or the covergroup's type, which reaches the instance of the
+// scope the type belongs to, where it belongs to one, as a static method's
+// call does (LRM 6.22).
+struct CovergroupInstanceReceiver {
+  ExprId instance;
+
+  auto operator==(const CovergroupInstanceReceiver&) const -> bool = default;
+};
+
+struct CovergroupTypeReceiver {
+  std::optional<DeclaringInstanceReach> declaring_instance;
+
+  auto operator==(const CovergroupTypeReceiver&) const -> bool = default;
+};
+
+using CovergroupReceiver =
+    std::variant<CovergroupInstanceReceiver, CovergroupTypeReceiver>;
+
+// A call of a method of a covergroup, or of one of its coverpoints or crosses
+// where `item` names one (LRM 19.8): of the type for `get_coverage`
+// (`cg::get_coverage()`), and of an instance otherwise. `arguments` are as the
+// source wrote them, an absent one being left to its default.
+struct CovergroupMethodCallExpr {
+  CovergroupRef covergroup;
+  CovergroupReceiver receiver;
+  std::optional<std::string> item;
+  CovergroupMethod method = CovergroupMethod::kSample;
+  std::vector<std::optional<ExprId>> arguments;
+
+  auto operator==(const CovergroupMethodCallExpr&) const -> bool = default;
+};
+
+// `option.<field>` of a covergroup instance, or of one of its coverpoints or
+// crosses where `item` names one, or `type_option.<field>` of its type (LRM
+// 19.7, 19.10), read and written as a variable is.
+struct CovergroupOptionExpr {
+  CovergroupRef covergroup;
+  CovergroupReceiver receiver;
+  std::optional<std::string> item;
+  std::string field;
+
+  auto operator==(const CovergroupOptionExpr&) const -> bool = default;
+};
+
 // How an invalid assignment is handled, which LRM 6.24.2 makes the whole of
 // what the two spellings of the construct differ in: the answer is the only
 // report where the source called the function, and the design is told where it
@@ -472,7 +532,8 @@ using ExprData = std::variant<
     InterfaceInstanceAccessExpr, ConcatExpr, StreamingConcatExpr,
     ReplicationExpr, AssignmentPatternExpr, AssignmentPatternReplicationExpr,
     DynamicArrayNewExpr, ClassNewExpr, AssociativeAssignmentPatternExpr,
-    AssignmentPatternKeyedExpr, TaggedUnionExpr, DynamicCastExpr>;
+    AssignmentPatternKeyedExpr, TaggedUnionExpr, DynamicCastExpr,
+    CovergroupNewExpr, CovergroupMethodCallExpr, CovergroupOptionExpr>;
 
 struct Expr {
   TypeId type;

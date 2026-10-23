@@ -89,6 +89,64 @@ auto TypeImporter::ImportClassRef(const ClassRef& ref) const -> ClassRef {
       ref);
 }
 
+auto TypeImporter::ImportCovergroupRef(const CovergroupRef& ref) const
+    -> CovergroupRef {
+  return std::visit(
+      Overloaded{
+          [this](const LocalCovergroupRef& local) -> CovergroupRef {
+            if (!source_owner_.has_value()) {
+              throw InternalError(
+                  "TypeImporter: a pool that has left its unit names every "
+                  "covergroup by declaring unit and path, so a local "
+                  "covergroup id cannot appear in one");
+            }
+            return ExternalCovergroupRef{
+                .unit_name = std::string{source_owner_->unit_name},
+                .path = source_owner_->covergroups->PathOf(local.covergroup)};
+          },
+          [](const ExternalCovergroupRef& external) -> CovergroupRef {
+            return external;
+          }},
+      ref);
+}
+
+auto TypeImporter::Import(const PublishedCovergroup& published)
+    -> PublishedCovergroup {
+  const auto formals =
+      [&](const std::vector<PublishedCovergroupFormal>& declared) {
+        std::vector<PublishedCovergroupFormal> imported;
+        imported.reserve(declared.size());
+        for (const PublishedCovergroupFormal& formal : declared) {
+          imported.push_back(
+              PublishedCovergroupFormal{
+                  .name = formal.name,
+                  .type = Import(formal.type),
+                  .direction = formal.direction});
+        }
+        return imported;
+      };
+  std::vector<PublishedCoverpoint> coverpoints;
+  coverpoints.reserve(published.coverpoints.size());
+  for (const PublishedCoverpoint& point : published.coverpoints) {
+    coverpoints.push_back(
+        PublishedCoverpoint{
+            .name = point.name,
+            .value_type = Import(point.value_type),
+            .library_class = ImportClassRef(point.library_class)});
+  }
+  return PublishedCovergroup{
+      .path = published.path,
+      .formals = formals(published.formals),
+      .sample_formals = formals(published.sample_formals),
+      .embedding = published.embedding.transform(
+          [&](const ClassRef& cls) { return ImportClassRef(cls); }),
+      .coverpoints = std::move(coverpoints),
+      .crosses = published.crosses,
+      .base = published.base.transform([&](const CovergroupRef& base) {
+        return ImportCovergroupRef(base);
+      })};
+}
+
 auto TypeImporter::Import(const Type& type) -> Type {
   return type.Visit(
       Overloaded{
@@ -165,6 +223,10 @@ auto TypeImporter::Import(const Type& type) -> Type {
                 t.class_ref);
           },
           [](const ImportedClassHandleType& t) -> Type { return Type{t}; },
+          [this](const CovergroupHandleType& t) -> Type {
+            return Type{CovergroupHandleType{
+                .covergroup = ImportCovergroupRef(t.covergroup)}};
+          },
           [](const UnitObjectType& t) -> Type { return Type{t}; },
           [](const UnitObjectsType& t) -> Type { return Type{t}; },
           [](const VirtualInterfaceType& t) -> Type { return Type{t}; },

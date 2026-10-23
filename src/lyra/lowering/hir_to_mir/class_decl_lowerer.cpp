@@ -20,6 +20,7 @@
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/class_definition.hpp"
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
+#include "lyra/lowering/hir_to_mir/covergroup_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
@@ -27,6 +28,7 @@
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
+#include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/callable_code.hpp"
@@ -404,7 +406,18 @@ auto ClassDeclLowerer::DeclareShape(
             .callable = unit_lowerer.TranslateMethod(hir_class_id_, id),
             .statics = bind_statics(method)});
   }
-  shape.callable_signatures = {hir_class.methods.size(), std::move(signatures)};
+  // The method making each covergroup the class embeds follows the methods the
+  // source declares (LRM 19.4.1), virtual so a class extending this one makes
+  // its extension of the covergroup through it.
+  for (const hir::CovergroupId covergroup : hir_class.embedded_covergroups) {
+    signatures.push_back(
+        CallableSignature{
+            .virtual_dispatch =
+                CovergroupFactoryDispatch(unit_lowerer, covergroup)});
+  }
+  shape.callable_signatures = {
+      hir_class.methods.size() + hir_class.embedded_covergroups.size(),
+      std::move(signatures)};
   declared_methods_ = {hir_class.methods.size(), std::move(declared_methods)};
   ctor_static_bindings_ = bind_statics(hir_class.constructor);
 
@@ -415,11 +428,17 @@ auto ClassDeclLowerer::DeclareShape(
   // method is automatic (LRM 8.6), and LRM 9.6.2 disables a block inside an
   // automatic task for every concurrent execution of it, so one cell serves
   // every object of the class.
+  //
+  // A block of a method a covergroup the class embeds is sampled at triggers
+  // the event of the record of each instance the object holds (LRM 19.3).
+  BlockEventTriggers block_events;
+  AddEmbeddedBlockEvents(unit_lowerer, hir_class_id_, shape, block_events);
   scopes_ = ScopesOwningDisableTargets(
       hir_class.procedural_scopes, class_storage,
       unit_lowerer.Unit().types.Intern(
           mir::Type{mir::RuntimeLibraryType{
-              .kind = mir::RuntimeLibraryKind::kCancellationTarget}}));
+              .kind = mir::RuntimeLibraryKind::kCancellationTarget}}),
+      block_events);
 
   unit_lowerer.DefineClassShape(class_id_, std::move(shape));
   return {};
@@ -534,11 +553,11 @@ auto ClassDeclLowerer::PopulateBodies(
       base_args.push_back(BuildImplicitInstanceArgument(
           ctor_lowerer, frame, *hir_class.base_call.declaring_instance));
     }
-    for (const hir::ExprId arg : hir_class.base_call.arguments) {
-      auto arg_or = ctor_lowerer.LowerExpr(ctor.body.exprs.Get(arg), reporting);
-      if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-      base_args.push_back(ctor_block.exprs.Add(*std::move(arg_or)));
-    }
+    auto actuals = EmitConstructionActuals(
+        ctor_lowerer, reporting, *hir_class.base,
+        hir_class.base_call.arguments);
+    if (!actuals) return std::unexpected(std::move(actuals.error()));
+    base_args.insert(base_args.end(), actuals->begin(), actuals->end());
     // The base's construction is part of this one, so it reports where this
     // one does.
     base_args.push_back(ctor_block.ReadLocal(
@@ -653,6 +672,31 @@ auto ClassDeclLowerer::PopulateBodies(
                                .foreign = std::nullopt,
                                .virtual_dispatch = method_dispatch,
                            });
+  }
+
+  // The method making each covergroup the class embeds (LRM 19.4.1), named by
+  // the covergroup's name, as the class's signature publishes it.
+  for (std::size_t i = 0; i < hir_class.embedded_covergroups.size(); ++i) {
+    const hir::CovergroupId covergroup = hir_class.embedded_covergroups[i];
+    const mir::CallableId callable =
+        unit_lowerer.TranslateFactory(hir_class_id_, i);
+    ScopeChainNode factory_link{};
+    auto factory = LowerCovergroupFactory(
+        unit_lowerer, BodyFrame(declaring_frame, mir_class, factory_link),
+        shape, covergroup);
+    if (!factory) return std::unexpected(std::move(factory.error()));
+    mir_class.named_callables.push_back(
+        mir::NamedCallable{
+            .name = hir::CovergroupFactoryName(
+                unit_lowerer.Hir().covergroups.PathOf(covergroup)),
+            .body = callable});
+    mir_class.callables.Define(
+        callable,
+        mir::CallableDecl{
+            .code = *std::move(factory),
+            .foreign = std::nullopt,
+            .virtual_dispatch =
+                shape.callable_signatures.Get(callable).virtual_dispatch});
   }
 
   // The constructor body statements (LRM 8.7) run after base construction

@@ -445,6 +445,11 @@ enum class BuiltinFn : std::uint16_t {
   // naming whatever that member names, and a takeover through it acts on that
   // member.
   kBindAlias,
+  // Binding a reference an object holds as a member to what a construction
+  // was handed (LRM 13.5.2): it names that from then on, and nothing else is
+  // told, since what names it is the object and ends with it -- a
+  // covergroup's `ref` argument (LRM 19.3).
+  kBindReference,
   // Stating, as the design is built, that a continuous assignment drives the
   // storage a reference names (LRM 10.3), which decides what a variable shows
   // once nothing overrides it (LRM 10.6.2).
@@ -515,7 +520,14 @@ enum class BuiltinFn : std::uint16_t {
   // once the event has named the slot.
   kRunDetached,
   kResumeInNbaRegion,
+  // LRM 19.3: a covergroup sampled on its clocking event samples at each
+  // occurrence, as though the execution making it occur called `sample`, so
+  // the execution that waits for the event runs inside each occurrence.
+  kRunObserving,
   kSubmitPostponed,
+  // LRM 19.9: the coverage database is written once the run has ended, after
+  // the final procedures.
+  kSubmitAtRunEnd,
   // LRM 16.5: a concurrent assertion's tick is evaluated in the Observed
   // region, and nothing withdraws it -- what it reads is sampled, so a flush
   // point of whatever submitted it cannot change the answer.

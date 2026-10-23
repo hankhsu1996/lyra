@@ -561,7 +561,8 @@ void VerifyReferenceBindings(
     if (call == nullptr) continue;
     const std::optional<support::BuiltinFn> entry = DirectBuiltinFn(*call);
     if (entry != support::BuiltinFn::kBindMember &&
-        entry != support::BuiltinFn::kBindAlias) {
+        entry != support::BuiltinFn::kBindAlias &&
+        entry != support::BuiltinFn::kBindReference) {
       continue;
     }
     if (call->arguments.empty() ||
@@ -1043,9 +1044,11 @@ void VerifyWritesLandInWritableStorage(
 // boolean a condition tests (LRM 12.4). An integral value is read at a type
 // laying it out alike, an enumeration's and its base's; a machine integer at
 // another width; a pointer at another pointee, as a code address is at another
-// signature; and a reference at the same referent made read-only, as clang
-// states a qualification conversion (LRM 13.5.2). A value moved between
-// representations, and a handle seen as another class's, is a call.
+// signature; a reference at the same referent made read-only, as clang states
+// a qualification conversion (LRM 13.5.2); and a reference held as a member
+// read as the reference it holds, at the same referent and never more
+// writable. A value moved between representations, and a handle seen as
+// another class's, is a call.
 auto CastReadsAsAnother(const TypePool& types, TypeId from, TypeId to) -> bool {
   const Type& source = types.Get(from);
   const Type& destination = types.Get(to);
@@ -1068,11 +1071,16 @@ auto CastReadsAsAnother(const TypePool& types, TypeId from, TypeId to) -> bool {
        destination.Is<MachineFunctionType>())) {
     return true;
   }
-  const auto* from_ref = source.As<VariableRefType>();
   const auto* to_ref = destination.As<VariableRefType>();
-  return from_ref != nullptr && to_ref != nullptr &&
-         from_ref->pointee == to_ref->pointee &&
-         to_ref->mutability == Mutability::kReadOnly;
+  if (to_ref == nullptr) return false;
+  if (const auto* from_ref = source.As<VariableRefType>()) {
+    return from_ref->pointee == to_ref->pointee &&
+           to_ref->mutability == Mutability::kReadOnly;
+  }
+  const auto* from_member = source.As<ReferenceWrapperType>();
+  return from_member != nullptr && from_member->pointee == to_ref->pointee &&
+         (to_ref->mutability == Mutability::kReadOnly ||
+          from_member->mutability == Mutability::kMutable);
 }
 
 // Every value handed to something of a type it states is a value of that
@@ -1110,10 +1118,20 @@ void VerifyValuesMeetTheirTypes(
         refuse("a local's initializer", declared, type_of(block, decl->init));
       }
     }
-    if (const auto* returned = std::get_if<ReturnStmt>(&stmt.data);
-        returned != nullptr && returned->value.has_value() &&
-        type_of(block, *returned->value) != answered) {
-      refuse("what it answers", answered, type_of(block, *returned->value));
+    if (const auto* returned = std::get_if<ReturnStmt>(&stmt.data)) {
+      // A body stating a result answers one on every way out of it, so a
+      // return handing back nothing belongs only to a body stating none.
+      if (!returned->value.has_value() && answered != unit.builtins.void_type) {
+        throw InternalError(
+            std::format(
+                "mir verify: {} returns nothing where it states type {} -- "
+                "please report this as a bug",
+                describe(), DumpType(unit, answered)));
+      }
+      if (returned->value.has_value() &&
+          type_of(block, *returned->value) != answered) {
+        refuse("what it answers", answered, type_of(block, *returned->value));
+      }
     }
   }
   for (const ExprId id : block.exprs.Ids()) {
