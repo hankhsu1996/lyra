@@ -12,14 +12,17 @@
 
 namespace lyra::runtime {
 
-Scope::Scope(
-    Scope* parent, HierarchySegment segment, const ObjectDefinition* definition)
-    : parent_(parent),
-      segment_(std::move(segment)),
-      definition_(RequireScopeClass(definition)) {
-}
+Scope::Scope() = default;
 
 Scope::~Scope() = default;
+
+void Scope::SetPlace(
+    Scope* parent, HierarchySegment segment,
+    const ObjectDefinition* definition) {
+  parent_ = parent;
+  segment_ = std::move(segment);
+  definition_ = RequireScopeClass(definition);
+}
 
 auto Scope::AddOwnedChild(std::unique_ptr<Scope> child) -> Scope* {
   child->parent_ = this;

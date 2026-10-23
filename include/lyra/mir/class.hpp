@@ -73,25 +73,17 @@ struct NamedStaticProperty {
   return std::nullopt;
 }
 
-// The class's construction protocol. The constructor is a bare body block the
-// class owns directly, not a member of the callable arena: it is never a call
-// target and never dispatches, so it carries no callable identity. `code` runs
-// the constructor body, which is where every step of construction the body can
-// express already lives -- a property's declared initializer among them (LRM
-// 8.7), lowered as an ordinary write in declaration order. What remains beside
-// it is the one step no body statement reaches: the base is constructed before
-// the body runs, so a consumer initializes the base first, then descends into
-// `code`.
+// The class's constructor, entered on an object already created whole (LRM
+// 8.7): every member of every class of its lineage exists and the object is of
+// its own class before any constructor runs. It is a body the class owns
+// directly rather than a member of the callable arena, since it never
+// dispatches. Every step of construction is a statement of it, in order: what
+// the compiler records for the object, the base's construction, each
+// property's start value and initializer, then the source's body.
 struct ConstructorDecl {
   // A class that states a construction defines it, so this code is always a
   // definition; an empty body is a class that constructs nothing.
   CallableCode code = CallableCode::Defined();
-  // What the base's constructor is entered with (LRM 8.7), each argument
-  // evaluated in this constructor's own local scope. Which base that is, and
-  // whether the class has one, is the class's own declaration. The list is
-  // every argument that construction takes, so a consumer forwards it as it
-  // stands and supplies nothing of its own.
-  std::vector<ExprId> base_args;
 };
 
 // One behavior of an interface class a class answers (LRM 8.26.2), and the

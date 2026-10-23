@@ -33,14 +33,6 @@ class FunctionLowerer {
  public:
   FunctionLowerer(
       UnitLowerer& unit, const mir::CallableCode& code, std::string name);
-  // Lowers a class's constructor. The base is constructed before the body runs
-  // (LRM 8.7), and what base that is belongs to the class rather than to the
-  // body, so the class comes with the constructor it builds from. Between the
-  // two the constructor enters `prologue`, the class's constructor prologue.
-  FunctionLowerer(
-      UnitLowerer& unit, const mir::Class& cls,
-      const mir::ConstructorDecl& constructor, std::string prologue,
-      std::string name);
   // Lowers a closure's invoke. Its signature leads with the receiver naming the
   // storage the captures live in, and the body reads each of them as a member
   // of it.
@@ -149,22 +141,13 @@ class FunctionLowerer {
   };
   auto ConstructorOf(const mir::DeclaredClassRef& cls) -> EnteredConstructor;
 
-  // Enters the constructor of `cls` on the storage `object` names, with
-  // `arguments` after the object -- which is how a value the program builds
-  // and an instance of the design hierarchy alike are constructed once their
-  // storage exists.
+  // Enters the constructor of `cls` on the object the storage `object` holds,
+  // already created whole, with `arguments` after the object -- which is how a
+  // value the program builds and an instance of the design hierarchy alike are
+  // constructed.
   auto EnterConstructor(
       const mir::DeclaredClassRef& cls, const lir::Operand& object,
       std::vector<lir::Operand> arguments) -> diag::Result<void>;
-
-  // Enters the base's constructor on this same object, ahead of the body (LRM
-  // 8.7). The base's part starts where the object does, so the base
-  // initializes its own members through the receiver it is handed. The part
-  // every scope shares is the library's, entered through the library's own
-  // constructor of it; the part every object starts with records the
-  // allocation, so it comes into existence with the storage and nothing enters
-  // it here.
-  auto ConstructBase() -> diag::Result<void>;
 
   // A block is an extent: what its declarations bind ends where it does. Its
   // statements run in order, and a block expression's run where the value that
@@ -214,8 +197,8 @@ class FunctionLowerer {
   // States that the bytes the frame keeps for `of` come into use, or go out
   // of it.
   void MarkStorage(lir::StorageInstr::Op op, lir::ValueId of);
-  // What a scope owes on any way out of it for a value it ends: the value's
-  // end, and its bytes going out of use.
+  // What a scope owes where a way out runs it: a value's end and its bytes
+  // going out of use, or storage given back.
   void EmitScopeDrop(const ValueEnd& end);
   void EmitScopeDrop(const SlotEnd& end);
   void EmitScopeDrop(const StorageRelease& release);
@@ -506,11 +489,12 @@ class FunctionLowerer {
   auto LowerNew(
       const mir::Block& block, const mir::NewExpr& allocation,
       mir::TypeId owner) -> diag::Result<lir::Operand>;
-  // Evaluates a new-expression's initializer `id` into the storage `storage`
-  // points at, which holds nothing yet.
-  auto InitializeAllocated(
-      const mir::Block& block, mir::ExprId id, const lir::Operand& storage)
-      -> diag::Result<void>;
+  // A new-expression of an object: its construction's arguments, then the
+  // object created whole and held by `owner`, then its constructor entered on
+  // it (LRM 8.7, 8.29).
+  auto LowerObjectNew(
+      const mir::Block& block, const mir::Expr& initializer, mir::TypeId owner)
+      -> diag::Result<lir::Operand>;
   // A reference is the address of the storage its referent lives in, carrying
   // which of the two kinds that storage is. One built over a reference denotes
   // the storage at the end of the chain rather than binding afresh, so it
@@ -658,18 +642,8 @@ class FunctionLowerer {
   // it was handed and nothing else, since nothing else is open yet.
   auto EmitInitialSuspend() -> diag::Result<void>;
 
-  // A class's constructor and the class it builds, held together because the
-  // base the one names is entered with what the other states, and the symbol
-  // of the body building the class's own part once its base is built.
-  struct Construction {
-    const mir::Class* cls;
-    const mir::ConstructorDecl* constructor;
-    std::string prologue;
-  };
-
   UnitLowerer* unit_;
   const mir::CallableCode* code_;
-  std::optional<Construction> construction_;
   const mir::ClosureDecl* closure_;
   std::string name_;
   lir::Function fn_;

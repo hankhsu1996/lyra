@@ -467,8 +467,7 @@ auto BaseObjectConstructorSymbolOf(support::RuntimeClass klass)
     -> std::string_view {
   switch (klass) {
     case support::RuntimeClass::kScope:
-      return "_ZN4lyra7runtime5ScopeC2EPS1_NS0_16HierarchySegmentEPKNS0_"
-             "16ObjectDefinitionE";
+      return "_ZN4lyra7runtime5ScopeC2Ev";
     case support::RuntimeClass::kObject:
       return "_ZN4lyra7runtime8GcObjectC2Ev";
     case support::RuntimeClass::kProcess:

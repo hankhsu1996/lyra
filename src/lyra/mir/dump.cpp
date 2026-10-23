@@ -746,6 +746,9 @@ class MirDumper {
                   "external_class_method={}::{}::{}", e.unit_name,
                   support::DisplayOf(e.class_path), e.method_name);
             },
+            [this](const ConstructorTarget& c) -> std::string {
+              return std::format("constructor={}", FormatClassRef(c.cls));
+            },
             [](const RecordMethodTarget& s) -> std::string {
               return std::format(
                   R"(struct_method={}::{} "{}")", s.declaration.unit_name,
@@ -1080,14 +1083,6 @@ class MirDumper {
       const ConstructorDecl& ctor = *s.constructor;
       Line("Constructor:");
       Indent();
-      if (!ctor.base_args.empty()) {
-        Line("BaseArgs:");
-        Indent();
-        for (std::size_t i = 0; i < ctor.base_args.size(); ++i) {
-          Line(std::format("[{}] Expr[{}]", i, ctor.base_args[i].value));
-        }
-        Dedent();
-      }
       Line("Body:");
       Indent();
       DumpCallableBody(ctor.code);

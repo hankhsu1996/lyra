@@ -131,14 +131,23 @@ struct CppUnionMemberTag {
 
 void WriteOne(TargetText& out, const CppUnionMemberTag& tag);
 
-// What takes ownership of the storage a `new` allocated, applied to the
-// pointer `new` yields: `std::unique_ptr<T>(new T(init))` for a uniquely
-// owning pointer, `lyra::runtime::AdoptObject(new C(init))` for a class handle.
+// What takes ownership of the storage a `new` allocated for a value, applied
+// to the pointer `new` yields: `std::unique_ptr<T>(new T(init))`.
 struct CppNewOwner {
   CppType of;
 };
 
 void WriteOne(TargetText& out, const CppNewOwner& owner);
+
+// The library function a `new` of an object is, which creates it whole, makes
+// `of` the owner holding it, and then enters its constructor:
+// `lyra::runtime::CreateObject<C>(&C::sv_construct, args)` for a class handle,
+// `lyra::runtime::CreateOwned<C>(...)` for a uniquely owning pointer.
+struct CppObjectCreation {
+  CppType of;
+};
+
+void WriteOne(TargetText& out, const CppObjectCreation& creation);
 
 // The library's product of a product type's components, `Tuple<Ts...>`: what a
 // tuple is spelled as.

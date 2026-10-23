@@ -1,6 +1,7 @@
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -76,11 +77,13 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// Adds what every scope is built against -- its parent and its hierarchy
-// segment -- as ordinary ctor params, in the order the base constructor
-// consumes them. The base also takes the definition of the class the instance
-// is of, which comes after these: a class names its own definition, and what a
-// unit published of its object is handed it by the class realizing it.
+// Adds what places every scope -- its parent and its hierarchy segment -- as
+// ordinary ctor params, in the order its constructor's first statement hands
+// them on: to its base's constructor, or, for a class extending the root of
+// the design hierarchy, to the scope's own part. That statement hands on the
+// definition of the class the instance is of after these, since a class names
+// its own definition and what a unit published of its object is handed it by
+// the class realizing it.
 void AttachRuntimeScopeCtorPrefix(
     const mir::CompilationUnit& unit, ClassShape& shape) {
   const auto& builtins = unit.builtins;
@@ -1850,8 +1853,8 @@ auto BuildOwnedChildHandle(
   };
 
   // Build the child's structural identity once and pass it as the child's
-  // own ctor argument. The child holds onto it from the moment its
-  // constructor returns; %m and debug traces read from that single source.
+  // own ctor argument. The child holds onto it from its constructor's first
+  // statement on; %m and debug traces read from that single source.
   const mir::ExprId segment_id = BuildHierarchySegment(
       unit_lowerer.Unit(), arm_block, runtime_label, std::move(numbers));
 
@@ -2883,31 +2886,56 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
 
 namespace {
 
-// Settles the class's construction protocol: the constructor body, and the
-// arguments its base is entered with -- each prefix forwarded as a consuming
-// use, then the trailing ones. `ctor_code` arrives finalized, its params and
-// result type set, and this is what installs it.
-void FinalizeConstructor(
-    mir::CompilationUnit& unit, mir::Class& cls, mir::CallableCode ctor_code,
-    const std::vector<mir::LocalId>& prefix_local_ids,
-    const std::vector<mir::ExprId>& base_trailing_args) {
+// Opens a scope class's constructor with the statement that comes before
+// anything else of the scope runs: constructing its base on the object -- or,
+// where the class extends the root of the design hierarchy, giving the part
+// every scope shares its place -- with each prefix forwarded as a consuming
+// use, then the trailing ones. `ctor_code`'s body holds nothing yet.
+void ConstructBaseFirst(
+    mir::CompilationUnit& unit, const mir::ClassRef& base,
+    mir::CallableCode& ctor_code, mir::LocalId self,
+    std::span<const mir::LocalId> prefix_local_ids,
+    std::span<const mir::ExprId> base_trailing_args) {
+  mir::Block& body = ctor_code.Body();
   std::vector<mir::ExprId> base_args;
   base_args.reserve(prefix_local_ids.size() + base_trailing_args.size());
   for (const mir::LocalId id : prefix_local_ids) {
     const mir::TypeId ty = ctor_code.locals.Get(id).type;
-    const mir::ExprId local_ref = ctor_code.Body().LocalPlace(id, ty);
+    const mir::ExprId local_ref = body.LocalPlace(id, ty);
     if (unit.types.Get(ty).IsAliasHandle()) {
-      base_args.push_back(ctor_code.Body().Read(local_ref));
+      base_args.push_back(body.Read(local_ref));
     } else {
-      base_args.push_back(ctor_code.Body().exprs.Add(
+      base_args.push_back(body.exprs.Add(
           mir::Expr{.data = mir::MoveExpr{.operand = local_ref}, .type = ty}));
     }
   }
-  for (const mir::ExprId e : base_trailing_args) {
-    base_args.push_back(e);
-  }
-  cls.constructor = mir::ConstructorDecl{
-      .code = std::move(ctor_code), .base_args = std::move(base_args)};
+  base_args.insert(
+      base_args.end(), base_trailing_args.begin(), base_trailing_args.end());
+  const mir::ExprId object = BuildObjectDeref(
+      unit, body, body.ReadLocal(self, ctor_code.locals.Get(self).type));
+  const mir::DirectTarget target = std::visit(
+      Overloaded{
+          [](const mir::IntraUnitClassRef& extended) -> mir::DirectTarget {
+            return mir::ConstructorTarget{.cls = extended};
+          },
+          [](const mir::CrossUnitClassRef& extended) -> mir::DirectTarget {
+            return mir::ConstructorTarget{.cls = extended};
+          },
+          [](const mir::ObjectTreeRootRef&) -> mir::DirectTarget {
+            return support::BuiltinFn::kSetScopePlace;
+          },
+          [](const mir::ManagedObjectRootRef&) -> mir::DirectTarget {
+            throw InternalError(
+                "hir_to_mir: a scope extends the root of objects the program "
+                "builds -- please report this as a bug");
+          }},
+      base);
+  body.AppendStmt(
+      mir::ExprStmt{
+          .expr = body.exprs.Add(
+              mir::MakeCallExpr(
+                  mir::Direct{.target = target, .receiver = object},
+                  std::move(base_args), unit.builtins.void_type))});
 }
 
 // Whether a declared object of this type is an owned child (a pointer, a
@@ -2951,6 +2979,14 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     const auto& p = shape.ctor_prefix_params.Get(param);
     ctor_prefix_local_ids.push_back(ctor_bindings.DeclareAnonymous(p.type));
   }
+  // The object is of this class, which is the only one that knows it, so its
+  // constructor hands the published class the definition the tree is told.
+  const std::array<mir::ExprId, 1> definition{BuildDefinitionRead(
+      unit_lowerer.Unit(), ctor_code.Body(),
+      mir::IntraUnitClassRef{.class_id = class_id_})};
+  ConstructBaseFirst(
+      unit_lowerer.Unit(), mir_class.base.value(), ctor_code, self_id,
+      ctor_prefix_local_ids, definition);
   // The construction table follows the prefix, and what construction supplies
   // follows that. Both stay out of the base call: the base contract demands
   // the prefix and nothing this scope alone is handed. The table is what the
@@ -3303,6 +3339,13 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       node_ctor_code.params.push_back(node_ctor_prefix_local_ids.back());
     }
     node_ctor_code.result_type = void_type;
+    const std::array<mir::ExprId, 1> node_definition{BuildDefinitionRead(
+        unit_lowerer.Unit(), node_ctor_code.Body(),
+        mir::IntraUnitClassRef{.class_id = name_node.class_id})};
+    ConstructBaseFirst(
+        unit_lowerer.Unit(), node_class.base.value(), node_ctor_code,
+        node_ctor_code.params.front(), node_ctor_prefix_local_ids,
+        node_definition);
     // A name node has no work in any phase and describes nothing, which is
     // four bodies with no statements rather than four it does not have -- the
     // same shape a scope with work carries, so nothing downstream tells the
@@ -3326,12 +3369,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     empty_phase(support::LibraryVirtual::kScopeDescribe);
     StateScopeDefinition(
         unit_lowerer.Unit(), name_node.class_id, node_class, {});
-    const mir::ExprId node_definition = BuildDefinitionRead(
-        unit_lowerer.Unit(), node_ctor_code.Body(),
-        mir::IntraUnitClassRef{.class_id = name_node.class_id});
-    FinalizeConstructor(
-        unit_lowerer.Unit(), node_class, std::move(node_ctor_code),
-        node_ctor_prefix_local_ids, {node_definition});
+    node_class.constructor =
+        mir::ConstructorDecl{.code = std::move(node_ctor_code)};
     unit_lowerer.Unit().DefineClass(name_node.class_id, std::move(node_class));
   }
 
@@ -3685,13 +3724,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   add_body(
       describe_code, describe_self_id, support::LibraryVirtual::kScopeDescribe);
 
-  // The object is of this class, which is the only one that knows it, so its
-  // constructor hands the published class the definition the tree is told.
-  const mir::ExprId definition = BuildDefinitionRead(
-      unit, ctor_code.Body(), mir::IntraUnitClassRef{.class_id = class_id_});
-  FinalizeConstructor(
-      unit, mir_class, std::move(ctor_code), ctor_prefix_local_ids,
-      {definition});
+  mir_class.constructor = mir::ConstructorDecl{.code = std::move(ctor_code)};
 
   // The design root states every body's construction table, its own among
   // them, since nothing hands it one.
@@ -3715,9 +3748,11 @@ void StructuralScopeLowerer::DefinePublishedClasses(UnitLowerer& unit_lowerer) {
   for (const auto& [id, scope] : unit_lowerer.PublishedScopes()) {
     BuiltPublishedClass published =
         BuildPublishedClass(unit, unit_lowerer.GetClassShape(id), scope);
-    FinalizeConstructor(
-        unit, published.cls, std::move(published.ctor), published.ctor_prefix,
-        {});
+    ConstructBaseFirst(
+        unit, published.cls.base.value(), published.ctor,
+        published.ctor.params.front(), published.ctor_prefix, {});
+    published.cls.constructor =
+        mir::ConstructorDecl{.code = std::move(published.ctor)};
     StateNamedClassDefinition(unit, published.cls);
     unit.DefineClass(id, std::move(published.cls));
   }

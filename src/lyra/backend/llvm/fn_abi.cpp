@@ -1058,7 +1058,7 @@ auto CallArranger::FnAbiOf(const lir::CallInstr& call, lir::TypeId result_type)
           [&](const lir::FunctionTarget&) { return as_stated(); },
           [&](const lir::DispatchTarget&) { return as_stated(); },
           [&](const lir::IndirectTarget&) { return as_stated(); },
-          [&](const lir::LibraryConstructorTarget&) { return as_stated(); },
+          [&](const lir::CreationTarget&) { return as_stated(); },
           [&](const lir::SymbolTarget&) { return as_stated(); },
           [&](const lir::ForeignTarget&) { return as_stated(); },
           [&](const lir::ValueCellTarget& t) -> Arranged {

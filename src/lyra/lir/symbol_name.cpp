@@ -50,8 +50,10 @@ auto CategoryTag(SymbolCategory category) -> char {
       return 'i';
     case SymbolCategory::kTypeOperation:
       return 't';
-    case SymbolCategory::kConstructorPrologue:
-      return 's';
+    case SymbolCategory::kBaseObjectCreation:
+      return 'g';
+    case SymbolCategory::kCompleteObjectCreation:
+      return 'h';
     case SymbolCategory::kBaseObjectDestructor:
       return 'x';
     case SymbolCategory::kCompleteObjectDestructor:
@@ -282,9 +284,18 @@ auto DefinitionSymbol(const CompilationUnit& unit, ClosureId id)
        SymbolPart::Ordinal(id.value)});
 }
 
-auto ConstructorPrologueSymbol(std::string_view definition) -> std::string {
-  return SymbolName(
-      SymbolCategory::kConstructorPrologue, {SymbolPart::Name(definition)});
+auto CreationSymbol(std::string_view definition, Creation which)
+    -> std::string {
+  const SymbolCategory category = [&] {
+    switch (which) {
+      case Creation::kBaseObject:
+        return SymbolCategory::kBaseObjectCreation;
+      case Creation::kCompleteObject:
+        return SymbolCategory::kCompleteObjectCreation;
+    }
+    throw InternalError("CreationSymbol: unknown creation");
+  }();
+  return SymbolName(category, {SymbolPart::Name(definition)});
 }
 
 auto DestructorSymbol(std::string_view definition, Destructor which)

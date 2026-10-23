@@ -322,6 +322,38 @@ void RenderReferenceExpr(
       reference.target);
 }
 
+// A new-expression. A value is formed in the storage `new` allocates, which C++
+// guarantees where it is a value of the type allocated
+// ([dcl.init.general]/16.6.1), whatever that type's constructors. An object's
+// initializer is its construction, whose arguments the library function
+// creating the object hands its constructor once the object exists whole:
+// `lyra::runtime::CreateObject<C>(&C::sv_construct, args)`.
+void RenderNewExpr(
+    const ScopeView& view, const mir::NewExpr& n, mir::TypeId owner,
+    TargetText& out) {
+  const mir::Expr& initializer = view.Expr(n.initializer);
+  const CppType built = CppType(view.Unit(), initializer.type);
+  if (!view.Unit().types.Get(initializer.type).Is<mir::ObjectType>()) {
+    Write(
+        view, out, CppNewOwner{.of = CppType(view.Unit(), owner)}, "(new ",
+        built, "(", n.initializer, "))");
+    return;
+  }
+  const auto* construction = std::get_if<mir::CallExpr>(&initializer.data);
+  if (construction == nullptr) {
+    throw InternalError(
+        "backend::cpp: an object a new-expression creates is initialized only "
+        "by its constructor -- please report this as a bug");
+  }
+  Write(
+      view, out, CppObjectCreation{.of = CppType(view.Unit(), owner)}, "<",
+      built, ">(&", built, "::", CppConstructorMemberName());
+  for (const mir::ExprId argument : construction->arguments) {
+    Write(view, out, ", ", argument);
+  }
+  out += ")";
+}
+
 // `target = value`. The target always renders as a C++ lvalue. A write yields
 // nothing, so it stands only where a statement does and never needs
 // parentheses.
@@ -574,14 +606,8 @@ void RenderExpr(
           [&](const mir::CallExpr& call) {
             RenderCallExpr(view, call, expr.type, out);
           },
-          // The initializer is formed in the storage `new` allocates, which
-          // C++ guarantees where it is a value of the type allocated
-          // ([dcl.init.general]/16.6.1), whatever that type's constructors.
           [&](const mir::NewExpr& n) {
-            Write(
-                view, out, CppNewOwner{.of = CppType(view.Unit(), expr.type)},
-                "(new ", CppType(view.Unit(), view.Expr(n.initializer).type),
-                "(", n.initializer, "))");
+            RenderNewExpr(view, n, expr.type, out);
           },
           [&](const mir::DerefExpr& d) { RenderDerefExpr(view, d, out); },
           [&](const mir::AddressOfExpr& a) {

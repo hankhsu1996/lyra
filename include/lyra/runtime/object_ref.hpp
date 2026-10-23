@@ -48,16 +48,13 @@ class GcObject : public std::enable_shared_from_this<GcObject> {
   // A write to one of this object's properties is over.
   void PublishChange();
 
-  // The reference the code building this object holds, taken over by the
-  // `new` that built it once its constructor has run. The object holds it
-  // from the moment this part is made, before any constructor of the program
-  // runs, so the constructor runs on an object already referred to and may
-  // hand `this` on (LRM 8.11), as an object starts with one reference that its
-  // creator owns (Swift's `swift_allocObject`, CPython's `tp_new`); here the
-  // object holds it, since a C++ new-expression gives no frame a handle before
-  // the constructor runs. An object no `new` builds -- an instance of the
-  // design hierarchy, which its parent owns -- keeps it to the end, where it
-  // ends nothing.
+  // The reference the code creating this object holds, taken over by the
+  // `new` that created it as soon as the object exists whole and before its
+  // constructor runs, so the constructor runs on an object already referred to
+  // and may hand `this` on (LRM 8.11), as an object starts with one reference
+  // its creator owns (Swift's `swift_allocObject`, CPython's `tp_new`). An
+  // object one owner holds alone -- an instance of the design hierarchy, which
+  // its parent owns -- keeps it to the end, where it ends nothing.
   [[nodiscard]] auto TakeCreatorsShare() -> std::shared_ptr<GcObject>;
 
  private:
@@ -90,11 +87,41 @@ auto RefToObject(std::shared_ptr<T> owned) -> value::ObjectRef {
   }
 }
 
-// The reference to an object a `new` built as `T`, handed over from the code
-// that built it.
+// The reference to an object a `new` created as `T`, handed over from the
+// code that created it.
 template <std::derived_from<GcObject> T>
 auto AdoptObject(T* object) -> value::ObjectRef {
   return RefToObject(std::shared_ptr<T>(object->TakeCreatorsShare(), object));
+}
+
+// A SystemVerilog `new` of an object of class `T` (LRM 8.7): the object is
+// created whole -- `T`'s C++ constructor builds every member of every class it
+// extends and gives it its class, and runs none of the design's code -- then
+// held, then constructed by `construct`, the class's constructor, with `args`.
+// The holder is made before the constructor runs, so a construction left
+// partway lets go of the object and leaves it to whatever else refers to it
+// (LRM 8.29), and a virtual call the constructor makes answers for `T` (LRM
+// 8.17).
+template <std::derived_from<GcObject> T, typename... Params, typename... Args>
+auto CreateObject(void (T::*construct)(Params...), Args&&... args)
+    -> value::ObjectRef {
+  auto created = std::make_unique<T>();
+  value::ObjectRef held = AdoptObject(created.get());
+  // The object ends through the reference from here, which every holder of it
+  // shares.
+  T* object = created.release();
+  (object->*construct)(std::forward<Args>(args)...);
+  return held;
+}
+
+// The same for an object one owner holds alone: an instance of the design
+// hierarchy, which its parent owns.
+template <std::derived_from<GcObject> T, typename... Params, typename... Args>
+auto CreateOwned(void (T::*construct)(Params...), Args&&... args)
+    -> std::unique_ptr<T> {
+  auto held = std::make_unique<T>();
+  (held.get()->*construct)(std::forward<Args>(args)...);
+  return held;
 }
 
 // The same object seen as `To`, where the program point holding it saw it as

@@ -527,10 +527,7 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     const lir::FunctionId function = ConstructorFunction(owner);
     auto constructor =
         FunctionLowerer(
-            *this, cls, *cls.constructor,
-            lir::ConstructorPrologueSymbol(
-                lir::ClassDefinitionSymbol(
-                    qualifier, lir::SymbolPartOf(cls.path, owner.value))),
+            *this, cls.constructor->code,
             lir::ConstructorSymbol(
                 qualifier, lir::SymbolPartOf(cls.path, owner.value)))
             .Run();

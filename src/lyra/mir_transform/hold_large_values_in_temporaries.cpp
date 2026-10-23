@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <map>
 #include <optional>
-#include <span>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -161,13 +160,11 @@ class BodyTemporaries {
   auto operator=(BodyTemporaries&&) -> BodyTemporaries& = delete;
   ~BodyTemporaries() = default;
 
-  // The code rewritten, each outside root -- what a constructor enters its
-  // base's constructor with -- an evaluation of its own, and the temporaries
-  // its evaluations declared among its locals.
-  auto Rewritten(std::span<const mir::ExprId> outside_roots)
-      -> mir::SourcedCode {
-    mir::SourcedCode rewritten = RebuildCode(*code_, outside_roots, rules_);
-    rewritten.code.locals = std::move(locals_);
+  // The code rewritten, and the temporaries its evaluations declared among its
+  // locals.
+  auto Rewritten() -> mir::CallableCode {
+    mir::CallableCode rewritten = RebuildCode(*code_, rules_);
+    rewritten.locals = std::move(locals_);
     return rewritten;
   }
 
@@ -513,9 +510,7 @@ auto HoldLargeValuesInTemporaries(mir::CompilationUnit unit)
   return mir::RewriteEachCode(
       std::move(unit),
       [](const mir::CompilationUnit& unit, const mir::CodeSource& at,
-         const mir::CallableCode& code,
-         std::span<const mir::ExprId> outside_roots)
-          -> std::optional<mir::SourcedCode> {
+         const mir::CallableCode& code) -> std::optional<mir::CallableCode> {
         // A foreign body is entered by the convention its declaration states,
         // which nothing here changes.
         if (mir::IsEnteredForeign(unit, at) || !code.body.has_value() ||
@@ -523,7 +518,7 @@ auto HoldLargeValuesInTemporaries(mir::CompilationUnit unit)
           return std::nullopt;
         }
         BodyTemporaries temporaries(unit, code);
-        return temporaries.Rewritten(outside_roots);
+        return temporaries.Rewritten();
       });
 }
 

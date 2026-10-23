@@ -2636,16 +2636,12 @@ enough to warrant its own focused review.
       for the other backend. Swift links those libraries and uses them only for user C++, never
       for its own runtime. Not blocked; needs a design pass of its own.
 
-- [ ] R171 -- On the execution backend a run-time error raised inside a constructor leaves the
-      storage being constructed behind. An instance of the design hierarchy and an object built with
-      `new` are each allocated by their class's allocation and then constructed, and nothing between
-      the two gives the storage back if the constructor raises, nor ends the members the constructor
-      had already given values: a class whose constructor sets a `string` member and then raises
-      leaves both the member's text and the object's storage, while the C++ backend leaves neither.
-      Every call there can already be unwound out of, so what is missing is not an edge but a
-      statement of what is owed on it: clang's constructor pushes the end of each member it has
-      built as a cleanup only an unwinding takes, and its new-expression one that frees the storage.
-      Not blocked.
+- [x] R171 -- On the execution backend an object whose construction was left partway -- by a
+      run-time error, or by its process being killed while the run goes on -- kept what the
+      construction had built, and on both backends one that had handed `this` on was freed under the
+      handle holding it. An object is now created whole before any constructor runs, owned by its
+      creator from creation on, and a construction left partway ends that reference alone, so the
+      object ends exactly when nothing else refers to it.
 
 - [ ] R172 -- A declaration another unit makes is named differently from one this unit makes, at
       every reference to it. Each semantic layer spells a class, a property of a class, a method, a
@@ -2703,8 +2699,8 @@ enough to warrant its own focused review.
       drop, a body's variables are opened and closed where rustc marks storage live and dead, a
       suspension's two successors are a resume and an abandonment where rustc's yield has a resume
       and a drop, and a composed value is a product where rustc's is an aggregate. On the execution
-      backend what a constructor does once its base is built is a storage begin where clang calls it
-      the constructor prologue, and what only the most-derived constructor does is a whole begin.
+      backend the bodies creating an object, whole and one class's part at a time, are creations
+      where the Itanium ABI calls them the complete-object and base-object constructors.
       Every symbol is spelled in a scheme of this compiler's own, so a debugger, a profiler and a
       demangler show it raw; the Itanium scheme, whose shape rustc's legacy symbols borrow, would let
       every one of them read it.

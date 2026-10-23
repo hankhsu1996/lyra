@@ -1,6 +1,8 @@
 # A new-expression allocates, then initializes, and the pointer owning the storage moves
 
-Date: 2026-10-12 Status: accepted.
+Date: 2026-10-12 Status: accepted; for a class object, superseded 2026-10-22 by
+[an-object-is-created-whole-then-constructed](an-object-is-created-whole-then-constructed.md), which
+creates the object whole and then constructs it. A box's `new T(init)` stands.
 
 ## Context
 

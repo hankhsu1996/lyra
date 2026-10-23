@@ -24,10 +24,11 @@ struct ObjectDefinition {
   const ScopeInfo* scope = nullptr;
 };
 
-// A handle owning `object`, a whole value of a class extending the part every
-// object starts with, once constructed: the reference its creator held while
-// it was built, which the program's `new` answers (LRM 8.3) and which ends the
-// value through its virtual destructor when the last reference to it goes.
+// A handle owning `object`, a value of a class extending the part every object
+// starts with, created whole and not yet constructed. It is the reference its
+// creator holds while the constructor runs, which the program's `new` answers
+// (LRM 8.3), and it ends the value through its virtual destructor when the last
+// reference to it goes.
 [[nodiscard]] auto AdoptObject(void* object) -> value::ObjectRef;
 
 // The definition of a class an instance of the design hierarchy is built of,

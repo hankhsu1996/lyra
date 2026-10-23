@@ -3415,6 +3415,13 @@ auto lyra_rt_parent(void* self) -> void* {
   return static_cast<Scope*>(self)->Parent();
 }
 
+void lyra_rt_set_scope_place(
+    void* self, void* parent, const void* segment, const void* definition) {
+  static_cast<Scope*>(self)->SetPlace(
+      static_cast<Scope*>(parent), Read<HierarchySegment>(segment),
+      static_cast<const ObjectDefinition*>(definition));
+}
+
 auto lyra_rt_add_owned_child(void* parent, void* child) -> void* {
   return static_cast<Scope*>(parent)->AddOwnedChild(
       std::unique_ptr<Scope>(static_cast<Scope*>(child)));

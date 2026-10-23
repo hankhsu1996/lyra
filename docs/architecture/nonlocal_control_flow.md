@@ -214,7 +214,10 @@ of its own, as a C++ coroutine's body stands in a `try` whose handler hands what
 promise. A cleanup's code therefore appears once on the unwinding path however many calls inside it
 can leave, while the ordinary ways out -- falling off the end, a return, a loop exit -- still copy
 it, as below. A value whose end passes to storage or to the caller stops being owed at that point,
-so the paths built while it was owed keep ending it and those built afterwards do not.
+so the paths built while it was owed keep ending it and those built afterwards do not. An object
+being constructed is such a value. Its creator's reference to it is owed on every way out of the
+construction, so a departure that leaves the construction partway ends that reference and nothing
+else, and the object goes on existing while anything else refers to it.
 
 Enumerating a body's ways out is what every compiler targeting a control-flow graph or a stack
 machine does with a cleanup construct. JVM bytecode has no `finally`; the compiler copies the

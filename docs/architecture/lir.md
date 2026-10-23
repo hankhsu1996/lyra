@@ -70,8 +70,10 @@ below LIR, at LIR-to-LLVM.
   as SIL states `store [init]` beside `store [assign]`.
 - Who ends a value a pointer owns: a uniquely owning pointer is an owned value with no copy, moved
   wherever it is handed on -- into a slot, to a caller, to a callee -- and ended by its last holder,
-  which ends what it points at and gives the storage back. Storage of dynamic duration is allocated
-  holding nothing, initialized there, given back if the initialization departs, and only then owned.
+  which ends what it points at and gives the storage back. Storage of dynamic duration for a value
+  is allocated holding nothing, initialized there, given back if the initialization departs, and
+  only then owned. An object is created whole and owned from creation on, before its constructor
+  runs, so a construction that departs ends its owner as any owned value is ended.
 - The transient-value vocabulary: a computed value with a pure dataflow origin, not backed by a
   named memory location.
 - Where every computed value goes, stated on the step that computes it as Rust's MIR states an

@@ -3,17 +3,14 @@
 #include <compare>
 #include <functional>
 #include <optional>
-#include <span>
 #include <string>
 #include <variant>
-#include <vector>
 
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/record_id.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/value_operation.hpp"
@@ -73,24 +70,14 @@ using CodeSource = std::variant<
 [[nodiscard]] auto IsEnteredForeign(
     const CompilationUnit& unit, const CodeSource& at) -> bool;
 
-// The code at a source, and the nodes of its body that no statement reaches
-// but the source still names: what a constructor enters its base's
-// constructor with (LRM 8.7), and nothing anywhere else.
-struct SourcedCode {
-  CallableCode code;
-  std::vector<ExprId> outside_roots;
-};
-
-using CodeVisit = std::function<void(
-    const CodeSource&, const CallableCode&, std::span<const ExprId>)>;
+using CodeVisit = std::function<void(const CodeSource&, const CallableCode&)>;
 
 // Calls `visit` with every code `unit` holds, a definition or a declaration
-// alike, with its source and its outside roots.
+// alike, with its source.
 void ForEachCode(const CompilationUnit& unit, const CodeVisit& visit);
 
-using CodeRewrite = std::function<std::optional<SourcedCode>(
-    const CompilationUnit&, const CodeSource&, const CallableCode&,
-    std::span<const ExprId>)>;
+using CodeRewrite = std::function<std::optional<CallableCode>(
+    const CompilationUnit&, const CodeSource&, const CallableCode&)>;
 
 // `unit` with the code at every source `rewrite` answers for replaced by its
 // answer, and the code it answers nothing for kept as it is. Every code is

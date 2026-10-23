@@ -88,6 +88,16 @@ each stage establishes, not how.
       `super.new` -- so a backend never resorts to its target language's default-construction
       convention.
 
+- [x] An object is of its own class from the moment it is created (LRM 8.7, 8.17 NOTE 2, 8.20):
+      every member of every class of its lineage exists before any constructor runs, so a virtual
+      method or an interface class method called from a base constructor or a property initializer
+      is the object's class's, a cast inside a base constructor succeeds on what the object is, an
+      abstract base's constructor may call its pure virtual method, and a base constructor's
+      arguments may read a property of the class being constructed, as LRM 8.7's own example does. A
+      construction left partway, by its process being killed or by a run-time error, leaves an
+      object that something already refers to -- a `this` its constructor handed on -- as it was,
+      and reclaims one nothing refers to (LRM 8.29).
+
 - [x] Assigning a handle to a variable of a subclass (LRM 8.16): illegal to write directly and legal
       through the dynamic cast, which succeeds on what the object turns out to be rather than on
       what the source was declared as. Its coverage is tracked whole in `datatypes.md`, with the

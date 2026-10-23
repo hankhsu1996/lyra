@@ -819,6 +819,11 @@ enum class BuiltinFn : std::uint16_t {
   // the holding object's own answer, so a name carries only the value.
   kLoopBlocksAdd,
   kLoopBlocksAt,
+  // A scope's constructor gives the part every scope shares its place, first,
+  // before anything of the scope runs: its parent, its segment, and the
+  // definition of the class the object is of. The part itself was built
+  // without them when the object was created.
+  kSetScopePlace,
   // A constructor hands a freshly-built child to its parent to own: this
   // consumes the built child (a unique pointer) and returns the parent-owned
   // handle -- the child's own `Segment()` supplies the LRM display form, so the

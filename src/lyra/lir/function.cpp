@@ -87,9 +87,7 @@ auto CallEndingOf(const CallTarget& target) -> support::CallEnding {
             return support::RuntimeEntryOf(builtin.fn).ending;
           },
           [](const ConstructTarget&) { return CallEnding::kReturnsOrUnwinds; },
-          [](const LibraryConstructorTarget&) {
-            return CallEnding::kReturnsOrUnwinds;
-          },
+          [](const CreationTarget&) { return CallEnding::kReturns; },
           [](const ValueCellTarget&) { return CallEnding::kReturns; },
           // Keeping a part's value only moves memory; writing a slice is what
           // any storage's slice takes, which can raise.

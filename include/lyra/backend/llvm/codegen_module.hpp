@@ -26,6 +26,7 @@
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/integral_constant_id.hpp"
 #include "lyra/lir/linkage.hpp"
+#include "lyra/lir/symbol_name.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/layout.hpp"
 #include "lyra/support/member_storage_kind.hpp"
@@ -296,7 +297,23 @@ class CodeGenModule {
       llvm::IRBuilderBase& builder, llvm::Value* value,
       const PlacedMembers& placed) -> diag::Result<void>;
 
+  // The symbol of `cls`'s creation `which`: a class some unit declares names
+  // its creations over its definition, and the base object creation of a
+  // class of the library is that class's own constructor, which builds its
+  // part from nothing.
+  [[nodiscard]] auto CreationSymbol(lir::TypeId cls, lir::Creation which) const
+      -> std::string;
+
  private:
+  // Ends the object at `object` as C++ ends one through a pointer to a class
+  // whose destructor is virtual: by the deleting destructor its own table
+  // holds, which ends it as the class it was created as and gives its storage
+  // back.
+  void EndObject(llvm::IRBuilderBase& builder, llvm::Value* object);
+  // The symbol of the base object destructor of `cls`, named the same two
+  // ways.
+  [[nodiscard]] auto BaseObjectDestructorSymbol(lir::TypeId cls) const
+      -> std::string;
   // Whether a member of `type` held as `storage` is the bytes this backend lays
   // a value of the type out in -- a product's, a fixed-size unpacked array's,
   // an integral value's, a machine integer's -- rather than an object of the
@@ -439,11 +456,12 @@ class CodeGenModule {
   auto LayOut(const Declared& declared) -> diag::Result<PlacedMembers>;
   // How a closure's captures are laid out, after the library's part of it.
   auto LayOutCaptures(lir::ClosureId id) -> diag::Result<PlacedMembers>;
-  // Emits the constructor prologue of `declared`, which its constructor runs
-  // once its base is built: the value's table address, then its own members,
-  // then the table address of each interface class part a complete object of
-  // it holds.
-  auto EmitConstructorPrologue(const Declared& declared, lir::Linkage linkage)
+  // Emits the two creations of `declared`, as the JVM's `new` gives an object
+  // all its fields and its class before any constructor runs: the base object
+  // creation builds what it extends and then its own members, and the
+  // complete object creation does that and then stores the table address of
+  // the lineage and of each interface class part, once.
+  auto EmitCreations(const Declared& declared, lir::Linkage linkage)
       -> diag::Result<void>;
   // Emits the three destructors of `declared`, as clang emits them for a class
   // whose destructor is implicit: the base object destructor ends its own

@@ -32,15 +32,21 @@ class Scope : public GcObject {
  public:
   using ChildVisitor = std::function<void(Scope&)>;
 
-  // `definition` has to be of a scope class.
-  Scope(
-      Scope* parent, HierarchySegment segment,
-      const ObjectDefinition* definition);
+  // Built when the object is created, before any constructor of its class
+  // runs; the constructor then gives it its place with `SetPlace`.
+  Scope();
   ~Scope() override;
   Scope(const Scope&) = delete;
   auto operator=(const Scope&) -> Scope& = delete;
   Scope(Scope&&) = delete;
   auto operator=(Scope&&) -> Scope& = delete;
+
+  // Where this scope stands: its parent, its segment, and the class it is an
+  // object of, which has to be a scope class. The first thing its constructor
+  // does, so nothing of the scope runs before it has its place.
+  void SetPlace(
+      Scope* parent, HierarchySegment segment,
+      const ObjectDefinition* definition);
 
   [[nodiscard]] auto Parent() const -> Scope*;
 

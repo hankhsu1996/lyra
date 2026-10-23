@@ -70,8 +70,9 @@ auto ClosurePart() -> support::Layout;
 auto TypeInfoSymbolOf(support::RuntimeClass klass) -> std::string;
 
 // The symbols of that class's base object constructor and base object
-// destructor (C++ ABI 5.1.4.3, C2 and D2), which the constructor and destructor
-// of a class extending it call as a C++ class's call its base's.
+// destructor (C++ ABI 5.1.4.3, C2 and D2), which the creation and the
+// destructor of a class extending it call as a C++ class's call its base's.
+// The constructor takes nothing but the value it builds.
 auto BaseObjectConstructorSymbolOf(support::RuntimeClass klass)
     -> std::string_view;
 auto BaseObjectDestructorSymbolOf(support::RuntimeClass klass)

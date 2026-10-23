@@ -278,6 +278,12 @@ auto FunctionLowerer::LowerCallTarget(
                       return lir::CallTarget{ExternalMethodSymbol(
                           t.unit_name, t.class_path, t.method_name)};
                     },
+                    // A base's constructor, entered on the object the call is
+                    // made on, as a `new` enters the class's own.
+                    [&](const mir::ConstructorTarget& t)
+                        -> diag::Result<lir::CallTarget> {
+                      return ConstructorOf(t.cls).callee;
+                    },
                     // Reached by the symbol its declaring unit emits it under,
                     // from that unit and from any other alike.
                     [&](const mir::RecordMethodTarget& t)
@@ -336,7 +342,6 @@ FunctionLowerer::FunctionLowerer(
     UnitLowerer& unit, const mir::CallableCode& code, std::string name)
     : unit_(&unit),
       code_(&code),
-      construction_(std::nullopt),
       closure_(nullptr),
       name_(std::move(name)),
       variable_slot_(code.locals.size(), std::nullopt),
@@ -344,27 +349,9 @@ FunctionLowerer::FunctionLowerer(
 }
 
 FunctionLowerer::FunctionLowerer(
-    UnitLowerer& unit, const mir::Class& cls,
-    const mir::ConstructorDecl& constructor, std::string prologue,
-    std::string name)
-    : unit_(&unit),
-      code_(&constructor.code),
-      construction_(
-          Construction{
-              .cls = &cls,
-              .constructor = &constructor,
-              .prologue = std::move(prologue)}),
-      closure_(nullptr),
-      name_(std::move(name)),
-      variable_slot_(constructor.code.locals.size(), std::nullopt),
-      locals_(constructor.code.locals.size(), std::nullopt) {
-}
-
-FunctionLowerer::FunctionLowerer(
     UnitLowerer& unit, const mir::ClosureDecl& closure, std::string name)
     : unit_(&unit),
       code_(&closure.invoke),
-      construction_(std::nullopt),
       closure_(&closure),
       name_(std::move(name)),
       variable_slot_(closure.invoke.locals.size(), std::nullopt),
@@ -516,17 +503,6 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
     BindParam(param, argument);
   }
 
-  // The base's arguments are one full-expression, evaluated before the body.
-  const std::size_t base_depth = scopes_.size();
-  auto based = ConstructBase();
-  if (!based) {
-    return std::unexpected(std::move(based.error()));
-  }
-  auto base_closed = CloseExtent(base_depth);
-  if (!base_closed) {
-    return std::unexpected(std::move(base_closed.error()));
-  }
-
   auto lowered = LowerBlockInto(code_->Body());
   if (!lowered) {
     return std::unexpected(std::move(lowered.error()));
@@ -601,62 +577,6 @@ auto FunctionLowerer::ConstructorOf(const mir::DeclaredClassRef& cls)
                         ext.unit_name, lir::SymbolPartOf(ext.class_path))}}};
           }},
       cls);
-}
-
-auto FunctionLowerer::ConstructBase() -> diag::Result<void> {
-  if (!construction_.has_value() || !construction_->cls->base.has_value()) {
-    return {};
-  }
-  lir::CallTarget callee = std::visit(
-      Overloaded{
-          [&](const mir::IntraUnitClassRef& intra) -> lir::CallTarget {
-            return ConstructorOf(intra).callee;
-          },
-          [&](const mir::CrossUnitClassRef& cross) -> lir::CallTarget {
-            return ConstructorOf(cross).callee;
-          },
-          [](const mir::ObjectTreeRootRef&) -> lir::CallTarget {
-            return lir::LibraryConstructorTarget{
-                .cls = support::RuntimeClass::kScope};
-          },
-          [](const mir::ManagedObjectRootRef&) -> lir::CallTarget {
-            return lir::LibraryConstructorTarget{
-                .cls = support::RuntimeClass::kObject};
-          }},
-      *construction_->cls->base);
-  const lir::Operand object{lir::Use{.value = fn_.params.front()}};
-  const lir::TypeId void_type =
-      unit_->TranslateType(unit_->Mir().builtins.void_type);
-  // What the base construction carries was settled where the class was read:
-  // the arguments are complete however the source arrived at them, so there is
-  // nothing to establish about them here.
-  const std::vector<mir::ExprId>& stated =
-      construction_->constructor->base_args;
-  std::vector<lir::Operand> args;
-  args.reserve(stated.size() + 1);
-  // The base is entered on the object being constructed, which leads its
-  // arguments the way a receiver leads any body's parameters.
-  args.push_back(object);
-  for (const mir::ExprId arg : stated) {
-    auto lowered = LowerArgument(code_->Body(), arg);
-    if (!lowered) {
-      return std::unexpected(std::move(lowered.error()));
-    }
-    args.push_back(*std::move(lowered));
-  }
-  auto entered = EmitCallTo(std::move(callee), std::move(args), void_type);
-  if (!entered) {
-    return std::unexpected(std::move(entered.error()));
-  }
-  // Once the base is built the object is a value of this class, which is what
-  // the rest of a C++ constructor's prologue makes it.
-  auto prologue = EmitCallTo(
-      lir::SymbolTarget{.symbol = construction_->prologue}, {object},
-      void_type);
-  if (!prologue) {
-    return std::unexpected(std::move(prologue.error()));
-  }
-  return {};
 }
 
 auto FunctionLowerer::UnwindingType() -> lir::TypeId {
@@ -2644,13 +2564,17 @@ auto FunctionLowerer::ObjectAddress(
 auto FunctionLowerer::LowerNew(
     const mir::Block& block, const mir::NewExpr& allocation, mir::TypeId owner)
     -> diag::Result<lir::Operand> {
-  // The storage is allocated as `operator new` allocates it, and what it is to
-  // hold is then evaluated into it, so a way out before that is done gives the
-  // storage back; only once it holds that is the owner made, as
-  // `std::unique_ptr` or `std::shared_ptr` is given what a C++ `new` built.
   const mir::Expr& initializer = block.exprs.Get(allocation.initializer);
+  if (unit_->Mir().types.Get(initializer.type).Is<mir::ObjectType>()) {
+    return LowerObjectNew(block, initializer, owner);
+  }
+  const lir::TypeId held = unit_->TranslateType(initializer.type);
+  // A value that has a value apart from where it lies is made in the storage
+  // `operator new` allocates, as clang emits an initializer into it, so a way
+  // out before it is made gives the storage back; only once it holds the value
+  // is the owner made, as `std::unique_ptr` is given what a C++ `new` built.
   const lir::Operand storage = Emit(
-      AddressType(unit_->TranslateType(initializer.type)),
+      AddressType(held),
       lir::CallInstr{
           .target =
               lir::DynamicStorageTarget{
@@ -2658,38 +2582,30 @@ auto FunctionLowerer::LowerNew(
           .args = {}});
   const std::size_t released_at = scopes_.size();
   OpenScope(StorageRelease{.storage = storage});
-  if (auto initialized =
-          InitializeAllocated(block, allocation.initializer, storage);
-      !initialized) {
-    return std::unexpected(std::move(initialized.error()));
+  if (auto made =
+          LowerExprInto(block, allocation.initializer, StorageAt(storage));
+      !made) {
+    return std::unexpected(std::move(made.error()));
   }
   PassEndAt(released_at);
   return EmitCallTo(
       lir::ConstructTarget{}, {storage}, unit_->TranslateType(owner));
 }
 
-auto FunctionLowerer::InitializeAllocated(
-    const mir::Block& block, mir::ExprId id, const lir::Operand& storage)
-    -> diag::Result<void> {
-  const mir::Expr& initializer = block.exprs.Get(id);
-  // A value that has a value apart from where it lies is made in the new
-  // storage, as clang emits an initializer into it.
-  if (!unit_->Types()
-           .Get(unit_->TranslateType(initializer.type))
-           .IsAddressOnly()) {
-    return LowerExprInto(block, id, StorageAt(storage));
-  }
-  // An object has none, so its constructor is entered on the storage. A
-  // construction carries every argument its constructor takes -- the source
-  // wrote the call, so the front end bound it against the declaration and
-  // filled in whatever it left to a default. So there is nothing to establish
-  // about the arguments here, and nothing to read about the class beyond how
-  // its constructor is named.
+auto FunctionLowerer::LowerObjectNew(
+    const mir::Block& block, const mir::Expr& initializer, mir::TypeId owner)
+    -> diag::Result<lir::Operand> {
+  // An object has no value apart from where it lies, so its initializer is its
+  // construction. A construction carries every argument its constructor takes
+  // -- the source wrote the call, so the front end bound it against the
+  // declaration and filled in whatever it left to a default.
   const auto* construction = std::get_if<mir::CallExpr>(&initializer.data);
   if (construction == nullptr ||
       !std::holds_alternative<mir::Construct>(construction->callee)) {
     return Unsupported("an object is initialized only by its constructor");
   }
+  // The arguments come first, so a way out while they are evaluated owes
+  // nothing for an object.
   std::vector<lir::Operand> arguments;
   arguments.reserve(construction->arguments.size());
   for (const mir::ExprId argument : construction->arguments) {
@@ -2699,9 +2615,36 @@ auto FunctionLowerer::InitializeAllocated(
     }
     arguments.push_back(*std::move(lowered));
   }
-  return EnterConstructor(
+  // The object is then created whole -- every member of every class it is
+  // built of, and its own class's tables -- which runs none of the design's
+  // code, and its creator holds it from there. A construction left partway
+  // ends that hold as any value this body owns is ended, and the object goes
+  // on existing while anything else refers to it (LRM 8.29).
+  const lir::TypeId object_type = unit_->TranslateType(initializer.type);
+  const lir::Operand storage = Emit(
+      AddressType(object_type),
+      lir::CallInstr{
+          .target =
+              lir::DynamicStorageTarget{
+                  .op = lir::DynamicStorageTarget::Op::kAllocate},
+          .args = {}});
+  Emit(
+      unit_->TranslateType(unit_->Mir().builtins.void_type),
+      lir::CallInstr{
+          .target = lir::CreationTarget{.cls = object_type},
+          .args = {storage}});
+  auto held = EmitCallTo(
+      lir::ConstructTarget{}, {storage}, unit_->TranslateType(owner));
+  if (!held) {
+    return held;
+  }
+  auto constructed = EnterConstructor(
       mir::ClassOfObject(unit_->Mir().types, initializer.type), storage,
       std::move(arguments));
+  if (!constructed) {
+    return std::unexpected(std::move(constructed.error()));
+  }
+  return held;
 }
 
 auto FunctionLowerer::EnterConstructor(

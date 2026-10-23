@@ -149,7 +149,9 @@ the detail lives in the entry itself.
   the execution IR a uniquely owning pointer is an owned value with no copy, moved wherever it is
   handed on and ended by its last holder, and a new-expression gives its storage back if
   initialization departs. Handing the initializer to the owner's construction, a box realized as a
-  slot below MIR, and a lent argument the callee empties are rejected.
+  slot below MIR, and a lent argument the callee empties are rejected. For a class object the
+  lowering is superseded by
+  [an-object-is-created-whole-then-constructed](an-object-is-created-whole-then-constructed.md).
 - [a-value-too-large-for-a-frame-is-held-through-a-box](a-value-too-large-for-a-frame-is-held-through-a-box.md)
   -- every type is laid out flat at every size, and a local, a parameter taken by value, a made
   value and a capture of a type too large for a frame are held through a uniquely owning pointer a
@@ -651,13 +653,23 @@ the detail lives in the entry itself.
 - [object-model-storage](object-model-storage.md) -- a compilation unit owns one canonical registry
   of local nominal object declarations; identity, lexical name resolution, and backend emission
   nesting are separate relations; the lexical-tree-only storage and a second identity are rejected.
+- [an-object-is-created-whole-then-constructed](an-object-is-created-whole-then-constructed.md) --
+  an object is created whole before any code of the design runs on it -- every member of every class
+  of its lineage in existence and its own class's tables in place -- and then constructed by its
+  constructor, an ordinary body whose base's construction is a statement, so a dispatch or a cast
+  during construction answers for the object's class (LRM 8.17 NOTE 2) and a construction left
+  partway only drops its creator's reference (LRM 8.29). C++'s construction, a hidden argument
+  telling a base what it builds, C#'s initializer order, Swift's ban on early use and creation
+  handed the creator's values are rejected.
 - [entering-a-class-construction](entering-a-class-construction.md) -- a class's runtime definition
   carries no constructor, because the allocation site's static type chooses one and nothing a caller
   chooses belongs on a record every object shares: the code that wrote the `new` enters the
   constructor, so its arguments cross as themselves. Who allocates is superseded by
-  [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md). A registered
-  entry taking a span of arguments, a per-arity signature on the definition, and splitting in the
-  backend are rejected.
+  [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md). Its C++ backend
+  spelling a construction with the host's constructor is superseded by
+  [an-object-is-created-whole-then-constructed](an-object-is-created-whole-then-constructed.md). A
+  registered entry taking a span of arguments, a per-arity signature on the definition, and
+  splitting in the backend are rejected.
 - [constructing-another-units-class](constructing-another-units-class.md) -- a construction reaches
   its constructor by the identity it reaches the class's declaration by, so the declaring unit
   decides where each answer is read and nothing after it; the constructor is named the way every
@@ -843,7 +855,9 @@ the detail lives in the entry itself.
   of a class derived from the library's root and is ended through its virtual destructor; a scope's
   phases are virtual functions its class overrides; what the library reads by name is one C-layout
   constant per class, emitted by the declaring unit; and an instance of the design hierarchy is
-  built by its class's own constructor, entered typed. A name reaching a method of a class the
+  created and then constructed, as
+  [an-object-is-created-whole-then-constructed](an-object-is-created-whole-then-constructed.md)
+  states, which replaced how this record built an object. A name reaching a method of a class the
   referrer cannot name is settled to a body while the design elaborates, a virtual one included.
   **That last decision is reversed by
   [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**,

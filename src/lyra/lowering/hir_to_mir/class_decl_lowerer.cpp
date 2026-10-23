@@ -521,12 +521,13 @@ auto ClassDeclLowerer::PopulateBodies(
   if (!reported_or) return std::unexpected(std::move(reported_or.error()));
   const WalkFrame reporting = frame.WithReportingReachedTo(report);
 
-  // Base construction (LRM 8.7): a derived class always forwards to its base,
-  // and what that forward carries came with the base itself. Publishing it here
-  // is what makes base-constructor ordering a stated fact rather than a backend
-  // convention.
-  std::vector<mir::ExprId> base_args;
+  // Base construction (LRM 8.7): a derived class always constructs its base,
+  // with the arguments the class states for it, as a statement of this
+  // constructor after what the object records and before any property is
+  // initialized. The object is already of the class it was created as (LRM
+  // 8.17 NOTE 2), so the base's constructor runs on it as it is.
   if (hir_class.base.has_value()) {
+    std::vector<mir::ExprId> base_args;
     // A base belonging to an instance leads its arguments with that instance,
     // which encloses the one this class belongs to.
     if (hir_class.base_call.declaring_instance.has_value()) {
@@ -542,6 +543,21 @@ auto ClassDeclLowerer::PopulateBodies(
     // one does.
     base_args.push_back(ctor_block.ReadLocal(
         report, unit_lowerer.Unit().builtins.read_report_ptr));
+    const mir::ExprId object = BuildObjectDeref(
+        unit_lowerer.Unit(), ctor_block,
+        ctor_block.exprs.Add(MakeSelfRefExpr(frame)));
+    ctor_block.AppendStmt(
+        mir::ExprStmt{
+            .expr = ctor_block.exprs.Add(
+                mir::MakeCallExpr(
+                    mir::Direct{
+                        .target =
+                            mir::ConstructorTarget{
+                                .cls = unit_lowerer.TranslateClassRef(
+                                    *hir_class.base)},
+                        .receiver = object},
+                    std::move(base_args),
+                    unit_lowerer.Unit().builtins.void_type))});
   }
 
   // Initialize each property in declaration order before the constructor body
@@ -640,16 +656,15 @@ auto ClassDeclLowerer::PopulateBodies(
   }
 
   // The constructor body statements (LRM 8.7) run after base construction
-  // and property initialization, so they follow both the field-init prologue
-  // and the base-call arg evaluation already emitted into the ctor block.
+  // and property initialization, so they follow both, already appended to the
+  // ctor block.
   auto body_or = ctor_lowerer.LowerConstructorBodyInto(reporting);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
 
   ctor_code.params = std::move(ctor_params);
   ctor_code.result_type = unit_lowerer.Unit().builtins.void_type;
   if (!hir_class.is_interface_class) {
-    mir_class.constructor = mir::ConstructorDecl{
-        .code = std::move(ctor_code), .base_args = std::move(base_args)};
+    mir_class.constructor = mir::ConstructorDecl{.code = std::move(ctor_code)};
   }
 
   std::vector<BodyStatics> body_statics;

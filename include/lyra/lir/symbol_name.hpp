@@ -33,7 +33,8 @@ enum class SymbolCategory : std::uint8_t {
   kStaticProperty,
   kClosureInvoke,
   kTypeOperation,
-  kConstructorPrologue,
+  kBaseObjectCreation,
+  kCompleteObjectCreation,
   kBaseObjectDestructor,
   kCompleteObjectDestructor,
   kDeletingDestructor,
@@ -171,12 +172,17 @@ auto DefinitionSymbol(const CompilationUnit& unit, TypeId type)
 auto DefinitionSymbol(const CompilationUnit& unit, ClassId id) -> std::string;
 auto DefinitionSymbol(const CompilationUnit& unit, ClosureId id) -> std::string;
 
-// The symbol of a declaration's constructor prologue, given the symbol its
-// definition is linked under: what a constructor does once its base is built
-// and before its body runs -- the value takes the declaration's tables, and its
-// own members come into existence. It stands beside the definition, so it is
-// composed over that symbol.
-auto ConstructorPrologueSymbol(std::string_view definition) -> std::string;
+// The bodies that create a value of a declaration, running none of the
+// design's code, in the two the Itanium C++ ABI gives its constructors: the
+// base object creation brings into existence the part the declaration
+// declares and every part it extends, and the complete object creation does
+// that and then gives the value the declaration's tables, once. A value is
+// created by its own class's complete object creation before any constructor
+// runs on it, and a declaration extending one of another unit names its
+// base's base object creation this way.
+enum class Creation : std::uint8_t { kBaseObject, kCompleteObject };
+
+auto CreationSymbol(std::string_view definition, Creation which) -> std::string;
 
 // The destructors the Itanium C++ ABI gives a class with a virtual destructor:
 // the base object destructor (D2) ends what the declaration declares and then
