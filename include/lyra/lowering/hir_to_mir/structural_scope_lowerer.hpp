@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <optional>
 #include <span>
@@ -21,6 +22,7 @@
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/covergroup_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_callable.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
@@ -561,6 +563,7 @@ class StructuralScopeLowerer {
   // bodies -- which is what gives a class body the reach a process of the scope
   // has, and the instance to record.
   std::vector<ClassDeclLowerer> class_lowerers_;
+  std::deque<CovergroupLowerer> covergroup_lowerers_;
 };
 
 // Which property a class property access names (LRM 8.4): the member at the

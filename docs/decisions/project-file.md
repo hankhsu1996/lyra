@@ -421,19 +421,19 @@ implementation fact the writer has no reason to know.
 
 ## A policy field is named for the construct family, and admitted by one test
 
-`assertions = "check" | "skip"` is the first of a kind that will grow -- coverage is the obvious
-next -- so what matters is the rule for adding the second, not the first field's spelling.
+`assertions = "check" | "skip"` is the first of a kind that may grow, so what matters is the rule
+for adding the second, not the first field's spelling.
 
 **A construct family may be given a policy only if eliding it cannot change what the design
-computes.** LRM 16 assertions pass: an assertion observes and never drives. LRM 19 covergroups pass
-the same test for the same reason. A family that fails it does not get a policy at any spelling,
-because the option would then be a way to ask for a different answer.
+computes.** LRM 16 assertions pass: an assertion observes and never drives. LRM 19 covergroups fail
+it: `get_coverage` and `$get_coverage` hand the design what was counted (LRM 19.8, 19.9), so a
+design reading them computes something else once coverage is elided. A family that fails it does not
+get a policy at any spelling, because the option would then be a way to ask for a different answer.
 
 **Each family gets its own field and its own values; there is no shared on-off switch.** The values
-are not the same question: an assertion is checked or elided, while coverage is collected or not,
-and forcing both onto one `on|off` is a tag beside spare fields. What the families share is the
-admission test above, which is a rule rather than a type. Two families spelled identically are not
-evidence for unifying them; three consumers would be.
+are not the same question across families, and forcing them onto one `on|off` is a tag beside spare
+fields. What the families share is the admission test above, which is a rule rather than a type. Two
+families spelled identically are not evidence for unifying them; three consumers would be.
 
 ## Precedence, worked
 

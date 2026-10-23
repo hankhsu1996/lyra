@@ -63,9 +63,12 @@ class RuntimeEffects {
   // The same for a timer, which fires when that region runs.
   void Schedule(SimTime when, Region region, Timer& timer);
 
-  // The wait that parked `activation` is satisfied, so it becomes runnable in
-  // the current slot, in the Active region of its thread's region set --
-  // Reactive for a program's (LRM 4.5, 24.3.1). Ending the wait belongs to
+  // The wait that parked `activation` is satisfied, so it is placed where its
+  // context says a wake places it: runnable in the current slot, in the
+  // Active region of its thread's region set -- Reactive for a program's
+  // (LRM 4.5, 24.3.1) -- or run at the occurrence itself, once the waits it
+  // reached have all been asked and before whatever made it occur goes on
+  // (LRM 19.3). Ending the wait belongs to
   // the same step: nothing it was parked on -- the sibling observables of an
   // `@(a or b)`, the event it waited for -- may fire it a second time, and a
   // suspend in the woken-but-not-yet-resumed window then saves a runnable
@@ -82,7 +85,9 @@ class RuntimeEffects {
   // wait for a state by whether that state holds, and every other wait by
   // having been reached at all, its process deciding once it runs (LRM 4.5,
   // 9.2.2.2.1, 9.4.2, 15.5.1). Waking only queues and leaves every membership
-  // where it is, so each activation is woken as it is found.
+  // where it is, so each activation is woken as it is found; what is woken to
+  // run at the occurrence runs once every membership has been asked, so no
+  // code of the design runs while the list is walked.
   void WakeParkedOn(
       IntrusiveList<WaitMembership>& members, const Change& change);
 
@@ -185,6 +190,16 @@ class RuntimeEffects {
   // whose control the statement reaching it executes.
   void RunDetached(Coroutine<void> coroutine);
 
+  // The same for an execution that observes what it waits for: each time it
+  // is woken it runs inside the occurrence that woke it, as though the
+  // execution that made it occur had called it -- a covergroup sampled on its
+  // clocking event (LRM 19.3).
+  void RunObserving(Coroutine<void> coroutine);
+
+  // Holds `closure` until the simulation has ended, and runs it after the final
+  // procedures (LRM 9.2.3): what writes the coverage database (LRM 19.9).
+  void SubmitAtRunEnd(OwnedClosure<support::EffectSignature> closure);
+
   // The process whose body is executing right now (LRM 9.5); the observation
   // target `wait fork` reads and a fork spawn parents its branch to. Throws
   // if no process is executing.
@@ -234,6 +249,13 @@ class RuntimeEffects {
  protected:
   RuntimeEffects() = default;
   ~RuntimeEffects() = default;
+
+ private:
+  void StartDetached(
+      Coroutine<void> coroutine, const ExecutionContext& context);
+  // Runs what occurrences woke to run at them, once no occurrence is still
+  // being told to the waits it reaches.
+  void RunWokenAtTheOccurrence();
 };
 
 // Reports a run-time error that left a body or a time-zero phase, and asks the

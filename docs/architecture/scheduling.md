@@ -85,7 +85,15 @@ the scheduler to read in place of a placement. When a construct seems to require
 "is this an X?", the neutral verb set is missing a primitive -- add the primitive, do not teach the
 engine the construct. Which region set a thread runs in is not such a note: the standard places a
 thread by it as it places one by time (LRM 24.3.1), so it is part of the placement, chosen where the
-placement is and never read by the dispatch.
+placement is and never read by the dispatch. Nor is where a satisfied wait places an execution: in
+the Active region of its set, as every thread is, or at the occurrence itself, once every wait it
+reached has been asked and before the execution that made it occur goes on, which is how a
+covergroup is sampled on its event (LRM 19.3). It is held beside the region set, chosen where the
+execution is started and passed on to nothing it starts, and read by the one verb that wakes; an
+asynchronous runtime holds the same choice in the same place, as the dispatcher of a coroutine's
+context, one of which resumes a coroutine in whatever resumed it. Running it only once the waits
+have all been asked is what an event library does when it copies its listeners before calling them:
+no code of the design runs while the list it was reached through is walked.
 
 ## Deferred work is a closure submit, not a suspension
 
@@ -117,10 +125,14 @@ that names processes may find it: `wait fork` does not wait for it and `disable 
 it (LRM 9.6.1, 9.6.3). **Forbidden:** giving such an execution a parent to reuse the spawning path,
 which makes the update visible to process control the standard never put it under.
 
-An assertion's action is the other execution of no lineage. Its placement is known -- Reactive, or
+An assertion's action is another execution of no lineage. Its placement is known -- Reactive, or
 Postponed for a final deferred assertion -- but what runs there is a procedural statement that may
 wait (LRM 16.3, 16.4, 16.14.1), so the region starts it as an execution rather than calling it, and
 runs it to its first stop at once, since nothing in the region runs ahead of it.
+
+A covergroup sampled on its clocking event is a third (LRM 19.3): `new` starts it, the standard
+makes no process of it, and each occurrence of its event runs it in place, once every wait the
+occurrence reached has been asked and before the execution that made the event occur goes on.
 
 Yield-based alternatives are rejected because they would entangle the deferred effect's commit time
 with the process's resumption schedule. A process that does `q <= d; #5; ...` should not be forced
@@ -229,12 +241,15 @@ rather than a requirement -- which is why the corpus does not hold a case for it
 Registered `final` actions then run in registration order, because a `final` procedure occurs at the
 end of simulation time (LRM 9.2.3), which a run reaches by being asked to end and equally by running
 out of work. A further request from inside a `final` ends the simulation immediately, so the ones
-still queued do not run.
+still queued do not run. What the design asked to have done once the simulation is over -- writing
+the coverage database a covergroup asks for (LRM 19.9) -- is a call held from wherever it was asked
+for and run after them, as C's `atexit` holds a function rather than a thread.
 
 The one ending that runs none of them is the tool being unable to carry the run on: a `final`
-procedure is design code, and the state it would read is already known to be wrong. What the engine
-owes either way -- the immediate cover report (LRM 16.3), the flush of what the design wrote, the
-exit status -- is owed because the run is over, not because of how it ended.
+procedure is design code, and the state it would read is already known to be wrong; so is what
+writes the coverage database. What the engine owes either way -- the immediate cover report (LRM
+16.3), the flush of what the design wrote, the exit status -- is owed because the run is over, not
+because of how it ended.
 
 A run-time error of the design is not a separate ending. It is reported where the activation it left
 lands, and asks for the ending `$fatal` asks for, so the same tail runs and the engine sees a

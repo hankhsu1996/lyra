@@ -125,6 +125,21 @@ auto EquivalenceIdentityOf(const UnitLowerer& unit_lowerer, hir::TypeId type)
             return std::format(
                 "class std::{}", support::ImportedRuntimeClassName(t.klass));
           },
+          [&](const hir::CovergroupHandleType& t) {
+            return std::visit(
+                Overloaded{
+                    [&](const hir::LocalCovergroupRef& local) {
+                      return "covergroup " +
+                             DeclarationText(
+                                 hir_unit.name,
+                                 hir_unit.covergroups.PathOf(local.covergroup));
+                    },
+                    [](const hir::ExternalCovergroupRef& external) {
+                      return "covergroup " +
+                             DeclarationText(external.unit_name, external.path);
+                    }},
+                t.covergroup);
+          },
           [](const hir::VirtualInterfaceType& t) {
             return "virtual " + t.unit_name;
           },

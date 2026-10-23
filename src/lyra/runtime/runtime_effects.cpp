@@ -155,7 +155,17 @@ void RuntimeEffects::Schedule(SimTime when, Region region, Timer& timer) {
 
 void RuntimeEffects::Wake(Activation* activation) {
   ConsumeWait(activation);
-  Schedule(Now(), activation->Process().Context().regions.active, activation);
+  const ExecutionContext& context = activation->Process().Context();
+  switch (context.wake) {
+    case WakePlacement::kActiveRegion:
+      Schedule(Now(), context.regions.active, activation);
+      return;
+    case WakePlacement::kAtTheOccurrence:
+      AsRuntime(*this).woken_at_the_occurrence_.push_back(activation);
+      RunWokenAtTheOccurrence();
+      return;
+  }
+  throw InternalError("RuntimeEffects::Wake: unknown wake placement");
 }
 
 void RuntimeEffects::Submit(SimTime when, Region region, OwnedCall effect) {
@@ -268,33 +278,79 @@ void RuntimeEffects::SubmitDeferredFinal(Coroutine<void> body) {
       });
 }
 
+void RuntimeEffects::RunWokenAtTheOccurrence() {
+  Runtime& rt = AsRuntime(*this);
+  if (rt.occurrences_being_told_ != 0) return;
+  while (!rt.woken_at_the_occurrence_.empty()) {
+    std::vector<Activation*> woken;
+    woken.swap(rt.woken_at_the_occurrence_);
+    for (Activation* activation : woken) {
+      RuntimeProcess::RunUndispatched(*this, activation);
+    }
+  }
+}
+
+namespace {
+
+// The extent of telling one occurrence to the waits it reaches, which ends
+// however the telling does. What it wakes to run at it runs once the outermost
+// such extent has ended.
+class TellingAnOccurrence {
+ public:
+  explicit TellingAnOccurrence(int& depth) : depth_(depth) {
+    ++depth_;
+  }
+  TellingAnOccurrence(const TellingAnOccurrence&) = delete;
+  auto operator=(const TellingAnOccurrence&) -> TellingAnOccurrence& = delete;
+  TellingAnOccurrence(TellingAnOccurrence&&) = delete;
+  auto operator=(TellingAnOccurrence&&) -> TellingAnOccurrence& = delete;
+  ~TellingAnOccurrence() {
+    --depth_;
+  }
+
+ private:
+  int& depth_;
+};
+
+}  // namespace
+
 void RuntimeEffects::WakeParkedOn(
     IntrusiveList<WaitMembership>& members, const Change& change) {
-  members.ForEach([&](WaitMembership& membership) {
-    if (change.KnownUnchanged(membership.reads)) {
-      return;
-    }
-    std::visit(
-        Overloaded{
-            [&](Awaiter* awaiter) {
-              if (Activation* woken = awaiter->WokenBy(membership)) {
-                Wake(woken);
-              }
-            },
-            [](SampledValue* sampled) { sampled->Reached(); },
-            [](SourceFollower* follower) { follower->Reached(); },
-            [this](ProgramThreads* program) { program->RootEnded(*this); },
-            [&](PropertyEvaluation* evaluation) {
-              evaluation->Reached(membership);
-            },
-            [](DumpWatch* watch) { watch->Reached(); }},
-        membership.observer);
-  });
+  const auto told = [&] {
+    const TellingAnOccurrence telling(AsRuntime(*this).occurrences_being_told_);
+    members.ForEach([&](WaitMembership& membership) {
+      if (change.KnownUnchanged(membership.reads)) {
+        return;
+      }
+      std::visit(
+          Overloaded{
+              [&](Awaiter* awaiter) {
+                if (Activation* woken = awaiter->WokenBy(membership)) {
+                  Wake(woken);
+                }
+              },
+              [](SampledValue* sampled) { sampled->Reached(); },
+              [](SourceFollower* follower) { follower->Reached(); },
+              [this](ProgramThreads* program) { program->RootEnded(*this); },
+              [&](PropertyEvaluation* evaluation) {
+                evaluation->Reached(membership);
+              },
+              [](DumpWatch* watch) { watch->Reached(); }},
+          membership.observer);
+    });
+  };
+  told();
+  RunWokenAtTheOccurrence();
 }
 
 void RuntimeEffects::WakeParkedOn(
     Observable& place, const PartPath& written, const Change& change) {
-  place.WakeAffectedBy(*this, written, change);
+  const auto told = [&] {
+    const TellingAnOccurrence telling(AsRuntime(*this).occurrences_being_told_);
+    place.WakeAffectedBy(*this, written, change);
+  };
+  told();
+  RunWokenAtTheOccurrence();
 }
 
 auto RuntimeEffects::Bound() -> BoundMembers& {
@@ -354,7 +410,8 @@ auto RuntimeEffects::Spawn(Coroutine<void> coroutine)
   // one at its root and the order the branches then run in does not move any
   // of it.
   auto child = std::make_shared<RuntimeProcess>(
-      parent.Context(), std::move(coroutine), parent.Running().rng.Split());
+      parent.Context().ForStarted(), std::move(coroutine),
+      parent.Running().rng.Split());
   Activation* const activation = child->TopActivation();
   // The spawned activity is enabled within whatever disable targets the spawner
   // is inside (LRM 9.6.2), so it takes that membership here rather than
@@ -367,32 +424,49 @@ auto RuntimeEffects::Spawn(Coroutine<void> coroutine)
 }
 
 void RuntimeEffects::RunDetached(Coroutine<void> coroutine) {
+  StartDetached(
+      std::move(coroutine), AsRuntime(*this).RunningContext().WithoutLineage());
+}
+
+void RuntimeEffects::RunObserving(Coroutine<void> coroutine) {
+  StartDetached(
+      std::move(coroutine),
+      AsRuntime(*this).RunningContext().WokenAtTheOccurrence());
+}
+
+void RuntimeEffects::StartDetached(
+    Coroutine<void> coroutine, const ExecutionContext& context) {
   Runtime& rt = AsRuntime(*this);
-  RuntimeProcess* const reached_by = rt.current_process_;
-  if (reached_by == nullptr) {
-    throw InternalError(
-        "RuntimeEffects::RunDetached: no ambient process to take the owning "
-        "scope from");
-  }
-  // The carrier evaluates the control it carries, there and again at each
-  // candidacy, so it draws from a generator of its own. No thread creates it,
-  // so that generator is the next of the context's initialization RNG (LRM
-  // 18.14.1), and the draws of the process that reached the statement do not
-  // move.
-  const ExecutionContext context = reached_by->Context().WithoutLineage();
-  auto carrier = std::make_shared<RuntimeProcess>(
+  // What it waits for is evaluated there and again at each candidacy, so it
+  // draws from a generator of its own. No thread creates it, so that generator
+  // is the next of the context's initialization RNG (LRM 18.14.1), and the
+  // draws of whatever reached the statement do not move.
+  auto execution = std::make_shared<RuntimeProcess>(
       context, std::move(coroutine), context.SplitInitializationRng());
-  Activation* const activation = carrier->TopActivation();
-  // No lineage and no disable membership: the standard makes no process of the
-  // update this carries out, so nothing that names processes may find it. What
-  // keeps it alive until it ends is therefore the runtime itself.
-  rt.AdoptProcess(carrier);
+  Activation* const activation = execution->TopActivation();
+  // No lineage and no disable membership: the standard makes a process of
+  // neither an update it carries out nor a covergroup's sampling, so nothing
+  // that names processes may find it (LRM 9.6.1, 9.6.3). What keeps it alive
+  // until it ends is therefore the runtime itself.
+  rt.AdoptProcess(execution);
+  // Reached where nothing executes -- a static initialization making a
+  // covergroup sampled on its event (LRM 19.3) -- it starts with the
+  // processes, since nothing it waits for can happen before they run.
+  if (rt.current_process_ == nullptr) {
+    Schedule(Now(), execution->Context().regions.active, activation);
+    return;
+  }
   // It runs now, as the statement that reached it, until it first waits: the
   // statement executes the control it carries (LRM 9.4.5). So the object an
   // event names and the value a change is measured from are those of that
   // moment, a change the process makes after the statement is one the wait
   // sees, and an error evaluating the control is the statement's.
   RuntimeProcess::RunUndispatched(*this, activation);
+}
+
+void RuntimeEffects::SubmitAtRunEnd(
+    OwnedClosure<support::EffectSignature> closure) {
+  AsRuntime(*this).at_run_end_.emplace_back(std::move(closure));
 }
 
 auto RuntimeEffects::CurrentProcess() -> RuntimeProcess& {

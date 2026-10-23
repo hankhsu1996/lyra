@@ -21,6 +21,7 @@
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
+#include <slang/ast/symbols/CoverSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
@@ -1147,8 +1148,8 @@ auto IsDesignElement(const slang::ast::Symbol& unit) -> bool {
   return unit.kind == slang::ast::SymbolKind::InstanceBody;
 }
 
-auto BelongsToAnInstance(const slang::ast::ClassType& cls) -> bool {
-  return IsInstanceScope(ReplicatingScope(cls));
+auto BelongsToAnInstance(const slang::ast::Symbol& type) -> bool {
+  return IsInstanceScope(ReplicatingScope(type));
 }
 
 auto CompilationUnitName(
@@ -1260,6 +1261,13 @@ auto StepOf(const slang::ast::Symbol& scope, const SpecializationPolicy& policy)
         .arguments = ArgumentsDigest(
             ClassKeyUnder(std::string{cls->name}, *cls, policy))};
   }
+  // A covergroup is a type of its scope as a class is (LRM 19.3), in the same
+  // name space, so it is told from the others by its name the same way.
+  if (const auto* covergroup = scope.as_if<slang::ast::CovergroupType>()) {
+    return support::ClassStep{
+        .name = std::string{CovergroupNameOf(*covergroup)},
+        .arguments = std::nullopt};
+  }
   if (scope.kind == SymbolKind::Subroutine ||
       scope.kind == SymbolKind::StatementBlock) {
     return ProceduralStepOf(scope);
@@ -1296,6 +1304,22 @@ auto ProceduralStepOf(const slang::ast::Symbol& scope) -> support::DefPathData {
         .position = static_cast<std::uint32_t>(scope.getIndex())};
   }
   return support::NamedBlockStep{.name = std::string{scope.name}};
+}
+
+auto CovergroupNameOf(const slang::ast::CovergroupType& covergroup)
+    -> std::string_view {
+  if (!covergroup.name.empty()) return covergroup.name;
+  const auto& embedding =
+      covergroup.getParentScope()->asSymbol().as<slang::ast::ClassType>();
+  for (const auto& property :
+       embedding.membersOfType<slang::ast::ClassPropertySymbol>()) {
+    if (&property.getType().getCanonicalType() == &covergroup) {
+      return property.name;
+    }
+  }
+  throw InternalError(
+      "CovergroupNameOf: a covergroup a class embeds is the type of one of its "
+      "properties");
 }
 
 auto DefPathOf(

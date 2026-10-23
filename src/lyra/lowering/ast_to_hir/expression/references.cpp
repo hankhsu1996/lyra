@@ -28,6 +28,8 @@
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
+#include "lyra/lowering/ast_to_hir/covergroup_access.hpp"
+#include "lyra/lowering/ast_to_hir/covergroup_decl.hpp"
 #include "lyra/lowering/ast_to_hir/expression/selects.hpp"
 #include "lyra/lowering/ast_to_hir/expression/view_names.hpp"
 #include "lyra/lowering/ast_to_hir/expression/virtual_interface.hpp"
@@ -387,9 +389,20 @@ auto MakeClassPropertyRefExpr(
     UnitLowerer& unit_lowerer, const WalkFrame& frame,
     const slang::ast::Symbol& sym, const slang::ast::Type& type,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  auto type_id = unit_lowerer.InternType(type, span);
-  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  // A covergroup's options are read one field at a time (LRM 19.7).
+  if (IsCovergroupMember(sym)) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "reading a covergroup's options as a whole is not yet supported");
+  }
   const auto& prop = sym.as<slang::ast::ClassPropertySymbol>();
+  // A reference reads the storage it reaches, which for the variable of a
+  // covergroup extending a base's is the base's (LRM 19.4.1).
+  const slang::ast::ClassPropertySymbol* held =
+      InheritedCovergroupProperty(prop);
+  auto type_id =
+      unit_lowerer.InternType(held == nullptr ? type : held->getType(), span);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
   // LRM 8.9: a static-lifetime property belongs to the type rather than to any
   // object of it, so its reference form carries neither the enclosing method's
   // receiver nor a fabricated stand-in. Instance properties and static
@@ -404,6 +417,17 @@ auto MakeClassPropertyRefExpr(
   auto target = unit_lowerer.MakeClassPropertyTarget(owner_class, prop, span);
   if (!target) {
     return std::unexpected(std::move(target.error()));
+  }
+  // A covergroup a class embeds names the embedding object's properties as
+  // if it were that object (LRM 19.4).
+  if (ReachedThroughEmbedding(frame, sym)) {
+    return hir::Expr{
+        .type = *type_id,
+        .data =
+            hir::ClassPropertyAccessExpr{
+                .base_value = EmbeddingObject(frame, span),
+                .target = *std::move(target)},
+        .span = span};
   }
   return hir::MakeRefExpr(
       hir::ClassPropertyRef{.target = *std::move(target)}, *type_id, span);

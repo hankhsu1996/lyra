@@ -7,7 +7,7 @@
 #
 # A case may appear in this file or in the defect record, never both.
 06_data_types/net_of_a_tagged_union: "a net holding a tagged union is not yet supported"
-08_classes/constructor_argument_directions: "a constructor with an 'output', 'inout' or 'ref' argument is not yet supported"
+08_classes/constructor_argument_directions: "a constructor with an 'output' or 'inout' argument is not yet supported"
 09_processes/always_comb_writes_one_key_of_an_associative_array: "driven by always_comb procedure cannot be written to by any other process"
 10_assignments/net_delay: "a net delay is not yet supported"
 11_operators/streaming_a_class_handle_streams_its_object: "streaming the object a class handle refers to is not yet supported"

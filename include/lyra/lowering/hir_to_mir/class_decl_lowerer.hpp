@@ -5,6 +5,7 @@
 #include "lyra/base/translation.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/class_decl.hpp"
+#include "lyra/hir/method_id.hpp"
 #include "lyra/lowering/hir_to_mir/declared_callable.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"

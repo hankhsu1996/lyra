@@ -307,6 +307,19 @@ struct ValueDumpSystemSubroutineInfo {
   ValueDumpTask task;
 };
 
+// LRM 19.9 coverage database functions: the coverage of every covergroup type
+// of the run, and naming or loading the database the run writes at its end.
+// Each is a function of the coverage library, which a call reaches by name.
+enum class CoverageDatabaseCall : std::uint8_t {
+  kGetCoverage,
+  kSetCoverageDbName,
+  kLoadCoverageDb,
+};
+
+struct CoverageDatabaseSystemSubroutineInfo {
+  CoverageDatabaseCall call;
+};
+
 using SystemSubroutineSemantic = std::variant<
     PrintSystemSubroutineInfo, TerminationSystemSubroutineInfo,
     ProgramControlSystemSubroutineInfo, DiagnosticSystemSubroutineInfo,
@@ -317,7 +330,8 @@ using SystemSubroutineSemantic = std::variant<
     BitVectorSystemSubroutineInfo, HostCommandSystemSubroutineInfo,
     RandomSystemSubroutineInfo, DistributionSystemSubroutineInfo,
     SampledValueSystemSubroutineInfo, ValueChangeSystemSubroutineInfo,
-    PastValueSystemSubroutineInfo, ValueDumpSystemSubroutineInfo>;
+    PastValueSystemSubroutineInfo, ValueDumpSystemSubroutineInfo,
+    CoverageDatabaseSystemSubroutineInfo>;
 
 struct SystemSubroutineDesc {
   SystemSubroutineId id;
@@ -1246,6 +1260,33 @@ inline constexpr std::array kSystemSubroutines = {
         .semantic =
             ValueDumpSystemSubroutineInfo{
                 .task = ValueDumpTask::kDumpPortsFlush},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{97},
+        .name = "$get_coverage",
+        .kind = SystemSubroutineKind::kFunction,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 0},
+        .semantic =
+            CoverageDatabaseSystemSubroutineInfo{
+                .call = CoverageDatabaseCall::kGetCoverage},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{98},
+        .name = "$set_coverage_db_name",
+        .kind = SystemSubroutineKind::kFunction,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 1},
+        .semantic =
+            CoverageDatabaseSystemSubroutineInfo{
+                .call = CoverageDatabaseCall::kSetCoverageDbName},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{99},
+        .name = "$load_coverage_db",
+        .kind = SystemSubroutineKind::kFunction,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 1},
+        .semantic =
+            CoverageDatabaseSystemSubroutineInfo{
+                .call = CoverageDatabaseCall::kLoadCoverageDb},
     },
 };
 

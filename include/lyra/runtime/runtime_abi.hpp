@@ -414,6 +414,10 @@ void lyra_rt_submit_postponed(void* runtime, void* closure);
 void lyra_rt_submit_observed(void* runtime, void* closure);
 void lyra_rt_submit_violation_report(void* runtime, void* closure);
 
+// The same for what is owed once the simulation has ended, after the final
+// procedures: writing the coverage database (LRM 19.9).
+void lyra_rt_submit_at_run_end(void* runtime, void* closure);
+
 // Queues a deferred assertion's action, which is started as an execution of
 // its own once the report matures (LRM 16.4). Each takes ownership of the
 // coroutine `body` points at, built where the statement is.
@@ -442,6 +446,10 @@ void lyra_rt_run_detached(void* runtime, void* carrier);
 // The wait for the region that update is due in, which the carrier stops at
 // once the event has named the slot (LRM 4.4.2.4).
 auto lyra_rt_resume_in_nba_region(void* out) -> void*;
+
+// An execution of no lineage that runs at each occurrence of what it waits
+// for: a covergroup sampled on its clocking event (LRM 19.3).
+void lyra_rt_run_observing(void* runtime, void* started);
 
 // The wait of a delay (LRM 9.4.1): `duration` steps of its scope's time unit
 // (`unit_power`), from now. The runtime rounds that amount to the scope's
@@ -918,6 +926,9 @@ auto lyra_rt_reference_reports_to(const void* reference) -> void*;
 void lyra_rt_bind_member(void* member, const void* bound);
 // A `ref` port bound to what its connection names (LRM 23.3.3.2).
 void lyra_rt_bind_alias(void* alias, const void* bound);
+// A reference an object holds bound to what its construction was handed (LRM
+// 13.5.2).
+void lyra_rt_bind_reference(void* member, const void* bound);
 
 // States that a continuous assignment drives the storage `reference` names
 // (LRM 10.3).

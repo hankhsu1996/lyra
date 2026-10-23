@@ -298,6 +298,13 @@ class Runtime final : public RuntimeEffects {
   // Final processes wait here rather than in any slot: LRM 9.2.3 runs them
   // after the last one, when no slot is left to hold them.
   IntrusiveList<QueuePlace> finals_;
+  // What is owed because the simulation is over, held from wherever the run
+  // asked for it and run once the final procedures have.
+  std::vector<OwnedCall> at_run_end_;
+  // What an occurrence woke to run at it, held while the waits it reached are
+  // still being asked, and how deep that asking is.
+  std::vector<Activation*> woken_at_the_occurrence_;
+  int occurrences_being_told_ = 0;
   // The design's processes start in the active region set, and a program's in
   // the reactive one once the design's have settled (LRM 24.3.1).
   StartingTurns design_starting_{.regions = kActiveRegionSet, .turns = {}};

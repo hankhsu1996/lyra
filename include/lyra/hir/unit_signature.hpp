@@ -12,6 +12,7 @@
 #include "lyra/hir/external_scope_class.hpp"
 #include "lyra/hir/port_direction.hpp"
 #include "lyra/hir/published_callable.hpp"
+#include "lyra/hir/published_covergroup.hpp"
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/published_method.hpp"
 #include "lyra/hir/published_scope.hpp"
@@ -200,9 +201,22 @@ struct UnitSignature {
   // name (LRM 26.2), each reached by its own name rather than through any
   // instance.
   std::vector<ClassSignature> classes;
+  // The covergroups this unit declares and other units may name (LRM 19.3,
+  // 26.2), each by its own path, as a class is.
+  std::vector<PublishedCovergroup> covergroups;
   std::variant<PublishedDesignElement, PublishedNamespace> unit;
 
   auto operator==(const UnitSignature&) const -> bool = default;
+
+  // The covergroup published under `path`, or nothing where the unit published
+  // no such covergroup.
+  [[nodiscard]] auto FindCovergroup(const support::DefPath& path) const
+      -> const PublishedCovergroup* {
+    for (const PublishedCovergroup& published : covergroups) {
+      if (published.path == path) return &published;
+    }
+    return nullptr;
+  }
 
   // The class published under `class_path`, or nothing where the unit published
   // no such class.

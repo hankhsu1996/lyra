@@ -1,10 +1,17 @@
 #pragma once
 
 #include <optional>
+#include <span>
 #include <string>
+#include <vector>
 
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/class_ref.hpp"
+#include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_id.hpp"
+#include "lyra/hir/param_direction.hpp"
+#include "lyra/hir/subroutine_ref.hpp"
+#include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
@@ -19,6 +26,18 @@ struct CallExpr;
 namespace lyra::lowering::hir_to_mir {
 
 class ProcessLowerer;
+class UnitLowerer;
+
+// A call of the method `callee` names where no source expression stands for
+// it: on the object the handle `receiver` holds, or on none for a
+// type-associated method, with `arguments` in the frame's block -- an input's
+// value, brought here to its formal's type, and a `ref` one's reference. It
+// answers the method's result, or the call where the method answers none.
+auto BuildMethodCall(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    const hir::MethodCallee& callee, std::optional<mir::ExprId> receiver,
+    std::span<const mir::ExprId> arguments, hir::TypeId result_type)
+    -> mir::ExprId;
 
 // Lowers a call to a user subroutine -- an intra-unit structural one, a
 // cross-unit package / `$unit` one (LRM 26.3), or a class method whether it
@@ -67,5 +86,27 @@ template <ExprLowerer Lowerer>
 auto EmitReportingCall(
     Lowerer& lowerer, const WalkFrame& frame, hir::ExprId call,
     mir::LocalId report) -> diag::Result<void>;
+
+// Emits into `frame` the argument an `input` or a `ref` formal of `type` is
+// handed for `actual`: its value, or what it designates (LRM 13.5.2), which is
+// the whole of a variable or a class property or a part of one, so a write
+// through the formal is a write of what holds that storage, told to whoever
+// waits on it when it lands. A formal generic over a type takes the actual seen
+// as any.
+template <ExprLowerer Lowerer>
+auto EmitBoundActual(
+    Lowerer& lowerer, const WalkFrame& frame, const hir::Expr& actual,
+    hir::ParamDirection direction, mir::TypeId type)
+    -> diag::Result<mir::ExprId>;
+
+// Emits into `frame` the arguments a construction of `cls` is entered with
+// (LRM 8.7) for `actuals`, each bound by its formal's direction as a call
+// binds it: an input as its value, a `ref` as what it names (LRM 13.5.2). The
+// same for `new` and for a constructor's call of its base's.
+template <ExprLowerer Lowerer>
+auto EmitConstructionActuals(
+    Lowerer& lowerer, const WalkFrame& frame, const hir::ClassRef& cls,
+    std::span<const hir::ExprId> actuals)
+    -> diag::Result<std::vector<mir::ExprId>>;
 
 }  // namespace lyra::lowering::hir_to_mir

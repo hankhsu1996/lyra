@@ -402,7 +402,16 @@ auto StorageFoundBy(Lowerer& lowerer, const hir::Expr& expr) -> StorageFound {
             return StorageFound::kNone;
           },
           [](const hir::TaggedUnionExpr&) { return StorageFound::kNone; },
-          [](const hir::DynamicCastExpr&) { return StorageFound::kNone; }},
+          [](const hir::DynamicCastExpr&) { return StorageFound::kNone; },
+          [](const hir::CovergroupNewExpr&) { return StorageFound::kNone; },
+          [](const hir::CovergroupMethodCallExpr&) {
+            return StorageFound::kNone;
+          },
+          // An option is a field of what the coverage library keeps for the
+          // instance or the type, which outlives every read (LRM 19.10).
+          [](const hir::CovergroupOptionExpr&) {
+            return StorageFound::kBeyondTheSteps;
+          }},
       expr.data);
 }
 

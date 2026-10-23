@@ -16,6 +16,8 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/primary.hpp"
+#include "lyra/lowering/ast_to_hir/covergroup_access.hpp"
+#include "lyra/lowering/ast_to_hir/covergroup_decl.hpp"
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/expression/virtual_interface.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
@@ -169,6 +171,11 @@ auto LowerMemberAccessExpr(
     return LowerCurrentInstanceMember(
         lowerer.Owner(), frame, sel.member, *sel.type, span);
   }
+  // A field of a covergroup's options (LRM 19.7, 19.10).
+  if (NamesCoverageOptions(sel.value())) {
+    return LowerCoverageOption(
+        lowerer, frame, sel.value(), sel.member.name, *sel.type, span);
+  }
   auto base_or = lowerer.LowerExpr(sel.value(), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const hir::ExprId base_id = frame.Exprs().Add(*std::move(base_or));
@@ -215,6 +222,12 @@ auto LowerMemberAccessExpr(
         lowerer.Owner().MakeClassPropertyTarget(declaring_class, prop, span);
     if (!target) {
       return std::unexpected(std::move(target.error()));
+    }
+    // A reference reads the storage it reaches, which for the variable of a
+    // covergroup extending a base's is the base's (LRM 19.4.1).
+    if (const auto* held = InheritedCovergroupProperty(prop)) {
+      type_id = lowerer.Owner().InternType(held->getType(), span);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
     }
     return hir::Expr{
         .type = *type_id,

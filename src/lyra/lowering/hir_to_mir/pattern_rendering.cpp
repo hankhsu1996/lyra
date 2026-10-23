@@ -338,6 +338,7 @@ auto Renderer::BuildBody(
           [&](const hir::ChandleType& t) { return none(t); },
           [&](const hir::ClassHandleType& t) { return none(t); },
           [&](const hir::ImportedClassHandleType& t) { return none(t); },
+          [&](const hir::CovergroupHandleType& t) { return none(t); },
           [&](const hir::UnitObjectType& t) { return none(t); },
           [&](const hir::UnitObjectsType& t) { return none(t); },
           [&](const hir::VirtualInterfaceType& t) { return none(t); },
@@ -759,6 +760,7 @@ auto PatternReadingOf(const hir::CompilationUnit& hir, hir::TypeId type)
           [&](const hir::ImportedClassHandleType& t) {
             return value_answers(t);
           },
+          [&](const hir::CovergroupHandleType& t) { return value_answers(t); },
           [&](const hir::NullType& t) { return value_answers(t); },
           [&](const hir::VirtualInterfaceType& t) { return value_answers(t); },
           // An index of no declared type is a place a key of any integral width

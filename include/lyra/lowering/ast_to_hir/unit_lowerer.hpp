@@ -182,6 +182,11 @@ struct ScopePublicationRecord {
     const slang::ast::ClassPropertySymbol* symbol = nullptr;
     const slang::ast::ClassType* owner = nullptr;
   };
+  // The block event of a covergroup the scope declares (LRM 19.3), whose
+  // identity the covergroup is minted with.
+  struct CovergroupEvent {
+    const slang::ast::CovergroupType* symbol = nullptr;
+  };
   // An instance the scope builds, or an array of them, with the unit each is
   // an instance of and the range of each dimension; a single instance has
   // none.
@@ -195,7 +200,8 @@ struct ScopePublicationRecord {
     const slang::ast::InterfacePortSymbol* symbol = nullptr;
   };
   using Member = std::variant<
-      DataObject, LocalStatic, ClassStatic, Instance, InterfacePort>;
+      DataObject, LocalStatic, ClassStatic, CovergroupEvent, Instance,
+      InterfacePort>;
 
   // A subroutine the source declared on the scope (LRM 13).
   struct Subroutine {
@@ -523,12 +529,14 @@ class LoweringFacts {
       SensitivityAnalyzer& sensitivity_analyzer,
       support::AssertionPolicy assertion_policy,
       const SpecializationPolicy& specialization,
-      const PlacedSpecializations& placed, const StdDefinitions& std_classes)
+      const PlacedSpecializations& placed, const StdDefinitions& std_classes,
+      const CoverageLibrary& coverage)
       : sensitivity_analyzer_(&sensitivity_analyzer),
         assertion_policy_(assertion_policy),
         specialization_(&specialization),
         placed_(&placed),
-        std_classes_(&std_classes) {
+        std_classes_(&std_classes),
+        coverage_(&coverage) {
   }
 
   // The specializations placed in the unit `home` is the body of.
@@ -545,6 +553,11 @@ class LoweringFacts {
       -> const slang::ast::ClassType* {
     const auto it = std_classes_->find(&cls);
     return it == std_classes_->end() ? nullptr : it->second;
+  }
+
+  // What every covergroup's class is written over (LRM 19).
+  [[nodiscard]] auto Coverage() const -> const CoverageLibrary& {
+    return *coverage_;
   }
 
   [[nodiscard]] auto Sensitivity() const -> SensitivityAnalyzer& {
@@ -565,6 +578,7 @@ class LoweringFacts {
   const SpecializationPolicy* specialization_;
   const PlacedSpecializations* placed_;
   const StdDefinitions* std_classes_;
+  const CoverageLibrary* coverage_;
 };
 
 // Per-unit lowerer, over a module instance body or a package. It holds the
@@ -801,6 +815,51 @@ class UnitLowerer {
   // regardless of which route saw the class first.
   auto ResolveClassRef(const slang::ast::ClassType& cls, diag::SourceSpan span)
       -> diag::Result<hir::ClassRef>;
+
+  // The same for a covergroup (LRM 19.3), which is identified as a class is: a
+  // `LocalCovergroupRef` where this unit holds it, minted on first reach, and
+  // an `ExternalCovergroupRef` whose published form this unit records where
+  // another does.
+  auto ResolveCovergroupRef(
+      const slang::ast::CovergroupType& covergroup, diag::SourceSpan span)
+      -> diag::Result<hir::CovergroupRef>;
+  auto InternLocalCovergroup(
+      const slang::ast::CovergroupType& covergroup, diag::SourceSpan span)
+      -> diag::Result<hir::CovergroupId>;
+
+  // This unit's record of what `unit_name` published about its covergroup
+  // `path`, taken from that unit's signature the first time this unit asks.
+  auto ExternalCovergroupOf(
+      const std::string& unit_name, const support::DefPath& path)
+      -> const hir::PublishedCovergroup&;
+
+  // The method a class embedding `covergroup` publishes for making it (LRM
+  // 19.4.1).
+  auto PublishedFactoryOf(
+      const slang::ast::CovergroupType& covergroup, diag::SourceSpan span)
+      -> diag::Result<hir::PublishedMethod>;
+
+  // Records what each other unit published about every covergroup of its that
+  // a type of this unit names, once the bodies have lowered.
+  void ReadSignaturesOfNamedCovergroups();
+
+  // What this unit publishes about its own covergroup `covergroup`.
+  auto PublishedCovergroupOf(
+      const slang::ast::CovergroupType& covergroup, diag::SourceSpan span)
+      -> diag::Result<hir::PublishedCovergroup>;
+
+  // Hands a structural scope the covergroups it replicates, once.
+  [[nodiscard]] auto TakeReplicatedCovergroups(const slang::ast::Scope& scope)
+      -> std::vector<hir::CovergroupId>;
+
+  // Lowers every covergroup `scope` replicates, where a process of the scope
+  // is lowered, so its expressions reach what a body of the scope reaches.
+  auto PopulateCovergroupsReplicatedBy(const slang::ast::Scope& scope)
+      -> diag::Result<void>;
+
+  // The classes of the coverage library this unit names, recorded once
+  // anything of this unit is a covergroup or reads one's coverage (LRM 19).
+  auto NameCoverageLibrary(diag::SourceSpan span) -> diag::Result<void>;
 
   // What a class `std` declares, or one of its methods, stands for: Lyra's
   // definition of it. Any other class or method stands for itself.
@@ -1043,6 +1102,10 @@ class UnitLowerer {
     return facts_.AssertionPolicy();
   }
 
+  [[nodiscard]] auto Coverage() const -> const CoverageLibrary& {
+    return facts_.Coverage();
+  }
+
   [[nodiscard]] auto Specialization() const -> const SpecializationPolicy& {
     return facts_.Specialization();
   }
@@ -1209,11 +1272,11 @@ class UnitLowerer {
   [[nodiscard]] auto InReadingOrder(std::vector<const slang::ast::Scope*> built)
       const -> std::vector<const slang::ast::Scope*>;
 
-  // Whether a design element other than this unit holds `cls`, so that an
-  // object of it belongs to an instance of that element, which no count of
-  // this unit's own scopes reaches.
+  // Whether a design element other than this unit holds `type`, a class or a
+  // covergroup, so that an object of it belongs to an instance of that
+  // element, which no count of this unit's own scopes reaches.
   [[nodiscard]] auto HeldByAnotherDesignElement(
-      const slang::ast::ClassType& cls) const -> bool;
+      const slang::ast::Symbol& type) const -> bool;
 
   // Whether a construction of `cls` and a call of a method of the class itself
   // are handed the instance it belongs to, as the class states it: its own
@@ -1223,10 +1286,10 @@ class UnitLowerer {
       -> diag::Result<bool>;
 
   // How far out of `frame`'s own structural scope the instance an object of
-  // `cls` belongs to sits, for a class one of this unit's structural scopes
-  // replicates.
+  // `type` belongs to sits, for a class or a covergroup one of this unit's
+  // structural scopes replicates.
   [[nodiscard]] auto DeclaringScopeHopsFrom(
-      const slang::ast::ClassType& cls, const WalkFrame& frame,
+      const slang::ast::Symbol& type, const WalkFrame& frame,
       diag::SourceSpan span) const -> diag::Result<hir::StructuralHops>;
 
   // How a body at `frame` reaches the instance an object of `cls` belongs to,
@@ -1238,6 +1301,12 @@ class UnitLowerer {
       const slang::ast::ClassType& cls, const WalkFrame& frame,
       diag::SourceSpan span)
       -> diag::Result<std::optional<hir::DeclaringInstanceReach>>;
+
+  // How a body at `frame` reaches the instance an object of `type` belongs to,
+  // for a class or a covergroup an instance replicates (LRM 6.22).
+  [[nodiscard]] auto ReachDeclaringInstance(
+      const slang::ast::Symbol& type, const WalkFrame& frame,
+      diag::SourceSpan span) -> diag::Result<hir::DeclaringInstanceReach>;
 
   // What `scope` published, in this unit's own identities: asked once the walk
   // lowering the scope has given every declaration it published its identity.
@@ -1472,10 +1541,10 @@ class UnitLowerer {
   [[nodiscard]] auto StartInEnclosing(const slang::ast::Scope& scope)
       -> RouteStart;
 
-  // How this reader reaches the scope whose instance `cls` belongs to (LRM
+  // How this reader reaches the scope whose instance `type` belongs to (LRM
   // 6.22), where another design element declares it.
-  [[nodiscard]] auto RouteToClassScope(
-      const WalkFrame& frame, const slang::ast::ClassType& cls)
+  [[nodiscard]] auto RouteToReplicatingScope(
+      const WalkFrame& frame, const slang::ast::Symbol& type)
       -> std::optional<ScopeRoute>;
 
   // How this reader reaches `target` when `target` is a scope this unit itself
@@ -1560,8 +1629,10 @@ class UnitLowerer {
   // declares: the properties another unit may name, in the order that fixes
   // their slots, and the behaviors the class introduces, in the order that
   // fixes their ordinals. Every class is already minted when this runs, so this
-  // reads the unit's own declarations rather than the frontend's tree.
-  void PublishClassSignatures();
+  // reads the unit's own declarations rather than the frontend's tree. Each
+  // covergroup it declares is published beside them, as what the step to MIR
+  // makes its class from (LRM 19.3).
+  auto PublishTypeSignatures() -> diag::Result<void>;
 
   // Derives what this unit publishes about each subroutine its namespace
   // declares (LRM 26.3). A design element declares none another unit calls by
@@ -1817,6 +1888,25 @@ class UnitLowerer {
   // class per unit; a second reference to the same slang `ClassType` reads
   // the answer, whether it is Local or External.
   std::unordered_map<const slang::ast::ClassType*, hir::ClassRef> class_cache_;
+  // The same for each covergroup this unit's lowering has resolved, and for
+  // one this unit holds, the path it publishes it under.
+  std::unordered_map<const slang::ast::CovergroupType*, hir::CovergroupRef>
+      covergroup_cache_;
+  std::map<support::DefPath, const slang::ast::CovergroupType*>
+      own_covergroups_by_path_;
+  // A covergroup whose identity is minted and whose declaration is not: its
+  // expressions name what encloses it, so it lowers with the scope
+  // replicating it.
+  struct PendingCovergroup {
+    const slang::ast::CovergroupType* covergroup;
+    hir::CovergroupId id;
+    diag::SourceSpan span;
+    const slang::ast::Scope* replicating_scope;
+  };
+  std::unordered_map<const slang::ast::Scope*, std::vector<PendingCovergroup>>
+      pending_covergroups_;
+  std::unordered_map<const slang::ast::Scope*, std::vector<hir::CovergroupId>>
+      covergroups_by_scope_;
   std::unordered_map<const slang::ast::Scope*, std::vector<PendingClassBody>>
       pending_class_bodies_;
   std::unordered_map<const slang::ast::SubroutineSymbol*, hir::MethodId>

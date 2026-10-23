@@ -13,6 +13,7 @@
 #include "lyra/base/interner.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/constant_value.hpp"
+#include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/support/def_path.hpp"
@@ -254,6 +255,15 @@ struct ClassHandleType {
   auto operator==(const ClassHandleType&) const -> bool = default;
 };
 
+// LRM 19.3: the type of a variable holding an instance of a covergroup, which
+// is reached through it as an object of a class is, made by `new` and null
+// until then.
+struct CovergroupHandleType {
+  CovergroupRef covergroup;
+
+  auto operator==(const CovergroupHandleType&) const -> bool = default;
+};
+
 // LRM 8.3 class handle whose referenced class is an imported runtime-library
 // class rather than a unit-declared one. Managed and null-legal like
 // ClassHandleType, but the class is named by its library identity, not a unit
@@ -397,8 +407,9 @@ class Type {
       EnumType, UnpackedStructType, UnpackedUnionType, UnpackedArrayType,
       DynamicArrayType, QueueType, AssociativeArrayType, WildcardIndexType,
       StringType, EventType, RealType, ShortRealType, RealTimeType, ChandleType,
-      ClassHandleType, ImportedClassHandleType, UnitObjectType, UnitObjectsType,
-      VirtualInterfaceType, NullType, DynamicType, VoidType>;
+      ClassHandleType, ImportedClassHandleType, CovergroupHandleType,
+      UnitObjectType, UnitObjectsType, VirtualInterfaceType, NullType,
+      DynamicType, VoidType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

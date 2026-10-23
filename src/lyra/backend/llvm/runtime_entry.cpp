@@ -1793,8 +1793,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kSubmitNbaAfter:
     case support::BuiltinFn::kSubmitNbaAfterReal:
     case support::BuiltinFn::kRunDetached:
+    case support::BuiltinFn::kRunObserving:
     case support::BuiltinFn::kResumeInNbaRegion:
     case support::BuiltinFn::kSubmitPostponed:
+    case support::BuiltinFn::kSubmitAtRunEnd:
     case support::BuiltinFn::kSubmitObserved:
     case support::BuiltinFn::kSubmitViolationReport:
     case support::BuiltinFn::kSubmitDeferredObserved:
@@ -1929,10 +1931,12 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // fact of the reference, whatever it names.
     case support::BuiltinFn::kReferProperty:
     case support::BuiltinFn::kReferenceReportsTo:
-    // Binding a port's reference, as a member or as another name, and telling
-    // one it is driven continuously, act on the reference alone.
+    // Binding a reference -- a port's, as a member or as another name, or one
+    // an object holds -- and telling one it is driven continuously, act on the
+    // reference alone.
     case support::BuiltinFn::kBindMember:
     case support::BuiltinFn::kBindAlias:
+    case support::BuiltinFn::kBindReference:
     case support::BuiltinFn::kDrivesContinuously:
     // What an enumeration's member list answers about a value. One routine
     // serves every enumeration, because the list is the receiver and every

@@ -84,18 +84,6 @@ auto LowerHirNullLiteral(mir::TypeId type) -> mir::Expr {
   return mir::Expr{.data = mir::NullLiteral{}, .type = type};
 }
 
-// LRM 8.11 `this`: the handle referring to the object the subroutine was
-// invoked on. Every body of a class holds a share of its object from where it
-// begins, which is such a handle (LRM 8.29), so `this` is a copy of it.
-auto LowerHirThisHandle(const WalkFrame& frame) -> mir::Expr {
-  const BodyBindingRef share =
-      frame.bindings->EnsureCarrier(ReceiverShareOrigin{});
-  return mir::MakeCopyExpr(
-      frame.current_block->exprs.Add(
-          frame.bindings->MakeBindingPlace(share, *frame.current_block)),
-      frame.bindings->TypeOf(share));
-}
-
 // LRM 7.10.1 `$`: the index of the last element of the queue the enclosing
 // select is taken from, which is one less than how many elements it holds. The
 // select evaluated the queue once, and this reads that.
@@ -320,7 +308,7 @@ auto LowerHirPrimaryExprProc(
             return LowerHirNullLiteral(result_type);
           },
           [&](const hir::ThisHandle&) -> mir::Expr {
-            return LowerHirThisHandle(frame);
+            return BuildThisHandle(frame);
           },
           [&](const hir::QueueLastIndex&) -> mir::Expr {
             return LowerHirQueueLastIndex(process.Owner(), frame, result_type);

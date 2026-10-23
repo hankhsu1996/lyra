@@ -17,6 +17,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <variant>
@@ -32,6 +33,7 @@ class ConstantValue;
 
 namespace slang::ast {
 class ClassType;
+class CovergroupType;
 class DefinitionSymbol;
 class GenerateBlockSymbol;
 class InstanceBodySymbol;
@@ -509,6 +511,12 @@ auto DefPathOf(
     const slang::ast::Symbol& declaration, const SpecializationPolicy& policy)
     -> support::DefPath;
 
+// The name a covergroup goes by (LRM 19.3): the one it was declared with, or
+// for one a class embeds, which declares an anonymous type and a property of it
+// (LRM 19.4), the property's.
+auto CovergroupNameOf(const slang::ast::CovergroupType& covergroup)
+    -> std::string_view;
+
 // The package (LRM 26.2) or `$unit` scope (LRM 3.12.1) `decl` is declared in,
 // or null where it is declared in any other scope. Neither has an instance, so
 // what one declares is reached by the unit's name rather than routed to through
@@ -561,12 +569,11 @@ auto DeclaringCompilationUnit(const slang::ast::Symbol& decl)
 // the file-set scope are named once and declare once.
 [[nodiscard]] auto IsDesignElement(const slang::ast::Symbol& unit) -> bool;
 
-// Whether `cls` belongs to an instance (LRM 6.22): an instance replicates it,
-// so each instance of that scope has a type of its own. A class a package or
-// the `$unit` scope declares belongs to none, whichever unit reaches it, unless
-// it is a specialization on a type that does.
-[[nodiscard]] auto BelongsToAnInstance(const slang::ast::ClassType& cls)
-    -> bool;
+// Whether `type`, a class or a covergroup, belongs to an instance (LRM 6.22):
+// an instance replicates it, so each instance of that scope has a type of its
+// own. One a package or the `$unit` scope declares belongs to none, whichever
+// unit reaches it, unless it is a specialization on a type that does.
+[[nodiscard]] auto BelongsToAnInstance(const slang::ast::Symbol& type) -> bool;
 
 // The name a compilation unit publishes for itself, so a consumer reaching one
 // of its declarations and the unit emitting that declaration agree with no

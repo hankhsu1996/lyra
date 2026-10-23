@@ -53,11 +53,23 @@ auto BindImplicitParameters(
 // closure self-capture, and runtime-effect engine handle starts from it.
 auto MakeSelfRefExpr(const WalkFrame& frame) -> mir::Expr;
 
+// LRM 8.11 `this`: the handle referring to the object the body runs on. Every
+// body of a class holds a share of its object from where it begins, which is
+// such a handle (LRM 8.29), so `this` is a copy of it.
+auto BuildThisHandle(const WalkFrame& frame) -> mir::Expr;
+
 // The object `reaches` designates, as a place -- `*reaches` -- added to
 // `block`, or the place itself where `reaches` is its address. A member is
 // reached on an object, so this is what a field access or a call is made on
 // wherever a handle, a pointer, or a write in progress reaches it.
 auto BuildObjectDeref(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId reaches)
+    -> mir::ExprId;
+
+// A borrowed pointer to the object `reaches` designates -- a handle, a
+// pointer, or a write in progress -- as a call dispatching on the object or
+// viewing it as a class it extends takes the object.
+auto BuildObjectPointer(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId reaches)
     -> mir::ExprId;
 

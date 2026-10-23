@@ -217,7 +217,8 @@ auto CollectPackages(const LowerCompilationFacts& facts)
 // Whether a compilation-unit scope declares a member that becomes namespace
 // content -- storage, a subroutine, a type alias, or a class. A file whose only
 // scope members are design elements (a module or package declaration) and
-// imports manifests no `$unit` unit, so it is not collected.
+// imports manifests no `$unit` unit, so it is not collected. A covergroup is a
+// class the compiler writes (LRM 19.3), and so content as a class is.
 //
 // A class declared here is namespace content like any other: whoever names it
 // names it through this scope's unit (LRM 3.12.1), so a scope holding one has
@@ -232,6 +233,7 @@ auto HasUnitScopeContent(const slang::ast::Scope& scope) -> bool {
       case slang::ast::SymbolKind::TypeAlias:
       case slang::ast::SymbolKind::ClassType:
       case slang::ast::SymbolKind::GenericClassDef:
+      case slang::ast::SymbolKind::CovergroupType:
         return true;
       case slang::ast::SymbolKind::AnonymousProgram:
         if (HasUnitScopeContent(
@@ -278,8 +280,16 @@ struct SpecializationHomes {
 struct BindsEveryExpression
     : slang::ast::ASTVisitor<
           BindsEveryExpression, slang::ast::VisitFlags::AllGood> {
+  // Every covergroup a body declares, for the classes it is written over.
+  std::vector<const slang::ast::CovergroupType*> covergroups;
+
   void handle(const slang::ast::InstanceSymbol& child) {
     child.visitExprs(*this);
+  }
+
+  void handle(const slang::ast::CovergroupType& covergroup) {
+    covergroups.push_back(&covergroup);
+    visitDefault(covergroup);
   }
 };
 
@@ -288,13 +298,26 @@ struct BindsEveryExpression
 // when something reads it. So every body a unit is lowered from is bound before
 // specializations are collected; otherwise one appears only once its unit is
 // already lowering, after the scope replicating it has settled what it holds.
-void BindEveryBody(const Collected& collected) {
+// Answers every covergroup the bodies, the packages and the `$unit` scopes
+// declare, whose coverpoints each need a specialization of their own (LRM
+// 19.5).
+auto BindEveryBody(
+    const LowerCompilationFacts& facts, const Collected& collected)
+    -> std::vector<const slang::ast::CovergroupType*> {
   BindsEveryExpression binder;
   for (const auto* bodies : {&collected.units, &collected.repeats}) {
     for (const CollectedUnit& unit : *bodies) {
       unit.elaborated->visit(binder);
     }
   }
+  for (const slang::ast::PackageSymbol* package : CollectPackages(facts)) {
+    package->visit(binder);
+  }
+  for (const slang::ast::CompilationUnitSymbol* cu :
+       CollectCompilationUnits(facts)) {
+    cu->visit(binder);
+  }
+  return std::move(binder.covergroups);
 }
 
 // Binds what one of Lyra's definitions of `std` holds, and notes whether the
@@ -323,18 +346,27 @@ struct BindsADefinition
 // Lyra's definition of each class of `std` a design names is specialized once
 // every body is bound, so it is bound in its turn before specializations are
 // collected, as any body naming one is. The definitions are Lyra's own text,
-// so one the front end refuses is Lyra's defect.
-void BindEveryDefinition(const StdDefinitions& definitions) {
+// so one the front end refuses is Lyra's defect. A coverpoint's class is such a
+// specialization too, at the coverpoint's type.
+void BindDefinition(const slang::ast::ClassType& definition) {
+  BindsADefinition binder;
+  definition.visit(binder);
+  if (binder.refused) {
+    throw InternalError(
+        std::format(
+            "Lyra's definition of '{}' does not elaborate for the parameters "
+            "a design gave it",
+            definition.toString()));
+  }
+}
+
+void BindEveryDefinition(
+    const StdDefinitions& definitions, const CoverageLibrary& coverage) {
   for (const auto& [_, definition] : definitions) {
-    BindsADefinition binder;
-    definition->visit(binder);
-    if (binder.refused) {
-      throw InternalError(
-          std::format(
-              "Lyra's definition of '{}' does not elaborate for the "
-              "parameters a design gave it",
-              definition->toString()));
-    }
+    BindDefinition(*definition);
+  }
+  for (const auto& [_, definition] : coverage.integral_coverpoints) {
+    BindDefinition(*definition);
   }
 }
 
@@ -477,6 +509,7 @@ struct DeclaredDesign::Units {
   SensitivityAnalyzer sensitivity;
   SpecializationPolicy specialization;
   StdDefinitions std_classes;
+  CoverageLibrary coverage;
   SpecializationHomes specialization_homes;
   LoweringFacts facts;
   std::vector<TopLevelUnit> tops;
@@ -491,7 +524,7 @@ struct DeclaredDesign::Units {
       : front_end(std::move(elaborated)),
         facts(
             sensitivity, assertion_policy, specialization,
-            specialization_homes.placed, std_classes) {
+            specialization_homes.placed, std_classes, coverage) {
   }
 
   // The lowerer of one body of a design element's unit, over the instance it
@@ -593,9 +626,11 @@ auto DeclaredDesign::Declare(
     return std::nullopt;
   }
   const Collected collected = CollectUnits(facts, units->specialization);
-  BindEveryBody(collected);
+  const std::vector<const slang::ast::CovergroupType*> covergroups =
+      BindEveryBody(facts, collected);
   units->std_classes = DefineStdClasses(facts.Compilation());
-  BindEveryDefinition(units->std_classes);
+  units->coverage = DefineCoverageClasses(facts.Compilation(), covergroups);
+  BindEveryDefinition(units->std_classes, units->coverage);
   units->specialization_homes =
       CollectSpecializationHomes(facts, units->specialization);
   units->DeclareEveryUnit(facts, collected, CheckedAgainstOf(collected), sink);

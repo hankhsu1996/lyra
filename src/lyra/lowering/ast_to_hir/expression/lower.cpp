@@ -24,6 +24,7 @@
 #include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/real_bits.hpp"
+#include "lyra/lowering/ast_to_hir/covergroup_access.hpp"
 #include "lyra/lowering/ast_to_hir/expression/aggregates.hpp"
 #include "lyra/lowering/ast_to_hir/expression/assignment.hpp"
 #include "lyra/lowering/ast_to_hir/expression/calls.hpp"
@@ -383,11 +384,17 @@ auto LowerExprImpl(
           span, diag::DiagCode::kUnsupportedExpressionForm,
           "a distribution constraint is not yet supported");
 
-    case slang::ast::ExpressionKind::NewCovergroup:
-      // LRM 19.
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "constructing a covergroup is not yet supported");
+    case slang::ast::ExpressionKind::NewCovergroup: {
+      const auto& created = expr.as<slang::ast::NewCovergroupExpression>();
+      std::vector<hir::ExprId> arguments;
+      for (const slang::ast::Expression* argument : created.arguments) {
+        auto lowered = LowerExprImpl(lowerer, frame, *argument);
+        if (!lowered) return std::unexpected(std::move(lowered.error()));
+        arguments.push_back(frame.Exprs().Add(*std::move(lowered)));
+      }
+      return LowerNewCovergroup(
+          lowerer, frame, created, std::move(arguments), span);
+    }
 
     case slang::ast::ExpressionKind::AssertionInstance:
       return diag::Fail(

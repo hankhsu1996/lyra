@@ -16,6 +16,7 @@
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/covergroup_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/predicate.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -215,6 +216,19 @@ auto LowerBlockStmt(
     }
   }
   OpenActivationScope(process, child_frame, declared);
+  // A covergroup sampled where the block begins or ends samples there (LRM
+  // 19.3). Its end is owed on every normal way out -- falling off the end, or
+  // a jump out of the block -- and on none a departure takes.
+  const ScopeBlockEvents& events = process.Scopes().Get(b.scope).block_events;
+  AppendBlockEventTriggers(process, child_frame, events.at_begin);
+  const NormalCleanup end{
+      .emit =
+          [&](const WalkFrame& at) {
+            AppendBlockEventTriggers(process, at, events.at_end);
+          },
+      .outer = frame.normal_cleanups};
+  const WalkFrame inside =
+      events.at_end.empty() ? child_frame : child_frame.WithNormalCleanup(end);
 
   // A named block (LRM 9.6.2) is a region that consumes the effect naming it:
   // an execution anywhere inside it -- including inside a callable it invoked
@@ -225,11 +239,11 @@ auto LowerBlockStmt(
       process.Scopes().Get(b.scope).disable_target;
 
   for (const hir::StmtId child_hir_id : b.statements) {
-    auto child_or =
-        process.LowerStmt(hir_proc.stmts.Get(child_hir_id), child_frame);
+    auto child_or = process.LowerStmt(hir_proc.stmts.Get(child_hir_id), inside);
     if (!child_or) return std::unexpected(std::move(child_or.error()));
     child_block.AppendStmt(*std::move(child_or));
   }
+  end.emit(child_frame);
   // The handler is built where the region sits, not inside its body: it runs
   // once the body has already been left.
   if (disable_target.has_value()) {

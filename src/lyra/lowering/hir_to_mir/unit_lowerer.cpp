@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <deque>
 #include <expected>
 #include <format>
 #include <memory>
@@ -32,6 +33,7 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/covergroup_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
@@ -599,11 +601,17 @@ auto UnitLowerer::TakeClassIdentities(const hir::ClassDecl& decl)
   for (std::size_t m = 0; m < decl.methods.size(); ++m) {
     methods.push_back(callables.Take());
   }
+  std::vector<mir::CallableId> factories;
+  factories.reserve(decl.embedded_covergroups.size());
+  for (std::size_t f = 0; f < decl.embedded_covergroups.size(); ++f) {
+    factories.push_back(callables.Take());
+  }
   return ClassTranslation{
       .id = id,
       .object_type = unit_.types.Intern(
           mir::Type{mir::ObjectType{.of = mir::IntraUnitClassRef{id}}}),
-      .methods = {decl.methods.size(), std::move(methods)}};
+      .methods = {decl.methods.size(), std::move(methods)},
+      .factories = std::move(factories)};
 }
 
 auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
@@ -623,6 +631,16 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
     declared_classes_.emplace(hir_->classes.PathOf(hir_id), classes.back().id);
   }
   class_translations_ = {hir_->classes.size(), std::move(classes)};
+  // Each covergroup this unit declares is a class of its own (LRM 19.3), which
+  // a type naming the covergroup names, and another unit reaches by the
+  // covergroup's path.
+  covergroup_classes_ = base::Translation<hir::CovergroupId, mir::ClassId>{
+      hir_->covergroups.size()};
+  for (const hir::CovergroupId hir_id : hir_->covergroups.Ids()) {
+    const mir::ClassId id = unit_.DeclareClass();
+    covergroup_classes_.Append(id);
+    declared_classes_.emplace(hir_->covergroups.PathOf(hir_id), id);
+  }
 
   // Every HIR type is MIR-representable: AST-to-HIR rejects the forms MIR has
   // no shape for, so this projection never fails.
@@ -659,6 +677,12 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
   // recorded where a reference takes the name rather than here.
   for (const hir::ExternalClass& published : hir_->external_classes) {
     TakePublishedClass(published);
+  }
+  // The class another unit writes for each of its covergroups this one names,
+  // laid out from what it published (LRM 26.3).
+  for (const hir::ExternalCovergroup& published : hir_->external_covergroups) {
+    unit_.external_classes.push_back(
+        PublishedCovergroupClass(*this, published));
   }
 
   // What each unit this one references published of its scope classes, in
@@ -831,12 +855,27 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   // -- and with no object to hang one under, none of its scopes owns a name
   // node.
   const hir::StructuralScope& scope = hir_->root_scope;
+
+  // The covergroups the namespace declares, each the class it is written as
+  // (LRM 19.3). Nothing replicates one, so one sampled where a block of the
+  // namespace begins or ends keeps the event that block triggers for its type
+  // itself, and its shape is settled before those blocks are given what they
+  // trigger.
+  std::deque<CovergroupLowerer> covergroup_lowerers;
+  BlockEventTriggers block_events;
+  for (const hir::CovergroupId covergroup : scope.replicated_covergroups) {
+    CovergroupLowerer& lowerer =
+        covergroup_lowerers.emplace_back(*this, covergroup, nullptr);
+    lowerer.DeclareShape(nullptr, std::nullopt);
+    lowerer.AddTypeBlockEvents(block_events);
+  }
   const DeclaredScopes package_scope_nodes = ScopesOwningDisableTargets(
       scope.procedural_scopes,
       UnitStorage{.variables = &unit_.static_variables},
       unit_.types.Intern(
           mir::Type{mir::RuntimeLibraryType{
-              .kind = mir::RuntimeLibraryKind::kCancellationTarget}}));
+              .kind = mir::RuntimeLibraryKind::kCancellationTarget}}),
+      block_events);
 
   base::Translation<hir::StructuralSubroutineId, StaticVarBindings>
       subroutine_statics{scope.structural_subroutines.size()};
@@ -911,6 +950,14 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   }
   for (ClassDeclLowerer& class_lowerer : class_lowerers) {
     if (auto r = class_lowerer.PopulateBodies(
+            WalkFrame{},
+            StorageBringUp{.install = install_frame, .value = value_frame});
+        !r) {
+      return std::unexpected(std::move(r.error()));
+    }
+  }
+  for (CovergroupLowerer& covergroup_lowerer : covergroup_lowerers) {
+    if (auto r = covergroup_lowerer.PopulateBodies(
             WalkFrame{},
             StorageBringUp{.install = install_frame, .value = value_frame});
         !r) {
@@ -1023,6 +1070,25 @@ auto UnitLowerer::MakeCrossUnitClassFieldTarget(
           hir::ExternalClassRef{
               .unit_name = target.unit_name, .class_path = target.class_path}),
       .slot = mir::FieldId{target.property.value}};
+}
+
+auto UnitLowerer::CovergroupObjectType(const hir::CovergroupRef& covergroup)
+    -> mir::TypeId {
+  return std::visit(
+      Overloaded{
+          [&](const hir::LocalCovergroupRef& local) {
+            return unit_.types.Intern(
+                mir::Type{mir::ObjectType{
+                    .of = mir::IntraUnitClassRef{
+                        CovergroupClassId(local.covergroup)}}});
+          },
+          [&](const hir::ExternalCovergroupRef& external) {
+            return MakeExternalClassPointee(
+                hir::ExternalClassRef{
+                    .unit_name = external.unit_name,
+                    .class_path = external.path});
+          }},
+      covergroup);
 }
 
 auto UnitLowerer::TakePublishedClass(const hir::ExternalClass& published)

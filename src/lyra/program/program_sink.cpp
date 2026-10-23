@@ -150,8 +150,10 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_submit_nba_after", &lyra_rt_submit_nba_after);
   add("lyra_rt_submit_nba_after_real", &lyra_rt_submit_nba_after_real);
   add("lyra_rt_run_detached", &lyra_rt_run_detached);
+  add("lyra_rt_run_observing", &lyra_rt_run_observing);
   add("lyra_rt_resume_in_nba_region", &lyra_rt_resume_in_nba_region);
   add("lyra_rt_submit_postponed", &lyra_rt_submit_postponed);
+  add("lyra_rt_submit_at_run_end", &lyra_rt_submit_at_run_end);
   add("lyra_rt_submit_observed", &lyra_rt_submit_observed);
   add("lyra_rt_submit_violation_report", &lyra_rt_submit_violation_report);
   add("lyra_rt_submit_deferred_observed", &lyra_rt_submit_deferred_observed);
@@ -425,6 +427,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_reference_reports_to", &lyra_rt_reference_reports_to);
   add("lyra_rt_bind_member", &lyra_rt_bind_member);
   add("lyra_rt_bind_alias", &lyra_rt_bind_alias);
+  add("lyra_rt_bind_reference", &lyra_rt_bind_reference);
   add("lyra_rt_drives_continuously", &lyra_rt_drives_continuously);
   add("lyra_rt_string_cell_refer", &lyra_rt_string_cell_refer);
   add("lyra_rt_real_cell_refer", &lyra_rt_real_cell_refer);

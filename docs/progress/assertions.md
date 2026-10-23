@@ -233,7 +233,7 @@ one non-blocking assignment uses.
 - Formal-verification semantics of `assume`. In simulation it behaves as `assert`; the distinction
   is intent for a formal tool.
 - Coverage collection and reporting beyond a cover statement's own hit. Functional coverage
-  (`covergroup`, LRM 19) is a separate language surface.
+  (`covergroup`, LRM 19) is a separate language surface, tracked in `coverage.md`.
 
 ## Cross-references
 

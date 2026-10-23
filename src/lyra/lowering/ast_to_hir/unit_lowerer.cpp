@@ -21,6 +21,7 @@
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
+#include <slang/ast/symbols/CoverSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
@@ -215,6 +216,7 @@ auto UnitLowerer::LowerBodies(const hir::UnitSignatures& signatures)
   }
   RequireEveryClassBodyLowered();
   ReadSignaturesOfNamedClasses();
+  ReadSignaturesOfNamedCovergroups();
   hir::Verify(unit_);
   return std::move(unit_);
 }
@@ -258,12 +260,18 @@ auto UnitLowerer::InternOwnClassDeclarations() -> diag::Result<void> {
   // reaches the class first (LRM 23.9 makes a class a scope of the name tree,
   // and a generate block declares its own).
   auto visit = [&](const slang::ast::Symbol& member) -> diag::Result<void> {
+    const diag::SourceSpan span = frontend::PointSpanOf(member.location);
+    // A covergroup is a type of its scope as a class is (LRM 19.3), so it is
+    // minted on the same walk.
+    if (const auto* covergroup = member.as_if<slang::ast::CovergroupType>()) {
+      auto r = InternLocalCovergroup(*covergroup, span);
+      if (!r) return std::unexpected(std::move(r.error()));
+      return {};
+    }
     if (member.kind != slang::ast::SymbolKind::ClassType) {
       return {};
     }
-    if (auto r = InternLocalClass(
-            member.as<slang::ast::ClassType>(),
-            frontend::PointSpanOf(member.location));
+    if (auto r = InternLocalClass(member.as<slang::ast::ClassType>(), span);
         !r) {
       return std::unexpected(std::move(r.error()));
     }
@@ -810,8 +818,8 @@ auto UnitLowerer::InReadingOrder(std::vector<const slang::ast::Scope*> built)
 }
 
 auto UnitLowerer::HeldByAnotherDesignElement(
-    const slang::ast::ClassType& cls) const -> bool {
-  return BelongsToAnInstance(cls) && !Owns(cls);
+    const slang::ast::Symbol& type) const -> bool {
+  return BelongsToAnInstance(type) && !Owns(type);
 }
 
 auto UnitLowerer::TakesDeclaringInstance(
@@ -838,14 +846,14 @@ auto UnitLowerer::TakesDeclaringInstance(
 }
 
 auto UnitLowerer::DeclaringScopeHopsFrom(
-    const slang::ast::ClassType& cls, const WalkFrame& frame,
+    const slang::ast::Symbol& type, const WalkFrame& frame,
     diag::SourceSpan span) const -> diag::Result<hir::StructuralHops> {
-  if (!BelongsToAnInstance(cls) || HeldByAnotherDesignElement(cls)) {
+  if (!BelongsToAnInstance(type) || HeldByAnotherDesignElement(type)) {
     throw InternalError(
-        "UnitLowerer::DeclaringScopeHopsFrom: only a class one of this unit's "
+        "UnitLowerer::DeclaringScopeHopsFrom: only a type one of this unit's "
         "structural scopes replicates is counted out of this unit's scopes");
   }
-  const slang::ast::Scope& replicating = ReplicatingScope(cls);
+  const slang::ast::Scope& replicating = ReplicatingScope(type);
   const auto hops = frame.HopsTo(LookupScopeFrame(replicating));
   if (!hops.has_value()) {
     return diag::Fail(
@@ -950,6 +958,17 @@ auto UnitLowerer::TakePublication(const slang::ast::Scope& scope)
                   return hir::LocalStaticPropertyTarget{
                       .owner = local->class_id,
                       .prop = LookupClassPropertyStaticId(*property.symbol)};
+                },
+                [&](const ScopePublicationRecord::CovergroupEvent& event)
+                    -> hir::PublishedDecl {
+                  const auto minted = covergroup_cache_.find(event.symbol);
+                  if (minted == covergroup_cache_.end()) {
+                    unbound("a covergroup's block event");
+                  }
+                  return hir::CovergroupBlockEvent{
+                      .covergroup =
+                          std::get<hir::LocalCovergroupRef>(minted->second)
+                              .covergroup};
                 },
                 [](const ScopePublicationRecord::Instance& instance)
                     -> hir::PublishedDecl { return instance.id; },

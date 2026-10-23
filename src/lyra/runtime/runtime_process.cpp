@@ -340,9 +340,11 @@ void RuntimeProcess::RunUndispatched(
   }
   // Nothing outside it names an execution run this way, so what ended it is an
   // error it met, already reported where it was received. It was met where the
-  // calling process stands, so it stops that process the same way.
-  RuntimeProcess& caller = effects.CurrentProcess();
-  caller.RequestTermination(ProcessTerminationCause::kKilled);
+  // executing process stands, so it stops that process the same way; an
+  // occurrence the scheduler itself carries out stops nothing more.
+  RuntimeProcess* const caller = effects.TryCurrentProcess();
+  if (caller == nullptr) return;
+  caller->RequestTermination(ProcessTerminationCause::kKilled);
   RaiseUnclaimableEffect();
 }
 

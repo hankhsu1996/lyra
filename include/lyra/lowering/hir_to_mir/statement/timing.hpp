@@ -52,6 +52,21 @@ auto BuildEventLeaves(
     Lowerer& lowerer, const WalkFrame& frame, const hir::EventControl& ec)
     -> diag::Result<std::vector<ObservedLeaf>>;
 
+// The wait for the next trigger of the event object `event`, a value in
+// `block` evaluated where the wait is reached, built into `block` (LRM 15.5.2):
+// the wait an event control naming that one event is, for a waiter the
+// lowering writes rather than the source.
+template <ExprLowerer Lowerer>
+auto BuildEventObjectWaitStmt(
+    Lowerer& lowerer, WalkFrame frame, mir::Block& block, mir::ExprId event)
+    -> diag::Result<mir::Stmt>;
+
+// LRM 15.5.1: triggering the object the event value `event_id`, in `block`,
+// names, which wakes what waits on it.
+auto BuildTriggerCallExpr(
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId event_id)
+    -> mir::Expr;
+
 auto LowerTimedStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::TimedStmt& t) -> diag::Result<mir::Stmt>;

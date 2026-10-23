@@ -6,6 +6,7 @@
 
 #include "lyra/base/component_index.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/external_callee.hpp"
 #include "lyra/hir/param_direction.hpp"
 #include "lyra/hir/published_callable.hpp"
@@ -138,6 +139,12 @@ auto CalleeFormalsOf(UnitLowerer& unit_lowerer, const hir::SubroutineDecl& decl)
 // interface a call recomputed for it.
 auto CalleeFormalsOf(
     UnitLowerer& unit_lowerer, const hir::ExternalCalleeInterface& interface)
+    -> std::vector<CalleeFormal>;
+
+// The formals a construction of the class `cls` is entered with (LRM 8.7),
+// read off its declaration where this unit has one and off what its own unit
+// published otherwise.
+auto ConstructorFormalsOf(UnitLowerer& unit_lowerer, const hir::ClassRef& cls)
     -> std::vector<CalleeFormal>;
 
 // The type a call to `decl` yields: its completion under the protocol its kind

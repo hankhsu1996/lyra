@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include "lyra/runtime/import_call_chain.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/rng.hpp"
@@ -10,7 +12,19 @@ class ProgramThreads;
 class ReadReport;
 class Scope;
 
-// What an execution runs in, which one it starts carries over unchanged.
+// Where an execution woken by what it waits for is placed: in the Active region
+// of its region set, in the slot the occurrence happened in, as every thread
+// is; or at the occurrence itself, running before the execution that made it
+// occur goes on, as a callback an occurrence invokes does. A covergroup's
+// clocking event is the second: the group is sampled as it occurs, as though
+// the process triggering it called `sample` (LRM 19.3).
+enum class WakePlacement : std::uint8_t {
+  kActiveRegion,
+  kAtTheOccurrence,
+};
+
+// What an execution runs in, which one it starts carries over, all but where a
+// wake places it: that is chosen where an execution is started.
 struct ExecutionContext {
   // The scope a report raised while it runs names -- a run-time warning or
   // error, and the note on a slot that never settles. Borrowed, and outlives
@@ -28,6 +42,8 @@ struct ExecutionContext {
   // The region set the execution is placed in, which is the one its thread
   // started in, whatever the code it runs was declared in (LRM 24.3.1, 24.5).
   RegionSet regions = kActiveRegionSet;
+  // Where it is placed once a wait it stops at is satisfied.
+  WakePlacement wake = WakePlacement::kActiveRegion;
   // The program whose initial procedure the thread originates in, which a
   // `$exit` it calls ends (LRM 24.7). Borrowed, and held for the run. Null for
   // every other execution.
@@ -42,12 +58,27 @@ struct ExecutionContext {
     return root;
   }
 
-  // The context of an execution of no lineage started from this one: placed
-  // where this one is, but no thread a `$exit` ends (LRM 24.7).
+  // The context of an execution this one starts: placed in this one's region
+  // set and woken as every thread is.
+  [[nodiscard]] auto ForStarted() const -> ExecutionContext {
+    ExecutionContext started = *this;
+    started.wake = WakePlacement::kActiveRegion;
+    return started;
+  }
+
+  // The same for an execution of no lineage, which is no thread a `$exit`
+  // ends (LRM 24.7).
   [[nodiscard]] auto WithoutLineage() const -> ExecutionContext {
-    ExecutionContext detached = *this;
+    ExecutionContext detached = ForStarted();
     detached.program = nullptr;
     return detached;
+  }
+
+  // The same, for one woken at the occurrence it waits for.
+  [[nodiscard]] auto WokenAtTheOccurrence() const -> ExecutionContext {
+    ExecutionContext observing = WithoutLineage();
+    observing.wake = WakePlacement::kAtTheOccurrence;
+    return observing;
   }
 
   // A generator for an execution nothing that is a thread creates here: the

@@ -69,4 +69,13 @@ template class Coroutine<value::Chandle>;
 template class Coroutine<value::ObjectRef>;
 template class Coroutine<value::Tuple<>>;
 
+template class KeptPart<value::String>;
+template class KeptPart<value::Real>;
+template class KeptPart<value::ShortReal>;
+template class KeptPart<value::Chandle>;
+template class KeptPart<value::ObjectRef>;
+
+template auto StepTo<value::String>(const value::String& key) -> PartPath;
+template auto StepTo<value::ObjectRef>(const value::ObjectRef& key) -> PartPath;
+
 }  // namespace lyra::runtime

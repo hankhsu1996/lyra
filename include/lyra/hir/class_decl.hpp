@@ -7,6 +7,7 @@
 #include "lyra/base/arena.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/hir/class_ref.hpp"
+#include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/field_id.hpp"
 #include "lyra/hir/method_id.hpp"
@@ -229,6 +230,10 @@ struct ClassDecl {
   ProceduralBody static_init;
   std::vector<StaticPropertyInit> static_property_inits;
   base::Registry<ProceduralScopeDecl, ProceduralScopeId> procedural_scopes;
+  // The covergroups the class embeds (LRM 19.4), in the order its signature
+  // publishes the method making each: the one at position `i` is made by the
+  // method `i` places after every method the source declares.
+  std::vector<CovergroupId> embedded_covergroups;
 
   auto operator==(const ClassDecl&) const -> bool = default;
 };

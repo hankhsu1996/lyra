@@ -16,6 +16,7 @@
 #include "lyra/hir/pattern_id.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_scope.hpp"
+#include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/with_clause_id.hpp"
@@ -26,6 +27,7 @@ struct Pattern;
 }  // namespace lyra::hir
 
 namespace slang::ast {
+class ClassType;
 class Symbol;
 class Scope;
 class TimingControl;
@@ -59,6 +61,13 @@ struct ActiveIterationClause {
 struct ExpansionInstance {
   const slang::ast::Symbol* declaration;
   const slang::ast::TimingControl* clock;
+};
+
+// The class a covergroup's body is embedded in (LRM 19.4), and the variable of
+// that body holding the object embedding it.
+struct CovergroupEmbedding {
+  const slang::ast::ClassType* cls = nullptr;
+  hir::ProceduralVarId object;
 };
 
 // A procedural scope while its own contents are still being walked. Its
@@ -190,6 +199,13 @@ struct WalkFrame {
   // foreach loop variables are also slang Iterator symbols, so the match is by
   // symbol identity. Empty outside a with-clause body.
   std::vector<ActiveIterationClause> active_iteration_clauses;
+
+  // Where the body is that of a covergroup a class embeds (LRM 19.4): the
+  // class, and the variable of the body holding the object embedding the
+  // covergroup. The covergroup's expressions name that object's members as if
+  // they were written in its class, so a member named without a handle reaches
+  // it through this variable. Absent everywhere else.
+  std::optional<CovergroupEmbedding> embedding;
 
   // The lexical procedural scope whose contents are currently being walked.
   // Owned by the caller that opened it; null on a frame that is not inside a
@@ -411,6 +427,13 @@ struct WalkFrame {
       -> WalkFrame {
     WalkFrame next = *this;
     next.open_scope = scope;
+    return next;
+  }
+
+  [[nodiscard]] auto WithEmbedding(CovergroupEmbedding embedded) const
+      -> WalkFrame {
+    WalkFrame next = *this;
+    next.embedding = embedded;
     return next;
   }
 

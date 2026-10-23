@@ -6,6 +6,8 @@
 
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/class_registry.hpp"
+#include "lyra/hir/covergroup.hpp"
+#include "lyra/hir/published_covergroup.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
 
@@ -19,6 +21,7 @@ namespace lyra::hir {
 struct TypePoolOwner {
   std::string_view unit_name;
   const ClassRegistry* classes;
+  const CovergroupRegistry* covergroups;
 };
 
 // What one source pool's identities became in a destination pool. Held outside
@@ -40,6 +43,11 @@ class TypeImporter {
 
   auto Import(TypeId id) -> TypeId;
 
+  // A covergroup published by the source's unit, its types taken into the
+  // destination and every covergroup and class it names renamed as a type
+  // naming one is.
+  auto Import(const PublishedCovergroup& published) -> PublishedCovergroup;
+
  private:
   auto Import(const Type& type) -> Type;
 
@@ -48,6 +56,10 @@ class TypeImporter {
   // which is what identifies it from anywhere; a class already named that way
   // needs nothing.
   [[nodiscard]] auto ImportClassRef(const ClassRef& ref) const -> ClassRef;
+
+  // The same for a covergroup a reference names.
+  [[nodiscard]] auto ImportCovergroupRef(const CovergroupRef& ref) const
+      -> CovergroupRef;
 
   const TypePool* source_;
   std::optional<TypePoolOwner> source_owner_;

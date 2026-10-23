@@ -149,11 +149,11 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // if the whole process ran to completion, false if it stopped to wait again.
   static auto Run(RuntimeEffects& effects, Activation* activation) -> bool;
 
-  // Runs an execution not yet started, which nothing outside it names, from
-  // `activation` in place of the process calling this, up to its first wait,
-  // as a C++ coroutine that does not suspend initially runs. An error it meets
-  // before then stops that process too, since it is met where that process
-  // stands. Once it has waited it runs as any process does.
+  // Runs an execution which nothing outside it names, from `activation` in
+  // place of whatever is executing, up to its next wait, as a C++ coroutine
+  // that does not suspend initially runs: one not yet started, or one woken
+  // inside the occurrence it waited for. An error it meets there stops the
+  // process executing too, since it is met where that process stands.
   static void RunUndispatched(RuntimeEffects& effects, Activation* activation);
 
   // The top-level frame's activation. A wait is arranged for whichever frame is
