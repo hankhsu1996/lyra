@@ -1331,7 +1331,7 @@ auto LowerRandomizationCall(
       WalkFrame within = frame;
       if (on_class) {
         const slang::ast::Type* class_type =
-            handle != nullptr ? handle->type : nullptr;
+            handle != nullptr ? handle->type.get() : nullptr;
         if (class_type == nullptr) {
           const slang::ast::ClassType* method_class =
               slang::ast::Lookup::getContainingClass(*info.scope).first;
