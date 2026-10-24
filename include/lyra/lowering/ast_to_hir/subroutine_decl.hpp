@@ -14,6 +14,7 @@
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace slang::ast {
+class CallExpression;
 class ClassType;
 class Expression;
 class FormalArgumentSymbol;
@@ -26,16 +27,40 @@ namespace lyra::lowering::ast_to_hir {
 
 class UnitLowerer;
 
+// The class declaring a subroutine, or none where no class declares it.
+auto DeclaringClassOf(const slang::ast::SubroutineSymbol& sym)
+    -> const slang::ast::ClassType*;
+
+// The subroutine a class member stands for: a method itself, or the definition
+// a prototype (LRM 8.21, 8.24) names; nothing for any other member, or for a
+// prototype nothing defines.
+auto SubroutineOf(const slang::ast::Symbol& member)
+    -> const slang::ast::SubroutineSymbol*;
+
+// Whether a call is made on a class object: through a handle, or an instance
+// method named alone or through `super`, which is made on the object the
+// calling method runs on (LRM 8.6, 8.15).
+auto IsMadeOnAnObject(
+    const slang::ast::CallExpression& call,
+    const slang::ast::SubroutineSymbol& callee) -> bool;
+
+// The method a call naming `method` runs. Every class has a `pre_randomize()`
+// and a `post_randomize()` (LRM 18.6.2), and the front end gives a class it
+// reads from source its own of each it does not declare, which invokes its
+// base's; the hooks are never virtual, so a call naming such a hook runs the
+// one the nearest class above declares. Where none above declares one -- the
+// lineage ends, or reaches a class the front end makes itself, which has none
+// -- it is the one every class object has, which does nothing. Any other
+// method is the one the call runs.
+auto RandomizationHookReached(const slang::ast::SubroutineSymbol& method)
+    -> const slang::ast::SubroutineSymbol*;
+
 // Classifies a slang formal's argument direction into its HIR ParamDirection
 // (LRM 13.5). slang has no ConstRef direction (LRM 13.5.2): a `const ref`
 // formal carries direction Ref with the Const variable flag, so const-ness is
 // read off the formal rather than the direction enum alone. Shared by the
 // subroutine-declaration lowering and the cross-unit call site, which recompute
 // the same directions from the same formals.
-// The class declaring a subroutine, or none where no class declares it.
-auto DeclaringClassOf(const slang::ast::SubroutineSymbol& sym)
-    -> const slang::ast::ClassType*;
-
 auto ParamDirectionOf(const slang::ast::FormalArgumentSymbol& formal)
     -> hir::ParamDirection;
 

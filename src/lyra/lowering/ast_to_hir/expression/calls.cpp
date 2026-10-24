@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <expected>
-#include <format>
 #include <optional>
 #include <span>
 #include <string>
@@ -32,7 +31,6 @@
 
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/expr_builders.hpp"
@@ -60,23 +58,11 @@
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
-#include "lyra/support/def_path.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
-
-// True when the call reaches an instance method through its enclosing class
-// -- either the source supplied a handle (`h.foo()`) or slang resolved an
-// unqualified call to a class-scope subroutine, whose enclosing class is
-// the receiver's own type (LRM 8.6 implicit `this`, including LRM 8.15
-// `super.foo()`).
-auto CallReachesInstanceMethod(
-    const slang::ast::CallExpression& call,
-    const slang::ast::SubroutineSymbol& sym) -> bool {
-  return call.thisClass() != nullptr || DeclaringClassOf(sym) != nullptr;
-}
 
 // Classifies which object an instance-method call runs against into a
 // MethodReceiver arm. Super takes precedence over an accompanying `thisClass`,
@@ -921,12 +907,15 @@ auto LowerSubroutineCall(
     std::vector<std::optional<hir::ExprId>> arg_ids, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   auto& unit_lowerer = lowerer.Owner();
-  const auto* sym =
+  const auto* named =
       std::get<const slang::ast::SubroutineSymbol*>(call.subroutine);
-  if (sym == nullptr) {
+  if (named == nullptr) {
     throw InternalError(
         "AST->HIR call: user call missing resolved SubroutineSymbol");
   }
+  // The call is made on the object it names, whichever class the method it
+  // runs is declared in.
+  const slang::ast::SubroutineSymbol* sym = RandomizationHookReached(*named);
 
   // A method the runtime carries out routes to the library entry. A static
   // method acts on no object, whatever handle the call is written through (LRM
@@ -969,7 +958,7 @@ auto LowerSubroutineCall(
   // Lyra defines are that definition's methods, called as any other class's.
   if (const slang::ast::ClassType* declaring = DeclaringClassOf(*sym);
       sym->flags.has(slang::ast::MethodFlags::BuiltIn) &&
-      declaring != nullptr && &unit_lowerer.Defining(*declaring) == declaring) {
+      declaring != nullptr && unit_lowerer.Defining(*declaring) == declaring) {
     return LowerBuiltinClassMethodCall(
         lowerer, frame, call, *sym, *declaring, std::move(arg_ids), span);
   }
@@ -1028,10 +1017,9 @@ auto LowerSubroutineCall(
   // Instance-method call (LRM 8.6): every source shape -- `h.foo()`, an
   // unqualified `foo()` from inside a class body, `this.foo()`, and
   // `super.foo()` -- lowers to one `MethodCallRef`, distinguished by which
-  // object the classifier says it runs against. The declaring class comes from
-  // slang's resolved callee, which already accounts for inheritance and super
-  // resolution.
-  if (CallReachesInstanceMethod(call, *sym)) {
+  // object the classifier says it runs against. The declaring class is the one
+  // declaring the method the call runs, an inherited one included.
+  if (IsMadeOnAnObject(call, *sym)) {
     auto receiver_or = ClassifyMethodReceiver(lowerer, frame, call);
     if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
     const auto& declaring_class = *DeclaringClassOf(*sym);
@@ -1396,11 +1384,11 @@ auto LowerRandomizationCall(
     }
     auto on = lowerer.LowerExpr(*args[1], frame);
     if (!on) return std::unexpected(std::move(on.error()));
-    std::variant<
-        hir::ConstraintBlockMode, hir::StaticConstraintBlockMode,
-        hir::ObjectModes>
-        set_target;
-    std::visit([&](auto&& t) { set_target = std::move(t); }, block_target);
+    auto set_target = std::visit(
+        [](auto& t) -> decltype(hir::ConstraintModeSetExpr::target) {
+          return std::move(t);
+        },
+        block_target);
     return make(
         hir::ConstraintModeSetExpr{
             .target = std::move(set_target),

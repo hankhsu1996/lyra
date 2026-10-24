@@ -46,6 +46,44 @@ auto DeclaringClassOf(const slang::ast::SubroutineSymbol& sym)
   return &scope->asSymbol().as<slang::ast::ClassType>();
 }
 
+auto SubroutineOf(const slang::ast::Symbol& member)
+    -> const slang::ast::SubroutineSymbol* {
+  if (member.kind == slang::ast::SymbolKind::Subroutine) {
+    return &member.as<slang::ast::SubroutineSymbol>();
+  }
+  if (member.kind == slang::ast::SymbolKind::MethodPrototype) {
+    return member.as<slang::ast::MethodPrototypeSymbol>().getSubroutine();
+  }
+  return nullptr;
+}
+
+auto IsMadeOnAnObject(
+    const slang::ast::CallExpression& call,
+    const slang::ast::SubroutineSymbol& callee) -> bool {
+  return call.thisClass() != nullptr ||
+         (DeclaringClassOf(callee) != nullptr &&
+          !callee.flags.has(slang::ast::MethodFlags::Static));
+}
+
+auto RandomizationHookReached(const slang::ast::SubroutineSymbol& method)
+    -> const slang::ast::SubroutineSymbol* {
+  const slang::ast::SubroutineSymbol* hook = &method;
+  if (method.name != "pre_randomize" && method.name != "post_randomize") {
+    return hook;
+  }
+  while (hook->flags.has(slang::ast::MethodFlags::BuiltIn)) {
+    const slang::ast::Type* base = DeclaringClassOf(*hook)->getBaseClass();
+    if (base == nullptr || base->isError()) break;
+    const slang::ast::Symbol* inherited =
+        base->getCanonicalType().as<slang::ast::ClassType>().find(method.name);
+    const slang::ast::SubroutineSymbol* declared =
+        inherited == nullptr ? nullptr : SubroutineOf(*inherited);
+    if (declared == nullptr) break;
+    hook = declared;
+  }
+  return hook;
+}
+
 auto ParamDirectionOf(const slang::ast::FormalArgumentSymbol& formal)
     -> hir::ParamDirection {
   switch (formal.direction) {

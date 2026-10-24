@@ -691,21 +691,6 @@ auto OwningClassOf(const slang::ast::Symbol& member)
   return member.getParentScope()->asSymbol().as<slang::ast::ClassType>();
 }
 
-// The definition a slang override link names. A link may point at the base's
-// own definition or at a prototype standing for one, and what every consumer
-// wants is the declaration carrying the signature, so the two forms are
-// unwrapped to one here rather than at each site that follows a link.
-auto OverriddenSubroutine(const slang::ast::Symbol& target)
-    -> const slang::ast::SubroutineSymbol* {
-  if (target.kind == slang::ast::SymbolKind::Subroutine) {
-    return &target.as<slang::ast::SubroutineSymbol>();
-  }
-  if (target.kind == slang::ast::SymbolKind::MethodPrototype) {
-    return target.as<slang::ast::MethodPrototypeSymbol>().getSubroutine();
-  }
-  return nullptr;
-}
-
 // Whether `overridden` belongs to the lineage of `cls`: always for an interface
 // class, whose lineage is what it extends, and otherwise unless it is declared
 // by an interface class.
@@ -724,7 +709,7 @@ auto ImplementationOf(const slang::ast::ClassType& cls, std::string_view name)
   if (found == nullptr) {
     return nullptr;
   }
-  const slang::ast::SubroutineSymbol* method = OverriddenSubroutine(*found);
+  const slang::ast::SubroutineSymbol* method = SubroutineOf(*found);
   return method != nullptr && InLineageOf(cls, *method) ? method : nullptr;
 }
 
@@ -914,7 +899,7 @@ auto OverriddenMethod(
   // override as introducing behaviour of its own.
   if (const auto* prototype = method.getPrototype(); prototype != nullptr) {
     if (const auto* target = prototype->getOverride(); target != nullptr) {
-      if (const auto* resolved = OverriddenSubroutine(*target);
+      if (const auto* resolved = SubroutineOf(*target);
           resolved != nullptr && InLineageOf(cls, *resolved)) {
         return resolved;
       }
@@ -1042,7 +1027,7 @@ auto UnitLowerer::MakeClassMethodTarget(
     -> hir::ClassMethodTarget {
   if (const auto* local = std::get_if<hir::LocalClassRef>(&class_ref)) {
     return hir::LocalClassMethodTarget{
-        .owner = local->class_id, .method = LookupMethodId(Defining(method))};
+        .owner = local->class_id, .method = LookupMethodId(*Defining(method))};
   }
   const auto& ext = std::get<hir::ExternalClassRef>(class_ref);
   return hir::ExternalClassMethodTarget{
@@ -1548,16 +1533,16 @@ auto UnitLowerer::ResolveClassRef(
 }
 
 auto UnitLowerer::Defining(const slang::ast::ClassType& cls) const
-    -> const slang::ast::ClassType& {
+    -> const slang::ast::ClassType* {
   const slang::ast::ClassType* definition = facts_.StdDefinitionOf(cls);
-  return definition == nullptr ? cls : *definition;
+  return definition == nullptr ? &cls : definition;
 }
 
 auto UnitLowerer::Defining(const slang::ast::SubroutineSymbol& method) const
-    -> const slang::ast::SubroutineSymbol& {
+    -> const slang::ast::SubroutineSymbol* {
   const auto& declaring = OwningClassOf(method);
   const slang::ast::ClassType* definition = facts_.StdDefinitionOf(declaring);
-  return definition == nullptr ? method : DefiningMethod(*definition, method);
+  return definition == nullptr ? &method : &DefiningMethod(*definition, method);
 }
 
 auto UnitLowerer::InternLocalClass(
@@ -2020,7 +2005,7 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
     // identity registered when that ancestor was interned.
     if (const auto* overridden = proto->getOverride(); overridden != nullptr) {
       const slang::ast::SubroutineSymbol* overridden_sub =
-          OverriddenSubroutine(*overridden);
+          SubroutineOf(*overridden);
       if (overridden_sub != nullptr) {
         auto taken = MakeVirtualBehavior(*overridden_sub, span);
         if (!taken) return std::unexpected(std::move(taken.error()));
@@ -2123,7 +2108,7 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
         if (const slang::ast::SubroutineSymbol* base_constructor =
                 Defining(
                     base_type->getCanonicalType().as<slang::ast::ClassType>())
-                    .getConstructor()) {
+                    ->getConstructor()) {
           for (const auto* formal : base_constructor->getArguments()) {
             auto arg_or =
                 init_lowerer.LowerExpr(*formal->getDefaultValue(), init_frame);

@@ -21,6 +21,7 @@
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/std_classes.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -74,7 +75,7 @@ class ListedCalls : public slang::ast::ASTVisitor<
     return callee.subroutineKind == slang::ast::SubroutineKind::Function &&
            !callee.flags.has(slang::ast::MethodFlags::DPIImport) &&
            !callee.flags.has(slang::ast::MethodFlags::Constructor) &&
-           !IsRuntimeLibraryMethod(callee) && call.thisClass() == nullptr;
+           !IsRuntimeLibraryMethod(callee) && !IsMadeOnAnObject(call, callee);
   }
 
   void Add(const slang::ast::CallExpression& call) {

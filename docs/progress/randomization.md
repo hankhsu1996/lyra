@@ -122,7 +122,13 @@ Done when:
       split from whatever made it, used only by its own `randomize()`. `pre_randomize` and
       `post_randomize` run around each call, on the object and on every object a random handle
       reaches; a call that finds no answer returns 0, runs no `post_randomize` and leaves every
-      variable as it was.
+      variable as it was. A call the source writes naming a hook of a class that declares none, by
+      `super`, by its name, through `this` or through a handle, runs the one the nearest class above
+      declares, or nothing where none does (LRM 18.6.2).
+
+- [ ] `randomize()` and the hooks called through an interface class handle (LRM 8.26.9): on the
+      execution backend the run stops at an internal error, and on the C++ backend a hook called
+      that way runs the empty one where the object's own should run.
 
 - [x] Inline constraints added at the call site, a call listing the variables it chooses, an array
       among them standing for its elements and its size, every handle it does not list held, and the
