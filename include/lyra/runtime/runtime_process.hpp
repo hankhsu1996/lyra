@@ -14,6 +14,7 @@
 #include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/running_state.hpp"
 #include "lyra/runtime/wait.hpp"
+#include "lyra/support/target_landing.hpp"
 
 namespace lyra::runtime {
 
@@ -236,12 +237,13 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   auto EnterForeignExecution(std::unique_ptr<ForeignExecution> fe) -> bool;
 
   // Enter (LRM 9.6.2) a disable target: until the target is left, a `disable`
-  // of it reaches this execution, and a check finds it among the targets this
-  // execution is inside.
-  void PushEnclosingTarget(CancellationTarget* target) {
+  // of it reaches this execution, landing where `landing` says, and a check
+  // finds it among the targets this execution is inside.
+  void PushEnclosingTarget(
+      CancellationTarget* target, support::TargetLanding landing) {
     enclosing_targets_.emplace_back(
         CapturedTarget{.target = target, .generation = target->Generation()},
-        *this);
+        landing, *this);
   }
 
   // Leave a target. Reached on every exit path an execution can take out of
@@ -259,9 +261,14 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // The three are one question because what each owes this execution is the
   // same: it runs no further statement of the design.
   [[nodiscard]] auto DepartureIsDue() const -> bool {
+    return TerminationIsDue() || OutermostInvalidatedTarget() != nullptr;
+  }
+
+  // LRM 9.7: whether this execution's own termination was requested or
+  // settled, which nothing may continue past.
+  [[nodiscard]] auto TerminationIsDue() const -> bool {
     return termination_requested_ ||
-           execution_state_ == ProcessExecutionState::kTerminated ||
-           OutermostInvalidatedTarget() != nullptr;
+           execution_state_ == ProcessExecutionState::kTerminated;
   }
 
   // Whether a foreign call this execution made has still to return. Such an
@@ -289,10 +296,12 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // -- at the spawn, from the spawner's live state -- is what makes the spawned
   // activity a member from the instant it exists, before it has run any of its
   // own code, and reaches targets that are not in its body's lexical scope at
-  // all (a fork inside a task called from the target).
+  // all (a fork inside a task called from the target). Nothing of the spawned
+  // activity lies past any of them, so a `disable` of one ends it.
   void InheritEnclosingTargets(const RuntimeProcess& spawner) {
     for (const EnclosingTarget& enclosing : spawner.enclosing_targets_) {
-      enclosing_targets_.emplace_back(enclosing.captured, *this);
+      enclosing_targets_.emplace_back(
+          enclosing.captured, support::TargetLanding::kAtExecutionEnd, *this);
     }
   }
 
@@ -409,6 +418,14 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // or terminated process is a no-op.
   void RequestTermination(ProcessTerminationCause cause);
 
+  // Forcibly terminates `process` and its whole subtree (LRM 9.7 `kill`, and a
+  // `disable` of the statement it executes, LRM 9.6.3), releasing what that
+  // leaves with nothing under it. Where `process` is the executing one or an
+  // ancestor of it, the executing one is only asked to stop, and leaves where
+  // it next asks whether a departure is due. The caller holds `process`, so
+  // releasing it cannot free it mid-call.
+  static void Kill(RuntimeProcess& process, RuntimeEffects& services);
+
   // Releases `process` where it has terminated with nothing under it, then each
   // ancestor that release leaves the same way, walking upward, so each is
   // destroyed unless a `process` handle (LRM 9.7) still holds it. Deliberately
@@ -440,9 +457,12 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // not to be disabled, alongside whatever else the frame waits for, and the
   // membership is how a `disable` finds the process to ask.
   struct EnclosingTarget {
-    EnclosingTarget(CapturedTarget captured, RuntimeProcess& inside)
+    EnclosingTarget(
+        CapturedTarget captured, support::TargetLanding landing,
+        RuntimeProcess& inside)
         : captured(captured) {
       membership.process = &inside;
+      membership.landing = landing;
       captured.target->Members().PushBack(membership);
     }
 

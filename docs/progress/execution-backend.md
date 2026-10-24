@@ -621,25 +621,25 @@ each meets the same lifetime question above.
       direction resolving in one place and the inward direction in another that cannot see it.
 - [x] **A region that consumes a control effect** -- what a named block, a named fork, and a task
       need so that `disable` of one resumes execution after it (LRM 9.6.2). A named procedural block
-      runs here whether or not anything disables it, a self-`disable` leaves its own region, and an
-      effect naming an enclosing target passes outward through the regions that decline it. The
-      region's extent is bracketed by two ordinary calls under a cleanup that runs on every way out
-      of the body, so no backend has to run code at scope exit to hold the membership; where an
-      execution regains control it asks the runtime whether it has been told to stop -- a target it
-      is inside was disabled while it was away, or its own termination is owed because a foreign
-      call it made had still to return -- and the comparison behind that answer stays in the
-      runtime. Leaving is what the target's own scope exit does: a call that could be left that way
-      names where to continue as well as where to return, and a body that claims nothing passes the
-      departure outward, so it reaches a caller's region as readily as an enclosing one of its own.
-      An effect no region claims anywhere settles the activation cancelled, and a body that can
-      suspend is left by one the way it is left by returning, whether or not any path in it could
-      reach its end: a process that waited and then ends the run, or a branch looping forever that
-      disables the block around it, ends what it holds once. Disabling a named `fork` exercises all
-      of it: the branches it spawned are enclosed by the target even though their bodies state no
-      region, so the `disable` wakes one parked on a delay, that branch settles cancelled where it
-      regains control, and the process that entered the block resumes after it in the same time
-      step. `disable` of a task runs here too, now that a task enable does, and so does one written
-      inside a function and naming a block outside it.
+      runs here whether or not anything disables it, a self-`disable` leaves its own block, and an
+      effect a region does not land -- one naming an enclosing target, or one an outer activation of
+      the same task is owed -- passes outward through the regions that decline it. The region's
+      extent is bracketed by two ordinary calls under a cleanup that runs on every way out of the
+      body, so no backend has to run code at scope exit to hold the membership; where an execution
+      regains control it asks the runtime whether it has been told to stop -- a target it is inside
+      was disabled while it was away, or its own termination is owed because a foreign call it made
+      had still to return -- and the comparison behind that answer stays in the runtime. Leaving is
+      what the target's own scope exit does: a call that could be left that way names where to
+      continue as well as where to return, and a body that claims nothing passes the departure
+      outward, so it reaches a caller's region as readily as an enclosing one of its own. An effect
+      no region claims anywhere settles the activation cancelled, and a body that can suspend is
+      left by one the way it is left by returning, whether or not any path in it could reach its
+      end: a process that waited and then ends the run, or a branch looping forever that disables
+      the block around it, ends what it holds once. Disabling a named `fork` exercises all of it:
+      the branches it spawned are enclosed by the target even though their bodies state no region,
+      so the `disable` ends one parked on a delay at once, KILLED, and the process that entered the
+      block resumes after it in the same time step. `disable` of a task runs here too, now that a
+      task enable does, and so does one written inside a function and naming a block outside it.
 - [ ] The transient-escape rule is held by construction and naming, not by a checker.
 - [ ] Displaying an aggregate. A print item is named by the operand's value domain, and the erased
       container this backend realizes exposes no per-element walk for a formatter to use. It is the

@@ -41,6 +41,7 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/target_landing.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -56,6 +57,13 @@ auto PromotedVarPlace(
 
 auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
     -> diag::Result<mir::Stmt> {
+  return LowerStmt(
+      stmt, std::move(frame), support::TargetLanding::kPastTheTarget);
+}
+
+auto ProcessLowerer::LowerStmt(
+    const hir::Stmt& stmt, WalkFrame frame, support::TargetLanding landing)
+    -> diag::Result<mir::Stmt> {
   const diag::FailureContext at(stmt.span);
   return std::visit(
       Overloaded{
@@ -67,10 +75,10 @@ auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
             return LowerExprStmt(*this, frame, stmt.label, e);
           },
           [&](const hir::BlockStmt& b) {
-            return LowerBlockStmt(*this, frame, stmt.label, b);
+            return LowerBlockStmt(*this, frame, stmt.label, b, landing);
           },
           [&](const hir::ForkStmt& f) {
-            return LowerForkStmt(*this, frame, stmt.label, f);
+            return LowerForkStmt(*this, frame, stmt.label, f, landing);
           },
           [&](const hir::IfStmt& i) {
             return LowerIfStmt(*this, frame, stmt.label, i, stmt.span);
@@ -167,7 +175,8 @@ auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
 
 namespace {
 
-auto LowerStraightLineBodyInto(ProcessLowerer& process, WalkFrame frame)
+auto LowerStraightLineBodyInto(
+    ProcessLowerer& process, WalkFrame frame, support::TargetLanding landing)
     -> diag::Result<void> {
   const hir::ProceduralBody& body = process.HirBody();
   const hir::Stmt& root = body.stmts.Get(process.HirRootStmt());
@@ -175,7 +184,7 @@ auto LowerStraightLineBodyInto(ProcessLowerer& process, WalkFrame frame)
   // as that block does.
   const auto* block = std::get_if<hir::BlockStmt>(&root.data);
   if (block != nullptr && block->scope == body.root_scope) {
-    auto lowered = process.LowerStmt(root, frame);
+    auto lowered = process.LowerStmt(root, frame, landing);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     frame.current_block->AppendStmt(*std::move(lowered));
     return {};
@@ -193,14 +202,17 @@ auto LowerStraightLineBodyInto(ProcessLowerer& process, WalkFrame frame)
           },
       .outer = frame.normal_cleanups};
   auto lowered = process.LowerStmt(
-      root, events.at_end.empty() ? frame : frame.WithNormalCleanup(end));
+      root, events.at_end.empty() ? frame : frame.WithNormalCleanup(end),
+      landing);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
   frame.current_block->AppendStmt(*std::move(lowered));
   end.emit(frame);
   return {};
 }
 
-auto LowerStraightLineProcess(ProcessLowerer& process)
+// `landing` is where a `disable` of the procedure's own statement lands.
+auto LowerStraightLineProcess(
+    ProcessLowerer& process, support::TargetLanding landing)
     -> diag::Result<mir::CallableCode> {
   const WalkFrame& parent = process.OwnerCtorFrame();
   mir::CallableCode code = mir::CallableCode::Defined();
@@ -210,7 +222,7 @@ auto LowerStraightLineProcess(ProcessLowerer& process)
   code.params = {self_id};
   const WalkFrame body_frame = process.InRootScope(
       parent.WithBlock(&code.Body()).WithBindings(&bindings));
-  auto lowered = LowerStraightLineBodyInto(process, body_frame);
+  auto lowered = LowerStraightLineBodyInto(process, body_frame, landing);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
   // A process completes by falling off its end, which is a real body statement
   // rather than an implicit exit (LRM 9.2). Its coroutine result type is what
@@ -243,7 +255,8 @@ auto LowerForeverProcess(ProcessLowerer& process, Ahead ahead)
   mir::Block body_block;
   {
     const WalkFrame body_frame = entry_frame.WithBlock(&body_block);
-    auto lowered = LowerStraightLineBodyInto(process, body_frame);
+    auto lowered = LowerStraightLineBodyInto(
+        process, body_frame, support::TargetLanding::kPastTheTarget);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     (*after_body)(body_block);
   }
@@ -356,11 +369,17 @@ auto ProcessLowerer::Run(const hir::Process& src)
   const diag::FailureContext at(src.span);
   return std::visit(
       Overloaded{
+          // An initial procedure is a process of its own, so nothing of it
+          // follows its statement (LRM 9.5); the final procedures are calls
+          // one process makes in turn (LRM 9.2.3), so leaving one goes on to
+          // the next.
           [&](const hir::InitialProcess&) {
-            return LowerStraightLineProcess(*this);
+            return LowerStraightLineProcess(
+                *this, support::TargetLanding::kAtExecutionEnd);
           },
           [&](const hir::FinalProcess&) {
-            return LowerStraightLineProcess(*this);
+            return LowerStraightLineProcess(
+                *this, support::TargetLanding::kPastTheTarget);
           },
           [&](const hir::AlwaysProcess&) { return LowerAlwaysProcess(*this); },
           [&](const hir::AlwaysFfProcess&) {
@@ -493,12 +512,15 @@ auto ProcessLowerer::LowerSubroutine(
     // `disable` reach them all (LRM 9.6.2).
     mir::Block body_block;
     const WalkFrame inner_frame = body_frame.WithBlock(&body_block);
-    auto lowered = LowerStraightLineBodyInto(*this, inner_frame);
+    auto lowered = LowerStraightLineBodyInto(
+        *this, inner_frame, support::TargetLanding::kPastTheTarget);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    code.body->AppendStmt(BuildCancellableRegion(
-        *this, body_frame, std::move(body_block), *disable_target));
+    code.body->AppendStmt(BuildTargetExtent(
+        *this, body_frame, std::move(body_block), *disable_target,
+        support::TargetLanding::kPastTheTarget));
   } else {
-    auto lowered = LowerStraightLineBodyInto(*this, body_frame);
+    auto lowered = LowerStraightLineBodyInto(
+        *this, body_frame, support::TargetLanding::kPastTheTarget);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
   }
 
@@ -641,7 +663,8 @@ void ProcessLowerer::RegisterConstructorFormals(
 
 auto ProcessLowerer::LowerConstructorBodyInto(const WalkFrame& frame)
     -> diag::Result<void> {
-  return LowerStraightLineBodyInto(*this, frame);
+  return LowerStraightLineBodyInto(
+      *this, frame, support::TargetLanding::kPastTheTarget);
 }
 
 namespace {

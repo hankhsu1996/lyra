@@ -89,16 +89,9 @@ auto ProcessStatus(const value::ObjectRef& self) -> value::Int {
 }
 
 void ProcessKill(const value::ObjectRef& self, RuntimeEffects& runtime) {
-  RuntimeProcess& target = ProcessNodeOf(self);
-  RuntimeProcess& caller = runtime.CurrentProcess();
-  if (target.IsSelfOrAncestorOf(caller)) {
-    target.TerminateSubtreeDeferringRunning(caller, runtime);
-    RaiseUnclaimableEffect();
-  }
-  target.TerminateSubtreeKilled(runtime);
-  // `self` still pins the target, so releasing it cannot free it mid-call. The
-  // kill may leave a terminated ancestor with nothing under it to retain it.
-  RuntimeProcess::ReleaseTerminatedLineage(target);
+  // `self` holds the target for the whole call.
+  RuntimeProcess::Kill(ProcessNodeOf(self), runtime);
+  TakeDepartureIfDue(runtime.CurrentProcess());
 }
 
 auto ProcessAwait(const value::ObjectRef& self, RuntimeEffects& runtime)

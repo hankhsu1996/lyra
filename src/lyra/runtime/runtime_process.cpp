@@ -235,6 +235,16 @@ void RuntimeProcess::Release() {
   const std::shared_ptr<RuntimeProcess> last = std::move(owned_place_.held);
 }
 
+void RuntimeProcess::Kill(RuntimeProcess& process, RuntimeEffects& services) {
+  RuntimeProcess* const caller = services.TryCurrentProcess();
+  if (caller != nullptr && process.IsSelfOrAncestorOf(*caller)) {
+    process.TerminateSubtreeDeferringRunning(*caller, services);
+    return;
+  }
+  process.TerminateSubtreeKilled(services);
+  ReleaseTerminatedLineage(process);
+}
+
 void RuntimeProcess::ReleaseTerminatedLineage(RuntimeProcess& process) {
   RuntimeProcess* node = &process;
   while (node != nullptr && node->owned_by_ != nullptr &&
@@ -357,16 +367,6 @@ auto RuntimeProcess::ResumeWith(RuntimeEffects& effects, Activation* activation)
   }
   if (execution_state_ == ProcessExecutionState::kRunning) {
     throw InternalError("RuntimeProcess::ResumeWith: reentrant resume");
-  }
-  // An activity spawned inside a target that was disabled before this activity
-  // ever ran has no statement to leave from: it is terminated where it stands,
-  // without running any of its body (LRM 9.6.2 -- everything enabled within the
-  // target is terminated). Its frame has not begun, so releasing it here is the
-  // whole termination.
-  if (execution_state_ == ProcessExecutionState::kCreated &&
-      OutermostInvalidatedTarget() != nullptr) {
-    SettleTerminated(ProcessTerminationCause::kKilled, effects);
-    return true;
   }
   execution_state_ = ProcessExecutionState::kRunning;
   {

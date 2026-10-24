@@ -1526,10 +1526,15 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "disable",
           .declaration = RuntimeFunction("Disable"),
           .takes_the_runtime_handle = true};
-    case BuiltinFn::kEnterTarget:
+    case BuiltinFn::kEnterTargetLandingPastIt:
       return {
-          .name = "enter_target",
-          .declaration = RuntimeFunction("EnterCancellationTarget"),
+          .name = "enter_target_landing_past_it",
+          .declaration = RuntimeFunction("EnterTargetLandingPastIt"),
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kEnterTargetLandingAtExecutionEnd:
+      return {
+          .name = "enter_target_landing_at_execution_end",
+          .declaration = RuntimeFunction("EnterTargetLandingAtExecutionEnd"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kLeaveTarget:
       return {
@@ -1537,10 +1542,11 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = RuntimeFunction("LeaveCancellationTarget"),
           .takes_the_runtime_handle = true,
           .ending = CallEnding::kReturns};
-    case BuiltinFn::kEffectNamesTarget:
+    case BuiltinFn::kRegionLandsEffect:
       return {
-          .name = "effect_names_target",
-          .declaration = RuntimeFunction("EffectNamesTarget"),
+          .name = "region_lands_effect",
+          .declaration = RuntimeFunction("RegionLandsEffect"),
+          .takes_the_runtime_handle = true,
           .ending = CallEnding::kReturns};
     case BuiltinFn::kReceiveDeparture:
       return {
