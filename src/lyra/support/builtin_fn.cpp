@@ -1528,15 +1528,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "disable",
           .declaration = RuntimeFunction("Disable"),
           .takes_the_runtime_handle = true};
-    case BuiltinFn::kEnterTargetLandingPastIt:
+    case BuiltinFn::kEnterTarget:
       return {
-          .name = "enter_target_landing_past_it",
-          .declaration = RuntimeFunction("EnterTargetLandingPastIt"),
-          .takes_the_runtime_handle = true};
-    case BuiltinFn::kEnterTargetLandingAtExecutionEnd:
-      return {
-          .name = "enter_target_landing_at_execution_end",
-          .declaration = RuntimeFunction("EnterTargetLandingAtExecutionEnd"),
+          .name = "enter_target",
+          .declaration = RuntimeFunction("EnterCancellationTarget"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kLeaveTarget:
       return {

@@ -6,8 +6,8 @@ Both backends now reach the cases that need a second activation as well, since a
 call into a task both lower on the execution backend. A target declared in a class method, a static
 method, or a package subroutine is reached the same way, its source living where that declaration
 scope keeps static-lifetime state, and one declared anywhere else on the design hierarchy is reached
-by a hierarchical name in every direction the language admits. D2 revised 2026-10-05; D2, D4 and D5
-revised 2026-10-24 for an execution whose whole statement is the target.
+by a hierarchical name in every direction the language admits. D2 revised 2026-10-05; D2, D4, D5 and
+D6 revised 2026-10-24: a target is left and resumed past wherever its block stands.
 
 ## Why this decision matters
 
@@ -58,22 +58,21 @@ activation is running, waiting, or runnable.
 D2. A target is a thing an execution waits on, so `disable` releases waiters rather than searching
 for them. Only the execution itself can leave a scope, so for an execution that resumes past the
 target all a `disable` has to do is give control back to the executions that would never regain it
--- the blocked ones. An execution the `disable` ends (D4) has nothing past the target to regain
-control for, and nothing of the design runs on its way out, so the `disable` ends it there and then,
-the same act as `kill` (LRM 9.7), and it reads KILLED as soon as the statement completes -- read
-from a `final` procedure too, after which nothing else would ever run it. LRM 9.6.2 says only that
-the `disable` shall terminate it; terminating it within the statement, rather than whenever it next
-runs, is this decision's, and it is what lets every later reader of its status agree with that.
-Being blocked inside a target is itself a wait: the execution waits for that target not to be
-disabled, alongside whatever else it waits for. It therefore holds a membership on the target for as
-long as it is inside, owned by its own record of the target (a-membership-is-one-record.md), and
-`disable` fires the target's list, the same act an event trigger performs: each member that resumes
-past the target has its frame woken where that frame is blocked -- the same "who is parked here now"
-test a wait on storage uses -- while one that is running or runnable is passed over and reaches the
-check on its own, and a stopped one takes it when it is started again (LRM 9.7). The alternative --
-no list on the target, and a `disable` that searches the live executions for the ones inside it --
-would be the only place in the runtime that finds its waiters by searching instead of by firing a
-list.
+-- the blocked ones. An activity enabled within the target (D4) has nothing past the target to
+regain control for, and nothing of the design runs on its way out, so the `disable` ends it there
+and then, the same act as `kill` (LRM 9.7), and it reads KILLED as soon as the statement completes.
+LRM 9.6.2 says only that such activities shall be terminated; terminating them within the statement,
+rather than whenever they next run, is this decision's, and it is what lets every later reader of
+their status agree with that. Being blocked inside a target is itself a wait: the execution waits
+for that target not to be disabled, alongside whatever else it waits for. It therefore holds a
+membership on the target for as long as it is inside, owned by its own record of the target
+(a-membership-is-one-record.md), and `disable` fires the target's list, the same act an event
+trigger performs: each member that resumes past the target has its frame woken where that frame is
+blocked -- the same "who is parked here now" test a wait on storage uses -- while one that is
+running or runnable is passed over and reaches the check on its own, and a stopped one takes it when
+it is started again (LRM 9.7). The alternative -- no list on the target, and a `disable` that
+searches the live executions for the ones inside it -- would be the only place in the runtime that
+finds its waiters by searching instead of by firing a list.
 
 D3. The check is generation mismatch alone. There is no resume-reason and no pending-control flag:
 the captured generation versus the target's current generation is the whole signal, asked before the
@@ -106,30 +105,34 @@ activation of the same reentrant task, which LRM 9.6.2 disables too, and not one
 whose termination is due -- as a cancel scope in Trio steps aside while an enclosing scope's
 cancellation is still in force (`trio/_core/_run.py`, `CancelScope._close`). That region resumes
 past the target: a named block continues after the block, a task named by a `disable` completes
-normally so its enabling statement resumes. An execution with nothing after the target to continue
-into is terminated by it, and settles KILLED rather than FINISHED (LRM 9.7): a spawned activity,
-which is inside the target from its spawn, and a process whose own statement is the target -- an
-`initial` procedure's or a fork branch's, each a thread of its own (LRM 9.5) -- since LRM 9.6.3 says
-the `disable` "terminates a process when applied to the named block or statement being executed by
-the process". Neither has a region of its own for the target: the target's landing is the
-execution's end. A `final` procedure is not such a process: the final procedures are "a series of
-function calls from a single process" (LRM 9.2.3), so leaving one goes on to the next and the
-process is not ended. Nor is an assertion's action, which the standard schedules (LRM 16.14.1) but
-does not make a process with a life of its own; leaving it ends the run of that action and nothing
-more. This split is the only essential divergence, and it is one the LRM mandates.
+normally so its enabling statement resumes. Every target is such a region, wherever its block
+stands: LRM 9.6.2 gives one rule, "Execution shall resume at the statement following the block", and
+nothing in it depends on whether the block is nested or is the whole statement a process runs. A
+process whose own statement is the target -- an `initial` procedure's, a fork branch's, a concurrent
+assertion's action -- resumes past it with nothing left, so its execution runs out and it reads
+FINISHED; an always procedure goes round again (9.6.2 Example 7); a `final` procedure returns to the
+next (LRM 9.2.3). What a `disable` forcibly terminates, and so reports KILLED (LRM 9.7, whose KILLED
+cites 9.6.2), is "all activities enabled within the named block": an execution started inside the
+target, which holds it from its spawn and has nothing past it. The 9.6.3 sentence "The disable
+construct terminates a process when applied to the named block or statement being executed by the
+process" stands in the paragraph contrasting which processes `disable` and `disable fork` select;
+read as a rule for status it would contradict 9.6.2's resumption wherever something follows the
+block, so it is read as selection. Revised 2026-10-24: from #1460 until then, a process whose own
+statement was the target was ended KILLED, which made one block statement behave two ways by where
+it stood and needed the compiler to know, for every kind of execution, which block was its root.
 
 D5. No new runtime concept is introduced. There is no execution-entitlement object, no live-extent
 registry, no stored exit continuation, and no traversal of the live executions: a target reuses the
 membership list every wait target already uses, and membership -- which targets an execution is
-inside, the generation it captured entering each, and whether a `disable` of each lands past it or
-at the execution's end -- is state of the running execution. The last is stated by the entry, as a
-compiler states in each frame's unwind table whether it handles an exception, so the `disable` reads
-whether a member lands without running it, as an unwinder's search phase does.
+inside, the generation it captured entering each, and whether a `disable` of each resumes it past
+the target or ends it -- is state of the running execution. An execution that entered a target
+resumes past it, and one started inside it ends; the runtime records which at the entry and at the
+spawn, so the `disable` reads whether a member ends without running it, as an unwinder's search
+phase reads a frame's table without running the frame.
 
-D6. Only the target's extent is expressed in the compiled program -- its entry, which states where a
-`disable` of it lands, its cleanup, and, where the execution resumes past it, the region that
-consumes the effect. A suspend, a call, and a `disable` are the same program whether or not any
-target encloses them -- the generation check and the outward travel are the runtime's, never
+D6. Only the target's extent is expressed in the compiled program -- its entry, its cleanup, and the
+region that consumes the effect. A suspend, a call, and a `disable` are the same program whether or
+not any target encloses them -- the generation check and the outward travel are the runtime's, never
 statements a body states for itself. What a body does carry is the region itself: a scope that can
 be left from anywhere within it, including from a callable it invoked, and whose continuation is the
 statement after it. That is a generic control construct, not a cancellation mechanism, and a backend
@@ -139,8 +142,8 @@ no backend.
 
 ## Consequences
 
-- `disable` gains no state branch: it invalidates, then releases the waiters that land past it
-  through the existing wake verb and ends the members that land at their end through `kill`'s own
+- `disable` gains no state branch: it invalidates, then releases the waiters that resume past it
+  through the existing wake verb and ends the activities enabled within it through `kill`'s own
   path; the running activation -- only ever the one executing the `disable` -- reaches the gate
   after its statement, and an already-runnable one reaches it when next drained.
 - Entering a target enrols the execution in it, and leaving it leaves -- nothing at all for a body

@@ -23,7 +23,6 @@
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
-#include "lyra/support/target_landing.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -66,8 +65,7 @@ auto DispatchForJoinMode(hir::JoinMode mode) -> JoinDispatch {
 // parent awaits it.
 auto LowerForkStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::ForkStmt& f, support::TargetLanding landing)
-    -> diag::Result<mir::Stmt> {
+    const hir::ForkStmt& f) -> diag::Result<mir::Stmt> {
   const hir::ProceduralBody& hir_proc = process.HirBody();
   mir::Block fork_block;
   // A fork the source named is part of the hierarchical name of everything
@@ -79,9 +77,10 @@ auto LowerForkStmt(
       frame.WithBlock(&fork_block).WithScopeName(fork_scope.name);
 
   // A fork the source named is a target a `disable` can name (LRM 9.6.2), and
-  // what it must end is every process executing the block -- the thread that
-  // runs the block items and awaits the join, and each branch, which takes the
-  // target's membership at the spawn. The extent brackets the whole fork, so
+  // what it must reach is every process executing the block -- the thread that
+  // runs the block items and awaits the join, which resumes past the fork, and
+  // each branch, which takes the target's membership at the spawn and is ended.
+  // The extent brackets the whole fork, so
   // the target is entered before any branch spawns and all of them are inside
   // it.
   const std::optional<StaticStorageHome>& disable_target =
@@ -125,9 +124,8 @@ auto LowerForkStmt(
     ClosureBuilder closure(
         process.Owner().Unit(), fork_frame, support::ClosureKind::kFnOnce,
         branch_policy);
-    auto lowered = process.LowerStmt(
-        branch, closure.Frame().WithBodyCanWait(true),
-        support::TargetLanding::kAtExecutionEnd);
+    auto lowered =
+        process.LowerStmt(branch, closure.Frame().WithBodyCanWait(true));
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
@@ -164,7 +162,7 @@ auto LowerForkStmt(
     return mir::Stmt{
         .label = std::move(label),
         .data = BuildTargetExtent(
-            process, frame, std::move(fork_block), *disable_target, landing)};
+            process, frame, std::move(fork_block), *disable_target)};
   }
   const mir::BlockId scope_id =
       frame.current_block->child_scopes.Add(std::move(fork_block));

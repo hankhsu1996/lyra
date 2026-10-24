@@ -14,15 +14,12 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/support/target_landing.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
-// `landing` is where a `disable` of the fork lands, where it is named.
 auto LowerForkStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::ForkStmt& f, support::TargetLanding landing)
-    -> diag::Result<mir::Stmt>;
+    const hir::ForkStmt& f) -> diag::Result<mir::Stmt>;
 
 auto LowerWaitForkStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label)

@@ -4,8 +4,8 @@
 // of the processes executing its parallel statements, so a branch still parked
 // on a delay ends there and the process that entered the block carries on in
 // the same time step. The disable arrives from an unrelated process, which is
-// allowed because what makes a branch a target is the block it is executing
-// rather than which process spawned it (LRM 9.6.3).
+// allowed because a disable selects by the block, not by which process spawned
+// the branch (LRM 9.6.3).
 module Top;
   int early_ran, late_ran;
   int resumed, resume_time;

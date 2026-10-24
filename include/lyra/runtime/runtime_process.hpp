@@ -15,7 +15,6 @@
 #include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/running_state.hpp"
 #include "lyra/runtime/wait.hpp"
-#include "lyra/support/target_landing.hpp"
 
 namespace lyra::runtime {
 
@@ -250,13 +249,12 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   auto EnterForeignExecution(std::unique_ptr<ForeignExecution> fe) -> bool;
 
   // Enter (LRM 9.6.2) a disable target: until the target is left, a `disable`
-  // of it reaches this execution, landing where `landing` says, and a check
-  // finds it among the targets this execution is inside.
-  void PushEnclosingTarget(
-      CancellationTarget* target, support::TargetLanding landing) {
+  // of it reaches this execution, which resumes past it, and a check finds it
+  // among the targets this execution is inside.
+  void PushEnclosingTarget(CancellationTarget* target) {
     enclosing_targets_.emplace_back(
         CapturedTarget{.target = target, .generation = target->Generation()},
-        landing, *this);
+        MembershipOrigin::kEntered, *this);
   }
 
   // Leave a target. Reached on every exit path an execution can take out of
@@ -314,7 +312,7 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   void InheritEnclosingTargets(const RuntimeProcess& spawner) {
     for (const EnclosingTarget& enclosing : spawner.enclosing_targets_) {
       enclosing_targets_.emplace_back(
-          enclosing.captured, support::TargetLanding::kAtExecutionEnd, *this);
+          enclosing.captured, MembershipOrigin::kEnabledWithin, *this);
     }
   }
 
@@ -432,11 +430,11 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   void RequestTermination(ProcessTerminationCause cause);
 
   // Forcibly terminates `process` and its whole subtree (LRM 9.7 `kill`, and a
-  // `disable` of the statement it executes, LRM 9.6.3), releasing what that
-  // leaves with nothing under it. Where `process` is the executing one or an
-  // ancestor of it, the executing one is only asked to stop, and leaves where
-  // it next asks whether a departure is due. The caller holds `process`, so
-  // releasing it cannot free it mid-call.
+  // `disable` of a target it is an activity enabled within, LRM 9.6.2),
+  // releasing what that leaves with nothing under it. Where `process` is the
+  // executing one or an ancestor of it, the executing one is only asked to
+  // stop, and leaves where it next asks whether a departure is due. The caller
+  // holds `process`, so releasing it cannot free it mid-call.
   static void Kill(RuntimeProcess& process, RuntimeEffects& services);
 
   // Releases `process` where it has terminated with nothing under it, then each
@@ -471,11 +469,11 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // membership is how a `disable` finds the process to ask.
   struct EnclosingTarget {
     EnclosingTarget(
-        CapturedTarget captured, support::TargetLanding landing,
+        CapturedTarget captured, MembershipOrigin origin,
         RuntimeProcess& inside)
         : captured(captured) {
       membership.process = &inside;
-      membership.landing = landing;
+      membership.origin = origin;
       captured.target->Members().PushBack(membership);
     }
 

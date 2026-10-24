@@ -134,12 +134,12 @@ language.
    nothing is queued and nothing has to be cleared. A region is re-entered under one identity -- a
    reentrant callable, a loop body -- so a one-shot mark cannot express "since this entry".
 
-6. **A departure no region lands settles the activation, rather than returning a value.** An
-   execution with nothing after the region to continue into ends; that outcome is the activation's,
-   not a result its caller reads. So a target that is the whole of what an execution runs -- the
-   statement of a process, or of a fork branch -- has no region of its own: the departure runs out
-   the body and the activation settles as cancelled. A body that is a call, such as a final
-   procedure's, has its caller after it, and its target is a region like any block's.
+6. **A departure no region lands settles the activation, rather than returning a value.** Every
+   target is a region wherever its block stands -- a process's statement, a block nested in one, a
+   call's body -- so a departure naming a target is landed there, unless the execution's own
+   termination is owed, and the execution resumes past it, running out if nothing follows. What no
+   region lands is a departure naming none: a kill, a disable of a target the execution was started
+   inside, a run-time error. That outcome is the activation's, not a result its caller reads.
 
 7. **Whether a call can leave is a property of its callee's declaration, never of what the callee
    does.** Nothing proves a callee cannot leave; one that cannot says so where it is declared. A
@@ -225,11 +225,11 @@ construction, so a departure that leaves the construction partway ends that refe
 else, and the object goes on existing while anything else refers to it.
 
 Ending an execution is the other construct the opening names, built on this one. Three requests end
-executions -- a `disable` of a target an execution is wholly inside, `disable fork`, and `kill()` --
-and each chooses its own: the executions inside the target, the caller's descendants, the target
-process and its descendants. Once chosen, all three end them one way: an execution stopped at a wait
-is torn down where it stands, and one that is running, or inside a foreign call, is asked to stop
-and leaves by the departure no region claims at the next point where it regains control.
+executions -- a `disable` of a target an execution was started inside, `disable fork`, and `kill()`
+-- and each chooses its own: the executions started inside the target, the caller's descendants, the
+target process and its descendants. Once chosen, all three end them one way: an execution stopped at
+a wait is torn down where it stands, and one that is running, or inside a foreign call, is asked to
+stop and leaves by the departure no region claims at the next point where it regains control.
 
 Enumerating a body's ways out is what every compiler targeting a control-flow graph or a stack
 machine does with a cleanup construct. JVM bytecode has no `finally`; the compiler copies the

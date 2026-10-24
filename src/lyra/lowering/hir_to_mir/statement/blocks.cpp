@@ -30,7 +30,6 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/target_landing.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -126,14 +125,16 @@ void EmitTargetBracket(
       {CancellationTarget(process, frame, target)});
 }
 
-// The target's extent around `body`: `enter` first, so an execution inside it
+// The target's extent around `body`: its entry first, so an execution inside it
 // -- including one suspended in a callable the body invoked -- is known to be
 // inside the target, and a cleanup withdrawing that however control gets out.
 auto BuildExtent(
     ProcessLowerer& process, const WalkFrame& frame, mir::Block&& body,
-    const StaticStorageHome& target, support::BuiltinFn enter) -> mir::Block {
+    const StaticStorageHome& target) -> mir::Block {
   mir::Block extent;
-  EmitTargetBracket(process, frame.WithBlock(&extent), target, enter);
+  EmitTargetBracket(
+      process, frame.WithBlock(&extent), target,
+      support::BuiltinFn::kEnterTarget);
   mir::Block cleanup;
   EmitTargetBracket(
       process, frame.WithBlock(&cleanup), target,
@@ -199,23 +200,10 @@ auto BuildRegion(
 
 auto BuildTargetExtent(
     ProcessLowerer& process, const WalkFrame& frame, mir::Block&& body,
-    const StaticStorageHome& target, support::TargetLanding landing)
-    -> mir::StmtData {
-  switch (landing) {
-    case support::TargetLanding::kPastTheTarget:
-      return BuildRegion(
-          process, frame,
-          BuildExtent(
-              process, frame, std::move(body), target,
-              support::BuiltinFn::kEnterTargetLandingPastIt),
-          target);
-    case support::TargetLanding::kAtExecutionEnd:
-      return mir::BlockStmt{
-          .scope = frame.current_block->child_scopes.Add(BuildExtent(
-              process, frame, std::move(body), target,
-              support::BuiltinFn::kEnterTargetLandingAtExecutionEnd))};
-  }
-  throw InternalError("BuildTargetExtent: unknown TargetLanding");
+    const StaticStorageHome& target) -> mir::StmtData {
+  return BuildRegion(
+      process, frame, BuildExtent(process, frame, std::move(body), target),
+      target);
 }
 
 auto LowerEmptyStmt(std::optional<std::string> label)
@@ -225,8 +213,7 @@ auto LowerEmptyStmt(std::optional<std::string> label)
 
 auto LowerBlockStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::BlockStmt& b, support::TargetLanding landing)
-    -> diag::Result<mir::Stmt> {
+    const hir::BlockStmt& b) -> diag::Result<mir::Stmt> {
   mir::Block child_block;
   // A block the source named is part of the name everything inside it reports
   // (LRM 21.2.1.5).
@@ -258,9 +245,10 @@ auto LowerBlockStmt(
 
   // A named block (LRM 9.6.2) is a target: an execution anywhere inside it --
   // including inside a callable it invoked -- leaves the block where it is
-  // disabled, and lands where `landing` says. A `disable` reaches its target by
-  // naming it, so an unnamed block is one none can reach and it needs no
-  // extent -- which is what owning no target says.
+  // disabled, and resumes at the statement after it, wherever the block stands.
+  // A `disable` reaches its target by naming it, so an unnamed block is one
+  // none can reach and it needs no extent -- which is what owning no target
+  // says.
   const std::optional<StaticStorageHome>& disable_target =
       process.Scopes().Get(b.scope).disable_target;
 
@@ -276,7 +264,7 @@ auto LowerBlockStmt(
     return mir::Stmt{
         .label = std::move(label),
         .data = BuildTargetExtent(
-            process, frame, std::move(child_block), *disable_target, landing)};
+            process, frame, std::move(child_block), *disable_target)};
   }
   const mir::BlockId scope_id =
       frame.current_block->child_scopes.Add(std::move(child_block));
@@ -316,8 +304,7 @@ auto LowerDisableStmt(
   // One call carries the whole statement (LRM 9.6.2): it invalidates the
   // target, wakes or ends what is inside it, and -- when the disabling
   // execution is itself inside the target -- leaves from here, which is what a
-  // self-disable means. Nothing about where any affected execution lands is
-  // decided here; the extent each entered says.
+  // self-disable means.
   const mir::ExprId disable = block.exprs.Add(
       mir::Expr{
           .data =
