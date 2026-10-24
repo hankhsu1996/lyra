@@ -42,13 +42,12 @@ class Scope : public GcObject {
   auto operator=(Scope&&) -> Scope& = delete;
 
   // Where this scope stands: its parent, its segment, and the class it is an
-  // object of, which has to be a scope class. The first thing its constructor
-  // does, so nothing of the scope runs before it has its place.
+  // object of, which has to be a scope class. Its constructor gives it before
+  // running anything of the scope's own, so nothing of it runs placeless. The
+  // parent given here is the one the scope is attached under.
   void SetPlace(
       Scope* parent, HierarchySegment segment,
       const ObjectDefinition* definition);
-
-  [[nodiscard]] auto Parent() const -> Scope*;
 
   // The scope's structural identity at this level: the parent-side label
   // plus per-dimension indices (empty for a scalar, `{i}` for a generate-for
@@ -84,12 +83,11 @@ class Scope : public GcObject {
     return definition_;
   }
 
-  // Wires `child` into this scope's physical containment edge: sets
-  // `child.parent_` to `this` and places `child` in the attached-children
-  // relation (used by elaboration walks, dump, and ForEachChild). Called after
-  // the typed owner commits the child, so a thrown ctor leaves no half-attached
-  // scope.
-  auto AddOwnedChild(std::unique_ptr<Scope> child) -> Scope*;
+  // Takes `child` into the tree, owned by the parent its constructor placed it
+  // under, among the children the elaboration phases, a dump and a traversal
+  // descend; returns it as a borrowed handle. Called once the child is built,
+  // so a thrown constructor leaves nothing half-attached.
+  static auto Attach(std::unique_ptr<Scope> child) -> Scope*;
 
   // Whether this scope carries a source-visible SV name. An unnamed
   // begin/end (synthetic anonymous scope) is emitted with an empty

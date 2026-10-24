@@ -24,10 +24,15 @@ void Scope::SetPlace(
   definition_ = RequireScopeClass(definition);
 }
 
-auto Scope::AddOwnedChild(std::unique_ptr<Scope> child) -> Scope* {
-  child->parent_ = this;
+auto Scope::Attach(std::unique_ptr<Scope> child) -> Scope* {
+  Scope* parent = child->parent_;
+  if (parent == nullptr) {
+    throw InternalError(
+        "Scope::Attach: a scope was attached that was placed under no parent "
+        "-- please report this as a bug");
+  }
   Scope* handle = child.get();
-  attached_children_.push_back(std::move(child));
+  parent->attached_children_.push_back(std::move(child));
   return handle;
 }
 
@@ -35,10 +40,6 @@ void Scope::ForEachChild(const ChildVisitor& fn) {
   for (const auto& child : attached_children_) {
     fn(*child);
   }
-}
-
-auto Scope::Parent() const -> Scope* {
-  return parent_;
 }
 
 auto Scope::Segment() const -> const HierarchySegment& {

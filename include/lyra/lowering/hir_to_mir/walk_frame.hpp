@@ -51,13 +51,16 @@ struct ArgumentsEvaluatedEarlier {
   const WalkFrame* statement = nullptr;
 };
 
-// A class the walk can name, and the identity it was minted under. Reaching one
-// is reaching the other: a reference to a member reads its type off the
-// declaration and qualifies its target with the owner, so a walk that resolved
-// only one of the two would immediately go looking for the other.
+// A class the walk is in or can climb to, and the identity it was minted
+// under. Reaching one is reaching the other: a reference to a member reads its
+// type off the declaration and qualifies its target with the owner, so a walk
+// that resolved only one of the two would immediately go looking for the
+// other. `enclosing` is the member an object of a generate block's class keeps
+// the scope that built it in, which is how a walk climbs out of it.
 struct EnclosingClass {
-  const mir::Class* cls = nullptr;
+  mir::Class* cls = nullptr;
   mir::ClassId id{};
+  std::optional<mir::FieldId> enclosing;
 };
 
 // How a body reaches the instance of the structural scope its outward
@@ -89,13 +92,9 @@ using StructuralBase = std::variant<
 // Singly-linked node carrying a class's parent chain so a leaf reference
 // can read the declared type of a member at `hops > 0`. Each node lives on
 // the stack frame of the construction walk that pushed it; the chain extends
-// one node per class opened during traversal. This is the construction-side
-// half of the shared walk position: the rendering fold's read-only
-// `ScopeView` resolves the same (hops, var) reference by climbing its own
-// parent link, so both reach the same `mir::FieldDecl`.
+// one node per class opened during traversal.
 struct ScopeChainNode {
-  const mir::Class* cls = nullptr;
-  mir::ClassId cls_id{};
+  EnclosingClass outer;
   const ScopeChainNode* parent = nullptr;
 };
 
@@ -119,17 +118,14 @@ enum class ReadsAsOf : std::uint8_t {
 // deferred-check site -- is appended to the unit directly, since it has no
 // place on a per-recursion frame.
 struct WalkFrame {
-  // The current class write target. Set when a class-constructing task builds
-  // its class and entered via `WithClass`. Null outside class handlers.
-  mir::Class* current_class = nullptr;
+  // The class write target: the class a class-constructing task builds,
+  // entered via `WithClass`, with its identity, so an owner-qualified field or
+  // method target names it without a reverse lookup. Its class is null
+  // outside class handlers.
+  EnclosingClass current_class;
 
-  // Registry identity of `current_class`. Set together with `current_class` by
-  // `WithClass`; carried alongside so an owner-qualified field or method
-  // target names the enclosing class arena without a reverse lookup.
-  mir::ClassId current_class_id{};
-
-  // Outer classes reached by climbing `parent` links, in the same order as the
-  // lowerer `parent_` chain. Populated by `WithClass` when the construction
+  // The classes around the current one, innermost first. Populated by
+  // `WithClass` when the construction
   // walk opens a new class. Read via `EnclosingClassAtHops` to resolve a member
   // reference at `hops > 0`. This is the object-graph axis, distinct from the
   // lexical binding axis carried by `bindings`.
@@ -235,19 +231,18 @@ struct WalkFrame {
         structural_base);
   }
 
-  // Pushes `cls` as the current class and links the previous `current_class`
-  // into the outer chain through `chain_node`, which the caller stack-allocates
-  // so its lifetime spans the descent.
+  // Pushes `cls` as the current class and links the previous one into the
+  // outer chain through `chain_node`, which the caller stack-allocates so its
+  // lifetime spans the descent.
   [[nodiscard]] auto WithClass(
-      mir::Class* cls, mir::ClassId cls_id, ScopeChainNode& chain_node) const
+      const EnclosingClass& cls, ScopeChainNode& chain_node) const
       -> WalkFrame {
-    chain_node.cls = current_class;
-    chain_node.cls_id = current_class_id;
+    chain_node.outer = current_class;
     chain_node.parent = outer_classes;
     WalkFrame next = *this;
     next.current_class = cls;
-    next.current_class_id = cls_id;
-    next.outer_classes = current_class != nullptr ? &chain_node : outer_classes;
+    next.outer_classes =
+        current_class.cls != nullptr ? &chain_node : outer_classes;
     return next;
   }
 
@@ -267,34 +262,36 @@ struct WalkFrame {
       -> EnclosingClass {
     const mir::EnclosingHops hops{raw_hops.value + StructuralBaseHops()};
     if (hops.value == 0) {
-      if (current_class == nullptr) {
+      if (current_class.cls == nullptr) {
         throw InternalError(
             "WalkFrame::EnclosingClassAtHops: no current class");
       }
-      return EnclosingClass{.cls = current_class, .id = current_class_id};
+      return current_class;
     }
     const ScopeChainNode* node = outer_classes;
     for (std::uint32_t step = 1; step < hops.value && node != nullptr; ++step) {
       node = node->parent;
     }
-    if (node == nullptr || node->cls == nullptr) {
+    if (node == nullptr || node->outer.cls == nullptr) {
       throw InternalError(
           "WalkFrame::EnclosingClassAtHops: hops exceed chain depth");
     }
-    return EnclosingClass{.cls = node->cls, .id = node->cls_id};
+    return node->outer;
   }
 
-  // How many steps out the class its unit is rooted at sits. The outer chain
-  // starts empty and grows one node per class the walk opens, so at the unit's
-  // own root it is empty and its depth elsewhere is the distance to it -- which
-  // is what a body reaching a member of its unit instance names.
+  // How many steps out of the scope this body counts from the class its unit
+  // is rooted at sits, which is what a body reaching a member of its unit
+  // instance names. The outer chain starts empty and grows one node per class
+  // the walk opens, so its depth is the distance from the current class; a
+  // body of a class an instance declares counts from that instance, which is
+  // that many steps nearer.
   [[nodiscard]] auto HopsToUnitRoot() const -> mir::EnclosingHops {
     std::uint32_t hops = 0;
     for (const ScopeChainNode* node = outer_classes; node != nullptr;
          node = node->parent) {
       ++hops;
     }
-    return mir::EnclosingHops{hops};
+    return mir::EnclosingHops{hops - StructuralBaseHops()};
   }
 
   [[nodiscard]] auto WithBodyCanWait(bool can_wait) const -> WalkFrame {

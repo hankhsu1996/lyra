@@ -3192,9 +3192,16 @@ source, or not yet tried.
       only thing to refuse it, and the execution backend hands the object to the library as whatever
       the entry expects, which reads its storage as that class's. A `%m` in a class method once
       named the object rather than a scope, and read a string out of the object's fields on the
-      execution backend while the C++ build of the same program failed to compile. Target: a method
-      entry states the library class it acts on, as MIR states a member's owner, and the verifier
-      refuses a call whose receiver is not of that class or one derived from it. Not blocked.
+      execution backend while the C++ build of the same program failed to compile. Its operands are
+      unchecked for the same reason: an entry states the kinds of operand it takes rather than their
+      types, so a pointer handed at a class it was not converted to passes too, while the verifier
+      holds a call of a body, a constructor or an address of a known prototype to the types it
+      takes. A constructor of a class another unit declares, entered as a base, is not in view and
+      is unchecked as well. Target: a method entry states the library class it acts on, as MIR
+      states a member's owner, and every entry the types of its operands; the verifier refuses a
+      call whose receiver is not of that class or one derived from it, and one handing an operand of
+      another type. Not blocked.
+
 - [ ] R253 -- Where a value a block expression declares ends is stated two ways. The lowering to the
       machine model ends what a block expression's steps declare with the full-expression the block
       expression stands in; the C++ backend writes a block expression as a lambda called where it

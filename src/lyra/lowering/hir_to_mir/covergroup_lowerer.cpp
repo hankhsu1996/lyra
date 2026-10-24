@@ -2167,7 +2167,8 @@ auto CovergroupLowerer::PopulateBodies(
   const ClassShape& shape = unit_lowerer.GetClassShape(class_id_);
   mir::Class cls = shape.OpenClass();
   ScopeChainNode link{};
-  WalkFrame owner = declaring_frame.WithClass(&cls, class_id_, link);
+  WalkFrame owner = declaring_frame.WithClass(
+      {.cls = &cls, .id = class_id_, .enclosing = std::nullopt}, link);
   owner =
       shape.declaring_instance.has_value()
           ? owner.WithStructuralBase(

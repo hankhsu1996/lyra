@@ -542,6 +542,13 @@ class StructuralScopeLowerer {
   base::Translation<hir::ConcurrentAssertionId, StaticVarBindings>
       assertion_static_bindings_;
   mir::ClassId class_id_{};
+  // The member this scope's object keeps the object of the scope around it in,
+  // for a block of a generate construct: the scope around it builds it and
+  // hands it itself, which never changes after, as an inner class keeps its
+  // enclosing instance. So a name declared out there is reached by reading this
+  // member, once per scope climbed. Absent for a unit's own scope, which no
+  // scope of its unit encloses.
+  std::optional<mir::FieldId> enclosing_;
   // Each is a constructor parameter after the prefix every scope takes, and is
   // filled from it before anything the construction does can read it.
   std::vector<ConstructionValue> construction_values_;

@@ -891,11 +891,12 @@ enum class BuiltinFn : std::uint16_t {
   // definition of the class the object is of. The part itself was built
   // without them when the object was created.
   kSetScopePlace,
-  // A constructor hands a freshly-built child to its parent to own: this
-  // consumes the built child (a unique pointer) and returns the parent-owned
-  // handle -- the child's own `Segment()` supplies the LRM display form, so the
-  // parent never re-states it.
-  kAddOwnedChild,
+  // A constructor hands a freshly-built child to the tree: this consumes the
+  // built child (a unique pointer), files it under the parent the child was
+  // given when it was built, and returns the handle the parent owns -- the
+  // child's own `Segment()` supplies the LRM display form, so the parent never
+  // re-states it.
+  kAttachScope,
   // How the instance at one instantiation is made, read off the construction
   // table the object being built was handed: the entry making it, as a code
   // address whose prototype the construction restores, and the table it is
@@ -1397,11 +1398,6 @@ enum class BuiltinFn : std::uint16_t {
   kEnumerationName,
   kEnumerationNext,
   kEnumerationPrev,
-  // Typed parent navigation: `scope->Parent()` returns the enclosing scope as
-  // the runtime `Scope` base pointer. An intra-unit upward member access casts
-  // the result to the enclosing class and reads the member directly, the unit
-  // owning the enclosing class's layout.
-  kParent,
   // LRM 8.11 `this`: the handle referring to the object the running subroutine
   // was invoked on. A body reaches its own object through a borrowed pointer,
   // which serves every member access; the source asks for a handle instead when

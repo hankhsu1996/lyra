@@ -79,18 +79,33 @@ namespace lyra::lowering::hir_to_mir {
 namespace {
 
 // Adds what places every scope -- its parent and its hierarchy segment -- as
-// ordinary ctor params, in the order its constructor's first statement hands
-// them on: to its base's constructor, or, for a class extending the root of
-// the design hierarchy, to the scope's own part. That statement hands on the
+// ordinary ctor params, in the order its constructor's base call hands them
+// on: to its base's constructor, or, for a class extending the root of the
+// design hierarchy, to the scope's own part. That call hands on the
 // definition of the class the instance is of after these, since a class names
 // its own definition and what a unit published of its object is handed it by
-// the class realizing it.
+// the class realizing it. The parent is taken as `parent`: a block of a
+// generate construct takes the scope building it as that scope's class, which
+// is what the builder hands, and anything else the base every scope extends.
 void AttachRuntimeScopeCtorPrefix(
-    const mir::CompilationUnit& unit, ClassShape& shape) {
-  const auto& builtins = unit.builtins;
-  shape.ctor_prefix_params.Add(mir::ParamDecl{.type = builtins.scope_ptr});
+    const mir::CompilationUnit& unit, ClassShape& shape, mir::TypeId parent) {
+  shape.ctor_prefix_params.Add(mir::ParamDecl{.type = parent});
   shape.ctor_prefix_params.Add(
-      mir::ParamDecl{.type = builtins.hierarchy_segment});
+      mir::ParamDecl{.type = unit.builtins.hierarchy_segment});
+}
+
+// Where the parent stands among the prefix a scope's constructor takes.
+constexpr mir::ParamId kParentPrefix{0};
+
+// The borrowed pointer a body of a class this unit declares names its object
+// by.
+auto BorrowedPointerTo(mir::CompilationUnit& unit, mir::ClassId cls)
+    -> mir::TypeId {
+  const mir::TypeId object = unit.types.Intern(
+      mir::Type{mir::ObjectType{.of = mir::IntraUnitClassRef{cls}}});
+  return unit.types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = object, .ownership = mir::PointerOwnership::kBorrowed}});
 }
 
 // A parameter an instantiation may leave to its default is handed as whether a
@@ -337,11 +352,6 @@ auto ReadInstantiation(
           .type = type});
 }
 
-// Where a unit's object entry takes the first parameter it is handed: after
-// where the object hangs, its segment and the construction table it is built
-// with.
-constexpr std::size_t kFirstHandedEntryParam = 3;
-
 // The type of a unit's object entry: where the object hangs, its segment and
 // the construction table it is built with, then each parameter it is handed,
 // assigned or left to its default, at the type `handed` gives it, answering an
@@ -421,28 +431,18 @@ auto BuildOwnedInstance(
   // asked for rather than made here. Which body is made at the instantiation
   // is decided where the program is assembled, so the entry is read off the
   // table and converted back to the prototype its unit declares it with.
+  // The entry takes its parent as the base every scope extends, being
+  // compiled by a unit that knows no class of this one.
   const mir::TypeId entry_type =
       ObjectEntryType(unit_lowerer, handed, owning_pointer_type);
-  const auto& entry_params =
-      unit.types.Get(entry_type).Get<mir::MachineFunctionType>().params;
-  if (entry_params.size() != kFirstHandedEntryParam + arguments.size()) {
-    throw InternalError(
-        "hir_to_mir: an instance is built with a different number of values "
-        "than its object entry takes -- please report this as a bug");
-  }
   const mir::TypeId table_type = mir::ConstructionTablePointer(unit.types);
   std::vector<mir::ExprId> entry_arguments{
-      block.AsValue(unit.types, parent_self), segment_id,
+      ObjectAs(block, parent_self, builtins.scope_ptr), segment_id,
       ReadInstantiation(
           unit, frame, support::BuiltinFn::kInstantiationTable, instantiation,
           table_type)};
-  for (std::size_t i = 0; i < arguments.size(); ++i) {
-    if (arguments[i].type != entry_params[kFirstHandedEntryParam + i]) {
-      throw InternalError(
-          "hir_to_mir: an instance is handed a value at a type other than "
-          "the one its object entry takes -- please report this as a bug");
-    }
-    entry_arguments.push_back(block.exprs.Add(std::move(arguments[i])));
+  for (mir::Expr& argument : arguments) {
+    entry_arguments.push_back(block.exprs.Add(std::move(argument)));
   }
   const mir::ExprId erased = ReadInstantiation(
       unit, frame, support::BuiltinFn::kInstantiationEntry, instantiation,
@@ -457,18 +457,15 @@ auto BuildOwnedInstance(
                   .arguments = std::move(entry_arguments)},
           .type = owning_pointer_type});
 
-  // The runtime tree owns the instance (AddOwnedChild consumes the freshly
-  // built owning pointer) and hands back a borrowed handle, which is what
-  // the parent keeps and what a layout-visible route step projects through.
+  // The runtime tree owns the instance, under the parent it was built with,
+  // and hands back a borrowed handle, which is what the parent keeps and what
+  // a layout-visible route step projects through.
   const mir::ExprId add_id = block.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kAddOwnedChild,
-                          .receiver = BuildObjectDeref(
-                              unit_lowerer.Unit(), block, parent_self)},
+                      mir::Direct{.target = support::BuiltinFn::kAttachScope},
                   .arguments = {ctor_call_id}},
           .type = builtins.scope_ptr});
   return ObjectAs(block, add_id, borrowed_pointer_type);
@@ -1150,7 +1147,7 @@ auto BuildRouteValue(
 void FillScopeSlot(
     const mir::CompilationUnit& unit, const WalkFrame& frame, mir::FieldId slot,
     mir::ExprId value) {
-  mir::Class& mir_class = *frame.current_class;
+  mir::Class& mir_class = *frame.current_class.cls;
   mir::Block& block = *frame.current_block;
   const mir::TypeId slot_type = mir_class.fields.Get(slot).type;
   const mir::ExprId self = block.exprs.Add(MakeSelfRefExpr(frame));
@@ -1158,7 +1155,7 @@ void FillScopeSlot(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(unit, block, self),
           mir::ClassFieldTarget{
-              .owner = mir::IntraUnitClassRef{frame.current_class_id},
+              .owner = mir::IntraUnitClassRef{frame.current_class.id},
               .slot = slot},
           slot_type));
   const mir::ExprId assign =
@@ -1228,7 +1225,7 @@ auto StartedBody(
                       mir::Direct{
                           .target =
                               mir::CallableTarget{
-                                  .owner = frame.current_class_id,
+                                  .owner = frame.current_class.id,
                                   .slot = body},
                           .receiver = body_self},
                   .arguments = {}},
@@ -1580,7 +1577,7 @@ auto BindInputPort(
   UnitLowerer& unit_lowerer = lowerer.Owner();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
-  mir::Class& mir_class = *frame.current_class;
+  mir::Class& mir_class = *frame.current_class.cls;
   mir::Block& resolve_block = *resolve_frame.current_block;
 
   const hir::DataCell member = hir::CellOf(route.leaf);
@@ -1622,7 +1619,7 @@ auto BindInputPort(
             mir::MakeFieldAccessExpr(
                 BuildObjectDeref(unit, block, self),
                 mir::ClassFieldTarget{
-                    .owner = mir::IntraUnitClassRef{in.current_class_id},
+                    .owner = mir::IntraUnitClassRef{in.current_class.id},
                     .slot = kept},
                 cell_type)),
         .descent = {}};
@@ -1677,7 +1674,7 @@ auto BindInputPort(
 auto InstallPortConnections(
     StructuralScopeLowerer& lowerer, WalkFrame frame, WalkFrame resolve_frame,
     WalkFrame init_frame, WalkFrame activate_frame) -> diag::Result<void> {
-  mir::Class& mir_class = *frame.current_class;
+  mir::Class& mir_class = *frame.current_class.cls;
   mir::Block& resolve_block = *resolve_frame.current_block;
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   UnitLowerer& unit_lowerer = lowerer.Owner();
@@ -1830,7 +1827,7 @@ auto BuildOwnedChildHandle(
     std::vector<mir::ExprId> numbers, mir::TypeId handle_type,
     std::vector<mir::Expr> arguments) -> mir::ExprId {
   mir::Block& arm_block = *arm_frame.current_block;
-  const mir::Class& owner_class = *arm_frame.current_class;
+  const mir::Class& owner_class = *arm_frame.current_class.cls;
   ValidateOwnedChildConstruction(owner_class, child_scope_id);
 
   const auto& builtins = unit_lowerer.Unit().builtins;
@@ -1848,7 +1845,7 @@ auto BuildOwnedChildHandle(
         mir::MakeFieldAccessExpr(
             BuildObjectDeref(unit_lowerer.Unit(), arm_block, self_read()),
             mir::ClassFieldTarget{
-                .owner = mir::IntraUnitClassRef{arm_frame.current_class_id},
+                .owner = mir::IntraUnitClassRef{arm_frame.current_class.id},
                 .slot = *runtime_parent_handle},
             owner_class.fields.Get(*runtime_parent_handle).type));
   };
@@ -1859,10 +1856,15 @@ auto BuildOwnedChildHandle(
   const mir::ExprId segment_id = BuildHierarchySegment(
       unit_lowerer.Unit(), arm_block, runtime_label, std::move(numbers));
 
+  // The parent is handed as the child takes it: a block keeps the scope
+  // building it as that scope's class, and anything else takes the base every
+  // scope extends.
+  const ClassShape& child_shape = unit_lowerer.GetClassShape(child_scope_id);
   std::vector<mir::ExprId> ctor_call_args;
   ctor_call_args.reserve(2 + arguments.size());
-  ctor_call_args.push_back(
-      arm_block.AsValue(unit_lowerer.Unit().types, parent_read()));
+  ctor_call_args.push_back(ObjectAs(
+      arm_block, parent_read(),
+      child_shape.ctor_prefix_params.Get(kParentPrefix).type));
   ctor_call_args.push_back(segment_id);
   for (mir::Expr& value : arguments) {
     ctor_call_args.push_back(arm_block.exprs.Add(std::move(value)));
@@ -1876,20 +1878,17 @@ auto BuildOwnedChildHandle(
                   std::move(ctor_call_args))),
           child_ptr_type));
 
-  // The runtime tree owns the child (AddOwnedChild consumes the freshly built
-  // unique pointer); ownership transfers after the child's constructor commits,
-  // so a thrown subobject ctor leaves no half-attached scope. The borrowed
-  // pointer it hands back is downcast and stored in the parent's handle
-  // member, which is what a typed intra-unit route navigates through.
+  // The runtime tree owns the child, under the parent it was built with;
+  // ownership transfers after the child's constructor commits, so a thrown
+  // subobject ctor leaves no half-attached scope. The borrowed pointer it hands
+  // back is downcast and stored in the parent's handle member, which is what a
+  // typed intra-unit route navigates through.
   const mir::ExprId add_call_id = arm_block.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kAddOwnedChild,
-                          .receiver = BuildObjectDeref(
-                              unit_lowerer.Unit(), arm_block, parent_read())},
+                      mir::Direct{.target = support::BuiltinFn::kAttachScope},
                   .arguments = {ctor_call_id}},
           .type = builtins.scope_ptr});
   return ObjectAs(arm_block, add_call_id, handle_type);
@@ -2331,8 +2330,8 @@ auto DescribeDumped(
         mir::MakeCallExpr(
             mir::Direct{.target = entry, .receiver = member},
             {runtime(), DumpEntryAddress(
-                            unit, block, frame.current_class_id,
-                            *frame.current_class, declaration)},
+                            unit, block, frame.current_class.id,
+                            *frame.current_class.cls, declaration)},
             unit.builtins.void_type));
   }
   for (const hir::DumpedBlock& inside : dumped.blocks) {
@@ -2340,8 +2339,8 @@ auto DescribeDumped(
         mir::MakeCallExpr(
             mir::Direct{.target = support::BuiltinFn::kBeginDescribedBlock},
             {runtime(), DumpBlockAddress(
-                            unit, block, frame.current_class_id,
-                            *frame.current_class, inside)},
+                            unit, block, frame.current_class.id,
+                            *frame.current_class.cls, inside)},
             unit.builtins.void_type));
     auto inner = DescribeDumped(lowerer, frame, inside.members);
     if (!inner) return std::unexpected(std::move(inner.error()));
@@ -2488,12 +2487,8 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   // class's, and this class, which extends it with what the lowering adds,
   // answers to none.
   class_id_ = unit_lowerer.Unit().DeclareClass();
-  const mir::TypeId self_object_type = unit_lowerer.Unit().types.Intern(
-      mir::Type{mir::ObjectType{.of = mir::IntraUnitClassRef{class_id_}}});
-  const mir::TypeId self_pointer_type = unit_lowerer.Unit().types.Intern(
-      mir::Type{mir::PointerType{
-          .pointee = self_object_type,
-          .ownership = mir::PointerOwnership::kBorrowed}});
+  const mir::TypeId self_pointer_type =
+      BorrowedPointerTo(unit_lowerer.Unit(), class_id_);
 
   ClassShape shape;
   // The scope stands in the tree through what its unit published of it.
@@ -2506,7 +2501,18 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   shape.dumped_as = parent_ == nullptr ? support::DumpScopeKind::kModule
                                        : support::DumpScopeKind::kBegin;
 
-  AttachRuntimeScopeCtorPrefix(unit_lowerer.Unit(), shape);
+  // A block of a generate construct is built by the scope around it, which
+  // hands itself as its own class and is kept as that. A unit's own scope is
+  // built by an instance of another unit, or by nothing, and keeps nothing.
+  if (parent_ == nullptr) {
+    AttachRuntimeScopeCtorPrefix(
+        unit_lowerer.Unit(), shape, unit_lowerer.Unit().builtins.scope_ptr);
+  } else {
+    const mir::TypeId builder =
+        BorrowedPointerTo(unit_lowerer.Unit(), parent_->ClassId());
+    AttachRuntimeScopeCtorPrefix(unit_lowerer.Unit(), shape, builder);
+    enclosing_ = shape.AddField(builder);
+  }
   // What construction supplies is what distinguishes one built scope from
   // another built from the same declarations.
   construction_values_ = ConstructionValuesOf(unit_lowerer, hir_scope);
@@ -2762,16 +2768,15 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     ClassShape node_shape;
     node_shape.base = mir::ClassRef{mir::ObjectTreeRootRef{}};
     node_shape.is_final = true;
-    node_shape.self_pointer_type = unit_lowerer.Unit().types.Intern(
-        mir::Type{mir::PointerType{
-            .pointee = unit_lowerer.Unit().types.Intern(
-                mir::Type{
-                    mir::ObjectType{.of = mir::IntraUnitClassRef{node_class}}}),
-            .ownership = mir::PointerOwnership::kBorrowed}});
+    node_shape.self_pointer_type =
+        BorrowedPointerTo(unit_lowerer.Unit(), node_class);
     node_shape.time_resolution = hir_scope.time_resolution;
     node_shape.execution = unit_lowerer.ScopeExecution();
     node_shape.dumped_as = support::DumpScopeKind::kBegin;
-    AttachRuntimeScopeCtorPrefix(unit_lowerer.Unit(), node_shape);
+    // A node hangs under the scope or under another node.
+    AttachRuntimeScopeCtorPrefix(
+        unit_lowerer.Unit(), node_shape,
+        unit_lowerer.Unit().builtins.scope_ptr);
     unit_lowerer.DefineClassShape(node_class, std::move(node_shape));
     shape.contained.push_back(node_class);
 
@@ -2785,13 +2790,8 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
         .name_node =
             ScopeNameNode{
                 .class_id = node_class,
-                .borrowed_handle =
-                    shape.AddField(unit_lowerer.Unit().types.Intern(
-                        mir::Type{mir::PointerType{
-                            .pointee = unit_lowerer.Unit().types.Intern(
-                                mir::Type{mir::ObjectType{
-                                    .of = mir::IntraUnitClassRef{node_class}}}),
-                            .ownership = mir::PointerOwnership::kBorrowed}}))},
+                .borrowed_handle = shape.AddField(
+                    BorrowedPointerTo(unit_lowerer.Unit(), node_class))},
         .disable_target = std::nullopt,
         .block_events = BlockEventsOf(block_events, scope_id)};
 
@@ -2914,11 +2914,12 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
 
 namespace {
 
-// Opens a scope class's constructor with the statement that comes before
-// anything else of the scope runs: constructing its base on the object -- or,
-// where the class extends the root of the design hierarchy, giving the part
-// every scope shares its place -- with each prefix forwarded as a consuming
-// use, then the trailing ones. `ctor_code`'s body holds nothing yet.
+// Appends the construction of a scope class's base on the object -- or, where
+// the class extends the root of the design hierarchy, giving the part every
+// scope shares its place -- which nothing of the scope's own runs before but
+// the store of the scope that built it. The parent is handed on as the base
+// every scope extends, whatever class this scope takes it as, each other
+// prefix is forwarded as a consuming use, then the trailing ones.
 void ConstructBaseFirst(
     mir::CompilationUnit& unit, const mir::ClassRef& base,
     mir::CallableCode& ctor_code, mir::LocalId self,
@@ -2927,7 +2928,12 @@ void ConstructBaseFirst(
   mir::Block& body = ctor_code.Body();
   std::vector<mir::ExprId> base_args;
   base_args.reserve(prefix_local_ids.size() + base_trailing_args.size());
-  for (const mir::LocalId id : prefix_local_ids) {
+  const mir::LocalId parent = prefix_local_ids[kParentPrefix.value];
+  base_args.push_back(ObjectAs(
+      body, body.ReadLocal(parent, ctor_code.locals.Get(parent).type),
+      unit.builtins.scope_ptr));
+  for (const mir::LocalId id :
+       prefix_local_ids.subspan(kParentPrefix.value + 1)) {
     const mir::TypeId ty = ctor_code.locals.Get(id).type;
     const mir::ExprId local_ref = body.LocalPlace(id, ty);
     if (unit.types.Get(ty).IsAliasHandle()) {
@@ -3012,6 +3018,27 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   const std::array<mir::ExprId, 1> definition{BuildDefinitionRead(
       unit_lowerer.Unit(), ctor_code.Body(),
       mir::IntraUnitClassRef{.class_id = class_id_})};
+  // Every body of the scope is the instance its outward references count from.
+  const WalkFrame scope_frame =
+      parent_frame
+          .WithClass(
+              {.cls = &mir_class, .id = class_id_, .enclosing = enclosing_},
+              outer_scope_link)
+          .WithStructuralBase(ScopeIsSelf{})
+          .WithScopeName(unit_lowerer.Hir().fixed_name);
+  mir::Block& ctor_block = ctor_code.Body();
+  const WalkFrame ctor_frame =
+      scope_frame.WithBlock(&ctor_block).WithBindings(&ctor_bindings);
+  // A block keeps the scope that built it before its base is constructed, as
+  // javac stores an inner class's enclosing instance ahead of its superclass
+  // constructor call, so nothing that runs on the object can find the link
+  // unset.
+  if (enclosing_.has_value()) {
+    const mir::LocalId builder = ctor_prefix_local_ids[kParentPrefix.value];
+    FillScopeSlot(
+        unit_lowerer.Unit(), ctor_frame, *enclosing_,
+        ctor_block.ReadLocal(builder, ctor_code.locals.Get(builder).type));
+  }
   ConstructBaseFirst(
       unit_lowerer.Unit(), mir_class.base.value(), ctor_code, self_id,
       ctor_prefix_local_ids, definition);
@@ -3036,14 +3063,6 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     supplied.push_back(local);
     handed_for.emplace(value.declared, local);
   }
-  // Every body of the scope is the instance its outward references count from.
-  const WalkFrame scope_frame =
-      parent_frame.WithClass(&mir_class, class_id_, outer_scope_link)
-          .WithStructuralBase(ScopeIsSelf{})
-          .WithScopeName(unit_lowerer.Hir().fixed_name);
-  mir::Block& ctor_block = ctor_code.Body();
-  const WalkFrame ctor_frame =
-      scope_frame.WithBlock(&ctor_block).WithBindings(&ctor_bindings);
 
   mir::CallableCode initialize_code = mir::CallableCode::Defined();
   CallableBindings init_bindings(unit_lowerer.Unit(), initialize_code);

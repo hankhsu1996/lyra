@@ -36,6 +36,7 @@ loop_sizing_by_index:
   - mir.class constants
   - mir.classes
   - mir.constructors
+  - mir.fields
   - mir.types
 scan_outputs:
   - mir.types

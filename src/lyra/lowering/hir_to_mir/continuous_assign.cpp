@@ -70,7 +70,7 @@ auto FieldOfSelf(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(unit, block, self),
           mir::ClassFieldTarget{
-              .owner = mir::IntraUnitClassRef{frame.current_class_id},
+              .owner = mir::IntraUnitClassRef{frame.current_class.id},
               .slot = field.field},
           field.type));
 }
@@ -348,7 +348,8 @@ auto LowerContinuousDrive(
     std::span<const hir::SensitivityEntry> sensitivity)
     -> diag::Result<mir::CallableDecl> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  const mir::TypeId self_ptr_type = ctor_frame.current_class->self_pointer_type;
+  const mir::TypeId self_ptr_type =
+      ctor_frame.current_class.cls->self_pointer_type;
 
   // What each place of the target is driven through: a net accepts no store,
   // only a drive, so each place that is one acquires a driver in Resolve, held
@@ -379,7 +380,7 @@ auto LowerContinuousDrive(
       }
       const mir::ExprId cell = *place;
       const ClassField driver = AddField(
-          *resolve_frame.current_class,
+          *resolve_frame.current_class.cls,
           unit.types.Intern(mir::Type{mir::DriverType{.value = net->value}}));
       const mir::ExprId strength =
           BuildStrengthOperand(unit, resolve_block, drive_strength);
@@ -502,7 +503,7 @@ auto LowerContinuousDrive(
     mir::Block& entry = code.Body();
     auto first = evaluate(entry_frame);
     if (!first) return std::unexpected(std::move(first.error()));
-    mir::Class& mir_class = *ctor_frame.current_class;
+    mir::Class& mir_class = *ctor_frame.current_class.cls;
     const ClassField scheduled =
         AddField(mir_class, entry.exprs.Get(*first).type);
     const ClassField timer = AddField(

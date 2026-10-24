@@ -224,7 +224,7 @@ auto LowerActionArm(
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(unit, code);
   const mir::LocalId self_id = bindings.Declare(
-      ReceiverOrigin{}, parent.current_class->self_pointer_type);
+      ReceiverOrigin{}, parent.current_class.cls->self_pointer_type);
   code.params = {self_id};
   code.result_type = unit.builtins.coroutine_void;
 
@@ -770,7 +770,7 @@ auto LowerAdvance(
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(unit, code);
   const mir::LocalId self_id = bindings.Declare(
-      ReceiverOrigin{}, parent.current_class->self_pointer_type);
+      ReceiverOrigin{}, parent.current_class.cls->self_pointer_type);
   code.params = {self_id};
   code.result_type = void_type;
 
@@ -826,7 +826,7 @@ auto LowerDisableWatcher(
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(unit, code);
   const mir::LocalId self_id = bindings.Declare(
-      ReceiverOrigin{}, ctor_frame.current_class->self_pointer_type);
+      ReceiverOrigin{}, ctor_frame.current_class.cls->self_pointer_type);
 
   mir::Block body_block;
   const WalkFrame body_frame =
@@ -880,7 +880,8 @@ auto LowerProcess(
     mir::CallableId advance) -> diag::Result<mir::CallableDecl> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const mir::TypeId void_type = unit.builtins.void_type;
-  const mir::TypeId self_ptr_type = ctor_frame.current_class->self_pointer_type;
+  const mir::TypeId self_ptr_type =
+      ctor_frame.current_class.cls->self_pointer_type;
 
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(unit, code);
@@ -909,7 +910,7 @@ auto LowerProcess(
                               mir::Direct{
                                   .target =
                                       mir::CallableTarget{
-                                          .owner = body_frame.current_class_id,
+                                          .owner = body_frame.current_class.id,
                                           .slot = advance},
                                   .receiver = BuildObjectDeref(
                                       unit, closure.Body(),
@@ -964,9 +965,9 @@ auto BuildEvaluationAttemptsExpr(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(lowerer.Owner().Unit(), block, self),
           mir::ClassFieldTarget{
-              .owner = mir::IntraUnitClassRef{frame.current_class_id},
+              .owner = mir::IntraUnitClassRef{frame.current_class.id},
               .slot = field},
-          frame.current_class->fields.Get(field).type));
+          frame.current_class.cls->fields.Get(field).type));
 }
 
 auto LowerConcurrentAssertion(

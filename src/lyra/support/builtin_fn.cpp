@@ -1429,9 +1429,11 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {.name = "loop_blocks_at", .declaration = Method{"At"}};
     case BuiltinFn::kSetScopePlace:
       return {.name = "set_scope_place", .declaration = Method{"SetPlace"}};
-    case BuiltinFn::kAddOwnedChild:
+    case BuiltinFn::kAttachScope:
       return {
-          .name = "add_owned_child", .declaration = Method{"AddOwnedChild"}};
+          .name = "attach_scope",
+          .declaration = FreeFunction{
+              .scope = "lyra::runtime::Scope", .identifier = "Attach"}};
     case BuiltinFn::kInstantiationEntry:
       return {
           .name = "instantiation_entry",
@@ -2234,8 +2236,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "enumeration_prev",
           .declaration = Method{"Prev"},
           .operands = {kMachine, kBits}};
-    case BuiltinFn::kParent:
-      return {.name = "parent", .declaration = Method{"Parent"}};
     case BuiltinFn::kSelfHandle:
       return {
           .name = "self_handle", .declaration = RuntimeFunction("SelfHandle")};

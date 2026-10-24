@@ -10,10 +10,10 @@ library's to build and end.
 ## Context
 
 A design unit's construct writes into its own members. A scalar submodule instance is attached to
-the runtime tree (`AddOwnedChild`) and, additionally, a borrowed handle to it is stored in a member
-of the parent -- the layout-visible head a cross-unit reference projects
-(`self -> borrowed handle -> ...`). This store is part of every construct that instantiates a scalar
-submodule, including the synthesized `$root` unit constructing the top-level units.
+the runtime tree and, additionally, a borrowed handle to it is stored in a member of the parent --
+the layout-visible head a cross-unit reference projects (`self -> borrowed handle -> ...`). This
+store is part of every construct that instantiates a scalar submodule, including the synthesized
+`$root` unit constructing the top-level units.
 
 The C++ backend realizes a member as a native C++ field on its instance subclass; the store is an
 ordinary field assignment the C++ compiler lays out. The execution backend has no such subclass. It

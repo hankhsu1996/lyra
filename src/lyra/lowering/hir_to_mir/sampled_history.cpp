@@ -92,9 +92,9 @@ auto BuildSampledHistoryExpr(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(lowerer.Owner().Unit(), block, self),
           mir::ClassFieldTarget{
-              .owner = mir::IntraUnitClassRef{frame.current_class_id},
+              .owner = mir::IntraUnitClassRef{frame.current_class.id},
               .slot = field},
-          frame.current_class->fields.Get(field).type));
+          frame.current_class.cls->fields.Get(field).type));
 }
 
 auto LowerSampledHistorySampler(
@@ -103,7 +103,8 @@ auto LowerSampledHistorySampler(
     -> diag::Result<mir::CallableDecl> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
-  const mir::TypeId self_ptr_type = ctor_frame.current_class->self_pointer_type;
+  const mir::TypeId self_ptr_type =
+      ctor_frame.current_class.cls->self_pointer_type;
   const mir::TypeId void_type = unit.builtins.void_type;
 
   mir::CallableCode code = mir::CallableCode::Defined();

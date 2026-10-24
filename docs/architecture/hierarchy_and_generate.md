@@ -39,7 +39,11 @@ shared by all consumers: external references, child routing, and construction.
    deterministic traversal. No second list of child pointers is maintained in parallel, and the
    parent never restates a child's identity that the child already carries. A hierarchical name
    reaches a child through the typed member or the generate entry that holds it, never by searching
-   the adjacency list for its name.
+   the adjacency list for its name. Upward it is the same pair: a generate block keeps the scope
+   that built it in a typed member of its own class, and a name declared there is reached through
+   that member, while the base scope's generic parent serves what the runtime answers by walking the
+   tree -- a scope's name, and where an upward name searched by class starts (LRM 23.8) -- and no
+   name within one unit.
 5. The same compilation unit compiled once serves every instance of that unit. Hierarchy does not
    fork the unit's compile-time artifacts.
 6. A parameter value read only as a value is a constructor input: it changes how many blocks a loop
@@ -191,9 +195,10 @@ flowchart TB
 Four things the picture is for.
 
 **There is one tree and every kind of node is in it.** A generate scope is not a second topology
-laid over the instances; it is a node beside them, with children of its own. Nothing anywhere holds
-a generate-specific parent relation, which is what invariant 1 means by generate having no identity
-system of its own.
+laid over the instances; it is a node beside them, with children of its own. A block's link to the
+scope that built it is that same edge of that same tree, kept typed, so nothing holds a parent
+relation of generate's own, which is what invariant 1 means by generate having no identity system of
+its own.
 
 **An index is part of a node's own identity, not a separate structure.** `g[0]` and `bank[0]` carry
 theirs the same way, so an instance array and a generate loop differ in what declared them and in

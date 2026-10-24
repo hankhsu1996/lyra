@@ -437,10 +437,11 @@ the detail lives in the entry itself.
   -- a reference is a route plus what it ends at, and the reader's own scope is the route that goes
   nowhere. A route of parent edges has nothing to resolve and is walked where it is used, which is
   what lets a generate construct read an enclosing constant while the tree is built (LRM 11.2.1); a
-  route that descends or crosses a unit is walked once at Resolve into a slot. A reference form of
-  its own for names read during elaboration, slotting parent-edge routes and filling them at
-  construction, a per-callable walking mode, handing constants down, and one unit-wide construction
-  procedure are rejected.
+  route that descends or crosses a unit is walked once at Resolve into a slot, and a parent edge is
+  a member of the scope it leaves, typed as the scope it leads to. A reference form of its own for
+  names read during elaboration, slotting parent-edge routes and filling them at construction, a
+  per-callable walking mode, handing constants down, and one unit-wide construction procedure are
+  rejected.
 - [a-reference-states-its-use](a-reference-states-its-use.md) -- a value, the object a call is made
   on, a subroutine reached by name, and a `disable` target are each a reference of their own, whose
   route ends only at what that use reaches; the path is one shape for all four. One reference with

@@ -1925,7 +1925,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kLoopBlocksAdd:
     case support::BuiltinFn::kLoopBlocksAt:
     case support::BuiltinFn::kSetScopePlace:
-    case support::BuiltinFn::kAddOwnedChild:
+    case support::BuiltinFn::kAttachScope:
     case support::BuiltinFn::kInstantiationEntry:
     case support::BuiltinFn::kInstantiationTable:
     case support::BuiltinFn::kExtendSequence:
@@ -2081,7 +2081,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kObjectConstraintModeSet:
     case support::BuiltinFn::kStaticConstraintModeSet:
     case support::BuiltinFn::kStaticConstraintModeGet:
-    case support::BuiltinFn::kParent:
     case support::BuiltinFn::kHierarchicalPathOf:
     // An assertion's attempts hold machine words and no value of the design,
     // so there is no representation for these to be named by (LRM 16.14.1).

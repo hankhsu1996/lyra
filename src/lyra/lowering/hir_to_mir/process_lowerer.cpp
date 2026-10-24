@@ -218,7 +218,7 @@ auto LowerStraightLineProcess(
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(process.Owner().Unit(), code);
   const mir::LocalId self_id = bindings.Declare(
-      ReceiverOrigin{}, parent.current_class->self_pointer_type);
+      ReceiverOrigin{}, parent.current_class.cls->self_pointer_type);
   code.params = {self_id};
   const WalkFrame body_frame = process.InRootScope(
       parent.WithBlock(&code.Body()).WithBindings(&bindings));
@@ -246,7 +246,7 @@ auto LowerForeverProcess(ProcessLowerer& process, Ahead ahead)
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(process.Owner().Unit(), code);
   const mir::LocalId self_id = bindings.Declare(
-      ReceiverOrigin{}, parent.current_class->self_pointer_type);
+      ReceiverOrigin{}, parent.current_class.cls->self_pointer_type);
   code.params = {self_id};
   const WalkFrame entry_frame = process.InRootScope(
       parent.WithBlock(&code.Body()).WithBindings(&bindings));
@@ -406,11 +406,11 @@ auto ProcessLowerer::EnterSubroutineBody(
   const WalkFrame entry_frame =
       InRootScope(parent.WithBlock(&code.Body()).WithBindings(&bindings))
           .WithBodyCanWait(CanWait(src.kind));
-  if (parent.current_class == nullptr) {
+  if (parent.current_class.cls == nullptr) {
     return BoundImplicitParameters{.params = {}, .frame = entry_frame};
   }
   return BindImplicitParameters(
-      *owner_, entry_frame, owner_->GetClassShape(parent.current_class_id),
+      *owner_, entry_frame, owner_->GetClassShape(parent.current_class.id),
       src.is_static ? CallableForm::kTypeAssociated
                     : CallableForm::kInstanceMember);
 }
@@ -609,10 +609,10 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
       .foreign = std::nullopt,
       .virtual_dispatch = std::nullopt};
   mir::DirectTarget recording;
-  if (mir::Class* declaring = owner_ctor_frame_.current_class;
+  if (mir::Class* declaring = owner_ctor_frame_.current_class.cls;
       declaring != nullptr) {
     recording = mir::CallableTarget{
-        .owner = owner_ctor_frame_.current_class_id,
+        .owner = owner_ctor_frame_.current_class.id,
         .slot = declaring->callables.Add(std::move(recording_decl))};
   } else {
     recording = mir::UnitCallableTarget{

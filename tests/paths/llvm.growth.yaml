@@ -50,11 +50,13 @@ loop_sizing_by_index:
   - lir.classes
   - lir.constants
   - lir.functions
+  - lir.members
   - lir.types
   - mir.callables
   - mir.class constants
   - mir.classes
   - mir.constructors
+  - mir.fields
   - mir.types
 scan_outputs:
   - lir.types
