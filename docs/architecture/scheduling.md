@@ -1,12 +1,12 @@
 # Scheduling
 
 A lyra simulation runs as a set of coroutines coordinated by a stratified event scheduler. Each
-SystemVerilog process -- `initial`, `always*`, `final` -- runs as a coroutine. The scheduler pulls
-coroutines from time-slot region queues and resumes them; a coroutine runs until it suspends, and
-lands on whichever queue its own `await_suspend` chose. Deferred effects (`<=` writes, `$strobe`
-prints) are not yields: the coroutine snapshots its inputs into a closure, hands the closure to the
-engine, and continues running. The engine invokes those closures when their owning region runs, and
-where the slot to run in is not yet knowable, what is handed over is an execution that finds it.
+SystemVerilog process -- `initial`, `always*` -- runs as a coroutine. The scheduler pulls coroutines
+from time-slot region queues and resumes them; a coroutine runs until it suspends, and lands on
+whichever queue its own `await_suspend` chose. Deferred effects (`<=` writes, `$strobe` prints) are
+not yields: the coroutine snapshots its inputs into a closure, hands the closure to the engine, and
+continues running. The engine invokes those closures when their owning region runs, and where the
+slot to run in is not yet knowable, what is handed over is an execution that finds it.
 
 This doc covers the decisions behind the engine itself: process model, suspension protocol, region
 structure, deferred work, how a run ends, and the MIR boundary. Sensitivity tracking, change
@@ -238,13 +238,19 @@ the request commits and a `final` procedure can read it. LRM 20.2 says only that
 simulator exit and does not say how much of the in-progress slot still happens, so this is a choice
 rather than a requirement -- which is why the corpus does not hold a case for it.
 
-Registered `final` actions then run in registration order, because a `final` procedure occurs at the
-end of simulation time (LRM 9.2.3), which a run reaches by being asked to end and equally by running
-out of work. A `$finish` a `final` executes -- directly, through `$fatal`, or by a run-time error of
-the design -- ends the simulation immediately, so the ones still queued do not run. What the design
-asked to have done once the simulation is over -- writing the coverage database a covergroup asks
-for (LRM 19.9) -- is a call held from wherever it was asked for and run after them, as C's `atexit`
-holds a function rather than a thread.
+The `final` procedures then run in registration order, because a `final` procedure occurs at the end
+of simulation time (LRM 9.2.3), which a run reaches by being asked to end and equally by running out
+of work. They are not processes of their own but function calls one thread makes in turn, as C's
+`exit` calls what `atexit` was handed on the thread that called it: each unit registers a call of
+its procedure on its instance, and the run makes the thread once the simulation has ended, so
+`process::self()` answers that thread in every one of them and its generator carries on from one to
+the next. Each call runs in its own procedure's scope, place and seeds, and is a landing of its own.
+No initial or always procedure created that thread, so process control may not act on it (LRM 9.7)
+and nothing it runs may schedule what takes effect after the call returns (LRM 13.4.4). A `$finish`
+a `final` executes -- directly, through `$fatal`, or by a run-time error of the design -- ends the
+simulation immediately, so the ones still registered do not run. What the design asked to have done
+once the simulation is over -- writing the coverage database a covergroup asks for (LRM 19.9) -- is
+a call held from wherever it was asked for and run after them, as `atexit` holds a function.
 
 The one ending that runs none of them is the tool being unable to carry the run on: a `final`
 procedure is design code, and the state it would read is already known to be wrong; so is what

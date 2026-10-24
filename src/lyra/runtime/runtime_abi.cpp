@@ -3775,10 +3775,10 @@ void lyra_rt_register_triggered(
 }
 
 void lyra_rt_register_final(
-    void* self, void* unit_instance, void* coroutine, const char* written_at) {
-  RegisterFinalProcess(
+    void* self, void* unit_instance, void* closure, const char* written_at) {
+  RegisterFinalProcedure(
       static_cast<Scope*>(self), static_cast<Scope*>(unit_instance),
-      std::move(*static_cast<Coroutine<void>*>(coroutine)), written_at);
+      AdoptClosure<lyra::support::EffectSignature>(closure), written_at);
 }
 
 void lyra_rt_run_assertion_action(

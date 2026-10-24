@@ -1114,10 +1114,8 @@ enum class BuiltinFn : std::uint16_t {
   kStaticConstraintModeSet,
   kStaticConstraintModeGet,
   // Lifecycle activation registration (LRM 9.2): binds a process body's
-  // coroutine to the scope's startup (`kRegisterInitial`) or shutdown
-  // (`kRegisterFinal`) lifecycle. Distinct callees, not one tagged call --
-  // initial and final are different registrations. Each dispatches on the
-  // scope handle; the coroutine to register is a regular argument.
+  // coroutine to the scope's startup. Each dispatches on the scope handle; the
+  // coroutine to register is a regular argument.
   //
   // What starts at time zero is registered by the kind of process it is,
   // because the kinds start in turn: an `always` procedure
@@ -1130,6 +1128,8 @@ enum class BuiltinFn : std::uint16_t {
   kRegisterContinuousDriver,
   kRegisterInitial,
   kRegisterTriggered,
+  // A final procedure is a function the run calls at the end of simulation
+  // (LRM 9.2.3), so what registers it is a closure calling it on its scope.
   kRegisterFinal,
   // A concurrent assertion's pass or fail statement, started as an execution of
   // its own when an attempt's outcome selects it (LRM 16.14.1), from what a

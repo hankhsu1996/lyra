@@ -23,11 +23,18 @@ under each item, and the conformance gaps at the end.
       rides on every other test in the corpus.
 - [x] P2 -- `final` (LRM 9.2.3). A final procedure occurs at the end of simulation time, which a run
       reaches by being asked to end and equally by running out of work. A `$finish` one executes,
-      directly or through `$fatal`, ends the simulation immediately, so the ones still queued do not
-      run. What a final procedure may contain is what a function may, so none can consume time. Work
-      still suspended when the run ends stops where it stands: its frame is released without
-      resuming, so what it would have written is not written, and a cleanup that frame was holding
-      open runs with nothing of the design executing and has nothing left to withdraw from.
+      directly or through `$fatal`, ends the simulation immediately, so the ones still registered do
+      not run. What a final procedure may contain is what a function may, so none can consume time.
+      The final procedures are function calls from one process, whichever instance each belongs to:
+      `process::self()` answers the same process in each, it reads RUNNING throughout, and its
+      generator carries on from one to the next. Killing, suspending or resuming it is an error (LRM
+      9.7), and so is a fork-join_none, a nonblocking assignment or a nonblocking event trigger a
+      final procedure reaches, directly or in a function it calls (LRM 13.4.4). Work still suspended
+      when the run ends stops where it stands: its frame is released without resuming, so what it
+      would have written is not written, and a cleanup that frame was holding open runs with nothing
+      of the design executing and has nothing left to withdraw from.
+  - [ ] A nonblocking assignment carrying an event control, in a function a final procedure calls,
+        is not refused and has no effect.
 - [x] P14 -- `$finish` / `$stop` finish number (LRM 20.2, Table 20-1), which `$fatal` takes first
       (LRM 20.10). The argument selects what the tool prints where the task is reached -- nothing,
       the call's location with the simulation time, or those plus what the run has cost -- and

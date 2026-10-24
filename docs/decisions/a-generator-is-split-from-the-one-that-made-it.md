@@ -50,6 +50,13 @@ where two do share an addend they start at unrelated points of a cycle of 2^192.
 The initialization RNG of a container is the same generator, started from the default seed, and
 hands out its static processes' and static initializers' generators by splitting.
 
+The final procedures are function calls from one thread (LRM 9.2.3), which is neither a static
+process -- Annex P lists every kind and leaves it out -- nor one any thread created, so 18.14.1 does
+not say where its generator comes from. It is split from the initialization RNG of the design's root
+once the simulation has ended. That split is the last draw the root's generator is asked for, so it
+moves no generator made before it; which values the finals draw is this choice's and no stronger
+promise than that.
+
 ## Why this one
 
 The question the standard poses -- generators created dynamically, each from its creator, in

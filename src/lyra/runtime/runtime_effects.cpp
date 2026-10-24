@@ -53,6 +53,20 @@ auto RunningNbaRegion(RuntimeEffects& effects) -> Region {
   return AsRuntime(effects).RunningContext().regions.nba;
 }
 
+// LRM 13.4.4: a function may schedule what cannot become active until it has
+// returned -- a nonblocking assignment, a fork-join_none -- only on a thread an
+// initial or always procedure created, or a fork of one, and a tool issues an
+// error otherwise. Where everything a thread runs is inside a function call, as
+// the final procedures' thread runs (LRM 9.2.3), whatever it schedules is one.
+void RequireMayScheduleAfterReturn(const ExecutionContext& running) {
+  if (RunsOnlyInsideFunctionCalls(running.creator) &&
+      !CreatedByInitialOrAlways(running.creator)) {
+    throw SimulationError(
+        "a final procedure cannot schedule what takes effect after it "
+        "returns");
+  }
+}
+
 // What a violation report records where it is created: the executing process's
 // pass and nothing more, which is the whole of the flush-point set LRM 12.4.2.1
 // lists.
@@ -183,6 +197,7 @@ void RuntimeEffects::Submit(SimTime when, Region region, OwnedCall effect) {
 }
 
 void RuntimeEffects::SubmitNba(OwnedClosure<support::EffectSignature> closure) {
+  RequireMayScheduleAfterReturn(AsRuntime(*this).RunningContext());
   Submit(Now(), RunningNbaRegion(*this), std::move(closure));
 }
 
@@ -190,6 +205,7 @@ void RuntimeEffects::SubmitNbaAfter(
     const value::ConstIntegralView& duration, std::int64_t unit_power,
     std::int64_t precision_power,
     OwnedClosure<support::EffectSignature> closure) {
+  RequireMayScheduleAfterReturn(AsRuntime(*this).RunningContext());
   const auto unit = static_cast<std::int8_t>(unit_power);
   const auto precision = static_cast<std::int8_t>(precision_power);
   Submit(
@@ -201,6 +217,7 @@ void RuntimeEffects::SubmitNbaAfterReal(
     const value::Real& duration, std::int64_t unit_power,
     std::int64_t precision_power,
     OwnedClosure<support::EffectSignature> closure) {
+  RequireMayScheduleAfterReturn(AsRuntime(*this).RunningContext());
   const auto unit = static_cast<std::int8_t>(unit_power);
   const auto precision = static_cast<std::int8_t>(precision_power);
   Submit(
@@ -415,6 +432,7 @@ auto RuntimeEffects::Spawn(Coroutine<void> coroutine)
         "RuntimeEffects::Spawn: no ambient process to parent the branch to");
   }
   RuntimeProcess& parent = *rt.current_process_.load();
+  RequireMayScheduleAfterReturn(parent.Context());
   // Hierarchical seeding (LRM 18.14.1): the branch's generator is taken out of
   // the spawner's, so a whole subtree of threads follows from the seed of the
   // one at its root and the order the branches then run in does not move any

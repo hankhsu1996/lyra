@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <string_view>
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
@@ -10,6 +11,7 @@
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/rng.hpp"
+#include "lyra/runtime/running_state.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/wait.hpp"
@@ -27,6 +29,22 @@ namespace {
 // every point here assumes the same class, so it is named once.
 auto ProcessNodeOf(const value::ObjectRef& self) -> RuntimeProcess& {
   return self.Deref<RuntimeProcess>();
+}
+
+// The process node a reference names, where `method` may act on it: LRM 9.7
+// restricts `kill()`, `await()`, `suspend()` and `resume()` to a process an
+// initial or always procedure created, or a fork of one. Asked before anything
+// else the method does, so a refused one waits for nothing and changes nothing.
+auto ControlledProcessOf(const value::ObjectRef& self, std::string_view method)
+    -> RuntimeProcess& {
+  RuntimeProcess& target = ProcessNodeOf(self);
+  if (!CreatedByInitialOrAlways(target.Context().creator)) {
+    throw SimulationError(
+        "'process::{}' applies only to a process an initial or always "
+        "procedure created, or a fork of one",
+        method);
+  }
+  return target;
 }
 
 // Waiting for another process to terminate (LRM 9.7 `process::await`). It is
@@ -90,15 +108,15 @@ auto ProcessStatus(const value::ObjectRef& self) -> value::Int {
 
 void ProcessKill(const value::ObjectRef& self, RuntimeEffects& runtime) {
   // `self` holds the target for the whole call.
-  RuntimeProcess::Kill(ProcessNodeOf(self), runtime);
+  RuntimeProcess::Kill(ControlledProcessOf(self, "kill"), runtime);
   TakeDepartureIfDue(runtime.CurrentProcess());
 }
 
 auto ProcessAwait(const value::ObjectRef& self, RuntimeEffects& runtime)
     -> Wait {
-  // The check is here at the call, symmetric with `suspend`, so the wait itself
-  // is pure readiness.
-  if (self.View<RuntimeProcess>() == &runtime.CurrentProcess()) {
+  // The checks are here at the call, symmetric with `suspend`, so the wait
+  // itself is pure readiness.
+  if (&ControlledProcessOf(self, "await") == &runtime.CurrentProcess()) {
     // LRM 9.7.
     throw SimulationError(
         "'process::await' on the calling process is not allowed");
@@ -109,7 +127,7 @@ auto ProcessAwait(const value::ObjectRef& self, RuntimeEffects& runtime)
 void ProcessSuspend(const value::ObjectRef& self, RuntimeEffects& runtime) {
   // The activation layer does the state transition and the detach; nothing
   // here schedules.
-  RuntimeProcess& target = ProcessNodeOf(self);
+  RuntimeProcess& target = ControlledProcessOf(self, "suspend");
   if (&target == &runtime.CurrentProcess()) {
     // LRM 9.7.
     throw SimulationError(
@@ -119,7 +137,7 @@ void ProcessSuspend(const value::ObjectRef& self, RuntimeEffects& runtime) {
 }
 
 void ProcessResume(const value::ObjectRef& self, RuntimeEffects& runtime) {
-  ProcessNodeOf(self).Resume(runtime);
+  ControlledProcessOf(self, "resume").Resume(runtime);
 }
 
 void ProcessSrandom(

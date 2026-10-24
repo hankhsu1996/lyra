@@ -23,9 +23,54 @@ enum class WakePlacement : std::uint8_t {
   kAtTheOccurrence,
 };
 
-// What an execution runs in, which one it starts carries over, all but where a
-// wake places it: that is chosen where an execution is started.
-struct ExecutionContext {
+// What created a thread, which is what the standard asks before it lets process
+// control act on the thread (LRM 9.7) and before it lets a function the thread
+// calls schedule what takes effect after the call returns (LRM 13.4.4): both
+// are allowed only of a thread an initial or always procedure created, or a
+// fork of one. The final procedures are told apart from every other construct
+// because each of them is a function call (LRM 9.2.3), so everything their
+// thread runs is inside one.
+enum class ThreadCreator : std::uint8_t {
+  kInitialOrAlwaysProcedure,
+  kTheFinalProcedures,
+  kAnotherConstruct,
+};
+
+// Whether an initial or always procedure, or a fork of one, created the thread
+// -- the threads process control may act on (LRM 9.7) and whose function calls
+// may schedule past their return (LRM 13.4.4).
+[[nodiscard]] constexpr auto CreatedByInitialOrAlways(ThreadCreator creator)
+    -> bool {
+  switch (creator) {
+    case ThreadCreator::kInitialOrAlwaysProcedure:
+      return true;
+    case ThreadCreator::kTheFinalProcedures:
+    case ThreadCreator::kAnotherConstruct:
+      return false;
+  }
+  return false;
+}
+
+// Whether every statement the thread runs is inside a function call, which is
+// what lets the runtime see where LRM 13.4.4 applies without knowing how deep
+// in calls a statement is.
+[[nodiscard]] constexpr auto RunsOnlyInsideFunctionCalls(ThreadCreator creator)
+    -> bool {
+  switch (creator) {
+    case ThreadCreator::kTheFinalProcedures:
+      return true;
+    case ThreadCreator::kInitialOrAlwaysProcedure:
+    case ThreadCreator::kAnotherConstruct:
+      return false;
+  }
+  return false;
+}
+
+// What the code an execution is running belongs to. A thread runs one
+// procedure, except the thread the final procedures are called from, which
+// runs each of them in turn and takes on each one's of these as it calls it
+// (LRM 9.2.3).
+struct ProcedureContext {
   // The scope a report raised while it runs names -- a run-time warning or
   // error, and the note on a slot that never settles. Borrowed, and outlives
   // the execution. Null for a namespace's initializer, which has no scope.
@@ -39,6 +84,12 @@ struct ExecutionContext {
   // one reader that cannot wait for a safe moment -- the run being stopped from
   // outside -- may neither allocate nor call anything that does.
   const char* written_at = "";
+};
+
+// What an execution runs in, which one it starts carries over, all but where a
+// wake places it: that is chosen where an execution is started.
+struct ExecutionContext {
+  ProcedureContext procedure;
   // The region set the execution is placed in, which is the one its thread
   // started in, whatever the code it runs was declared in (LRM 24.3.1, 24.5).
   RegionSet regions = kActiveRegionSet;
@@ -48,6 +99,9 @@ struct ExecutionContext {
   // `$exit` it calls ends (LRM 24.7). Borrowed, and held for the run. Null for
   // every other execution.
   ProgramThreads* program = nullptr;
+  // What created the thread the execution belongs to, which a fork carries on
+  // to the threads it starts (LRM 9.7, 13.4.4).
+  ThreadCreator creator = ThreadCreator::kAnotherConstruct;
 
   // The context of a root thread of `program`, whose initial procedure it is,
   // and so of every thread it starts (LRM 24.3, 24.7).
@@ -67,10 +121,11 @@ struct ExecutionContext {
   }
 
   // The same for an execution of no lineage, which is no thread a `$exit`
-  // ends (LRM 24.7).
+  // ends (LRM 24.7) and none a procedure created.
   [[nodiscard]] auto WithoutLineage() const -> ExecutionContext {
     ExecutionContext detached = ForStarted();
     detached.program = nullptr;
+    detached.creator = ThreadCreator::kAnotherConstruct;
     return detached;
   }
 
@@ -84,7 +139,7 @@ struct ExecutionContext {
   // A generator for an execution nothing that is a thread creates here: the
   // next one of the initialization RNG (LRM 18.14.1).
   [[nodiscard]] auto SplitInitializationRng() const -> DrawRng {
-    return seeds->Split();
+    return procedure.seeds->Split();
   }
 };
 

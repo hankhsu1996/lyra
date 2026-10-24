@@ -210,9 +210,17 @@ auto LowerStraightLineBodyInto(
   return {};
 }
 
-// `landing` is where a `disable` of the procedure's own statement lands.
-auto LowerStraightLineProcess(
-    ProcessLowerer& process, support::TargetLanding landing)
+// What the way a procedure that runs its statement once is executed decides of
+// its body.
+struct BodyOfExecution {
+  // Where a `disable` of the procedure's statement lands.
+  support::TargetLanding landing;
+  bool can_wait;
+  mir::TypeId result_type;
+};
+
+auto LowerStraightLineProcedure(
+    ProcessLowerer& process, const BodyOfExecution& body)
     -> diag::Result<mir::CallableCode> {
   const WalkFrame& parent = process.OwnerCtorFrame();
   mir::CallableCode code = mir::CallableCode::Defined();
@@ -220,15 +228,17 @@ auto LowerStraightLineProcess(
   const mir::LocalId self_id = bindings.Declare(
       ReceiverOrigin{}, parent.current_class.cls->self_pointer_type);
   code.params = {self_id};
-  const WalkFrame body_frame = process.InRootScope(
-      parent.WithBlock(&code.Body()).WithBindings(&bindings));
-  auto lowered = LowerStraightLineBodyInto(process, body_frame, landing);
+  const WalkFrame body_frame =
+      process
+          .InRootScope(parent.WithBlock(&code.Body()).WithBindings(&bindings))
+          .WithBodyCanWait(body.can_wait);
+  auto lowered = LowerStraightLineBodyInto(process, body_frame, body.landing);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
-  // A process completes by falling off its end, which is a real body statement
-  // rather than an implicit exit (LRM 9.2). Its coroutine result type is what
-  // makes that return a coroutine completion.
+  // A procedure completes by falling off its end, which is a real body
+  // statement rather than an implicit exit (LRM 9.2). A process's coroutine
+  // result type is what makes that return a coroutine completion.
   code.Body().AppendStmt(mir::ReturnStmt{.value = std::nullopt});
-  code.result_type = process.Owner().Unit().builtins.coroutine_void;
+  code.result_type = body.result_type;
   return code;
 }
 
@@ -367,19 +377,28 @@ auto CanWait(hir::SubroutineKind kind) -> bool {
 auto ProcessLowerer::Run(const hir::Process& src)
     -> diag::Result<mir::CallableCode> {
   const diag::FailureContext at(src.span);
+  const mir::CompilationUnit& unit = owner_->Unit();
   return std::visit(
       Overloaded{
-          // An initial procedure is a process of its own, so nothing of it
-          // follows its statement (LRM 9.5); the final procedures are calls
-          // one process makes in turn (LRM 9.2.3), so leaving one goes on to
-          // the next.
+          // An initial procedure is a process of its own (LRM 9.5): nothing
+          // of it follows its statement, so a `disable` of that statement
+          // ends the process, and its body is the coroutine a thread runs.
           [&](const hir::InitialProcess&) {
-            return LowerStraightLineProcess(
-                *this, support::TargetLanding::kAtExecutionEnd);
+            return LowerStraightLineProcedure(
+                *this, BodyOfExecution{
+                           .landing = support::TargetLanding::kAtExecutionEnd,
+                           .can_wait = true,
+                           .result_type = unit.builtins.coroutine_void});
           },
+          // The final procedures are function calls one process makes in turn
+          // (LRM 9.2.3): leaving one returns to the call, which goes on to the
+          // next, and a function cannot wait (LRM 13.4.4).
           [&](const hir::FinalProcess&) {
-            return LowerStraightLineProcess(
-                *this, support::TargetLanding::kPastTheTarget);
+            return LowerStraightLineProcedure(
+                *this, BodyOfExecution{
+                           .landing = support::TargetLanding::kPastTheTarget,
+                           .can_wait = false,
+                           .result_type = unit.builtins.void_type});
           },
           [&](const hir::AlwaysProcess&) { return LowerAlwaysProcess(*this); },
           [&](const hir::AlwaysFfProcess&) {

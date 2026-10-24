@@ -36,6 +36,7 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/class_definition.hpp"
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
+#include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/concurrent_assertion.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/continuous_assign.hpp"
@@ -1209,11 +1210,11 @@ auto CreatingInstance(UnitLowerer& unit_lowerer, const WalkFrame& frame)
       frame, unit_lowerer.Unit(), frame.HopsToUnitRoot());
 }
 
-// The call of `body`, a callable of the scope `frame` stands on, whose result
-// is the execution it runs as.
-auto StartedBody(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::CallableId body)
-    -> mir::ExprId {
+// The call of `body`, a callable of the scope `frame` stands on, answering
+// `result`.
+auto CallOnScope(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::CallableId body,
+    mir::TypeId result) -> mir::ExprId {
   mir::Block& block = *frame.current_block;
   const mir::ExprId body_self = BuildObjectDeref(
       unit_lowerer.Unit(), block, block.exprs.Add(MakeSelfRefExpr(frame)));
@@ -1229,7 +1230,15 @@ auto StartedBody(
                                   .slot = body},
                           .receiver = body_self},
                   .arguments = {}},
-          .type = unit_lowerer.Unit().builtins.coroutine_void});
+          .type = result});
+}
+
+// The call of a process body, whose result is the execution it runs as.
+auto StartedBody(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::CallableId body)
+    -> mir::ExprId {
+  return CallOnScope(
+      unit_lowerer, frame, body, unit_lowerer.Unit().builtins.coroutine_void);
 }
 
 // Where the source writes this execution, as "file:line:col". A run prints it
@@ -1268,9 +1277,7 @@ void AppendDriverRegistration(
 }
 
 // Registers `body` in the scope's `activate` body through `registration`,
-// which says whether it starts with the scope or runs at its shutdown (LRM
-// 9.2). Startup and shutdown are distinct registration callees, not one tagged
-// call.
+// which says which turn it starts in with the scope (LRM 9.2).
 void AppendProcessRegistration(
     UnitLowerer& unit_lowerer, const WalkFrame& activate_frame,
     mir::CallableId body, support::BuiltinFn registration,
@@ -1279,6 +1286,32 @@ void AppendProcessRegistration(
       mir::ExprStmt{
           .expr = BuildExecutionStart(
               unit_lowerer, activate_frame, body, registration, written_at)});
+}
+
+// Registers `body`, a final procedure of the scope, to be called at the end of
+// simulation (LRM 9.2.3). It is a function rather than a process, so the run is
+// handed a call of it on this scope, which it keeps until then, as a C library
+// keeps what `atexit` is handed.
+void AppendFinalRegistration(
+    UnitLowerer& unit_lowerer, const WalkFrame& activate_frame,
+    mir::CallableId body, diag::SourceSpan written_at) {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  mir::Block& block = *activate_frame.current_block;
+  ClosureBuilder call(unit, activate_frame, support::ClosureKind::kFn);
+  call.Body().AppendStmt(
+      mir::ExprStmt{
+          .expr = CallOnScope(
+              unit_lowerer, call.Frame(), body, unit.builtins.void_type)});
+  const mir::ExprId kept = BuildKeptClosure(unit, block, call.BuildVoid());
+  block.AppendStmt(
+      mir::ExprStmt{
+          .expr = block.exprs.Add(
+              mir::MakeCallExpr(
+                  mir::Direct{.target = support::BuiltinFn::kRegisterFinal},
+                  {OwningScope(activate_frame),
+                   CreatingInstance(unit_lowerer, activate_frame), kept,
+                   WrittenAtText(unit_lowerer, block, written_at)},
+                  unit.builtins.void_type))});
 }
 
 // A variable declaration assignment runs before any procedure starts (LRM
@@ -3535,32 +3568,37 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             .code = *std::move(code_or),
             .foreign = std::nullopt,
             .virtual_dispatch = std::nullopt});
-    // A final procedure runs when the simulation ends, and every other kind
-    // starts with the scope (LRM 9.2), registered as the kind it is. What an
-    // `always_comb` is at time zero holds of an `always_latch` too (LRM
+    // A final procedure is called when the simulation ends, and every other
+    // kind starts with the scope (LRM 9.2), registered as the kind it is. What
+    // an `always_comb` is at time zero holds of an `always_latch` too (LRM
     // 9.2.2.3).
     using support::BuiltinFn;
-    const BuiltinFn registration = std::visit(
+    const auto starts_as = [&](BuiltinFn registration) {
+      AppendProcessRegistration(
+          unit_lowerer, activate_frame, body, registration, p.span);
+    };
+    std::visit(
         Overloaded{
-            [](const hir::InitialProcess&) {
-              return BuiltinFn::kRegisterInitial;
+            [&](const hir::InitialProcess&) {
+              starts_as(BuiltinFn::kRegisterInitial);
             },
-            [](const hir::FinalProcess&) { return BuiltinFn::kRegisterFinal; },
-            [](const hir::AlwaysProcess&) {
-              return BuiltinFn::kRegisterAlways;
+            [&](const hir::FinalProcess&) {
+              AppendFinalRegistration(
+                  unit_lowerer, activate_frame, body, p.span);
             },
-            [](const hir::AlwaysFfProcess&) {
-              return BuiltinFn::kRegisterAlways;
+            [&](const hir::AlwaysProcess&) {
+              starts_as(BuiltinFn::kRegisterAlways);
             },
-            [](const hir::AlwaysCombProcess&) {
-              return BuiltinFn::kRegisterTriggered;
+            [&](const hir::AlwaysFfProcess&) {
+              starts_as(BuiltinFn::kRegisterAlways);
             },
-            [](const hir::AlwaysLatchProcess&) {
-              return BuiltinFn::kRegisterTriggered;
+            [&](const hir::AlwaysCombProcess&) {
+              starts_as(BuiltinFn::kRegisterTriggered);
+            },
+            [&](const hir::AlwaysLatchProcess&) {
+              starts_as(BuiltinFn::kRegisterTriggered);
             }},
         p.kind);
-    AppendProcessRegistration(
-        unit_lowerer, activate_frame, body, registration, p.span);
     for (const StaticVarBinding& binding : statics) {
       auto integ = IntegrateStaticInitializer(
           process_lowerer, p.body,
