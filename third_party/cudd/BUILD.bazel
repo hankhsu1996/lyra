@@ -1,0 +1,6 @@
+# The build of CUDD, which `MODULE.bazel` fetches.
+
+exports_files([
+    "cudd.BUILD",
+    "cudd.patch",
+])

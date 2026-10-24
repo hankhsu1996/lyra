@@ -10,6 +10,7 @@
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/runtime_class.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::lir {
@@ -44,13 +45,16 @@ enum class SymbolCategory : std::uint8_t {
 };
 
 // One component of a symbol: a name the source wrote, an ordinal the compiler
-// counted, or the steps of the path that tells a declaration from the others
-// of its unit. Each self-delimits and says which kind it is, so a sequence of
-// them composes to one string no other sequence composes to: a block and a
-// class carrying one label are different parts.
+// counted, a function of the runtime library's classes a class overrides, or
+// the steps of the path that tells a declaration from the others of its unit.
+// Each self-delimits and says which kind it is, so a sequence of them composes
+// to one string no other sequence composes to: a block and a class carrying one
+// label are different parts, and a method the source named after a library
+// function is not the override of it.
 struct SymbolPart {
   static auto Name(std::string_view name) -> SymbolPart;
   static auto Ordinal(std::uint32_t value) -> SymbolPart;
+  static auto LibraryVirtual(support::LibraryVirtual function) -> SymbolPart;
 
   std::string encoded;
 };

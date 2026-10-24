@@ -127,6 +127,9 @@ class Queue : public OrdinalArrayMethods<Queue<T, kBound>> {
   [[nodiscard]] auto RawAt(std::size_t i) const -> const T& {
     return *static_cast<const T*>(core_.At(i));
   }
+  [[nodiscard]] auto RawAt(std::size_t i) -> T& {
+    return *static_cast<T*>(core_.At(i));
+  }
 
   [[nodiscard]] auto operator==(const Queue& other) const ->
       typename StaticElem<T>::Equality {

@@ -311,9 +311,14 @@ class ValueType {
     return witnesses_->order_before(*this, lhs, rhs);
   }
 
+  // Whether a value of the type holds parts ordered by position, which a walk
+  // down to a value's leaves asks of each type it meets.
+  [[nodiscard]] auto HasParts() const -> bool {
+    return witnesses_->parts != nullptr;
+  }
+
   // The parts of the value lying at `value`, for a type whose parts are
-  // ordered by position, which only a walk the compiler set out over such a
-  // type asks.
+  // ordered by position.
   [[nodiscard]] auto PartCount(const void* value) const -> std::size_t {
     return Parts().count(*this, value);
   }

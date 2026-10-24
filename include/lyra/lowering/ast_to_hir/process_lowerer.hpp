@@ -15,6 +15,7 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/constraint_id.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
@@ -26,6 +27,7 @@
 
 namespace slang::ast {
 class ConcurrentAssertionStatement;
+class Constraint;
 class StatementBlockSymbol;
 }  // namespace slang::ast
 
@@ -144,6 +146,12 @@ class ProcessLowerer {
 
   auto LowerExpr(const slang::ast::Expression& expr, WalkFrame frame)
       -> diag::Result<hir::Expr>;
+  // A constraint (LRM 18.5), the constraints nested in it stored in the arena
+  // of the body being lowered, where it names them.
+  auto LowerConstraint(
+      const slang::ast::Constraint& constraint, WalkFrame frame)
+      -> diag::Result<hir::Constraint>;
+
   auto LowerStmt(const slang::ast::Statement& stmt, WalkFrame frame)
       -> diag::Result<hir::Stmt>;
   auto LowerForeachStmt(

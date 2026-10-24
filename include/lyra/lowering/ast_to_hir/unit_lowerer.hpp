@@ -970,11 +970,12 @@ class UnitLowerer {
       const slang::ast::ClassType& cls, diag::SourceSpan span,
       hir::ClassDecl& decl) -> diag::Result<void>;
 
-  // The behavior `method` states, with the class declaring it named the way
-  // the boundary it sits on names one: what a method overriding it overrides,
-  // and what an interface class's behavior is answered by.
+  // The behavior `method` states -- a method, or a constraint block, which is
+  // overridden as one (LRM 18.5.2) -- with the class declaring it named the
+  // way the boundary it sits on names one: what a member overriding it
+  // overrides, and what an interface class's behavior is answered by.
   auto MakeOverriddenBehavior(
-      const slang::ast::SubroutineSymbol& method, diag::SourceSpan span)
+      const slang::ast::Symbol& method, diag::SourceSpan span)
       -> diag::Result<hir::OverriddenBehavior>;
 
   // The behavior named `method_name` that `cls` answers, named by the class of
@@ -1018,14 +1019,14 @@ class UnitLowerer {
   // interning that owns it adds the method. Downstream consumers translate a
   // frontend symbol into the HIR-side identity through this cache, so the
   // slang enumeration order is walked once (at class interning) and never
-  // again at a resolution site.
-  void RegisterMethodId(
-      const slang::ast::SubroutineSymbol& method, hir::MethodId id) {
+  // again at a resolution site. A constraint block (LRM 18.5) is a method of
+  // its class too, and is recorded the same way.
+  void RegisterMethodId(const slang::ast::Symbol& method, hir::MethodId id) {
     method_cache_.emplace(&method, id);
   }
 
-  [[nodiscard]] auto LookupMethodId(
-      const slang::ast::SubroutineSymbol& method) const -> hir::MethodId {
+  [[nodiscard]] auto LookupMethodId(const slang::ast::Symbol& method) const
+      -> hir::MethodId {
     if (const auto it = method_cache_.find(&method);
         it != method_cache_.end()) {
       return it->second;
@@ -1395,6 +1396,7 @@ class UnitLowerer {
     std::unique_ptr<hir::ClassDecl> decl;
     std::vector<const slang::ast::SubroutineSymbol*> defined_methods;
     std::vector<const slang::ast::MethodPrototypeSymbol*> pure_prototypes;
+    std::vector<const slang::ast::ConstraintBlockSymbol*> constraint_blocks;
     const slang::ast::SubroutineSymbol* constructor_sym;
   };
 
@@ -1909,8 +1911,7 @@ class UnitLowerer {
       covergroups_by_scope_;
   std::unordered_map<const slang::ast::Scope*, std::vector<PendingClassBody>>
       pending_class_bodies_;
-  std::unordered_map<const slang::ast::SubroutineSymbol*, hir::MethodId>
-      method_cache_;
+  std::unordered_map<const slang::ast::Symbol*, hir::MethodId> method_cache_;
   std::unordered_map<const slang::ast::ClassPropertySymbol*, hir::FieldId>
       class_property_field_ids_;
   std::unordered_map<

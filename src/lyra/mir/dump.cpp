@@ -751,6 +751,12 @@ class MirDumper {
             [this](const ConstructorTarget& c) -> std::string {
               return std::format("constructor={}", FormatClassRef(c.cls));
             },
+            [](const ExternalLibraryOverrideTarget& e) -> std::string {
+              return std::format(
+                  "external_library_override={}::{}::{}", e.unit_name,
+                  support::DisplayOf(e.class_path),
+                  support::LibraryVirtualName(e.function));
+            },
             [](const RecordMethodTarget& s) -> std::string {
               return std::format(
                   R"(struct_method={}::{} "{}")", s.declaration.unit_name,

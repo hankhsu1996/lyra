@@ -8,25 +8,36 @@
 #include <string_view>
 #include <unordered_map>
 #include <utility>
+#include <variant>
 #include <vector>
 
+#include "lyra/base/component_index.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/class_decl.hpp"
 #include "lyra/hir/class_ref.hpp"
+#include "lyra/hir/param_direction.hpp"
 #include "lyra/hir/procedural_body.hpp"
+#include "lyra/hir/random_qualifier.hpp"
 #include "lyra/hir/subroutine.hpp"
+#include "lyra/hir/subroutine_kind.hpp"
+#include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/class_definition.hpp"
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
 #include "lyra/lowering/hir_to_mir/covergroup_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
+#include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/randomization.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -36,12 +47,14 @@
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/runtime_class.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -127,6 +140,185 @@ auto BehaviorSlot(
             return unit_lowerer.MakeExternalVirtualSlot(external);
           }},
       behavior);
+}
+
+// Whether a property of type `type` holds class handles, itself or as the
+// elements of an array of them, so what is random of it is the objects they
+// reach (LRM 18.4) rather than a value of its own.
+auto HoldsHandles(const hir::TypePool& types, hir::TypeId type) -> bool {
+  return types.Get(ChosenValueType(types, type)).Is<hir::ClassHandleType>();
+}
+
+// One of what `randomize()` asks of a class, as its body is written: handed
+// the object, and then the call's problem, as a reference to it, where
+// `problem_type` is that reference's type.
+class HookBody {
+ public:
+  template <typename MakeFrame>
+  HookBody(
+      UnitLowerer& unit_lowerer, const ClassShape& shape,
+      const MakeFrame& make_frame, std::optional<mir::TypeId> problem_type)
+      : unit_lowerer_(&unit_lowerer),
+        code_(mir::CallableCode::Defined()),
+        bindings_(unit_lowerer.Unit(), code_),
+        bound_(BindImplicitParameters(
+            unit_lowerer,
+            make_frame(link_)
+                .WithBlock(&code_.Body())
+                .WithBindings(&bindings_)
+                .WithBodyCanWait(false),
+            shape, CallableForm::kInstanceMember)),
+        problem_(problem_type.transform([&](mir::TypeId type) {
+          return Handed{
+              .local = bindings_.DeclareAnonymous(type), .type = type};
+        })) {
+    if (problem_.has_value()) {
+      bound_.params.push_back(problem_->local);
+    }
+  }
+  HookBody(const HookBody&) = delete;
+  auto operator=(const HookBody&) -> HookBody& = delete;
+  HookBody(HookBody&&) = delete;
+  auto operator=(HookBody&&) -> HookBody& = delete;
+  ~HookBody() = default;
+
+  [[nodiscard]] auto Unit() const -> mir::CompilationUnit& {
+    return unit_lowerer_->Unit();
+  }
+  [[nodiscard]] auto Block() -> mir::Block& {
+    return code_.Body();
+  }
+  [[nodiscard]] auto Frame() const -> const WalkFrame& {
+    return bound_.frame;
+  }
+
+  // The object the hook runs on, as the pointer its body holds.
+  [[nodiscard]] auto Self() -> mir::ExprId {
+    return Block().exprs.Add(MakeSelfRefExpr(Frame()));
+  }
+  // The problem, as the reference the hook was handed, and as itself.
+  [[nodiscard]] auto ProblemReference() -> mir::ExprId {
+    return Block().ReadLocal(problem_->local, problem_->type);
+  }
+  [[nodiscard]] auto ProblemLocal() const -> mir::LocalId {
+    return problem_->local;
+  }
+  [[nodiscard]] auto HandedType() const -> mir::TypeId {
+    return problem_->type;
+  }
+  [[nodiscard]] auto Problem() -> mir::ExprId {
+    return Block().Read(
+        Block().exprs.Add(
+            mir::MakeDerefExpr(
+                ProblemReference(), Unit().builtins.constraint_problem)));
+  }
+
+  [[nodiscard]] auto Call(
+      mir::Callee callee, std::vector<mir::ExprId> arguments, mir::TypeId type)
+      -> mir::ExprId {
+    return Block().exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee = std::move(callee),
+                    .arguments = std::move(arguments)},
+            .type = type});
+  }
+  void Run(mir::Callee callee, std::vector<mir::ExprId> arguments) {
+    Block().AppendStmt(
+        mir::ExprStmt{
+            .expr = Call(
+                std::move(callee), std::move(arguments),
+                Unit().builtins.void_type)});
+  }
+
+  // A reference to the part `path` reaches, and the value of type `type` it
+  // holds now.
+  struct Named {
+    mir::ExprId reference;
+    mir::ExprId value;
+  };
+  [[nodiscard]] auto Name(const AccessPath& path, mir::TypeId type) -> Named {
+    mir::Block& block = Block();
+    const mir::TypeId reference_type =
+        *ParamTypeOf(Unit(), type, hir::ParamDirection::kRef);
+    const mir::LocalId reference = bindings_.DeclareAnonymous(reference_type);
+    block.AppendStmt(
+        mir::LocalDeclStmt{
+            .target = reference,
+            .init = AtType(
+                Unit(), block, PathReference(Unit(), block, path),
+                reference_type)});
+    return Named{
+        .reference = block.ReadLocal(reference, reference_type),
+        .value = block.Read(block.exprs.Add(block.WrapperContents(
+            Unit().types, block.ReadLocal(reference, reference_type), type)))};
+  }
+
+  // The finished body, overriding `function`.
+  [[nodiscard]] auto Finish(support::LibraryVirtual function)
+      -> mir::CallableDecl {
+    code_.params = std::move(bound_.params);
+    code_.result_type = Unit().builtins.void_type;
+    return mir::CallableDecl{
+        .code = std::move(code_),
+        .foreign = std::nullopt,
+        .virtual_dispatch = mir::OverridesLibraryVirtual{.function = function}};
+  }
+
+ private:
+  UnitLowerer* unit_lowerer_;
+  ScopeChainNode link_{};
+  mir::CallableCode code_;
+  CallableBindings bindings_;
+  BoundImplicitParameters bound_;
+  // The parameter the problem is handed in, and its type.
+  struct Handed {
+    mir::LocalId local;
+    mir::TypeId type;
+  };
+  std::optional<Handed> problem_;
+};
+
+// One of the functions every class overrides for `randomize()` that a class
+// extending another starts by calling its base's for: the library's function,
+// and where a class's hooks hold the body it gives it.
+struct ExtendedHook {
+  support::LibraryVirtual function;
+  mir::CallableId RandomizationHooks::* body;
+};
+constexpr ExtendedHook kRandVariablesHook{
+    .function = support::LibraryVirtual::kClassRandVariables,
+    .body = &RandomizationHooks::rand_variables};
+constexpr ExtendedHook kConstrainHook{
+    .function = support::LibraryVirtual::kClassConstrain,
+    .body = &RandomizationHooks::constrain};
+constexpr ExtendedHook kRandObjectsHook{
+    .function = support::LibraryVirtual::kClassRandObjects,
+    .body = &RandomizationHooks::rand_objects};
+
+// The body the class `base` gives `hook`, which a class extending it calls
+// directly to do what its base does first.
+auto BaseHookTarget(
+    UnitLowerer& unit_lowerer, const hir::ClassRef& base,
+    const ExtendedHook& hook) -> mir::DirectTarget {
+  return std::visit(
+      Overloaded{
+          [&](const hir::LocalClassRef& local) -> mir::DirectTarget {
+            return mir::CallableTarget{
+                .owner = unit_lowerer.TranslateClass(local.class_id),
+                .slot = (*unit_lowerer.RandomizationHooksOf(local.class_id)).*
+                        hook.body};
+          },
+          [&](const hir::ExternalClassRef& external) -> mir::DirectTarget {
+            unit_lowerer.Unit().ConsumeClassOf(
+                external.unit_name, external.class_path);
+            return mir::ExternalLibraryOverrideTarget{
+                .unit_name = external.unit_name,
+                .class_path = external.class_path,
+                .function = hook.function};
+          }},
+      base);
 }
 
 // One body of the class and the static-lifetime variables it declared, paired
@@ -415,9 +607,22 @@ auto ClassDeclLowerer::DeclareShape(
             .virtual_dispatch =
                 CovergroupFactoryDispatch(unit_lowerer, covergroup)});
   }
-  shape.callable_signatures = {
-      hir_class.methods.size() + hir_class.embedded_covergroups.size(),
-      std::move(signatures)};
+  // What `randomize()` asks of the class (LRM 18.6) overrides what the part of
+  // every object declares, each at the identity the class took for it.
+  std::size_t callable_count =
+      hir_class.methods.size() + hir_class.embedded_covergroups.size();
+  if (const std::optional<RandomizationHooks>& hooks =
+          unit_lowerer.RandomizationHooksOf(hir_class_id_)) {
+    const auto overrides = hooks->Overrides();
+    callable_count += overrides.size();
+    signatures.resize(callable_count);
+    for (const auto& [id, function] : overrides) {
+      signatures[id.value] = CallableSignature{
+          .virtual_dispatch =
+              mir::OverridesLibraryVirtual{.function = function}};
+    }
+  }
+  shape.callable_signatures = {callable_count, std::move(signatures)};
   declared_methods_ = {hir_class.methods.size(), std::move(declared_methods)};
   ctor_static_bindings_ = bind_statics(hir_class.constructor);
 
@@ -454,6 +659,258 @@ auto ClassDeclLowerer::BodyFrame(
   if (!instance.has_value()) return frame.WithStructuralBase(NoScope{});
   return frame.WithStructuralBase(
       ScopeThroughMember{.member = instance->member});
+}
+
+// Each hook starts with what the class it extends does -- a source class by
+// the body that class gave it, which it calls directly, and the part every
+// object starts with by nothing at all -- and then adds what the class
+// declares itself.
+void ClassDeclLowerer::DefineRandomizationHooks(
+    const WalkFrame& declaring_frame, mir::Class& mir_class,
+    const RandomizationHooks& hooks) const {
+  UnitLowerer& unit_lowerer = *owner_;
+  const hir::ClassDecl& hir_class = *hir_class_;
+  const ClassShape& shape = unit_lowerer.GetClassShape(class_id_);
+  const auto make_frame = [&](ScopeChainNode& link) {
+    return BodyFrame(declaring_frame, mir_class, link);
+  };
+  // A hook is handed the problem as each constraint block it calls is.
+  const std::optional<mir::TypeId> handed = ConstraintProblemParamTypeOf(
+      unit_lowerer.Unit(), hir::SubroutineKind::kConstraintBlock);
+  const auto finish = [&](HookBody& body, const ExtendedHook& hook) {
+    mir_class.callables.Define(hooks.*hook.body, body.Finish(hook.function));
+  };
+  const auto begin = [&](HookBody& body, const ExtendedHook& hook) {
+    if (!hir_class.base.has_value()) {
+      return;
+    }
+    body.Run(
+        mir::Direct{
+            .target = BaseHookTarget(unit_lowerer, *hir_class.base, hook),
+            .receiver =
+                BuildObjectDeref(body.Unit(), body.Block(), body.Self())},
+        {body.ProblemReference()});
+  };
+  // Each random variable the class declares (LRM 18.4): each property
+  // declared random, an instance one through the object and a static one
+  // through its cell, and of a structure declared random each member its type
+  // declares random, at any depth. Each is visited with the part of its type
+  // the source wrote, which says whether it holds handles, whose objects are
+  // what is random of it.
+  const auto each_random_variable = [&](HookBody& body, const auto& visit) {
+    mir::CompilationUnit& unit = body.Unit();
+    const hir::TypePool& hir_types = unit_lowerer.Hir().types;
+    const auto walk = [&](const auto& self, AccessPath path,
+                          hir::TypeId hir_type, mir::TypeId type,
+                          hir::RandomQualifier random) -> void {
+      const hir::Type& declared = hir_types.Get(hir_type);
+      const auto* structure = declared.As<hir::UnpackedStructType>();
+      if (structure == nullptr) {
+        visit(path, hir_type, type, random);
+        return;
+      }
+      for (std::uint32_t i = 0; i < structure->fields.size(); ++i) {
+        const hir::UnpackedAggregateField& member = structure->fields[i];
+        if (!hir::IsRandom(member.random)) {
+          continue;
+        }
+        const mir::TypeId member_type = unit_lowerer.TranslateType(member.type);
+        self(
+            self,
+            DescendInto(
+                path, MemberStep(
+                          unit_lowerer, body.Block(), declared,
+                          base::ComponentIndex{.value = i}, member_type)),
+            member.type, member_type, member.random);
+      }
+    };
+    for (const hir::FieldId id : hir_class.fields.Ids()) {
+      const hir::ClassField& field = hir_class.fields.Get(id);
+      if (!hir::IsRandom(field.random)) {
+        continue;
+      }
+      const mir::FieldId slot = shape.field_translation.Get(id);
+      const mir::TypeId type = mir_class.fields.Get(slot).type;
+      walk(
+          walk,
+          AccessPath{
+              .owner =
+                  ObjectProperty{
+                      .object = body.Self(),
+                      .property =
+                          mir::ClassFieldTarget{
+                              .owner = mir::IntraUnitClassRef{class_id_},
+                              .slot = slot},
+                      .type = type},
+              .descent = {}},
+          field.type, type, field.random);
+    }
+    for (const hir::StaticPropertyId id : hir_class.static_properties.Ids()) {
+      const hir::ClassStaticProperty& property =
+          hir_class.static_properties.Get(id);
+      if (!hir::IsRandom(property.random)) {
+        continue;
+      }
+      const mir::TypeId type = unit_lowerer.TranslateType(property.type);
+      walk(
+          walk,
+          AccessPath{
+              .owner = body.Block().exprs.Add(BuildStaticStorageAccess(
+                  unit, body.Frame(), shape.static_property_translation.Get(id),
+                  mir::ObservableCellOf(unit.types, type),
+                  mir::EnclosingHops{})),
+              .descent = {}},
+          property.type, type, property.random);
+    }
+  };
+
+  {
+    HookBody body(unit_lowerer, shape, make_frame, handed);
+    begin(body, kRandVariablesHook);
+    each_random_variable(
+        body, [&](const AccessPath& path, hir::TypeId hir_type,
+                  mir::TypeId type, hir::RandomQualifier random) {
+          if (HoldsHandles(unit_lowerer.Hir().types, hir_type)) {
+            return;
+          }
+          const HookBody::Named named = body.Name(path, type);
+          if (const std::optional<mir::ExprId> members =
+                  ChosenMembers(unit_lowerer, body.Block(), hir_type)) {
+            body.Run(
+                mir::Direct{.target = support::BuiltinFn::kConstraintMembers},
+                {body.Problem(), named.reference, *members});
+          }
+          body.Run(
+              mir::Direct{
+                  .target = random == hir::RandomQualifier::kRandc
+                                ? support::BuiltinFn::kConstraintRandc
+                                : support::BuiltinFn::kConstraintRand},
+              {body.Problem(), named.reference, named.value});
+        });
+    finish(body, kRandVariablesHook);
+  }
+
+  {
+    HookBody body(unit_lowerer, shape, make_frame, handed);
+    begin(body, kConstrainHook);
+    for (const hir::MethodId id : hir_class.methods.Ids()) {
+      const hir::SubroutineDecl& method = hir_class.methods.Get(id);
+      const mir::CallableId callable = declared_methods_.Get(id).callable;
+      const std::optional<mir::VirtualDispatchRole>& role =
+          shape.callable_signatures.Get(callable).virtual_dispatch;
+      // A block overriding one of the class it extends is reached by that
+      // class's call, which dispatches to it.
+      if (!role.has_value() ||
+          !std::holds_alternative<mir::IntroducesVirtualSlot>(*role)) {
+        continue;
+      }
+      mir::Block& block = body.Block();
+      mir::CompilationUnit& unit = body.Unit();
+      const auto name = [&](std::string text) {
+        return BuildStringValueExpr(unit, block, std::move(text));
+      };
+      mir::ExprId enabled{};
+      switch (method.kind) {
+        case hir::SubroutineKind::kTask:
+        case hir::SubroutineKind::kFunction:
+          continue;
+        case hir::SubroutineKind::kConstraintBlock:
+          enabled = body.Call(
+              mir::Direct{
+                  .target = support::BuiltinFn::kConstraintBlockEnabled},
+              {block.AsValue(unit.types, body.Self()), name(method.name)},
+              unit.builtins.machine_bool);
+          break;
+        case hir::SubroutineKind::kStaticConstraintBlock:
+          enabled = body.Call(
+              mir::Direct{
+                  .target = support::BuiltinFn::kStaticConstraintBlockEnabled},
+              {name(StaticConstraintModeKey(
+                  unit_lowerer.Hir(), hir::LocalClassRef{hir_class_id_},
+                  method.name))},
+              unit.builtins.machine_bool);
+          break;
+      }
+      const mir::VirtualSlot slot =
+          CanonicalVirtualSlot(class_id_, callable, *role);
+      mir::Block then_block;
+      then_block.AppendStmt(
+          mir::ExprStmt{
+              .expr = then_block.exprs.Add(
+                  mir::Expr{
+                      .data =
+                          mir::CallExpr{
+                              .callee =
+                                  mir::Virtual{
+                                      .receiver = BuildObjectDeref(
+                                          unit, then_block,
+                                          AsIntroducer(
+                                              unit.types, then_block,
+                                              then_block.exprs.Add(
+                                                  MakeSelfRefExpr(
+                                                      body.Frame())),
+                                              slot)),
+                                      .slot = slot},
+                              .arguments = {then_block.ReadLocal(
+                                  body.ProblemLocal(), body.HandedType())}},
+                      .type = unit.builtins.void_type})});
+      block.AppendStmt(
+          mir::IfStmt{
+              .condition = enabled,
+              .then_scope = block.child_scopes.Add(std::move(then_block)),
+              .else_scope = std::nullopt});
+    }
+    finish(body, kConstrainHook);
+  }
+
+  {
+    HookBody body(unit_lowerer, shape, make_frame, handed);
+    begin(body, kRandObjectsHook);
+    each_random_variable(
+        body, [&](const AccessPath& path, hir::TypeId hir_type,
+                  mir::TypeId type, hir::RandomQualifier) {
+          if (!HoldsHandles(unit_lowerer.Hir().types, hir_type)) {
+            return;
+          }
+          const HookBody::Named named = body.Name(path, type);
+          body.Run(
+              mir::Direct{.target = support::BuiltinFn::kRandomizeNested},
+              {body.Problem(), named.reference, named.value});
+        });
+    finish(body, kRandObjectsHook);
+  }
+
+  // The `pre_randomize` or `post_randomize` the class declares, called on the
+  // object as a call written in the class names it: directly, since neither is
+  // virtual, and handing on no report, since no evaluation makes the call.
+  const auto calls_own =
+      [&](const std::optional<RandomizationHooks::CallsDeclared>& hook,
+          support::LibraryVirtual function) {
+        if (!hook.has_value()) {
+          return;
+        }
+        const hir::MethodId method = hook->method;
+        HookBody body(unit_lowerer, shape, make_frame, std::nullopt);
+        std::vector<mir::ExprId> arguments;
+        if (ReportParamTypeOf(body.Unit(), hir_class.methods.Get(method).kind)
+                .has_value()) {
+          arguments.push_back(BuildReportHandedOn(body.Unit(), body.Frame()));
+        }
+        const mir::ExprId called = body.Call(
+            mir::Direct{
+                .target =
+                    mir::CallableTarget{
+                        .owner = class_id_,
+                        .slot = declared_methods_.Get(method).callable},
+                .receiver =
+                    BuildObjectDeref(body.Unit(), body.Block(), body.Self())},
+            std::move(arguments),
+            SubroutineCallTypeOf(unit_lowerer, hir_class.methods.Get(method)));
+        body.Block().AppendStmt(mir::ExprStmt{.expr = called});
+        mir_class.callables.Define(hook->body, body.Finish(function));
+      };
+  calls_own(hooks.pre_randomize, support::LibraryVirtual::kClassPreRandomize);
+  calls_own(hooks.post_randomize, support::LibraryVirtual::kClassPostRandomize);
 }
 
 auto ClassDeclLowerer::PopulateBodies(
@@ -697,6 +1154,10 @@ auto ClassDeclLowerer::PopulateBodies(
             .foreign = std::nullopt,
             .virtual_dispatch =
                 shape.callable_signatures.Get(callable).virtual_dispatch});
+  }
+  if (const std::optional<RandomizationHooks>& hooks =
+          unit_lowerer.RandomizationHooksOf(hir_class_id_)) {
+    DefineRandomizationHooks(declaring_frame, mir_class, *hooks);
   }
 
   // The constructor body statements (LRM 8.7) run after base construction

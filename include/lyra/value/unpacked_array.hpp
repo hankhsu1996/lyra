@@ -216,6 +216,9 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
   [[nodiscard]] auto RawAt(std::size_t i) const -> const T& {
     return Items()[i];
   }
+  [[nodiscard]] auto RawAt(std::size_t i) -> T& {
+    return Items()[i];
+  }
 
   // LRM 11.4.11: the two arms of a conditional operator whose condition is
   // ambiguous, combined element by element -- an element the arms agree on

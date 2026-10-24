@@ -993,6 +993,98 @@ enum class BuiltinFn : std::uint16_t {
   kProcessSrandom,
   kProcessGetRandstate,
   kProcessSetRandstate,
+  // LRM 18.13.3 -- 18.13.5 on a class object's own generator (LRM 18.14.3),
+  // acting on whatever reaches the object: a handle, or a method's own object.
+  kObjectSrandom,
+  kObjectGetRandstate,
+  kObjectSetRandstate,
+  // The built-in `pre_randomize()` and `post_randomize()` (LRM 18.6.2), on
+  // the object a call reaches where no class of its lineage writes its own:
+  // the part every object starts with gives them.
+  kObjectPreRandomize,
+  kObjectPostRandomize,
+  // A call of `randomize()` (LRM 18.6, 18.7, 18.11, 18.12), as the steps its
+  // caller runs: begin on the object -- choosing what its declarations and
+  // modes choose, or only what the call lists -- or on the running thread for
+  // `std::randomize()`; list each variable the call names; let the object state
+  // its own; add what the call writes with it; and finish, answering 1 or 0.
+  kRandomizeObject,
+  kRandomizeObjectListed,
+  kRandomizeScope,
+  kRandomizeList,
+  kRandomizeConstrain,
+  kRandomizeFinish,
+  // What a class states to the call's problem in the functions the class
+  // object declares for it (LRM 18.4, 18.5): a variable a constraint reads,
+  // by how the source declared it, after the members of the enumeration it
+  // is where it is one; a constant; a random object a handle reaches; whether
+  // a constraint block is on; and the operations, constraints and orderings a
+  // constraint is made of, each over the problem's terms.
+  kConstraintMembers,
+  kConstraintRand,
+  kConstraintRandc,
+  kConstraintVariable,
+  kConstraintConstant,
+  kRandomizeNested,
+  kConstraintBlockEnabled,
+  kStaticConstraintBlockEnabled,
+  kConstraintNegate,
+  kConstraintBitwiseNot,
+  kConstraintReduceAnd,
+  kConstraintReduceOr,
+  kConstraintReduceXor,
+  kConstraintLogicalNot,
+  kConstraintAdd,
+  kConstraintSubtract,
+  kConstraintMultiply,
+  kConstraintDivide,
+  kConstraintRemainder,
+  kConstraintBitwiseAnd,
+  kConstraintBitwiseOr,
+  kConstraintBitwiseXor,
+  kConstraintShiftLeft,
+  kConstraintShiftRight,
+  kConstraintEqual,
+  kConstraintLess,
+  kConstraintLogicalAnd,
+  kConstraintLogicalOr,
+  kConstraintConcatenate,
+  kConstraintSelect,
+  kConstraintResize,
+  kConstraintSlice,
+  kConstraintRequire,
+  kConstraintPrefer,
+  kConstraintDisableSoft,
+  kConstraintSolveBefore,
+  // LRM 18.5.3: a distribution of a value, answered as which one it is, then
+  // its items and its default. LRM 18.5.4: a set of values that differ, its
+  // members, an array standing for each of its elements, and its requirement.
+  kConstraintDistribution,
+  kConstraintDistributionItem,
+  kConstraintDistributionDefault,
+  kConstraintUniqueSet,
+  kConstraintUniqueMember,
+  kConstraintUniqueArray,
+  kConstraintUniqueRequire,
+  // LRM 18.5.7.1 and 18.5.11: the size of an array a constraint reads, a
+  // variable a function a constraint calls is handed, and settling those
+  // before the rest, answering whether the description is stated again.
+  kConstraintArraySize,
+  kConstraintWant,
+  kRandomizeSettleFirst,
+  // LRM 18.8 and 18.9: a random variable's mode, through the variable the
+  // class declares, its value and a reference to the part named, or every one
+  // of an object's at once; a constraint block's, by its name on an
+  // object, every one of an object's, or a static block's by the key naming it
+  // and the class that introduced it.
+  kRandModeSet,
+  kRandModeGet,
+  kObjectRandModeSet,
+  kConstraintModeSet,
+  kConstraintModeGet,
+  kObjectConstraintModeSet,
+  kStaticConstraintModeSet,
+  kStaticConstraintModeGet,
   // Lifecycle activation registration (LRM 9.2): binds a process body's
   // coroutine to the scope's startup (`kRegisterInitial`) or shutdown
   // (`kRegisterFinal`) lifecycle. Distinct callees, not one tagged call --

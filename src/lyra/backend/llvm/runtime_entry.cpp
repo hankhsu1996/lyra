@@ -1989,6 +1989,75 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kProcessSrandom:
     case support::BuiltinFn::kProcessGetRandstate:
     case support::BuiltinFn::kProcessSetRandstate:
+    // A class object's generator and the steps of a call of `randomize()`:
+    // each is one library function, whatever class it acts on and whatever
+    // type a variable it names is of, since every variable crosses with its
+    // type.
+    case support::BuiltinFn::kObjectPreRandomize:
+    case support::BuiltinFn::kObjectPostRandomize:
+    case support::BuiltinFn::kObjectSrandom:
+    case support::BuiltinFn::kObjectGetRandstate:
+    case support::BuiltinFn::kObjectSetRandstate:
+    case support::BuiltinFn::kRandomizeObject:
+    case support::BuiltinFn::kRandomizeObjectListed:
+    case support::BuiltinFn::kRandomizeScope:
+    case support::BuiltinFn::kRandomizeList:
+    case support::BuiltinFn::kRandomizeConstrain:
+    case support::BuiltinFn::kRandomizeFinish:
+    case support::BuiltinFn::kConstraintMembers:
+    case support::BuiltinFn::kConstraintRand:
+    case support::BuiltinFn::kConstraintRandc:
+    case support::BuiltinFn::kConstraintVariable:
+    case support::BuiltinFn::kConstraintConstant:
+    case support::BuiltinFn::kRandomizeNested:
+    case support::BuiltinFn::kConstraintBlockEnabled:
+    case support::BuiltinFn::kStaticConstraintBlockEnabled:
+    case support::BuiltinFn::kConstraintNegate:
+    case support::BuiltinFn::kConstraintBitwiseNot:
+    case support::BuiltinFn::kConstraintReduceAnd:
+    case support::BuiltinFn::kConstraintReduceOr:
+    case support::BuiltinFn::kConstraintReduceXor:
+    case support::BuiltinFn::kConstraintLogicalNot:
+    case support::BuiltinFn::kConstraintAdd:
+    case support::BuiltinFn::kConstraintSubtract:
+    case support::BuiltinFn::kConstraintMultiply:
+    case support::BuiltinFn::kConstraintDivide:
+    case support::BuiltinFn::kConstraintRemainder:
+    case support::BuiltinFn::kConstraintBitwiseAnd:
+    case support::BuiltinFn::kConstraintBitwiseOr:
+    case support::BuiltinFn::kConstraintBitwiseXor:
+    case support::BuiltinFn::kConstraintShiftLeft:
+    case support::BuiltinFn::kConstraintShiftRight:
+    case support::BuiltinFn::kConstraintEqual:
+    case support::BuiltinFn::kConstraintLess:
+    case support::BuiltinFn::kConstraintLogicalAnd:
+    case support::BuiltinFn::kConstraintLogicalOr:
+    case support::BuiltinFn::kConstraintConcatenate:
+    case support::BuiltinFn::kConstraintSelect:
+    case support::BuiltinFn::kConstraintResize:
+    case support::BuiltinFn::kConstraintSlice:
+    case support::BuiltinFn::kConstraintRequire:
+    case support::BuiltinFn::kConstraintPrefer:
+    case support::BuiltinFn::kConstraintDisableSoft:
+    case support::BuiltinFn::kConstraintSolveBefore:
+    case support::BuiltinFn::kConstraintDistribution:
+    case support::BuiltinFn::kConstraintDistributionItem:
+    case support::BuiltinFn::kConstraintDistributionDefault:
+    case support::BuiltinFn::kConstraintUniqueSet:
+    case support::BuiltinFn::kConstraintUniqueMember:
+    case support::BuiltinFn::kConstraintUniqueArray:
+    case support::BuiltinFn::kConstraintUniqueRequire:
+    case support::BuiltinFn::kConstraintArraySize:
+    case support::BuiltinFn::kConstraintWant:
+    case support::BuiltinFn::kRandomizeSettleFirst:
+    case support::BuiltinFn::kRandModeSet:
+    case support::BuiltinFn::kRandModeGet:
+    case support::BuiltinFn::kObjectRandModeSet:
+    case support::BuiltinFn::kConstraintModeSet:
+    case support::BuiltinFn::kConstraintModeGet:
+    case support::BuiltinFn::kObjectConstraintModeSet:
+    case support::BuiltinFn::kStaticConstraintModeSet:
+    case support::BuiltinFn::kStaticConstraintModeGet:
     case support::BuiltinFn::kParent:
     case support::BuiltinFn::kHierarchicalPath:
     // An assertion's attempts hold machine words and no value of the design,

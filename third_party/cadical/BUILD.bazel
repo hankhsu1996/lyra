@@ -1,0 +1,3 @@
+# The build of CaDiCaL, which `MODULE.bazel` fetches.
+
+exports_files(["cadical.BUILD"])

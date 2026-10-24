@@ -92,6 +92,12 @@ class ClassDeclLowerer {
       const WalkFrame& declaring_frame, mir::Class& mir_class,
       ScopeChainNode& link) const -> WalkFrame;
 
+  // Defines what `randomize()` asks of the class (LRM 18.6), each at the
+  // identity the class took for it.
+  void DefineRandomizationHooks(
+      const WalkFrame& declaring_frame, mir::Class& mir_class,
+      const RandomizationHooks& hooks) const;
+
   UnitLowerer* owner_;
   hir::ClassId hir_class_id_;
   mir::ClassId class_id_;

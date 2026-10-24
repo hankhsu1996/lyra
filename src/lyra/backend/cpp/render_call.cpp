@@ -18,6 +18,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
+#include "lyra/support/runtime_class.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -362,6 +363,14 @@ void WriteDirectCallee(
                 ReceiverPlacement::kIntoCalleeName,
                 CppClassRef(view.Unit(), t.cls),
                 "::", CppConstructorMemberName());
+          },
+          // Another unit's class's override of a library class's function,
+          // `obj.::Pkg::C::sv_constrain(p)`, qualified so it does not dispatch.
+          [&](const mir::ExternalLibraryOverrideTarget& t) {
+            callee.Named(
+                ReceiverPlacement::kIntoCalleeName,
+                CppExternalClassPath(t.unit_name, t.class_path), "::",
+                VerbatimName{.text = support::LibraryVirtualName(t.function)});
           },
           // A method of a struct or a union, qualified by its type the way a
           // class method is: `v.::Pkg::sv_types::s::IsBitIdentical(w)` on the

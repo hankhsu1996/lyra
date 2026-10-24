@@ -152,4 +152,7 @@ class InitializationRng {
   DrawRng source_{RandomSeed{1}};
 };
 
+// A uniform draw in [0, `span`) from `rng`, for a span of 1 to 2^32.
+[[nodiscard]] auto DrawBelow(DrawRng& rng, std::uint64_t span) -> std::uint64_t;
+
 }  // namespace lyra::runtime

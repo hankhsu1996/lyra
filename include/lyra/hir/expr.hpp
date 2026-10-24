@@ -10,6 +10,7 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/class_ref.hpp"
+#include "lyra/hir/constraint_id.hpp"
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/expr_id.hpp"
@@ -524,6 +525,106 @@ struct AssignmentPatternKeyedExpr {
   auto operator==(const AssignmentPatternKeyedExpr&) const -> bool = default;
 };
 
+// The variables a call of `randomize()` chooses (LRM 18.11, 18.12): those the
+// object declares random whose modes are on, or exactly those the call lists,
+// which `randomize(null)` lists none of, so that it checks instead (LRM
+// 18.11.1). Each listed variable is a place.
+struct DeclaredRandomVariables {
+  auto operator==(const DeclaredRandomVariables&) const -> bool = default;
+};
+struct ListedRandomVariables {
+  std::vector<ExprId> variables;
+
+  auto operator==(const ListedRandomVariables&) const -> bool = default;
+};
+using RandomVariables =
+    std::variant<DeclaredRandomVariables, ListedRandomVariables>;
+
+// What a call of `randomize()` randomizes: an object, reached through a handle
+// or as the running method's own (LRM 18.6.1), with the variables it chooses;
+// or the variables a scope randomize lists (LRM 18.12).
+struct RandomizedClassObject {
+  ExprId object;
+  RandomVariables variables;
+
+  auto operator==(const RandomizedClassObject&) const -> bool = default;
+};
+struct RandomizedScopeVariables {
+  std::vector<ExprId> variables;
+
+  auto operator==(const RandomizedScopeVariables&) const -> bool = default;
+};
+using RandomizeTarget =
+    std::variant<RandomizedClassObject, RandomizedScopeVariables>;
+
+// A call of `randomize()` (LRM 18.6.1, 18.7, 18.11, 18.12), and the constraint
+// block written with it where one is (LRM 18.7, 18.12.1), in this body's arena.
+// It answers 1 where it set every variable it chooses and 0 where nothing
+// satisfies the constraints.
+struct RandomizeExpr {
+  RandomizeTarget target;
+  std::optional<ConstraintId> with;
+
+  auto operator==(const RandomizeExpr&) const -> bool = default;
+};
+
+// What `rand_mode()` and `constraint_mode()` act on (LRM 18.8, 18.9): one
+// random variable, a place; every random variable or every constraint block of
+// an object; one constraint block, by its name on an object; and a static
+// block, whose mode every object of its class shares.
+struct RandomVariableMode {
+  ExprId variable;
+
+  auto operator==(const RandomVariableMode&) const -> bool = default;
+};
+struct ObjectModes {
+  ExprId object;
+
+  auto operator==(const ObjectModes&) const -> bool = default;
+};
+struct ConstraintBlockMode {
+  ExprId object;
+  std::string name;
+
+  auto operator==(const ConstraintBlockMode&) const -> bool = default;
+};
+// A static block's mode is its class's (LRM 18.5.10): the class that
+// introduced the block, whichever class's block of that name the call reached.
+struct StaticConstraintBlockMode {
+  ClassRef introducer;
+  std::string block;
+
+  auto operator==(const StaticConstraintBlockMode&) const -> bool = default;
+};
+
+// `rand_mode(on)` called as a task, and `rand_mode()` as a function (LRM
+// 18.8).
+struct RandModeSetExpr {
+  std::variant<RandomVariableMode, ObjectModes> target;
+  ExprId on;
+
+  auto operator==(const RandModeSetExpr&) const -> bool = default;
+};
+struct RandModeGetExpr {
+  RandomVariableMode target;
+
+  auto operator==(const RandModeGetExpr&) const -> bool = default;
+};
+
+// `constraint_mode(on)` and `constraint_mode()` (LRM 18.9).
+struct ConstraintModeSetExpr {
+  std::variant<ConstraintBlockMode, StaticConstraintBlockMode, ObjectModes>
+      target;
+  ExprId on;
+
+  auto operator==(const ConstraintModeSetExpr&) const -> bool = default;
+};
+struct ConstraintModeGetExpr {
+  std::variant<ConstraintBlockMode, StaticConstraintBlockMode> target;
+
+  auto operator==(const ConstraintModeGetExpr&) const -> bool = default;
+};
+
 using ExprData = std::variant<
     PrimaryExpr, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr, IncDecExpr,
     CallExpr, ConversionExpr, ConstantExpr, ValueRangeExpr, InsideExpr,
@@ -533,7 +634,9 @@ using ExprData = std::variant<
     ReplicationExpr, AssignmentPatternExpr, AssignmentPatternReplicationExpr,
     DynamicArrayNewExpr, ClassNewExpr, AssociativeAssignmentPatternExpr,
     AssignmentPatternKeyedExpr, TaggedUnionExpr, DynamicCastExpr,
-    CovergroupNewExpr, CovergroupMethodCallExpr, CovergroupOptionExpr>;
+    CovergroupNewExpr, CovergroupMethodCallExpr, CovergroupOptionExpr,
+    RandomizeExpr, RandModeSetExpr, RandModeGetExpr, ConstraintModeSetExpr,
+    ConstraintModeGetExpr>;
 
 struct Expr {
   TypeId type;

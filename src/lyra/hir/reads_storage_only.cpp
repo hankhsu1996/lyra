@@ -124,7 +124,12 @@ auto ReadsOnly(
           [](const DynamicCastExpr&) { return false; },
           [](const CovergroupNewExpr&) { return false; },
           [](const CovergroupMethodCallExpr&) { return false; },
-          [](const CovergroupOptionExpr&) { return false; }},
+          [](const CovergroupOptionExpr&) { return false; },
+          [](const RandomizeExpr&) { return false; },
+          [](const RandModeSetExpr&) { return false; },
+          [](const RandModeGetExpr&) { return false; },
+          [](const ConstraintModeSetExpr&) { return false; },
+          [](const ConstraintModeGetExpr&) { return false; }},
       exprs.Get(id).data);
 }
 
@@ -140,6 +145,7 @@ auto IsPropertyOfTheReceiver(const Primary& primary) -> bool {
           [](const RealLiteral&) { return false; },
           [](const NullLiteral&) { return false; },
           [](const ThisHandle&) { return false; },
+          [](const RandomizedObject&) { return false; },
           [](const QueueLastIndex&) { return false; },
           [](const ProceduralVarRef&) { return false; },
           [](const StaticPropertyRef&) { return false; },
@@ -168,6 +174,7 @@ auto IsDeclaredByABody(const Primary& primary) -> bool {
           [](const RealLiteral&) { return false; },
           [](const NullLiteral&) { return false; },
           [](const ThisHandle&) { return false; },
+          [](const RandomizedObject&) { return false; },
           [](const QueueLastIndex&) { return false; },
           [](const ClassPropertyRef&) { return false; },
           [](const StaticPropertyRef&) { return false; },

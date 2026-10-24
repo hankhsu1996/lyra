@@ -172,6 +172,12 @@ auto ResolveRuntimeLocation(std::string_view binary_path)
   if (!svdpi) {
     return std::unexpected(std::move(svdpi.error()));
   }
+  auto licenses = LocateShipped(
+      *runfiles, std::format("_main/{}", kThirdPartyLicensesFile),
+      "the notices of the code the Lyra runtime carries");
+  if (!licenses) {
+    return std::unexpected(std::move(licenses.error()));
+  }
   auto source_list = LocateShipped(
       *runfiles, std::format("_main/runtime_sources/{}", kRuntimeSourceList),
       "the Lyra runtime sources");
@@ -184,7 +190,8 @@ auto ResolveRuntimeLocation(std::string_view binary_path)
       .address_sanitized_lib = *std::move(sanitized),
       .address_sanitizer = std::move(asan),
       .sources_root = source_list->parent_path(),
-      .svdpi_header = *std::move(svdpi)};
+      .svdpi_header = *std::move(svdpi),
+      .third_party_licenses = *std::move(licenses)};
 }
 
 auto ExportRuntimeTree(
@@ -199,6 +206,11 @@ auto ExportRuntimeTree(
   }
   if (auto r =
           CopyFile(runtime.lib, dest_dir / kRuntimeLibDir / kRuntimeLibFile);
+      !r) {
+    return r;
+  }
+  if (auto r = CopyFile(
+          runtime.third_party_licenses, dest_dir / kThirdPartyLicensesFile);
       !r) {
     return r;
   }

@@ -42,6 +42,8 @@ struct RuntimeLocation {
   // Lyra source includes it -- but shipped alongside so a user's foreign
   // sources compile against the standard declarations.
   std::filesystem::path svdpi_header;
+  // The notices of the third-party code the runtime library carries.
+  std::filesystem::path third_party_licenses;
 };
 
 // What a program links of the runtime: the archives or objects, and what the

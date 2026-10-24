@@ -606,12 +606,26 @@ auto UnitLowerer::TakeClassIdentities(const hir::ClassDecl& decl)
   for (std::size_t f = 0; f < decl.embedded_covergroups.size(); ++f) {
     factories.push_back(callables.Take());
   }
+  const auto calls_declared = [&](hir::MethodId method) {
+    return RandomizationHooks::CallsDeclared{
+        .body = callables.Take(), .method = method};
+  };
+  std::optional<RandomizationHooks> randomization;
+  if (!decl.is_interface_class) {
+    randomization = RandomizationHooks{
+        .rand_variables = callables.Take(),
+        .constrain = callables.Take(),
+        .rand_objects = callables.Take(),
+        .pre_randomize = decl.pre_randomize.transform(calls_declared),
+        .post_randomize = decl.post_randomize.transform(calls_declared)};
+  }
   return ClassTranslation{
       .id = id,
       .object_type = unit_.types.Intern(
           mir::Type{mir::ObjectType{.of = mir::IntraUnitClassRef{id}}}),
       .methods = {decl.methods.size(), std::move(methods)},
-      .factories = std::move(factories)};
+      .factories = std::move(factories),
+      .randomization = randomization};
 }
 
 auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {

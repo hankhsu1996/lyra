@@ -891,6 +891,77 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_process_srandom", &lyra_rt_process_srandom);
   add("lyra_rt_process_get_randstate", &lyra_rt_process_get_randstate);
   add("lyra_rt_process_set_randstate", &lyra_rt_process_set_randstate);
+  add("lyra_rt_object_srandom", &lyra_rt_object_srandom);
+  add("lyra_rt_object_get_randstate", &lyra_rt_object_get_randstate);
+  add("lyra_rt_object_pre_randomize", &lyra_rt_object_pre_randomize);
+  add("lyra_rt_object_post_randomize", &lyra_rt_object_post_randomize);
+  add("lyra_rt_object_set_randstate", &lyra_rt_object_set_randstate);
+  add("lyra_rt_randomize_object", &lyra_rt_randomize_object);
+  add("lyra_rt_randomize_object_listed", &lyra_rt_randomize_object_listed);
+  add("lyra_rt_randomize_scope", &lyra_rt_randomize_scope);
+  add("lyra_rt_randomize_list", &lyra_rt_randomize_list);
+  add("lyra_rt_randomize_constrain", &lyra_rt_randomize_constrain);
+  add("lyra_rt_randomize_finish", &lyra_rt_randomize_finish);
+  add("lyra_rt_constraint_members", &lyra_rt_constraint_members);
+  add("lyra_rt_constraint_rand", &lyra_rt_constraint_rand);
+  add("lyra_rt_constraint_randc", &lyra_rt_constraint_randc);
+  add("lyra_rt_constraint_variable", &lyra_rt_constraint_variable);
+  add("lyra_rt_constraint_constant", &lyra_rt_constraint_constant);
+  add("lyra_rt_randomize_nested", &lyra_rt_randomize_nested);
+  add("lyra_rt_constraint_block_enabled", &lyra_rt_constraint_block_enabled);
+  add("lyra_rt_static_constraint_block_enabled",
+      &lyra_rt_static_constraint_block_enabled);
+  add("lyra_rt_constraint_negate", &lyra_rt_constraint_negate);
+  add("lyra_rt_constraint_bitwise_not", &lyra_rt_constraint_bitwise_not);
+  add("lyra_rt_constraint_reduce_and", &lyra_rt_constraint_reduce_and);
+  add("lyra_rt_constraint_reduce_or", &lyra_rt_constraint_reduce_or);
+  add("lyra_rt_constraint_reduce_xor", &lyra_rt_constraint_reduce_xor);
+  add("lyra_rt_constraint_logical_not", &lyra_rt_constraint_logical_not);
+  add("lyra_rt_constraint_add", &lyra_rt_constraint_add);
+  add("lyra_rt_constraint_subtract", &lyra_rt_constraint_subtract);
+  add("lyra_rt_constraint_multiply", &lyra_rt_constraint_multiply);
+  add("lyra_rt_constraint_divide", &lyra_rt_constraint_divide);
+  add("lyra_rt_constraint_remainder", &lyra_rt_constraint_remainder);
+  add("lyra_rt_constraint_bitwise_and", &lyra_rt_constraint_bitwise_and);
+  add("lyra_rt_constraint_bitwise_or", &lyra_rt_constraint_bitwise_or);
+  add("lyra_rt_constraint_bitwise_xor", &lyra_rt_constraint_bitwise_xor);
+  add("lyra_rt_constraint_shift_left", &lyra_rt_constraint_shift_left);
+  add("lyra_rt_constraint_shift_right", &lyra_rt_constraint_shift_right);
+  add("lyra_rt_constraint_equal", &lyra_rt_constraint_equal);
+  add("lyra_rt_constraint_less", &lyra_rt_constraint_less);
+  add("lyra_rt_constraint_logical_and", &lyra_rt_constraint_logical_and);
+  add("lyra_rt_constraint_logical_or", &lyra_rt_constraint_logical_or);
+  add("lyra_rt_constraint_concatenate", &lyra_rt_constraint_concatenate);
+  add("lyra_rt_constraint_select", &lyra_rt_constraint_select);
+  add("lyra_rt_constraint_resize", &lyra_rt_constraint_resize);
+  add("lyra_rt_constraint_slice", &lyra_rt_constraint_slice);
+  add("lyra_rt_constraint_require", &lyra_rt_constraint_require);
+  add("lyra_rt_constraint_prefer", &lyra_rt_constraint_prefer);
+  add("lyra_rt_constraint_disable_soft", &lyra_rt_constraint_disable_soft);
+  add("lyra_rt_constraint_solve_before", &lyra_rt_constraint_solve_before);
+  add("lyra_rt_constraint_distribution", &lyra_rt_constraint_distribution);
+  add("lyra_rt_constraint_distribution_item",
+      &lyra_rt_constraint_distribution_item);
+  add("lyra_rt_constraint_distribution_default",
+      &lyra_rt_constraint_distribution_default);
+  add("lyra_rt_constraint_unique_set", &lyra_rt_constraint_unique_set);
+  add("lyra_rt_constraint_unique_member", &lyra_rt_constraint_unique_member);
+  add("lyra_rt_constraint_unique_array", &lyra_rt_constraint_unique_array);
+  add("lyra_rt_constraint_unique_require", &lyra_rt_constraint_unique_require);
+  add("lyra_rt_constraint_array_size", &lyra_rt_constraint_array_size);
+  add("lyra_rt_constraint_want", &lyra_rt_constraint_want);
+  add("lyra_rt_randomize_settle_first", &lyra_rt_randomize_settle_first);
+  add("lyra_rt_rand_mode_set", &lyra_rt_rand_mode_set);
+  add("lyra_rt_rand_mode_get", &lyra_rt_rand_mode_get);
+  add("lyra_rt_object_rand_mode_set", &lyra_rt_object_rand_mode_set);
+  add("lyra_rt_constraint_mode_set", &lyra_rt_constraint_mode_set);
+  add("lyra_rt_constraint_mode_get", &lyra_rt_constraint_mode_get);
+  add("lyra_rt_object_constraint_mode_set",
+      &lyra_rt_object_constraint_mode_set);
+  add("lyra_rt_static_constraint_mode_set",
+      &lyra_rt_static_constraint_mode_set);
+  add("lyra_rt_static_constraint_mode_get",
+      &lyra_rt_static_constraint_mode_get);
   add("lyra_rt_laidout_cell_initialize", &lyra_rt_laidout_cell_initialize);
   add("lyra_rt_laidout_cell_set", &lyra_rt_laidout_cell_set);
   add("lyra_rt_laidout_cell_arm_sampling", &lyra_rt_laidout_cell_arm_sampling);

@@ -6,10 +6,12 @@
 #include <cstdlib>
 #include <exception>
 #include <memory>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 #include "lyra/base/diag_message.hpp"
@@ -22,6 +24,7 @@
 #include "lyra/runtime/plusargs.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/runtime/third_party_licenses.hpp"
 #include "lyra/value/queue_bound.hpp"
 
 namespace lyra::runtime {
@@ -81,6 +84,8 @@ constexpr std::string_view kOutOfStack =
     "note: a subroutine of the design calls itself, or others, more deeply "
     "than the stack this program was started with allows\n";
 
+constexpr std::string_view kLicensesOption = "lyra+licenses";
+
 constexpr std::string_view kOutOfMemory =
     "error: the simulation ran out of memory\n";
 
@@ -103,7 +108,15 @@ auto RunDesignRoot(
   for (std::size_t i = 1; i < args.size(); ++i) {
     arguments.emplace_back(args[i]);
   }
-  Runtime runtime{RuntimeOptions{.plusargs = PlusargsFrom(arguments)}};
+  std::vector<std::string> plusargs = PlusargsFrom(arguments);
+  // The program carries third-party code inside the runtime it links, whose
+  // notices it prints when asked, in place of a run.
+  if (std::ranges::contains(plusargs, kLicensesOption)) {
+    const std::string_view notices = ThirdPartyLicenses();
+    std::fwrite(notices.data(), 1, notices.size(), stdout);
+    return EXIT_SUCCESS;
+  }
+  Runtime runtime{RuntimeOptions{.plusargs = std::move(plusargs)}};
 
   // Building the design and resolving its references precede the simulation
   // (LRM 3.12). An error here has no activation to leave and no final procedure

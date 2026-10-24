@@ -39,6 +39,7 @@
 #include "lyra/runtime/any.hpp"                     // IWYU pragma: keep
 #include "lyra/runtime/bound_members.hpp"           // IWYU pragma: keep
 #include "lyra/runtime/class_definition.hpp"        // IWYU pragma: keep
+#include "lyra/runtime/class_object.hpp"            // IWYU pragma: keep
 #include "lyra/runtime/construction_table.hpp"      // IWYU pragma: keep
 #include "lyra/runtime/coroutine.hpp"               // IWYU pragma: keep
 #include "lyra/runtime/delay.hpp"                   // IWYU pragma: keep
@@ -63,6 +64,7 @@
 #include "lyra/runtime/process_control.hpp"         // IWYU pragma: keep
 #include "lyra/runtime/property_wait.hpp"           // IWYU pragma: keep
 #include "lyra/runtime/random.hpp"                  // IWYU pragma: keep
+#include "lyra/runtime/randomize.hpp"               // IWYU pragma: keep
 #include "lyra/runtime/reaction.hpp"                // IWYU pragma: keep
 #include "lyra/runtime/read_report.hpp"             // IWYU pragma: keep
 #include "lyra/runtime/runtime.hpp"                 // IWYU pragma: keep

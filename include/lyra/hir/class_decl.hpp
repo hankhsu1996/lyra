@@ -12,6 +12,7 @@
 #include "lyra/hir/field_id.hpp"
 #include "lyra/hir/method_id.hpp"
 #include "lyra/hir/procedural_body.hpp"
+#include "lyra/hir/random_qualifier.hpp"
 #include "lyra/hir/static_property_id.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type_id.hpp"
@@ -33,6 +34,7 @@ struct ClassField {
   // through the class or through an extension of it, and an extension may be
   // declared anywhere.
   bool is_published = true;
+  RandomQualifier random = RandomQualifier::kNone;
 
   auto operator==(const ClassField&) const -> bool = default;
 };
@@ -48,6 +50,7 @@ struct ClassField {
 struct ClassStaticProperty {
   std::string name;
   TypeId type;
+  RandomQualifier random = RandomQualifier::kNone;
 
   auto operator==(const ClassStaticProperty&) const -> bool = default;
 };
@@ -234,6 +237,12 @@ struct ClassDecl {
   // publishes the method making each: the one at position `i` is made by the
   // method `i` places after every method the source declares.
   std::vector<CovergroupId> embedded_covergroups;
+  // The `pre_randomize` and `post_randomize` the class declares, where it
+  // declares one. `randomize()` calls them on an object of the class, so the
+  // one a class declares replaces its base's, though neither is virtual (LRM
+  // 18.6.2).
+  std::optional<MethodId> pre_randomize;
+  std::optional<MethodId> post_randomize;
 
   auto operator==(const ClassDecl&) const -> bool = default;
 };

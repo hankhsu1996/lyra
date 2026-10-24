@@ -2,7 +2,9 @@
 
 #include <cstddef>
 #include <expected>
+#include <format>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -11,11 +13,13 @@
 
 #include <slang/ast/Compilation.h>
 #include <slang/ast/Expression.h>
+#include <slang/ast/Lookup.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/SystemSubroutine.h>
 #include <slang/ast/TimingControl.h>
 #include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/expressions/MiscExpressions.h>
+#include <slang/ast/expressions/SelectExpressions.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
@@ -24,9 +28,11 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 #include <slang/numeric/SVInt.h>
+#include <slang/syntax/AllSyntax.h>
 
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/expr_builders.hpp"
@@ -37,6 +43,7 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/lowering/ast_to_hir/constraint_block.hpp"
 #include "lyra/lowering/ast_to_hir/covergroup_access.hpp"
 #include "lyra/lowering/ast_to_hir/expression/dynamic_cast.hpp"
 #include "lyra/lowering/ast_to_hir/expression/expr_lowerer.hpp"
@@ -53,6 +60,7 @@
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
+#include "lyra/support/def_path.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -388,15 +396,18 @@ auto LowerSampledHistoryExpr(
 }
 
 // A call to a built-in runtime entry, out of the operands the source wrote with
-// the object first. The object the entry acts on becomes the call's receiver
+// the object first. The value the entry acts on becomes the call's receiver
 // and the rest its arguments, so no layer below has to know which operand
-// position an object was written in; an entry that acts on none -- a factory
-// answering with the value it builds -- takes every operand as an argument.
+// position it was written in. An entry that acts on none -- a factory
+// answering with the value it builds -- takes every operand as an argument,
+// and so does one acting on a class object, which is handed whatever reaches
+// that object as its first operand and opens it there.
 auto BuiltinCall(
     support::BuiltinFn method, std::vector<std::optional<hir::ExprId>> operands)
     -> hir::CallExpr {
   const support::RuntimeEntry entry = support::RuntimeEntryOf(method);
-  if (std::holds_alternative<support::StaticFactory>(entry.declaration)) {
+  if (std::holds_alternative<support::StaticFactory>(entry.declaration) ||
+      entry.reaches_an_object) {
     return hir::CallExpr{
         .callee =
             hir::BuiltinMethodRef{.method = method, .receiver = std::nullopt},
@@ -865,6 +876,74 @@ auto LowerSystemCall(
   };
 }
 
+// The object a call of `randomize()` or a mode method acts on, where the call
+// reached it through a handle; the running method's own where it named none.
+template <ExprLowerer Lowerer>
+auto ObjectOfCall(
+    Lowerer& lowerer, const WalkFrame& frame,
+    const slang::ast::Expression* handle, const slang::ast::Type& class_type,
+    diag::SourceSpan span) -> diag::Result<hir::ExprId> {
+  if (handle != nullptr) {
+    auto lowered = lowerer.LowerExpr(*handle, frame);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    return frame.Exprs().Add(*std::move(lowered));
+  }
+  auto type = lowerer.Owner().InternType(class_type, span);
+  if (!type) return std::unexpected(std::move(type.error()));
+  return frame.Exprs().Add(hir::MakeRefExpr(hir::ThisHandle{}, *type, span));
+}
+
+// A call of a method every class has (LRM 18.6.2, 18.8, 18.9, 18.13.3 --
+// 18.13.5), on the object the call reaches or the running method's own.
+template <ExprLowerer Lowerer>
+auto LowerBuiltinClassMethodCall(
+    Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
+    const slang::ast::SubroutineSymbol& sym,
+    const slang::ast::ClassType& declaring,
+    std::vector<std::optional<hir::ExprId>> arg_ids, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  auto type = lowerer.Owner().InternExpressionType(call, span);
+  if (!type) return std::unexpected(std::move(type.error()));
+  const auto expr = [&](hir::ExprData data) {
+    return hir::Expr{.type = *type, .data = std::move(data), .span = span};
+  };
+  auto object = ObjectOfCall(lowerer, frame, call.thisClass(), declaring, span);
+  if (!object) return std::unexpected(std::move(object.error()));
+  const auto on_object = [&](support::BuiltinFn fn) {
+    std::vector<std::optional<hir::ExprId>> operands{*object};
+    operands.insert(operands.end(), arg_ids.begin(), arg_ids.end());
+    return expr(BuiltinCall(fn, std::move(operands)));
+  };
+  if (sym.name == "pre_randomize") {
+    return on_object(support::BuiltinFn::kObjectPreRandomize);
+  }
+  if (sym.name == "post_randomize") {
+    return on_object(support::BuiltinFn::kObjectPostRandomize);
+  }
+  if (sym.name == "srandom") {
+    return on_object(support::BuiltinFn::kObjectSrandom);
+  }
+  if (sym.name == "get_randstate") {
+    return on_object(support::BuiltinFn::kObjectGetRandstate);
+  }
+  if (sym.name == "set_randstate") {
+    return on_object(support::BuiltinFn::kObjectSetRandstate);
+  }
+  if ((sym.name == "rand_mode" || sym.name == "constraint_mode") &&
+      arg_ids.size() == 1 && arg_ids.front().has_value()) {
+    const hir::ObjectModes target{.object = *object};
+    if (sym.name == "rand_mode") {
+      return expr(
+          hir::RandModeSetExpr{.target = target, .on = *arg_ids.front()});
+    }
+    return expr(
+        hir::ConstraintModeSetExpr{.target = target, .on = *arg_ids.front()});
+  }
+  return diag::Fail(
+      span, diag::DiagCode::kUnsupportedExpressionForm,
+      "the built-in class method '{}' is not yet supported", sym.name);
+}
+
 // A call to a subroutine the source declared: a method of a class or of an
 // imported runtime-library class, one of an interface instance, a DPI-C
 // import, one another unit's namespace declares, or one of this unit's scopes.
@@ -916,15 +995,14 @@ auto LowerSubroutineCall(
   // A class method the front end supplies itself has no body, so there is no
   // declaration of this unit for the call to name. Every class has such
   // methods for its generator and its constraints (LRM 18.6, 18.8, 18.9,
-  // 18.13.3 -- 18.13.5); those of a library class the runtime carries out were
-  // routed above, and those of a `std` class Lyra defines are that
-  // definition's methods, called as any other class's.
+  // 18.13.3 -- 18.13.5), which the runtime carries out; those of a library
+  // class the runtime defines were routed above, and those of a `std` class
+  // Lyra defines are that definition's methods, called as any other class's.
   if (const slang::ast::ClassType* declaring = DeclaringClassOf(*sym);
       sym->flags.has(slang::ast::MethodFlags::BuiltIn) &&
       declaring != nullptr && &unit_lowerer.Defining(*declaring) == declaring) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm,
-        "the built-in class method '{}' is not yet supported", sym->name);
+    return LowerBuiltinClassMethodCall(
+        lowerer, frame, call, *sym, *declaring, std::move(arg_ids), span);
   }
 
   // A static class method call (LRM 8.10): the target has no receiver, so it
@@ -1117,6 +1195,253 @@ auto LowerSubroutineCall(
 
 }  // namespace
 
+namespace {
+
+// Whether `call` is a class's `randomize()` (LRM 18.6.1), as opposed to the
+// scope randomize of the `std` package (LRM 18.12). The front end makes both
+// calls of a system subroutine of the name, and only the class's is the one
+// it keeps on class types.
+auto IsClassRandomize(const slang::ast::CallExpression& call) -> bool {
+  const auto& info =
+      std::get<slang::ast::CallExpression::SystemCallInfo>(call.subroutine);
+  const slang::ast::Scope* scope = info.scope;
+  const slang::ast::SystemSubroutine* class_randomize =
+      scope == nullptr ? nullptr
+                       : scope->getCompilation().getSystemMethod(
+                             slang::ast::SymbolKind::ClassType, "randomize");
+  return info.subroutine == class_randomize;
+}
+
+// Whether a call of a class's `randomize()` was made on a handle -- as
+// `obj.randomize()` or `f().randomize()`, with or without parentheses or a
+// `with` -- so that the front end lists the handle ahead of the variables the
+// call names. Bare in a method of the class it lists only the variables, and
+// the object is the one the method runs on (LRM 18.6.1).
+auto CalledOnAHandle(const slang::ast::CallExpression& call) -> bool {
+  const slang::syntax::SyntaxNode* node = call.syntax;
+  if (node == nullptr) {
+    return false;
+  }
+  if (node->kind ==
+      slang::syntax::SyntaxKind::ArrayOrRandomizeMethodExpression) {
+    node = node->as<slang::syntax::ArrayOrRandomizeMethodExpressionSyntax>()
+               .method;
+  }
+  if (node->kind == slang::syntax::SyntaxKind::InvocationExpression) {
+    node = node->as<slang::syntax::InvocationExpressionSyntax>().left;
+  }
+  if (node->kind == slang::syntax::SyntaxKind::ScopedName) {
+    return node->as<slang::syntax::ScopedNameSyntax>().separator.kind ==
+           slang::parsing::TokenKind::Dot;
+  }
+  return node->kind == slang::syntax::SyntaxKind::MemberAccessExpression;
+}
+
+// The constraint block a `constraint_mode()` call names, and the handle it is
+// reached through, absent where the call names it bare in a method of its
+// class.
+struct NamedConstraintBlock {
+  const slang::ast::ConstraintBlockSymbol* block;
+  const slang::ast::Expression* handle;
+};
+
+auto ConstraintBlockOf(const slang::ast::Expression& named)
+    -> std::optional<NamedConstraintBlock> {
+  if (const auto* bare = named.as_if<slang::ast::ArbitrarySymbolExpression>()) {
+    if (const auto* block =
+            bare->symbol->as_if<slang::ast::ConstraintBlockSymbol>()) {
+      return NamedConstraintBlock{.block = block, .handle = nullptr};
+    }
+    return std::nullopt;
+  }
+  if (const auto* member = named.as_if<slang::ast::MemberAccessExpression>()) {
+    if (const auto* block =
+            member->member.as_if<slang::ast::ConstraintBlockSymbol>()) {
+      return NamedConstraintBlock{.block = block, .handle = &member->value()};
+    }
+  }
+  return std::nullopt;
+}
+
+// LRM 18.6 -- 18.12: `randomize()`, `rand_mode()` and `constraint_mode()`,
+// whose arguments name variables and blocks rather than values, so they are
+// recognized before the arguments are lowered as values are. Nothing where the
+// call is none of them.
+template <ExprLowerer Lowerer>
+auto LowerRandomizationCall(
+    Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
+    diag::SourceSpan span) -> diag::Result<std::optional<hir::Expr>> {
+  if (!call.isSystemCall()) {
+    return std::nullopt;
+  }
+  const auto& info =
+      std::get<slang::ast::CallExpression::SystemCallInfo>(call.subroutine);
+  const auto known = info.subroutine->knownNameId;
+  auto& unit_lowerer = lowerer.Owner();
+  const auto result_type = [&]() {
+    return unit_lowerer.InternExpressionType(call, span);
+  };
+  const auto place = [&](const slang::ast::Expression& arg,
+                         const WalkFrame& at) -> diag::Result<hir::ExprId> {
+    const slang::ast::Expression* variable = ArgLValue(arg);
+    auto lowered = lowerer.LowerExpr(variable != nullptr ? *variable : arg, at);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    return at.Exprs().Add(*std::move(lowered));
+  };
+  const auto make =
+      [&](hir::ExprData data) -> diag::Result<std::optional<hir::Expr>> {
+    auto type = result_type();
+    if (!type) return std::unexpected(std::move(type.error()));
+    return hir::Expr{.type = *type, .data = std::move(data), .span = span};
+  };
+
+  if (known == slang::parsing::KnownSystemName::Randomize) {
+    if constexpr (!std::same_as<Lowerer, ProcessLowerer>) {
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "randomization outside a procedure is not yet supported");
+    } else {
+      const bool on_class = IsClassRandomize(call);
+      std::span<const slang::ast::Expression* const> args = call.arguments();
+      const slang::ast::Expression* handle = nullptr;
+      if (on_class && CalledOnAHandle(call) && !args.empty()) {
+        handle = args.front();
+        args = args.subspan(1);
+      }
+      const auto* with =
+          std::get_if<slang::ast::CallExpression::RandomizeCallInfo>(
+              &info.extraInfo);
+      // The names a call lists, and those its inline constraints read, are
+      // looked up in the object's class first (LRM 18.7, 18.11).
+      std::vector<hir::ExprId> listed;
+      const auto list = [&](const WalkFrame& at) -> diag::Result<void> {
+        for (const slang::ast::Expression* arg : args) {
+          // `randomize(null)` lists no variable (LRM 18.11.1).
+          if (arg->type->isNull()) {
+            continue;
+          }
+          auto variable = place(*arg, at);
+          if (!variable) return std::unexpected(std::move(variable.error()));
+          listed.push_back(*variable);
+        }
+        return {};
+      };
+      const bool lists = !args.empty();
+      hir::RandomizeTarget target;
+      WalkFrame within = frame;
+      if (on_class) {
+        const slang::ast::Type* class_type =
+            handle != nullptr ? handle->type.get() : nullptr;
+        if (class_type == nullptr) {
+          const slang::ast::ClassType* method_class =
+              slang::ast::Lookup::getContainingClass(*info.scope).first;
+          if (method_class == nullptr) {
+            throw InternalError(
+                "AST->HIR randomize: a class's randomize() named bare outside "
+                "a method of a class");
+          }
+          class_type = method_class;
+        }
+        auto object = ObjectOfCall(lowerer, frame, handle, *class_type, span);
+        if (!object) return std::unexpected(std::move(object.error()));
+        within = frame.WithRandomizedClass(
+            class_type->getCanonicalType().as<slang::ast::ClassType>());
+        if (auto r = list(within); !r) {
+          return std::unexpected(std::move(r.error()));
+        }
+        hir::RandomVariables variables = hir::DeclaredRandomVariables{};
+        if (lists) {
+          variables =
+              hir::ListedRandomVariables{.variables = std::move(listed)};
+        }
+        target = hir::RandomizedClassObject{
+            .object = *object, .variables = std::move(variables)};
+      } else {
+        if (auto r = list(frame); !r) {
+          return std::unexpected(std::move(r.error()));
+        }
+        target = hir::RandomizedScopeVariables{.variables = std::move(listed)};
+      }
+      std::optional<hir::ConstraintId> constraints;
+      if (with != nullptr && with->inlineConstraints != nullptr) {
+        auto lowered =
+            lowerer.LowerConstraint(*with->inlineConstraints, within);
+        if (!lowered) return std::unexpected(std::move(lowered.error()));
+        constraints = within.current_procedural_body->constraints.Add(
+            *std::move(lowered));
+      }
+      return make(
+          hir::RandomizeExpr{.target = std::move(target), .with = constraints});
+    }
+  }
+
+  if (known == slang::parsing::KnownSystemName::RandMode) {
+    const auto args = call.arguments();
+    auto variable = place(*args.front(), frame);
+    if (!variable) return std::unexpected(std::move(variable.error()));
+    const hir::RandomVariableMode target{.variable = *variable};
+    if (args.size() == 1) {
+      return make(hir::RandModeGetExpr{.target = target});
+    }
+    auto on = lowerer.LowerExpr(*args[1], frame);
+    if (!on) return std::unexpected(std::move(on.error()));
+    return make(
+        hir::RandModeSetExpr{
+            .target = target, .on = frame.Exprs().Add(*std::move(on))});
+  }
+
+  if (known == slang::parsing::KnownSystemName::ConstraintMode) {
+    const auto args = call.arguments();
+    const std::optional<NamedConstraintBlock> named =
+        ConstraintBlockOf(*args.front());
+    if (!named.has_value()) {
+      throw InternalError(
+          "AST->HIR constraint_mode: the call names no constraint block");
+    }
+    std::variant<hir::ConstraintBlockMode, hir::StaticConstraintBlockMode>
+        block_target;
+    // Whether a block's mode is the object's or the class's is decided where
+    // the block was introduced, whose randomization checks it (LRM 18.5.2).
+    const slang::ast::ConstraintBlockSymbol& introducing =
+        IntroducingConstraintBlock(*named->block);
+    if (introducing.flags.has(slang::ast::ConstraintBlockFlags::Static)) {
+      auto introducer = lowerer.Owner().ResolveClassRef(
+          introducing.getParentScope()->asSymbol().as<slang::ast::ClassType>(),
+          span);
+      if (!introducer) return std::unexpected(std::move(introducer.error()));
+      block_target = hir::StaticConstraintBlockMode{
+          .introducer = *std::move(introducer),
+          .block = std::string{introducing.name}};
+    } else {
+      const auto& owner = named->block->getParentScope()
+                              ->asSymbol()
+                              .as<slang::ast::ClassType>();
+      auto object = ObjectOfCall(lowerer, frame, named->handle, owner, span);
+      if (!object) return std::unexpected(std::move(object.error()));
+      block_target = hir::ConstraintBlockMode{
+          .object = *object, .name = std::string{named->block->name}};
+    }
+    if (args.size() == 1) {
+      return make(
+          hir::ConstraintModeGetExpr{.target = std::move(block_target)});
+    }
+    auto on = lowerer.LowerExpr(*args[1], frame);
+    if (!on) return std::unexpected(std::move(on.error()));
+    std::variant<
+        hir::ConstraintBlockMode, hir::StaticConstraintBlockMode,
+        hir::ObjectModes>
+        set_target;
+    std::visit([&](auto&& t) { set_target = std::move(t); }, block_target);
+    return make(
+        hir::ConstraintModeSetExpr{
+            .target = std::move(set_target),
+            .on = frame.Exprs().Add(*std::move(on))});
+  }
+  return std::nullopt;
+}
+
+}  // namespace
+
 template <ExprLowerer Lowerer>
 auto LowerCallExpr(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
@@ -1141,6 +1466,10 @@ auto LowerCallExpr(
     return LowerDynamicCastExpr(
         lowerer, frame, call, hir::InvalidAssignmentHandling::kAnswered, span);
   }
+
+  auto randomization = LowerRandomizationCall(lowerer, frame, call, span);
+  if (!randomization) return std::unexpected(std::move(randomization.error()));
+  if (randomization->has_value()) return *std::move(*randomization);
 
   std::vector<std::optional<hir::ExprId>> arg_ids;
   arg_ids.reserve(call.arguments().size());

@@ -1344,6 +1344,11 @@ the detail lives in the entry itself.
   object, each made by drawing from its creator's, in unbounded number. It is a splittable generator
   of four words, a child takes its whole state from its parent and nothing 32 bits wide passes
   between them, and changing it changes every value a recorded seed stands for.
+- [a-constraint-describes-a-problem-the-runtime-solves](a-constraint-describes-a-problem-the-runtime-solves.md)
+  -- a constraint is code describing a problem to a solver the runtime carries, and MIR has no node
+  for it; every class overrides three functions of the part each object starts with, its base's
+  called first, and a block is a virtual method called where its mode is on. Solving at compile
+  time, an external solver and an interpreted table of constraints are rejected.
 - [dpi-context-scope-is-an-extent](dpi-context-scope-is-an-extent.md) -- the scope a `context`
   import makes current is stated as an entering call and a cleanup that gives it back on every way
   out, never as a value whose destructor does it, and the chain it pushes onto belongs to whatever

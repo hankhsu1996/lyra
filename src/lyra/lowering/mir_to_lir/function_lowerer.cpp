@@ -284,6 +284,13 @@ auto FunctionLowerer::LowerCallTarget(
                         -> diag::Result<lir::CallTarget> {
                       return ConstructorOf(t.cls).callee;
                     },
+                    [&](const mir::ExternalLibraryOverrideTarget& t)
+                        -> diag::Result<lir::CallTarget> {
+                      return lir::CallTarget{lir::SymbolTarget{
+                          .symbol = lir::ClassCallableSymbol(
+                              t.unit_name, lir::SymbolPartOf(t.class_path),
+                              lir::SymbolPart::LibraryVirtual(t.function))}};
+                    },
                     // Reached by the symbol its declaring unit emits it under,
                     // from that unit and from any other alike.
                     [&](const mir::RecordMethodTarget& t)

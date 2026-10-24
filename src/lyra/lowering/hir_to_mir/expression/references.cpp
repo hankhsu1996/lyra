@@ -84,6 +84,19 @@ auto LowerHirNullLiteral(mir::TypeId type) -> mir::Expr {
   return mir::Expr{.data = mir::NullLiteral{}, .type = type};
 }
 
+// The object a `randomize() with` call randomizes (LRM 18.7), which the call
+// evaluated once and holds for the constraints written with it.
+auto LowerHirRandomizedObject(const WalkFrame& frame, mir::TypeId type)
+    -> mir::Expr {
+  if (!frame.randomized_object.has_value()) {
+    throw InternalError(
+        "LowerHirRandomizedObject: the object a randomize call randomizes is "
+        "named outside the constraints written with the call");
+  }
+  return mir::MakeCopyExpr(
+      frame.current_block->LocalPlace(*frame.randomized_object, type), type);
+}
+
 // LRM 7.10.1 `$`: the index of the last element of the queue the enclosing
 // select is taken from, which is one less than how many elements it holds. The
 // select evaluated the queue once, and this reads that.
@@ -310,6 +323,9 @@ auto LowerHirPrimaryExprProc(
           [&](const hir::ThisHandle&) -> mir::Expr {
             return BuildThisHandle(frame);
           },
+          [&](const hir::RandomizedObject&) -> mir::Expr {
+            return LowerHirRandomizedObject(frame, result_type);
+          },
           [&](const hir::QueueLastIndex&) -> mir::Expr {
             return LowerHirQueueLastIndex(process.Owner(), frame, result_type);
           },
@@ -369,6 +385,11 @@ auto LowerHirPrimaryExprStructural(
             throw InternalError(
                 "LowerHirPrimaryExprStructural: HIR ThisHandle does not appear "
                 "in structural expressions");
+          },
+          [](const hir::RandomizedObject&) -> mir::Expr {
+            throw InternalError(
+                "LowerHirPrimaryExprStructural: the object a randomize call "
+                "randomizes does not appear in structural expressions");
           },
           [&](const hir::QueueLastIndex&) -> mir::Expr {
             return LowerHirQueueLastIndex(lowerer.Owner(), frame, result_type);

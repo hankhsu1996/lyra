@@ -3,6 +3,7 @@
 #include "lyra/base/arena.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/hir/assertion.hpp"
+#include "lyra/hir/constraint.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/pattern.hpp"
 #include "lyra/hir/procedural_scope.hpp"
@@ -32,6 +33,9 @@ struct ProceduralBody {
   // written in a procedure may name a static local of it (LRM 16.6).
   base::Arena<SequenceExpr, SequenceExprId> sequence_exprs;
   base::Arena<PropertyExpr, PropertyExprId> property_exprs;
+  // The constraints written in this body (LRM 18.5, 18.7), beside the
+  // expressions they read for the same reason.
+  base::Arena<Constraint, ConstraintId> constraints;
   base::Registry<ProceduralVarDecl, ProceduralVarId> procedural_vars;
 
   auto operator==(const ProceduralBody&) const -> bool = default;

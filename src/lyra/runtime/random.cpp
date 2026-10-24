@@ -29,18 +29,9 @@ auto UrandomRange(
   const std::uint32_t lower = std::min(high, low);
   const std::uint32_t upper = std::max(high, low);
   const std::uint64_t span = std::uint64_t{upper} - lower + 1;
-  DrawRng& rng = runtime.Running().rng;
-  // Rejection rather than a modulo of the raw draw: the low values would
-  // otherwise come up more often whenever the span does not divide the
-  // generator's range, which is every span that is not a power of two. A span
-  // covering the whole range divides it exactly, so nothing is ever rejected.
-  const std::uint64_t limit = (std::uint64_t{1} << 32U) / span * span;
-  std::uint64_t draw = rng.NextValue();
-  while (draw >= limit) {
-    draw = rng.NextValue();
-  }
   return value::IntUnsigned::FromInt(
-      static_cast<std::uint32_t>(lower + (draw % span)));
+      static_cast<std::uint32_t>(
+          lower + DrawBelow(runtime.Running().rng, span)));
 }
 
 auto Random(RuntimeEffects& runtime) -> value::Int {

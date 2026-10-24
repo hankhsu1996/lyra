@@ -28,6 +28,7 @@
 #include "lyra/runtime/owned_processes.hpp"
 #include "lyra/runtime/plusargs.hpp"
 #include "lyra/runtime/program_threads.hpp"
+#include "lyra/runtime/randomization.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/running_state.hpp"
@@ -280,6 +281,7 @@ class Runtime final : public RuntimeEffects {
   FileTable files_;
   // Built from the plusargs before they are moved into their own source.
   ValueDumps dumps_;
+  RandomizeSettings randomize_settings_;
   PlusArgsSource plusargs_;
   CoverageLog coverage_;
   CurrentRuntimeGuard current_runtime_guard_{*this};

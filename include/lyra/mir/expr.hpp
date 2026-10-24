@@ -31,6 +31,7 @@
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/runtime_class.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::mir {
@@ -269,6 +270,19 @@ struct ConstructorTarget {
   auto operator==(const ConstructorTarget&) const -> bool = default;
 };
 
+// Identity of the body another compilation unit's class gives a function of
+// the runtime library's classes it overrides: the declaring unit, the class's
+// path in it, and the function. The function is its name in every unit, so a
+// derived class reaches its base's override with no name the source wrote, the
+// way a qualified call reaches a base's method without dispatching.
+struct ExternalLibraryOverrideTarget {
+  std::string unit_name;
+  support::DefPath class_path;
+  support::LibraryVirtual function;
+
+  auto operator==(const ExternalLibraryOverrideTarget&) const -> bool = default;
+};
+
 // Identity of a method a record's declaration has: the structure or the union,
 // and the operation on a whole value the method answers. A record the source
 // declared is identified by its declaration wherever it is named (LRM 6.22),
@@ -349,10 +363,12 @@ using CallPart = std::variant<base::ComponentIndex, ClassFieldTarget>;
 // library entries (`BuiltinFn`), another compilation unit's namespace
 // (`ExternalUnitCallableTarget`) or one of its classes
 // (`ExternalUnitClassMethodTarget`), a class's constructor, of this unit or
-// another (`ConstructorTarget`), a declared struct's or union's methods
-// (`RecordMethodTarget`), the operations this unit states for a type with no
-// declaration (`TypeOperationTarget`), the bodies another unit's namespace is
-// brought up through (`ExternalBringUpTarget`), and the DPI-C name space
+// another (`ConstructorTarget`), the override another unit's class gives a
+// runtime library class's function (`ExternalLibraryOverrideTarget`), a
+// declared struct's or union's methods (`RecordMethodTarget`), the operations
+// this unit states for a type with no declaration (`TypeOperationTarget`), the
+// bodies another unit's namespace is brought up through
+// (`ExternalBringUpTarget`), and the DPI-C name space
 // (`ForeignSymbolTarget`, LRM 35.4). Inside this unit a body is named by its
 // position and outside it by what the namespace published, so the two
 // namespace alternatives are total and do not overlap. Nothing here says
@@ -361,8 +377,8 @@ using CallPart = std::variant<base::ComponentIndex, ClassFieldTarget>;
 using DirectTarget = std::variant<
     CallableTarget, ClosureTarget, UnitCallableTarget, support::BuiltinFn,
     ExternalUnitCallableTarget, ExternalUnitClassMethodTarget,
-    ConstructorTarget, RecordMethodTarget, TypeOperationTarget,
-    ExternalBringUpTarget, ForeignSymbolTarget>;
+    ConstructorTarget, ExternalLibraryOverrideTarget, RecordMethodTarget,
+    TypeOperationTarget, ExternalBringUpTarget, ForeignSymbolTarget>;
 
 // A direct call whose callee is settled at compile time. The single shape for
 // every direct invocation: a user method, a built-in, a subroutine of this

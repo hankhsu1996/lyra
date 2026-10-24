@@ -64,9 +64,10 @@ struct Enumeration {
       const ConstIntegralView& value, std::int64_t count) const
       -> std::optional<ConstIntegralView>;
 
- private:
+  // The member at `position` in declared order.
   [[nodiscard]] auto MemberAt(std::size_t position) const -> ConstIntegralView;
 
+ private:
   // The member `steps` places after the one `value` is, wrapping.
   [[nodiscard]] auto Stepped(const ConstIntegralView& value, std::size_t steps)
       const -> std::optional<ConstIntegralView>;

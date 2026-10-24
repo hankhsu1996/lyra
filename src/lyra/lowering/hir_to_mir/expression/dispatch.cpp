@@ -7,6 +7,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/failure_context.hpp"
 #include "lyra/hir/expr.hpp"
@@ -26,6 +27,7 @@
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/expression/tagged_union.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/randomization.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -56,6 +58,13 @@ auto KeepsSampledValue(const L& lowerer, const hir::Expr& expr) -> bool {
     }
   }
   return true;
+}
+
+// A call of randomization reached from a structural expression.
+auto OutsideAProcedure(diag::SourceSpan span) -> diag::Result<mir::Expr> {
+  return diag::Fail(
+      span, diag::DiagCode::kUnsupportedExpressionForm,
+      "randomization outside a procedure is not yet supported");
 }
 
 // The one expression dispatcher, shared by both pass classes. An expression's
@@ -230,6 +239,47 @@ auto LowerAsPlaceImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
             const mir::ExprId place = PathAsPlace(unit, block, *path);
             return mir::MakeCopyExpr(place, block.exprs.Get(place).type);
           },
+          // A call of `randomize()` in a structural expression -- a continuous
+          // assignment, a port connection -- is refused where it is read, so
+          // only a procedure reaches here with one. A mode call is not, and a
+          // structural one is not yet carried out.
+          [&](const hir::RandomizeExpr& r) -> diag::Result<mir::Expr> {
+            if constexpr (kProcedural) {
+              return LowerRandomizeExpr(lowerer, frame, r, result_type);
+            } else {
+              throw InternalError(
+                  "HIR->MIR randomize: a structural expression calls "
+                  "randomize(), which reading the source refuses");
+            }
+          },
+          [&](const hir::RandModeSetExpr& m) -> diag::Result<mir::Expr> {
+            if constexpr (kProcedural) {
+              return LowerRandModeSetExpr(lowerer, frame, m);
+            } else {
+              return OutsideAProcedure(expr.span);
+            }
+          },
+          [&](const hir::RandModeGetExpr& m) -> diag::Result<mir::Expr> {
+            if constexpr (kProcedural) {
+              return LowerRandModeGetExpr(lowerer, frame, m, result_type);
+            } else {
+              return OutsideAProcedure(expr.span);
+            }
+          },
+          [&](const hir::ConstraintModeSetExpr& m) -> diag::Result<mir::Expr> {
+            if constexpr (kProcedural) {
+              return LowerConstraintModeSetExpr(lowerer, frame, m);
+            } else {
+              return OutsideAProcedure(expr.span);
+            }
+          },
+          [&](const hir::ConstraintModeGetExpr& m) -> diag::Result<mir::Expr> {
+            if constexpr (kProcedural) {
+              return LowerConstraintModeGetExpr(lowerer, frame, m, result_type);
+            } else {
+              return OutsideAProcedure(expr.span);
+            }
+          },
       },
       expr.data);
   if (!raw_or) return raw_or;
@@ -386,6 +436,11 @@ auto LowerAccessPathImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
           [&](const hir::CovergroupOptionExpr& option) {
             return CovergroupOptionPath(lowerer, frame, option);
           },
+          [&](const hir::RandomizeExpr&) { return names_no_storage(); },
+          [&](const hir::RandModeSetExpr&) { return names_no_storage(); },
+          [&](const hir::RandModeGetExpr&) { return names_no_storage(); },
+          [&](const hir::ConstraintModeSetExpr&) { return names_no_storage(); },
+          [&](const hir::ConstraintModeGetExpr&) { return names_no_storage(); },
       },
       expr.data);
 }

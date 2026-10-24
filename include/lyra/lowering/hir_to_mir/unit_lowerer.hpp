@@ -20,6 +20,7 @@
 #include "lyra/hir/construction_table_layout.hpp"
 #include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/external_scope_class.hpp"
+#include "lyra/hir/method_id.hpp"
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/published_scope.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
@@ -36,9 +37,49 @@
 #include "lyra/mir/record_id.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/runtime_class.hpp"
 #include "lyra/support/scope_execution.hpp"
 
 namespace lyra::lowering::hir_to_mir {
+
+// The bodies a class gives the functions every object's part for
+// `randomize()` declares (LRM 18.6): declaring its random variables, stating
+// its constraints, and naming the random objects its handles reach, which a
+// class extending another of the same unit calls the one it extends by; and
+// calling the `pre_randomize` and `post_randomize` it declares, where it
+// declares one (LRM 18.6.2).
+struct RandomizationHooks {
+  // A hook calling a method the class declares: the hook's body, and the
+  // method it calls.
+  struct CallsDeclared {
+    mir::CallableId body;
+    hir::MethodId method;
+  };
+
+  mir::CallableId rand_variables;
+  mir::CallableId constrain;
+  mir::CallableId rand_objects;
+  std::optional<CallsDeclared> pre_randomize;
+  std::optional<CallsDeclared> post_randomize;
+
+  // Each body, with the function of the library it overrides.
+  [[nodiscard]] auto Overrides() const
+      -> std::vector<std::pair<mir::CallableId, support::LibraryVirtual>> {
+    std::vector<std::pair<mir::CallableId, support::LibraryVirtual>> out{
+        {rand_variables, support::LibraryVirtual::kClassRandVariables},
+        {constrain, support::LibraryVirtual::kClassConstrain},
+        {rand_objects, support::LibraryVirtual::kClassRandObjects}};
+    if (pre_randomize.has_value()) {
+      out.emplace_back(
+          pre_randomize->body, support::LibraryVirtual::kClassPreRandomize);
+    }
+    if (post_randomize.has_value()) {
+      out.emplace_back(
+          post_randomize->body, support::LibraryVirtual::kClassPostRandomize);
+    }
+    return out;
+  }
+};
 
 // What one HIR class declaration became: its MIR identity, and the interned
 // object type that names it. Both are settled together before any type is
@@ -56,6 +97,8 @@ struct ClassTranslation {
   // embeds (LRM 19.4.1), after every method the source declares, in the order
   // the class lists them.
   std::vector<mir::CallableId> factories;
+  // Absent for an interface class, which has no object (LRM 8.26).
+  std::optional<RandomizationHooks> randomization;
 };
 
 // One field of the class a scope publishes: the type it holds, and the name a
@@ -282,6 +325,11 @@ class UnitLowerer {
   [[nodiscard]] auto CovergroupClassId(hir::CovergroupId covergroup) const
       -> mir::ClassId {
     return covergroup_classes_.Get(covergroup);
+  }
+
+  [[nodiscard]] auto RandomizationHooksOf(hir::ClassId owner) const
+      -> const std::optional<RandomizationHooks>& {
+    return class_translations_.Get(owner).randomization;
   }
 
   [[nodiscard]] auto ClassObjectType(hir::ClassId hir_id) const -> mir::TypeId {

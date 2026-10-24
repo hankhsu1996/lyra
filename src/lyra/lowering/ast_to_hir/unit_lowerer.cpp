@@ -1360,6 +1360,12 @@ auto ContributionOf(const slang::ast::Symbol& member, const UnitLowerer& owner)
   if (const auto* body = DeclaredSubroutineBody(member); body != nullptr) {
     return {.minted = body, .walked = body};
   }
+  // A constraint block is a scope the source named (LRM 18.5), and the loop
+  // variables of a `foreach` in it live in it (LRM 18.5.7).
+  if (member.kind == slang::ast::SymbolKind::ConstraintBlock) {
+    const auto& block = member.as<slang::ast::ConstraintBlockSymbol>();
+    return {.minted = &member, .walked = &block};
+  }
   if (member.kind == slang::ast::SymbolKind::ProceduralBlock) {
     const auto& proc = member.as<slang::ast::ProceduralBlockSymbol>();
     // A statement label creates a named block around the statement it labels
