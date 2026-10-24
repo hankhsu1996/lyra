@@ -25,8 +25,13 @@ arguments, the options and every bin's values and hands them to the library; its
 each coverpoint's guard and expression and hands the values over; its built-in methods call the
 library. What does not depend on it -- distributing values into bins, matching a value or a
 sequence, the cross product, the arithmetic of LRM 19.11, naming bins, keeping what was counted --
-is the library, beside `std`'s other classes
-([the-classes-of-std-are-written-in-systemverilog](the-classes-of-std-are-written-in-systemverilog.md)).
+is the library, written in SystemVerilog as `std`'s classes are
+([the-classes-of-std-are-written-in-systemverilog](the-classes-of-std-are-written-in-systemverilog.md))
+and read into a compilation where the design asks for coverage -- it declares a covergroup or calls
+a coverage function (LRM 19.9) -- as a compilation-unit scope of its own. A design asking for none
+compiles nothing of it and depends on nothing of it, as clang's driver adds its profile runtime to a
+link only where the invocation asks for profiling (`ToolChain::needsProfileRT`), and Verilator
+compiles its covergroup runtime only under coverage.
 
 The class is written in the step to MIR, and HIR holds the covergroup as the source declares it: its
 arguments with their directions, how it is sampled, its options, coverpoints, crosses and bins as
@@ -148,6 +153,9 @@ extension.
   carrying them.
 - **Each bin compiled into a condition.** Bins computed from arguments and queues at `new` have no
   condition to compile, and an array of bins over a wide range would be a condition per value.
+- **The library in the text of `std`'s classes.** Every design then compiled it and depended on it:
+  a design printing one line emitted 782 KB of C++, 770 KB of it the `std` unit, and the merge
+  gate's test compiling every case twice went from 21.6 s to 186.4 s when the library joined it.
 - **The library in the runtime's C++, with options read through calls.** The program names the
   options as fields of a structure, so the compiler and the runtime would both lay the record out.
 - **The end trigger as the cleanup of a body.** A cleanup runs on every way out, a `disable` and the

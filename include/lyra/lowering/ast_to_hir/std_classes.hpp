@@ -1,13 +1,11 @@
 #pragma once
 
 #include <optional>
-#include <span>
 #include <unordered_map>
 
 #include <slang/ast/Compilation.h>
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
-#include <slang/ast/symbols/CoverSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 
 #include "lyra/support/imported_runtime_class.hpp"
@@ -38,36 +36,6 @@ using StdDefinitions = std::unordered_map<
 // one is bound, so each specialization of a definition exists before the
 // design's units are collected.
 auto DefineStdClasses(slang::ast::Compilation& compilation) -> StdDefinitions;
-
-// The classes of Lyra's coverage library (LRM 19), which the same definitions
-// hold, that every covergroup is written over in the step to MIR, and for
-// each coverpoint of an integral expression the integral coverpoint
-// specialized at the coverpoint's type (LRM 19.5.7); a coverpoint of a real
-// expression is counted by the real one.
-struct CoverageLibrary {
-  const slang::ast::ClassType* registry = nullptr;
-  const slang::ast::ClassType* group_type = nullptr;
-  const slang::ast::ClassType* group_instance = nullptr;
-  const slang::ast::ClassType* cross = nullptr;
-  const slang::ast::ClassType* selection = nullptr;
-  const slang::ast::ClassType* real_coverpoint = nullptr;
-  std::unordered_map<
-      const slang::ast::CoverpointSymbol*, const slang::ast::ClassType*>
-      integral_coverpoints;
-};
-
-// Defines what every covergroup of `covergroups` is counted by, once every
-// body that could declare one is bound, so each specialization exists before
-// the design's units are collected.
-auto DefineCoverageClasses(
-    slang::ast::Compilation& compilation,
-    std::span<const slang::ast::CovergroupType* const> covergroups)
-    -> CoverageLibrary;
-
-// The class of the library counting a coverpoint's values.
-auto CoverpointClassOf(
-    const CoverageLibrary& library, const slang::ast::CoverpointSymbol& point)
-    -> const slang::ast::ClassType&;
 
 // The method of `definition` that `declared`, the front end's declaration of
 // one of its methods, stands for.

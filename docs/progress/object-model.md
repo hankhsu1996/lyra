@@ -260,8 +260,10 @@ cyclic reclamation). Current backend coverage:
 Both backends reclaim by shared ownership, and both leak an unreachable cycle. A handle has one
 shape on both, the object's identity, which shares its ownership, plus the view a static type
 reaches it through -- a class view is the object's start and an interface view is that interface's
-part. Acyclic garbage is reclaimed as the last handle drops, which is sufficient for every SV class
-feature planned in this workstream, since none depends on cyclic reclamation.
+part. Acyclic garbage is reclaimed as the last handle drops. One feature makes a cycle of every
+object using it: a class embedding a covergroup and that covergroup refer to each other (LRM 19.4),
+and a program may keep the covergroup past its last handle to the object, so neither reference can
+be weakened, and every such object stays until the run ends.
 
 Nothing above is visible to any IR: no rule in HIR, MIR, LIR, or lowering states a reference count,
 a shared owner, or a control block. The one exception is the operation recovering a handle from the
@@ -271,8 +273,9 @@ what the body already holds, so the operation goes away with the interim rather 
 it.
 
 Precise-tracing storage discipline and collector are deferred until a driver appears (a workload
-that hits cycle leaks in practice, or LLVM-backend SV-class execution becoming a priority). The
-design space explored while scoping this deferral surfaced:
+that hits cycle leaks in practice -- a testbench making objects that embed covergroups is one -- or
+LLVM-backend SV-class execution becoming a priority). The design space explored while scoping this
+deferral surfaced:
 
 - Runtime `Traceable` inheritance protocol is rejected: it would force every managed-carrying
   emitted type into a runtime vtable shape and violates the mechanical-translation contract.

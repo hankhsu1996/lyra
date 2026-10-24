@@ -36,12 +36,12 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/frontend/library_texts.hpp"
 #include "lyra/lowering/ast_to_hir/connected_interface.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/hierarchy_override.hpp"
 #include "lyra/lowering/ast_to_hir/instance_context.hpp"
 #include "lyra/lowering/ast_to_hir/library_cell.hpp"
-#include "lyra/lowering/ast_to_hir/std_classes.hpp"
 #include "lyra/stable_hash/fingerprint.hpp"
 #include "lyra/support/def_path.hpp"
 
@@ -1173,14 +1173,11 @@ auto CompilationUnitName(
     // is the compilation-unit input it belongs to, named by the source buffer
     // its declarations live in. Folding the resolved path yields a name stable
     // across edits to the scope's body (the property a module's specialization
-    // name has) and distinct per input, with no shared table. The scope symbol
-    // itself carries no source location, but every member of one input shares
-    // its buffer, so the first located member names it.
+    // name has) and distinct per input, with no shared table. A text of Lyra's
+    // own is an input that names itself.
     const auto& cu = unit.as<slang::ast::CompilationUnitSymbol>();
-    // Lyra's definitions of `std`'s classes are compiled in the name of the
-    // package declaring them, the unit a name of one reaches.
-    if (IsStdDefinitions(cu)) {
-      return std::string(cu.getCompilation().getStdPackage().name);
+    if (const frontend::LibraryText* text = frontend::LibraryTextOf(cu)) {
+      return std::string(text->unit);
     }
     const slang::SourceManager* sources =
         cu.getCompilation().getSourceManager();
@@ -1188,15 +1185,13 @@ auto CompilationUnitName(
       throw InternalError(
           "CompilationUnitName: compilation has no source manager");
     }
-    for (const auto& member : cu.members()) {
-      if (member.location.valid()) {
-        const std::string path =
-            sources->getFullPath(member.location.buffer()).string();
-        return std::format("$unit__{:016x}", NameDigest(path));
-      }
+    const std::optional<slang::BufferID> buffer = frontend::BufferOf(cu);
+    if (!buffer.has_value()) {
+      throw InternalError(
+          "CompilationUnitName: compilation unit has no located member");
     }
-    throw InternalError(
-        "CompilationUnitName: compilation unit has no located member");
+    return std::format(
+        "$unit__{:016x}", NameDigest(sources->getFullPath(*buffer).string()));
   }
   throw InternalError(
       "CompilationUnitName: symbol is not a package, module body, compilation "

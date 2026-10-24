@@ -298,6 +298,14 @@ embedded_text(
     symbol = "kStdDefinitionsText",
 )
 
+embedded_text(
+    name = "coverage_library_text",
+    src = "src/lyra/frontend/coverage.sv",
+    out = "include/lyra/frontend/coverage_library_text.hpp",
+    namespace = "lyra::frontend",
+    symbol = "kCoverageLibraryText",
+)
+
 cc_library(
     name = "frontend",
     srcs = glob(["src/lyra/frontend/*.cpp"]),
@@ -306,6 +314,7 @@ cc_library(
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
+        ":coverage_library_text",
         ":diag",
         ":slang_source",
         ":std_definitions_text",
