@@ -1993,8 +1993,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kRunExportedTaskToCompletion:
     case support::BuiltinFn::kMakeDynamicArrayNew:
     case support::BuiltinFn::kMakeDynamicArrayNewCopy:
-    case support::BuiltinFn::kEnterTargetLandingPastIt:
-    case support::BuiltinFn::kEnterTargetLandingAtExecutionEnd:
+    case support::BuiltinFn::kEnterTarget:
     case support::BuiltinFn::kLeaveTarget:
     case support::BuiltinFn::kRegionLandsEffect:
     case support::BuiltinFn::kReceiveDeparture:

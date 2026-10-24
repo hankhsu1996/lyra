@@ -2014,8 +2014,7 @@ using lyra::runtime::DumpVarsOfVariable;
 using lyra::runtime::Emplace;
 using lyra::runtime::EndClosure;
 using lyra::runtime::EndDescribedBlock;
-using lyra::runtime::EnterTargetLandingAtExecutionEnd;
-using lyra::runtime::EnterTargetLandingPastIt;
+using lyra::runtime::EnterCancellationTarget;
 using lyra::runtime::ErasedAt;
 using lyra::runtime::ErasedDesignation;
 using lyra::runtime::ErasedObjectWrite;
@@ -3304,15 +3303,8 @@ void lyra_rt_settle_departure(void* target) {
           ControlEffect{.target = static_cast<CancellationTarget*>(target)}));
 }
 
-void lyra_rt_enter_target_landing_past_it(void* runtime, void* target) {
-  EnterTargetLandingPastIt(
-      *static_cast<RuntimeEffects*>(runtime),
-      static_cast<CancellationTarget*>(target));
-}
-
-void lyra_rt_enter_target_landing_at_execution_end(
-    void* runtime, void* target) {
-  EnterTargetLandingAtExecutionEnd(
+void lyra_rt_enter_target(void* runtime, void* target) {
+  EnterCancellationTarget(
       *static_cast<RuntimeEffects*>(runtime),
       static_cast<CancellationTarget*>(target));
 }

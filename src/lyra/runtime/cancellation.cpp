@@ -8,7 +8,6 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
-#include "lyra/support/target_landing.hpp"
 
 namespace lyra::runtime {
 
@@ -22,39 +21,33 @@ void CancellationTarget::Invalidate(RuntimeEffects& effects) {
   // is running, already runnable, or stopped from outside is not blocked and
   // reaches the check on its own, when it next runs.
   //
-  // An execution that lands at its own end has nothing to regain control for,
-  // so it is ended here. Ending one releases its frame, which leaves every
-  // target it is inside and may end its descendants, so the ones to end are
-  // gathered first and each is held until it has been ended.
+  // An activity enabled within the target has nothing past it to regain
+  // control for, so it is ended here. Ending one releases its frame, which
+  // leaves every target it is inside and may end its descendants, so the ones
+  // to end are gathered first and each is held until it has been ended.
   std::vector<std::shared_ptr<RuntimeProcess>> ended;
   members_.ForEach([&](TargetMembership& member) {
-    switch (member.landing) {
-      case support::TargetLanding::kPastTheTarget:
+    switch (member.origin) {
+      case MembershipOrigin::kEntered:
         if (Activation* blocked = member.process->BlockedLeaf()) {
           effects.Wake(blocked);
         }
         return;
-      case support::TargetLanding::kAtExecutionEnd:
+      case MembershipOrigin::kEnabledWithin:
         ended.push_back(member.process->shared_from_this());
         return;
     }
-    throw InternalError("CancellationTarget::Invalidate: unknown landing");
+    throw InternalError(
+        "CancellationTarget::Invalidate: unknown membership origin");
   });
   for (const std::shared_ptr<RuntimeProcess>& process : ended) {
     RuntimeProcess::Kill(*process, effects);
   }
 }
 
-void EnterTargetLandingPastIt(
+void EnterCancellationTarget(
     RuntimeEffects& effects, CancellationTarget* target) {
-  effects.CurrentProcess().PushEnclosingTarget(
-      target, support::TargetLanding::kPastTheTarget);
-}
-
-void EnterTargetLandingAtExecutionEnd(
-    RuntimeEffects& effects, CancellationTarget* target) {
-  effects.CurrentProcess().PushEnclosingTarget(
-      target, support::TargetLanding::kAtExecutionEnd);
+  effects.CurrentProcess().PushEnclosingTarget(target);
 }
 
 void LeaveCancellationTarget(

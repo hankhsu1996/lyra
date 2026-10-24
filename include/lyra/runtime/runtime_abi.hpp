@@ -774,10 +774,9 @@ auto lyra_rt_event_reports_to(const void* event) -> void*;
 // the target it names, since that is all one carries.
 //
 // The brackets record on the running process which targets its execution is
-// inside, the generation each held on entry, and where a `disable` of each
-// lands, which the entering bracket names; `lyra_rt_disable` advances the named
-// target's generation, wakes the executions blocked inside it that land past
-// it, and ends those that land at their own end (LRM 9.6.3). Where a body
+// inside and the generation each held on entry; `lyra_rt_disable` advances the
+// named target's generation, wakes the executions blocked inside it so each
+// resumes past it, and ends the activities enabled within it. Where a body
 // regains control it asks for the departure it owes, if any -- its own
 // termination, which names no target and so no region may land, and otherwise
 // the outermost target it is inside that was disabled -- because a simulated
@@ -785,8 +784,7 @@ auto lyra_rt_event_reports_to(const void* event) -> void*;
 // asks whether the departure it caught lands there. Both are answered from the
 // generations and the termination, so nothing is stored and nothing has to be
 // cleared.
-void lyra_rt_enter_target_landing_past_it(void* runtime, void* target);
-void lyra_rt_enter_target_landing_at_execution_end(void* runtime, void* target);
+void lyra_rt_enter_target(void* runtime, void* target);
 void lyra_rt_leave_target(void* runtime, void* target) noexcept;
 void lyra_rt_disable(void* target, void* runtime);
 auto lyra_rt_region_lands_effect(

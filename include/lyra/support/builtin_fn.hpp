@@ -976,19 +976,15 @@ enum class BuiltinFn : std::uint16_t {
   kDisableFork,
   // LRM 9.6.2 `disable <named block or task>`. `kDisable` is the statement
   // itself: it invalidates the named target, wakes the executions blocked
-  // inside it that resume past it, ends those with nothing past it to resume
-  // into, and leaves the disabling execution when that execution is inside the
-  // target too. An entering call
-  // and `kLeaveTarget` bracket the target's extent, recording on the running
-  // process which targets its execution is inside, the generation each held on
-  // entry, and where a `disable` of each lands: past it, or -- for the
-  // statement an execution runs whole -- at the execution's end, which ends the
-  // execution (LRM 9.6.3). A region of a target asks `kRegionLandsEffect`
-  // whether the effect in hand lands there, and raises it again where it does
-  // not.
+  // inside it so each resumes past it, ends the activities enabled within it,
+  // and leaves the disabling execution when that execution is inside the target
+  // too. `kEnterTarget` and `kLeaveTarget` bracket the target's extent,
+  // recording on the running process which targets its execution is inside and
+  // the generation each held on entry. A region of a target asks
+  // `kRegionLandsEffect` whether the effect in hand lands there, and raises it
+  // again where it does not.
   kDisable,
-  kEnterTargetLandingPastIt,
-  kEnterTargetLandingAtExecutionEnd,
+  kEnterTarget,
   kLeaveTarget,
   kRegionLandsEffect,
   // What a region binds as the effect it caught, asked of whatever unwound into
