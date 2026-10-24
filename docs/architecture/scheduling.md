@@ -240,16 +240,18 @@ rather than a requirement -- which is why the corpus does not hold a case for it
 
 Registered `final` actions then run in registration order, because a `final` procedure occurs at the
 end of simulation time (LRM 9.2.3), which a run reaches by being asked to end and equally by running
-out of work. A further request from inside a `final` ends the simulation immediately, so the ones
-still queued do not run. What the design asked to have done once the simulation is over -- writing
-the coverage database a covergroup asks for (LRM 19.9) -- is a call held from wherever it was asked
-for and run after them, as C's `atexit` holds a function rather than a thread.
+out of work. A `$finish` a `final` executes -- directly, through `$fatal`, or by a run-time error of
+the design -- ends the simulation immediately, so the ones still queued do not run. What the design
+asked to have done once the simulation is over -- writing the coverage database a covergroup asks
+for (LRM 19.9) -- is a call held from wherever it was asked for and run after them, as C's `atexit`
+holds a function rather than a thread.
 
 The one ending that runs none of them is the tool being unable to carry the run on: a `final`
 procedure is design code, and the state it would read is already known to be wrong; so is what
-writes the coverage database. What the engine owes either way -- the immediate cover report (LRM
-16.3), the flush of what the design wrote, the exit status -- is owed because the run is over, not
-because of how it ended.
+writes the coverage database. A request of the design's to end, made after the tool has stopped the
+run, does not turn that ending into the design's. What the engine owes either way -- the immediate
+cover report (LRM 16.3), the flush of what the design wrote, the exit status -- is owed because the
+run is over, not because of how it ended.
 
 A run-time error of the design is not a separate ending. It is reported where the activation it left
 lands, and asks for the ending `$fatal` asks for, so the same tail runs and the engine sees a
@@ -258,9 +260,11 @@ request rather than a failure.
 A program ends its own threads, and the last program to end ends the run (LRM 24.3). Once every
 initial procedure of a program has ended, whatever they started that is still running is ended with
 them; once that has happened to every program, the run ends as `$finish` ends it, printing nothing
-because no call was made. `$exit` ends the program the calling thread originates in, that thread
-with it, and from any other thread does nothing but warn (LRM 24.7). The program's continuous
-assignments are not its threads, so neither ending reaches them.
+because no call was made. A simulation that has already ended has nothing left for that to end, so a
+`final` procedure that ends the last program leaves the other `final` procedures to run (LRM 9.2.3).
+`$exit` ends the program the calling thread originates in, that thread with it, and from any other
+thread does nothing but warn (LRM 24.7). The program's continuous assignments are not its threads,
+so neither ending reaches them.
 
 ## What a deferred closure may refer to
 

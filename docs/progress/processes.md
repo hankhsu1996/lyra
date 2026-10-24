@@ -22,9 +22,9 @@ under each item, and the conformance gaps at the end.
 - [x] P1 -- `initial` (LRM 9.2.1). Runs once at time 0; finishes when the body completes. Coverage
       rides on every other test in the corpus.
 - [x] P2 -- `final` (LRM 9.2.3). A final procedure occurs at the end of simulation time, which a run
-      reaches by being asked to end and equally by running out of work. A further request to end,
-      made from inside one, ends the simulation immediately, so the ones still queued do not run.
-      What a final procedure may contain is what a function may, so none can consume time. Work
+      reaches by being asked to end and equally by running out of work. A `$finish` one executes,
+      directly or through `$fatal`, ends the simulation immediately, so the ones still queued do not
+      run. What a final procedure may contain is what a function may, so none can consume time. Work
       still suspended when the run ends stops where it stands: its frame is released without
       resuming, so what it would have written is not written, and a cleanup that frame was holding
       open runs with nothing of the design executing and has nothing left to withdraw from.
@@ -336,10 +336,11 @@ under each item, and the conformance gaps at the end.
       resumption lands in Reactive, a `#0` in Re-Inactive and a nonblocking assignment in Re-NBA
       (LRM 24.3.1, 24.5). Once a program's initial procedures have all ended it ends whatever they
       started, and once every program has ended the run ends by an implicit `$finish`, with `final`
-      procedures run (LRM 24.3). `$exit` ends the program the calling thread originates in, and from
-      any other thread is ignored with a warning (LRM 24.7). A program nested in a module or an
-      interface uses its variables, events and subroutines by the plain name, so programs nested in
-      one scope share them (LRM 24.3).
+      procedures run (LRM 24.3); a `final` procedure that ends the last program leaves the others to
+      run, since the simulation has already ended (LRM 9.2.3). `$exit` ends the program the calling
+      thread originates in, and from any other thread is ignored with a warning (LRM 24.7). A
+      program nested in a module or an interface uses its variables, events and subroutines by the
+      plain name, so programs nested in one scope share them (LRM 24.3).
 - [x] P20 -- An anonymous program (LRM 24.6) declares its subroutines and classes in the package or
       `$unit` scope around it, and a program reaches them by the scope's name, by import or as
       `$unit` items; a task of one called from a program runs in the program's thread, so in the

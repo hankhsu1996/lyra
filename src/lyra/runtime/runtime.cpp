@@ -136,19 +136,23 @@ void Runtime::RunSimulation() {
 
     while (std::holds_alternative<Running>(state_)) {
       ExecuteTimeSlot();
-      if (!std::holds_alternative<Running>(state_) || !AdvanceToNextSlot()) {
-        break;
+      // LRM 9.2.3: a run reaches the end of simulation time by exhausting its
+      // work as much as by being asked to end.
+      if (std::holds_alternative<Running>(state_) && !AdvanceToNextSlot()) {
+        state_ = SimulationEnded{};
       }
     }
 
-    // LRM 9.2.3: a final procedure occurs at the end of simulation time, which
-    // a run reaches by exhausting its work as much as by being asked to end. A
-    // tool that cannot carry the run on has no such end to offer, and running
-    // the design's procedures over a state already known to be wrong is not
-    // one.
+    // LRM 9.2.3: a final procedure occurs at the end of simulation time. A tool
+    // that cannot carry the run on has no such end to offer, and running the
+    // design's procedures over a state already known to be wrong is not one.
     const bool ends_the_simulation = std::visit(
         Overloaded{
-            [](const Running&) { return true; },
+            [](const Running&) -> bool {
+              throw InternalError(
+                  "Runtime::RunSimulation: the region loop ended with the "
+                  "simulation still running -- please report this as a bug");
+            },
             [](const SimulationEnded&) { return true; },
             [](const ToolStopped&) { return false; }},
         state_);
@@ -176,7 +180,12 @@ void Runtime::RunSimulation() {
 
 void Runtime::RequestSimulationEnd() {
   ++end_requests_;
-  state_ = SimulationEnded{};
+  // What is left of a region pass still runs after the tool stops the run, and
+  // one of it asking to end does not make that the design's end, whose final
+  // procedures would read a state already known to be wrong.
+  if (!std::holds_alternative<ToolStopped>(state_)) {
+    state_ = SimulationEnded{};
+  }
 }
 
 void Runtime::RequestToolStop() {
@@ -383,8 +392,12 @@ auto Runtime::ProgramOf(const Scope& program) -> ProgramThreads& {
 
 void Runtime::ProgramEnded() {
   // LRM 24.3: the implicit `$finish` has no call and no place, so it prints
-  // nothing, and the run ends as one that runs out of work does.
-  if (std::ranges::all_of(
+  // nothing, and the run ends as one that runs out of work does. It ends a
+  // simulation that is still running; once the simulation has ended there is
+  // nothing left for it to end, so a final procedure that ends the last program
+  // leaves the others to run (LRM 9.2.3).
+  if (std::holds_alternative<Running>(state_) &&
+      std::ranges::all_of(
           std::views::values(programs_), &ProgramThreads::AllRootsEnded)) {
     RequestSimulationEnd();
   }

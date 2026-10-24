@@ -48,9 +48,9 @@ is wrong it is corrected in the front end and not in Lyra's settings, so Lyra pa
 compatibility mode and keeps no list of diagnostics deciding what is legal. A caller can still ask
 for a tolerant reading by name.
 
-Two texts the standard allows are refused by the front end's default today -- an `always_comb`
-writing one constant key of an associative array, and `$bits` of a member reached through an
-interface port -- and each is reported upstream to be corrected there.
+Two texts the standard allows were refused by the front end's default when this was decided -- an
+`always_comb` writing one constant key of an associative array, and `$bits` of a member reached
+through an interface port -- and each was corrected in the front end, which refuses neither now.
 
 A constant select outside its vector or array is a third kind: the standard gives it a value
 (11.5.1, 7.4.5) and also lets a tool refuse it while compiling, so the front end's refusal is a

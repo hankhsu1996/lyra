@@ -5,7 +5,9 @@ everything the design wrote to standard output, where it used to lose a line not
 because standard output has no buffer of the runtime's own in front of the process's stream. Revised
 again 2026-10-21: D9's error becomes a departure at the first landing that takes it, a region's or
 the activation's own, where it named a cleanup's landing too; a cleanup's landing only passes what
-arrived on, as the C++ backend's already did.
+arrived on, as the C++ backend's already did. Revised 2026-10-24: the last program ending is a stop
+only while the simulation runs, so a final procedure that ends it leaves the other final procedures
+to run, where it used to stop them.
 
 ## Why this decision matters
 
@@ -55,7 +57,7 @@ $finish / $stop             stop + departure
 $exit                       a departure of every thread of the calling thread's program, from a
                             thread of a program; from any other thread a warning, and nothing else
                             (LRM 24.7)
-the last program ending     stop (LRM 24.3)
+the last program ending     stop (LRM 24.3), while the simulation runs; nothing once it has ended
 a design run-time error     report [+ stop + departure]  by its chosen severity
 an internal inconsistency   the tool stops the run; none of the three, and no ending of the design's
 a refused request for       the program ends where it asked; none of the three, and nothing of
@@ -66,7 +68,10 @@ memory                      the run after it
 call to `$finish`, and points to LRM 24.7 for what a call does: it ends the program the calling
 thread originates in, and from any other thread it is ignored. So it ends threads rather than the
 run, and the run ends when the last program does, which is the implicit `$finish` LRM 24.3 makes.
-That stop has no call, so it prints nothing.
+That stop has no call, so it prints nothing. It ends a simulation that is still running, and a
+simulation that has reached its end has nothing left for it to end: a final procedure that kills the
+last thread of the last program leaves the other final procedures to run, because R3's immediate end
+is for a task a final procedure executes, and the program's ending is not one.
 
 The composition is not new. `$fatal` already lowers to a severity emit followed by a finish request,
 which is LRM 20.10's "results in an implicit call to `$finish`" written out. What this entry does is
