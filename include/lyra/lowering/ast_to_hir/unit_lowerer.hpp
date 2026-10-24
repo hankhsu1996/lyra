@@ -879,9 +879,9 @@ class UnitLowerer {
   // What a class `std` declares, or one of its methods, stands for: Lyra's
   // definition of it. Any other class or method stands for itself.
   [[nodiscard]] auto Defining(const slang::ast::ClassType& cls) const
-      -> const slang::ast::ClassType&;
+      -> const slang::ast::ClassType*;
   [[nodiscard]] auto Defining(const slang::ast::SubroutineSymbol& method) const
-      -> const slang::ast::SubroutineSymbol&;
+      -> const slang::ast::SubroutineSymbol*;
 
   // Builds a class-method target from a class reference and the resolved
   // callee symbol. Local when the class was interned by this unit -- the
