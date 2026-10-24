@@ -305,7 +305,7 @@ layer directly.
       of one module compiled for different parameters are shown under one name, and the C++
       backend's compile does not say what was up to date.
 
-- [ ] D27 -- Lyra accepts the text the front end accepts, at the severity it gives except where the
+- [x] D27 -- Lyra accepts the text the front end accepts, at the severity it gives except where the
       standard leaves the choice to the tool, whatever another simulator does. Lyra no longer asks
       the front end for its most tolerant reading, and a caller asks for one by name (`--compat`). A
       forbidden text the front end accepts with a warning runs with that warning, such as `$fatal`
@@ -313,9 +313,9 @@ layer directly.
       end builds nothing to carry out for is refused where it was written, as an error and never a
       gap, and a build that fails shows the warnings `run` otherwise withholds. A select at a
       constant position outside its vector or array, which the standard both gives a value and lets
-      a tool refuse, runs with a warning. Open: the front end's default refuses two texts the
-      standard allows (an `always_comb` writing one constant key of an associative array, `$bits` of
-      a member through an interface port), and the default waits on each being corrected there.
+      a tool refuse, runs with a warning. A text the standard allows and the front end refused is
+      corrected there; an `always_comb` writing one constant key of an associative array and `$bits`
+      of a member through an interface port were two, and both run.
       `decisions/the-standard-decides-what-text-is-legal.md` settles it.
 
 - [x] D29 -- One run tells its reader about every place in the source the same way. A message the

@@ -152,7 +152,8 @@ class Runtime final : public RuntimeEffects {
   [[nodiscard]] auto ProgramOf(const Scope& program) -> ProgramThreads&;
 
   // A program's initial procedures have all ended. Once that holds of every
-  // program the run ends, by the implicit `$finish` LRM 24.3 makes.
+  // program while the simulation runs, it ends, by the implicit `$finish` LRM
+  // 24.3 makes.
   void ProgramEnded();
 
   // Takes a static initialization on as what is running, and gives it back.
@@ -185,9 +186,9 @@ class Runtime final : public RuntimeEffects {
   friend class ProcessExecutionGuard;
   friend class InterruptReport;
 
-  // The run has not been asked to end. Leaving the region loop in this state
-  // means it ran out of work, which is an end of simulation like any other.
   struct Running {};
+  // The simulation reached its end (LRM 9.2.3): it was asked to end, or no work
+  // was left.
   struct SimulationEnded {};
   struct ToolStopped {};
   using RunState = std::variant<Running, SimulationEnded, ToolStopped>;
@@ -356,8 +357,9 @@ class Runtime final : public RuntimeEffects {
   value::TimeFormat time_format_;
   RunState state_ = Running{};
   // Every request that the run end, counted, because LRM 9.2.3 has a `$finish`
-  // from within a `final` procedure end the simulation immediately and the tail
-  // that would obey it is already running under an earlier request.
+  // from within a `final` procedure end the simulation immediately, and by then
+  // the simulation has already ended, so the state alone cannot say one was
+  // made.
   std::uint64_t end_requests_ = 0;
   bool bound_ = false;
   bool ran_ = false;
