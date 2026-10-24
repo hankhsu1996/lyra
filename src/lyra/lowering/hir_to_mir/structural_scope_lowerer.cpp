@@ -2831,9 +2831,10 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   for (const hir::PublishedCallableId published :
        hir_scope.published.callables.Ids()) {
     dispatch[hir_scope.published.callables.Get(published).value] =
-        mir::OverridesIntraUnitSlot{
-            .slot_owner = published_class_id_,
-            .slot_id = PublishedMethodOf(published)};
+        mir::OverridesVirtualSlot{
+            .overridden = mir::LocalVirtualSlot{
+                .owner_class = published_class_id_,
+                .slot = PublishedMethodOf(published)}};
   }
   base::IdAllocator<mir::CallableId> subroutine_ids;
   std::vector<DeclaredCallable> declared_subroutines;

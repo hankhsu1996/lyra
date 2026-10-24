@@ -35,10 +35,11 @@ struct PublishedProperty {
 };
 
 // A method of a class of another unit that overrides a virtual method one of
-// its ancestors introduced (LRM 8.20) and gives it a body, and that method.
+// its ancestors introduced (LRM 8.20) and gives it a body, and that method --
+// named by this unit's own method where the ancestor is a class of this unit.
 struct PublishedOverride {
   std::string method;
-  ExternalDispatchSlot behavior;
+  VirtualBehavior behavior;
 
   auto operator==(const PublishedOverride&) const -> bool = default;
 };

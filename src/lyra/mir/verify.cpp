@@ -22,6 +22,7 @@
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class.hpp"
+#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/closure_signature.hpp"
@@ -2282,9 +2283,37 @@ void VerifyOwnClassesNamedAsOwn(
       refuse(other->class_path, "a type");
     }
   }
+  // What a record of another unit's class names may lead back to this unit,
+  // where that class's lineage passes through one of its own; a reference in a
+  // body to another unit's class is checked where it consumed the signature.
+  const auto refuse_own = [&](const CrossUnitClassRef* other,
+                              std::string_view where) {
+    if (other != nullptr && other->unit_name == unit.name) {
+      refuse(other->class_path, where);
+    }
+  };
   for (const ExternalClass& record : unit.external_classes) {
     if (record.unit_name == unit.name) {
       refuse(record.class_path, "its record of what a unit published");
+    }
+    if (record.base.has_value()) {
+      refuse_own(
+          std::get_if<CrossUnitClassRef>(&*record.base),
+          "the base of its record of another unit's class");
+    }
+    for (const DeclaredClassRef& iface : record.implements) {
+      refuse_own(
+          std::get_if<CrossUnitClassRef>(&iface),
+          "what its record of another unit's class implements");
+    }
+    for (const PublishedOverride& overriding : record.overrides) {
+      const auto* other =
+          std::get_if<ExternalVirtualSlot>(&overriding.behavior);
+      if (other != nullptr && other->unit_name == unit.name) {
+        refuse(
+            other->class_path,
+            "a behavior its record of another unit's class overrides");
+      }
     }
   }
   for (const ConsumedSignature& consumed : unit.consumed_signatures) {

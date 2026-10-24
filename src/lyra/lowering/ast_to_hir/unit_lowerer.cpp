@@ -832,13 +832,13 @@ auto UnitLowerer::TakesDeclaringInstance(
   return std::visit(
       Overloaded{
           [&](const hir::LocalClassRef&) {
-            const auto own = own_class_signatures_.find(&Defining(cls));
-            if (own == own_class_signatures_.end()) {
+            const auto own = own_classes_.find(&Defining(cls));
+            if (own == own_classes_.end()) {
               throw InternalError(
                   "UnitLowerer::TakesDeclaringInstance: a class this unit "
                   "holds states what it takes once it is interned");
             }
-            return own->second.takes_declaring_instance;
+            return own->second.signature.takes_declaring_instance;
           },
           [&](const hir::ExternalClassRef& ext) {
             return ExternalClassOf(ext.unit_name, ext.class_path)

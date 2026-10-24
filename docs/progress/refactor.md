@@ -3195,7 +3195,6 @@ source, or not yet tried.
       execution backend while the C++ build of the same program failed to compile. Target: a method
       entry states the library class it acts on, as MIR states a member's owner, and the verifier
       refuses a call whose receiver is not of that class or one derived from it. Not blocked.
-
 - [ ] R253 -- Where a value a block expression declares ends is stated two ways. The lowering to the
       machine model ends what a block expression's steps declare with the full-expression the block
       expression stands in; the C++ backend writes a block expression as a lambda called where it
@@ -3207,6 +3206,17 @@ source, or not yet tried.
       a lifetime MIR's own contract does not state. Target: the lifetime is MIR's to state once and
       both backends realize it; on the C++ side that means storage for such a declaration outside
       the lambda, or a form that is not a lambda. Not blocked.
+- [ ] R254 -- Every kind of thing one unit can name of another -- a class, a covergroup, a method, a
+      static property, a virtual behavior, a scope's published class -- has its own pair of forms,
+      one for this unit and one for another, and its own place where a name that turns out to be
+      this unit's own is given this unit's identity: some where a signature is read, some in the
+      lowering to MIR. Nothing states once what a unit's own entity is, how a name another unit
+      published is rebased onto the reader's identities, and which step does it, so a new kind of
+      entity a unit can name across units repeats the pair, the rebasing and the verifier's check.
+      The case that found it was a specialization's lineage coming back to the package declaring its
+      generic, which had to be answered for classes, behaviors and covergroups separately. Target:
+      one identity for each entity a unit declares, with the forms a reader holds of it derived from
+      that identity and the reader, and one rebasing step every import goes through. Not blocked.
 
 ## Out of Scope
 

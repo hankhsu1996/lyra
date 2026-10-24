@@ -24,15 +24,8 @@ auto CanonicalVirtualSlot(
             return mir::LocalVirtualSlot{
                 .owner_class = self_owner, .slot = self_slot};
           },
-          [](const mir::OverridesIntraUnitSlot& s) -> mir::VirtualSlot {
-            return mir::LocalVirtualSlot{
-                .owner_class = s.slot_owner, .slot = s.slot_id};
-          },
-          [](const mir::OverridesExternalSlot& e) -> mir::VirtualSlot {
-            return mir::ExternalVirtualSlot{
-                .unit_name = e.unit_name,
-                .class_path = e.class_path,
-                .ordinal = e.ordinal};
+          [](const mir::OverridesVirtualSlot& o) -> mir::VirtualSlot {
+            return o.overridden;
           },
           // Only the library calls one of its own virtual functions, so no
           // call of the source names the behavior such a method answers.

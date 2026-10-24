@@ -110,7 +110,7 @@ using MethodReceiver =
 // that shows.
 struct ExternalMethodCallee {
   ExternalClassMethodTarget target;
-  std::optional<ExternalDispatchSlot> slot;
+  std::optional<VirtualBehavior> behavior;
   ExternalCalleeInterface interface;
 
   auto operator==(const ExternalMethodCallee&) const -> bool = default;

@@ -44,6 +44,7 @@
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/mir/class.hpp"
+#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -163,7 +164,7 @@ auto PublishedOf(const UnitLowerer& unit_lowerer, const hir::CovergroupRef& ref)
                 "a covergroup of another unit is named without the form it "
                 "published -- please report this as a bug");
           }},
-      ref);
+      unit_lowerer.AsLocalOrExternal(ref));
 }
 
 // The first covergroup of the lineage `ref` belongs to (LRM 19.4.1).
@@ -172,7 +173,7 @@ auto FirstOf(const UnitLowerer& unit_lowerer, hir::CovergroupRef ref)
   while (const auto& base = PublishedOf(unit_lowerer, ref).base) {
     ref = *base;
   }
-  return ref;
+  return unit_lowerer.AsLocalOrExternal(ref);
 }
 
 auto HandleTo(UnitLowerer& unit_lowerer, const hir::ClassRef& cls)
@@ -199,25 +200,37 @@ auto CovergroupHandle(
 }
 
 // The behavior `behavior` the first class of `ref`'s lineage introduced, as a
-// dispatch names it.
-auto IntroducedSlot(
-    UnitLowerer& unit_lowerer, const hir::CovergroupRef& ref,
+// record of another unit's covergroup names it, which is no dependency.
+auto SlotIntroducedAlong(
+    const UnitLowerer& unit_lowerer, const hir::CovergroupRef& ref,
     std::uint32_t behavior) -> mir::VirtualSlot {
   return std::visit(
       Overloaded{
           [&](const hir::LocalCovergroupRef& local) -> mir::VirtualSlot {
-            return CanonicalVirtualSlot(
-                unit_lowerer.CovergroupClassId(local.covergroup),
-                mir::CallableId{behavior}, mir::IntroducesVirtualSlot{});
+            return mir::LocalVirtualSlot{
+                .owner_class = unit_lowerer.CovergroupClassId(local.covergroup),
+                .slot = mir::CallableId{behavior}};
           },
           [&](const hir::ExternalCovergroupRef& external) -> mir::VirtualSlot {
-            return mir::VirtualSlot{unit_lowerer.MakeExternalVirtualSlot(
-                hir::ExternalDispatchSlot{
-                    .unit_name = external.unit_name,
-                    .class_path = external.path,
-                    .behavior = hir::PublishedBehaviorId{behavior}})};
+            return mir::ExternalVirtualSlot{
+                .unit_name = external.unit_name,
+                .class_path = external.path,
+                .ordinal = mir::BehaviorOrdinal{behavior}};
           }},
       FirstOf(unit_lowerer, ref));
+}
+
+// The same as a dispatch names it, which depends on the introducing class's
+// unit where it is another's.
+auto IntroducedSlot(
+    UnitLowerer& unit_lowerer, const hir::CovergroupRef& ref,
+    std::uint32_t behavior) -> mir::VirtualSlot {
+  mir::VirtualSlot slot = SlotIntroducedAlong(unit_lowerer, ref, behavior);
+  if (const auto* external = std::get_if<mir::ExternalVirtualSlot>(&slot)) {
+    unit_lowerer.Unit().ConsumeClassOf(
+        external->unit_name, external->class_path);
+  }
+  return slot;
 }
 
 // The dispatch role of a class of `ref`'s lineage for the behavior
@@ -228,23 +241,8 @@ auto RoleIn(
   if (!PublishedOf(unit_lowerer, ref).base.has_value()) {
     return mir::IntroducesVirtualSlot{};
   }
-  return std::visit(
-      Overloaded{
-          [&](const hir::LocalCovergroupRef& local)
-              -> mir::VirtualDispatchRole {
-            return mir::OverridesIntraUnitSlot{
-                .slot_owner = unit_lowerer.CovergroupClassId(local.covergroup),
-                .slot_id = mir::CallableId{behavior}};
-          },
-          [&](const hir::ExternalCovergroupRef& external)
-              -> mir::VirtualDispatchRole {
-            return unit_lowerer.MakeExternalMethodOverride(
-                hir::ExternalDispatchSlot{
-                    .unit_name = external.unit_name,
-                    .class_path = external.path,
-                    .behavior = hir::PublishedBehaviorId{behavior}});
-          }},
-      FirstOf(unit_lowerer, ref));
+  return mir::OverridesVirtualSlot{
+      .overridden = IntroducedSlot(unit_lowerer, ref, behavior)};
 }
 
 // A method of the class itself, named as a call names it: by position in a
@@ -266,7 +264,7 @@ auto TypeMethod(
                     .class_path = external.path,
                     .method_name = std::string{name}});
           }},
-      ref);
+      unit_lowerer.AsLocalOrExternal(ref));
 }
 
 // Whether a class of `ref` belongs to the instance of the scope declaring its
@@ -274,7 +272,8 @@ auto TypeMethod(
 // type-associated body of it.
 auto TakesDeclaringInstance(
     const UnitLowerer& unit_lowerer, const hir::CovergroupRef& ref) -> bool {
-  return std::holds_alternative<hir::LocalCovergroupRef>(ref) &&
+  return std::holds_alternative<hir::LocalCovergroupRef>(
+             unit_lowerer.AsLocalOrExternal(ref)) &&
          hir::RootsAnObject(unit_lowerer.Hir().role);
 }
 
@@ -606,7 +605,7 @@ auto CovergroupClassOf(
   const hir::PublishedCovergroup& published =
       PublishedOf(unit_lowerer, covergroup);
   return CovergroupClass{
-      .covergroup = covergroup,
+      .covergroup = unit_lowerer.AsLocalOrExternal(covergroup),
       .published = &published,
       .layout = CovergroupLayoutOf(published)};
 }
@@ -627,7 +626,7 @@ auto CovergroupClassRef(
                     .unit_name = external.unit_name,
                     .class_path = external.path});
           }},
-      covergroup);
+      unit_lowerer.AsLocalOrExternal(covergroup));
 }
 
 auto CovergroupPropertyTarget(
@@ -732,23 +731,15 @@ auto PublishedCovergroupClass(
             .name = std::string{kCovergroupMakeRecord}, .is_pure = false});
     return record;
   }
-  const hir::CovergroupRef lineage_first = FirstOf(unit_lowerer, ref);
-  const auto* first = std::get_if<hir::ExternalCovergroupRef>(&lineage_first);
-  if (first == nullptr) {
-    throw InternalError(
-        "a covergroup of another unit extends one of this unit's -- please "
-        "report this as a bug");
-  }
+  // The first covergroup of the lineage may be this unit's own, where the
+  // lineage another unit published passes back through it.
   for (const auto& [name, behavior] :
        {std::pair{kCovergroupSample, kSampleBehavior},
         std::pair{kCovergroupMakeRecord, kMakeRecordBehavior}}) {
     record.overrides.push_back(
         mir::PublishedOverride{
             .method = std::string{name},
-            .behavior = mir::OverridesExternalSlot{
-                .unit_name = first->unit_name,
-                .class_path = first->path,
-                .ordinal = mir::BehaviorOrdinal{behavior}}});
+            .behavior = SlotIntroducedAlong(unit_lowerer, ref, behavior)});
   }
   return record;
 }
@@ -2265,6 +2256,21 @@ auto FactoryOf(UnitLowerer& unit_lowerer, const hir::CovergroupRef& first)
 
 }  // namespace
 
+auto FactorySlot(UnitLowerer& unit_lowerer, const hir::CovergroupRef& first)
+    -> mir::VirtualSlot {
+  return std::visit(
+      Overloaded{
+          [&](const mir::CallableTarget& own) -> mir::VirtualSlot {
+            return CanonicalVirtualSlot(
+                own.owner, own.slot, mir::IntroducesVirtualSlot{});
+          },
+          [&](const hir::ExternalDispatchSlot& published) -> mir::VirtualSlot {
+            return mir::VirtualSlot{
+                unit_lowerer.MakeExternalVirtualSlot(published)};
+          }},
+      FactoryOf(unit_lowerer, first));
+}
+
 auto CovergroupFactoryDispatch(
     UnitLowerer& unit_lowerer, hir::CovergroupId covergroup)
     -> mir::VirtualDispatchRole {
@@ -2273,20 +2279,11 @@ auto CovergroupFactoryDispatch(
   if (!decl.base.has_value()) return mir::IntroducesVirtualSlot{};
   // An extension's factory overrides the one making the first covergroup of
   // the lineage, which the class embedding that covergroup introduced.
-  return std::visit(
-      Overloaded{
-          [](const mir::CallableTarget& own) -> mir::VirtualDispatchRole {
-            return mir::OverridesIntraUnitSlot{
-                .slot_owner = own.owner, .slot_id = own.slot};
-          },
-          [&](const hir::ExternalDispatchSlot& published)
-              -> mir::VirtualDispatchRole {
-            return unit_lowerer.MakeExternalMethodOverride(published);
-          }},
-      FactoryOf(
+  return mir::OverridesVirtualSlot{
+      .overridden = FactorySlot(
           unit_lowerer, FirstOf(
                             unit_lowerer, hir::LocalCovergroupRef{
-                                              .covergroup = covergroup})));
+                                              .covergroup = covergroup}))};
 }
 
 namespace {
@@ -2498,23 +2495,6 @@ auto BindCovergroupActuals(
     bound.push_back(*actual);
   }
   return bound;
-}
-
-// The behavior the class embedding `first`, the first covergroup of a lineage,
-// makes it by, as a call through an object of that class dispatches on it.
-auto FactorySlot(UnitLowerer& unit_lowerer, const hir::CovergroupRef& first)
-    -> mir::VirtualSlot {
-  return std::visit(
-      Overloaded{
-          [&](const mir::CallableTarget& own) -> mir::VirtualSlot {
-            return CanonicalVirtualSlot(
-                own.owner, own.slot, mir::IntroducesVirtualSlot{});
-          },
-          [&](const hir::ExternalDispatchSlot& published) -> mir::VirtualSlot {
-            return mir::VirtualSlot{
-                unit_lowerer.MakeExternalVirtualSlot(published)};
-          }},
-      FactoryOf(unit_lowerer, first));
 }
 
 // The record of `covergroup`'s type, as its class answers it, reaching the

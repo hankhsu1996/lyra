@@ -40,5 +40,7 @@ Done when every construct of LRM 19 behaves as the standard says on both backend
       it from either class; a coverpoint it declares again stops the base's from counting, one it
       adds counts beside them, an option it sets overrides the base's, and the two are separate
       types.
+  - [x] Extended by a specialization of a generic class of the package whose class embeds it, the
+        package's own code making and sampling the extension (LRM 8.25).
 - [x] The coverage database: written at the end of a run that made an instance, named by
       `$set_coverage_db_name`, read by `$load_coverage_db` (LRM 19.9).

@@ -111,6 +111,13 @@ class CovergroupLowerer {
   DeclaredScopes scopes_;
 };
 
+// The behavior the class embedding `first`, the first covergroup of a lineage,
+// makes it by, as a call through an object of that class and an override name
+// it.
+[[nodiscard]] auto FactorySlot(
+    UnitLowerer& unit_lowerer, const hir::CovergroupRef& first)
+    -> mir::VirtualSlot;
+
 // The dispatch role of the method a class embedding `covergroup` makes it by
 // (LRM 19.4.1): introduced by the class embedding the first covergroup of a
 // lineage, overridden by each class embedding one extending it.

@@ -74,32 +74,43 @@ struct IntroducesVirtualSlot {
   auto operator==(const IntroducesVirtualSlot&) const -> bool = default;
 };
 
-// A method that overrides a virtual dispatch slot declared by a class of this
-// same compilation unit -- LRM 8.20. The stored (`slot_owner`, `slot_id`) is
-// the slot's canonical identity: the class and callable-arena position where
-// the slot was originally introduced, invariant across every override in the
-// chain. A call site names the slot in one read; no consumer walks an
-// override chain to derive it.
-struct OverridesIntraUnitSlot {
-  ClassId slot_owner;
-  CallableId slot_id;
+// Identity of a virtual dispatch slot introduced by a class in this
+// compilation unit: the introducing class and the callable arena position
+// where the slot was first declared. The receiver's dynamic type is what
+// decides which implementation runs; the slot is the canonical logical
+// identity a backend reads to reach the method's name and signature.
+struct LocalVirtualSlot {
+  ClassId owner_class;
+  CallableId slot;
 
-  auto operator==(const OverridesIntraUnitSlot&) const -> bool = default;
+  auto operator==(const LocalVirtualSlot&) const -> bool = default;
 };
 
-// A method that overrides a virtual dispatch slot introduced by a class in
-// another compilation unit -- LRM 8.20 across the unit boundary. The behavior's
-// canonical identity carries no unit-local ids: it names the declaring unit and
-// the introducing class's path in it, together with which of that class's
-// introductions it is, counted out of what that class published. That is the
-// same coordinate an intra-unit override carries, with the class named by its
-// parts rather than by an id.
-struct OverridesExternalSlot {
+// Identity of a behavior a class of another compilation unit introduced. The
+// introducing class carries no unit-local id here, so it is named by (declaring
+// unit, class path) together with which of that class's introductions
+// this is, counted out of what it published -- the same coordinate an
+// intra-unit slot carries, with the class named by its parts.
+struct ExternalVirtualSlot {
   std::string unit_name;
   support::DefPath class_path;
   BehaviorOrdinal ordinal;
 
-  auto operator==(const OverridesExternalSlot&) const -> bool = default;
+  auto operator==(const ExternalVirtualSlot&) const -> bool = default;
+};
+
+// The slot a virtual call and an override name: a class of this unit names it
+// by position, and a class of another unit by the coordinate that unit
+// published, since the identity follows the compilation-unit boundary.
+using VirtualSlot = std::variant<LocalVirtualSlot, ExternalVirtualSlot>;
+
+// A method that overrides a behavior an ancestor introduced (LRM 8.20), named
+// by that behavior's slot: invariant across every override in the chain, so a
+// call site names it in one read and no consumer walks an override chain.
+struct OverridesVirtualSlot {
+  VirtualSlot overridden;
+
+  auto operator==(const OverridesVirtualSlot&) const -> bool = default;
 };
 
 // A method that overrides a virtual function a class of the runtime library
@@ -115,14 +126,11 @@ struct OverridesLibraryVirtual {
 // A method's participation in the class-object dispatch table (LRM 8.20). A
 // non-participating method (a regular direct-only callable) carries no value
 // of this optional; a participating method carries the arm whose payload
-// names the slot's canonical identity: an introducer names itself, an
-// intra-unit override names the introducing (class, method) pair, a
-// cross-unit override names the introducing (unit, class, method) name
-// triple, and an override of the library's names the library's function. A
-// consumer reads the slot's identity in one step.
+// names the slot's canonical identity: an introducer names itself, an override
+// names the slot it overrides, and an override of the library's names the
+// library's function. A consumer reads the slot's identity in one step.
 using VirtualDispatchRole = std::variant<
-    IntroducesVirtualSlot, OverridesIntraUnitSlot, OverridesExternalSlot,
-    OverridesLibraryVirtual>;
+    IntroducesVirtualSlot, OverridesVirtualSlot, OverridesLibraryVirtual>;
 
 // Whether this participation is the appearance that introduces the slot (LRM
 // 8.20), as against overriding one an ancestor already declared. A callable in

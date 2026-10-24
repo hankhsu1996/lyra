@@ -6,7 +6,8 @@
 
 ## Status
 
-Accepted.
+Accepted. Revised 2026-10-23: D3 says where a virtual behavior of this unit's class, reached through
+another unit's lineage, is named as its own.
 
 ## Why this decision matters
 
@@ -62,6 +63,21 @@ to no name, while another unit's is named by what that unit published. A publish
 therefore reserves one method per published subroutine, in the signature's order, before any body
 lowers, so a body reaching another instance of its own unit calls the method by position.
 
+A virtual behavior is a callable too, and a lineage another unit published -- a specialization of a
+generic this unit declares, extending one of this unit's classes -- can name one this unit's class
+introduced by that unit's coordinate, which is the class and which of its introduced behaviors it
+is. Such a lineage has no counterpart among Rust's crates, which depend on one another without
+cycles; units do not, because a specialization is compiled apart from the scope declaring its
+generic. The behavior is named by this unit's identity for it where the lineage is read, as clang's
+module reader maps an identity local to the file it reads into the reader's own as it reads it
+(`ASTReader::getGlobalDeclID`), rather than at each use. That is where the introducing class turns
+out to be this unit's: the signature it publishes keeps, beside it, what each of its methods is in
+this unit -- a method, or, for the method making a covergroup it embeds (LRM 19.4.1), which no
+method of the source stands for, the covergroup. It holds for a call dispatching on the behavior, an
+override of it, and the record kept of the other unit's class alike, and from there one translation
+gives every one of them its slot. A covergroup a type or a lineage of the other unit names is this
+unit's own as a class is, by D1.
+
 ### D4. What holds objects of a loop generate stays the scope every block is
 
 Which blocks of a loop share a body is decided by lowering the bodies, and what a unit publishes
@@ -85,8 +101,9 @@ class.
 ## Consequences
 
 - The MIR verifier refuses a unit that names a class of its own as another unit's -- in a type, in a
-  record of what a unit published, or in what it consumed -- so the rule is checked rather than
-  stated.
+  record of what a unit published or in what such a record extends, implements or overrides, or in
+  what it consumed -- so the rule is checked rather than stated. Reading a class or a covergroup of
+  this unit as another unit's is refused where it is read.
 - A unit's published scope classes are minted, under every name each answers to, before any type
   translates, since a type another unit's signature states may name one.
 - The execution layer keeps telling a class this unit defines from one it only declares, as LLVM

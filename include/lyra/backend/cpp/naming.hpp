@@ -17,6 +17,7 @@
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_constant_id.hpp"
 #include "lyra/mir/class_id.hpp"
+#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/enum_table_id.hpp"
@@ -399,6 +400,9 @@ void WriteOne(TargetText& out, BodyScope scope);
   return ToCppName(introducer->behaviors[ordinal.value].name);
 }
 
+[[nodiscard]] inline auto CppVirtualSlotName(
+    const mir::CompilationUnit& unit, const mir::VirtualSlot& slot) -> CppName;
+
 // The name of a function a class owns -- a method, a process, or a lifecycle
 // body. A named one keeps its name; an unnamed one is `sv_body_<n>`. The
 // declaration, the definition and every call take it from here.
@@ -431,19 +435,32 @@ void WriteOne(TargetText& out, BodyScope scope);
           [&](const mir::IntroducesVirtualSlot&) -> CppName {
             return declared_here();
           },
-          [&](const mir::OverridesIntraUnitSlot& taken) -> CppName {
-            return CppClassCallableName(
-                unit, unit.GetClass(taken.slot_owner), taken.slot_id);
-          },
-          [&](const mir::OverridesExternalSlot& taken) -> CppName {
-            return CppExternalBehaviorName(
-                unit, taken.unit_name, taken.class_path, taken.ordinal);
+          [&](const mir::OverridesVirtualSlot& taken) -> CppName {
+            return CppVirtualSlotName(unit, taken.overridden);
           },
           [](const mir::OverridesLibraryVirtual& taken) -> CppName {
             return VerbatimName{
                 .text = support::LibraryVirtualName(taken.function)};
           }},
       *role);
+}
+
+// The name of the virtual method a slot names, which a virtual call through it
+// and an override of it both spell.
+[[nodiscard]] inline auto CppVirtualSlotName(
+    const mir::CompilationUnit& unit, const mir::VirtualSlot& slot) -> CppName {
+  return std::visit(
+      Overloaded{
+          [&](const mir::LocalVirtualSlot& local) -> CppName {
+            return CppClassCallableName(
+                unit, unit.GetClass(local.owner_class), local.slot);
+          },
+          [&](const mir::ExternalVirtualSlot& external) -> CppName {
+            return CppExternalBehaviorName(
+                unit, external.unit_name, external.class_path,
+                external.ordinal);
+          }},
+      slot);
 }
 
 // The name of a class field: `sv_field_<slot>`, plus the source name where

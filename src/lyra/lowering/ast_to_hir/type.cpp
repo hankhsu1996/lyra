@@ -1,6 +1,7 @@
 #include "lyra/hir/type.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <format>
 #include <optional>
@@ -817,7 +818,7 @@ auto BuildInterfaceForwardingMethod(
   // is a behavior of this class's lineage, and the forward takes it over: a
   // value of this class answers it with the forward, which enters the
   // implementation it was inherited with.
-  auto taken = unit_lowerer.MakeOverriddenBehavior(impl, span);
+  auto taken = unit_lowerer.MakeVirtualBehavior(impl, span);
   if (!taken) return std::unexpected(std::move(taken.error()));
 
   // The forwarder's text reads no cell of its own: what a call of it reads is
@@ -980,9 +981,9 @@ auto LowerConstraintBlockDecl(
   }
   body.root_scope = frame.SealScope(std::move(root));
 
-  std::optional<hir::OverriddenBehavior> overrides;
+  std::optional<hir::VirtualBehavior> overrides;
   if (const auto* base = OverriddenConstraintBlock(cls, block.name)) {
-    auto taken = unit_lowerer.MakeOverriddenBehavior(*base, span);
+    auto taken = unit_lowerer.MakeVirtualBehavior(*base, span);
     if (!taken) return std::unexpected(std::move(taken.error()));
     overrides = *std::move(taken);
   }
@@ -1024,7 +1025,7 @@ auto LowerDefinedClassMethod(
   if (overridden == nullptr) {
     return method_decl;
   }
-  auto taken = unit_lowerer.MakeOverriddenBehavior(*overridden, span);
+  auto taken = unit_lowerer.MakeVirtualBehavior(*overridden, span);
   if (!taken) return std::unexpected(std::move(taken.error()));
   method_decl->overrides = *std::move(taken);
   // A method that overrides another is itself virtual, whether or not the
@@ -1082,15 +1083,15 @@ auto UnitLowerer::MakeMethodCallee(
           [](const hir::IntroducesVirtual&) { return true; },
           [](const hir::OverridesVirtual&) { return true; }},
       declared->dispatch);
-  std::optional<hir::ExternalDispatchSlot> slot;
+  std::optional<hir::VirtualBehavior> behavior;
   if (is_virtual) {
-    auto resolved = MakeExternalDispatchSlot(ext, method.name, span);
+    auto resolved = MakeVirtualBehavior(ext, method.name, span);
     if (!resolved) return std::unexpected(std::move(resolved.error()));
-    slot = *std::move(resolved);
+    behavior = *std::move(resolved);
   }
   return hir::ExternalMethodCallee{
       .target = std::get<hir::ExternalClassMethodTarget>(std::move(target)),
-      .slot = std::move(slot),
+      .behavior = std::move(behavior),
       .interface = std::move(interface)};
 }
 
@@ -1281,10 +1282,10 @@ auto UnitLowerer::StateConformance(
     return {};
   }
   const auto answer_of = [&](std::string_view name)
-      -> diag::Result<std::optional<hir::OverriddenBehavior>> {
+      -> diag::Result<std::optional<hir::VirtualBehavior>> {
     const slang::ast::SubroutineSymbol* method = ImplementationOf(cls, name);
     if (method == nullptr) return std::nullopt;
-    auto answer = MakeOverriddenBehavior(*method, span);
+    auto answer = MakeVirtualBehavior(*method, span);
     if (!answer) return std::unexpected(std::move(answer.error()));
     return std::optional{*std::move(answer)};
   };
@@ -1313,7 +1314,7 @@ auto UnitLowerer::StateConformance(
                 if (OverriddenMethod(*local, *stub) != nullptr) {
                   continue;
                 }
-                auto behavior = MakeOverriddenBehavior(*stub, span);
+                auto behavior = MakeVirtualBehavior(*stub, span);
                 if (!behavior) {
                   return std::unexpected(std::move(behavior.error()));
                 }
@@ -1356,33 +1357,31 @@ auto UnitLowerer::StateConformance(
   return {};
 }
 
-auto UnitLowerer::MakeOverriddenBehavior(
+auto UnitLowerer::MakeVirtualBehavior(
     const slang::ast::Symbol& method, diag::SourceSpan span)
-    -> diag::Result<hir::OverriddenBehavior> {
+    -> diag::Result<hir::VirtualBehavior> {
   auto declaring = ResolveClassRef(OwningClassOf(method), span);
   if (!declaring) return std::unexpected(std::move(declaring.error()));
   return std::visit(
       Overloaded{
           [&](const hir::LocalClassRef& local)
-              -> diag::Result<hir::OverriddenBehavior> {
+              -> diag::Result<hir::VirtualBehavior> {
             return hir::LocalClassMethodTarget{
                 .owner = local.class_id, .method = LookupMethodId(method)};
           },
           [&](const hir::ExternalClassRef& external)
-              -> diag::Result<hir::OverriddenBehavior> {
-            auto slot = MakeExternalDispatchSlot(external, method.name, span);
-            if (!slot) return std::unexpected(std::move(slot.error()));
-            return hir::OverriddenBehavior{*std::move(slot)};
+              -> diag::Result<hir::VirtualBehavior> {
+            return MakeVirtualBehavior(external, method.name, span);
           }},
       *declaring);
 }
 
-auto UnitLowerer::MakeExternalDispatchSlot(
+auto UnitLowerer::MakeVirtualBehavior(
     const hir::ExternalClassRef& cls, std::string_view method_name,
-    diag::SourceSpan span) -> diag::Result<hir::ExternalDispatchSlot> {
-  if (std::optional<hir::ExternalDispatchSlot> slot =
-          IntroducerOf(cls, method_name)) {
-    return *std::move(slot);
+    diag::SourceSpan span) -> diag::Result<hir::VirtualBehavior> {
+  if (std::optional<hir::VirtualBehavior> behavior =
+          FindVirtualBehavior(cls, method_name)) {
+    return *std::move(behavior);
   }
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedExpressionForm,
@@ -1391,51 +1390,59 @@ auto UnitLowerer::MakeExternalDispatchSlot(
       cls.unit_name, support::DisplayOf(cls.class_path), method_name);
 }
 
-auto UnitLowerer::IntroducerOf(
+auto UnitLowerer::FindVirtualBehavior(
     const hir::ExternalClassRef& cls, std::string_view method_name)
-    -> std::optional<hir::ExternalDispatchSlot> {
+    -> std::optional<hir::VirtualBehavior> {
   // A virtual method is named by the class that introduced it, which is the
   // one identity every class overriding it agrees on -- so a class overriding
   // it is a step on the way, not the answer. The walk follows what each class
   // published about the class it extends, and reading those signatures is what
   // makes their units dependencies of this one. A lineage another unit
   // published may pass back through a class of this unit, which is read off
-  // what this unit states it publishes.
+  // what this unit states it publishes; a behavior that class introduced is
+  // named by this unit's identity for it.
   for (std::optional<hir::ExternalClassRef> at = cls; at.has_value();) {
-    std::optional<hir::PublishedBehaviorId> behavior;
-    std::optional<hir::ExternalClassRef> base;
     if (at->unit_name == unit_.name) {
-      const hir::ClassSignature& own = OwnClassSignature(at->class_path);
-      behavior = hir::FindIntroducedVirtual(own.methods, method_name);
-      base = own.base;
-    } else {
-      const hir::ExternalClass& published =
-          ExternalClassOf(at->unit_name, at->class_path);
-      behavior = hir::FindIntroducedVirtual(published.methods, method_name);
-      base = published.base;
+      const OwnClass& own = OwnClassAt(at->class_path);
+      const auto introduced = std::ranges::find_if(
+          own.signature.methods, [&](const hir::PublishedMethod& method) {
+            return method.prototype.name == method_name &&
+                   std::holds_alternative<hir::IntroducesVirtual>(
+                       method.dispatch);
+          });
+      if (introduced != own.signature.methods.end()) {
+        return own.methods.at(
+            static_cast<std::size_t>(
+                introduced - own.signature.methods.begin()));
+      }
+      at = own.signature.base;
+      continue;
     }
-    if (behavior.has_value()) {
+    const hir::ExternalClass& published =
+        ExternalClassOf(at->unit_name, at->class_path);
+    if (const std::optional<hir::PublishedBehaviorId> behavior =
+            hir::FindIntroducedVirtual(published.methods, method_name)) {
       return hir::ExternalDispatchSlot{
           .unit_name = at->unit_name,
           .class_path = at->class_path,
           .behavior = *behavior};
     }
-    at = std::move(base);
+    at = published.base;
   }
   return std::nullopt;
 }
 
-auto UnitLowerer::OwnClassSignature(const support::DefPath& class_path) const
-    -> const hir::ClassSignature& {
+auto UnitLowerer::OwnClassAt(const support::DefPath& class_path) const
+    -> const OwnClass& {
   const auto it = own_classes_by_path_.find(class_path);
   if (it == own_classes_by_path_.end()) {
     throw InternalError(
         std::format(
-            "UnitLowerer::OwnClassSignature: this unit holds no class '{}' -- "
+            "UnitLowerer::OwnClassAt: this unit holds no class '{}' -- "
             "please report this as a bug",
             support::DisplayOf(class_path)));
   }
-  return own_class_signatures_.at(it->second);
+  return own_classes_.at(it->second);
 }
 
 auto UnitLowerer::AsLocalOrPublished(const hir::ExternalClassRef& named) const
@@ -1821,6 +1828,7 @@ auto UnitLowerer::InternLocalClass(
     }
     return hir::OverridesVirtual{.is_pure = is_pure};
   };
+  std::vector<hir::VirtualBehavior> own_methods;
   const auto publish_method = [&](const slang::ast::SubroutineSymbol& method,
                                   bool is_pure) -> diag::Result<void> {
     auto interface = MakeExternalCalleeInterface(method, span);
@@ -1835,6 +1843,9 @@ auto UnitLowerer::InternLocalClass(
                     .interface = *std::move(interface),
                     .result_type = *result_type},
             .dispatch = dispatch_of(method, is_pure)});
+    own_methods.emplace_back(
+        hir::LocalClassMethodTarget{
+            .owner = id, .method = LookupMethodId(method)});
     return {};
   };
   for (const auto* method : defined_methods) {
@@ -1872,6 +1883,9 @@ auto UnitLowerer::InternLocalClass(
                             .params = {}},
                     .result_type = *void_type},
             .dispatch = dispatch});
+    own_methods.emplace_back(
+        hir::LocalClassMethodTarget{
+            .owner = id, .method = LookupMethodId(*block)});
   }
   // Each covergroup the class embeds is made by a method of the class that a
   // class extending it overrides where its covergroup extends this one (LRM
@@ -1884,8 +1898,13 @@ auto UnitLowerer::InternLocalClass(
     auto embedded = InternLocalCovergroup(covergroup, span);
     if (!embedded) return std::unexpected(std::move(embedded.error()));
     decl.embedded_covergroups.push_back(*embedded);
+    own_methods.emplace_back(
+        hir::LocalCovergroupFactory{.covergroup = *embedded});
   }
-  own_class_signatures_.emplace(&cls, std::move(own_signature));
+  own_classes_.emplace(
+      &cls, OwnClass{
+                .signature = std::move(own_signature),
+                .methods = std::move(own_methods)});
 
   pending_class_bodies_[&replicating].push_back(
       UnitLowerer::PendingClassBody{
@@ -2003,7 +2022,7 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
       const slang::ast::SubroutineSymbol* overridden_sub =
           OverriddenSubroutine(*overridden);
       if (overridden_sub != nullptr) {
-        auto taken = MakeOverriddenBehavior(*overridden_sub, span);
+        auto taken = MakeVirtualBehavior(*overridden_sub, span);
         if (!taken) return std::unexpected(std::move(taken.error()));
         proto_decl->overrides = *std::move(taken);
       }

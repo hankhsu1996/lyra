@@ -29,12 +29,10 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// The declaration-facing view of a callable: the facts a peer's body lowering
-// needs to know about it while its own body is being lowered. The callable's
-// body itself is not here; the finished `mir::CallableDecl` on the class
-// carries the body once every body composes. `virtual_dispatch` is here so a
-// peer that calls this callable picks between direct and virtual invocation
-// from a stated fact, with no dependency on which class's body lowered first.
+// The declaration-facing view of a callable: what its class states of it
+// before any body is lowered. The callable's body itself is not here; the
+// finished `mir::CallableDecl` on the class carries the body once every body
+// composes.
 struct CallableSignature {
   std::optional<mir::VirtualDispatchRole> virtual_dispatch;
 };

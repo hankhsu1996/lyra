@@ -89,8 +89,10 @@ auto CoverageLibrary::MethodOf(
                           .unit_name = external.unit_name,
                           .class_path = external.class_path,
                           .method_name = std::string{name}},
-                  .slot = is_virtual ? std::optional{SlotOf(external, name)}
-                                     : std::nullopt,
+                  .behavior = is_virtual
+                                  ? std::optional<hir::VirtualBehavior>{SlotOf(
+                                        external, name)}
+                                  : std::nullopt,
                   .interface = method->prototype.interface},
           .prototype = method->prototype};
     }

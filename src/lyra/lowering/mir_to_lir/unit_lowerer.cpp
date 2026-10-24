@@ -146,9 +146,7 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     for (const mir::PublishedOverride& overriding : cls.overrides) {
       record.dispatch.overrides.push_back(
           lir::Override{
-              .behavior = ExternalMethodRef(
-                  overriding.behavior.unit_name, overriding.behavior.class_path,
-                  overriding.behavior.ordinal),
+              .behavior = SlotRef(overriding.behavior),
               .body = body(overriding.method)});
     }
     out_.external_classes.push_back(std::move(record));
@@ -841,14 +839,8 @@ auto UnitLowerer::LowerDispatch(mir::ClassId owner, const mir::Class& cls)
             [&](const mir::IntroducesVirtualSlot&) {
               dispatch.introduces.push_back(body);
             },
-            [&](const mir::OverridesIntraUnitSlot& overridden) {
-              override_with_body(
-                  MethodRef(overridden.slot_owner, overridden.slot_id));
-            },
-            [&](const mir::OverridesExternalSlot& overridden) {
-              override_with_body(ExternalMethodRef(
-                  overridden.unit_name, overridden.class_path,
-                  overridden.ordinal));
+            [&](const mir::OverridesVirtualSlot& o) {
+              override_with_body(SlotRef(o.overridden));
             },
             // The library's class introduced it, at the position its class
             // declares it among its own.

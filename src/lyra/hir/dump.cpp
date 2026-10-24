@@ -353,16 +353,19 @@ auto SubroutineKindName(SubroutineKind kind) -> std::string_view {
   throw InternalError("SubroutineKindName: unknown subroutine kind");
 }
 
-auto FormatOverriddenBehavior(const OverriddenBehavior& taken) -> std::string {
+auto FormatVirtualBehavior(const VirtualBehavior& behavior) -> std::string {
   return std::visit(
       Overloaded{
           [](const LocalClassMethodTarget& t) {
             return FormatLocalClassMethod(t);
           },
+          [](const LocalCovergroupFactory& f) {
+            return std::format("factory of Covergroup[{}]", f.covergroup.value);
+          },
           [](const ExternalDispatchSlot& s) {
             return FormatExternalDispatchSlot(s);
           }},
-      taken);
+      behavior);
 }
 
 auto FormatMethodCallee(const MethodCallee& callee) -> std::string {
@@ -375,9 +378,9 @@ auto FormatMethodCallee(const MethodCallee& callee) -> std::string {
             return std::format(
                 "{} {}{}", FormatExternalClassMethod(c.target),
                 SubroutineKindName(c.interface.kind),
-                c.slot.has_value()
+                c.behavior.has_value()
                     ? std::format(
-                          " virtual={}", FormatExternalDispatchSlot(*c.slot))
+                          " virtual={}", FormatVirtualBehavior(*c.behavior))
                     : "");
           }},
       callee);
@@ -1994,9 +1997,9 @@ class HirDumper {
       Line(
           std::format(
               "Conforms: {} <- {}",
-              FormatOverriddenBehavior(answered.interface_behavior),
+              FormatVirtualBehavior(answered.interface_behavior),
               answered.answered_by.has_value()
-                  ? FormatOverriddenBehavior(*answered.answered_by)
+                  ? FormatVirtualBehavior(*answered.answered_by)
                   : std::string{"nothing"}));
     }
     for (const auto& field : c.fields) {
@@ -2498,7 +2501,7 @@ class HirDumper {
     if (d.is_prototype) flags += " prototype";
     if (d.overrides.has_value()) {
       flags +=
-          std::format(" overrides={}", FormatOverriddenBehavior(*d.overrides));
+          std::format(" overrides={}", FormatVirtualBehavior(*d.overrides));
     }
     Line(
         std::format(

@@ -229,6 +229,13 @@ class DeclBuilder {
       auto base =
           owner_->ResolveCovergroupRef(*lineage[lineage.size() - 2], span_);
       if (!base) return std::unexpected(std::move(base.error()));
+      // The step to MIR walks the lineage over what each covergroup of it
+      // published, and no type need name the one extended, so another unit's
+      // is read here.
+      if (const auto* external =
+              std::get_if<hir::ExternalCovergroupRef>(&*base)) {
+        owner_->ExternalCovergroupOf(external->unit_name, external->path);
+      }
       decl_.base = *base;
     }
     // One extending another is sampled on the event of the first of its
@@ -783,6 +790,13 @@ auto UnitLowerer::InternLocalCovergroup(
 auto UnitLowerer::ExternalCovergroupOf(
     const std::string& unit_name, const support::DefPath& path)
     -> const hir::PublishedCovergroup& {
+  if (unit_name == unit_.name) {
+    throw InternalError(
+        std::format(
+            "UnitLowerer::ExternalCovergroupOf: this unit's own covergroup "
+            "'{}' is read as another unit's -- please report this as a bug",
+            support::DisplayOf(path)));
+  }
   for (const hir::ExternalCovergroup& held : unit_.external_covergroups) {
     if (held.unit_name == unit_name && held.published.path == path) {
       return held.published;
@@ -803,10 +817,11 @@ auto UnitLowerer::ExternalCovergroupOf(
   hir::PublishedCovergroup record = importer.Import(*published);
   // The step to MIR lays the covergroup out from what it extends, the class
   // embedding it and the classes counting its coverpoints, so reading it reads
-  // each of those too. One of this unit is its own, with nothing to read.
+  // each of those too. One of this unit is its own, with nothing to read,
+  // including one a lineage another unit published passes back through.
   if (record.base.has_value()) {
-    if (const auto* base =
-            std::get_if<hir::ExternalCovergroupRef>(&*record.base)) {
+    const auto* base = std::get_if<hir::ExternalCovergroupRef>(&*record.base);
+    if (base != nullptr && base->unit_name != unit_.name) {
       ExternalCovergroupOf(base->unit_name, base->path);
     }
   }
@@ -836,8 +851,11 @@ void UnitLowerer::ReadSignaturesOfNamedCovergroups() {
       if (id.value < read) continue;
       const auto* handle = unit_.types.Get(id).As<hir::CovergroupHandleType>();
       if (handle == nullptr) continue;
-      if (const auto* external =
-              std::get_if<hir::ExternalCovergroupRef>(&handle->covergroup)) {
+      // A type another unit's signature states may name a covergroup of this
+      // unit, which is this unit's own and no signature to read.
+      const auto* external =
+          std::get_if<hir::ExternalCovergroupRef>(&handle->covergroup);
+      if (external != nullptr && external->unit_name != unit_.name) {
         ExternalCovergroupOf(external->unit_name, external->path);
       }
     }

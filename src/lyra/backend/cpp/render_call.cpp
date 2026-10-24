@@ -435,23 +435,9 @@ void WriteCallee(
           },
           [&](const mir::Indirect& i) { callee.Computed(i.code); },
           [&](const mir::Virtual& v) {
-            std::visit(
-                Overloaded{
-                    [&](const mir::LocalVirtualSlot& l) {
-                      callee.Named(
-                          ReceiverPlacement::kIntoCalleeName,
-                          CppClassCallableName(
-                              view.Unit(), view.Unit().GetClass(l.owner_class),
-                              l.slot));
-                    },
-                    [&](const mir::ExternalVirtualSlot& e) {
-                      callee.Named(
-                          ReceiverPlacement::kIntoCalleeName,
-                          CppExternalBehaviorName(
-                              view.Unit(), e.unit_name, e.class_path,
-                              e.ordinal));
-                    }},
-                v.slot);
+            callee.Named(
+                ReceiverPlacement::kIntoCalleeName,
+                CppVirtualSlotName(view.Unit(), v.slot));
           },
           // What a construction names comes from its result type, through the
           // type mapping.
