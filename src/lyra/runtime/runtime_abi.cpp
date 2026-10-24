@@ -2014,7 +2014,8 @@ using lyra::runtime::DumpVarsOfVariable;
 using lyra::runtime::Emplace;
 using lyra::runtime::EndClosure;
 using lyra::runtime::EndDescribedBlock;
-using lyra::runtime::EnterCancellationTarget;
+using lyra::runtime::EnterTargetLandingAtExecutionEnd;
+using lyra::runtime::EnterTargetLandingPastIt;
 using lyra::runtime::ErasedAt;
 using lyra::runtime::ErasedDesignation;
 using lyra::runtime::ErasedObjectWrite;
@@ -3303,8 +3304,15 @@ void lyra_rt_settle_departure(void* target) {
           ControlEffect{.target = static_cast<CancellationTarget*>(target)}));
 }
 
-void lyra_rt_enter_target(void* runtime, void* target) {
-  EnterCancellationTarget(
+void lyra_rt_enter_target_landing_past_it(void* runtime, void* target) {
+  EnterTargetLandingPastIt(
+      *static_cast<RuntimeEffects*>(runtime),
+      static_cast<CancellationTarget*>(target));
+}
+
+void lyra_rt_enter_target_landing_at_execution_end(
+    void* runtime, void* target) {
+  EnterTargetLandingAtExecutionEnd(
       *static_cast<RuntimeEffects*>(runtime),
       static_cast<CancellationTarget*>(target));
 }
@@ -3321,11 +3329,16 @@ void lyra_rt_disable(void* target, void* runtime) {
       *static_cast<RuntimeEffects*>(runtime));
 }
 
-auto lyra_rt_effect_names_target(void* effect, void* target, void* out) noexcept
-    -> void* {
+auto lyra_rt_region_lands_effect(
+    void* runtime, void* effect, void* target, void* out) noexcept -> void* {
   // A control effect crosses as the target it names, since that is all one
-  // carries, so naming a target is comparing the two.
-  return Emplace(out, lyra::value::Bit::FromBool(effect == target));
+  // carries.
+  return Emplace(
+      out,
+      lyra::value::Bit::FromBool(RegionLandsEffect(
+          *static_cast<RuntimeEffects*>(runtime),
+          ControlEffect{.target = static_cast<CancellationTarget*>(effect)},
+          static_cast<CancellationTarget*>(target))));
 }
 
 void lyra_rt_take_departure_if_due(void* runtime) {

@@ -7,7 +7,11 @@
 // of the activities enabled within a block is that the block spawned it rather
 // than that it has begun running: such a process does not start until its
 // spawner blocks or terminates (LRM 9.3.2), so a block that disables itself
-// straight after spawning one ends it before it has executed anything.
+// straight after spawning one ends it before it has executed anything. It
+// stays one after its spawner has left the block, so it ends with the block's
+// disable all the same. A block of the branch's own, by contrast, is not
+// executing until the branch has begun, so disabling it before then has no
+// effect and the branch runs it in full.
 module Top;
   int parked_entered;
   int parked_after_delay;
@@ -21,6 +25,9 @@ module Top;
   int spawner_after_delay;
 
   int unstarted_child_ran;
+
+  int outlived_spawner_finished;
+  int own_block_ran;
 
   int activations_entered;
   int activations_completed;
@@ -76,11 +83,34 @@ module Top;
   join_none
 
   initial begin
+    begin : left_behind
+      fork
+        begin
+          #100;
+          outlived_spawner_finished = 1;
+        end
+      join_none
+      #1;
+    end
+    #100;
+  end
+
+  initial begin
+    fork
+      begin : not_yet_begun
+        own_block_ran = 1;
+      end
+    join_none
+    disable not_yet_begun;
+  end
+
+  initial begin
     #10;
     disable parked;
     disable caller;
     disable spawner;
     disable enabled_twice;
+    disable left_behind;
     disable_time = $time;
   end
 
@@ -116,6 +146,11 @@ module Top;
       $fatal(1, "spawner_after_delay was %0d, expected 0", spawner_after_delay);
     if (unstarted_child_ran !== 0)
       $fatal(1, "unstarted_child_ran was %0d, expected 0", unstarted_child_ran);
+    if (outlived_spawner_finished !== 0)
+      $fatal(1, "outlived_spawner_finished was %0d, expected 0",
+             outlived_spawner_finished);
+    if (own_block_ran !== 1)
+      $fatal(1, "own_block_ran was %0d, expected 1", own_block_ran);
     if (activations_entered !== 2)
       $fatal(1, "activations_entered was %0d, expected 2", activations_entered);
     if (activations_completed !== 0)

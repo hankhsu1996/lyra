@@ -33,6 +33,7 @@
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/support/target_landing.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -194,7 +195,13 @@ class ProcessLowerer {
       -> diag::Result<AccessPath>;
 
   // Central statement dispatcher. One switch over `hir::Stmt::data` routing
-  // each kind to its per-family handler.
+  // each kind to its per-family handler. `landing` is where a `disable` of the
+  // statement itself lands, where it is a target: at the execution's end when
+  // the statement is the whole of what an execution runs (LRM 9.6.3), and past
+  // it otherwise, which is what the form without one means.
+  auto LowerStmt(
+      const hir::Stmt& stmt, WalkFrame frame, support::TargetLanding landing)
+      -> diag::Result<mir::Stmt>;
   auto LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
       -> diag::Result<mir::Stmt>;
 

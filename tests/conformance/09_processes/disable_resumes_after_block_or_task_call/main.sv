@@ -7,8 +7,11 @@
 // enclosing block from inside that body resumes after that block instead,
 // past the remainder of it as well as the loop. Disabling a task ends its
 // activity from wherever the disable stands, while disabling a block written
-// inside a task ends only that block and the rest of the task still runs
-// (LRM 9.6.2).
+// inside a task ends only that block and the rest of the task still runs.
+// Disabling a task disables every activation of it, so an activation that
+// enabled the task again does not go on past that call either, and execution
+// resumes after the outermost enabling statement (LRM 9.6.2). Each process
+// running the task resumes after its own outermost call.
 module Top;
   int self_disabled;
   int after_self_disabled;
@@ -26,6 +29,10 @@ module Top;
   int task_after_block;
   int after_second_call;
 
+  int outer_after_inner;
+  int after_recursive_call;
+  int beside_resumed_at;
+
   task automatic disables_itself();
     task_entered = 1;
     disable disables_itself;
@@ -39,6 +46,16 @@ module Top;
       block_in_task = 2;
     end
     task_after_block = 1;
+  endtask
+
+  task automatic disables_every_activation(int depth);
+    if (depth == 0) begin
+      disables_every_activation(1);
+      outer_after_inner = 1;
+    end else begin
+      #1;
+      disable disables_every_activation;
+    end
   endtask
 
   initial begin
@@ -68,6 +85,14 @@ module Top;
 
     disables_its_own_block();
     after_second_call = 1;
+
+    disables_every_activation(0);
+    after_recursive_call = 1;
+  end
+
+  initial begin
+    disables_every_activation(2);
+    beside_resumed_at = $time;
   end
 
   final begin
@@ -96,6 +121,13 @@ module Top;
       $fatal(1, "task_after_block was %0d, expected 1", task_after_block);
     if (after_second_call !== 1)
       $fatal(1, "after_second_call was %0d, expected 1", after_second_call);
+    if (outer_after_inner !== 0)
+      $fatal(1, "outer_after_inner was %0d, expected 0", outer_after_inner);
+    if (beside_resumed_at !== 1)
+      $fatal(1, "beside_resumed_at was %0d, expected 1", beside_resumed_at);
+    if (after_recursive_call !== 1)
+      $fatal(1, "after_recursive_call was %0d, expected 1",
+             after_recursive_call);
     $display("All checks passed");
   end
 endmodule

@@ -773,22 +773,24 @@ auto lyra_rt_event_reports_to(const void* event) -> void*;
 // LRM 9.6.2 `disable`. A target crosses as its address, and a control effect as
 // the target it names, since that is all one carries.
 //
-// The two brackets record on the running process which targets its execution is
-// inside, and the generation each held on entry; `lyra_rt_disable` advances the
-// named target's generation and wakes the executions blocked inside it, and
-// leaves who lands where to each of them. The two queries answer whether this
-// execution has to leave where it stands and which target its departure names
-// -- the first computed from the generations and from a termination this
-// execution has yet to unwind for, the second from the generations alone, so
-// nothing is stored and nothing has to be cleared. A departure naming no target
-// is one no region may claim. A body asks them where it regains control,
-// because a simulated process cannot be made to run code partway through a
-// statement.
-void lyra_rt_enter_target(void* runtime, void* target);
+// The brackets record on the running process which targets its execution is
+// inside, the generation each held on entry, and where a `disable` of each
+// lands, which the entering bracket names; `lyra_rt_disable` advances the named
+// target's generation, wakes the executions blocked inside it that land past
+// it, and ends those that land at their own end (LRM 9.6.3). Where a body
+// regains control it asks for the departure it owes, if any -- its own
+// termination, which names no target and so no region may land, and otherwise
+// the outermost target it is inside that was disabled -- because a simulated
+// process cannot be made to run code partway through a statement. A region
+// asks whether the departure it caught lands there. Both are answered from the
+// generations and the termination, so nothing is stored and nothing has to be
+// cleared.
+void lyra_rt_enter_target_landing_past_it(void* runtime, void* target);
+void lyra_rt_enter_target_landing_at_execution_end(void* runtime, void* target);
 void lyra_rt_leave_target(void* runtime, void* target) noexcept;
 void lyra_rt_disable(void* target, void* runtime);
-auto lyra_rt_effect_names_target(void* effect, void* target, void* out) noexcept
-    -> void*;
+auto lyra_rt_region_lands_effect(
+    void* runtime, void* effect, void* target, void* out) noexcept -> void*;
 void lyra_rt_take_departure_if_due(void* runtime);
 
 // A departure a handler took, in the steps only the runtime can take. The

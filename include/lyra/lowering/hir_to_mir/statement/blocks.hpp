@@ -15,23 +15,27 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/support/target_landing.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 auto LowerEmptyStmt(std::optional<std::string> label)
     -> diag::Result<mir::Stmt>;
 
-// Builds the region that consumes a `disable` of `target` (LRM 9.6.2) around an
-// already-lowered `body`. The region brackets the body with the target's extent
-// -- so a `disable` reaches every execution inside it, and a check finds the
-// target among the ones that execution is inside -- and binds the effect
-// leaving the body, ending it here when it names this target, so execution
-// continues past the region, and raising it again for the region that does name
-// its target. `target` is the cell the scope owns; a named block, a named fork,
-// and a task each build one alike.
-auto BuildCancellableRegion(
+// Brackets an already-lowered `body` with the extent of `target` (LRM 9.6.2),
+// so a `disable` reaches every execution inside it and a check finds the target
+// among the ones that execution is inside. Where the `disable` lands past the
+// body, the extent is a region binding the effect leaving the body: it lands
+// the effect here when the `disable` it carries lands here, so execution
+// continues past the region, and raises it again for the region where it does
+// land. Where
+// it lands at the execution's end, nothing binds it, and it ends the execution
+// as an effect no region claims does. `target` is the cell the scope owns; a
+// named block, a named fork, and a task each build one alike.
+auto BuildTargetExtent(
     ProcessLowerer& process, const WalkFrame& frame, mir::Block&& body,
-    const StaticStorageHome& target) -> mir::TryStmt;
+    const StaticStorageHome& target, support::TargetLanding landing)
+    -> mir::StmtData;
 
 // LRM 6.21: an automatic variable a detached fork branch borrows can outlive
 // the scope that declares it, so each such variable among `declared` is
@@ -47,11 +51,12 @@ void OpenActivationScope(
 
 auto LowerBlockStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::BlockStmt& b) -> diag::Result<mir::Stmt>;
+    const hir::BlockStmt& b, support::TargetLanding landing)
+    -> diag::Result<mir::Stmt>;
 
 // Lowers `disable <named block or task>` (LRM 9.6.2) to the one call that
-// carries the whole statement: it invalidates the named target, wakes what is
-// blocked inside it, and leaves the disabling execution when that execution is
+// carries the whole statement: it invalidates the named target, wakes or ends
+// what is inside it, and leaves the disabling execution when that execution is
 // inside the target too. Where any affected execution lands is not decided
 // here.
 auto LowerDisableStmt(

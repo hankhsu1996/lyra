@@ -6,6 +6,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
+#include "lyra/support/target_landing.hpp"
 
 namespace lyra::runtime {
 
@@ -18,6 +19,7 @@ class RuntimeProcess;
 struct TargetMembership : IntrusiveListNode<TargetMembership> {
   // Null on the sentinel a list embeds to close its ring.
   RuntimeProcess* process = nullptr;
+  support::TargetLanding landing = support::TargetLanding::kPastTheTarget;
 };
 
 // The cancellation state of a procedural scope (LRM 9.6.2
@@ -27,10 +29,12 @@ struct TargetMembership : IntrusiveListNode<TargetMembership> {
 // regains control it compares its captured generation against the current one,
 // and a mismatch means it was disabled while away. `disable` advances the
 // generation and wakes every one of them that is blocked so each reaches that
-// comparison. The generation is a counter rather than a one-shot flag because
-// the same target is re-entered under one static identity (a reentrant task, an
-// `always`); an entry after a disable captures the newer generation and is
-// unaffected, which a boolean could not express.
+// comparison -- except an execution the disable ends, which has nothing past
+// the target to reach and is ended where it stands. The generation is a counter
+// rather than a one-shot flag because the same target is re-entered under one
+// static identity (a reentrant task, an `always`); an entry after a disable
+// captures the newer generation and is unaffected, which a boolean could not
+// express.
 //
 // This is the cancellation token of async runtimes, made reusable. There is one
 // per thing that replicates the scope -- a module instance, and nothing at all
@@ -47,7 +51,9 @@ struct TargetMembership : IntrusiveListNode<TargetMembership> {
 // both deliberate. A cancellation reaches an execution by polling and not by a
 // callback: it is reconciled where the execution regains control, because a
 // simulated process cannot be made to run arbitrary code partway through a
-// statement of the design. And there is one strength of cancellation rather
+// statement of the design; an execution the cancellation ends instead runs
+// nothing of the design on its way out, so it is ended at once, as `kill` ends
+// one. And there is one strength of cancellation rather
 // than three -- `disable` ends its target's extent outright, and the language
 // offers no partial form there would be anything to honour.
 class CancellationTarget {
@@ -74,9 +80,10 @@ class CancellationTarget {
     return members_;
   }
 
-  // LRM 9.6.2 `disable`: end the current generation, then wake every execution
-  // blocked inside the target so each reconciles against the new one where it
-  // regains control.
+  // LRM 9.6.2 `disable`: end the current generation, wake every execution
+  // blocked inside the target that lands past it, so each reconciles against
+  // the new generation where it regains control, and end every execution that
+  // lands at its own end, as `kill` ends one (LRM 9.6.3, 9.7).
   void Invalidate(RuntimeEffects& effects);
 
  private:
@@ -203,11 +210,13 @@ void RunAsLanding(RuntimeEffects& effects, Stretch&& stretch) {
 
 // The two ends of an execution's membership of a target (LRM 9.6.2). Entering
 // captures the target's current generation and marks the executing process as
-// inside it, so a `disable` of the target reaches this execution and a check
-// finds the target among the ones it is inside; leaving withdraws that. The
-// two bracket the target's extent, and the extent's ways out are the caller's
-// to enumerate.
-void EnterCancellationTarget(
+// inside it, landing where the entry names, so a `disable` of the target
+// reaches this execution and a check finds the target among the ones it is
+// inside; leaving withdraws that. The two bracket the target's extent, and the
+// extent's ways out are the caller's to enumerate.
+void EnterTargetLandingPastIt(
+    RuntimeEffects& effects, CancellationTarget* target);
+void EnterTargetLandingAtExecutionEnd(
     RuntimeEffects& effects, CancellationTarget* target);
 void LeaveCancellationTarget(
     RuntimeEffects& effects, CancellationTarget* target);
@@ -226,15 +235,22 @@ void TakeDepartureIfDue(RuntimeProcess& process);
 // control with no resumption to ask on its behalf (LRM 35.9).
 void TakeDepartureIfDue(RuntimeEffects& effects);
 
-// Whether a landing may claim the effect it is holding (LRM 9.6.2): true when
-// the effect names the target this landing owns, so execution resumes past that
-// target. A pure test; the landing acts on the answer itself.
-auto EffectNamesTarget(const ControlEffect& effect, CancellationTarget* target)
-    -> bool;
+// Whether a region of `target` lands the effect it is holding (LRM 9.6.2),
+// asked once the region has left its own extent: true when the effect names
+// `target` and the execution then owes no further departure, so execution
+// resumes past the region. A departure still owed -- the execution is inside
+// the same target further out, as a reentrant task's earlier activation is, or
+// its own termination is due -- means the region is not where the `disable`
+// lands, and it raises the effect again for the one that is (LRM 9.6.2: every
+// activation of a disabled task is disabled). The region acts on the answer
+// itself.
+auto RegionLandsEffect(
+    RuntimeEffects& effects, const ControlEffect& effect,
+    CancellationTarget* target) -> bool;
 
-// LRM 9.6.2 `disable`: invalidate the target, wake the executions blocked
-// inside it, then raise the effect in the disabling execution itself when it
-// is inside the target too -- which is what makes a self-disable leave
+// LRM 9.6.2 `disable`: invalidate the target, which wakes or ends each
+// execution inside it, then raise the effect in the disabling execution itself
+// when it is inside the target too -- which is what makes a self-disable leave
 // immediately rather than at some later boundary.
 void Disable(CancellationTarget* target, RuntimeEffects& effects);
 

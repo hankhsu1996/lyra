@@ -205,10 +205,13 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_trigger", &lyra_rt_trigger);
   add("lyra_rt_event_occurrences", &lyra_rt_event_occurrences);
   add("lyra_rt_event_reports_to", &lyra_rt_event_reports_to);
-  add("lyra_rt_enter_target", &lyra_rt_enter_target);
+  add("lyra_rt_enter_target_landing_past_it",
+      &lyra_rt_enter_target_landing_past_it);
+  add("lyra_rt_enter_target_landing_at_execution_end",
+      &lyra_rt_enter_target_landing_at_execution_end);
   add("lyra_rt_leave_target", &lyra_rt_leave_target);
   add("lyra_rt_disable", &lyra_rt_disable);
-  add("lyra_rt_effect_names_target", &lyra_rt_effect_names_target);
+  add("lyra_rt_region_lands_effect", &lyra_rt_region_lands_effect);
   add("lyra_rt_receive_departure", &lyra_rt_receive_departure);
   add("lyra_rt_decline_departure", &lyra_rt_decline_departure);
   add("lyra_rt_settle_departure", &lyra_rt_settle_departure);

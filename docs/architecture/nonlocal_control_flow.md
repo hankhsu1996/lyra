@@ -10,12 +10,14 @@ One body, one landing. Execution anywhere dynamically inside the body -- includi
 the body invoked -- can be sent to the landing, and continues at the statement after the region.
 
 ```systemverilog
-initial begin : blk
-  x = 1;
-  disable blk;   // sends this execution to the landing
-  x = 2;         // never runs
+initial begin
+  begin : blk
+    x = 1;
+    disable blk;   // sends this execution to the landing
+    x = 2;         // never runs
+  end
+  y = 3;           // the landing: execution continues here
 end
-                 // the landing: execution continues here
 ```
 
 Three properties make this more than a jump, and each one rules out a simpler mechanism:
