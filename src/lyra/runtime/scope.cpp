@@ -50,12 +50,23 @@ auto Scope::DisplaySegment() const -> std::string {
 }
 
 auto Scope::HierarchicalPath() const -> lyra::value::String {
+  return HierarchicalPathOf(lyra::value::String(""));
+}
+
+auto Scope::HierarchicalPathOf(const lyra::value::String& below) const
+    -> lyra::value::String {
   // Each segment is the scope's own LRM display form (carrying any per-dim
   // bracketed index it acquired at construction). Stopping at
   // `parent_ == nullptr` drops the implicit `$root` from the joined output
   // -- the root anchors top-level adoption but is not part of a
   // user-visible hierarchical path.
+  //
+  // What `below` names is innermost, and like a scope with no name it adds
+  // nothing where it names nothing.
   std::vector<std::string> parts;
+  if (!below.View().empty()) {
+    parts.emplace_back(below.View());
+  }
   for (const Scope* cur = this; cur != nullptr && cur->parent_ != nullptr;
        cur = cur->parent_) {
     if (!cur->IsAddressable()) {

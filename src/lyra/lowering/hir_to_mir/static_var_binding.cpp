@@ -88,6 +88,7 @@ auto BindBodyStatics(
       bindings.push_back(
           StaticVarBinding{
               .var = var_id,
+              .scope = scope_id,
               .home = PlacedOrDeclared(owner, var_id, cell_type),
               .cell_type = cell_type});
     }

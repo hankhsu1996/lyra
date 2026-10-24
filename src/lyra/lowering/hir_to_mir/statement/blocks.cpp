@@ -201,12 +201,11 @@ auto LowerBlockStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::BlockStmt& b) -> diag::Result<mir::Stmt> {
   mir::Block child_block;
-  // A block is part of the hierarchical name of everything inside it, so
-  // entering it adopts the name node the shape phase gave it.
+  // A block the source named is part of the name everything inside it reports
+  // (LRM 21.2.1.5).
   const WalkFrame child_frame =
       frame.WithBlock(&child_block)
-          .WithScopeNameBorrowedHandle(
-              process.Scopes().Get(b.scope).NameBorrowedHandle());
+          .WithScopeName(process.Scopes().Get(b.scope).name);
   const hir::ProceduralBody& hir_proc = process.HirBody();
   std::vector<hir::ProceduralVarId> declared;
   for (const hir::StmtId statement : b.statements) {

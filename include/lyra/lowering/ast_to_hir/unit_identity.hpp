@@ -551,6 +551,10 @@ auto DeclaringCompilationUnit(const slang::ast::Symbol& decl)
 [[nodiscard]] auto ReplicatingScope(const slang::ast::Symbol& decl)
     -> const slang::ast::Scope&;
 
+// Whether `scope` is a scope of the design hierarchy: a design element's body
+// or a generate block, each of which every instance has its own of.
+[[nodiscard]] auto IsInstanceScope(const slang::ast::Scope& scope) -> bool;
+
 // The symbol whose compilation unit holds `decl`: the one whose own source
 // fixes everything `decl` is, so no unit's content follows from how another
 // unit uses its declarations. A declaration an instance replicates belongs to

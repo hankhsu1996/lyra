@@ -3213,6 +3213,16 @@ source, or not yet tried.
       description, chosen by measuring the indirect call. The kind's own operations stay its own
       entries. Not blocked.
 
+- [ ] R252 -- A runtime entry the library declares as a method of an object states the method's name
+      and not the class it is a method of, so nothing checks that a call names an object of that
+      class. A call on the wrong object passes MIR's verifier, the C++ backend's compile is then the
+      only thing to refuse it, and the execution backend hands the object to the library as whatever
+      the entry expects, which reads its storage as that class's. A `%m` in a class method once
+      named the object rather than a scope, and read a string out of the object's fields on the
+      execution backend while the C++ build of the same program failed to compile. Target: a method
+      entry states the library class it acts on, as MIR states a member's owner, and the verifier
+      refuses a call whose receiver is not of that class or one derived from it. Not blocked.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

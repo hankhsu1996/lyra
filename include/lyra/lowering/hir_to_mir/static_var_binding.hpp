@@ -107,9 +107,12 @@ using StaticStorageOwner =
 // The cell one static-lifetime body variable became. `cell_type` is the type
 // the home was declared with -- an observable cell where something outside the
 // body can reach it, the plain value type where nothing can -- settled once
-// here so no reader recomputes it.
+// here so no reader recomputes it. `scope` is the scope declaring the
+// variable, which its initializer is written in though it runs apart from
+// every activation of that scope (LRM 6.21).
 struct StaticVarBinding {
   hir::ProceduralVarId var;
+  hir::ProceduralScopeId scope;
   StaticStorageHome home;
   mir::TypeId cell_type;
 };

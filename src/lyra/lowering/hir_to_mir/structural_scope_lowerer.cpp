@@ -2741,17 +2741,17 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   }
 
   // Every procedural scope becomes a name node -- an object carrying the
-  // segment a construct inside it reports as its hierarchical name (LRM
-  // 21.2.1.5) -- whatever the source called it and whether or not anything was
-  // declared there, so one shape lowers every scope. A scope the source named
-  // carries its segment and one it did not carries none, which keeps the latter
-  // out of every reported name while it still holds the nodes below it
-  // together.
+  // segment a hierarchical path matches (LRM 23.6) and a value dump names --
+  // whatever the source called it and whether or not anything was declared
+  // there, so one shape lowers every scope. A scope the source named carries
+  // its segment and one it did not carries none, which keeps the latter off
+  // every path while it still holds the nodes below it together.
   //
   // This scope keeps a borrowed handle to every one of them, however deeply
-  // they nest, so a body reaches its own name node in one step and nothing has
-  // to know what stands between. The nodes' own nesting is the HIR scope tree,
-  // read where the objects are built.
+  // they nest. The nodes' own nesting is the HIR scope tree, read where the
+  // objects are built.
+  const base::Translation<hir::ProceduralScopeId, hir::FixedName> names =
+      ReportedNames(hir_scope.procedural_scopes, unit_lowerer.Hir().fixed_name);
   std::vector<DeclaredScope> scopes;
   scopes.reserve(hir_scope.procedural_scopes.size());
   for (const hir::ProceduralScopeId scope_id :
@@ -2778,9 +2778,10 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     // The handle is a borrowed pointer to the node's own class, the same shape
     // an owned child instance or generate block keeps. That every owned child
     // is reachable through a typed member is what makes a class's layout state
-    // which objects the runtime builds under it, so the naming handle carries
-    // the node's type although it only ever asks for a name.
+    // which objects the runtime builds under it, so the node has one although
+    // no body asks it for anything.
     DeclaredScope node{
+        .name = names.Get(scope_id),
         .name_node =
             ScopeNameNode{
                 .class_id = node_class,
@@ -3037,7 +3038,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   // Every body of the scope is the instance its outward references count from.
   const WalkFrame scope_frame =
       parent_frame.WithClass(&mir_class, class_id_, outer_scope_link)
-          .WithStructuralBase(ScopeIsSelf{});
+          .WithStructuralBase(ScopeIsSelf{})
+          .WithScopeName(unit_lowerer.Hir().fixed_name);
   mir::Block& ctor_block = ctor_code.Body();
   const WalkFrame ctor_frame =
       scope_frame.WithBlock(&ctor_block).WithBindings(&ctor_bindings);

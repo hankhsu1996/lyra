@@ -7,6 +7,7 @@
 #include <slang/ast/Compilation.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
+#include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/parsing/LexerFacts.h>
 
 #include "lyra/support/simple_identifier.hpp"
@@ -38,6 +39,13 @@ auto NameInAPath(
 }
 
 auto NameInAPath(const slang::ast::Symbol& named) -> std::string {
+  // A constructor is declared under the keyword `new` rather than under an
+  // identifier (LRM 8.7), so there is nothing to escape.
+  if (const auto* subroutine = named.as_if<slang::ast::SubroutineSymbol>();
+      subroutine != nullptr &&
+      subroutine->flags.has(slang::ast::MethodFlags::Constructor)) {
+    return std::string{named.name};
+  }
   return NameInAPath(named.name, named.getParentScope()->getCompilation());
 }
 

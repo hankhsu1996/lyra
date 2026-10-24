@@ -33,12 +33,14 @@ both models, zeros being what a hexadecimal field is filled with either way.
 - [x] DI3 -- `%f` / `%e` / `%g` (real). Default precision 6 per LRM Table 21-2. Coverage tracked
       under `datatypes.md` Real C1.
 - [x] DI4 -- `%m` (hierarchical name, LRM 21.2.1.5). The reported name is the scope the call was
-      written in: a named block, a task or function, or the enclosing design element. It is one
-      ordinary SV string, so the format pipeline carries no `%m`-specific arm and a format string
-      parsed at run time reports the same name a literal one does. The part of the name fixed by
-      object-tree ownership comes from the run-time tree (closes `hierarchy.md` D5) and the part
-      below it -- the named scopes that need no run-time object of their own -- is fixed when the
-      body is compiled. Width modifiers on `%m` are rejected at the slang frontend.
+      written in: a named block, a task or function, a class method or constructor, or the enclosing
+      design element, a package included. It is one ordinary SV string, so the format pipeline
+      carries no `%m`-specific arm and a format string parsed at run time reports the same name a
+      literal one does. The instance's own part comes from the run-time tree (closes `hierarchy.md`
+      D5), and everything below it -- the package and classes around the subroutine, written as the
+      front end writes them (`pkg::C::m`), and the named scopes -- is fixed when the body is
+      compiled; in a package, in `$unit` and in a class declared in either, that is the whole name.
+      Width modifiers on `%m` are rejected at the slang frontend.
 - [x] DI5 -- File sink. Twelve `$display` / `$write` / `$fdisplay` / `$fwrite` variants
       (default-decimal plus `b` / `h` / `o` radix variants per LRM 21.2.1.1); descriptors per LRM
       21.3.1 (MCD with bit 0 = stdout, FD with bit 31 set, OR-able MCDs that fan output across

@@ -284,7 +284,7 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_dist_t", &lyra_rt_dist_t);
   add("lyra_rt_dist_erlang", &lyra_rt_dist_erlang);
   add("lyra_rt_make_segment", &lyra_rt_make_segment);
-  add("lyra_rt_hierarchical_path", &lyra_rt_hierarchical_path);
+  add("lyra_rt_hierarchical_path_of", &lyra_rt_hierarchical_path_of);
   add("lyra_rt_parent", &lyra_rt_parent);
   add("lyra_rt_set_scope_place", &lyra_rt_set_scope_place);
   add("lyra_rt_add_owned_child", &lyra_rt_add_owned_child);

@@ -390,12 +390,6 @@ auto IsCompilationUnit(const slang::ast::Symbol& symbol) -> bool {
          symbol.kind == slang::ast::SymbolKind::CompilationUnit;
 }
 
-auto IsInstanceScope(const slang::ast::Scope& scope) -> bool {
-  const slang::ast::SymbolKind kind = scope.asSymbol().kind;
-  return kind == slang::ast::SymbolKind::InstanceBody ||
-         kind == slang::ast::SymbolKind::GenerateBlock;
-}
-
 // The bytes a key folds to. Every part is written with its own delimiter, so
 // two keys that differ anywhere differ here; nothing rests on this being read
 // back, and nothing compares keys through it -- a key answers that itself.
@@ -600,6 +594,12 @@ auto BlocksBuiltBy(
 }
 
 }  // namespace
+
+auto IsInstanceScope(const slang::ast::Scope& scope) -> bool {
+  const slang::ast::SymbolKind kind = scope.asSymbol().kind;
+  return kind == slang::ast::SymbolKind::InstanceBody ||
+         kind == slang::ast::SymbolKind::GenerateBlock;
+}
 
 auto InstantiationOf(const slang::ast::InstanceBodySymbol& body)
     -> const slang::ast::InstanceSymbol& {

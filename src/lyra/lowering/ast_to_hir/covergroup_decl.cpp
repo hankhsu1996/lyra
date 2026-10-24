@@ -28,6 +28,7 @@
 #include "lyra/hir/covergroup.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/lowering/ast_to_hir/coverage_library.hpp"
+#include "lyra/lowering/ast_to_hir/fixed_name.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/statement/timing.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
@@ -180,6 +181,7 @@ class DeclBuilder {
             hir::ProceduralScopeKind::kSubroutineRoot,
             std::string{CovergroupNameOf(covergroup)}) {
     decl_.body = owner.MakeProceduralBody(covergroup);
+    decl_.declared_in = FixedNameOf(*covergroup.getParentScope());
     frame_ =
         declaring_frame
             .WithProceduralScopeOwner(&covergroup, &decl_.procedural_scopes)

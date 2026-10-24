@@ -4,6 +4,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -172,12 +173,18 @@ class BitVec {
 static_assert(LyraValue<BitVec>);
 
 // The run of bits `value` makes (LRM 6.24.3), as many as it holds, each part
-// writing its own.
+// writing its own. The value states its width and writes its bits by two
+// different means, so a write filling other than the whole run is a defect of
+// that value's type.
 template <typename V>
 [[nodiscard]] auto StreamOf(const V& value) -> BitVec {
   BitVec run = BitVec::Zeros(
       static_cast<std::uint64_t>(value.BitstreamWidth().ToInt64()));
-  value.WriteToStream(run.MutableView(), 0);
+  const std::uint64_t filled = value.WriteToStream(run.MutableView(), 0);
+  if (filled != run.View().width) {
+    throw InternalError(
+        "StreamOf: a value wrote a stream of another width than it states");
+  }
   return run;
 }
 

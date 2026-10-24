@@ -2059,7 +2059,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kStaticConstraintModeSet:
     case support::BuiltinFn::kStaticConstraintModeGet:
     case support::BuiltinFn::kParent:
-    case support::BuiltinFn::kHierarchicalPath:
+    case support::BuiltinFn::kHierarchicalPathOf:
     // An assertion's attempts hold machine words and no value of the design,
     // so there is no representation for these to be named by (LRM 16.14.1).
     case support::BuiltinFn::kEvaluationAttemptsInstall:

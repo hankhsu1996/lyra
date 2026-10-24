@@ -45,6 +45,7 @@
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/hir/verify.hpp"
+#include "lyra/lowering/ast_to_hir/fixed_name.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/library_cell.hpp"
@@ -126,6 +127,7 @@ UnitLowerer::UnitLowerer(
   unit_.role = role;
   unit_.source_name = SourceNameOf(home);
   unit_.library_binding = LibraryBindingOf(scope_->asSymbol());
+  unit_.fixed_name = FixedNameOf(*scope_);
   signature_.unit_name = unit_.name;
 }
 

@@ -10,6 +10,7 @@
 #include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/field_id.hpp"
+#include "lyra/hir/fixed_name.hpp"
 #include "lyra/hir/method_id.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/random_qualifier.hpp"
@@ -212,6 +213,9 @@ struct ConformingBehavior {
 // `static_init.exprs`. A static property without a source initializer takes
 // its type's Table 7-1 default and does not appear here.
 //
+// `fixed_name` is the class's name as far as its text fixes it (LRM
+// 21.2.1.5): the class and whatever declares it short of an instance.
+//
 // `procedural_scopes` owns the lexical declaration scopes (LRM 9.3.4) of
 // every body this class declares -- each method's root scope and the
 // begin/end, fork, and foreach scopes nested inside it. A class owns its
@@ -233,6 +237,7 @@ struct ClassDecl {
   ProceduralBody static_init;
   std::vector<StaticPropertyInit> static_property_inits;
   base::Registry<ProceduralScopeDecl, ProceduralScopeId> procedural_scopes;
+  FixedName fixed_name;
   // The covergroups the class embeds (LRM 19.4), in the order its signature
   // publishes the method making each: the one at position `i` is made by the
   // method `i` places after every method the source declares.

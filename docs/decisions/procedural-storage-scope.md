@@ -2,7 +2,7 @@
 
 ## Date
 
-2026-08-13 (revised; original 2026-06-30)
+2026-10-23 (revised; earlier 2026-08-13, original 2026-06-30)
 
 ## Status
 
@@ -160,7 +160,8 @@ was a scope whose absence nobody noticed.
 
 A declaration scope that is not itself part of the design hierarchy gives no scope a node at all. A
 class is one: its object is reached by member select, not by scope name (LRM 23.7), so no
-hierarchical path names a block inside a method and nothing there would answer for a name.
+hierarchical path names a block inside a method. A construct written there still reports a name of
+its own (D9), which the text fixes, so no object is needed to answer it.
 
 A scope's cancellation source -- what a `disable` of it invalidates (LRM 9.6.2) -- is one cell per
 instance, so it is a field of the enclosing class rather than something the node holds. Which scopes
@@ -254,9 +255,8 @@ borrowed handle) are separate concerns: the handle never owns the child and neve
 child's lifetime.
 
 Where a node hangs and who keeps a handle on it are separate too: the enclosing class keeps one
-handle per procedural scope however deeply the scope nests, so a body reaches its own node in one
-step and nothing has to know what stands between. That the handles are flat while the objects nest
-is the point -- reproducing the nesting in the handles would make every reader re-walk what the
+handle per procedural scope however deeply the scope nests. That the handles are flat while the
+objects nest is the point -- reproducing the nesting in the handles would state twice what the
 runtime tree already holds.
 
 The same split holds for an instance and a scalar generate-block child; each keeps a borrowed handle
@@ -264,25 +264,38 @@ for its scalar layout-visible head while the runtime tree owns the child. An arr
 generate-for iteration, an instance array) keeps no handle and is reached by an indexed by-name
 child lookup downcast to the child's typed class.
 
-The handle is typed to the child's own class in every one of those cases, including the naming-only
-one that asks the node for nothing but a name. That uniformity is what makes a class's layout a
-complete statement of which objects the runtime builds under it, and a consumer that needs that set
--- an execution backend deciding which classes to give a runtime definition -- reads it from the
-layout rather than from a list kept beside it.
+The handle is typed to the child's own class in every one of those cases, including a procedural
+scope's, which no body reads (D9). That uniformity is what makes a class's layout a complete
+statement of which objects the runtime builds under it, and a consumer that needs that set -- an
+execution backend deciding which classes to give a runtime definition -- reads it from the layout
+rather than from a list kept beside it.
 
-### D9. `%m` is the object's own path
+### D9. `%m` is the instance's path and the name the text fixes below it
 
 LRM 21.2.1.5 makes `%m` the hierarchical name of the design element, subroutine, named block, or
 labeled statement that _invokes_ the system task. The scope is the one the call was written in, so a
 deferred display (`$strobe`, an NBA) still reports the call site rather than wherever the output is
-flushed.
+flushed. A package is a design element (LRM 3.2) and a class method is a subroutine, so a call
+written in either reports a name too.
 
-The name is the path the runtime walks from that scope's object, and nothing else: an ancestor the
-source named contributes its segment, one it did not contributes none. An unnamed block is not among
-the four constructs LRM 21.2.1.5 names, so leaving it out is the standard's answer, not an elision.
-`%m` therefore lowers to one value with no compile-time remainder, which is what lets a format width
-apply to the whole name and what lets a format string parsed at run time answer `%m` from the same
-operand a parsed-at-compile-time one does.
+One compiled body serves every instance of a design element, so the part of the name an instance
+decides -- its own path, generate indices included -- is the instance's to answer at run time.
+Everything below it is fixed by where the text is written: the package and classes around the
+subroutine, as the front end spells them and joined to what they declare by `::`, then the
+subroutine and each block the source named around the call, joined by `.`. A static variable's
+initializer runs once, apart from every activation (LRM 6.21), and is still written in the scope
+declaring the variable, so that scope's name is the one it reports. A scope the source did not name
+contributes nothing, and an unnamed block is not among the four constructs LRM 21.2.1.5 names, so
+leaving it out is the standard's answer, not an elision. Where no instance holds the declaration --
+a package, `$unit`, a class declared in either -- the fixed part is the whole name and `%m` is a
+constant, the way a C++ compiler makes `__func__` a string of the declaration around it and waits
+for an instantiation only where that declaration is a template's.
+
+Either way `%m` lowers to one value, which is what lets a format width apply to the whole name and
+what lets a format string parsed at run time answer `%m` from the same operand a parsed-at-compile-
+time one does. Every body takes the same realization, so no predicate chooses between two of them,
+which is the defect D3 records of the design it replaced; the name nodes stay for what reaches a
+scope by its path, and nothing asks one for a name.
 
 ## Forbidden shapes
 
