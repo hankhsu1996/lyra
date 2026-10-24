@@ -1106,8 +1106,8 @@ auto ReferToProperty(void* object, void* storage, void* out) -> void* {
 // reference to it, which belongs to whatever the reference the step was taken
 // on belongs to.
 struct SteppedElement {
-  void* element;
-  value::Formation formed;
+  void* element = nullptr;
+  value::Formation formed{};
   ErasedReference part;
 };
 
@@ -2578,7 +2578,7 @@ auto lyra_rt_randomize_scope(void* runtime, void* out) -> void* {
 void lyra_rt_randomize_list(
     const void* problem, const void* reference, const void* value,
     const void* value_type) {
-  const ObjectRef& p = Read<ObjectRef>(problem);
+  const auto& p = Read<ObjectRef>(problem);
   const lyra::runtime::ErasedReference& variable = ErasedAt(reference);
   lyra::runtime::RandomizeListErased(
       p, variable, value, lyra::runtime::TypeAt(value_type),
@@ -2603,7 +2603,7 @@ void lyra_rt_constraint_members(
 void lyra_rt_constraint_rand(
     const void* problem, const void* reference, const void* value,
     const void* value_type) {
-  const ObjectRef& p = Read<ObjectRef>(problem);
+  const auto& p = Read<ObjectRef>(problem);
   const lyra::runtime::ErasedReference& variable = ErasedAt(reference);
   lyra::runtime::ConstraintDeclareErased(
       p, variable, value, lyra::runtime::TypeAt(value_type),
@@ -2614,7 +2614,7 @@ void lyra_rt_constraint_rand(
 void lyra_rt_constraint_randc(
     const void* problem, const void* reference, const void* value,
     const void* value_type) {
-  const ObjectRef& p = Read<ObjectRef>(problem);
+  const auto& p = Read<ObjectRef>(problem);
   const lyra::runtime::ErasedReference& variable = ErasedAt(reference);
   lyra::runtime::ConstraintDeclareErased(
       p, variable, value, lyra::runtime::TypeAt(value_type),
@@ -3890,10 +3890,6 @@ auto lyra_rt_hierarchical_path_of(void* self, const void* below, void* out)
       out, static_cast<Scope*>(self)->HierarchicalPathOf(Read<String>(below)));
 }
 
-auto lyra_rt_parent(void* self) -> void* {
-  return static_cast<Scope*>(self)->Parent();
-}
-
 void lyra_rt_set_scope_place(
     void* self, void* parent, const void* segment, const void* definition) {
   static_cast<Scope*>(self)->SetPlace(
@@ -3901,9 +3897,8 @@ void lyra_rt_set_scope_place(
       static_cast<const ObjectDefinition*>(definition));
 }
 
-auto lyra_rt_add_owned_child(void* parent, void* child) -> void* {
-  return static_cast<Scope*>(parent)->AddOwnedChild(
-      std::unique_ptr<Scope>(static_cast<Scope*>(child)));
+auto lyra_rt_attach_scope(void* child) -> void* {
+  return Scope::Attach(std::unique_ptr<Scope>(static_cast<Scope*>(child)));
 }
 
 void lyra_rt_insert_bits(

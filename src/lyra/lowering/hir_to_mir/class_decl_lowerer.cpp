@@ -31,7 +31,6 @@
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
-#include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/randomization.hpp"
@@ -47,7 +46,6 @@
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -570,8 +568,12 @@ auto ClassDeclLowerer::DeclareShape(
 auto ClassDeclLowerer::BodyFrame(
     const WalkFrame& declaring_frame, mir::Class& mir_class,
     ScopeChainNode& link) const -> WalkFrame {
-  const WalkFrame frame = declaring_frame.WithClass(&mir_class, class_id_, link)
-                              .WithScopeName(hir_class_->fixed_name);
+  const WalkFrame frame =
+      declaring_frame
+          .WithClass(
+              {.cls = &mir_class, .id = class_id_, .enclosing = std::nullopt},
+              link)
+          .WithScopeName(hir_class_->fixed_name);
   const std::optional<DeclaringInstance>& instance =
       owner_->GetClassShape(class_id_).declaring_instance;
   if (!instance.has_value()) return frame.WithStructuralBase(NoScope{});

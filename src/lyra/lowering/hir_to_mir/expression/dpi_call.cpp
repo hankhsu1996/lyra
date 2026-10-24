@@ -1306,7 +1306,7 @@ auto SynthesizeForeignExportEntry(
   std::optional<mir::ExprId> receiver;
   if (scope_param.has_value()) {
     const mir::TypeId self_type =
-        context_frame.current_class->self_pointer_type;
+        context_frame.current_class.cls->self_pointer_type;
     const mir::LocalId self_local =
         bindings.Declare(ReceiverOrigin{}, self_type);
     const mir::ExprId narrowed = body.exprs.Add(

@@ -50,22 +50,22 @@ auto Segment(std::string name) -> HierarchySegment {
   return HierarchySegment{std::move(name), {}};
 }
 
-// A scope created and then given its place, as a scope's constructor gives it.
+// A scope created and then given its place under `parent`, as a scope's
+// constructor gives it.
 auto PlacedScope(
-    const HierarchySegment& segment, const ObjectDefinition* definition)
-    -> std::unique_ptr<Scope> {
+    Scope* parent, const HierarchySegment& segment,
+    const ObjectDefinition* definition) -> std::unique_ptr<Scope> {
   auto scope = std::make_unique<Scope>();
-  scope->SetPlace(nullptr, segment, definition);
+  scope->SetPlace(parent, segment, definition);
   return scope;
 }
 
 // A scope is built of a class stating what only a scope class has. A class
 // stating none is refused as the class of one.
 TEST(ClassDefinitionTest, AScopeIsBuiltOfAScopeClass) {
-  const auto built = PlacedScope(Segment("u"), &kOuter);
+  const auto built = PlacedScope(nullptr, Segment("u"), &kOuter);
   EXPECT_EQ(built->Definition(), &kOuter);
   EXPECT_EQ(&built->Info(), &kScopeInfo);
-  EXPECT_EQ(built->Parent(), nullptr);
   EXPECT_EQ(built->DisplaySegment(), "u");
 
   EXPECT_THROW(std::ignore = RequireScopeClass(&kPlain), InternalError);
@@ -77,12 +77,13 @@ TEST(ClassDefinitionTest, AScopeIsBuiltOfAScopeClass) {
 // (LRM 23.8). Every instance a resolution covered has one, so a scope with
 // none is a compiler fault.
 TEST(ClassDefinitionTest, AnUpwardNameStartsAtTheNearestInstanceOfItsClass) {
-  const auto root = PlacedScope(Segment("$root"), &kRoot);
+  const auto root = PlacedScope(nullptr, Segment("$root"), &kRoot);
   Scope* outer =
-      root->AddOwnedChild(PlacedScope(Segment("top"), &kOuterExtended));
-  Scope* other = root->AddOwnedChild(PlacedScope(Segment("side"), &kOther));
-  Scope* middle = outer->AddOwnedChild(PlacedScope(Segment("m"), &kMiddle));
-  Scope* inner = middle->AddOwnedChild(PlacedScope(Segment("i"), &kInner));
+      Scope::Attach(PlacedScope(root.get(), Segment("top"), &kOuterExtended));
+  Scope* other =
+      Scope::Attach(PlacedScope(root.get(), Segment("side"), &kOther));
+  Scope* middle = Scope::Attach(PlacedScope(outer, Segment("m"), &kMiddle));
+  Scope* inner = Scope::Attach(PlacedScope(middle, Segment("i"), &kInner));
 
   EXPECT_EQ(inner->EnclosingScope(&kMiddle), middle);
   EXPECT_EQ(inner->EnclosingScope(&kOuterExtended), outer);

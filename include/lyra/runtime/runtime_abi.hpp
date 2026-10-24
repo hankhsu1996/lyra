@@ -995,20 +995,15 @@ auto lyra_rt_make_segment(void* label, LyraSpan indices, void* out) -> void*;
 auto lyra_rt_hierarchical_path_of(void* self, const void* below, void* out)
     -> void*;
 
-// The scope one step out. A name written in a generate block and declared in
-// the module around it is reached by climbing to that scope and reading the
-// member there, which the referring artifact can do directly because it owns
-// the enclosing scope's layout.
-auto lyra_rt_parent(void* self) -> void*;
-
 // Gives a scope its place -- its parent, its segment, and the definition of
-// the class it is an object of -- as its constructor's first act.
+// the class it is an object of -- before its constructor runs anything of the
+// scope's own.
 void lyra_rt_set_scope_place(
     void* self, void* parent, const void* segment, const void* definition);
 
-// Attaches a freshly built child to its parent, transferring ownership into the
-// runtime tree; returns the child as a borrowed scope handle.
-auto lyra_rt_add_owned_child(void* parent, void* child) -> void*;
+// Takes a freshly built child into the runtime tree, owned by the parent its
+// constructor placed it under; returns the child as a borrowed scope handle.
+auto lyra_rt_attach_scope(void* child) -> void*;
 
 // Where a hierarchical name leaving the instance `self` stands in starts (LRM
 // 23.6 / 23.8): the nearest scope above it of the class `definition` describes,

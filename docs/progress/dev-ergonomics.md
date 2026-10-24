@@ -360,6 +360,14 @@ layer directly.
       their reads through the C library are checked; and what the design printed before a report is
       lost with the run, as it is when a fault ends one.
 
+- [ ] D34 -- What the optimizer made of a design can be read without building it. Reading the
+      execution backend's intermediate form shows it only before any optimization: the dump takes no
+      optimization level, and the commands that do take one write a program or a C++ project, not
+      the form. So whether a climb out of a scope is read once or at every reference, or whether a
+      library entry was inlined, is answered today by building with `-O2` and disassembling the
+      program. A C++ compiler writes its optimized form on request at the level asked
+      (`-S -emit-llvm -O2`), and so does Rust's (`--emit=llvm-ir -C opt-level=2`). Not built.
+
 ## Out of Scope
 
 - New SystemVerilog feature coverage. This file tracks the developer feedback loop, not language

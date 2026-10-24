@@ -82,14 +82,12 @@ auto BuildObjectPointer(
 [[nodiscard]] auto ObjectAs(
     mir::Block& block, mir::ExprId object, mir::TypeId pointer) -> mir::ExprId;
 
-// The receiver object that owns something at `hops` enclosing-class levels up.
-// At hops 0 it is the current body's `self`; above that the thing lives in an
-// enclosing class whose runtime object is this scope's ancestor, reached by
-// navigating up the object tree `hops` times through the runtime
-// `Scope::Parent()` handle and casting to the enclosing class. The cast is
-// sound because the reference is intra-unit -- the unit owns the enclosing
-// class's layout. Shared by a structural field access and a call to a
-// subroutine declared in an enclosing scope.
+// A pointer to the object of the scope `hops` scopes out from the one the
+// current body counts from (LRM 23.9), as that scope's class. At hops 0 it is
+// that scope itself; each scope out is read from the member the scope inside
+// it keeps it in, as an inner class reaches its enclosing instance, so the
+// climb is as many member reads as scopes. Shared by a structural field access
+// and a call to a subroutine declared in an enclosing scope.
 auto BuildEnclosingScopeReceiver(
     const WalkFrame& frame, const mir::CompilationUnit& unit,
     mir::EnclosingHops hops) -> mir::ExprId;

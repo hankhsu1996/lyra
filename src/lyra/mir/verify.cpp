@@ -1193,33 +1193,52 @@ void VerifyValuesMeetTheirTypes(
         }
       }
     }
-    const auto* direct =
-        call != nullptr ? std::get_if<Direct>(&call->callee) : nullptr;
-    if (direct == nullptr) {
+    if (call == nullptr) {
       continue;
     }
+    // The constructor of a class of this unit, which a construction of its
+    // object enters with the call's arguments as one naming it does.
+    const auto constructor_of = [&](const auto& cls) -> const CallableCode* {
+      const auto* own = std::get_if<IntraUnitClassRef>(&cls);
+      if (own == nullptr || !unit.GetClass(own->class_id).constructor) {
+        return nullptr;
+      }
+      return &unit.GetClass(own->class_id).constructor->code;
+    };
     const CallableCode* callee = nullptr;
-    if (const auto* method = std::get_if<CallableTarget>(&direct->target)) {
-      callee = &unit.GetClass(method->owner).callables.Get(method->slot).code;
-    } else if (
-        const auto* free = std::get_if<UnitCallableTarget>(&direct->target)) {
-      callee = &unit.callables.Get(free->slot).code;
-    } else if (
-        const auto* constructor =
-            std::get_if<ConstructorTarget>(&direct->target)) {
-      if (const auto* own = std::get_if<IntraUnitClassRef>(&constructor->cls);
-          own != nullptr && unit.GetClass(own->class_id).constructor) {
-        callee = &unit.GetClass(own->class_id).constructor->code;
+    if (const auto* direct = std::get_if<Direct>(&call->callee)) {
+      if (const auto* method = std::get_if<CallableTarget>(&direct->target)) {
+        callee = &unit.GetClass(method->owner).callables.Get(method->slot).code;
+      } else if (
+          const auto* free = std::get_if<UnitCallableTarget>(&direct->target)) {
+        callee = &unit.callables.Get(free->slot).code;
+      } else if (
+          const auto* constructor =
+              std::get_if<ConstructorTarget>(&direct->target)) {
+        callee = constructor_of(constructor->cls);
       }
+    } else if (
+        std::holds_alternative<Construct>(call->callee) &&
+        unit.types.Get(expr.type).Is<ObjectType>()) {
+      callee = constructor_of(unit.types.Get(expr.type).Get<ObjectType>().of);
     }
-    if (callee == nullptr) {
-      continue;
-    }
+    // What the call's arguments meet: the parameters of a body this unit
+    // holds, or, for code reached through an address, what its type states.
     std::vector<TypeId> parameters;
-    for (const LocalId param : callee->params) {
-      if (param != callee->receiver) {
-        parameters.push_back(callee->locals.Get(param).type);
+    if (callee != nullptr) {
+      for (const LocalId param : callee->params) {
+        if (param != callee->receiver) {
+          parameters.push_back(callee->locals.Get(param).type);
+        }
       }
+    } else if (const auto* indirect = std::get_if<Indirect>(&call->callee)) {
+      const Type& code_type = unit.types.Get(type_of(block, indirect->code));
+      if (!code_type.Is<MachineFunctionType>()) {
+        continue;
+      }
+      parameters = code_type.Get<MachineFunctionType>().params;
+    } else {
+      continue;
     }
     if (parameters.size() != call->arguments.size()) {
       throw InternalError(

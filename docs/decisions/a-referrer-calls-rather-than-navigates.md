@@ -65,7 +65,7 @@ What the emitted text shows is that the parent names the child's storage **once 
 per instance, while the design elaborates**, and never again:
 
 ```cpp
-u       = AddOwnedChild(make_unique<Leaf>(this, seg));   // construct
+u       = Attach(make_unique<Leaf>(this, seg));          // construct
 field_4 = (Var*)(u->FindSignal("hidden"));               // past the promise, by name
 field_5 = &u->a;                                         // promised, by layout
 field_6 = &u->y;                                         // promised, by layout

@@ -298,21 +298,8 @@ auto BuildHierarchicalNameExpr(Lowerer& lowerer, const WalkFrame& frame)
             return BuildStringValueExpr(unit, block, name.text);
           },
           [&](const hir::NameBelowInstance& name) {
-            mir::ExprId instance =
-                BuildEnclosingScopeReceiver(frame, unit, mir::EnclosingHops{0});
-            for (std::uint32_t step = 0; step < name.scopes_out; ++step) {
-              instance = block.exprs.Add(
-                  mir::Expr{
-                      .data =
-                          mir::CallExpr{
-                              .callee =
-                                  mir::Direct{
-                                      .target = support::BuiltinFn::kParent,
-                                      .receiver = BuildObjectDeref(
-                                          unit, block, instance)},
-                              .arguments = {}},
-                      .type = unit.builtins.scope_ptr});
-            }
+            const mir::ExprId instance = BuildEnclosingScopeReceiver(
+                frame, unit, mir::EnclosingHops{name.scopes_out});
             const mir::ExprId below =
                 BuildStringValueExpr(unit, block, name.text);
             return block.exprs.Add(

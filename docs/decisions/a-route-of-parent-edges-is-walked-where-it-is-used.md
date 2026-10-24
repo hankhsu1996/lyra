@@ -1,6 +1,7 @@
 # A route of parent edges is walked where it is used
 
-Date: 2026-09-24 Status: accepted
+Date: 2026-09-24, revised 2026-10-23: a parent edge is a member of the scope it leaves. Status:
+accepted.
 
 ## Context
 
@@ -87,3 +88,32 @@ pair says the walk costs nothing measurable.
 - Neither the intermediate form nor the reference states a phase. Whether a route is walked where it
   is used or kept in a slot is decided where the reader's class is laid out, from the route's own
   segments.
+- A parent edge is the inner-class field itself: a block of a generate construct is handed the scope
+  building it as that scope's class, keeps it in a member of its own class, and hands its base the
+  same pointer as the base every scope extends. Walking the edge is reading that member, and nothing
+  is cast down anywhere. It was first built as a call to the runtime asking a scope for its parent,
+  answered as the base every scope extends and cast at each use. The measurement above ran with
+  link-time optimization, which inlines that call; a build without it paid a call per scope climbed,
+  on every activation of a process reading out of a block. The block stores the member before its
+  base is constructed; nothing in base construction reads it, and an object is created whole before
+  it is constructed
+  ([an-object-is-created-whole-then-constructed](an-object-is-created-whole-then-constructed.md)),
+  so the order only ensures nothing ever sees it unset. The block never outlives the scope that
+  built it, which owns it. A class an instance declares keeps that instance as the base instead
+  ([class-declared-in-a-structural-scope](class-declared-in-a-structural-scope.md)), because what
+  its unit publishes of it may name no class the instance keeps to itself.
+- So the edge is held twice: the runtime's tree keeps every scope's parent for what only the runtime
+  answers by walking the tree -- a scope's name (`%m`, a dump, the DPI scope registry) and where an
+  upward name searched by class starts (LRM 23.8) -- and a block keeps the same scope as its own
+  class for the names it reaches. Both are written once, while the block is constructed, from the
+  one value its builder hands, and nothing writes either again, so they cannot come apart. Which
+  scope owns a built scope is not a third statement of it either: attaching a scope to the tree
+  files it under the parent it was placed under, as SystemC files an object under the parent it was
+  made in, so owner and parent are one fact. Holding the edge once was weighed and rejected. In the
+  runtime's base alone, the design's code would have to read a prebuilt library's private layout and
+  cast down, or call it, which is what this removed. In the design's classes alone, the runtime
+  would ask each scope for its parent through a virtual every scope class overrides, which moves the
+  upward half of the tree out of the runtime that owns, names and walks the tree, to save a pointer
+  per block. Clang keeps a declaration's semantic and lexical contexts in one slot where they agree
+  because both are one generic pointer type; here the two sides of the library boundary hold
+  different types.

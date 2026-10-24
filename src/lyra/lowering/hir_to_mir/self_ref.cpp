@@ -130,7 +130,7 @@ auto BindImplicitParameters(
         bindings.Declare(ReceiverOrigin{}, owner.self_pointer_type);
     bound.params.push_back(receiver);
     const mir::ObjectLifetime lifetime = mir::LifetimeOfLineage(
-        mir::IntraUnitClassRef{.class_id = frame.current_class_id},
+        mir::IntraUnitClassRef{.class_id = frame.current_class.id},
         [&](const mir::DeclaredClassRef& declared) {
           return std::visit(
               Overloaded{
@@ -192,7 +192,7 @@ auto BuildEnclosingScopeReceiver(
                                     mir::ClassFieldTarget{
                                         .owner =
                                             mir::IntraUnitClassRef{
-                                                frame.current_class_id},
+                                                frame.current_class.id},
                                         .slot = through.member},
                                     unit.builtins.scope_ptr)))},
                     .type = frame.EnclosingClassAtHops(mir::EnclosingHops{0})
@@ -212,23 +212,22 @@ auto BuildEnclosingScopeReceiver(
                                 .cls->self_pointer_type});
           }},
       frame.structural_base);
-  if (hops.value == 0) {
-    return nav;
-  }
   for (std::uint32_t step = 0; step < hops.value; ++step) {
-    nav = block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{
-                            .target = support::BuiltinFn::kParent,
-                            .receiver = BuildObjectDeref(unit, block, nav)},
-                    .arguments = {}},
-            .type = unit.builtins.scope_ptr});
+    const EnclosingClass at =
+        frame.EnclosingClassAtHops(mir::EnclosingHops{step});
+    if (!at.enclosing.has_value()) {
+      throw InternalError(
+          "BuildEnclosingScopeReceiver: a reference climbs out of a scope no "
+          "scope of its unit encloses -- please report this as a bug");
+    }
+    nav = block.Read(block.exprs.Add(
+        mir::MakeFieldAccessExpr(
+            BuildObjectDeref(unit, block, nav),
+            mir::ClassFieldTarget{
+                .owner = mir::IntraUnitClassRef{at.id}, .slot = *at.enclosing},
+            at.cls->fields.Get(*at.enclosing).type)));
   }
-  return ObjectAs(
-      block, nav, frame.EnclosingClassAtHops(hops).cls->self_pointer_type);
+  return nav;
 }
 
 auto BuildStructuralFieldAccessExpr(

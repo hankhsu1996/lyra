@@ -18,8 +18,24 @@ module Dut (input logic clk, input logic [3:0] d, output logic [3:0] q,
   assign io = 1'bz;
 endmodule
 
+// The instance calling is the one whose code the call is, wherever in that
+// code it stands: a block of a generate construct, or a method of a class the
+// module declares.
 module Leaf (input logic a);
+  class Dumper;
+    function void Dump();
+      $dumpports(, "class_leaf.evcd");
+    endfunction
+  endclass
+
   initial $dumpports(, "leaf.evcd");
+  if (1) begin : g
+    initial $dumpports(, "block_leaf.evcd");
+  end
+  initial begin
+    static Dumper dumper = new;
+    dumper.Dump();
+  end
 endmodule
 
 module Top;
@@ -35,6 +51,8 @@ module Top;
 
   string lines[$];
   string leaf_lines[$];
+  string block_leaf_lines[$];
+  string class_leaf_lines[$];
 
   task automatic Read(string file, output string into[$]);
     int fd;
@@ -84,6 +102,8 @@ module Top;
     #1 $dumpportsflush;
     Read("ports.evcd", lines);
     Read("leaf.evcd", leaf_lines);
+    Read("block_leaf.evcd", block_leaf_lines);
+    Read("class_leaf.evcd", class_leaf_lines);
   end
 
   final begin
@@ -141,6 +161,12 @@ module Top;
     if (!Has(leaf_lines, "$scope module Top.l $end") ||
         !Has(leaf_lines, "$var port 1 <0 a $end"))
       $fatal(1, "a $dumpports naming no instance did not dump its caller");
+    if (!Has(block_leaf_lines, "$scope module Top.l $end") ||
+        !Has(block_leaf_lines, "$var port 1 <0 a $end"))
+      $fatal(1, "a $dumpports in a generate block did not dump its instance");
+    if (!Has(class_leaf_lines, "$scope module Top.l $end") ||
+        !Has(class_leaf_lines, "$var port 1 <0 a $end"))
+      $fatal(1, "a $dumpports in a class method did not dump its instance");
     $display("All checks passed");
   end
 endmodule
