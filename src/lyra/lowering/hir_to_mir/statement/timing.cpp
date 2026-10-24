@@ -58,16 +58,9 @@ auto LowerTimedWaitWrapper(
     hir::StmtId inner_stmt, auto build_wait) -> diag::Result<mir::Stmt> {
   mir::Block child_block;
   const WalkFrame child_frame = frame.WithBlock(&child_block);
-  // What the wait declares to watch with is its own, and ends where the wait
-  // does, so nothing it read is held while the statement it controls runs.
-  mir::Block waiting_block;
-  auto wait_or =
-      build_wait(waiting_block, child_frame.WithBlock(&waiting_block));
+  auto wait_or = build_wait(child_block, child_frame);
   if (!wait_or) return std::unexpected(std::move(wait_or.error()));
-  waiting_block.AppendStmt(*std::move(wait_or));
-  child_block.AppendStmt(
-      mir::BlockStmt{
-          .scope = child_block.child_scopes.Add(std::move(waiting_block))});
+  child_block.AppendStmt(*std::move(wait_or));
   const hir::Stmt& inner_hir = process.HirBody().stmts.Get(inner_stmt);
   auto inner_or = process.LowerStmt(inner_hir, child_frame);
   if (!inner_or) return std::unexpected(std::move(inner_or.error()));
@@ -650,13 +643,17 @@ auto BuildProcessDecidedEventWaitStmt(
     Lowerer& lowerer, WalkFrame frame, mir::Block& block,
     const hir::EventControl& ec) -> diag::Result<mir::Stmt> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  // The reports are the wait's own and end where the wait does, so nothing an
+  // evaluation read is held while the statement the control governs runs.
+  mir::Block own;
+  const WalkFrame own_frame = frame.WithBlock(&own);
   std::vector<mir::LocalId> reports;
   std::vector<mir::LocalId> observations;
   reports.reserve(ec.entries.size());
   observations.reserve(ec.entries.size());
   for (const hir::EventEntry& entry : ec.entries) {
-    const mir::LocalId report = DeclareReport(unit, frame);
-    auto armed = ArmEntry(lowerer, frame, entry, report);
+    const mir::LocalId report = DeclareReport(unit, own_frame);
+    auto armed = ArmEntry(lowerer, own_frame, entry, report);
     if (!armed) return std::unexpected(std::move(armed.error()));
     reports.push_back(report);
     observations.push_back(armed->observation);
@@ -687,7 +684,11 @@ auto BuildProcessDecidedEventWaitStmt(
           {reports_id, observations_id}, unit.builtins.wait));
   waiting.AppendStmt(
       BuildStopStmt(lowerer.Owner(), frame.WithBlock(&waiting), wait_id));
-  return WaitUntilOneFires(unit, block, observations, std::move(waiting));
+  own.AppendStmt(
+      WaitUntilOneFires(unit, own, observations, std::move(waiting)));
+  return mir::Stmt{
+      .label = std::nullopt,
+      .data = mir::BlockStmt{.scope = block.child_scopes.Add(std::move(own))}};
 }
 
 // An event control a change decides (LRM 4.7, 9.4.2): one wait, built where
