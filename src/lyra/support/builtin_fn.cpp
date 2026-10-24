@@ -1928,8 +1928,8 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kRegisterFinal:
       return {
           .name = "register_final",
-          .declaration = RuntimeFunction("RegisterFinalProcess"),
-          .callables = {kStartedPastTheCaller}};
+          .declaration = RuntimeFunction("RegisterFinalProcedure"),
+          .callables = {kEffectFnOncePastTheCaller}};
     case BuiltinFn::kRunAssertionAction:
       return {
           .name = "run_assertion_action",

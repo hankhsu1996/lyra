@@ -3,9 +3,9 @@
 ## Purpose
 
 An activation is the runtime's one shape for "a concrete, in-flight execution instance." A
-SystemVerilog process (`initial`, `always*`, `final`), a task enable, and a fork-join branch are
-each an activation: a specific execution that has begun, can suspend and resume, and settles exactly
-one terminal outcome. An activation is not the callable declaration it runs (that is `callable.md`'s
+SystemVerilog process (`initial`, `always*`), a task enable, and a fork-join branch are each an
+activation: a specific execution that has begun, can suspend and resume, and settles exactly one
+terminal outcome. An activation is not the callable declaration it runs (that is `callable.md`'s
 subject) -- it is what exists after a callable is invoked.
 
 The activation concept draws three lines that the rest of the runtime depends on:

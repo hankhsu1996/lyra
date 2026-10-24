@@ -5,6 +5,7 @@
 #include <exception>
 #include <list>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "lyra/runtime/cancellation.hpp"
@@ -125,6 +126,18 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // Read by a run stopped from outside, so it may not throw.
   [[nodiscard]] auto Context() const noexcept -> const ExecutionContext& {
     return context_;
+  }
+
+  // The final procedures are calls one thread makes in turn (LRM 9.2.3), each
+  // reporting from its own scope and place and seeding from its own instance.
+  // Takes on `procedure` and answers the one it replaces, for the call's end to
+  // restore; nothing the thread itself is changes.
+  [[nodiscard]] auto EnterProcedure(const ProcedureContext& procedure)
+      -> ProcedureContext {
+    return std::exchange(context_.procedure, procedure);
+  }
+  void LeaveProcedure(const ProcedureContext& left) {
+    context_.procedure = left;
   }
 
   // The process's internal execution state. A `process` handle (LRM 9.7) reads

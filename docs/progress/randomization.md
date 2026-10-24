@@ -159,10 +159,6 @@ Done when:
 
 ## Open Questions
 
-- A `final` procedure is not among the static processes Annex P lists, so nothing states where its
-  RNG is seeded from, and a `$urandom` call inside one is legal SystemVerilog. Part one has to pick
-  a seed source for it and record the choice.
-
 - LRM 20.14 makes the algorithm `$random` generates by part of the standard, with or without its
   optional seed argument, and states no start for the stream a call with no seed advances; LRM 18.14
   does not list `$random` among what random stability applies to. Such a call advances one seed the

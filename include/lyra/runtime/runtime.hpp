@@ -18,6 +18,7 @@
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/bound_members.hpp"
+#include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/coverage.hpp"
 #include "lyra/runtime/diagnostic.hpp"
@@ -25,6 +26,7 @@
 #include "lyra/runtime/intrusive_list.hpp"
 #include "lyra/runtime/mem_file.hpp"
 #include "lyra/runtime/observable.hpp"
+#include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/owned_processes.hpp"
 #include "lyra/runtime/plusargs.hpp"
 #include "lyra/runtime/program_threads.hpp"
@@ -35,6 +37,7 @@
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/time_slot.hpp"
 #include "lyra/runtime/value_dumps.hpp"
+#include "lyra/support/callable_bounds.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/string.hpp"
 
@@ -73,6 +76,14 @@ enum class StartKind : std::uint8_t {
 
 inline constexpr std::size_t kStartTurnCount =
     static_cast<std::size_t>(StartKind::kTriggeredProcedure) + 1;
+
+// A final procedure bound to the instance it runs for: the call, and the
+// procedure it belongs to, which the thread calling it takes on for the length
+// of the call (LRM 9.2.3).
+struct RegisteredFinal {
+  ProcedureContext procedure;
+  OwnedCall call;
+};
 
 // The concrete simulation runtime. Owns every mutable piece of simulator
 // state -- time, region queues, execution ambient, the file table, the attached
@@ -140,9 +151,9 @@ class Runtime final : public RuntimeEffects {
   void RunAction(
       const ExecutionContext& context, Coroutine<void> coroutine, DrawRng rng);
 
-  // LRM 9.2.3: a `final` procedure waits for the end of simulation, after the
-  // last slot, rather than in any slot.
-  void QueueFinal(Activation* top);
+  // LRM 9.2.3: a `final` procedure is called at the end of simulation, after
+  // the last slot, in the order the procedures registered.
+  void RegisterFinal(RegisteredFinal registered);
 
   // A process that starts at time zero waits for the turn its kind has, in the
   // region set it runs in: the design's, or a program's (LRM 24.3.1).
@@ -272,7 +283,15 @@ class Runtime final : public RuntimeEffects {
   // The fatal report of a slot that met the bound on its passes, and what its
   // last passes ran, a procedure once for each time it ran.
   void ReportUnsettledSlot(std::span<const NotedProcedure> ran);
-  void ExecuteFinalProcesses();
+  // The final procedures are not processes of their own but a series of
+  // function calls from a single one (LRM 9.2.3), made here once the
+  // simulation has ended.
+  void ExecuteFinalProcedures();
+  // The body of the thread the final procedures are called from: each in turn
+  // until one ends the simulation. It never stops to wait, since a final
+  // procedure is a function call; it is a coroutine only because a thread runs
+  // one.
+  auto CallingFinalProcedures() -> Coroutine<void>;
   // LRM 4: variable initialization and process activation are simulation
   // activity at time zero, so a run-time error raised by either is the design's
   // and ends the run the same way one raised later does.
@@ -307,9 +326,9 @@ class Runtime final : public RuntimeEffects {
   // a delay reach the NBA region of a future slot (LRM 4.4.2.4, 10.4.2). One
   // whose every event was taken back stays until time passes it over.
   std::map<SimTime, TimeSlot> future_slots_;
-  // Final processes wait here rather than in any slot: LRM 9.2.3 runs them
-  // after the last one, when no slot is left to hold them.
-  IntrusiveList<QueuePlace> finals_;
+  // The final procedures, kept here rather than in any slot: LRM 9.2.3 has
+  // them called after the last one, when no slot is left to hold them.
+  std::vector<RegisteredFinal> finals_;
   // What is owed because the simulation is over, held from wherever the run
   // asked for it and run once the final procedures have.
   std::vector<OwnedCall> at_run_end_;
@@ -382,12 +401,11 @@ class Runtime final : public RuntimeEffects {
 
 // Reached by the generated registration builtins: creates a process bound to
 // `owning_scope` and registers it in the ambient runtime. LRM 9.2 lifecycle:
-// every kind but a `final` starts at time zero, in the turn its kind has; a
-// `final` waits on the finals list until shutdown. The scope handle arrives as
-// a pointer because the generated call site is holding the `self` pointer from
-// its enclosing body. `unit_instance` is the module, interface, or program
-// instance whose text creates the process, which holds the seeds LRM 18.14.1
-// starts a static process from: the scope itself unless the process is
+// every kind starts at time zero, in the turn its kind has. The scope handle
+// arrives as a pointer because the generated call site is holding the `self`
+// pointer from its enclosing body. `unit_instance` is the module, interface, or
+// program instance whose text creates the process, which holds the seeds LRM
+// 18.14.1 starts a static process from: the scope itself unless the process is
 // declared inside a generate scope, which has no seeds of its own. A process
 // runs as the code of that instance and in the region set its class states
 // (LRM 24.3.1), except a continuous driver, which names the instance it runs
@@ -406,9 +424,14 @@ void RegisterInitialProcess(
 void RegisterTriggeredProcess(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
     const char* written_at);
-void RegisterFinalProcess(
-    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
-    const char* written_at);
+
+// Reached by the generated registration of a final procedure: keeps `call`, a
+// final procedure bound to its instance, to be called at the end of
+// simulation (LRM 9.2.3). The other operands are those a process registration
+// takes.
+void RegisterFinalProcedure(
+    Scope* owning_scope, Scope* unit_instance,
+    OwnedClosure<support::EffectSignature> call, const char* written_at);
 
 // LRM 24.7 `$exit`: ends the program the running thread originates in, the
 // running thread with it; from any other thread it is ignored, and says so at

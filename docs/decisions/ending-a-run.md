@@ -91,7 +91,7 @@ R2. Such a task may stand in any body: a procedure, a task, a function, a class 
     rule (c) admits a function that kills the current process.
 R3. Final procedures run once the simulation has ended this way (LRM 9.2.3), except that one
     reached from inside a final procedure ends the simulation immediately, so the ones still
-    queued do not.
+    registered do not.
 R4. A frame of another language is never unwound by the design and never skipped; while the run
     lasts it ends only by returning (LRM 35.9).
 R5. A foreign frame beneath an execution the run ended under is told that its caller will not

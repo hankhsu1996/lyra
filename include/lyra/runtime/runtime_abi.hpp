@@ -234,7 +234,7 @@ void lyra_rt_register_initial(
 void lyra_rt_register_triggered(
     void* self, void* unit_instance, void* coroutine, const char* written_at);
 void lyra_rt_register_final(
-    void* self, void* unit_instance, void* coroutine, const char* written_at);
+    void* self, void* unit_instance, void* closure, const char* written_at);
 void lyra_rt_run_assertion_action(
     void* self, void* unit_instance, void* coroutine, const char* written_at);
 

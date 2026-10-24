@@ -68,7 +68,8 @@ closure is code plus a captured environment, and "async" is the result type (`as
    must `await` or `spawn`. The result type is parameterized: `Coroutine<T>` carries the value the
    completion yields. _Consequence: "function versus task" and a process's coroutine-ness are the
    result type, never a kind tag. "The body can suspend" is a separate body-analysis fact, not the
-   result type's meaning -- a `final` block never suspends yet is a coroutine through the protocol._
+   result type's meaning -- an `initial` procedure that never waits is still a coroutine through the
+   protocol._
 
 4. **Parameter direction is data flow.** An `input` is a value parameter; a `ref` / `const ref` is a
    reference-typed parameter (a live alias, LRM 6.21); an `output` is a component of the result's
