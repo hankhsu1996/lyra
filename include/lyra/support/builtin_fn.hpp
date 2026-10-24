@@ -789,10 +789,10 @@ enum class BuiltinFn : std::uint16_t {
   // What an evaluation states the places it reached in (LRM 9.4.2): an empty
   // report, or one no evaluation makes, a procedure's implicit list, whose
   // calls state what they read and never run; a place it reads and the bits it
-  // reads there; an object a property is read on, which the wait keeps while
-  // it watches it; a place written and its bits; settling what was reported as
-  // a
-  // procedure's implicit list (LRM 9.2.2.2.1), which keeps what was read less
+  // reads there; an object a property is read on, which the wait watches
+  // without keeping it; a place written and its bits; settling what was
+  // reported as a procedure's implicit list (LRM 9.2.2.2.1), which keeps
+  // what was read less
   // what was written; the bracket a function takes around collecting into the
   // list, which answers whether to go on at all; whether a function handed a
   // report runs -- one an evaluation handed it does; and the extent of the
@@ -998,6 +998,15 @@ enum class BuiltinFn : std::uint16_t {
   kObjectSrandom,
   kObjectGetRandstate,
   kObjectSetRandstate,
+  // LRM 8.30's weak reference to an object: one made from a handle, the object
+  // it answers while the object has not expired -- for a class object and for
+  // a process, which are objects of two kinds -- and an object's identity. The
+  // answer tells a wait evaluating it to watch the object's expiry.
+  kWeakDowngrade,
+  kWeakUpgrade,
+  kWeakUpgradeProcess,
+  kWeakRefersTo,
+  kObjectIdentity,
   // The built-in `pre_randomize()` and `post_randomize()` (LRM 18.6.2), on
   // the object a call reaches where no class of its lineage writes its own:
   // the part every object starts with gives them.

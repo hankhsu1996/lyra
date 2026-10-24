@@ -296,6 +296,14 @@ class CodeGenModule {
   auto EndMembers(
       llvm::IRBuilderBase& builder, llvm::Value* value,
       const PlacedMembers& placed) -> diag::Result<void>;
+  // The same for the one member at `i` alone: a body's variable, begun where
+  // its declaration is reached and ended where its block is left.
+  auto BeginMember(
+      llvm::IRBuilderBase& builder, llvm::Value* value,
+      const PlacedMembers& placed, std::size_t i) -> diag::Result<void>;
+  auto EndMember(
+      llvm::IRBuilderBase& builder, llvm::Value* value,
+      const PlacedMembers& placed, std::size_t i) -> diag::Result<void>;
 
   // The symbol of `cls`'s creation `which`: a class some unit declares names
   // its creations over its definition, and the base object creation of a

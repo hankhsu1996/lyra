@@ -32,7 +32,10 @@
 // alike (LRM 20.6.2, 20.7). Learning what the function reads is the evaluation
 // the wait makes anyway, so a system function with an effect inside it -- one
 // that draws from a seed -- and a function a constructor calls run once per
-// evaluation and no more.
+// evaluation and no more. Nothing but the evaluation refers to an object the
+// function makes and reads, and once it is gone nothing can write it, so a wait
+// whose value comes from such an object waits on: its going is no change to
+// what the wait reads (LRM 8.29, 9.4.2).
 package counters;
   int count = 0;
   int built_from = 0;
@@ -40,6 +43,7 @@ package counters;
   int base_built_from = 0;
   int clause_from = 0;
   int counted_calls = 0;
+  int fresh_calls = 0;
 
   function automatic int current();
     return count;
@@ -202,6 +206,7 @@ module Top;
   time interface_local_woke = 0;
   time with_clause_woke = 0;
   time base_clause_woke = 0;
+  time fresh_woke = 0;
 
   Node bag[$];
 
@@ -252,6 +257,12 @@ module Top;
 
   function int draws();
     return plus_g($random(seed));
+  endfunction
+
+  function automatic int fresh_status();
+    Node made = new;
+    counters::fresh_calls++;
+    return made.status;
   endfunction
 
   function automatic int built_calling();
@@ -377,6 +388,7 @@ module Top;
       begin @(size_of_sized()); size_in_function_woke = $time; end
       begin wait ($bits(stream) > 8); bits_woke = $time; end
       begin @(high_of_stream()); high_in_function_woke = $time; end
+      begin wait (fresh_status() == 1); fresh_woke = $time; end
     join_none
     #5 g = 1;
     #5 arr[2] = 3;
@@ -469,6 +481,11 @@ module Top;
     if (counters::counted_calls !== 1)
       $fatal(1, "a function a constructor calls ran %0d times in one evaluation, expected 1",
              counters::counted_calls);
+    if (fresh_woke !== 0)
+      $fatal(1, "a wait on an object only its evaluation made ended at %0t", fresh_woke);
+    if (counters::fresh_calls !== 1)
+      $fatal(1, "a wait on an object only its evaluation made evaluated %0d times, expected 1",
+             counters::fresh_calls);
     $display("All checks passed");
   end
 endmodule

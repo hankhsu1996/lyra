@@ -685,7 +685,7 @@ auto SynthesizeDefaultConstructor(
 // The class declaring `member`, a method or a constraint block. A method
 // defined out of block (LRM 8.24) and the stub standing for a pure virtual one
 // (LRM 8.21) sit in that class as well.
-auto DeclaringClassOf(const slang::ast::Symbol& member)
+auto OwningClassOf(const slang::ast::Symbol& member)
     -> const slang::ast::ClassType& {
   return member.getParentScope()->asSymbol().as<slang::ast::ClassType>();
 }
@@ -711,7 +711,7 @@ auto OverriddenSubroutine(const slang::ast::Symbol& target)
 auto InLineageOf(
     const slang::ast::ClassType& cls,
     const slang::ast::SubroutineSymbol& overridden) -> bool {
-  return cls.isInterface || !DeclaringClassOf(overridden).isInterface;
+  return cls.isInterface || !OwningClassOf(overridden).isInterface;
 }
 
 // The method of `cls`'s lineage the name `name` finds, as the front end finds
@@ -791,7 +791,7 @@ auto BuildInterfaceForwardingMethod(
   }
 
   auto impl_callee =
-      unit_lowerer.MakeMethodCallee(DeclaringClassOf(impl), impl, span);
+      unit_lowerer.MakeMethodCallee(OwningClassOf(impl), impl, span);
   if (!impl_callee) return std::unexpected(std::move(impl_callee.error()));
   const hir::ExprId call = body.exprs.Add(
       hir::Expr{
@@ -872,7 +872,7 @@ auto SynthesizeInterfaceForwardingMethods(
       // an inherited one needs a bridge, and only one with a body to forward
       // to: a still-abstract class may inherit nothing but a pure virtual.
       const slang::ast::SubroutineSymbol* impl = ImplementationOf(cls, name);
-      if (impl == nullptr || &DeclaringClassOf(*impl) == &cls ||
+      if (impl == nullptr || &OwningClassOf(*impl) == &cls ||
           impl->flags.has(slang::ast::MethodFlags::Pure)) {
         continue;
       }
@@ -1097,7 +1097,7 @@ auto UnitLowerer::MakeMethodCallee(
 auto UnitLowerer::PublishedMethodOf(
     const slang::ast::SubroutineSymbol& method, diag::SourceSpan span)
     -> diag::Result<std::optional<hir::PublishedMethod>> {
-  auto declaring = ResolveClassRef(DeclaringClassOf(method), span);
+  auto declaring = ResolveClassRef(OwningClassOf(method), span);
   if (!declaring) return std::unexpected(std::move(declaring.error()));
   if (const auto* ext = std::get_if<hir::ExternalClassRef>(&*declaring)) {
     if (const hir::PublishedMethod* declared = hir::FindMethod(
@@ -1359,7 +1359,7 @@ auto UnitLowerer::StateConformance(
 auto UnitLowerer::MakeOverriddenBehavior(
     const slang::ast::Symbol& method, diag::SourceSpan span)
     -> diag::Result<hir::OverriddenBehavior> {
-  auto declaring = ResolveClassRef(DeclaringClassOf(method), span);
+  auto declaring = ResolveClassRef(OwningClassOf(method), span);
   if (!declaring) return std::unexpected(std::move(declaring.error()));
   return std::visit(
       Overloaded{
@@ -1548,7 +1548,7 @@ auto UnitLowerer::Defining(const slang::ast::ClassType& cls) const
 
 auto UnitLowerer::Defining(const slang::ast::SubroutineSymbol& method) const
     -> const slang::ast::SubroutineSymbol& {
-  const auto& declaring = DeclaringClassOf(method);
+  const auto& declaring = OwningClassOf(method);
   const slang::ast::ClassType* definition = facts_.StdDefinitionOf(declaring);
   return definition == nullptr ? method : DefiningMethod(*definition, method);
 }
@@ -1664,7 +1664,7 @@ auto UnitLowerer::InternLocalClass(
     if (InheritedCovergroupProperty(prop) != nullptr) {
       continue;
     }
-    auto prop_type = InternType(prop.getType(), span);
+    auto prop_type = InternPropertyType(prop, span);
     if (!prop_type) return std::unexpected(std::move(prop_type.error()));
     auto random = RandomQualifierOf(prop.getType(), prop.randMode, span);
     if (!random) return std::unexpected(std::move(random.error()));
@@ -2182,6 +2182,14 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
 
 auto UnitLowerer::AddComposedType(hir::Type type) const -> hir::TypeId {
   return unit_.types.Intern(std::move(type));
+}
+
+auto UnitLowerer::InternPropertyType(
+    const slang::ast::ClassPropertySymbol& prop, diag::SourceSpan span)
+    -> diag::Result<hir::TypeId> {
+  auto declared = InternType(prop.getType(), span);
+  if (!declared || !IsHeldWeakly(prop)) return declared;
+  return AddComposedType(hir::Type{hir::WeakHandleType{.handle = *declared}});
 }
 
 auto UnitLowerer::InternType(

@@ -176,8 +176,8 @@ auto MakesValue(const Rvalue& value) -> bool {
           [](const ArrayInstr&) { return true; },
           [](const AddrOfInstr&) { return true; },
           [](const LandingInstr&) { return true; },
-          [](const OpenVariablesInstr&) { return true; },
-          [](const VariableAddressInstr&) { return true; },
+          [](const VariableStorageInstr&) { return true; },
+          [](const BeginVariableInstr&) { return true; },
           // A value moved in is one the destination owns from there on, as one
           // made there would be.
           [](const UseInstr&) { return true; }},

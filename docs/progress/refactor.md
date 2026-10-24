@@ -1563,42 +1563,14 @@ enough to warrant its own focused review.
       Not blocked. Found while splitting the C++ build into per-unit compiles, which is what made
       the first copy state a standard it had previously inherited from a shared command line.
 
-- [ ] R102 -- A variable's storage on the execution backend lives for its body's whole execution,
-      where the language says it lives for the scope that declared it. A variable of an inner block
-      exists, as storage, from the moment the body starts; entering the declaration begins its
-      contents afresh and leaving the block ends nothing. The other backend gives the scope's own
-      extent, because its target language does.
-
-      Nothing observes the difference today: SystemVerilog has no destructor, so a value ending
-      later than its scope is not a behaviour any program can see, and what a spawned process may
-      still reach is carried by a separate mechanism rather than by the declaring scope's storage.
-      What it costs is memory held longer than the language requires, which grows with the number of
-      declarations in a body rather than with anything a program does.
-
-      That last clause is too kind, and the hold on a lifted local is the counter-example. It is
-      taken where the block is entered rather than where the body starts, so a body that enters such
-      a block in a loop takes one hold per iteration and lets go of none until the whole execution
-      ends -- growth in what the program does, not in what it declares. Measured at 685 bytes per
-      entry over 200000 iterations, beside a baseline that already retains an order of magnitude
-      more per iteration for other reasons -- on the hold the runtime made before each lifted local
-      became its own cell held by a counted pointer, and not measured since.
-
-      And that one is worse than a cost, because dropping the hold where its scope ends is half of
-      what the shared wrapper the semantic layer names already means, not a target's spelling of it.
-      A target that does not emit that drop has not realized the construct, so the two stop agreeing
-      on what it means rather than only on how they represent it -- which the layer contract does not
-      admit. What is missing is a lowering rather than a new operation to state, and an end one
-      target emits while the other takes it from its own language already has a shape here, in how a
-      body's declared storage is opened and closed. It is a piece of work because it moves how such
-      a local lowers on both targets at once: whichever gets the end for free must stop emitting it
-      twice.
-
-      Target: the extent a variable's storage has is the extent its declaration has, on both
-      backends. This is the same axis as ending it on every way out and was deliberately not taken
-      with it -- ending at a scope exit needs the scope exits to be enumerable in the same way the
-      body's are, which is a separate piece.
-
-      Not blocked. Found while giving every declared variable one storage.
+- [x] R102 -- A variable on the execution backend exists from its declaration to the end of the
+      block declaring it (LRM 6.21), on every way out of that block, as it does on the other backend
+      by its target language. Its storage is reserved for the body's whole execution, as a C++
+      compiler reserves a local's in the entry block; what the storage holds begins where the
+      declaration is reached and ends where the block is left, so a handle in an inner block no
+      longer keeps its object alive past it. A lifted local's hold is dropped where its block ends
+      as well. Found while giving every declared variable one storage; made observable, and so
+      finished, by weak references (LRM 8.30), which can tell when an object ends.
 
 - [ ] R103 -- Two things own values for one execution: the storage a body's variables live in, and
       the store that carries what an execution completes with. They are the same relation -- a
@@ -2561,7 +2533,8 @@ enough to warrant its own focused review.
       - [x] The runtime states each storage kind's size and alignment over each value domain it is
             realized for, held to its own types, and a construct and destroy entry for each.
       - [x] A body's variables are one record in the body's own frame, each variable built in
-            place where the body opens and ended on every way out, at a constant offset in between.
+            place where its declaration is reached and ended where its block is left, at a constant
+            offset.
             At `-O2`, call-chain went from about 344,000 to about 600,000 iterations a second.
       - [x] Closure captures are laid out where the closure is built, filled by the code building
             it, and ended by a body the closure's definition names.
@@ -2683,7 +2656,7 @@ enough to warrant its own focused review.
 
       The same holds below the object model. A control-flow edge taken when a call leaves its caller
       is a departure where clang and rustc say unwind, the end of a value is an end where rustc says
-      drop, a body's variables are opened and closed where rustc marks storage live and dead, a
+      drop, a body's variable is begun and ended where rustc marks storage live and dead, a
       suspension's two successors are a resume and an abandonment where rustc's yield has a resume
       and a drop, and a composed value is a product where rustc's is an aggregate. On the execution
       backend the bodies creating an object, whole and one class's part at a time, are creations

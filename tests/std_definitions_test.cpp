@@ -4,7 +4,8 @@
 // same methods, each a task or a function as declared, with the same return
 // type and the same arguments -- name, direction, type and default. A compiler
 // checks a definition against its declaration the same way; nothing a design
-// runs would notice a mismatch until a call through it went wrong.
+// runs would notice a mismatch until a call through it went wrong. A method the
+// runtime carries out has no definition there.
 
 #include <filesystem>
 #include <fstream>
@@ -32,14 +33,19 @@
 namespace {
 
 using lyra::lowering::ast_to_hir::DefineStdClasses;
+using lyra::lowering::ast_to_hir::RuntimeCarriedMethodOf;
 
 // A design naming every class Lyra's `std` definitions hold, so the front end
 // makes a specialization of each generic one.
 constexpr std::string_view kNamesEveryClass = R"(
+class C;
+endclass
+
 module Top;
   semaphore s;
   mailbox #(int) m;
   mailbox any;
+  std::weak_reference #(C) w;
 endmodule
 )";
 
@@ -93,6 +99,7 @@ void ExpectDefinedAsDeclared(
   for (const auto& sub :
        declared.membersOfType<slang::ast::SubroutineSymbol>()) {
     ++methods;
+    if (RuntimeCarriedMethodOf(sub).has_value()) continue;
     SCOPED_TRACE(std::string(declared.name) + "::" + std::string(sub.name));
     const slang::ast::Symbol* found = defined.find(sub.name);
     ASSERT_NE(found, nullptr) << "Lyra's std definitions do not define it";
@@ -135,8 +142,9 @@ void ExpectDefinedAsDeclared(
 TEST(StdDefinitions, EveryDefinitionIsWhatItsDeclarationSays) {
   const Elaborated design(kNamesEveryClass);
   const auto defined = DefineStdClasses(design.Compilation());
-  // `semaphore`, and the two specializations of `mailbox` the design names.
-  EXPECT_EQ(defined.size(), 3U);
+  // `semaphore`, the two specializations of `mailbox` and the one of
+  // `weak_reference` the design names.
+  EXPECT_EQ(defined.size(), 4U);
   for (const auto& [declared, definition] : defined) {
     ExpectDefinedAsDeclared(*declared, *definition);
   }

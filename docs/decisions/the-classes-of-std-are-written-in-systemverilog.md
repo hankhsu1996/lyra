@@ -1,15 +1,16 @@
 # The classes of `std` are written in SystemVerilog
 
-Date: 2026-10-20 Status: accepted.
+Date: 2026-10-20, revised 2026-10-23: `weak_reference` (D5). Status: accepted.
 
 ## Context
 
-`semaphore` and `mailbox` are classes of the built-in package `std` (LRM 15.2, 26.7): a program
-makes them with `new`, calls their methods, and may extend them. The front end creates `std` itself,
-declaring each class and each method with its arguments and defaults and no body, and type checks
-every call and every derivation against that declaration. The package can not be declared again in
-source (the front end reports a duplicate definition of `std`), and `mailbox`'s type parameter
-defaults to a type no source can spell, the one LRM 15.4.9 calls `dynamic_type`.
+`semaphore`, `mailbox` and `weak_reference` are classes of the built-in package `std` (LRM 8.30,
+15.2, 26.7): a program makes them with `new`, calls their methods, and may extend them. The front
+end creates `std` itself, declaring each class and each method with its arguments and defaults and
+no body, and type checks every call and every derivation against that declaration. The package can
+not be declared again in source (the front end reports a duplicate definition of `std`), and
+`mailbox`'s type parameter defaults to a type no source can spell, the one LRM 15.4.9 calls
+`dynamic_type`.
 
 So something has to define these classes, and nothing in the program does.
 
@@ -77,8 +78,25 @@ value is kept at its type with every bound dropped. A message received is writte
 that type, which the caller holds for the call, and the caller's own assignment then carries it into
 the variable, applying the variable's bound as any assignment to it does (LRM 7.10.5).
 
+**D5. A `weak_reference #(T)` is an ordinary class over one weakly held property, and `get_id` is
+the runtime's** (LRM 8.29, 8.30). The class keeps its referent in a property Lyra's text declares
+`(* lyra_weak *)`: a weak handle, which refers to the object without keeping it. LRM 5.12 leaves
+attributes to the tool, and the attribute means nothing outside Lyra's own text, as clang states
+Objective-C's `__weak` as an attribute of a declaration. A read of the property is the library's
+upgrade, the object or null, and a write its downgrade, so `new`, `get` and `clear` are
+SystemVerilog and the class is extended, held and compared as any class is. Java's `WeakReference`
+has the same shape: a class written in Java over one field the collector treats specially. An
+object's identity is a fact only the runtime has, so the one method answering it, `get_id`, is
+carried out by the runtime as a `process` method is and has no definition here; what the runtime
+carries out is decided per method, not per class.
+
 ## Rejected
 
+- **`weak_reference` as a runtime library class, as `process` is.** It would need a library class as
+  a source class's base to be extended, and a second implementation of every class-wide feature --
+  randomizing one, seeding its generator -- for this one class.
+- **`get_id` defined here over a body that answers nothing**, to keep every declared method defined.
+  A body that does not answer what it is asked is a wrong definition held to its declaration.
 - **A runtime library class per `std` class, as `process` is.** `process` reflects state only the
   runtime has; a `semaphore` or a `mailbox` holds keys, messages and the processes waiting, all of
   which SystemVerilog states, and the end of a waiting process it observes through that process's

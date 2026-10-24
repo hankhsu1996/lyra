@@ -10,9 +10,11 @@
 #include <vector>
 
 #include <slang/ast/Expression.h>
+#include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
+#include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
@@ -33,6 +35,16 @@
 #include "lyra/support/dpi_abi.hpp"
 
 namespace lyra::lowering::ast_to_hir {
+
+auto DeclaringClassOf(const slang::ast::SubroutineSymbol& sym)
+    -> const slang::ast::ClassType* {
+  const slang::ast::Scope* scope = sym.getParentScope();
+  if (scope == nullptr ||
+      scope->asSymbol().kind != slang::ast::SymbolKind::ClassType) {
+    return nullptr;
+  }
+  return &scope->asSymbol().as<slang::ast::ClassType>();
+}
 
 auto ParamDirectionOf(const slang::ast::FormalArgumentSymbol& formal)
     -> hir::ParamDirection {

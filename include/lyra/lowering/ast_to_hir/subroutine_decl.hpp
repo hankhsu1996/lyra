@@ -14,6 +14,7 @@
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace slang::ast {
+class ClassType;
 class Expression;
 class FormalArgumentSymbol;
 class MethodPrototypeSymbol;
@@ -31,6 +32,10 @@ class UnitLowerer;
 // read off the formal rather than the direction enum alone. Shared by the
 // subroutine-declaration lowering and the cross-unit call site, which recompute
 // the same directions from the same formals.
+// The class declaring a subroutine, or none where no class declares it.
+auto DeclaringClassOf(const slang::ast::SubroutineSymbol& sym)
+    -> const slang::ast::ClassType*;
+
 auto ParamDirectionOf(const slang::ast::FormalArgumentSymbol& formal)
     -> hir::ParamDirection;
 

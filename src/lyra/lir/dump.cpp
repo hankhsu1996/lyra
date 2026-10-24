@@ -307,9 +307,10 @@ class LirDumper {
                   "{} = {}", FormatDestination(fn, assign.destination),
                   FormatRvalue(assign.value));
             },
-            [&](const CloseVariablesInstr& closed) -> std::string {
+            [&](const EndVariableInstr& ended) -> std::string {
               return std::format(
-                  "close variables {}", FormatOperand(closed.variables));
+                  "end variable {}[{}]", FormatOperand(ended.variables),
+                  ended.position.value);
             },
             [&](const StoreInstr& store) -> std::string {
               return std::format(
@@ -357,13 +358,13 @@ class LirDumper {
               return std::format(
                   "product({})", FormatOperands(product.components));
             },
-            [](const OpenVariablesInstr&) -> std::string {
-              return "open variables";
+            [](const VariableStorageInstr&) -> std::string {
+              return "variable storage";
             },
-            [&](const VariableAddressInstr& reached) -> std::string {
+            [&](const BeginVariableInstr& begun) -> std::string {
               return std::format(
-                  "variable {}[{}]", FormatOperand(reached.variables),
-                  reached.position.value);
+                  "begin variable {}[{}]", FormatOperand(begun.variables),
+                  begun.position.value);
             },
             [&](const ClosureInstr& built) -> std::string {
               return std::format("closure({})", FormatOperands(built.captures));

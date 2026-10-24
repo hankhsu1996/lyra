@@ -286,6 +286,14 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
             return mir::Type{mir::ManagedRefType{
                 .pointee = ImportedRuntimeObjectType(src.klass)}};
           },
+          // A handle held weakly refers to the object the handle names.
+          [&](const hir::WeakHandleType& src) -> mir::Type {
+            const mir::TypeId handle = TranslateType(src.handle);
+            return mir::Type{mir::WeakManagedRefType{
+                .pointee = unit_.types.Get(handle)
+                               .Get<mir::ManagedRefType>()
+                               .pointee}};
+          },
           // A covergroup instance is an object of the class the covergroup is
           // written as (LRM 19.3), reached through a managed reference as an
           // object of any class is.

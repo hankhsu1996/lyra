@@ -284,6 +284,10 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
             return lir::Type{
                 lir::ManagedRefType{.pointee = TranslateType(mr.pointee)}};
           },
+          [&](const mir::WeakManagedRefType& w) -> lir::Type {
+            return lir::Type{
+                lir::WeakManagedRefType{.pointee = TranslateType(w.pointee)}};
+          },
           [&](const mir::VectorType& v) -> lir::Type {
             return lir::Type{
                 lir::VectorType{.element = TranslateType(v.element)}};

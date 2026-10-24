@@ -98,6 +98,17 @@ each stage establishes, not how.
       object that something already refers to -- a `this` its constructor handed on -- as it was,
       and reclaims one nothing refers to (LRM 8.29).
 
+- [x] A weak reference (LRM 8.30): `std::weak_reference #(T)` is an ordinary class -- declared, held
+      in objects, passed and extended -- that refers to an object without keeping it. `get()`
+      answers the object until `clear()` or until nothing else refers to it, and null after;
+      `get_id()` answers one number per live object, the same through every class of its lineage,
+      and 0 for null. A process is an object one may refer to, and a finished one is still there
+      while a handle names it. A wait reading through `get()` ends when the object is gone, the
+      referent's own properties read in the same wait included, because a wait watches what it read
+      without referring to it (LRM 8.29). A cycle nothing outside refers to is not reclaimed (the
+      managed-object-lifetime item above), so a weak reference to an object in one goes on answering
+      it.
+
 - [x] Assigning a handle to a variable of a subclass (LRM 8.16): illegal to write directly and legal
       through the dynamic cast, which succeeds on what the object turns out to be rather than on
       what the source was declared as. Its coverage is tracked whole in `datatypes.md`, with the

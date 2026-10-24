@@ -1568,6 +1568,28 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "process_set_randstate",
           .declaration = RuntimeFunction("ProcessSetRandstate")};
+    case BuiltinFn::kWeakDowngrade:
+      return {
+          .name = "weak_downgrade",
+          .declaration = RuntimeFunction("Downgrade")};
+    case BuiltinFn::kWeakUpgrade:
+      return {
+          .name = "weak_upgrade",
+          .declaration = RuntimeFunction("Upgrade"),
+          .takes_the_read_report = true};
+    case BuiltinFn::kWeakUpgradeProcess:
+      return {
+          .name = "weak_upgrade_process",
+          .declaration = RuntimeFunction("UpgradeProcess"),
+          .takes_the_read_report = true};
+    case BuiltinFn::kWeakRefersTo:
+      return {
+          .name = "weak_refers_to",
+          .declaration = RuntimeFunction("WeakRefersTo")};
+    case BuiltinFn::kObjectIdentity:
+      return {
+          .name = "object_identity",
+          .declaration = RuntimeFunction("ObjectIdentity")};
     case BuiltinFn::kObjectPreRandomize:
       return {
           .name = "object_pre_randomize",

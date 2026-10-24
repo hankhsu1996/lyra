@@ -472,10 +472,10 @@ the detail lives in the entry itself.
   wherever its idea of a write was narrower than a write.
 - [a-declared-variable-is-one-storage](a-declared-variable-is-one-storage.md) -- the other half of
   that same pass, and the last question the translation answered from reading a whole body. A
-  variable is one storage its declaration decides, owned by the execution that declared it and ended
-  by the compiler on every way out including the one no statement spells. Read it for why the
-  obvious argument for emitting nothing there expires, and for the test that separates an answer
-  that survives the work ahead from one that does not.
+  variable is one storage its declaration decides, owned by the execution that declared it, and the
+  variable in it is ended by the compiler where its block is left, on every way out including the
+  one no statement spells. Read it for why the obvious argument for emitting nothing there expires,
+  and for the test that separates an answer that survives the work ahead from one that does not.
 - [a-body-holds-a-value-or-its-execution-stores-it](a-body-holds-a-value-or-its-execution-stores-it.md)
   -- the third cut of that same question, and the one the standard settles outright. A variable is a
   value of its body where the body holds the whole of that value and storage its execution owns
@@ -585,13 +585,16 @@ the detail lives in the entry itself.
   runs them, as it runs: every function and class constructor takes one more parameter, the
   evaluation's report, and hands it on; handed one, a body states the cells its text reads as it is
   entered and each object and interface variable it reads through a handle as it reaches it, and the
-  wait keeps the objects it watches. A function is compiled in two forms from its one body, the one
-  every call reaches entering the recording one only where it is handed a report, so a body run for
-  no evaluation hands its callees none. An export foreign code calls finds the evaluation in
-  progress, an implicit list is collected through the same parameter without running anything, and a
-  read no wait can watch yet is refused at the wait that asks. Stating ahead of the body what a call
-  will read, summarizing the callee in the waiting unit, publishing a summary in the signature, a
-  second form callers name directly, and polling are rejected.
+  wait watches those objects without keeping them; an object a weak reference answered is watched
+  for its expiry, told once the running execution has handed control back. A function is compiled in
+  two forms from its one body, the one every call reaches entering the recording one only where it
+  is handed a report, so a body run for no evaluation hands its callees none. An export foreign code
+  calls finds the evaluation in progress, an implicit list is collected through the same parameter
+  without running anything, and a read no wait can watch yet is refused at the wait that asks.
+  Stating ahead of the body what a call will read, summarizing the callee in the waiting unit,
+  publishing a summary in the signature, a second form callers name directly, polling, keeping what
+  a wait read, an object's end told as a change, telling expiry from a destructor and a table of
+  watched objects by address are rejected.
 - [the-waiting-process-evaluates-its-wait](the-waiting-process-evaluates-its-wait.md) -- a change to
   what a wait reads schedules the waiting process, which evaluates the event expression and its
   qualifier once and compares (LRM 4.5); a change evaluates them itself only where they read nothing
@@ -1488,15 +1491,18 @@ the detail lives in the entry itself.
   the front end's severity is shipped as given, so a forbidden text it accepts with a warning runs
   with it, and lowering judges no legality.
 - [the-classes-of-std-are-written-in-systemverilog](the-classes-of-std-are-written-in-systemverilog.md)
-  -- `std`'s `semaphore` and `mailbox` are defined by SystemVerilog Lyra reads into every
-  compilation as a compilation unit of its own and compiles in the name of `std`, held by a test to
-  what the front end declares; waiters are the waiting processes in the order they arrived, one that
-  stops waiting is dropped, and a message of a `mailbox` of no stated type is a value of any type
-  kept with the text of its type's equivalence class, which names no queue bound, received through a
-  reference of any type only into a variable of the same text. Runtime library classes, bodies built
-  in HIR, a package of Lyra's own, tickets, a type's address or MIR identity as the class, one
-  object both owning and referring, a bound in the text, copying a message in after `get` returns, a
-  second mailbox definition, and compiling the definitions only where named are rejected.
+  -- `std`'s `semaphore`, `mailbox` and `weak_reference` are defined by SystemVerilog Lyra reads
+  into every compilation as a compilation unit of its own and compiles in the name of `std`, held by
+  a test to what the front end declares; waiters are the waiting processes in the order they
+  arrived, one that stops waiting is dropped, and a message of a `mailbox` of no stated type is a
+  value of any type kept with the text of its type's equivalence class, which names no queue bound,
+  received through a reference of any type only into a variable of the same text. A `weak_reference`
+  holds its referent in a property Lyra's text declares weakly held, read through the library's
+  upgrade and written through its downgrade, and its `get_id` is the runtime's, decided per method.
+  Runtime library classes, a `get_id` body answering nothing, bodies built in HIR, a package of
+  Lyra's own, tickets, a type's address or MIR identity as the class, one object both owning and
+  referring, a bound in the text, copying a message in after `get` returns, a second mailbox
+  definition, and compiling the definitions only where named are rejected.
 - [the-front-end-fork-keeps-a-branch-per-release](the-front-end-fork-keeps-a-branch-per-release.md)
   -- the slang fork keeps one branch per upstream release it is based on, `lyra/v<major>`, which
   only grows and which the host protects; moving to a release starts a new branch, so every commit

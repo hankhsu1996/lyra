@@ -17,11 +17,14 @@ namespace lyra::runtime {
 class Observable;
 class RuntimeEffects;
 
-// What one evaluation reached, as a wait takes it: the places it watches, and
-// the objects among them, which it keeps for as long as it watches them.
+// What one evaluation reached, as a wait takes it: the places it watches, the
+// objects whose expiry it watches, and the objects all of those lie in, held
+// only until the wait has enrolled on them, since a wait watching an object
+// does not refer to it (LRM 8.29).
 struct ReachedPlaces {
   std::vector<Trigger> triggers;
-  std::vector<std::shared_ptr<GcObject>> objects;
+  std::vector<IntrusiveList<WaitMembership>*> expiries;
+  std::vector<std::shared_ptr<void>> held;
 };
 
 // The places one evaluation of a waited expression reached (LRM 9.4.2), which
@@ -68,14 +71,17 @@ class ReadReport {
       std::int64_t lsb_bit_offset, std::int64_t bit_width);
 
   // An object a property is read on, which one event source covers whole (LRM
-  // 9.4.2). The wait keeps it while it waits on it, as a subscription keeps
-  // what it is subscribed to: the evaluation may have reached it through
-  // nothing but a variable of a function that has since returned. One nothing
-  // owns yet is being constructed by this evaluation, which a later one
-  // constructs afresh, so it is not watched. Reaching it through a handle
-  // naming no object is the design's own failure (LRM 8.4).
+  // 9.4.2). One nothing owns yet is being constructed by this evaluation,
+  // which a later one constructs afresh, so it is not watched. Reaching it
+  // through a handle naming no object is the design's own failure (LRM 8.4).
   void AddObject(GcObject* object);
   void AddObject(const value::ObjectRef& object);
+
+  // An object a weak reference answered (LRM 8.30.3), whose expiry changes
+  // what the reference answers: `expiry` is where the object tells it, and
+  // `referent` holds the object until the wait has enrolled there.
+  void AddExpiry(
+      IntrusiveList<WaitMembership>& expiry, std::shared_ptr<void> referent);
 
   // A place the evaluation writes: which part of it and which bits of that
   // part, as a read names them. Only an implicit list reads these, and it
@@ -141,7 +147,8 @@ class ReadReport {
   explicit ReadReport(bool an_evaluation_reports);
 
   std::vector<Trigger> reached_;
-  std::vector<std::shared_ptr<GcObject>> objects_;
+  std::vector<IntrusiveList<WaitMembership>*> expiries_;
+  std::vector<std::shared_ptr<void>> held_;
   std::vector<Written> writes_;
   std::int64_t depth_ = 0;
   // Whether an evaluation is what reports here, which needs the value of the

@@ -98,6 +98,12 @@ auto current_runtime() -> RuntimeEffects& {
   return *handle;
 }
 
+void HandOverExpiry(IntrusiveList<WaitMembership>& expiry) noexcept {
+  RuntimeEffects* attached = CurrentRuntimeSlot();
+  if (attached == nullptr) return;
+  AsRuntime(*attached).expired_.Append(expiry);
+}
+
 CurrentRuntimeGuard::CurrentRuntimeGuard(RuntimeEffects& effects)
     : previous_(CurrentRuntimeSlot()) {
   CurrentRuntimeSlot() = &effects;

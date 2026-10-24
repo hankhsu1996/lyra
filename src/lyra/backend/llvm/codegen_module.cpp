@@ -1142,6 +1142,7 @@ auto CodeGenModule::HoldsItsBytesInline(
     case support::MemberStorageKind::kBorrowedHandle:
     case support::MemberStorageKind::kReference:
     case support::MemberStorageKind::kAnyReference:
+    case support::MemberStorageKind::kWeakReference:
     case support::MemberStorageKind::kSharedPointer:
     case support::MemberStorageKind::kCancellationTarget:
     case support::MemberStorageKind::kChannelCancellation:
@@ -1173,27 +1174,33 @@ auto CodeGenModule::ValuesHeldByMember(lir::TypeId type) const
   return ValuesHeldBy(unit_->types.Get(type));
 }
 
-// A value held as its bytes has none until one is copied in, which is how the
-// one value holding such members -- a closure's captures -- is filled, so
-// nothing builds it here.
 auto CodeGenModule::BeginMembers(
     llvm::IRBuilderBase& builder, llvm::Value* value,
     const PlacedMembers& placed) -> diag::Result<void> {
   for (std::size_t i = 0; i < placed.storage.size(); ++i) {
-    if (HoldsItsBytesInline(placed.types[i], placed.storage[i])) {
-      throw InternalError(
-          "llvm codegen: a value held as its bytes is built by copying a value "
-          "in, never default-built -- please report this as a bug");
-    }
-    auto built = BuildMemberStorage(
-        builder, placed.types[i], placed.storage[i],
-        builder.CreateConstInBoundsGEP1_64(
-            builder.getInt8Ty(), value, placed.offsets[i]));
+    auto built = BeginMember(builder, value, placed, i);
     if (!built) {
       return built;
     }
   }
   return {};
+}
+
+// A value held as its bytes has none until one is copied in, which is how the
+// one value holding such members -- a closure's captures -- is filled, so
+// nothing builds it here.
+auto CodeGenModule::BeginMember(
+    llvm::IRBuilderBase& builder, llvm::Value* value,
+    const PlacedMembers& placed, std::size_t i) -> diag::Result<void> {
+  if (HoldsItsBytesInline(placed.types[i], placed.storage[i])) {
+    throw InternalError(
+        "llvm codegen: a value held as its bytes is built by copying a value "
+        "in, never default-built -- please report this as a bug");
+  }
+  return BuildMemberStorage(
+      builder, placed.types[i], placed.storage[i],
+      builder.CreateConstInBoundsGEP1_64(
+          builder.getInt8Ty(), value, placed.offsets[i]));
 }
 
 // The entry building a member's storage takes where the storage is, after
@@ -1225,22 +1232,28 @@ auto CodeGenModule::EndMembers(
     llvm::IRBuilderBase& builder, llvm::Value* value,
     const PlacedMembers& placed) -> diag::Result<void> {
   for (std::size_t i = placed.storage.size(); i-- > 0;) {
-    if (MemberLayout(placed.types[i], placed.storage[i])
-            .ends_with_nothing_to_do) {
-      continue;
+    auto ended = EndMember(builder, value, placed, i);
+    if (!ended) {
+      return ended;
     }
-    const std::array<llvm::Value*, 1> args{builder.CreateConstInBoundsGEP1_64(
-        builder.getInt8Ty(), value, placed.offsets[i])};
-    if (HoldsItsBytesInline(placed.types[i], placed.storage[i])) {
-      auto ended = EmitLifecycle(
-          builder, placed.types[i], LifecycleStep::kDestroy, args);
-      if (!ended) {
-        return ended;
-      }
-      continue;
-    }
-    builder.CreateCall(MemberStorageDestructor(placed.storage[i]), args);
   }
+  return {};
+}
+
+auto CodeGenModule::EndMember(
+    llvm::IRBuilderBase& builder, llvm::Value* value,
+    const PlacedMembers& placed, std::size_t i) -> diag::Result<void> {
+  if (MemberLayout(placed.types[i], placed.storage[i])
+          .ends_with_nothing_to_do) {
+    return {};
+  }
+  const std::array<llvm::Value*, 1> args{builder.CreateConstInBoundsGEP1_64(
+      builder.getInt8Ty(), value, placed.offsets[i])};
+  if (HoldsItsBytesInline(placed.types[i], placed.storage[i])) {
+    return EmitLifecycle(
+        builder, placed.types[i], LifecycleStep::kDestroy, args);
+  }
+  builder.CreateCall(MemberStorageDestructor(placed.storage[i]), args);
   return {};
 }
 

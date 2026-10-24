@@ -180,6 +180,13 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
     return termination_;
   }
 
+  // The waits that reached this process through a weak reference (LRM 8.30.3),
+  // told once nothing refers to it any more -- which a process that has
+  // terminated may still be referred to by long after.
+  [[nodiscard]] auto Expiry() -> IntrusiveList<WaitMembership>& {
+    return expiry_;
+  }
+
   // Stops the frame carrying this process's thread at `awaiter`, and answers
   // whether the caller must give up control -- false where what it waits for
   // had already happened, in which case nothing was arranged and the caller
@@ -528,6 +535,7 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // spawned it, an `await` of it (LRM 9.3.2, 9.7) -- asked when this process
   // settles a terminal state.
   IntrusiveList<WaitMembership> termination_;
+  IntrusiveList<WaitMembership> expiry_;
 };
 
 }  // namespace lyra::runtime

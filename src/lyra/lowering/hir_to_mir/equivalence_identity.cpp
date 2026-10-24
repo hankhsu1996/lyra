@@ -125,6 +125,9 @@ auto EquivalenceIdentityOf(const UnitLowerer& unit_lowerer, hir::TypeId type)
             return std::format(
                 "class std::{}", support::ImportedRuntimeClassName(t.klass));
           },
+          [&](const hir::WeakHandleType&) {
+            return no_value("a weakly held handle");
+          },
           [&](const hir::CovergroupHandleType& t) {
             return std::visit(
                 Overloaded{

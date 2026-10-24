@@ -383,12 +383,19 @@ auto FunctionLowerer::TakeParam(mir::LocalId param) -> lir::ValueId {
 
 void FunctionLowerer::BindParam(mir::LocalId param, lir::ValueId argument) {
   // A parameter is a declared local whose first write is the incoming
-  // argument, so it binds exactly as any declaration does. An argument the
-  // caller only lends is copied into a slot owning its value, which the body
-  // may then write (LRM 13.5.1) and ends on its way out.
-  if (const std::optional<lir::ValueId> owning = BindLocal(
-          param, fn_.values.Get(argument).type, lir::Use{.value = argument})) {
-    OpenScope(SlotEnd{.slot = *owning});
+  // argument, so it binds exactly as any declaration does: a parameter the body
+  // gave storage of its own begins there, and any other is a frame slot. An
+  // argument the caller only lends is copied into a slot owning its value,
+  // which the body may then write (LRM 13.5.1) and ends on its way out.
+  if (variable_slot_[param.value].has_value()) {
+    InitializeCell(BeginVariable(param), lir::Use{.value = argument});
+    return;
+  }
+  const lir::TypeId type = fn_.values.Get(argument).type;
+  const lir::ValueId slot = OpenLocalSlot(param, type);
+  AssignFrom(LocalPlace(slot), lir::Use{.value = argument});
+  if (unit_->Types().Get(type).IsOwnedValue()) {
+    OpenScope(SlotEnd{.slot = slot});
   }
 }
 
@@ -505,7 +512,7 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
         .caught = NewPlaceLocal(unit_->ControlEffectType())};
     OpenScope(*top);
   }
-  OpenVariables();
+  ReserveVariableStorage();
   for (const auto& [param, argument] : taken) {
     BindParam(param, argument);
   }
@@ -532,23 +539,6 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   // A value-returning body reaches its returns explicitly, so its open blocks
   // are the latter.
   const bool falls_through_to_return = is_coroutine || answers_nothing;
-  // Falling off the end is a way out like any other, and the one no statement
-  // of the body spells, so what it owes is settled here rather than where the
-  // statements are walked.
-  if (falls_through_to_return) {
-    // Reading the identity rather than the position, because emitting into one
-    // block may open another and the set grows under the walk.
-    std::vector<lir::BlockId> open;
-    for (const OpenBlock& block : blocks_) {
-      if (!block.terminator.has_value()) {
-        open.push_back(block.id);
-      }
-    }
-    for (const lir::BlockId id : open) {
-      SetCurrent(id);
-      CloseVariables();
-    }
-  }
   fn_.blocks.reserve(blocks_.size());
   for (OpenBlock& block : blocks_) {
     if (!block.terminator.has_value()) {
@@ -709,6 +699,12 @@ auto FunctionLowerer::BuildUnwindEntry(std::size_t index, lir::BlockId outward)
               return {};
             });
           },
+          [&](const VariableEnd& end) -> diag::Result<lir::BlockId> {
+            return owed_then_outward([&]() -> diag::Result<void> {
+              EmitScopeDrop(end);
+              return {};
+            });
+          },
           // Nothing is owed here any more, so unwinding goes straight on.
           [&](const EndPassedOn&) -> diag::Result<lir::BlockId> {
             return outward;
@@ -741,9 +737,8 @@ auto FunctionLowerer::BuildUnwindEntry(std::size_t index, lir::BlockId outward)
   return entered;
 }
 
-// Past every scope nothing here takes the raise, so what is owed is what any
-// other way out of the body owes -- the end of the storage its declared
-// variables live in -- and then unwinding goes on out of the body.
+// Past every scope nothing here takes the raise and nothing more is owed, so
+// unwinding goes on out of the body.
 auto FunctionLowerer::FrameEdge() -> lir::BlockId {
   if (frame_edge_.has_value()) {
     return *frame_edge_;
@@ -752,7 +747,6 @@ auto FunctionLowerer::FrameEdge() -> lir::BlockId {
   frame_edge_ = edge;
   const lir::BlockId resumed = current_;
   SetCurrent(edge);
-  CloseVariables();
   Terminate(
       lir::UnwindResumeTerm{
           .exception = Load(
@@ -790,7 +784,6 @@ auto FunctionLowerer::EmitCoroutineHandler(const RegionScope& top)
   if (!closed) {
     return closed;
   }
-  CloseVariables();
   Terminate(
       lir::DepartTerm{
           .departure = Load(
@@ -946,6 +939,12 @@ void FunctionLowerer::EmitScopeDrop(const SlotEnd& end) {
   MarkStorage(lir::StorageInstr::Op::kDead, end.slot);
 }
 
+void FunctionLowerer::EmitScopeDrop(const VariableEnd& end) {
+  EmitStatement(
+      lir::EndVariableInstr{
+          .variables = *variables_, .position = end.position});
+}
+
 void FunctionLowerer::EmitScopeDrop(const StorageRelease& release) {
   Emit(
       unit_->TranslateType(unit_->Mir().builtins.void_type),
@@ -1076,65 +1075,44 @@ auto FunctionLowerer::OpenLocalSlot(mir::LocalId local, lir::TypeId type)
   return slot;
 }
 
-// Introduces a declared local, holding its initial value. A local the body
-// gave storage of its own was given it when the body opened, so reaching the
-// declaration is what installs the representation -- which is what makes each
-// entry to a declaration a fresh variable in the one storage. Every other
-// local is a frame slot the declaration writes, and a slot of an owned type
-// owns what it holds: it takes the initial value along with its end.
-auto FunctionLowerer::BindLocal(
-    mir::LocalId local, lir::TypeId type, lir::Operand init)
-    -> std::optional<lir::ValueId> {
-  if (variable_slot_[local.value].has_value()) {
-    InitializeCell(
-        std::get<CellBinding>(*locals_[local.value]).cell, std::move(init));
-    return std::nullopt;
-  }
-  const lir::ValueId slot = OpenLocalSlot(local, type);
-  AssignFrom(LocalPlace(slot), std::move(init));
-  if (!unit_->Types().Get(type).IsOwnedValue()) {
-    return std::nullopt;
-  }
-  return slot;
-}
-
 auto FunctionLowerer::DeclareLocal(
     const mir::Block& block, mir::LocalId local, mir::ExprId init)
     -> diag::Result<void> {
-  // A cell MIR declared is built where the body opens its variables, so its
-  // declaration names storage that already exists; what it holds is the
-  // initialization that follows.
-  const lir::TypeId type = unit_->TranslateType(code_->locals.Get(local).type);
-  if (IsDeclaredCell(unit_->Mir(), code_->locals.Get(local).type)) {
+  // A local the body gave storage of its own begins where its declaration is
+  // reached, so each entry to the declaration is a fresh variable in the one
+  // storage. A cell MIR declared takes what it holds from the initialization
+  // that follows; any other such variable from its initializer.
+  const mir::TypeId declared = code_->locals.Get(local).type;
+  if (IsDeclaredCell(unit_->Mir(), declared)) {
+    BeginVariable(local);
     return {};
   }
-  const std::size_t depth = scopes_.size();
-  std::optional<lir::ValueId> owning;
   if (variable_slot_[local.value].has_value()) {
+    const lir::Operand cell = BeginVariable(local);
+    const std::size_t depth = scopes_.size();
     auto value = LowerExpr(block, init);
     if (!value) {
       return std::unexpected(std::move(value.error()));
     }
-    owning = BindLocal(local, type, *std::move(value));
-  } else {
-    // The initial value is made where the local lies, as rustc's
-    // `expr_into_dest` builds a `let`'s initializer into its place, so a value
-    // that never moves -- a closure -- is a local like any other.
-    const lir::ValueId slot = OpenLocalSlot(local, type);
-    auto made = LowerExprInto(block, init, LocalPlace(slot));
-    if (!made) {
-      return made;
-    }
-    if (unit_->Types().Get(type).IsOwnedValue()) {
-      owning = slot;
-    }
+    InitializeCell(cell, *std::move(value));
+    return CloseExtent(depth);
+  }
+  // The initial value is made where the local lies, as rustc's
+  // `expr_into_dest` builds a `let`'s initializer into its place, so a value
+  // that never moves -- a closure -- is a local like any other.
+  const lir::TypeId type = unit_->TranslateType(declared);
+  const std::size_t depth = scopes_.size();
+  const lir::ValueId slot = OpenLocalSlot(local, type);
+  auto made = LowerExprInto(block, init, LocalPlace(slot));
+  if (!made) {
+    return made;
   }
   auto closed = CloseExtent(depth);
   if (!closed) {
     return closed;
   }
-  if (owning.has_value()) {
-    OpenScope(SlotEnd{.slot = *owning});
+  if (unit_->Types().Get(type).IsOwnedValue()) {
+    OpenScope(SlotEnd{.slot = slot});
   }
   return {};
 }
@@ -1183,36 +1161,28 @@ void FunctionLowerer::StoreActivationValue(
           .args = {std::move(handle), std::move(value)}});
 }
 
-void FunctionLowerer::OpenVariables() {
+void FunctionLowerer::ReserveVariableStorage() {
   if (fn_.variables.empty()) {
     return;
   }
   // The storage is the body's own and the body never reads through it; it only
-  // names it when reaching a variable in it and when closing it.
-  const lir::TypeId opened =
+  // names it when reaching, beginning and ending a variable in it.
+  const lir::TypeId storage =
       AddressType(unit_->Types().Intern(lir::Type{lir::VoidType{}}));
-  variables_ = Emit(opened, lir::OpenVariablesInstr{});
-  for (const mir::LocalId local : code_->locals.Ids()) {
-    if (!variable_slot_[local.value].has_value()) {
-      continue;
-    }
-    const lir::TypeId value = unit_->TranslateType(
-        StoredValueType(unit_->Mir(), code_->locals.Get(local).type));
-    const lir::TypeId address = AddressType(lir::CellOf(unit_->Types(), value));
-    locals_[local.value] = CellBinding{
-        .cell = Emit(
-            address, lir::VariableAddressInstr{
-                         .variables = *variables_,
-                         .position = lir::VariablePosition{
-                             *variable_slot_[local.value]}})};
-  }
+  variables_ = Emit(storage, lir::VariableStorageInstr{});
 }
 
-void FunctionLowerer::CloseVariables() {
-  if (!variables_.has_value()) {
-    return;
-  }
-  EmitStatement(lir::CloseVariablesInstr{.variables = *variables_});
+auto FunctionLowerer::BeginVariable(mir::LocalId local) -> lir::Operand {
+  const lir::VariablePosition position{*variable_slot_[local.value]};
+  const lir::TypeId value = unit_->TranslateType(
+      StoredValueType(unit_->Mir(), code_->locals.Get(local).type));
+  const lir::TypeId address = AddressType(lir::CellOf(unit_->Types(), value));
+  const lir::Operand cell = Emit(
+      address,
+      lir::BeginVariableInstr{.variables = *variables_, .position = position});
+  locals_[local.value] = CellBinding{.cell = cell};
+  OpenScope(VariableEnd{.position = position});
+  return cell;
 }
 
 void FunctionLowerer::InitializeCell(lir::Operand cell, lir::Operand value) {
@@ -1667,6 +1637,10 @@ auto FunctionLowerer::RunCleanupsDownTo(std::size_t depth)
               EmitScopeDrop(end);
               return {};
             },
+            [&](const VariableEnd& end) -> diag::Result<void> {
+              EmitScopeDrop(end);
+              return {};
+            },
             [](const EndPassedOn&) -> diag::Result<void> { return {}; },
             [&](const StorageRelease& release) -> diag::Result<void> {
               EmitScopeDrop(release);
@@ -1711,7 +1685,6 @@ auto FunctionLowerer::SuspendIf(lir::Operand park) -> diag::Result<void> {
   if (!cleaned) {
     return std::unexpected(std::move(cleaned.error()));
   }
-  CloseVariables();
   Terminate(lir::AbandonTerm{});
   SetCurrent(resume);
   return {};
@@ -2786,9 +2759,9 @@ auto FunctionLowerer::LowerObjectWriteOpening(
 auto FunctionLowerer::LowerCellPlace(
     const mir::Block& block, mir::ExprId referent) -> diag::Result<lir::Place> {
   const mir::Expr& expr = block.exprs.Get(referent);
-  // A local the body gave storage of its own is named by the handle the body
-  // opened over that storage, which reaches the storage in one step where
-  // reading the local reaches its value in two.
+  // A local the body gave storage of its own is named by the handle its
+  // declaration took on that storage, which reaches the storage in one step
+  // where reading the local reaches its value in two.
   if (const std::optional<mir::LocalId> local = mir::ReferencedLocal(expr.data);
       local.has_value() && locals_[local->value].has_value()) {
     if (const auto* cell = std::get_if<CellBinding>(&*locals_[local->value])) {
@@ -3819,7 +3792,6 @@ auto FunctionLowerer::LowerReturnInto(
   if (!cleaned) {
     return std::unexpected(std::move(cleaned.error()));
   }
-  CloseVariables();
   Terminate(lir::ReturnTerm{});
   return {};
 }

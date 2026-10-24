@@ -8,16 +8,23 @@
 #include <slang/ast/Expression.h>
 #include <slang/ast/TimingControl.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
+#include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
+#include <slang/ast/expressions/SelectExpressions.h>
+#include <slang/ast/symbols/ClassSymbols.h>
+#include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/types/Type.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/conversion.hpp"
+#include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/statement/timing.hpp"
+#include "lyra/lowering/ast_to_hir/std_classes.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -59,6 +66,83 @@ auto LowerAssignTiming(
   }
 }
 
+// Whether `value` names the object the running method was invoked on (LRM
+// 8.11).
+auto NamesOwnObject(const slang::ast::Expression& value) -> bool {
+  const auto* named = value.as_if<slang::ast::NamedValueExpression>();
+  if (named == nullptr) return false;
+  const slang::ast::Scope* scope = named->symbol.getParentScope();
+  const auto* method =
+      scope == nullptr
+          ? nullptr
+          : scope->asSymbol().as_if<slang::ast::SubroutineSymbol>();
+  return method != nullptr && method->thisVar == &named->symbol;
+}
+
+// The property an assignment writes where it is one Lyra's definitions hold
+// weakly (LRM 8.30): one of the method's own object, named alone or through
+// `this`.
+auto WeaklyHeldTarget(const slang::ast::Expression& target)
+    -> const slang::ast::ClassPropertySymbol* {
+  const slang::ast::Symbol* member = nullptr;
+  if (const auto* named = target.as_if<slang::ast::NamedValueExpression>()) {
+    member = &named->symbol;
+  } else if (const auto* access =
+                 target.as_if<slang::ast::MemberAccessExpression>();
+             access != nullptr && NamesOwnObject(access->value())) {
+    member = &access->member;
+  }
+  const auto* prop = member == nullptr
+                         ? nullptr
+                         : member->as_if<slang::ast::ClassPropertySymbol>();
+  return prop != nullptr && IsHeldWeakly(*prop) ? prop : nullptr;
+}
+
+// A write of a handle into a weakly held property: the weak reference to the
+// object the handle names, made by the library, is what lands (LRM 8.30.2,
+// 8.30.4).
+template <ExprLowerer Lowerer>
+auto LowerStoreWeaklyHeld(
+    Lowerer& lowerer, WalkFrame frame,
+    const slang::ast::AssignmentExpression& as,
+    const slang::ast::ClassPropertySymbol& prop, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  if (as.op.has_value() || as.isNonBlocking() || as.timingControl != nullptr) {
+    throw InternalError(
+        "LowerAssignmentExpr: Lyra's definitions write a weakly held property "
+        "only by a plain blocking assignment");
+  }
+  auto& unit_lowerer = lowerer.Owner();
+  auto stored = LowerWeaklyHeldStorage(unit_lowerer, prop, span);
+  if (!stored) return std::unexpected(std::move(stored.error()));
+  const hir::TypeId held = stored->type;
+  const hir::ExprId lhs_id = frame.Exprs().Add(*std::move(stored));
+  auto rhs_or = lowerer.LowerExpr(as.right(), frame);
+  if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
+  const hir::ExprId strong = frame.Exprs().Add(*std::move(rhs_or));
+  const hir::ExprId weak = frame.Exprs().Add(
+      hir::Expr{
+          .type = held,
+          .data =
+              hir::CallExpr{
+                  .callee =
+                      hir::BuiltinMethodRef{
+                          .method = support::BuiltinFn::kWeakDowngrade,
+                          .receiver = strong},
+                  .arguments = {}},
+          .span = span});
+  return hir::Expr{
+      .type = held,
+      .data =
+          hir::AssignExpr{
+              .timing = hir::EffectTiming{hir::ImmediateEffect{}},
+              .lhs = lhs_id,
+              .compound = std::nullopt,
+              .rhs = weak},
+      .span = span,
+  };
+}
+
 }  // namespace
 
 template <ExprLowerer Lowerer>
@@ -67,6 +151,10 @@ auto LowerAssignmentExpr(
     const slang::ast::AssignmentExpression& as, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   auto& unit_lowerer = lowerer.Owner();
+
+  if (const auto* weak = WeaklyHeldTarget(as.left())) {
+    return LowerStoreWeaklyHeld(lowerer, frame, as, *weak, span);
+  }
 
   auto lhs_or = lowerer.LowerExpr(as.left(), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));

@@ -40,6 +40,7 @@
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/value_cell.hpp"
 #include "lyra/runtime/var.hpp"
+#include "lyra/runtime/weak_reference.hpp"
 #include "lyra/value/any.hpp"
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/bit_vec.hpp"
@@ -86,6 +87,7 @@ static_assert(Of<Wait>() == support::kWaitStorage);
 static_assert(Of<HierarchySegment>() == support::kHierarchySegmentStorage);
 static_assert(
     Of<ChannelCancellation>() == support::kChannelCancellationStorage);
+static_assert(Of<WeakObjectRef>() == support::kWeakReferenceStorage);
 
 template <typename Answer>
 [[noreturn]] auto NotRealized() -> Answer {
@@ -163,8 +165,8 @@ struct AdmitsVariable : std::bool_constant<
                             !std::is_same_v<T, value::AnyValue> &&
                             !std::is_same_v<T, value::BitVec>> {};
 
-// A local of a body -- held inline, in a cell, or among the variables the body
-// opens -- may be of every value class a variable may, and a run of bits
+// A local of a body -- held inline, in a cell, or among the body's variables --
+// may be of every value class a variable may, and a run of bits
 // besides, which a streaming operator keeps in a local while it packs or
 // unpacks one (LRM 11.4.14).
 template <typename T>
@@ -276,6 +278,8 @@ auto LayoutOf(support::LibraryObject object) -> ObjectLayout {
       return Of<ErasedReference>();
     case support::LibraryObject::kAnyReference:
       return Of<AnyReference>();
+    case support::LibraryObject::kWeakReference:
+      return support::kWeakReferenceStorage;
   }
   throw InternalError("object layout: unknown library object");
 }
@@ -326,6 +330,8 @@ auto LayoutOf(
       return Of<ErasedReference>();
     case MemberStorageKind::kAnyReference:
       return Of<AnyReference>();
+    case MemberStorageKind::kWeakReference:
+      return support::kWeakReferenceStorage;
     case MemberStorageKind::kSharedPointer:
       return Of<SharedPointer>();
     case MemberStorageKind::kChannelCancellation:
@@ -429,6 +435,7 @@ auto HeldContentsOf(support::DeclaredMemberStorage storage)
           case MemberStorageKind::kBorrowedHandle:
           case MemberStorageKind::kReference:
           case MemberStorageKind::kAnyReference:
+          case MemberStorageKind::kWeakReference:
           case MemberStorageKind::kSharedPointer:
           case MemberStorageKind::kChannelCancellation:
           case MemberStorageKind::kCancellationTarget:

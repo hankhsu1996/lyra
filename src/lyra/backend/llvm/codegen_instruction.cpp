@@ -93,8 +93,8 @@ auto CodeGenFunction::LowerInstrInto(const lir::Instr& instr)
           // Bytes a frame keeps for a value come into use and go out of it
           // with nothing to do where they lie in the frame.
           [](const lir::StorageInstr&) -> Done { return {}; },
-          [&](const lir::CloseVariablesInstr& closed) -> Done {
-            return done(LowerCloseVariables(closed));
+          [&](const lir::EndVariableInstr& ended) -> Done {
+            return done(LowerEndVariable(ended));
           },
           [&](const lir::BeginHandlingInstr& begun) -> Done {
             return done(LowerBeginHandling(begun));
@@ -186,11 +186,11 @@ auto CodeGenFunction::LowerRvalue(
             return LowerDynamicCast(
                 cast, result_type, EnsureDestination(destination));
           },
-          [&](const lir::OpenVariablesInstr&) -> Lowered {
-            return LowerOpenVariables();
+          [&](const lir::VariableStorageInstr&) -> Lowered {
+            return LowerVariableStorage();
           },
-          [&](const lir::VariableAddressInstr& reached) -> Lowered {
-            return LowerVariableAddress(reached);
+          [&](const lir::BeginVariableInstr& begun) -> Lowered {
+            return LowerBeginVariable(begun);
           }},
       value);
 }

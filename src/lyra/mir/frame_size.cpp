@@ -212,6 +212,9 @@ auto LaidOut(const CompilationUnit& unit, TypeId type, const auto& part)
           [](const ManagedRefType&) {
             return LayoutOfClass<value::ObjectRef>();
           },
+          [](const WeakManagedRefType&) {
+            return support::kWeakReferenceStorage.layout;
+          },
           [](const EmptyType&) { return LayoutOfClass<value::Empty>(); },
           [](const VoidType&) {
             return support::Layout{.size = 0, .align = 1};

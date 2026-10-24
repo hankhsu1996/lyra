@@ -37,6 +37,7 @@ RuntimeProcess::~RuntimeProcess() {
   while (!foreign_calls_.empty()) {
     foreign_calls_.pop_back();
   }
+  HandOverExpiry(expiry_);
 }
 
 auto RuntimeProcess::TopActivation() const -> Activation* {

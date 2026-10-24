@@ -90,11 +90,17 @@ void ReadReport::AddObject(GcObject* object) {
   if (object != nullptr) {
     std::shared_ptr<GcObject> owned = object->weak_from_this().lock();
     if (owned == nullptr) return;
-    objects_.push_back(std::move(owned));
+    held_.push_back(std::move(owned));
   }
   reached_.emplace_back(
       WatchedPlace{EventSourceOf(object)}, Observation::OnReaching(),
       std::span<const std::int64_t>{}, 0, 0);
+}
+
+void ReadReport::AddExpiry(
+    IntrusiveList<WaitMembership>& expiry, std::shared_ptr<void> referent) {
+  expiries_.push_back(&expiry);
+  held_.push_back(std::move(referent));
 }
 
 void ReadReport::AddWrite(
@@ -239,13 +245,14 @@ void ReadReport::SettleAsImplicitList() {
 auto ReadReport::TakeReached() -> ReachedPlaces {
   ReachedPlaces reached{
       .triggers = std::exchange(reached_, {}),
-      .objects = std::exchange(objects_, {})};
+      .expiries = std::exchange(expiries_, {}),
+      .held = std::exchange(held_, {})};
   std::ranges::sort(reached.triggers, LeafBefore);
   const auto repeated_leaves = std::ranges::unique(reached.triggers, SameLeaf);
   reached.triggers.erase(repeated_leaves.begin(), repeated_leaves.end());
-  std::ranges::sort(reached.objects);
-  const auto repeated_objects = std::ranges::unique(reached.objects);
-  reached.objects.erase(repeated_objects.begin(), repeated_objects.end());
+  std::ranges::sort(reached.expiries);
+  const auto repeated_expiries = std::ranges::unique(reached.expiries);
+  reached.expiries.erase(repeated_expiries.begin(), repeated_expiries.end());
   // A wait watches what was written as well (LRM 9.4.2 leaves nothing out),
   // so the writes only an implicit list reads are dropped with the rest.
   writes_.clear();

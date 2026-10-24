@@ -1,12 +1,16 @@
-// What the classes of the built-in package `std` do (LRM 15.3, 15.4). The
-// front end declares `std` itself, with every method and no body, and the
+// What the classes of the built-in package `std` do (LRM 8.30, 15.3, 15.4).
+// The front end declares `std` itself, with every method and no body, and the
 // package can not be declared again in source; so the definitions are this
 // file's compilation-unit scope, which Lyra compiles in the name of `std`. It
 // is no design element, so it carries no time scale of its own (LRM
 // 3.14.2.3). Each class of `std` here has the name, the parameters and the
 // methods, with their arguments and defaults, that the front end declares for
 // it, since every call and every class extending one is checked against that
-// declaration and reaches this definition.
+// declaration and reaches this definition. A method whose answer only the
+// runtime has -- an object's identity -- is carried out by the runtime and has
+// no definition here, and a property this text declares `(* lyra_weak *)`
+// refers to the object its handle names without keeping it, which no source
+// type states.
 
 // The processes waiting for one kind of thing, in the order they arrived: each
 // waits until it is first and what it asks for is there, so they are served in
@@ -227,5 +231,24 @@ class mailbox #(type T);
   function int try_peek(ref T message);
     if (messages.size() == 0) return 0;
     return copy_first(message) ? 1 : -1;
+  endfunction
+endclass
+
+// A reference to an object that does not keep it (LRM 8.30): it answers the
+// object it was made with until it is cleared, by `clear()` or once nothing
+// else refers to the object, and null after. `get_id()` is the runtime's.
+class weak_reference #(type T);
+  (* lyra_weak *) local T referent;
+
+  function new(T referent);
+    this.referent = referent;
+  endfunction
+
+  function T get();
+    return referent;
+  endfunction
+
+  function void clear();
+    referent = null;
   endfunction
 endclass

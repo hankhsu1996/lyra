@@ -4,9 +4,11 @@
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/runtime/intrusive_list.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/part_path.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/runtime/wait.hpp"
 
 namespace lyra::runtime {
 
@@ -27,10 +29,22 @@ struct EndObject {
 
 }  // namespace
 
+struct GcObject::Watchers {
+  Observable properties;
+  IntrusiveList<WaitMembership> expiry;
+};
+
 GcObject::GcObject() : creators_share_(this, EndObject{}) {
 }
 
-GcObject::~GcObject() = default;
+// What reached this object through a weak reference is handed over to be told
+// once the object is gone; what watched its properties is let go of, nothing
+// having changed for it.
+GcObject::~GcObject() {
+  if (watchers_ != nullptr) {
+    HandOverExpiry(watchers_->expiry);
+  }
+}
 
 // A copy is a different object, so it starts with no event source of its own
 // -- what waits on the one it was copied from waits on that one -- and with
@@ -59,20 +73,29 @@ auto GcObject::operator=(const GcObject& other) -> GcObject& {
   return *this;
 }
 
-auto GcObject::EventSource() -> Observable& {
-  if (event_source_ == nullptr) {
-    event_source_ = std::make_unique<Observable>();
+auto GcObject::WatchersOf() -> Watchers& {
+  if (watchers_ == nullptr) {
+    watchers_ = std::make_unique<Watchers>();
   }
-  return *event_source_;
+  return *watchers_;
+}
+
+auto GcObject::EventSource() -> Observable& {
+  return WatchersOf().properties;
+}
+
+auto GcObject::Expiry() -> IntrusiveList<WaitMembership>& {
+  return WatchersOf().expiry;
 }
 
 auto GcObject::Watched() const -> bool {
-  return event_source_ != nullptr && event_source_->HasMembers();
+  return watchers_ != nullptr && watchers_->properties.HasMembers();
 }
 
 void GcObject::PublishChange() {
   if (Watched()) {
-    current_runtime().WakeParkedOn(*event_source_, PartPath{}, Change::Whole());
+    current_runtime().WakeParkedOn(
+        watchers_->properties, PartPath{}, Change::Whole());
   }
 }
 

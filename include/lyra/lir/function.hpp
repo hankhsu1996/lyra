@@ -711,11 +711,9 @@ struct VariablePosition {
       -> std::strong_ordering = default;
 };
 
-// The storage a body's declared variables live in: opened whole where the body
-// begins, each variable reached by its position, and closed on every way out,
-// which is what ends every variable in it. The result of opening is the
-// storage, which the other two name; reaching a variable yields a borrowed
-// pointer to its storage, and closing yields nothing.
+// The storage a body's declared variables live in, reserved where the body
+// begins and lasting the whole body, as clang makes a local's storage in the
+// entry block. Its result is the storage, which the others name.
 //
 // A declaration is what gives a variable storage, so none of these reads
 // anything about what the body does with one. What each piece of storage is
@@ -723,15 +721,21 @@ struct VariablePosition {
 // declaration's storage follows its type everywhere else. Where the storage
 // sits is the target's to choose; a target whose own language gives a
 // declaration storage is handed none of this.
-struct OpenVariablesInstr {};
+struct VariableStorageInstr {};
 
-struct VariableAddressInstr {
+// A variable exists from its declaration to the end of the block declaring it
+// (LRM 6.21), as a C automatic variable does: it is begun each time its
+// declaration is reached, which yields a borrowed pointer to its storage, and
+// ended on every way out of that block. Between an end and the next begin the
+// position holds nothing.
+struct BeginVariableInstr {
   Operand variables;
   VariablePosition position;
 };
 
-struct CloseVariablesInstr {
+struct EndVariableInstr {
   Operand variables;
+  VariablePosition position;
 };
 
 // The extent in which a handler of this frame handles `exception`, what a
@@ -754,7 +758,7 @@ using Rvalue = std::variant<
     CallInstr, ProductInstr, UnionInstr, ClosureInstr, ArrayInstr,
     VectorGetInstr, DiscriminantInstr, LoadInstr, OverlaidLoadInstr,
     AddrOfInstr, BinaryInstr, UnaryInstr, CastInstr, HandleCastInstr,
-    DynamicCastInstr, LandingInstr, OpenVariablesInstr, VariableAddressInstr,
+    DynamicCastInstr, LandingInstr, VariableStorageInstr, BeginVariableInstr,
     UseInstr>;
 
 // A value computed once and consumed where it is used, with a pure dataflow
@@ -777,9 +781,9 @@ struct AssignInstr {
 
 // One step of a block: an assignment, or a statement that yields nothing --
 // a write into a value already there, a frame's bytes coming into or going out
-// of use, or a handler's extent beginning or ending.
+// of use, a variable ending, or a handler's extent beginning or ending.
 using InstrData = std::variant<
-    AssignInstr, StoreInstr, BitsStoreInstr, StorageInstr, CloseVariablesInstr,
+    AssignInstr, StoreInstr, BitsStoreInstr, StorageInstr, EndVariableInstr,
     BeginHandlingInstr, EndHandlingInstr>;
 
 struct Instr {

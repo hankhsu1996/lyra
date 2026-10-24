@@ -313,6 +313,7 @@ auto BuildValueConversion(
           [&](const mir::AssociativeArrayType& t) { return none(t); },
           [&](const mir::WildcardIndexType& t) { return none(t); },
           [&](const mir::AnyType& t) { return none(t); },
+          [&](const mir::WeakManagedRefType& t) { return none(t); },
           [&](const mir::ErasedValueType& t) { return none(t); },
           [&](const mir::MachineCStringType& t) { return none(t); },
           [&](const mir::MachineBoolType& t) { return none(t); },
