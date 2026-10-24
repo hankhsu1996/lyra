@@ -10,7 +10,9 @@
 // here is that count, read off the lowered design through the same entry the
 // command line uses, in both directions -- one body where the repetitions agree
 // and one per repetition where they do not, so a run that shared nothing and a
-// run that shared what it must not are each a failure.
+// run that shared what it must not are each a failure. That a design compiles
+// nothing of Lyra's own it did not ask for is a property of the same kind, and
+// is asserted here too.
 
 #include <cstddef>
 #include <filesystem>
@@ -30,6 +32,7 @@
 #include "lyra/diag/sink.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace {
 
@@ -1451,6 +1454,48 @@ endmodule
   EXPECT_EQ(BodiesOf(*design, "Leaf"), 2U);
   EXPECT_EQ(UnitsOf(*design, "Mid"), 1U);
   EXPECT_EQ(BodiesOf(*design, "Mid"), 2U);
+}
+
+// Whether a unit of `design` declares a class named `name`.
+auto DeclaresAClassNamed(const LoweredUnits& design, std::string_view name)
+    -> bool {
+  for (const lyra::hir::CompilationUnit& unit : design) {
+    for (const lyra::hir::ClassId id : unit.classes.Ids()) {
+      if (lyra::support::DisplayOf(unit.classes.PathOf(id)) == name) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// What keeps every covergroup type of the run, which whatever counts coverage
+// is reached through.
+constexpr std::string_view kCoverageRegistry = "coverage_registry";
+
+TEST(ArtifactCount, ADesignAskingForNoCoverageCompilesNothingOfIt) {
+  // Counting coverage is asked for by a covergroup or a coverage function (LRM
+  // 19.3, 19.9); a design writing neither compiles nothing that counts it.
+  const auto design = LowerDesign(R"(
+module Top;
+  initial $display("no coverage");
+endmodule
+)");
+  ASSERT_TRUE(design.has_value());
+  EXPECT_FALSE(DeclaresAClassNamed(*design, kCoverageRegistry));
+}
+
+TEST(ArtifactCount, ACoverageFunctionAsksForWhatCountsCoverage) {
+  // `$get_coverage` answers over every covergroup type of the run, none here
+  // (LRM 19.11), and asks what keeps them.
+  const auto design = LowerDesign(R"(
+module Top;
+  real overall;
+  initial overall = $get_coverage();
+endmodule
+)");
+  ASSERT_TRUE(design.has_value());
+  EXPECT_TRUE(DeclaresAClassNamed(*design, kCoverageRegistry));
 }
 
 }  // namespace

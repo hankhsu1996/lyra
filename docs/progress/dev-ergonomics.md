@@ -355,10 +355,10 @@ layer directly.
       in the design's code and in the runtime alike, on both backends and through an emitted
       project's recipe. The sanitizer run that checks Lyra's own memory builds every program of the
       corpus that way, and holds what it finds unfixed in a record of its own; class objects that
-      name each other, never reclaimed, are the one entry. Not built: a user's foreign sources are
-      not instrumented on the execution backend, though their reads through the C library are
-      checked; and what the design printed before a report is lost with the run, as it is when a
-      fault ends one.
+      name each other, never reclaimed, are all it holds, a class embedding a covergroup among them.
+      Not built: a user's foreign sources are not instrumented on the execution backend, though
+      their reads through the C library are checked; and what the design printed before a report is
+      lost with the run, as it is when a fault ends one.
 
 ## Out of Scope
 

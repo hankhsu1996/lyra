@@ -34,6 +34,7 @@
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/unit_body_ref.hpp"
 #include "lyra/hir/unit_signatures.hpp"
+#include "lyra/lowering/ast_to_hir/coverage_library.hpp"
 #include "lyra/lowering/ast_to_hir/declaration_scopes.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/ast_to_hir/name_in_a_path.hpp"
@@ -320,7 +321,7 @@ auto BindEveryBody(
   return std::move(binder.covergroups);
 }
 
-// Binds what one of Lyra's definitions of `std` holds, and notes whether the
+// Binds what one class of Lyra's own SystemVerilog holds, and notes whether the
 // front end refused any of it. The front end reports what it refuses once,
 // before any definition is specialized, so a definition it cannot elaborate
 // for the parameters a design gave it would otherwise reach lowering as a
@@ -343,11 +344,11 @@ struct BindsADefinition
   }
 };
 
-// Lyra's definition of each class of `std` a design names is specialized once
-// every body is bound, so it is bound in its turn before specializations are
-// collected, as any body naming one is. The definitions are Lyra's own text,
-// so one the front end refuses is Lyra's defect. A coverpoint's class is such a
-// specialization too, at the coverpoint's type.
+// Lyra's definition of each class of `std` a design names, and the coverage
+// library's coverpoint class at each coverpoint's type, are specialized once
+// every body is bound, so each is bound in its turn before specializations are
+// collected, as any body naming one is. Both are Lyra's own text, so one the
+// front end refuses is Lyra's defect.
 void BindDefinition(const slang::ast::ClassType& definition) {
   BindsADefinition binder;
   definition.visit(binder);
@@ -361,12 +362,15 @@ void BindDefinition(const slang::ast::ClassType& definition) {
 }
 
 void BindEveryDefinition(
-    const StdDefinitions& definitions, const CoverageLibrary& coverage) {
+    const StdDefinitions& definitions,
+    const std::optional<CoverageLibrary>& coverage) {
   for (const auto& [_, definition] : definitions) {
     BindDefinition(*definition);
   }
-  for (const auto& [_, definition] : coverage.integral_coverpoints) {
-    BindDefinition(*definition);
+  if (coverage.has_value()) {
+    for (const auto& [_, definition] : coverage->integral_coverpoints) {
+      BindDefinition(*definition);
+    }
   }
 }
 
@@ -509,7 +513,7 @@ struct DeclaredDesign::Units {
   SensitivityAnalyzer sensitivity;
   SpecializationPolicy specialization;
   StdDefinitions std_classes;
-  CoverageLibrary coverage;
+  std::optional<CoverageLibrary> coverage;
   SpecializationHomes specialization_homes;
   LoweringFacts facts;
   std::vector<TopLevelUnit> tops;

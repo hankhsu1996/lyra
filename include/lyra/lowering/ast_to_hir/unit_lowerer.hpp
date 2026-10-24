@@ -39,6 +39,7 @@
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/climb.hpp"
+#include "lyra/lowering/ast_to_hir/coverage_library.hpp"
 #include "lyra/lowering/ast_to_hir/declaration_scopes.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
@@ -146,7 +147,7 @@ using ProceduralStaticBindings =
 // The owner is named by the frontend's own scope, which lives as long as the
 // elaborated design and is what a reader means by the scope.
 struct MintedProceduralScope {
-  const slang::ast::Scope* owner;
+  const slang::ast::Scope* owner = nullptr;
   hir::ProceduralScopeId scope;
 };
 
@@ -519,8 +520,9 @@ using PlacedSpecializations = std::unordered_map<
 // elided rather than rejected, what decides the name of every unit, which
 // every party naming one reads, the specializations placed in a unit from a
 // generic declared elsewhere, which only the design as a whole lists, and the
-// class defining each class of `std` a design names, which only the design as
-// a whole can make. The slang compilation itself is deliberately absent:
+// class defining each class of `std` a design names and the coverage library's
+// classes where the design asks for coverage, which only the design as a whole
+// can make. The slang compilation itself is deliberately absent:
 // walking top instances is the driver's job, and a unit lowering that could
 // reach it would be able to read another unit.
 class LoweringFacts {
@@ -530,7 +532,7 @@ class LoweringFacts {
       support::AssertionPolicy assertion_policy,
       const SpecializationPolicy& specialization,
       const PlacedSpecializations& placed, const StdDefinitions& std_classes,
-      const CoverageLibrary& coverage)
+      const std::optional<CoverageLibrary>& coverage)
       : sensitivity_analyzer_(&sensitivity_analyzer),
         assertion_policy_(assertion_policy),
         specialization_(&specialization),
@@ -555,9 +557,16 @@ class LoweringFacts {
     return it == std_classes_->end() ? nullptr : it->second;
   }
 
-  // What every covergroup's class is written over (LRM 19).
+  // What every covergroup's class is written over (LRM 19). The compilation
+  // reads it wherever a covergroup or a coverage function is written, and only
+  // those ask for it.
   [[nodiscard]] auto Coverage() const -> const CoverageLibrary& {
-    return *coverage_;
+    if (!coverage_->has_value()) {
+      throw InternalError(
+          "a design asking for coverage was compiled without the coverage "
+          "library -- please report this as a bug");
+    }
+    return **coverage_;
   }
 
   [[nodiscard]] auto Sensitivity() const -> SensitivityAnalyzer& {
@@ -578,7 +587,7 @@ class LoweringFacts {
   const SpecializationPolicy* specialization_;
   const PlacedSpecializations* placed_;
   const StdDefinitions* std_classes_;
-  const CoverageLibrary* coverage_;
+  const std::optional<CoverageLibrary>* coverage_;
 };
 
 // Per-unit lowerer, over a module instance body or a package. It holds the
@@ -1385,10 +1394,10 @@ class UnitLowerer {
   // lowers once every structural scope has bound its own declarations; what is
   // carried here is what the declaration half already settled.
   struct PendingClassBody {
-    const slang::ast::ClassType* cls;
+    const slang::ast::ClassType* cls = nullptr;
     hir::ClassId id;
     diag::SourceSpan span;
-    const slang::ast::Scope* replicating_scope;
+    const slang::ast::Scope* replicating_scope = nullptr;
     // Held by pointer because its identity is its address: the procedural
     // scopes a body may name are minted into `decl->procedural_scopes` in the
     // declaration half and looked up by the registry they belong to, so the
@@ -1397,7 +1406,7 @@ class UnitLowerer {
     std::vector<const slang::ast::SubroutineSymbol*> defined_methods;
     std::vector<const slang::ast::MethodPrototypeSymbol*> pure_prototypes;
     std::vector<const slang::ast::ConstraintBlockSymbol*> constraint_blocks;
-    const slang::ast::SubroutineSymbol* constructor_sym;
+    const slang::ast::SubroutineSymbol* constructor_sym = nullptr;
   };
 
   // Lowers the body half of every class `scope` replicates: each method, the
@@ -1900,10 +1909,10 @@ class UnitLowerer {
   // expressions name what encloses it, so it lowers with the scope
   // replicating it.
   struct PendingCovergroup {
-    const slang::ast::CovergroupType* covergroup;
+    const slang::ast::CovergroupType* covergroup = nullptr;
     hir::CovergroupId id;
     diag::SourceSpan span;
-    const slang::ast::Scope* replicating_scope;
+    const slang::ast::Scope* replicating_scope = nullptr;
   };
   std::unordered_map<const slang::ast::Scope*, std::vector<PendingCovergroup>>
       pending_covergroups_;

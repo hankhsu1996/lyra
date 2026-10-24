@@ -113,5 +113,7 @@ the variable, applying the variable's bound as any assignment to it does (LRM 7.
   rules.
 - **Compiling the definitions only into designs that name one of their classes.** Every
   compilation-unit scope with content is compiled, and nothing records that a non-generic class was
-  named before lowering; a `mailbox` specialization exists only where one is named. A cold C++ build
-  measured 7.62 s against 7.41 s with the two classes beside a design that names nothing of them.
+  named before lowering: a text names one by an ordinary identifier a design may give a class of its
+  own, where coverage is asked for by a keyword or a system name; a `mailbox` specialization exists
+  only where one is named. A cold C++ build measured 7.62 s against 7.41 s with the two classes
+  beside a design that names nothing of them.

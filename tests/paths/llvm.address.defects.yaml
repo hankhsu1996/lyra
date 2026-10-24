@@ -10,3 +10,8 @@
 # A case may appear in this file or in either of the path's own records, never
 # in two.
 08_classes/class_names_a_class_of_its_own_scope: "ERROR: LeakSanitizer: detected memory leaks"
+19_functional_coverage/block_events_sample_at_begin_and_end: "ERROR: LeakSanitizer: detected memory leaks"
+19_functional_coverage/covergroup_extended_across_units: "ERROR: LeakSanitizer: detected memory leaks"
+19_functional_coverage/covergroups_reached_from_another_unit: "ERROR: LeakSanitizer: detected memory leaks"
+19_functional_coverage/embedded_covergroup_extended_by_a_derived_class: "ERROR: LeakSanitizer: detected memory leaks"
+19_functional_coverage/embedded_covergroup_reads_its_object: "ERROR: LeakSanitizer: detected memory leaks"
