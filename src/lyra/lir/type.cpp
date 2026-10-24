@@ -103,6 +103,8 @@ auto RuntimeLibraryKindName(RuntimeLibraryKind kind) -> const char* {
       return "read report";
     case RuntimeLibraryKind::kWait:
       return "wait";
+    case RuntimeLibraryKind::kLeasedReference:
+      return "leased reference";
     case RuntimeLibraryKind::kObjectWrite:
       return "object write";
     case RuntimeLibraryKind::kCancellationTarget:
@@ -500,6 +502,7 @@ auto Type::IsAddressOnly() const -> bool {
       case RuntimeLibraryKind::kObservation:
       case RuntimeLibraryKind::kReadReport:
       case RuntimeLibraryKind::kWait:
+      case RuntimeLibraryKind::kLeasedReference:
       case RuntimeLibraryKind::kObjectWrite:
       case RuntimeLibraryKind::kControlEffect:
       case RuntimeLibraryKind::kObjectDefinition:
@@ -627,6 +630,10 @@ auto Type::HeldAs() const -> std::optional<Holding> {
               // Held by the body across every stop it makes at it.
               case RuntimeLibraryKind::kWait:
                 return LibraryObject::kWait;
+              // Held by the binding while the call runs; ending it lets go of
+              // what it kept.
+              case RuntimeLibraryKind::kLeasedReference:
+                return LibraryObject::kLeasedReference;
               // Held by the writer for as long as the write lasts; ending it
               // is what tells the object it was written.
               case RuntimeLibraryKind::kObjectWrite:

@@ -88,6 +88,8 @@ auto LayoutOfLibraryObject(RuntimeLibraryKind kind) -> support::Layout {
       return support::kReadReportStorage.layout;
     case RuntimeLibraryKind::kWait:
       return support::kWaitStorage.layout;
+    case RuntimeLibraryKind::kLeasedReference:
+      return support::kLeasedReferenceStorage.layout;
     case RuntimeLibraryKind::kHierarchySegment:
       return support::kHierarchySegmentStorage.layout;
     case RuntimeLibraryKind::kChannelCancellation:

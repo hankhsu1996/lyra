@@ -491,6 +491,8 @@ class MirDumper {
                   return "RuntimeLibrary(ReadReport)";
                 case RuntimeLibraryKind::kWait:
                   return "RuntimeLibrary(Wait)";
+                case RuntimeLibraryKind::kLeasedReference:
+                  return "RuntimeLibrary(LeasedReference)";
                 case RuntimeLibraryKind::kObjectDefinition:
                   return "RuntimeLibrary(ObjectDefinition)";
                 case RuntimeLibraryKind::kConstructionTable:

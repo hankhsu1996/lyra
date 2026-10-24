@@ -784,6 +784,27 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "refer_property",
           .declaration = RuntimeFunction("ReferProperty"),
           .reaches_an_object = true};
+    case BuiltinFn::kLeaseObject:
+      return {
+          .name = "lease_object",
+          .declaration = RuntimeFunction("LeaseObject")};
+    case BuiltinFn::kReferElementLeased:
+      return {
+          .name = "refer_element_leased",
+          .declaration = Method{"ReferElementLeased"},
+          .selects = PartSelection::kElement,
+          .operands = {kMachine, kPosition}};
+    case BuiltinFn::kAssocReferElementLeased:
+      return {
+          .name = "assocarray_refer_element_leased",
+          .declaration = Method{"ReferElementLeased"},
+          .selects = PartSelection::kElement,
+          .operands = {kMachine, kKey}};
+    case BuiltinFn::kLeasedReference:
+      return {
+          .name = "leased_reference",
+          .declaration = Method{"Reference"},
+          .takes_a_type_argument = true};
     case BuiltinFn::kReferenceReportsTo:
       return {
           .name = "reference_reports_to",

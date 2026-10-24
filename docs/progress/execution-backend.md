@@ -279,11 +279,11 @@ ownership, or native in-frame layout) for every value.
       A write into a component keeps only that component's value from before the write.
       `../decisions/a-write-compares-what-it-reached.md` holds the design.
 
-      Still unsettled: a variable-size container
-      preserving every element's identity across an insertion or a removal (LRM 7.10.3), with an
-      element removed while a reference is bound going on existing for whoever holds it (LRM
-      13.5.2), is a question of the container's representation that
-      `../decisions/storage-owns-its-value.md` leaves open.
+      An element of a queue or an associative array keeps its identity across an insertion or a
+      removal of another (LRM 7.10.3), and storage a call binds by reference -- a removed element,
+      a resized dynamic array's elements, a property of an object the program lets go of -- goes on
+      existing until the call returns, on both backends (LRM 13.5.2, 8.29).
+      `../decisions/a-bound-reference-leases-what-it-reaches-through.md` holds the design.
 
 - [x] **Writing into a local that holds a value rather than storage.** Every declared local has
       storage of its own -- a slot of the frame, or, for a type whose values the runtime builds,

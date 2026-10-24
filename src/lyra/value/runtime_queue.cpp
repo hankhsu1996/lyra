@@ -102,6 +102,10 @@ auto RuntimeQueue::ElementMut(
   return Core().ElementMut(position, formed);
 }
 
+auto RuntimeQueue::Lease(void* element) const -> ContainerLease {
+  return Core().Lease(element);
+}
+
 auto RuntimeQueue::Slice(
     std::optional<std::int64_t> lo, std::optional<std::int64_t> hi,
     const QueueType& type) const -> RuntimeQueue {

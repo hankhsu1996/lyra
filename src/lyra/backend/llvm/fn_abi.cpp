@@ -806,6 +806,7 @@ auto CallArranger::ConstructionOf(
               case lir::RuntimeLibraryKind::kObservation:
               case lir::RuntimeLibraryKind::kReadReport:
               case lir::RuntimeLibraryKind::kWait:
+              case lir::RuntimeLibraryKind::kLeasedReference:
               case lir::RuntimeLibraryKind::kObjectWrite:
               case lir::RuntimeLibraryKind::kCancellationTarget:
               case lir::RuntimeLibraryKind::kTimer:

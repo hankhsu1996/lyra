@@ -60,7 +60,8 @@ element reference is a pointer into it.
 **D4. Resize, whole replacement and `delete()` create a new generation and outdate references into
 the old one** -- which is exactly the set LRM 13.5.2 names for a dynamic array. If such a reference
 is still live, the old generation is retained **whole** until that reference's required lifetime
-ends.
+ends, by a lease the call's binding holds on the generation
+([a-bound-reference-leases-what-it-reaches-through](a-bound-reference-leases-what-it-reaches-through.md)).
 
 **D5. This is Lyra policy where the standard is silent.** D1 and D2 are a choice among readings the
 text permits, not a requirement it states. A conformance case may assert them only with this entry

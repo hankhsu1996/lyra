@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/value/container_lease.hpp"
 #include "lyra/value/element_policy.hpp"
 #include "lyra/value/element_sequence.hpp"
 #include "lyra/value/formation.hpp"
@@ -146,6 +147,12 @@ class BasicQueue {
     }
     formed = Formation::kNowhere;
     return elem_.DiscardedWrite();
+  }
+
+  // A lease a call takes on `element`, an element of this queue, which it then
+  // goes on reaching though the queue removes it (LRM 13.5.2, 7.10.3).
+  [[nodiscard]] auto Lease(void* element) const -> ContainerLease {
+    return LeaseElement(elem_, element);
   }
 
   // LRM 7.10.1 queue slice: the elements from position `lo` through `hi`. A
@@ -374,7 +381,7 @@ class BasicQueue {
     }
     void* slot = At(position);
     Unlink(position);
-    elem_.Move(slot, out);
+    TakeElement(elem_, slot, out);
     FreeElement(elem_, slot);
   }
 

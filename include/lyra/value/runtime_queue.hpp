@@ -8,6 +8,7 @@
 #include "lyra/value/basic_queue.hpp"
 #include "lyra/value/bit_vec.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/container_lease.hpp"
 #include "lyra/value/element_type.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral.hpp"
@@ -81,6 +82,10 @@ class RuntimeQueue {
   // `formed` says which of the three it was.
   [[nodiscard]] auto ElementMut(
       std::optional<std::int64_t> position, Formation& formed) -> void*;
+
+  // A lease a call takes on `element`, one this array holds, which it then
+  // goes on reaching however the array changes (LRM 13.5.2).
+  [[nodiscard]] auto Lease(void* element) const -> ContainerLease;
 
   // LRM 7.10.1 slice, as a queue of `type`, the type the selection answers.
   [[nodiscard]] auto Slice(

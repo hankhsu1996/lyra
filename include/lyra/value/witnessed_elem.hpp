@@ -27,6 +27,16 @@ class WitnessedElem {
     return *element_;
   }
 
+  // The element type is stated as constant data, which lasts as long as the
+  // program does, so its address is this policy's opaque value.
+  [[nodiscard]] auto OpaqueValue() const -> const void* {
+    return element_;
+  }
+  [[nodiscard]] static auto FromOpaqueValue(const void* opaque)
+      -> WitnessedElem {
+    return WitnessedElem(*static_cast<const value::ElementType*>(opaque));
+  }
+
   [[nodiscard]] auto Default() const -> const void* {
     return element_->Default();
   }

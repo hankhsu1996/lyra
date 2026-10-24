@@ -150,8 +150,8 @@ associative array; the dynamic array is still open.
   identity has to be nameable as storage, and LIR's place vocabulary had member and dereference
   steps and no index step. How it is named is answered by
   [a-part-of-storage-is-reached-where-it-lies](a-part-of-storage-is-reached-where-it-lies.md): an
-  element and a component are place steps. How a detached element's ownership is expressed is still
-  a separate design.
+  element and a component are place steps. How a detached element is kept is
+  [a-bound-reference-leases-what-it-reaches-through](a-bound-reference-leases-what-it-reaches-through.md)'s.
 
 - **`jit-value-realization` invariant 6 no longer describes the identity-bearing aggregates.** Its
   ABI half -- values crossing as opaque handles, the runtime performing every operation -- is

@@ -771,27 +771,160 @@ auto PathPlace(
   return ReachedForWrite(unit, block, path, WriteEnd::kLanded);
 }
 
-auto PathReference(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
+namespace {
+
+// A reference to the whole of what `owner` holds: the place itself, or, for a
+// property, a step taken on its object.
+auto OwnerReference(
+    mir::CompilationUnit& unit, mir::Block& block, const PathOwner& owner)
     -> mir::ExprId {
-  mir::ExprId reference = std::visit(
+  return std::visit(
       Overloaded{
           [&](mir::ExprId place) {
             return BuildReferenceArg(
                 unit, block, place, block.exprs.Get(place).type);
           },
-          [&](const ObjectProperty& owner) {
+          [&](const ObjectProperty& property) {
             return PropertyReference(
-                unit, block, owner.object, owner.property, owner.type);
+                unit, block, property.object, property.property, property.type);
+          }},
+      owner);
+}
+
+// `step` taken on `reference` for a reference to the part.
+auto LentStep(
+    mir::CompilationUnit& unit, mir::Block& block, const DescentStep& step,
+    mir::ExprId reference) -> mir::ExprId {
+  return TakeStep(
+      unit, block, step, StepUse::kLend, reference,
+      unit.types.Intern(
+          mir::Type{mir::VariableRefType{
+              .pointee = step.part_type,
+              .mutability = mir::Mutability::kMutable}}));
+}
+
+// Whether a value of `container` is a dynamically sized array, whose elements
+// it can let go of while a call leases one: a queue's or an associative array's
+// element, which a removal ends, or a dynamic array's elements, which a resize
+// or an assignment replaces (LRM 13.5.2). A fixed-size array's elements live
+// as long as the array does.
+auto IsDynamicallySized(const mir::Type& container) -> bool {
+  return container.Is<mir::QueueType>() ||
+         container.Is<mir::DynamicArrayType>() ||
+         container.Is<mir::AssociativeArrayType>();
+}
+
+// The leasing step a call's binding takes where `step` reaches an element of a
+// dynamically sized `container`, named by how the step names the element; none
+// for any other step.
+struct ElementLease {
+  support::BuiltinFn entry;
+  mir::ExprId coordinate;
+};
+auto ElementLeaseFor(const DescentStep& step, const mir::Type& container)
+    -> std::optional<ElementLease> {
+  if (!IsDynamicallySized(container)) {
+    return std::nullopt;
+  }
+  return std::visit(
+      Overloaded{
+          [](const StepToElement& element) -> std::optional<ElementLease> {
+            return ElementLease{
+                .entry = support::BuiltinFn::kReferElementLeased,
+                .coordinate = element.position};
+          },
+          [](const StepToAssocElement& element) -> std::optional<ElementLease> {
+            return ElementLease{
+                .entry = support::BuiltinFn::kAssocReferElementLeased,
+                .coordinate = element.key};
+          },
+          [](const StepToBits&) -> std::optional<ElementLease> {
+            return std::nullopt;
+          },
+          [](const StepToElementRun&) -> std::optional<ElementLease> {
+            return std::nullopt;
+          },
+          [](const StepToCharacter&) -> std::optional<ElementLease> {
+            return std::nullopt;
+          },
+          [](const StepToQueueRun&) -> std::optional<ElementLease> {
+            return std::nullopt;
+          },
+          [](const StepToComponent&) -> std::optional<ElementLease> {
+            return std::nullopt;
+          },
+          [](const StepToUnionMember&) -> std::optional<ElementLease> {
+            return std::nullopt;
+          },
+          [](const StepToTaggedMember&) -> std::optional<ElementLease> {
+            return std::nullopt;
+          }},
+      step.to);
+}
+
+// The reference to `pointee` the leased reference `leased` carries.
+auto CarriedReference(
+    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId leased,
+    mir::TypeId pointee) -> mir::ExprId {
+  return block.exprs.Add(
+      mir::MakeBuiltinCall(
+          unit, block, support::BuiltinFn::kLeasedReference, leased,
+          std::nullopt, pointee, {},
+          unit.types.Intern(
+              mir::Type{mir::VariableRefType{
+                  .pointee = pointee,
+                  .mutability = mir::Mutability::kMutable}})));
+}
+
+}  // namespace
+
+auto PathReference(
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
+    -> mir::ExprId {
+  mir::ExprId reference = OwnerReference(unit, block, path.owner);
+  for (const DescentStep& step : path.descent) {
+    reference = LentStep(unit, block, step, reference);
+  }
+  return reference;
+}
+
+auto PathBoundReference(
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path,
+    const HoldLease& hold) -> mir::ExprId {
+  const mir::TypeId leased = unit.types.Intern(
+      mir::Type{mir::RuntimeLibraryType{
+          .kind = mir::RuntimeLibraryKind::kLeasedReference}});
+  const mir::ExprId owned = OwnerReference(unit, block, path.owner);
+  mir::ExprId reference = std::visit(
+      Overloaded{
+          [&](mir::ExprId) { return owned; },
+          [&](const ObjectProperty& property) {
+            return CarriedReference(
+                unit, block,
+                hold(block.exprs.Add(
+                    mir::MakeBuiltinCall(
+                        unit, block, support::BuiltinFn::kLeaseObject,
+                        std::nullopt, {owned}, leased))),
+                property.type);
           }},
       path.owner);
   for (const DescentStep& step : path.descent) {
-    reference = TakeStep(
-        unit, block, step, StepUse::kLend, reference,
-        unit.types.Intern(
-            mir::Type{mir::VariableRefType{
-                .pointee = step.part_type,
-                .mutability = mir::Mutability::kMutable}}));
+    const mir::Type& container =
+        unit.types.Get(unit.types.Get(block.exprs.Get(reference).type)
+                           .Get<mir::VariableRefType>()
+                           .pointee);
+    if (const std::optional<ElementLease> lease =
+            ElementLeaseFor(step, container)) {
+      reference = CarriedReference(
+          unit, block,
+          hold(block.exprs.Add(
+              mir::MakeBuiltinCall(
+                  unit, block, lease->entry, reference, {lease->coordinate},
+                  leased))),
+          step.part_type);
+    } else {
+      reference = LentStep(unit, block, step, reference);
+    }
   }
   return reference;
 }

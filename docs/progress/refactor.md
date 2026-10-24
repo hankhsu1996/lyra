@@ -3196,6 +3196,18 @@ source, or not yet tried.
       entry states the library class it acts on, as MIR states a member's owner, and the verifier
       refuses a call whose receiver is not of that class or one derived from it. Not blocked.
 
+- [ ] R253 -- Where a value a block expression declares ends is stated two ways. The lowering to the
+      machine model ends what a block expression's steps declare with the full-expression the block
+      expression stands in; the C++ backend writes a block expression as a lambda called where it
+      stands, so what its steps declare ends when the lambda returns, before the rest of that
+      full-expression runs, and so does a temporary its value makes. The producers read keep to the
+      shorter end: the block builder reads a place it ends with as a value, and the one producer
+      handing it a reference -- a select of a queue's element -- does so only where the queue
+      outlives the steps, and yields the element's value otherwise. The lowering to MIR thus assumes
+      a lifetime MIR's own contract does not state. Target: the lifetime is MIR's to state once and
+      both backends realize it; on the C++ side that means storage for such a declaration outside
+      the lambda, or a form that is not a lambda. Not blocked.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

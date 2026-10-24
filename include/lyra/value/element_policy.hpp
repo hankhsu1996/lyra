@@ -1,16 +1,22 @@
 #pragma once
 
+#include <algorithm>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <new>
+#include <span>
 #include <utility>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/value/bit_vec.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/container_lease.hpp"
 #include "lyra/value/frame_bound.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
+#include "lyra/value/layout.hpp"
 #include "lyra/value/small_box.hpp"
 
 namespace lyra::value {
@@ -31,6 +37,11 @@ namespace lyra::value {
 // folds over its elements and whoever knows the type the comparison has holds
 // as a value of it. A stream of bits (LRM 6.24.3) is an integral value, which
 // a policy writes one element's bits into and reads one element back out of.
+//
+// A policy also round-trips through an opaque address, as LLVM's
+// `PointerIntPair` does through `getOpaqueValue`, so storage a container
+// detached can be ended after the container is gone: whatever the address
+// names lasts as long as the program.
 template <typename P>
 concept ElementPolicy =
     std::copyable<P> &&
@@ -46,6 +57,8 @@ concept ElementPolicy =
       { p.Agree(in, in) } -> std::same_as<bool>;
       { p.BitIdentical(in, in) } -> std::same_as<bool>;
       { p.HasUnknown(in) } -> std::same_as<bool>;
+      { p.OpaqueValue() } -> std::same_as<const void*>;
+      { P::FromOpaqueValue(in) } -> std::same_as<P>;
     };
 
 // A type whose default is the one its declaration states (LRM 7.2.2, Table
@@ -141,6 +154,19 @@ class StaticElem {
   }
   [[nodiscard]] static auto HasUnknown(const void* value) -> bool {
     return Of(value).HasUnknown();
+  }
+
+  // The type is the whole of this policy, so its opaque value is null.
+  [[nodiscard]] static auto OpaqueValue() -> const void* {
+    return nullptr;
+  }
+  [[nodiscard]] static auto FromOpaqueValue(const void* opaque) -> StaticElem {
+    if (opaque != nullptr) {
+      throw InternalError(
+          "an element policy over a C++ type is rebuilt from an opaque value "
+          "it never gave -- please report this as a bug");
+    }
+    return {};
   }
 
   // LRM 20.6.2 `$bits` / 20.9 `$countbits` of one element.
@@ -278,19 +304,102 @@ class StorageFor {
   void* storage_;
 };
 
-// Storage of its own holding a copy of `value`.
+namespace detail {
+
+// How an element a container keeps in storage of its own is laid out: the
+// element at the start, and after it the count of leases on it.
+struct SlotShape {
+  std::size_t element_size;
+  std::size_t element_align;
+
+  [[nodiscard]] auto CountAt() const -> std::size_t {
+    return AlignTo(element_size, alignof(LeaseCount));
+  }
+  [[nodiscard]] auto Size() const -> std::size_t {
+    return CountAt() + sizeof(LeaseCount);
+  }
+  [[nodiscard]] auto Align() const -> std::size_t {
+    return std::max(element_align, alignof(LeaseCount));
+  }
+  [[nodiscard]] auto CountOf(void* slot) const -> LeaseCount& {
+    return CountLyingAt(
+        std::span(static_cast<std::byte*>(slot), Size())
+            .subspan(CountAt())
+            .data());
+  }
+
+ private:
+  [[nodiscard]] static auto CountLyingAt(void* at) -> LeaseCount& {
+    return *static_cast<LeaseCount*>(at);
+  }
+};
+
 template <ElementPolicy Elem>
-[[nodiscard]] auto CopyElement(const Elem& elem, const void* value) -> void* {
-  StorageFor storage(elem);
-  elem.Copy(value, storage.Get());
-  return storage.Release();
+[[nodiscard]] auto ShapeOf(const Elem& elem) -> SlotShape {
+  return SlotShape{.element_size = elem.Size(), .element_align = elem.Align()};
 }
 
-// Ends the element at `slot` and gives its storage back.
+// Gives back the storage of the element at `slot`, which holds no value.
+inline void DeleteSlot(const SlotShape& shape, void* slot) {
+  std::destroy_at(&shape.CountOf(slot));
+  ::operator delete(slot, std::align_val_t{shape.Align()});
+}
+
+// Ends an element its container detached while a call leased it.
+template <ElementPolicy Elem>
+void EndDetachedSlot(void* slot, const void* element) {
+  const Elem elem = Elem::FromOpaqueValue(element);
+  elem.Destroy(slot);
+  DeleteSlot(ShapeOf(elem), slot);
+}
+
+}  // namespace detail
+
+// Storage of its own holding a copy of `value`, which a call may lease.
+template <ElementPolicy Elem>
+[[nodiscard]] auto CopyElement(const Elem& elem, const void* value) -> void* {
+  const detail::SlotShape shape = detail::ShapeOf(elem);
+  StorageFor slot(shape);
+  std::construct_at(&shape.CountOf(slot.Get()));
+  elem.Copy(value, slot.Get());
+  return slot.Release();
+}
+
+// The container lets the element at `slot` go: it is ended and its storage
+// given back, unless a call leases it, which detaches it and leaves ending it
+// to the last lease (LRM 13.5.2).
 template <ElementPolicy Elem>
 void FreeElement(const Elem& elem, void* slot) {
+  const detail::SlotShape shape = detail::ShapeOf(elem);
+  LeaseCount& count = shape.CountOf(slot);
+  if (count.held > 0) {
+    count.detached = true;
+    return;
+  }
   elem.Destroy(slot);
-  ::operator delete(slot, std::align_val_t{elem.Align()});
+  detail::DeleteSlot(shape, slot);
+}
+
+// The value of the element at `slot`, built in `out`, as the container lets
+// the element go: moved out where nothing leases it, copied where a call does,
+// since that call goes on reading it.
+template <ElementPolicy Elem>
+void TakeElement(const Elem& elem, void* slot, void* out) {
+  if (detail::ShapeOf(elem).CountOf(slot).held > 0) {
+    elem.Copy(slot, out);
+  } else {
+    elem.Move(slot, out);
+  }
+}
+
+// A lease a call takes on the element at `slot`, which a container keeps in
+// storage of its own.
+template <ElementPolicy Elem>
+[[nodiscard]] auto LeaseElement(const Elem& elem, void* slot)
+    -> ContainerLease {
+  return ContainerLease(
+      detail::ShapeOf(elem).CountOf(slot), slot, &detail::EndDetachedSlot<Elem>,
+      elem.OpaqueValue());
 }
 
 }  // namespace lyra::value

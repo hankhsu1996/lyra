@@ -26,6 +26,7 @@
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/value_storage_core.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/container_lease.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/object_ref.hpp"
@@ -875,6 +876,49 @@ struct ErasedReference {
       -> ErasedReference;
 };
 
+// What keeps storage a call binds by reference in existence until the call
+// returns, whatever the program does meanwhile (LRM 13.5.2, 8.29): a share of
+// the object a property lies in, or a lease on the element, or the generation
+// of elements, a container keeps it in. A binding takes one for each such
+// thing its reference reaches through; one taken where an index names no
+// element holds nothing.
+class StorageLease {
+ public:
+  StorageLease() = default;
+  explicit StorageLease(std::shared_ptr<GcObject> object)
+      : owner_(std::move(object)) {
+  }
+  explicit StorageLease(value::ContainerLease lease)
+      : owner_(std::move(lease)) {
+  }
+
+ private:
+  std::variant<std::monostate, std::shared_ptr<GcObject>, value::ContainerLease>
+      owner_;
+};
+
+// A reference a call binds, and the lease keeping what it names in existence
+// while the call runs. Whoever binds it holds this while the call runs and
+// hands the call the reference alone, which owns nothing.
+class LeasedReference {
+ public:
+  LeasedReference(StorageLease lease, const ErasedReference& reference)
+      : lease_(std::move(lease)), reference_(reference) {
+  }
+
+  [[nodiscard]] auto Erased() const -> const ErasedReference& {
+    return reference_;
+  }
+  template <value::LyraValue T>
+  [[nodiscard]] auto Reference() const -> VariableRef<T> {
+    return VariableRef<T>{reference_};
+  }
+
+ private:
+  StorageLease lease_;
+  ErasedReference reference_;
+};
+
 // A write of a whole value through `lent` (LRM 4.3, 10.6): one the variable
 // overrides is handed to it as `overridden` hands it, one nobody waits on is
 // written as `assign` writes it, and one that leaves the bits as `identical`
@@ -1018,6 +1062,22 @@ class VariableRef {
         erased_.Part(&element, formed, RetainedStepTo<T>(key))};
   }
 
+  // The same, bound by a call, with a lease on the element the array keeps,
+  // which the array cannot then end before the call returns (LRM 13.5.2).
+  template <typename Key>
+  [[nodiscard]] auto ReferElementLeased(const Key& key) const
+      -> LeasedReference {
+    erased_.AdmitStep();
+    value::Formation formed{};
+    auto& element = Storage().ElementMut(key, formed);
+    const ErasedReference part =
+        erased_.Part(&element, formed, RetainedStepTo<T>(key));
+    if (formed == value::Formation::kNowhere) {
+      return {StorageLease{}, part};
+    }
+    return {StorageLease(Storage().Lease(&element)), part};
+  }
+
   template <std::size_t I>
   [[nodiscard]] auto ReferComponent() const {
     auto& component = Storage().template Component<I>();
@@ -1146,6 +1206,15 @@ auto ReferProperty(const value::ObjectRef& handle)
     -> VariableRef<typename MemberOf<decltype(Property)>::Value> {
   return ReferProperty<Property>(
       handle.View<typename MemberOf<decltype(Property)>::Class>());
+}
+
+// `reference`, which names storage an object holds, bound by a call with a
+// share of that object, which then stays until the call returns though the
+// program lets go of every handle to it (LRM 8.29, 13.5.2).
+auto LeaseObject(const ErasedReference& reference) -> LeasedReference;
+template <value::LyraValue T>
+auto LeaseObject(const VariableRef<T>& reference) -> LeasedReference {
+  return LeaseObject(reference.Erased());
 }
 
 // What a wait on the storage `reference` names enrols on (LRM 13.5.2): what

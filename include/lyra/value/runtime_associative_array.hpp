@@ -10,6 +10,7 @@
 #include "lyra/value/basic_associative_array.hpp"
 #include "lyra/value/bit_vec.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/container_lease.hpp"
 #include "lyra/value/element_type.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral.hpp"
@@ -129,6 +130,10 @@ class RuntimeAssociativeArray {
   // allocated where absent; an index naming no entry lands where no read
   // reaches.
   [[nodiscard]] auto ElementMut(IndexView index, Formation& formed) -> void*;
+
+  // A lease a call takes on `element`, one this array holds, which it then
+  // goes on reaching however the array changes (LRM 13.5.2).
+  [[nodiscard]] auto Lease(void* element) const -> ContainerLease;
 
   // LRM 7.9.11: the element `index` names set to a copy of `value`.
   void Store(IndexView index, const void* value);

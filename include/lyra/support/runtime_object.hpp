@@ -38,6 +38,9 @@ enum class LibraryObject : std::uint8_t {
   kAnyReference,
   // A reference to an object that does not keep it (LRM 8.30).
   kWeakReference,
+  // A reference a call binds, with the lease keeping what it names in
+  // existence until the call returns (LRM 13.5.2).
+  kLeasedReference,
 };
 
 // An object generated code holds by value: it gives the object storage in its
@@ -86,6 +89,8 @@ inline constexpr ObjectLayout kChannelCancellationStorage{
     .layout = {.size = 24, .align = 8}, .ends_with_nothing_to_do = false};
 inline constexpr ObjectLayout kWeakReferenceStorage{
     .layout = {.size = 24, .align = 8}, .ends_with_nothing_to_do = false};
+inline constexpr ObjectLayout kLeasedReferenceStorage{
+    .layout = {.size = 112, .align = 8}, .ends_with_nothing_to_do = false};
 
 // The spelling the entries over an object carry, stated once for both sides.
 // A value domain's object is spelled as the domain is, so every entry over a
