@@ -229,9 +229,7 @@ auto LowerActionArm(
   code.result_type = unit.builtins.coroutine_void;
 
   const WalkFrame frame =
-      parent.WithBlock(&code.Body())
-          .WithBindings(&bindings)
-          .WithScopeNameBorrowedHandle(action.RootScope().NameBorrowedHandle())
+      action.InRootScope(parent.WithBlock(&code.Body()).WithBindings(&bindings))
           .WithBodyCanWait(true);
 
   auto appended = std::visit(
@@ -778,9 +776,7 @@ auto LowerAdvance(
 
   mir::Block& body = code.Body();
   const WalkFrame frame =
-      parent.WithBlock(&body)
-          .WithBindings(&bindings)
-          .WithScopeNameBorrowedHandle(action.RootScope().NameBorrowedHandle());
+      action.InRootScope(parent.WithBlock(&body).WithBindings(&bindings));
   const AttemptsPlace attempts = [&](mir::Block& block) {
     return BuildEvaluationAttemptsExpr(block, frame, lowerer, id);
   };

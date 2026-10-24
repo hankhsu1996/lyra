@@ -1381,12 +1381,13 @@ enum class BuiltinFn : std::uint16_t {
   // it returns, passes, or compares the object itself, and how a target answers
   // with one follows from how that target realizes a handle.
   kSelfHandle,
-  // LRM 21.2.1.5 `%m` source: yields the receiver scope's hierarchical name as
-  // an SV `string`. Walks `Parent()` from the receiver up to the implicit root
-  // and joins the name of each scope a path can reach with `.`. `%m` lowering
-  // reads the result as an ordinary value-string print item rather than as a
-  // context-dependent format kind.
-  kHierarchicalPath,
+  // LRM 21.2.1.5 `%m` source: yields, as an SV `string`, the hierarchical name
+  // of what its argument names inside the receiver scope. Walks `Parent()`
+  // from the receiver up to the implicit root, joins the name of each scope a
+  // path can reach with `.`, and joins the argument after them where it names
+  // anything. `%m` lowering reads the result as an ordinary value-string print
+  // item rather than as a context-dependent format kind.
+  kHierarchicalPathOf,
 };
 
 // A function the library declares in a scope of its own: the scope, and the

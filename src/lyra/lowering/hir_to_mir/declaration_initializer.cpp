@@ -52,7 +52,11 @@ auto IntegrateStaticInitializer(
       mir::EnclosingHops{}));
   mir::ExprId init_value{};
   if (decl.init.has_value()) {
-    auto init_or = process.LowerExpr(body.exprs.Get(*decl.init), value_frame);
+    // The initializer is written in the scope declaring the variable, whose
+    // name a construct in it reports (LRM 21.2.1.5), wherever it runs.
+    auto init_or = process.LowerExpr(
+        body.exprs.Get(*decl.init),
+        value_frame.WithScopeName(process.Scopes().Get(binding.scope).name));
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     init_value = value_block.exprs.Add(*std::move(init_or));
   } else {

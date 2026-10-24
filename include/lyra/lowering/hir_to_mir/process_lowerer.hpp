@@ -373,6 +373,11 @@ class ProcessLowerer {
     return scopes_->Get(hir_body_->root_scope);
   }
 
+  // `frame` inside this body's root scope, where the body's walk starts.
+  [[nodiscard]] auto InRootScope(const WalkFrame& frame) const -> WalkFrame {
+    return frame.WithScopeName(RootScope().name);
+  }
+
   // Assembles the completion-payload value a `return` should carry in the
   // subroutine being lowered: the product of the function's explicit return
   // value (or its implicit result variable when a `return` supplies none)

@@ -228,7 +228,8 @@ auto PopulateNamespaceOwnStorage(
     const StaticVarBindings& statics = subroutine_statics.Get(id);
     ProcessLowerer body_lowerer(
         unit_lowerer, nullptr, scope.time_resolution, src.body, std::nullopt,
-        WalkFrame{}, scope_nodes, statics);
+        WalkFrame{}.WithScopeName(unit_lowerer.Hir().fixed_name), scope_nodes,
+        statics);
     for (const StaticVarBinding& binding : statics) {
       auto integ = IntegrateStaticInitializer(
           body_lowerer, src.body,
@@ -867,8 +868,10 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   // cell each. The frame has no owner class, so the produced body carries no
   // `self`
   // -- and with no object to hang one under, none of its scopes owns a name
-  // node.
+  // node. Every body the namespace owns starts from one frame, which says what
+  // a name reported in it begins with.
   const hir::StructuralScope& scope = hir_->root_scope;
+  const WalkFrame namespace_frame = WalkFrame{}.WithScopeName(hir_->fixed_name);
 
   // The covergroups the namespace declares, each the class it is written as
   // (LRM 19.3). Nothing replicates one, so one sampled where a block of the
@@ -884,7 +887,7 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
     lowerer.AddTypeBlockEvents(block_events);
   }
   const DeclaredScopes package_scope_nodes = ScopesOwningDisableTargets(
-      scope.procedural_scopes,
+      scope.procedural_scopes, hir_->fixed_name,
       UnitStorage{.variables = &unit_.static_variables},
       unit_.types.Intern(
           mir::Type{mir::RuntimeLibraryType{
@@ -927,15 +930,15 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   mir::CallableCode install_code = mir::CallableCode::Defined();
   install_code.result_type = unit_.builtins.void_type;
   CallableBindings install_bindings(unit_, install_code);
-  const WalkFrame install_frame = WalkFrame{}
-                                      .WithBlock(&install_code.Body())
-                                      .WithBindings(&install_bindings);
+  const WalkFrame install_frame =
+      namespace_frame.WithBlock(&install_code.Body())
+          .WithBindings(&install_bindings);
 
   mir::CallableCode value_code = mir::CallableCode::Defined();
   value_code.result_type = unit_.builtins.void_type;
   CallableBindings value_bindings(unit_, value_code);
-  const WalkFrame value_frame =
-      WalkFrame{}.WithBlock(&value_code.Body()).WithBindings(&value_bindings);
+  const WalkFrame value_frame = namespace_frame.WithBlock(&value_code.Body())
+                                    .WithBindings(&value_bindings);
 
   if (auto own = PopulateNamespaceOwnStorage(
           *this, scope, subroutine_statics, package_scope_nodes, install_frame,
@@ -964,7 +967,7 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   }
   for (ClassDeclLowerer& class_lowerer : class_lowerers) {
     if (auto r = class_lowerer.PopulateBodies(
-            WalkFrame{},
+            namespace_frame,
             StorageBringUp{.install = install_frame, .value = value_frame});
         !r) {
       return std::unexpected(std::move(r.error()));
@@ -972,7 +975,7 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   }
   for (CovergroupLowerer& covergroup_lowerer : covergroup_lowerers) {
     if (auto r = covergroup_lowerer.PopulateBodies(
-            WalkFrame{},
+            namespace_frame,
             StorageBringUp{.install = install_frame, .value = value_frame});
         !r) {
       return std::unexpected(std::move(r.error()));
@@ -984,7 +987,7 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
     const hir::SubroutineDecl& src = scope.structural_subroutines.Get(id);
     ProcessLowerer subroutine_lowerer(
         *this, nullptr, scope.time_resolution, src.body, src.root_stmt,
-        WalkFrame{}, package_scope_nodes, subroutine_statics.Get(id));
+        namespace_frame, package_scope_nodes, subroutine_statics.Get(id));
     auto code_or = subroutine_lowerer.Run(src);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
     unit_.callables.Define(
@@ -1006,7 +1009,7 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
     // entry calls the body this unit's own namespace holds, naming the position
     // it already has in hand.
     ForeignExportEntry entry = SynthesizeForeignExportEntry(
-        *this, WalkFrame{}, mir::UnitCallableTarget{.slot = callable_id},
+        *this, namespace_frame, mir::UnitCallableTarget{.slot = callable_id},
         result_type, export_decl);
     // A name a namespace owns needs no entry beside its callable: that callable
     // is the program-global symbol and carries the prototype it publishes.

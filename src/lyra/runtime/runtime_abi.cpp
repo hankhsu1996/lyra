@@ -3801,8 +3801,10 @@ auto lyra_rt_make_segment(void* label, LyraSpan indices, void* out) -> void* {
       lyra::runtime::MachineIntsOf(indices));
 }
 
-auto lyra_rt_hierarchical_path(void* self, void* out) -> void* {
-  return Emplace(out, String(static_cast<Scope*>(self)->HierarchicalPath()));
+auto lyra_rt_hierarchical_path_of(void* self, const void* below, void* out)
+    -> void* {
+  return Emplace(
+      out, static_cast<Scope*>(self)->HierarchicalPathOf(Read<String>(below)));
 }
 
 auto lyra_rt_parent(void* self) -> void* {

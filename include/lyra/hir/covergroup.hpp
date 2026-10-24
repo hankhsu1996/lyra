@@ -17,6 +17,7 @@
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/expr_id.hpp"
+#include "lyra/hir/fixed_name.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
@@ -341,6 +342,9 @@ struct CovergroupDecl {
   std::optional<CovergroupRef> base;
   ProceduralBody body;
   base::Registry<ProceduralScopeDecl, ProceduralScopeId> procedural_scopes;
+  // The name of the scope declaring the covergroup, as far as its text fixes
+  // it, which the covergroup's own name follows (LRM 21.2.1.5).
+  FixedName declared_in;
   diag::SourceSpan span;
 
   auto operator==(const CovergroupDecl&) const -> bool = default;

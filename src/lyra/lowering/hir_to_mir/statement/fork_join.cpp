@@ -70,13 +70,11 @@ auto LowerForkStmt(
   mir::Block fork_block;
   // A fork the source named is part of the hierarchical name of everything
   // lexically inside it (LRM 23.9 lists a fork-join block among the constructs
-  // that define a scope), so entering it adopts its name node -- for the block
-  // items, which run in this execution context, and for every branch, which
-  // runs in its own.
+  // that define a scope) -- the block items, which run in this execution
+  // context, and every branch, which runs in its own.
   const DeclaredScope& fork_scope = process.Scopes().Get(f.scope);
   const WalkFrame fork_frame =
-      frame.WithBlock(&fork_block)
-          .WithScopeNameBorrowedHandle(fork_scope.NameBorrowedHandle());
+      frame.WithBlock(&fork_block).WithScopeName(fork_scope.name);
 
   // A fork the source named is a target a `disable` can name (LRM 9.6.2), and
   // what it must end is every process executing the block -- the thread that

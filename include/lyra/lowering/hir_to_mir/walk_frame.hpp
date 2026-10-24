@@ -10,6 +10,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/expr_id.hpp"
+#include "lyra/hir/fixed_name.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/field.hpp"
@@ -173,13 +174,11 @@ struct WalkFrame {
   // callable; replaced at a callable boundary.
   CallableBindings* bindings = nullptr;
 
-  // The enclosing class's borrowed handle on the name node of the procedural
-  // scope being walked. A construct that means "the scope I am in" -- the LRM
-  // 21.2.1.5 `%m` hierarchical name -- reads it off this body's `self`. Absent
-  // where the scope owns no node and where no scope is open at all; both mean
-  // the same thing to a reader, which is that the enclosing object answers for
-  // the name.
-  std::optional<mir::FieldId> scope_name_borrowed_handle;
+  // The name of the scope the construct being lowered is written in, which
+  // it reports as its own (LRM 21.2.1.5). Set where a declaration scope builds
+  // the frame its bodies descend from, and again wherever a procedural scope
+  // is entered; it points at an answer that outlives the lowering.
+  const hir::FixedName* scope_name = nullptr;
 
   // The queue the innermost enclosing select is taken from, while that select's
   // index or bounds are lowered: what `$` there reads the last index of (LRM
@@ -252,11 +251,11 @@ struct WalkFrame {
     return next;
   }
 
-  // Enters a procedural scope, adopting the name node the shape phase gave it.
-  [[nodiscard]] auto WithScopeNameBorrowedHandle(
-      std::optional<mir::FieldId> borrowed_handle) const -> WalkFrame {
+  // Enters a scope the construct lowered below is written in.
+  [[nodiscard]] auto WithScopeName(const hir::FixedName& name) const
+      -> WalkFrame {
     WalkFrame next = *this;
-    next.scope_name_borrowed_handle = borrowed_handle;
+    next.scope_name = &name;
     return next;
   }
 

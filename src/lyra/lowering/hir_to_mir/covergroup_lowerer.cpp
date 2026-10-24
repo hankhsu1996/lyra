@@ -2161,7 +2161,7 @@ void CovergroupLowerer::DeclareShape(
                   mir::ObservableCellOf(unit.types, unit.builtins.event));
   }
   scopes_ = ScopesOwningDisableTargets(
-      decl_->procedural_scopes, class_storage,
+      decl_->procedural_scopes, decl_->declared_in, class_storage,
       unit.types.Intern(
           mir::Type{mir::RuntimeLibraryType{
               .kind = mir::RuntimeLibraryKind::kCancellationTarget}}));

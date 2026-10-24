@@ -12,6 +12,7 @@
 #include "lyra/hir/covergroup.hpp"
 #include "lyra/hir/external_class.hpp"
 #include "lyra/hir/external_scope_class.hpp"
+#include "lyra/hir/fixed_name.hpp"
 #include "lyra/hir/foreign_import.hpp"
 #include "lyra/hir/foreign_import_id.hpp"
 #include "lyra/hir/published_covergroup.hpp"
@@ -91,6 +92,9 @@ struct CompilationUnit {
   // (LRM 33.2.1), which is what a `%l` written anywhere in it prints (LRM
   // 33.7).
   std::string library_binding;
+  // The unit's own scope's name as far as its text fixes it (LRM 21.2.1.5):
+  // the package's, and nothing for a design element or `$unit`.
+  FixedName fixed_name;
   UnitRole role = UnitRole::kModuleOrInterface;
   TypePool types;
   BuiltinHirTypes builtins;

@@ -390,8 +390,11 @@ auto LowerStaticStorageInto(
     if (written == initializer_of.end()) {
       continue;
     }
+    // The initializer is written in the class, whose name a construct in it
+    // reports (LRM 21.2.1.5).
     auto value_or = lowerer.LowerExpr(
-        hir_class.static_init.exprs.Get(written->second), frame);
+        hir_class.static_init.exprs.Get(written->second),
+        frame.WithScopeName(hir_class.fixed_name));
     if (!value_or) return std::unexpected(std::move(value_or.error()));
     const mir::ExprId value_id = block.exprs.Add(*std::move(value_or));
     const mir::ExprId target = block.exprs.Add(BuildStaticStorageAccess(
@@ -626,11 +629,11 @@ auto ClassDeclLowerer::DeclareShape(
   declared_methods_ = {hir_class.methods.size(), std::move(declared_methods)};
   ctor_static_bindings_ = bind_statics(hir_class.constructor);
 
-  // No lexical scope of a method body answers for a name: a class object is
-  // reached by member select rather than by scope name (LRM 23.7), so no
-  // hierarchical path names a block inside a method. A `disable` written inside
-  // one still names it, and what such a target belongs to is the class: a
-  // method is automatic (LRM 8.6), and LRM 9.6.2 disables a block inside an
+  // No lexical scope of a method body is a place a path reaches: a class
+  // object is reached by member select rather than by scope name (LRM 23.7),
+  // so no hierarchical path names a block inside a method. A `disable` written
+  // inside one still names it, and what such a target belongs to is the class:
+  // a method is automatic (LRM 8.6), and LRM 9.6.2 disables a block inside an
   // automatic task for every concurrent execution of it, so one cell serves
   // every object of the class.
   //
@@ -639,7 +642,7 @@ auto ClassDeclLowerer::DeclareShape(
   BlockEventTriggers block_events;
   AddEmbeddedBlockEvents(unit_lowerer, hir_class_id_, shape, block_events);
   scopes_ = ScopesOwningDisableTargets(
-      hir_class.procedural_scopes, class_storage,
+      hir_class.procedural_scopes, hir_class.fixed_name, class_storage,
       unit_lowerer.Unit().types.Intern(
           mir::Type{mir::RuntimeLibraryType{
               .kind = mir::RuntimeLibraryKind::kCancellationTarget}}),
@@ -652,8 +655,8 @@ auto ClassDeclLowerer::DeclareShape(
 auto ClassDeclLowerer::BodyFrame(
     const WalkFrame& declaring_frame, mir::Class& mir_class,
     ScopeChainNode& link) const -> WalkFrame {
-  const WalkFrame frame =
-      declaring_frame.WithClass(&mir_class, class_id_, link);
+  const WalkFrame frame = declaring_frame.WithClass(&mir_class, class_id_, link)
+                              .WithScopeName(hir_class_->fixed_name);
   const std::optional<DeclaringInstance>& instance =
       owner_->GetClassShape(class_id_).declaring_instance;
   if (!instance.has_value()) return frame.WithStructuralBase(NoScope{});
@@ -1162,8 +1165,10 @@ auto ClassDeclLowerer::PopulateBodies(
 
   // The constructor body statements (LRM 8.7) run after base construction
   // and property initialization, so they follow both, already appended to the
-  // ctor block.
-  auto body_or = ctor_lowerer.LowerConstructorBodyInto(reporting);
+  // ctor block. They are the body of `new`, a function the source named (LRM
+  // 8.7), so a name reported inside them is that function's.
+  auto body_or = ctor_lowerer.LowerConstructorBodyInto(
+      ctor_lowerer.InRootScope(reporting));
   if (!body_or) return std::unexpected(std::move(body_or.error()));
 
   ctor_code.params = std::move(ctor_params);

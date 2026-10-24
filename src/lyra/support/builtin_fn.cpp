@@ -2190,10 +2190,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kSelfHandle:
       return {
           .name = "self_handle", .declaration = RuntimeFunction("SelfHandle")};
-    case BuiltinFn::kHierarchicalPath:
+    case BuiltinFn::kHierarchicalPathOf:
       return {
-          .name = "hierarchical_path",
-          .declaration = Method{"HierarchicalPath"}};
+          .name = "hierarchical_path_of",
+          .declaration = Method{"HierarchicalPathOf"}};
   }
   throw InternalError("RuntimeEntryOf: unknown BuiltinFn");
 }

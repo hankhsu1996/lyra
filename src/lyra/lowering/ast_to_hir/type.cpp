@@ -40,6 +40,7 @@
 #include "lyra/lowering/ast_to_hir/constraint_block.hpp"
 #include "lyra/lowering/ast_to_hir/covergroup_decl.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
+#include "lyra/lowering/ast_to_hir/fixed_name.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 #include "lyra/lowering/ast_to_hir/name_in_a_path.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
@@ -1582,6 +1583,7 @@ auto UnitLowerer::InternLocalClass(
   hir::ClassDecl& decl = *decl_owner;
   decl.is_interface_class = cls.isInterface;
   decl.takes_declaring_instance = BelongsToAnInstance(cls) && !cls.isInterface;
+  decl.fixed_name = FixedNameOf(cls);
 
   // A class is the declaration scope that owns the lexical scopes of every
   // body it declares, so that ownership is stated once here and each method,

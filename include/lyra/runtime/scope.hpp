@@ -60,13 +60,18 @@ class Scope : public GcObject {
   [[nodiscard]] auto DisplaySegment() const -> std::string;
 
   // Joins each ancestor's display segment with `.`, ordered from the outermost
-  // inward (LRM 21.2.1.5; `%m` resolves to this string). A scope the source
-  // never named contributes nothing, which is what keeps it off every
-  // hierarchical path (LRM 23.6) without taking it out of the tree. The walk
-  // stops at the implicit `$root` so multi-top output reads `Top.mid.x` rather
-  // than `$root.Top.mid.x`. Walked on demand: the object tree is sealed by
-  // Activate.
+  // inward (LRM 23.6). A scope the source never named contributes nothing,
+  // which is what keeps it off every hierarchical path without taking it out
+  // of the tree. The walk stops at the implicit `$root` so multi-top output
+  // reads `Top.mid.x` rather than `$root.Top.mid.x`. Walked on demand: the
+  // object tree is sealed by Activate.
   [[nodiscard]] auto HierarchicalPath() const -> lyra::value::String;
+
+  // The hierarchical name of what `below` names inside this scope: this
+  // scope's own, then `below` joined by `.`, where it names anything (LRM
+  // 21.2.1.5; `%m` resolves to this string).
+  [[nodiscard]] auto HierarchicalPathOf(const lyra::value::String& below) const
+      -> lyra::value::String;
 
   // What this scope's class states of its instances beyond its type
   // information: its timescale, and the DPI-C exports an instance answers.

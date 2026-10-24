@@ -21,6 +21,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/fixed_name.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
@@ -271,36 +272,63 @@ auto BuildRuntimeFormatOperand(
 }
 
 // The string LRM 21.2.1.5 `%m` names: the hierarchical name of the scope the
-// directive was written in. That scope is the innermost named block around it
-// when there is one (LRM 9.3.5), a task or function when the directive sits in
-// one (LRM 23.9), and the body's own scope otherwise. Each of those is a
-// runtime object that knows its own path, so the whole answer is asking the
-// object the frame's scope names -- or the enclosing object itself where the
-// scope owns none. A deferred caller ($strobe, an NBA) captures `self` along
-// with the rest of its operands, so a delayed fire still reads the issuing
-// scope's name.
+// directive was written in -- the innermost named block around it when there
+// is one (LRM 9.3.5), a task or function when the directive sits in one (LRM
+// 23.9), and the body's own scope otherwise. Everything of that name below the
+// instance holding the declaration is fixed by the text, so it is a constant;
+// one compiled body serves every instance, so the instance's own name is the
+// instance's to answer, at run time. Where no instance holds the declaration
+// -- a package, `$unit`, a class declared in either -- the constant is the
+// whole name. A deferred caller ($strobe, an NBA) reaches the instance the way
+// it reaches the rest of its operands, so a delayed fire still reads the
+// issuing scope's name.
 template <ExprLowerer Lowerer>
 auto BuildHierarchicalNameExpr(Lowerer& lowerer, const WalkFrame& frame)
     -> mir::ExprId {
+  if (frame.scope_name == nullptr) {
+    throw InternalError(
+        "BuildHierarchicalNameExpr: a construct was lowered in no scope a "
+        "name is known for");
+  }
   auto& unit = lowerer.Owner().Unit();
   auto& block = *frame.current_block;
-  const mir::ExprId receiver_id =
-      frame.scope_name_borrowed_handle.has_value()
-          ? block.exprs.Add(BuildStructuralFieldAccessExpr(
-                frame, unit, mir::EnclosingHops{0},
-                *frame.scope_name_borrowed_handle))
-          : block.exprs.Add(MakeSelfRefExpr(frame));
-  return block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kHierarchicalPath,
-                          .receiver =
-                              BuildObjectDeref(unit, block, receiver_id)},
-                  .arguments = {}},
-          .type = unit.builtins.string});
+  return std::visit(
+      Overloaded{
+          [&](const hir::WholeName& name) {
+            return BuildStringValueExpr(unit, block, name.text);
+          },
+          [&](const hir::NameBelowInstance& name) {
+            mir::ExprId instance =
+                BuildEnclosingScopeReceiver(frame, unit, mir::EnclosingHops{0});
+            for (std::uint32_t step = 0; step < name.scopes_out; ++step) {
+              instance = block.exprs.Add(
+                  mir::Expr{
+                      .data =
+                          mir::CallExpr{
+                              .callee =
+                                  mir::Direct{
+                                      .target = support::BuiltinFn::kParent,
+                                      .receiver = BuildObjectDeref(
+                                          unit, block, instance)},
+                              .arguments = {}},
+                      .type = unit.builtins.scope_ptr});
+            }
+            const mir::ExprId below =
+                BuildStringValueExpr(unit, block, name.text);
+            return block.exprs.Add(
+                mir::Expr{
+                    .data =
+                        mir::CallExpr{
+                            .callee =
+                                mir::Direct{
+                                    .target =
+                                        support::BuiltinFn::kHierarchicalPathOf,
+                                    .receiver = BuildObjectDeref(
+                                        unit, block, instance)},
+                            .arguments = {below}},
+                    .type = unit.builtins.string});
+          }},
+      *frame.scope_name);
 }
 
 // The string LRM 33.7 `%l` names: the library and cell of the text the

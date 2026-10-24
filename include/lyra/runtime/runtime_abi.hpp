@@ -976,9 +976,10 @@ auto lyra_rt_dist_erlang(
 // caller gives.
 auto lyra_rt_make_segment(void* label, LyraSpan indices, void* out) -> void*;
 
-// The scope's hierarchical name (LRM 21.2.1.5; the `%m` source), as a string
-// built in storage the caller gives.
-auto lyra_rt_hierarchical_path(void* self, void* out) -> void*;
+// The hierarchical name of what `below` names inside the scope (LRM 21.2.1.5;
+// the `%m` source), as a string built in storage the caller gives.
+auto lyra_rt_hierarchical_path_of(void* self, const void* below, void* out)
+    -> void*;
 
 // The scope one step out. A name written in a generate block and declared in
 // the module around it is reached by climbing to that scope and reading the

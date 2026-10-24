@@ -208,11 +208,8 @@ auto LowerStraightLineProcess(ProcessLowerer& process)
   const mir::LocalId self_id = bindings.Declare(
       ReceiverOrigin{}, parent.current_class->self_pointer_type);
   code.params = {self_id};
-  const WalkFrame body_frame =
-      parent.WithBlock(&code.Body())
-          .WithBindings(&bindings)
-          .WithScopeNameBorrowedHandle(
-              process.RootScope().NameBorrowedHandle());
+  const WalkFrame body_frame = process.InRootScope(
+      parent.WithBlock(&code.Body()).WithBindings(&bindings));
   auto lowered = LowerStraightLineBodyInto(process, body_frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
   // A process completes by falling off its end, which is a real body statement
@@ -239,11 +236,8 @@ auto LowerForeverProcess(ProcessLowerer& process, Ahead ahead)
   const mir::LocalId self_id = bindings.Declare(
       ReceiverOrigin{}, parent.current_class->self_pointer_type);
   code.params = {self_id};
-  const WalkFrame entry_frame =
-      parent.WithBlock(&code.Body())
-          .WithBindings(&bindings)
-          .WithScopeNameBorrowedHandle(
-              process.RootScope().NameBorrowedHandle());
+  const WalkFrame entry_frame = process.InRootScope(
+      parent.WithBlock(&code.Body()).WithBindings(&bindings));
   diag::Result<AfterBody> after_body = ahead(entry_frame);
   if (!after_body) return std::unexpected(std::move(after_body.error()));
   mir::Block body_block;
@@ -386,14 +380,12 @@ auto ProcessLowerer::EnterSubroutineBody(
     CallableBindings& bindings) -> BoundImplicitParameters {
   const WalkFrame& parent = owner_ctor_frame_;
   // A task or function is a scope the source named (LRM 23.9), so the body
-  // starts in that scope's own name node and `%m` inside it reports the task,
-  // not the instance around it. What it takes ahead of its formals is what the
-  // class declaring it states; a subroutine of a namespace unit (LRM 26.3) has
-  // no class and takes nothing.
+  // starts inside it and `%m` there reports the task, not the scope around
+  // it. What it takes ahead of its formals is what the class declaring it
+  // states; a subroutine of a namespace unit (LRM 26.3) has no class and takes
+  // nothing.
   const WalkFrame entry_frame =
-      parent.WithBlock(&code.Body())
-          .WithBindings(&bindings)
-          .WithScopeNameBorrowedHandle(RootScope().NameBorrowedHandle())
+      InRootScope(parent.WithBlock(&code.Body()).WithBindings(&bindings))
           .WithBodyCanWait(CanWait(src.kind));
   if (parent.current_class == nullptr) {
     return BoundImplicitParameters{.params = {}, .frame = entry_frame};

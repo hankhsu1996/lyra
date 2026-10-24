@@ -27,7 +27,8 @@ namespace lyra::lowering::ast_to_hir {
     std::string_view identifier, const slang::ast::Compilation& compilation)
     -> std::string;
 
-// The same for the name `named` was declared under.
+// The same for the name `named` was declared under. A class constructor is
+// declared under the keyword `new` (LRM 8.7), which names it as it is.
 [[nodiscard]] auto NameInAPath(const slang::ast::Symbol& named) -> std::string;
 
 }  // namespace lyra::lowering::ast_to_hir
