@@ -40,7 +40,9 @@ the logical identity is not the index.
 
 **D3. Removal separates membership from lifetime.** Removing an element removes its membership. If a
 live reference still requires its storage, that storage is detached -- kept alive outside the
-logical order until the reference's required lifetime ends -- and otherwise it is recycled.
+logical order until the reference's required lifetime ends -- and otherwise it is recycled. What
+keeps it is a lease the call's binding holds on the element
+([a-bound-reference-leases-what-it-reaches-through](a-bound-reference-leases-what-it-reaches-through.md)).
 
 **D4. Iteration and traversal walk membership, never storage.** A detached element is therefore
 never visited, and no consumer ever skips a hole. This is what makes D3 affordable: detachment costs
@@ -111,7 +113,13 @@ neither array. The substrate serves those two.
 - **Reference counting each element slot.** The straightforward way to keep a detached element
   alive. Rejected because 13.5.2 bounds the requirement to the called subroutine's scope, so a
   scope-bounded owner suffices, and a refcount would put its traffic on every bind and every release
-  to pay for a case that is rare.
+  to pay for a case that is rare. What is rejected is counting every reference to the element --
+  each copy, each forward, each wait built from one. A count on the slot that only a call's binding
+  moves, at the bind and once the call has returned, is the scope-bounded owner itself, and its
+  traffic is what any registration of the bind would pay, beside the word of storage each element
+  then carries; that is the lease
+  [a-bound-reference-leases-what-it-reaches-through](a-bound-reference-leases-what-it-reaches-through.md)
+  takes.
 
 - **`boost::container::stable_vector` or an equivalent library container.** It provides stable
   element references across container mutation, which is most of D1 and D2, and not the part that is

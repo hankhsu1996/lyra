@@ -156,4 +156,14 @@ auto ErasedReference::Part(
   throw InternalError("ErasedReference::Part: unknown formation");
 }
 
+auto LeaseObject(const ErasedReference& reference) -> LeasedReference {
+  GcObject* const* object = std::get_if<GcObject*>(&reference.holder);
+  if (object == nullptr) {
+    throw InternalError(
+        "LeaseObject: a reference leased for the object it names storage of "
+        "names storage no object holds -- please report this as a bug");
+  }
+  return {StorageLease((*object)->weak_from_this().lock()), reference};
+}
+
 }  // namespace lyra::runtime

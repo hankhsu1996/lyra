@@ -16,12 +16,14 @@ obvious and the other is the reason this entry is longer than the question looke
 - **The object is collected.** The last handle is dropped while the callee still holds the
   reference, and the pointer is left naming freed storage.
 
-Non-moving storage answers the first and says nothing about the second. And the second is not
-settled by the standard: Table 8-1 p.182 says unreferenced objects are garbage collected, 8.4 never
-defines what counts as a reference, and nothing says whether an outstanding `ref` to one property is
-one. The evidence is an asymmetry rather than a silence -- 13.5.2 explicitly extends the lifetime of
-a _container element_ passed by reference and says nothing about a class property, so the standard
-has the vocabulary for lifetime-extension-by-reference and applied it to one category only.
+Non-moving storage answers the first and says nothing about the second. The standard settles the
+second by its outcome and leaves the mechanism open: LRM 8.29 p.216 promises that "users do not need
+to worry about dangling references, premature deallocation, or memory leaks for objects", which an
+object reclaimed under a live `ref` to its property would break; while Table 8-1 p.182 says only
+that unreferenced objects are garbage collected, 8.4 never defines what counts as a reference, and
+8.29's list of what makes an object strongly reachable names class handles and pending nonblocking
+assignments, not a reference to a property. 13.5.2 extends the lifetime of a _container element_
+passed by reference in so many words and says nothing of a class property.
 
 ## Decision
 
@@ -39,10 +41,14 @@ subroutines until they complete" -- a property of the element, not of the refere
 `storage.md`'s invariant that a reference aliases and never owns is therefore untouched: what
 survives is decided about the object, at the bind, for a bound duration.
 
-**D4. This is Lyra policy where the standard is silent.** Whether a `ref` to a property counts as a
-reference for reclamation is not stated anywhere. Lyra picks that it does, because the alternative
-is a dangling interior pointer and a silent wrong answer, while this costs at most an object that
-nothing else names, for the length of one call.
+**D4. The standard requires the outcome; how it is reached is Lyra's.** LRM 8.29 rules out a
+dangling reference and premature deallocation, so the object goes on existing while a `ref` into it
+lives. What it does not say is whether that `ref` makes the object reachable in its own terms, and
+Lyra need not answer that: the binding that lent the reference holds a share of the object for the
+call, which is a class handle in an active scope as 8.29 lists one. This revises the first form of
+this entry, which called the whole question Lyra policy where the standard is silent, reasoning from
+Table 8-1 and 8.4 and never from 8.29's own sentence; the cost it weighed -- an object nothing else
+names kept for the length of one call -- is unchanged.
 
 **D5. A future moving collector pins; it does not change the reference.** If fragmentation or
 throughput later argue for relocation, an object with an outstanding interior reference is pinned
@@ -53,8 +59,9 @@ for that reference's lifetime. The reference representation is not reopened for 
 1. A reference into an object is valid for its whole lifetime: the object neither moves nor is
    reclaimed while it exists.
 
-2. What keeps the object alive is a fact recorded about the object, bounded by the referring
-   subroutine's scope. Nothing about the reference's representation changes to express it.
+2. What keeps the object alive is a share the binding that lent the reference holds for the call,
+   bounded by the referring subroutine's scope. Nothing about the reference's representation changes
+   to express it.
 
 3. A collector change may not require a reference change. Relocation is admitted only with a
    mechanism that leaves the one-word interior pointer correct.
@@ -75,11 +82,10 @@ for that reference's lifetime. The reference representation is not reopened for 
   would be paying its complexity in advance.
 
 - **Letting a property reference dangle when the last handle drops.** The reading where `ref` does
-  not count as a reference for reclamation. It is not excluded by the text, and it is rejected
-  because the failure mode is a silent wrong answer -- a read through a pointer into reclaimed
-  storage -- where the other reading's cost is an object surviving one call longer than it had to.
-  The standard's own instinct in the analogous case is the same: it extends the container element's
-  lifetime rather than letting the reference dangle.
+  not count as a reference for reclamation. LRM 8.29's promise of no dangling reference and no
+  premature deallocation excludes it, and its failure mode is a silent wrong answer -- a read
+  through a pointer into reclaimed storage. The standard does the same in the analogous case: it
+  extends the container element's lifetime rather than letting the reference dangle.
 
 - **Making a property reference a managed reference.** It would keep the object alive by the
   existing mechanism with no new concept. Rejected: a managed reference is an owning edge the
@@ -95,10 +101,10 @@ for that reference's lifetime. The reference representation is not reopened for 
   D5's pinning before it may be adopted.
 
 - **The collector needs to know an interior reference exists.** D3 is a requirement on the
-  collector, and the mechanism is the collector's own -- a pin count on the object, or the referring
-  frame enumerating interior references at a safepoint. `lifetime.md` already requires every value
-  that survives a safepoint to live in traceable, Lyra-owned storage, so the information is
-  reachable; what is not decided here is which of the two shapes carries it.
+  collector.
+  [a-bound-reference-leases-what-it-reaches-through](a-bound-reference-leases-what-it-reaches-through.md)
+  answers it: the binding holds a share of the object for the call, in the frame of the code making
+  the call, which a counting runtime counts and a tracing collector reaches as a root.
 
 - **Property storage may be inline in the object.** With the object's address fixed, a property's
   address is fixed by its offset, so nothing about identity forces properties into separately
@@ -113,6 +119,8 @@ for that reference's lifetime. The reference representation is not reopened for 
 
 - [reference-is-a-tagged-pointer](reference-is-a-tagged-pointer.md) -- the address a reference
   holds, which this keeps valid, and the conflict with the collector contract that this resolves.
+- [a-bound-reference-leases-what-it-reaches-through](a-bound-reference-leases-what-it-reaches-through.md)
+  -- what keeps the object for the length of the call.
 - [object-model](object-model.md) -- the managed object this constrains the storage of.
 - [managed-value-realization](managed-value-realization.md) -- what a managed value may not live in,
   which this does not change.

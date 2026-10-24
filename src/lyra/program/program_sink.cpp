@@ -424,6 +424,8 @@ void BindWriteEntries(const auto& add) {
 void BindValueEntries(const auto& add) {
   add("lyra_rt_refer_storage", &lyra_rt_refer_storage);
   add("lyra_rt_refer_property", &lyra_rt_refer_property);
+  add("lyra_rt_lease_object", &lyra_rt_lease_object);
+  add("lyra_rt_leased_reference", &lyra_rt_leased_reference);
   add("lyra_rt_reference_reports_to", &lyra_rt_reference_reports_to);
   add("lyra_rt_bind_member", &lyra_rt_bind_member);
   add("lyra_rt_bind_alias", &lyra_rt_bind_alias);
@@ -442,6 +444,12 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_laidout_refer_element", &lyra_rt_laidout_refer_element);
   add("lyra_rt_queue_refer_element", &lyra_rt_queue_refer_element);
   add("lyra_rt_assocarray_refer_element", &lyra_rt_assocarray_refer_element);
+  add("lyra_rt_dynarray_refer_element_leased",
+      &lyra_rt_dynarray_refer_element_leased);
+  add("lyra_rt_queue_refer_element_leased",
+      &lyra_rt_queue_refer_element_leased);
+  add("lyra_rt_assocarray_refer_element_leased",
+      &lyra_rt_assocarray_refer_element_leased);
   add("lyra_rt_laidout_refer_component", &lyra_rt_laidout_refer_component);
   add("lyra_rt_string_ref_get", &lyra_rt_string_ref_get);
   add("lyra_rt_string_ref_set", &lyra_rt_string_ref_set);
@@ -694,6 +702,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_weak_reference_destroy", &lyra_rt_weak_reference_destroy);
   add("lyra_rt_open_write_destroy", &lyra_rt_open_write_destroy);
   add("lyra_rt_object_write_destroy", &lyra_rt_object_write_destroy);
+  add("lyra_rt_leased_reference_destroy", &lyra_rt_leased_reference_destroy);
   add("lyra_rt_string_assign", &lyra_rt_string_assign);
   add("lyra_rt_bitvec_assign", &lyra_rt_bitvec_assign);
   add("lyra_rt_real_assign", &lyra_rt_real_assign);
@@ -721,6 +730,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_assocarray_copy", &lyra_rt_assocarray_copy);
   add("lyra_rt_managedref_copy", &lyra_rt_managedref_copy);
   add("lyra_rt_shared_pointer_copy", &lyra_rt_shared_pointer_copy);
+  add("lyra_rt_leased_reference_copy", &lyra_rt_leased_reference_copy);
   add("lyra_rt_print_item_copy", &lyra_rt_print_item_copy);
   add("lyra_rt_format_spec_copy", &lyra_rt_format_spec_copy);
   add("lyra_rt_format_arg_copy", &lyra_rt_format_arg_copy);

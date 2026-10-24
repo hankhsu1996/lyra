@@ -4,6 +4,8 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <memory>
 #include <new>
 #include <optional>
 #include <span>
@@ -11,10 +13,12 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/value/container_lease.hpp"
 #include "lyra/value/element_policy.hpp"
 #include "lyra/value/element_sequence.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral_words.hpp"
+#include "lyra/value/layout.hpp"
 #include "lyra/value/position.hpp"
 
 namespace lyra::value {
@@ -92,18 +96,41 @@ class BasicDynamicArray {
     }
     return *this;
   }
+  // A generation a call leases is detached rather than ended, and the last
+  // lease to let go ends it (LRM 13.5.2).
   ~BasicDynamicArray() {
-    for (std::size_t i = count_; i-- > 0;) {
-      elem_.Destroy(At(i));
+    if (data_.empty()) {
+      return;
     }
-    if (!data_.empty()) {
-      ::operator delete(data_.data(), std::align_val_t{elem_.Align()});
+    Generation& generation = GenerationOf();
+    generation.count = count_;
+    if (generation.leases.held > 0) {
+      generation.leases.detached = true;
+      return;
     }
+    EndGeneration(elem_, generation);
   }
 
   [[nodiscard]] auto Element() const -> const Elem& {
     return elem_;
   }
+
+  // A lease a call takes on the generation `element`, one of these elements,
+  // lies in, which it then goes on reaching though the array is resized,
+  // assigned or deleted (LRM 13.5.2).
+  [[nodiscard]] auto Lease(void* element) const -> ContainerLease {
+    const auto* at = static_cast<const std::byte*>(element);
+    if (data_.empty() || std::less{}(at, data_.data()) ||
+        !std::less{}(at, std::to_address(data_.end()))) {
+      throw InternalError(
+          "a lease is taken on an element a dynamic array does not hold -- "
+          "please report this as a bug");
+    }
+    return ContainerLease(
+        GenerationOf().leases, &GenerationOf(), &EndDetachedGeneration,
+        elem_.OpaqueValue());
+  }
+
   [[nodiscard]] auto Count() const -> std::size_t {
     return count_;
   }
@@ -288,13 +315,54 @@ class BasicDynamicArray {
     std::swap(count_, other.count_);
   }
 
+  // What a generation keeps after its elements: the leases on it, and,
+  // for whoever ends it, where its elements start and how many there are.
+  struct Generation {
+    LeaseCount leases;
+    std::byte* first = nullptr;
+    std::size_t count = 0;
+  };
+
+  [[nodiscard]] static auto GenerationAt(std::size_t bytes) -> std::size_t {
+    return AlignTo(bytes, alignof(Generation));
+  }
+  [[nodiscard]] static auto GenerationAlign(const Elem& elem)
+      -> std::align_val_t {
+    return std::align_val_t{std::max(elem.Align(), alignof(Generation))};
+  }
+  [[nodiscard]] static auto GenerationLyingAt(void* at) -> Generation& {
+    return *static_cast<Generation*>(at);
+  }
+  [[nodiscard]] auto GenerationOf() const -> Generation& {
+    return GenerationLyingAt(
+        std::span(data_.data(), GenerationAt(data_.size()) + sizeof(Generation))
+            .subspan(GenerationAt(data_.size()))
+            .data());
+  }
+
+  // Ends the elements of `generation`, then the storage they lie in.
+  static void EndGeneration(const Elem& elem, Generation& generation) {
+    const std::span<std::byte> elements(
+        generation.first, generation.count * elem.Size());
+    for (std::size_t i = generation.count; i-- > 0;) {
+      elem.Destroy(elements.subspan(i * elem.Size()).data());
+    }
+    std::byte* first = generation.first;
+    std::destroy_at(&generation);
+    ::operator delete(first, GenerationAlign(elem));
+  }
+  static void EndDetachedGeneration(void* generation, const void* element) {
+    EndGeneration(
+        Elem::FromOpaqueValue(element), GenerationLyingAt(generation));
+  }
+
   void Allocate(std::size_t count) {
     const std::size_t bytes = count * elem_.Size();
     if (bytes != 0) {
-      data_ = {
-          static_cast<std::byte*>(
-              ::operator new(bytes, std::align_val_t{elem_.Align()})),
-          bytes};
+      auto* first = static_cast<std::byte*>(::operator new(
+          GenerationAt(bytes) + sizeof(Generation), GenerationAlign(elem_)));
+      data_ = {first, bytes};
+      std::construct_at(&GenerationOf(), Generation{.first = first});
     }
   }
 

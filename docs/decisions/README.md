@@ -521,10 +521,11 @@ the detail lives in the entry itself.
   class object a reference can point into neither moves nor is reclaimed while that reference lives,
   so a property reference is an ordinary interior pointer. Non-moving stops being a mere realization
   choice, and a future relocating collector pins rather than changing what a reference is. That an
-  outstanding `ref` keeps the object alive is Lyra policy where the standard is silent, framed as a
-  property of the object -- the analogue of LRM 13.5.2's detached container element -- so a
-  reference still never owns. An indirect collector-aware property reference, pinning adopted now, a
-  dangling property reference, and making a property reference a managed edge are rejected.
+  outstanding `ref` keeps the object alive is what LRM 8.29's promise of no dangling reference
+  requires, reached by a share the binding holds -- the analogue of LRM 13.5.2's detached container
+  element -- so a reference still never owns. An indirect collector-aware property reference,
+  pinning adopted now, a dangling property reference, and making a property reference a managed edge
+  are rejected.
 - [container-element-storage](container-element-storage.md) -- a variable-size container stores
   logical membership and ordering while its elements live in stable storage it does not move: a
   queue keeps the ordering of element slots, an associative array maps keys to entry storage,
@@ -540,13 +541,15 @@ the detail lives in the entry itself.
   arrays, per-element slots for the dynamic array, per-element detachment, and splitting the two
   array kinds are rejected; LRM 7.12.2 does not say whether an ordering method moves elements or
   values, so that half is Lyra policy rather than a requirement.
-- [call-scoped-borrow-registration](call-scoped-borrow-registration.md) -- who keeps a detached
-  element alive: nobody takes ownership. The arena goes on owning the storage and a call extent
-  registers a borrow, so retired storage is reclaimed once membership has ended and the last
-  borrowing invocation has. The unit is the live call extent, deduplicated per storage identity
-  within one invocation; forwarding a reference is not a bind, and nothing touches the access path.
-  Shared-pointer counting, transferring ownership to a frame, a container-side retire list, a
-  carried lifetime token, and block-granularity registration are rejected.
+- [a-bound-reference-leases-what-it-reaches-through](a-bound-reference-leases-what-it-reaches-through.md)
+  -- who keeps storage a call binds by reference until the call returns: the binding of a `ref`
+  actual takes a lease on each thing its reference reaches through that the program can let go of --
+  a share of the object a property lies in, a count on a queue's or an associative array's element,
+  a count on a dynamic array's generation -- and the full-expression holding the call holds it. A
+  container detaches a leased element rather than ending it, and the last lease ends the value, then
+  the storage. The reference stays a non-owning alias; forwarding is no bind, and nothing touches
+  the access path. A reference that owns, the callee holding its formals, an address registry, a new
+  call-extent concept, block granularity and counting at every copy are rejected.
 - [update-events-are-per-variable](update-events-are-per-variable.md) -- a write anywhere inside a
   variable is one update of that variable, emitted by the compiler from the place it already knows;
   a wait is an expression whose dependency set and previous result live in the subscription, and an

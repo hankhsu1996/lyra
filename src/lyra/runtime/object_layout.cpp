@@ -84,6 +84,7 @@ static_assert(Of<Trigger>() == support::kTriggerStorage);
 static_assert(Of<Observation>() == support::kObservationStorage);
 static_assert(Of<ReadReport>() == support::kReadReportStorage);
 static_assert(Of<Wait>() == support::kWaitStorage);
+static_assert(Of<LeasedReference>() == support::kLeasedReferenceStorage);
 static_assert(Of<HierarchySegment>() == support::kHierarchySegmentStorage);
 static_assert(
     Of<ChannelCancellation>() == support::kChannelCancellationStorage);
@@ -280,6 +281,8 @@ auto LayoutOf(support::LibraryObject object) -> ObjectLayout {
       return Of<AnyReference>();
     case support::LibraryObject::kWeakReference:
       return support::kWeakReferenceStorage;
+    case support::LibraryObject::kLeasedReference:
+      return support::kLeasedReferenceStorage;
   }
   throw InternalError("object layout: unknown library object");
 }

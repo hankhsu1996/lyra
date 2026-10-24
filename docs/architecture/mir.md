@@ -652,7 +652,12 @@ binds the part for as long as the callee holds it, and each write through it is 
 at the moment it lands (LRM 13.5.2, 4.3), which no write ended with the caller's full-expression can
 be; so a reference is formed over the owner and each step into a part is taken on the reference
 (`refer_element`, `refer_component`), answering a reference to that part that belongs to the same
-owner.
+owner. What such a reference reaches through that the program can let go of while the callee runs --
+the object a property lies in, an element of a queue or an associative array, a dynamic array's
+elements -- the binding leases, by a call answering the reference together with the lease; that
+answer is a value the call's full-expression makes, so it is held to that full-expression's end, or
+by a local of the frame where a closure built before the call captures the reference, and the callee
+is handed the reference it carries, which owns nothing (LRM 13.5.2, 8.29).
 
 Where the owner is a property of an object (LRM 8.4), the object is what hears the write (LRM
 9.4.2), and it is reached once, as the source reaches it once. A write is a write-in-progress value

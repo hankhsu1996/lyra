@@ -98,6 +98,8 @@ auto RuntimeLibraryCppType(mir::RuntimeLibraryKind kind) -> std::string_view {
       return "lyra::runtime::ReadReport";
     case mir::RuntimeLibraryKind::kWait:
       return "lyra::runtime::Wait";
+    case mir::RuntimeLibraryKind::kLeasedReference:
+      return "lyra::runtime::LeasedReference";
     case mir::RuntimeLibraryKind::kObjectDefinition:
       return "lyra::runtime::ObjectDefinition";
     case mir::RuntimeLibraryKind::kScopeInfo:

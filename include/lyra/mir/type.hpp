@@ -352,6 +352,12 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // once for the body's whole run where that is fixed storage, at the stop for
   // a delay or a join -- so a stop only says that the body is waiting there.
   kWait,
+  // LRM 13.5.2 / 8.29 a reference a call binds where what it names lies in
+  // something the program can let go of while the call runs, together with a
+  // lease keeping that thing in existence: `lyra::runtime::LeasedReference`.
+  // The binding holds one until at least the call returns and hands the call
+  // the reference it carries.
+  kLeasedReference,
   // LRM 23.3.3.5 / 27.6 elaborated hierarchy segment:
   // `lyra::runtime::HierarchySegment`, the per-scope structured identity each
   // child carries from construction (base name plus per-dimension indices).

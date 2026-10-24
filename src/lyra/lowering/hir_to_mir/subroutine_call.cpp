@@ -550,9 +550,19 @@ auto SeenAsAny(
       .owner = SnapshotPlaceIntoClosure(
           unit_lowerer, frame, carry, reference_to(incoming, kept)),
       .descent = {}};
+  // The call the variable is bound for runs past the statement building the
+  // closure, so what keeps the variable's storage is held by the frame.
+  const mir::ExprId bound = AtType(
+      unit, block,
+      PathBoundReference(
+          unit, block, place,
+          [&](mir::ExprId leased) {
+            return block.LocalPlace(
+                DeclareLocal(frame, leased), block.exprs.Get(leased).type);
+          }),
+      *ParamTypeOf(unit, seen, hir::ParamDirection::kRef));
   const AccessPath variable{
-      .owner = SnapshotPlaceIntoClosure(
-          unit_lowerer, frame, carry, reference_to(place, seen)),
+      .owner = SnapshotPlaceIntoClosure(unit_lowerer, frame, carry, bound),
       .descent = {}};
   body.AppendStmt(
       mir::ExprStmt{
@@ -593,7 +603,10 @@ auto EmitBoundActual(
                  ? SeenAsAny(
                        lowerer.Owner(), frame, actual.type, *named, reference)
                  : AtType(
-                       unit, block, PathReference(unit, block, *named),
+                       unit, block,
+                       PathBoundReference(
+                           unit, block, *named,
+                           [](mir::ExprId leased) { return leased; }),
                        reference);
     }
     case hir::ParamDirection::kInput: {

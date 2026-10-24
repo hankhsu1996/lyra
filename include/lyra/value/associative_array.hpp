@@ -9,6 +9,7 @@
 #include "lyra/value/basic_associative_array.hpp"
 #include "lyra/value/bit_vec.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/container_lease.hpp"
 #include "lyra/value/element_policy.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/index_order.hpp"
@@ -119,6 +120,12 @@ class AssociativeArray {
   [[nodiscard]] auto ElementMut(const K& key) -> V& {
     Formation formed{};
     return ElementMut(key, formed);
+  }
+
+  // A lease a call takes on `element`, one this array holds, which it then
+  // goes on reaching however the array changes (LRM 13.5.2).
+  [[nodiscard]] auto Lease(void* element) const -> ContainerLease {
+    return core_.Lease(element);
   }
 
   template <typename Fn>

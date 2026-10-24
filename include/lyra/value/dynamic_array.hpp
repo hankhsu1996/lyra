@@ -8,6 +8,7 @@
 #include "lyra/value/basic_dynamic_array.hpp"
 #include "lyra/value/bit_vec.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/container_lease.hpp"
 #include "lyra/value/element_policy.hpp"
 #include "lyra/value/element_sequence.hpp"
 #include "lyra/value/formation.hpp"
@@ -111,6 +112,12 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>> {
   }
   [[nodiscard]] auto ElementMut(const Position& position) -> T& {
     return *static_cast<T*>(core_.ExistingAt(ReadPosition(position)));
+  }
+
+  // A lease a call takes on `element`, one this array holds, which it then
+  // goes on reaching however the array changes (LRM 13.5.2).
+  [[nodiscard]] auto Lease(void* element) const -> ContainerLease {
+    return core_.Lease(element);
   }
 
   // LRM 7.4.5: an invalid-index read returns the element default (LRM Table

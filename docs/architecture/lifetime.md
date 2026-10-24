@@ -316,5 +316,6 @@ strategies change none of this.
 
 The same reference makes reclamation, not only relocation, the object's business: an object with an
 outstanding interior reference goes on existing for that reference's bounded life, the way LRM
-13.5.2 keeps a detached container element alive. That is a fact recorded about the object, so it is
-the collector's to honor and not a second kind of owning edge.
+13.5.2 keeps a detached container element alive. The binding that lent the reference keeps the
+object for the call by a share it holds -- a root to a tracing collector, as a body holds its
+receiver -- so the reference itself never becomes an owning edge.

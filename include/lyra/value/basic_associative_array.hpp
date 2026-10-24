@@ -7,6 +7,7 @@
 #include <map>
 #include <utility>
 
+#include "lyra/value/container_lease.hpp"
 #include "lyra/value/element_policy.hpp"
 #include "lyra/value/formation.hpp"
 
@@ -154,6 +155,12 @@ class BasicAssociativeArray {
     map_.emplace_hint(found, key_.Owned(key), slot);
     formed = Formation::kMade;
     return slot;
+  }
+
+  // A lease a call takes on `element`, an entry of this array, which it then
+  // goes on reaching though the array deletes the entry (LRM 13.5.2).
+  [[nodiscard]] auto Lease(void* element) const -> ContainerLease {
+    return LeaseElement(elem_, element);
   }
 
   // The element `key` names set to a copy of `value`, as a literal's entry

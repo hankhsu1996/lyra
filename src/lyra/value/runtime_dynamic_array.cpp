@@ -108,6 +108,10 @@ auto RuntimeDynamicArray::ElementMut(
   return Core().ElementMut(position, formed);
 }
 
+auto RuntimeDynamicArray::Lease(void* element) const -> ContainerLease {
+  return Core().Lease(element);
+}
+
 void RuntimeDynamicArray::Delete() {
   Core().Delete();
 }

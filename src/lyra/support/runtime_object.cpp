@@ -51,6 +51,8 @@ auto LibraryObjectName(LibraryObject object) -> std::string_view {
       return "any_reference";
     case LibraryObject::kWeakReference:
       return "weak_reference";
+    case LibraryObject::kLeasedReference:
+      return "leased_reference";
   }
   throw InternalError("runtime object: unknown library object");
 }

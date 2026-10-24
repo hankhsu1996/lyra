@@ -270,6 +270,7 @@ auto IsReachedByAddress(RuntimeLibraryKind kind) -> bool {
     case RuntimeLibraryKind::kObservation:
     case RuntimeLibraryKind::kReadReport:
     case RuntimeLibraryKind::kWait:
+    case RuntimeLibraryKind::kLeasedReference:
     case RuntimeLibraryKind::kHierarchySegment:
     case RuntimeLibraryKind::kChannelCancellation:
     case RuntimeLibraryKind::kDpiBitChunk:
@@ -311,6 +312,7 @@ auto IsLibraryValue(RuntimeLibraryKind kind) -> bool {
     case RuntimeLibraryKind::kObservation:
     case RuntimeLibraryKind::kReadReport:
     case RuntimeLibraryKind::kWait:
+    case RuntimeLibraryKind::kLeasedReference:
     case RuntimeLibraryKind::kHierarchySegment:
     case RuntimeLibraryKind::kChannelCancellation:
     case RuntimeLibraryKind::kDpiBitChunk:

@@ -224,16 +224,6 @@ and keeps every check it makes, recorded against the path that answers it wrongl
 answer becomes right the case passes and that record fails until its entry goes. A bullet saying no
 case holds it is one nothing watches.
 
-- [ ] A reference to an element of a dynamic array, queue, or associative array does not survive
-      operations that renumber positions. LRM 13.5.2 gives such an element a lifetime of its own --
-      it "shall continue to exist within the scope of the called subroutines until they complete" --
-      and makes a reference to a removed element an _outdated reference_ whose later writes "shall
-      not be visible outside". LRM 7.10.3 then fixes which queue operations do this: `insert`,
-      `push_back` and `push_front` "can never give rise to outdated references", a whole-queue
-      assignment outdates every element reference, and a removal outdates only what it removed. So a
-      reference held across a `push_front` must still name the element it named before, though every
-      position has moved. Nothing implements any of this, and no case holds it.
-
 - [ ] An array whose elements are bounded queues, assigned from an array of the same kind whose
       queues have another bound, stops the build with an internal error. The two element types are
       equivalent (LRM 6.22.2 compares the element types and not the bound), so the assignment is

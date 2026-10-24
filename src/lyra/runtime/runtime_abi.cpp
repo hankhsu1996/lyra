@@ -1102,19 +1102,55 @@ auto ReferToProperty(void* object, void* storage, void* out) -> void* {
                .holder = static_cast<GcObject*>(object), .storage = storage});
 }
 
+// An element a step into a container reaches, what forming it did, and the
+// reference to it, which belongs to whatever the reference the step was taken
+// on belongs to.
+struct SteppedElement {
+  void* element;
+  value::Formation formed;
+  ErasedReference part;
+};
+
 // The steps a reference takes into a part of what it names, each over the
 // value the reference names; they do what a reference's own methods do where
 // the value's type is known.
 template <typename Container, typename Index>
-auto ReferElement(const void* reference, const Index& index, void* out)
-    -> void* {
-  const ErasedReference& from = *static_cast<const ErasedReference*>(reference);
+auto StepIntoElement(const ErasedReference& from, const Index& index)
+    -> SteppedElement {
   from.AdmitStep();
   value::Formation formed{};
   void* element =
       static_cast<Container*>(from.storage)->ElementMut(index, formed);
+  return {
+      .element = element,
+      .formed = formed,
+      .part = from.Part(element, formed, RetainedStepTo<Container>(index))};
+}
+
+template <typename Container, typename Index>
+auto ReferElement(const void* reference, const Index& index, void* out)
+    -> void* {
   return BuildReference(
-      out, from.Part(element, formed, RetainedStepTo<Container>(index)));
+      out, StepIntoElement<Container>(ErasedAt(reference), index).part);
+}
+
+// The same, bound by a call, with a lease on the element the container keeps,
+// which the container cannot then end before the call returns (LRM 13.5.2).
+// An index naming no element names nothing to lease.
+template <typename Container, typename Index>
+auto ReferElementLeased(const void* reference, const Index& index, void* out)
+    -> void* {
+  const ErasedReference& from = ErasedAt(reference);
+  const SteppedElement stepped = StepIntoElement<Container>(from, index);
+  auto* leased = static_cast<LeasedReference*>(out);
+  if (stepped.formed == value::Formation::kNowhere) {
+    return std::construct_at(leased, StorageLease{}, stepped.part);
+  }
+  return std::construct_at(
+      leased,
+      StorageLease(
+          static_cast<Container*>(from.storage)->Lease(stepped.element)),
+      stepped.part);
 }
 
 // The same step into a fixed-size unpacked array, which the reference names as
@@ -2003,6 +2039,8 @@ using lyra::runtime::JoinNets;
 using lyra::runtime::LaidOutRefSet;
 using lyra::runtime::LandDesignation;
 using lyra::runtime::LandLaidOutDesignation;
+using lyra::runtime::LeasedReference;
+using lyra::runtime::LeaseObject;
 using lyra::runtime::LeaveCancellationTarget;
 using lyra::runtime::LocalAt;
 using lyra::runtime::LocalOf;
@@ -2053,6 +2091,7 @@ using lyra::runtime::RefDriveTakeover;
 using lyra::runtime::RefEndTakeover;
 using lyra::runtime::ReferArrayElement;
 using lyra::runtime::ReferElement;
+using lyra::runtime::ReferElementLeased;
 using lyra::runtime::ReferToCell;
 using lyra::runtime::ReferToProperty;
 using lyra::runtime::ReferToStorage;
@@ -3998,6 +4037,16 @@ auto lyra_rt_refer_property(void* object, void* storage, void* out) -> void* {
   return ReferToProperty(object, storage, out);
 }
 
+auto lyra_rt_lease_object(const void* reference, void* out) -> void* {
+  return std::construct_at(
+      static_cast<LeasedReference*>(out), LeaseObject(ErasedAt(reference)));
+}
+
+auto lyra_rt_leased_reference(const void* leased, void* out) -> void* {
+  return BuildReference(
+      out, static_cast<const LeasedReference*>(leased)->Erased());
+}
+
 auto lyra_rt_reference_reports_to(const void* reference) -> void* {
   return WatchedPlace::Through(ErasedAt(reference)).Word();
 }
@@ -4068,6 +4117,22 @@ auto lyra_rt_assocarray_refer_element(
     const void* reference, const void* index, const void* index_type, void* out)
     -> void* {
   return ReferElement<RuntimeAssociativeArray>(
+      reference, lyra::runtime::IndexAt(index, index_type), out);
+}
+auto lyra_rt_dynarray_refer_element_leased(
+    const void* reference, const void* position, void* out) -> void* {
+  return ReferElementLeased<RuntimeDynamicArray>(
+      reference, PositionNamedAt(position), out);
+}
+auto lyra_rt_queue_refer_element_leased(
+    const void* reference, const void* position, void* out) -> void* {
+  return ReferElementLeased<RuntimeQueue>(
+      reference, PositionNamedAt(position), out);
+}
+auto lyra_rt_assocarray_refer_element_leased(
+    const void* reference, const void* index, const void* index_type, void* out)
+    -> void* {
+  return ReferElementLeased<RuntimeAssociativeArray>(
       reference, lyra::runtime::IndexAt(index, index_type), out);
 }
 auto lyra_rt_laidout_refer_component(
@@ -7438,6 +7503,9 @@ void lyra_rt_open_write_destroy(void* object) {
 void lyra_rt_object_write_destroy(void* object) {
   std::destroy_at(static_cast<ErasedObjectWrite*>(object));
 }
+void lyra_rt_leased_reference_destroy(void* object) {
+  std::destroy_at(static_cast<LeasedReference*>(object));
+}
 
 // A second value equal to one the body already holds, built in further storage
 // the body gave -- where a value it only reads has to become one it owns.
@@ -7473,6 +7541,9 @@ auto lyra_rt_managedref_copy(const void* value, void* out) -> void* {
 }
 auto lyra_rt_shared_pointer_copy(const void* value, void* out) -> void* {
   return Emplace(out, Read<SharedPointer>(value));
+}
+auto lyra_rt_leased_reference_copy(const void* value, void* out) -> void* {
+  return Emplace(out, Read<LeasedReference>(value));
 }
 auto lyra_rt_print_item_copy(const void* value, void* out) -> void* {
   return Emplace(out, Read<PrintItem>(value));

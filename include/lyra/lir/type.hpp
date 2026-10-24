@@ -67,6 +67,7 @@ enum class RuntimeLibraryKind : std::uint8_t {
   kObservation,
   kReadReport,
   kWait,
+  kLeasedReference,
   kObjectWrite,
   kCancellationTarget,
   kTimer,

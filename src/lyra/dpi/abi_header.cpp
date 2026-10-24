@@ -95,6 +95,7 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
               case mir::RuntimeLibraryKind::kObservation:
               case mir::RuntimeLibraryKind::kReadReport:
               case mir::RuntimeLibraryKind::kWait:
+              case mir::RuntimeLibraryKind::kLeasedReference:
               case mir::RuntimeLibraryKind::kHierarchySegment:
               case mir::RuntimeLibraryKind::kDpiBitBuffer:
               case mir::RuntimeLibraryKind::kDpiLogicBuffer:

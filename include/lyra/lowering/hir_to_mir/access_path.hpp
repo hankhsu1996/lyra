@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <variant>
 #include <vector>
@@ -272,6 +273,23 @@ struct AccessPath {
 [[nodiscard]] auto PathReference(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
     -> mir::ExprId;
+
+// Holds a leased reference for as long as the call it is bound for runs, and
+// answers what reads it there.
+using HoldLease = std::function<mir::ExprId(mir::ExprId leased)>;
+
+// The path as a reference a call binds (LRM 13.5.2): the reference the path
+// names, with a lease taken on each thing it reaches through that the program
+// can let go of while the call runs -- the object a property lies in, an
+// element of a queue or an associative array, a dynamic array's elements -- so
+// each goes on existing until the call returns (LRM 8.29, 13.5.2). `hold`
+// answers what each lease is read from: the lease itself where the binding is
+// written in the call's full-expression, which then holds it to that
+// full-expression's end, or a local holding it where the call runs after that
+// full-expression has ended.
+[[nodiscard]] auto PathBoundReference(
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path,
+    const HoldLease& hold) -> mir::ExprId;
 
 // The reference the read form of an element step answers on `receiver`, whose
 // dereference is the element: what a block of steps yields where the element

@@ -106,8 +106,9 @@ reference to its whole.**
 - [object-is-an-event-source](object-is-an-event-source.md) -- a write to a property is a write
   opened on the object; a property lent by reference is the one form of write that outlasts the
   full-expression, so the reference carries the object instead.
-- [call-scoped-borrow-registration](call-scoped-borrow-registration.md) -- unchanged: registration
-  stays at the bind and at the invocation's end, and nothing reaches the access path.
+- [a-bound-reference-leases-what-it-reaches-through](a-bound-reference-leases-what-it-reaches-through.md)
+  -- unchanged: a lease is taken at the bind and released with the call's full-expression, and
+  nothing reaches the access path.
 
 ## Consequences
 

@@ -9,6 +9,7 @@
 #include "lyra/value/basic_dynamic_array.hpp"
 #include "lyra/value/bit_vec.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/container_lease.hpp"
 #include "lyra/value/element_type.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral.hpp"
@@ -67,6 +68,10 @@ class RuntimeDynamicArray {
       -> const void*;
   [[nodiscard]] auto ElementMut(
       std::optional<std::int64_t> position, Formation& formed) -> void*;
+
+  // A lease a call takes on `element`, one this array holds, which it then
+  // goes on reaching however the array changes (LRM 13.5.2).
+  [[nodiscard]] auto Lease(void* element) const -> ContainerLease;
 
   // LRM 7.5.3: empties the array.
   void Delete();

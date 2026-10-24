@@ -1121,6 +1121,21 @@ auto lyra_rt_laidout_refer_component(
     const void* reference, std::int64_t index, const void* tuple_type,
     void* out) -> void*;
 
+// What a call's binding of a reference leases where the program can let go of
+// what the reference reaches through while the call runs, each answering, in
+// the storage the caller gives, the reference with a lease keeping that thing
+// in existence until the call returns (LRM 13.5.2, 8.29); and the reference a
+// leased one carries.
+auto lyra_rt_lease_object(const void* reference, void* out) -> void*;
+auto lyra_rt_dynarray_refer_element_leased(
+    const void* reference, const void* position, void* out) -> void*;
+auto lyra_rt_queue_refer_element_leased(
+    const void* reference, const void* position, void* out) -> void*;
+auto lyra_rt_assocarray_refer_element_leased(
+    const void* reference, const void* index, const void* index_type, void* out)
+    -> void*;
+auto lyra_rt_leased_reference(const void* leased, void* out) -> void*;
+
 // Observable storage cell operations, reached through the cell's address. The
 // entry names the cell's value domain; the runtime never inspects a type tag.
 // A read of what a cell, a net, a driver or a reference holds answers with the
@@ -2560,6 +2575,7 @@ void lyra_rt_shared_pointer_destroy(void* object);
 void lyra_rt_weak_reference_destroy(void* object);
 void lyra_rt_open_write_destroy(void* object);
 void lyra_rt_object_write_destroy(void* object);
+void lyra_rt_leased_reference_destroy(void* object);
 auto lyra_rt_string_copy(const void* value, void* out) -> void*;
 auto lyra_rt_bitvec_copy(const void* value, void* out) -> void*;
 auto lyra_rt_real_copy(const void* value, void* out) -> void*;
@@ -2571,6 +2587,7 @@ auto lyra_rt_queue_copy(const void* value, void* out) -> void*;
 auto lyra_rt_assocarray_copy(const void* value, void* out) -> void*;
 auto lyra_rt_managedref_copy(const void* value, void* out) -> void*;
 auto lyra_rt_shared_pointer_copy(const void* value, void* out) -> void*;
+auto lyra_rt_leased_reference_copy(const void* value, void* out) -> void*;
 auto lyra_rt_print_item_copy(const void* value, void* out) -> void*;
 auto lyra_rt_format_spec_copy(const void* value, void* out) -> void*;
 auto lyra_rt_format_arg_copy(const void* value, void* out) -> void*;

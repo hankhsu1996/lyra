@@ -126,6 +126,10 @@ auto RuntimeAssociativeArray::ElementMut(IndexView index, Formation& formed)
   return Installed().ElementMut(index, formed);
 }
 
+auto RuntimeAssociativeArray::Lease(void* element) const -> ContainerLease {
+  return Installed().Lease(element);
+}
+
 void RuntimeAssociativeArray::Store(IndexView index, const void* value) {
   Installed().Store(index, value);
 }

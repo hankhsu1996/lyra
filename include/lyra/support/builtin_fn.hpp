@@ -436,6 +436,19 @@ enum class BuiltinFn : std::uint16_t {
   // the object travels with the reference, and the property is named as the
   // part the call reaches.
   kReferProperty,
+  // What a call's binding of a reference leases where the reference reaches
+  // through something the program can let go of while the call runs, each
+  // answering the reference together with a lease that keeps that thing in
+  // existence until the call returns (LRM 13.5.2, 8.29): the object a
+  // property reference names storage of, which the reference itself states;
+  // and an element of a queue or an associative array, or a dynamic array's
+  // elements, which only the step into the element can lease, so that step
+  // takes the lease. Then the reference a
+  // leased one carries, which is what the call is handed.
+  kLeaseObject,
+  kReferElementLeased,
+  kAssocReferElementLeased,
+  kLeasedReference,
   // What a wait on the storage a reference names enrols on: whatever a
   // write through the reference is told to -- the variable, or the object a
   // property belongs to (LRM 13.5.2, 9.4.2) -- as an erased pointer, the form

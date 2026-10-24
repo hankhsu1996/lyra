@@ -1014,6 +1014,7 @@ auto MemberStorageKindOf(
               case lir::RuntimeLibraryKind::kObservation:
               case lir::RuntimeLibraryKind::kReadReport:
               case lir::RuntimeLibraryKind::kWait:
+              case lir::RuntimeLibraryKind::kLeasedReference:
               case lir::RuntimeLibraryKind::kObjectWrite:
               case lir::RuntimeLibraryKind::kControlEffect:
               // What a constant is made of, which no member holds.
@@ -1745,6 +1746,11 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kDesignateElement:
     case support::BuiltinFn::kReferElement:
       return NamedByStorageDomain{.realized = kForSequencesSteppedInto};
+    // A call's binding leases what it steps into only where the program can
+    // let it go: an element of a sequence the library holds, never one laid
+    // out where its array lies.
+    case support::BuiltinFn::kReferElementLeased:
+      return NamedByStorageDomain{.realized = kForDynamicArraysAndQueues};
     case support::BuiltinFn::kDesignateComponent:
       return NamedByStorageDomain{.realized = kForComponentsSteppedInto};
     case support::BuiltinFn::kDesignateMember:
@@ -1934,9 +1940,13 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kOpenObjectWrite:
     case support::BuiltinFn::kWrittenObject:
     // A reference to a property holds the property erased, so one function
-    // serves every property's type; and what any reference reports to is a
-    // fact of the reference, whatever it names.
+    // serves every property's type, as one leases the object any such
+    // reference names storage of and one answers the reference any leased one
+    // carries; and what any reference reports to is a fact of the reference,
+    // whatever it names.
     case support::BuiltinFn::kReferProperty:
+    case support::BuiltinFn::kLeaseObject:
+    case support::BuiltinFn::kLeasedReference:
     case support::BuiltinFn::kReferenceReportsTo:
     // Binding a reference -- a port's, as a member or as another name, or one
     // an object holds -- and telling one it is driven continuously, act on the
@@ -2141,6 +2151,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kAssocElementMut:
     case support::BuiltinFn::kAssocDesignateElement:
     case support::BuiltinFn::kAssocReferElement:
+    case support::BuiltinFn::kAssocReferElementLeased:
     case support::BuiltinFn::kAssocDeleteIndex:
     case support::BuiltinFn::kQueueSlice:
     case support::BuiltinFn::kAssignQueueSlice:
