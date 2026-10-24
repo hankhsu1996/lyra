@@ -141,6 +141,11 @@ each stage establishes, not how.
       other classes, variables and initializers exist once however many specializations are made.
   - [x] A generic class that extends its own type parameter (`class W #(type T) extends T`, LRM
         8.25), specialized on a class of another package, of a module, or of a generate block.
+  - [x] A specialization extending a class of the package declaring its generic, and overriding a
+        virtual method that class introduced: a call the package writes on the specialization runs
+        the override, from a subroutine or a method of another class of it alike, and a class of the
+        package extending the specialization overrides it again and reaches it through `super` (LRM
+        8.20).
 
 - [x] Cross-unit class ownership: a class is owned by the compilation unit that declares it, and a
       reference from another unit reaches it by name -- the same by-name resolution package

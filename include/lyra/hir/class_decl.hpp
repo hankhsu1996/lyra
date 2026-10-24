@@ -113,8 +113,8 @@ struct BaseCall {
 // behavior. Nothing answers it where the class is abstract and leaves the
 // implementation to a class extending it.
 struct ConformingBehavior {
-  OverriddenBehavior interface_behavior;
-  std::optional<OverriddenBehavior> answered_by;
+  VirtualBehavior interface_behavior;
+  std::optional<VirtualBehavior> answered_by;
 
   auto operator==(const ConformingBehavior&) const -> bool = default;
 };

@@ -327,6 +327,12 @@ class UnitLowerer {
     return covergroup_classes_.Get(covergroup);
   }
 
+  // The covergroup `ref` names, as this unit names it: a type or a lineage
+  // another unit's signature states may name a covergroup of this unit by its
+  // unit and path, and that is this unit's own covergroup.
+  [[nodiscard]] auto AsLocalOrExternal(const hir::CovergroupRef& ref) const
+      -> hir::CovergroupRef;
+
   [[nodiscard]] auto RandomizationHooksOf(hir::ClassId owner) const
       -> const std::optional<RandomizationHooks>& {
     return class_translations_.Get(owner).randomization;
@@ -368,8 +374,10 @@ class UnitLowerer {
   // unit's signature, in one operation, so a caller never records the
   // dependency for itself and cannot build a reference that leaves one
   // unrecorded. Which reference it was is not kept, because what a unit depends
-  // on another for is that it read the signature. A reference naming this
-  // unit's own class is to that class, and depends on nothing.
+  // on another for is that it read the signature. A class reference naming
+  // this unit's own class is to that class and depends on nothing; every other
+  // builder is handed only another unit's member, since HIR names a behavior of
+  // this unit's own by this unit's identity.
   //
   // The type is one of them, which is easy to read as too much: building a
   // value of a class names that class outright, and the type is the whole of
@@ -435,9 +443,6 @@ class UnitLowerer {
   auto MakeExternalMethodTarget(const hir::ExternalClassMethodTarget& target)
       -> mir::ExternalUnitClassMethodTarget;
 
-  auto MakeExternalMethodOverride(const hir::ExternalDispatchSlot& slot)
-      -> mir::OverridesExternalSlot;
-
   // The behavior a call dispatches on when the class introducing it belongs to
   // another compilation unit, named by the coordinate that class published.
   // Records the class dependency so the referring artifact names the unit it
@@ -446,12 +451,25 @@ class UnitLowerer {
       -> mir::ExternalVirtualSlot;
 
   // The behavior a method of this unit's class answers, named by the class
-  // that introduced it, or nothing where the method is in no dispatch. A call
-  // that dispatches and a method answering an interface class's behavior name
-  // the behavior the same way, through here.
+  // that introduced it, or nothing where the method is in no dispatch.
   [[nodiscard]] auto LocalVirtualSlotOf(
-      const hir::LocalClassMethodTarget& method) const
+      const hir::LocalClassMethodTarget& method)
       -> std::optional<mir::VirtualSlot>;
+
+  // The part a method of this unit's class takes in its class's dispatch
+  // table (LRM 8.20): an override names the slot of the behavior it overrides,
+  // an introducer names itself, and a method in neither takes none. It is read
+  // off the HIR declarations along the override chain rather than off any
+  // class's lowered shape, so it is answered the same whatever order the
+  // classes are lowered in -- a base declared in an enclosing scope may be
+  // lowered after the class extending it.
+  [[nodiscard]] auto DispatchRoleOf(const hir::SubroutineDecl& method)
+      -> std::optional<mir::VirtualDispatchRole>;
+
+  // The slot a behavior names, as a call dispatching on it and a method
+  // answering an interface class's behavior name it. Every method a behavior
+  // names is in dispatch.
+  auto VirtualSlotOf(const hir::VirtualBehavior& behavior) -> mir::VirtualSlot;
 
   // Receiver-less callable of a unit's namespace (LRM 26.3 package function or
   // task). A body of that same unit names the position its declaration sits at,
@@ -593,6 +611,8 @@ class UnitLowerer {
   // names one by path -- a specialization of another unit's generic holding a
   // value of it, say -- and it is resolved to this unit's class here.
   std::map<support::DefPath, mir::ClassId> declared_classes_;
+  // The same, for the covergroups this unit declares.
+  std::map<support::DefPath, hir::CovergroupId> declared_covergroups_;
   std::map<mir::ClassId, PublishedScope> published_scopes_;
   std::uint32_t next_synthesized_site_ = 0;
   // What the declare stage settled about each class, read by every body that

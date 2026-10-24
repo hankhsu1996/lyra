@@ -25,10 +25,11 @@ struct PublishedBehavior {
 };
 
 // A method of a class of another unit that overrides a behavior one of its
-// ancestors introduced (LRM 8.20), and that behavior.
+// ancestors introduced (LRM 8.20), and that behavior -- a slot of this unit's
+// own where that ancestor is a class of this unit.
 struct PublishedOverride {
   std::string method;
-  OverridesExternalSlot behavior;
+  VirtualSlot behavior;
 };
 
 // A class of another unit this one reaches into, as far as that unit published

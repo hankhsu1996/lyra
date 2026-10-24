@@ -60,88 +60,6 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// Walks the HIR override chain starting at `method` and returns its
-// participation in the class's dispatch table (LRM 8.20). The walk terminates
-// at either an introducer (`overrides == nullopt && is_virtual`) or a
-// non-participating method (both facts absent). Depth is bounded by
-// inheritance depth; the frontend guarantees the chain is acyclic (LRM 8.13).
-//
-// An intra-unit override names the slot by the identity the declaring class
-// handed it, which is why a class is declared only after the classes it
-// extends: the answer is read off the base's own declaration rather than
-// worked out again from the shape of the source.
-auto CanonicalizeVirtualDispatch(
-    UnitLowerer& unit_lowerer, const hir::SubroutineDecl& method)
-    -> std::optional<mir::VirtualDispatchRole> {
-  if (method.overrides.has_value()) {
-    if (const auto* ext =
-            std::get_if<hir::ExternalDispatchSlot>(&*method.overrides)) {
-      // A behavior introduced in another unit is canonically owned there, so
-      // this unit records the override by the coordinate that unit published
-      // and states nothing about where it lands.
-      return mir::VirtualDispatchRole{
-          unit_lowerer.MakeExternalMethodOverride(*ext)};
-    }
-    const auto& local_ref =
-        std::get<hir::LocalClassMethodTarget>(*method.overrides);
-    const hir::SubroutineDecl& base_method = unit_lowerer.Hir()
-                                                 .classes.Get(local_ref.owner)
-                                                 .methods.Get(local_ref.method);
-    const auto base_role =
-        CanonicalizeVirtualDispatch(unit_lowerer, base_method);
-    if (!base_role.has_value()) {
-      throw InternalError(
-          "CanonicalizeVirtualDispatch: HIR override references a base "
-          "method the frontend did not classify as virtual");
-    }
-    const mir::ClassId base_mir_class =
-        unit_lowerer.TranslateClass(local_ref.owner);
-    const mir::CallableId base_mir_slot =
-        unit_lowerer.TranslateMethod(local_ref.owner, local_ref.method);
-    return std::visit(
-        Overloaded{
-            [&](const mir::IntroducesVirtualSlot&) -> mir::VirtualDispatchRole {
-              return mir::OverridesIntraUnitSlot{
-                  .slot_owner = base_mir_class, .slot_id = base_mir_slot};
-            },
-            [](const mir::OverridesIntraUnitSlot& s)
-                -> mir::VirtualDispatchRole { return s; },
-            [](const mir::OverridesExternalSlot& e)
-                -> mir::VirtualDispatchRole { return e; },
-            [](const mir::OverridesLibraryVirtual& l)
-                -> mir::VirtualDispatchRole { return l; }},
-        *base_role);
-  }
-  if (method.is_virtual) {
-    return mir::VirtualDispatchRole{mir::IntroducesVirtualSlot{}};
-  }
-  return std::nullopt;
-}
-
-// The behavior a method named by `behavior` answers, the way a call names it.
-// Every such method is in dispatch: the front end requires a method answering
-// an interface class's behavior to be virtual.
-auto BehaviorSlot(
-    UnitLowerer& unit_lowerer, const hir::OverriddenBehavior& behavior)
-    -> mir::VirtualSlot {
-  return std::visit(
-      Overloaded{
-          [&](const hir::LocalClassMethodTarget& local) -> mir::VirtualSlot {
-            std::optional<mir::VirtualSlot> slot =
-                unit_lowerer.LocalVirtualSlotOf(local);
-            if (!slot.has_value()) {
-              throw InternalError(
-                  "BehaviorSlot: a behavior is answered by a method in no "
-                  "dispatch -- please report this as a bug");
-            }
-            return *std::move(slot);
-          },
-          [&](const hir::ExternalDispatchSlot& external) -> mir::VirtualSlot {
-            return unit_lowerer.MakeExternalVirtualSlot(external);
-          }},
-      behavior);
-}
-
 // Whether a property of type `type` holds class handles, itself or as the
 // elements of an array of them, so what is random of it is the objects they
 // reach (LRM 18.4) rather than a value of its own.
@@ -581,9 +499,7 @@ auto ClassDeclLowerer::DeclareShape(
   // Everything a peer may need about a method before its body exists is
   // settled here, in one pass over the methods. Its callable identity comes
   // from the shape's own pool, so a call resolves whatever order the two
-  // bodies reach (LRM 13.7), and the signature published alongside it is the
-  // method's canonical dispatch role, which a peer reads to pick between
-  // direct and virtual invocation with no cross-class MIR read. Its
+  // bodies reach (LRM 13.7). Its
   // static-lifetime variables take their cells on this same shape, so a static
   // write from a body routes to the exact cell the shape declares.
   std::vector<DeclaredCallable> declared_methods;
@@ -594,8 +510,7 @@ auto ClassDeclLowerer::DeclareShape(
     const hir::SubroutineDecl& method = hir_class.methods.Get(id);
     signatures.push_back(
         CallableSignature{
-            .virtual_dispatch =
-                CanonicalizeVirtualDispatch(unit_lowerer, method)});
+            .virtual_dispatch = unit_lowerer.DispatchRoleOf(method)});
     declared_methods.push_back(
         DeclaredCallable{
             .callable = unit_lowerer.TranslateMethod(hir_class_id_, id),
@@ -928,10 +843,10 @@ auto ClassDeclLowerer::PopulateBodies(
     mir_class.conforming.push_back(
         mir::ConformingBehavior{
             .interface_behavior =
-                BehaviorSlot(unit_lowerer, answered.interface_behavior),
+                unit_lowerer.VirtualSlotOf(answered.interface_behavior),
             .answered_by = answered.answered_by.transform(
-                [&](const hir::OverriddenBehavior& behavior) {
-                  return BehaviorSlot(unit_lowerer, behavior);
+                [&](const hir::VirtualBehavior& behavior) {
+                  return unit_lowerer.VirtualSlotOf(behavior);
                 })});
   }
 

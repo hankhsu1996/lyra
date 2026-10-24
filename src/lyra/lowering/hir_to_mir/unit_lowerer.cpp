@@ -435,11 +435,11 @@ auto PublishObjectEntry(
           .virtual_dispatch = std::nullopt});
 }
 
-// What a signature names of another unit's behavior, in MIR's terms. Reading a
-// signature records no dependency, so neither does this.
-auto PublishedSlot(const hir::ExternalDispatchSlot& slot)
-    -> mir::OverridesExternalSlot {
-  return mir::OverridesExternalSlot{
+// What a signature names of another unit's behavior, in MIR's terms. Naming it
+// is no dependency; a reference reaching it is.
+auto PublishedVirtualSlot(const hir::ExternalDispatchSlot& slot)
+    -> mir::ExternalVirtualSlot {
+  return mir::ExternalVirtualSlot{
       .unit_name = slot.unit_name,
       .class_path = slot.class_path,
       .ordinal = mir::BehaviorOrdinal{slot.behavior.value}};
@@ -655,6 +655,7 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
     const mir::ClassId id = unit_.DeclareClass();
     covergroup_classes_.Append(id);
     declared_classes_.emplace(hir_->covergroups.PathOf(hir_id), id);
+    declared_covergroups_.emplace(hir_->covergroups.PathOf(hir_id), hir_id);
   }
 
   // Every HIR type is MIR-representable: AST-to-HIR rejects the forms MIR has
@@ -1038,6 +1039,23 @@ auto UnitLowerer::PublishedClass(const hir::ExternalClassRef& ref) const
   return DeclaredClassIdentityOf(ref.unit_name, ref.class_path);
 }
 
+auto UnitLowerer::AsLocalOrExternal(const hir::CovergroupRef& ref) const
+    -> hir::CovergroupRef {
+  const auto* external = std::get_if<hir::ExternalCovergroupRef>(&ref);
+  if (external == nullptr || !hir_->IsItself(external->unit_name)) {
+    return ref;
+  }
+  const auto it = declared_covergroups_.find(external->path);
+  if (it == declared_covergroups_.end()) {
+    throw InternalError(
+        std::format(
+            "UnitLowerer::AsLocalOrExternal: this unit declares no covergroup "
+            "'{}' -- please report this as a bug",
+            support::DisplayOf(external->path)));
+  }
+  return hir::LocalCovergroupRef{.covergroup = it->second};
+}
+
 auto UnitLowerer::DeclaredClassIdentityOf(
     const std::string& unit_name, const support::DefPath& class_path) const
     -> mir::DeclaredClassRef {
@@ -1105,7 +1123,7 @@ auto UnitLowerer::CovergroupObjectType(const hir::CovergroupRef& covergroup)
                     .unit_name = external.unit_name,
                     .class_path = external.path});
           }},
-      covergroup);
+      AsLocalOrExternal(covergroup));
 }
 
 auto UnitLowerer::TakePublishedClass(const hir::ExternalClass& published)
@@ -1161,11 +1179,24 @@ auto UnitLowerer::TakePublishedClass(const hir::ExternalClass& published)
               .name = method.prototype.name, .is_pure = introduced->is_pure});
     }
   }
+  // A behavior another unit's class introduced is named here without making
+  // that unit a dependency: holding a record of a class is not depending on
+  // it, and a body dispatching on the behavior records the dependency itself.
   for (const hir::PublishedOverride& overriding : published.overrides) {
     record.overrides.push_back(
         mir::PublishedOverride{
             .method = overriding.method,
-            .behavior = PublishedSlot(overriding.behavior)});
+            .behavior = std::visit(
+                Overloaded{
+                    [&](const hir::LocalClassMethodTarget& own)
+                        -> mir::VirtualSlot { return VirtualSlotOf(own); },
+                    [&](const hir::LocalCovergroupFactory& factory)
+                        -> mir::VirtualSlot { return VirtualSlotOf(factory); },
+                    [](const hir::ExternalDispatchSlot& slot)
+                        -> mir::VirtualSlot {
+                      return PublishedVirtualSlot(slot);
+                    }},
+                overriding.behavior)});
   }
   unit_.external_classes.push_back(std::move(record));
 }
@@ -1356,32 +1387,57 @@ auto UnitLowerer::MakeExternalMethodTarget(
       .method_name = target.method_name};
 }
 
-auto UnitLowerer::MakeExternalMethodOverride(
-    const hir::ExternalDispatchSlot& slot) -> mir::OverridesExternalSlot {
-  unit_.ConsumeClassOf(slot.unit_name, slot.class_path);
-  return PublishedSlot(slot);
-}
-
 auto UnitLowerer::MakeExternalVirtualSlot(const hir::ExternalDispatchSlot& slot)
     -> mir::ExternalVirtualSlot {
   unit_.ConsumeClassOf(slot.unit_name, slot.class_path);
-  return mir::ExternalVirtualSlot{
-      .unit_name = slot.unit_name,
-      .class_path = slot.class_path,
-      .ordinal = mir::BehaviorOrdinal{slot.behavior.value}};
+  return PublishedVirtualSlot(slot);
+}
+
+auto UnitLowerer::DispatchRoleOf(const hir::SubroutineDecl& method)
+    -> std::optional<mir::VirtualDispatchRole> {
+  if (method.overrides.has_value()) {
+    return mir::VirtualDispatchRole{mir::OverridesVirtualSlot{
+        .overridden = VirtualSlotOf(*method.overrides)}};
+  }
+  if (method.is_virtual) {
+    return mir::VirtualDispatchRole{mir::IntroducesVirtualSlot{}};
+  }
+  return std::nullopt;
 }
 
 auto UnitLowerer::LocalVirtualSlotOf(const hir::LocalClassMethodTarget& method)
-    const -> std::optional<mir::VirtualSlot> {
+    -> std::optional<mir::VirtualSlot> {
   const mir::ClassId owner = TranslateClass(method.owner);
   const mir::CallableId callable = TranslateMethod(method.owner, method.method);
-  // A method's dispatch role is read from the class's declaration rather than
-  // its body: a peer body may name the method before the class is lowered.
-  return GetClassShape(owner)
-      .callable_signatures.Get(callable)
-      .virtual_dispatch.transform([&](const mir::VirtualDispatchRole& role) {
+  return DispatchRoleOf(
+             Hir().classes.Get(method.owner).methods.Get(method.method))
+      .transform([&](const mir::VirtualDispatchRole& role) {
         return CanonicalVirtualSlot(owner, callable, role);
       });
+}
+
+auto UnitLowerer::VirtualSlotOf(const hir::VirtualBehavior& behavior)
+    -> mir::VirtualSlot {
+  return std::visit(
+      Overloaded{
+          [&](const hir::LocalClassMethodTarget& local) -> mir::VirtualSlot {
+            std::optional<mir::VirtualSlot> slot = LocalVirtualSlotOf(local);
+            if (!slot.has_value()) {
+              throw InternalError(
+                  "UnitLowerer::VirtualSlotOf: a behavior names a method in no "
+                  "dispatch -- please report this as a bug");
+            }
+            return *std::move(slot);
+          },
+          [&](const hir::LocalCovergroupFactory& factory) -> mir::VirtualSlot {
+            return FactorySlot(
+                *this,
+                hir::LocalCovergroupRef{.covergroup = factory.covergroup});
+          },
+          [&](const hir::ExternalDispatchSlot& external) -> mir::VirtualSlot {
+            return MakeExternalVirtualSlot(external);
+          }},
+      behavior);
 }
 
 auto UnitLowerer::MakeNamespaceCallableTarget(

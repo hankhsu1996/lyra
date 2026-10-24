@@ -691,18 +691,9 @@ class MirDumper {
             [](const IntroducesVirtualSlot&) -> std::string {
               return "IntroducesSlot";
             },
-            [this](const OverridesIntraUnitSlot& o) -> std::string {
-              const auto& owner = unit_->GetClass(o.slot_owner);
+            [this](const OverridesVirtualSlot& o) -> std::string {
               return std::format(
-                  "OverridesIntraUnitSlot[Class[{}].{}(Callable[{}])]",
-                  o.slot_owner.value,
-                  CallableLabel(owner.named_callables, o.slot_id),
-                  o.slot_id.value);
-            },
-            [](const OverridesExternalSlot& e) -> std::string {
-              return std::format(
-                  "OverridesExternalSlot[{}::{}#{}]", e.unit_name,
-                  support::DisplayOf(e.class_path), e.ordinal.value);
+                  "OverridesSlot[{}]", FormatVirtualSlot(o.overridden));
             },
             [](const OverridesLibraryVirtual& l) -> std::string {
               return std::format(

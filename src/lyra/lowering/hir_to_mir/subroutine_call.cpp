@@ -34,6 +34,7 @@
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/synthesized_function.hpp"
 #include "lyra/lowering/hir_to_mir/unit_object_access.hpp"
+#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -187,10 +188,9 @@ auto ReadMethodCallee(
                         mir::Direct{
                             .target = unit_lowerer.MakeExternalMethodTarget(
                                 ext.target)},
-                    .slot = ext.slot.transform(
-                        [&](const hir::ExternalDispatchSlot& published) {
-                          return mir::VirtualSlot{
-                              unit_lowerer.MakeExternalVirtualSlot(published)};
+                    .slot = ext.behavior.transform(
+                        [&](const hir::VirtualBehavior& behavior) {
+                          return unit_lowerer.VirtualSlotOf(behavior);
                         })}};
           }},
       callee);

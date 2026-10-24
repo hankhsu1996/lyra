@@ -7,6 +7,7 @@
 
 #include "lyra/base/pool_id.hpp"
 #include "lyra/hir/class_id.hpp"
+#include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/field_id.hpp"
 #include "lyra/hir/method_id.hpp"
 #include "lyra/hir/published_method.hpp"
@@ -146,11 +147,24 @@ struct ExternalDispatchSlot {
   auto operator==(const ExternalDispatchSlot&) const -> bool = default;
 };
 
-// Which behavior a method overrides (LRM 8.20). One this unit's own class
-// introduced is named by that class and the method introducing it; one a class
-// of another unit introduced is named by the coordinate that class published,
-// since no identity of this unit reaches it.
-using OverriddenBehavior =
-    std::variant<LocalClassMethodTarget, ExternalDispatchSlot>;
+// The method a class of this unit makes one of its embedded covergroups by
+// (LRM 19.4.1), which a class extending it overrides where its covergroup
+// extends this one. No method of the source stands for it, so it is named by
+// the covergroup.
+struct LocalCovergroupFactory {
+  CovergroupId covergroup;
+
+  auto operator==(const LocalCovergroupFactory&) const -> bool = default;
+};
+
+// A behavior (LRM 8.20), as what a method overrides, what a call dispatches
+// on, and what an interface class's behavior is and is answered by. One a
+// class of this unit introduced is named by this unit's identity for a method
+// answering it -- the one a method overrides, the introducing one, or the
+// factory of an embedded covergroup -- whichever unit's lineage the name was
+// reached through; one a class of another unit introduced is named by the
+// coordinate that class published, since no identity of this unit reaches it.
+using VirtualBehavior = std::variant<
+    LocalClassMethodTarget, LocalCovergroupFactory, ExternalDispatchSlot>;
 
 }  // namespace lyra::hir

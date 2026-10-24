@@ -919,9 +919,20 @@ class UnitLowerer {
   [[nodiscard]] auto AsLocalOrPublished(
       const hir::ExternalClassRef& named) const -> LocalOrPublishedClass;
 
-  // What this unit publishes about its own class `class_path`.
-  [[nodiscard]] auto OwnClassSignature(const support::DefPath& class_path) const
-      -> const hir::ClassSignature&;
+  // What a class this unit declares would publish to another unit, and what
+  // each method of that signature is in this unit, at its position: a method
+  // of the class, or the method making a covergroup it embeds, which no method
+  // of the source stands for. The second is kept beside the signature rather
+  // than in it, since no other unit reaches this unit's own identities.
+  struct OwnClass {
+    hir::ClassSignature signature;
+    std::vector<hir::VirtualBehavior> methods;
+  };
+
+  // What this unit publishes about its own class `class_path`, with what each
+  // of its methods is in this unit.
+  [[nodiscard]] auto OwnClassAt(const support::DefPath& class_path) const
+      -> const OwnClass&;
 
   // What a class's declaration names beside itself: the class it extends, and
   // the interface classes it implements or, for an interface class, extends
@@ -989,22 +1000,25 @@ class UnitLowerer {
   // overridden as one (LRM 18.5.2) -- with the class declaring it named the
   // way the boundary it sits on names one: what a member overriding it
   // overrides, and what an interface class's behavior is answered by.
-  auto MakeOverriddenBehavior(
+  auto MakeVirtualBehavior(
       const slang::ast::Symbol& method, diag::SourceSpan span)
-      -> diag::Result<hir::OverriddenBehavior>;
+      -> diag::Result<hir::VirtualBehavior>;
+
+  // The behavior named `method_name` that `cls` answers, refused where no
+  // signature up that lineage publishes one, which leaves nothing to name the
+  // behavior by.
+  auto MakeVirtualBehavior(
+      const hir::ExternalClassRef& cls, std::string_view method_name,
+      diag::SourceSpan span) -> diag::Result<hir::VirtualBehavior>;
 
   // The behavior named `method_name` that `cls` answers, named by the class of
-  // its lineage that introduced it. Refused where no signature up that lineage
-  // publishes one, which leaves nothing to name the behavior by.
-  auto MakeExternalDispatchSlot(
-      const hir::ExternalClassRef& cls, std::string_view method_name,
-      diag::SourceSpan span) -> diag::Result<hir::ExternalDispatchSlot>;
-
-  // The same walk, answering nothing where no signature up the lineage
-  // publishes the behavior.
-  auto IntroducerOf(
+  // its lineage that introduced it: by this unit's identity for it where that
+  // class is this unit's, which a lineage another unit published may pass back
+  // through, and by the coordinate its unit published otherwise. Nothing where
+  // no signature up the lineage publishes it.
+  auto FindVirtualBehavior(
       const hir::ExternalClassRef& cls, std::string_view method_name)
-      -> std::optional<hir::ExternalDispatchSlot>;
+      -> std::optional<hir::VirtualBehavior>;
 
   // The interface a subroutine's own declaration states: its call protocol and
   // each formal's direction and type (LRM 13.5), in this unit's types. It is
@@ -1864,12 +1878,10 @@ class UnitLowerer {
   // many connections name it.
   std::unordered_map<const hir::UnitSignature*, hir::TypeImportMemo>
       signature_type_memos_;
-  // What each class this unit declares would publish to another unit, taken
-  // where that class's own arenas are built so the two count the same
-  // positions. Only the classes the unit's namespace declares reach its
-  // signature.
-  std::unordered_map<const slang::ast::ClassType*, hir::ClassSignature>
-      own_class_signatures_;
+  // Each class this unit declares, taken where that class's own arenas are
+  // built so the signature and the class count the same positions. Only the
+  // classes the unit's namespace declares reach its signature.
+  std::unordered_map<const slang::ast::ClassType*, OwnClass> own_classes_;
   // Each class this unit holds, by the path it publishes it under, which is how
   // a lineage another unit published names one coming back through this unit.
   std::map<support::DefPath, const slang::ast::ClassType*> own_classes_by_path_;

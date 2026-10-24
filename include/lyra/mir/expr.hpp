@@ -11,13 +11,13 @@
 #include <vector>
 
 #include "lyra/base/component_index.hpp"
-#include "lyra/mir/behavior_ordinal.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/block_id.hpp"
 #include "lyra/mir/bring_up_entry.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_constant_id.hpp"
 #include "lyra/mir/class_id.hpp"
+#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/enum_table_id.hpp"
@@ -419,37 +419,6 @@ struct Direct {
 struct Indirect {
   ExprId code;
 };
-
-// Identity of a virtual dispatch slot introduced by a class in this
-// compilation unit: the introducing class and the callable arena position
-// where the slot was first declared. The receiver's dynamic type is what
-// decides which implementation runs; the slot is the canonical logical
-// identity a backend reads to reach the method's name and signature.
-struct LocalVirtualSlot {
-  ClassId owner_class;
-  CallableId slot;
-
-  auto operator==(const LocalVirtualSlot&) const -> bool = default;
-};
-
-// Identity of a behavior a class of another compilation unit introduced. The
-// introducing class carries no unit-local id here, so it is named by (declaring
-// unit, class path) together with which of that class's introductions
-// this is, counted out of what it published -- the same coordinate an
-// intra-unit slot carries, with the class named by its parts.
-struct ExternalVirtualSlot {
-  std::string unit_name;
-  support::DefPath class_path;
-  BehaviorOrdinal ordinal;
-
-  auto operator==(const ExternalVirtualSlot&) const -> bool = default;
-};
-
-// The slot a virtual call names -- an intra-unit position or a cross-unit
-// by-name identity. Peer of `DirectTarget`'s local / external variant
-// structure: identity representation follows the compilation-unit boundary,
-// never split across two dispatch node kinds.
-using VirtualSlot = std::variant<LocalVirtualSlot, ExternalVirtualSlot>;
 
 // A virtually-dispatched call: the receiver -- the object, as a direct call's
 // is -- is evaluated once and then the implementation of the named slot on

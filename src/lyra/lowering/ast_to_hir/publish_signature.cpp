@@ -303,9 +303,9 @@ auto UnitLowerer::PublishTypeSignatures() -> diag::Result<void> {
   // of its applications built it.
   std::set<support::DefPath> published_paths;
   const auto publish_class = [&](const slang::ast::ClassType& cls) {
-    const auto it = own_class_signatures_.find(&cls);
-    if (it == own_class_signatures_.end() ||
-        !published_paths.insert(it->second.class_path).second) {
+    const auto it = own_classes_.find(&cls);
+    if (it == own_classes_.end() ||
+        !published_paths.insert(it->second.signature.class_path).second) {
       return;
     }
     hir::TypeImportMemo published;
@@ -316,7 +316,7 @@ auto UnitLowerer::PublishTypeSignatures() -> diag::Result<void> {
             .classes = &unit_.classes,
             .covergroups = &unit_.covergroups},
         signature_.types, published);
-    const hir::ClassSignature& own = it->second;
+    const hir::ClassSignature& own = it->second.signature;
     // The order is part of what is published: a property's slot and a virtual
     // method's ordinal are counted out of these lists by the class that
     // declares them and by every unit that reaches one, and neither states a
@@ -802,13 +802,13 @@ auto UnitLowerer::PublishScopeClass(
               return cell(*local.symbol, local.within);
             },
             [&](const ScopePublicationRecord::ClassStatic& property) {
-              const auto own = own_class_signatures_.find(property.owner);
-              if (own == own_class_signatures_.end()) {
+              const auto own = own_classes_.find(property.owner);
+              if (own == own_classes_.end()) {
                 throw InternalError(
                     "PublishSignature: every class a scope declares is "
                     "interned before the scope's signature is published");
               }
-              return cell(*property.symbol, own->second.class_path);
+              return cell(*property.symbol, own->second.signature.class_path);
             },
             [&](const ScopePublicationRecord::CovergroupEvent& event)
                 -> diag::Result<hir::PublishedMember> {
@@ -1103,6 +1103,13 @@ auto UnitLowerer::ExternalScopeClassOf(
 auto UnitLowerer::ExternalClassOf(
     const std::string& unit_name, const support::DefPath& class_path)
     -> const hir::ExternalClass& {
+  if (unit_name == unit_.name) {
+    throw InternalError(
+        std::format(
+            "UnitLowerer::ExternalClassOf: this unit's own class '{}' is read "
+            "as another unit's -- please report this as a bug",
+            support::DisplayOf(class_path)));
+  }
   if (const hir::ExternalClass* held = hir::FindExternalClass(
           unit_.external_classes, unit_name, class_path)) {
     return *held;
@@ -1144,8 +1151,8 @@ auto UnitLowerer::ExternalClassOf(
       if (overriding == nullptr || overriding->is_pure) {
         continue;
       }
-      std::optional<hir::ExternalDispatchSlot> overridden =
-          IntroducerOf(*record.base, method.prototype.name);
+      std::optional<hir::VirtualBehavior> overridden =
+          FindVirtualBehavior(*record.base, method.prototype.name);
       if (!overridden.has_value()) {
         throw InternalError(
             std::format(

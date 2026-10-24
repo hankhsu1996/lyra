@@ -19,8 +19,7 @@ auto IntroducesSlot(const std::optional<VirtualDispatchRole>& role) -> bool {
   return std::visit(
       Overloaded{
           [](const IntroducesVirtualSlot&) { return true; },
-          [](const OverridesIntraUnitSlot&) { return false; },
-          [](const OverridesExternalSlot&) { return false; },
+          [](const OverridesVirtualSlot&) { return false; },
           [](const OverridesLibraryVirtual&) { return false; }},
       *role);
 }
