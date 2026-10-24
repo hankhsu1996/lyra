@@ -86,16 +86,22 @@ class StandingAwaiter final : public Awaiter {
 };
 
 // Waiting for one of the places an evaluation the process made reached to
-// report an occurrence. What it watches is known only once the process has
-// evaluated, so it is built at the stop, on what that evaluation reached; each
-// construct built on it says for itself what starting a stopped process again
-// asks (LRM 9.7).
+// report an occurrence, or for an object a weak reference answered to expire.
+// What it watches is known only once the process has evaluated, so it is built
+// at the stop, on what that evaluation reached; each construct built on it says
+// for itself what starting a stopped process again asks (LRM 9.7). It holds
+// nothing it watches, so what the evaluation held is let go once it has
+// enrolled: an expiry that follows is told only once the process has stopped
+// here, after the execution hands control back.
 class ReachedPlacesAwaiter : public Awaiter {
  public:
   explicit ReachedPlacesAwaiter(ReachedPlaces reached)
-      : Awaiter(reached.triggers.size()), objects_(std::move(reached.objects)) {
+      : Awaiter(reached.triggers.size() + reached.expiries.size()) {
     for (const Trigger& trigger : reached.triggers) {
       EnrolOnLeaf(trigger);
+    }
+    for (IntrusiveList<WaitMembership>* expiry : reached.expiries) {
+      EnrolOn(*expiry);
     }
   }
 
@@ -109,11 +115,6 @@ class ReachedPlacesAwaiter : public Awaiter {
   [[nodiscard]] auto IsReportFlushPoint() const -> bool override {
     return true;
   }
-
- private:
-  // The objects the evaluation read, kept for as long as the wait watches
-  // their event sources.
-  std::vector<std::shared_ptr<GcObject>> objects_;
 };
 
 // Waiting for a condition the body itself tests (LRM 9.4.3). It watches the
@@ -174,10 +175,12 @@ auto Collected(std::span<ReadReport* const> reports) -> ReachedPlaces {
         collected.triggers.end(),
         std::make_move_iterator(reached.triggers.begin()),
         std::make_move_iterator(reached.triggers.end()));
-    collected.objects.insert(
-        collected.objects.end(),
-        std::make_move_iterator(reached.objects.begin()),
-        std::make_move_iterator(reached.objects.end()));
+    collected.expiries.insert(
+        collected.expiries.end(), reached.expiries.begin(),
+        reached.expiries.end());
+    collected.held.insert(
+        collected.held.end(), std::make_move_iterator(reached.held.begin()),
+        std::make_move_iterator(reached.held.end()));
   }
   return collected;
 }

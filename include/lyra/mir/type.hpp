@@ -586,6 +586,18 @@ struct ManagedRefType {
   auto operator==(const ManagedRefType&) const -> bool = default;
 };
 
+// A weak reference to a garbage-collected object (LRM 8.30), as Rust's `Weak`
+// and C++'s `std::weak_ptr` are to their strong pointers: an edge the
+// collector does not follow, so it keeps nothing reachable, and which reads no
+// object once its target is unreachable. It is a value: a copy refers to the
+// same target. A managed reference is made into one, and one is read back as
+// one, through the library.
+struct WeakManagedRefType {
+  TypeId pointee;
+
+  auto operator==(const WeakManagedRefType&) const -> bool = default;
+};
+
 // A homogeneous sequence: one element type, laid down as many times as the
 // declaration standing for several objects covers (LRM 23.3.2). A member
 // holding one receives it complete, so how many objects stand behind a
@@ -768,9 +780,9 @@ class Type {
       ShortRealType, ChandleType, VoidType, ObjectType, RuntimeClassType,
       RuntimeEffectsType, FilesType, DiagnosticType, RuntimeLibraryType,
       CoroutineType, VariableRefType, ReferenceWrapperType, PointerType,
-      ReferenceType, ManagedRefType, VectorType, TupleType, EmptyType,
-      ObservableType, ResolvedType, DriverType, OpenWriteType, DesignationType,
-      BitsReferenceType, ObjectWriteType, SampledHistoryType,
+      ReferenceType, ManagedRefType, WeakManagedRefType, VectorType, TupleType,
+      EmptyType, ObservableType, ResolvedType, DriverType, OpenWriteType,
+      DesignationType, BitsReferenceType, ObjectWriteType, SampledHistoryType,
       EvaluationAttemptsType, LoopBlocksType, RecordType, ClosureType,
       ErasedCallableType>;
 

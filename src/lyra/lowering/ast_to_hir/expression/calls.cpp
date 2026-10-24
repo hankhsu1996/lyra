@@ -67,17 +67,6 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// The class declaring a subroutine, or none where no class declares it.
-auto DeclaringClassOf(const slang::ast::SubroutineSymbol& sym)
-    -> const slang::ast::ClassType* {
-  const slang::ast::Scope* scope = sym.getParentScope();
-  if (scope == nullptr ||
-      scope->asSymbol().kind != slang::ast::SymbolKind::ClassType) {
-    return nullptr;
-  }
-  return &scope->asSymbol().as<slang::ast::ClassType>();
-}
-
 // True when the call reaches an instance method through its enclosing class
 // -- either the source supplied a handle (`h.foo()`) or slang resolved an
 // unqualified call to a class-scope subroutine, whose enclosing class is
@@ -422,27 +411,6 @@ auto BuiltinCall(
   return hir::CallExpr{
       .callee = hir::BuiltinMethodRef{.method = method, .receiver = receiver},
       .arguments = {operands.begin() + 1, operands.end()}};
-}
-
-// A method of an imported runtime-library class (LRM 9.7 `process`) is
-// recognized by its declaring class, exactly as the handle type is; the runtime
-// carries the body out, so the call names a library entry rather than a lowered
-// user method.
-auto DetectImportedRuntimeMethod(const slang::ast::SubroutineSymbol& method)
-    -> std::optional<support::BuiltinFn> {
-  const slang::ast::ClassType* owner = DeclaringClassOf(method);
-  if (owner == nullptr) {
-    return std::nullopt;
-  }
-  const auto klass = ImportedRuntimeClassOf(*owner);
-  if (!klass.has_value()) {
-    return std::nullopt;
-  }
-  switch (*klass) {
-    case support::ImportedRuntimeClass::kProcess:
-      return LowerProcessMethodName(method.name);
-  }
-  throw InternalError("AST->HIR call: unknown imported runtime-library class");
 }
 
 // Enables a subroutine of another instance, or of a generate block inside one
@@ -944,8 +912,8 @@ auto LowerBuiltinClassMethodCall(
       "the built-in class method '{}' is not yet supported", sym.name);
 }
 
-// A call to a subroutine the source declared: a method of a class or of an
-// imported runtime-library class, one of an interface instance, a DPI-C
+// A call to a subroutine the source declared: a method of a class or one the
+// runtime carries out, one of an interface instance, a DPI-C
 // import, one another unit's namespace declares, or one of this unit's scopes.
 template <ExprLowerer Lowerer>
 auto LowerSubroutineCall(
@@ -960,15 +928,16 @@ auto LowerSubroutineCall(
         "AST->HIR call: user call missing resolved SubroutineSymbol");
   }
 
-  // A method of an imported runtime-library class routes to the library entry.
-  // A static method acts on no object; an instance method acts on the handle
-  // `thisClass` carries.
-  if (const auto imported = DetectImportedRuntimeMethod(*sym)) {
+  // A method the runtime carries out routes to the library entry. A static
+  // method acts on no object, whatever handle the call is written through (LRM
+  // 8.10); an instance method acts on the handle `thisClass` carries.
+  if (const auto carried = RuntimeCarriedMethodOf(*sym)) {
     auto result_type = unit_lowerer.InternExpressionType(call, span);
     if (!result_type) return std::unexpected(std::move(result_type.error()));
     std::optional<hir::ExprId> receiver;
     if (const slang::ast::Expression* this_class = call.thisClass();
-        this_class != nullptr) {
+        this_class != nullptr &&
+        !sym->flags.has(slang::ast::MethodFlags::Static)) {
       auto receiver_or = lowerer.LowerExpr(*this_class, frame);
       if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
       receiver = frame.Exprs().Add(*std::move(receiver_or));
@@ -979,7 +948,7 @@ auto LowerSubroutineCall(
             hir::CallExpr{
                 .callee =
                     hir::BuiltinMethodRef{
-                        .method = *imported, .receiver = receiver},
+                        .method = *carried, .receiver = receiver},
                 .arguments = std::move(arg_ids),
             },
         .span = span,

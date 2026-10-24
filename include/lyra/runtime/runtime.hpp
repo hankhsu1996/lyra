@@ -185,6 +185,7 @@ class Runtime final : public RuntimeEffects {
   friend class CurrentRuntimeGuard;
   friend class ProcessExecutionGuard;
   friend class InterruptReport;
+  friend void HandOverExpiry(IntrusiveList<WaitMembership>& expiry) noexcept;
 
   struct Running {};
   // The simulation reached its end (LRM 9.2.3): it was asked to end, or no work
@@ -264,6 +265,10 @@ class Runtime final : public RuntimeEffects {
   // and was reported.
   auto DrainRegions(Region first, Region last, SlotPasses& passes) -> bool;
   void RunRegion(Region region);
+  // Tells the waits on objects that expired since this was last asked (LRM
+  // 8.30.3), with no execution running: each runs where its context places a
+  // wake, as at any other occurrence, and what that runs may expire more.
+  void TellExpired();
   // The fatal report of a slot that met the bound on its passes, and what its
   // last passes ran, a procedure once for each time it ran.
   void ReportUnsettledSlot(std::span<const NotedProcedure> ran);
@@ -286,6 +291,10 @@ class Runtime final : public RuntimeEffects {
   PlusArgsSource plusargs_;
   CoverageLog coverage_;
   CurrentRuntimeGuard current_runtime_guard_{*this};
+  // The waits on objects that expired and have not been told yet. Declared
+  // before everything that holds an object, so it outlives every object that
+  // can expire into it.
+  IntrusiveList<WaitMembership> expired_;
   std::unique_ptr<Design> design_;
   // LRM 4.4 divides the event set first by time, into the current slot and
   // later ones, and each slot by region. Nearly every event -- a wake, a

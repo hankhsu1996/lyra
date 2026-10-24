@@ -183,6 +183,15 @@ void RequireInitializes(
       destination);
 }
 
+// A variable is named by a position the body stated a variable at.
+void RequireStatedVariable(const Function& fn, VariablePosition position) {
+  if (position.value >= fn.variables.size()) {
+    throw InternalError(
+        "lir verify: a variable is reached at a position the body stated no "
+        "variable at");
+  }
+}
+
 void VerifyRvalue(
     const CompilationUnit& unit, const Function& fn, const Rvalue& value,
     TypeId result_type);
@@ -238,8 +247,10 @@ void VerifyInstr(
                 break;
             }
           },
-          [](const CloseVariablesInstr&) {}, [](const BeginHandlingInstr&) {},
-          [](const EndHandlingInstr&) {}},
+          [&](const EndVariableInstr& ended) {
+            RequireStatedVariable(fn, ended.position);
+          },
+          [](const BeginHandlingInstr&) {}, [](const EndHandlingInstr&) {}},
       instr.data);
 }
 
@@ -332,10 +343,10 @@ void VerifyRvalue(
             }
           },
           [](const ArrayInstr&) {}, [](const BinaryInstr&) {},
-          [](const UnaryInstr&) {},
+          [](const UnaryInstr&) {}, [](const VariableStorageInstr&) {},
           // Where it may stand is a property of the block rather than of the
           // instruction, so it is held where the blocks are walked.
-          [](const LandingInstr&) {}, [](const OpenVariablesInstr&) {},
+          [](const LandingInstr&) {},
           [&](const UseInstr& use) {
             if (OperandType(fn, use.operand) != result_type) {
               throw InternalError(
@@ -343,12 +354,8 @@ void VerifyRvalue(
                   "it goes");
             }
           },
-          [&](const VariableAddressInstr& reached) {
-            if (reached.position.value >= fn.variables.size()) {
-              throw InternalError(
-                  "lir verify: a variable is reached at a position the body "
-                  "stated no variable at");
-            }
+          [&](const BeginVariableInstr& begun) {
+            RequireStatedVariable(fn, begun.position);
           }},
       value);
 }

@@ -47,6 +47,9 @@ enum class MemberStorageKind : std::uint8_t {
   // same way: where a value is received, of which type, and what carries it on
   // to the variable.
   kAnyReference,
+  // A reference to an object that does not keep it (LRM 8.30), held whole: a
+  // read hands back the weak reference itself, and filling it copies one.
+  kWeakReference,
   // A counted hold on the cell of a local a scope keeps past its end (LRM
   // 6.21), which the owner does keep alive: a read hands back the hold, and the
   // hold ending with its owner is what ends the cell once no holder is left.

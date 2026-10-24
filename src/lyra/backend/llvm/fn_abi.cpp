@@ -901,6 +901,16 @@ auto CallArranger::ConstructionOf(
                 .realization = std::nullopt,
                 .answer_told = AnswerToldOf(RuntimeOp::kDefault)};
           },
+          // A weak reference is built referring to nothing (LRM 8.30).
+          [&](const lir::WeakManagedRefType&) -> Built {
+            return Construction{
+                .symbol = RuntimeSymbol(
+                    support::LibraryObject::kWeakReference,
+                    RuntimeOp::kDefault),
+                .operands = OperandReadingsOf(RuntimeOp::kDefault),
+                .realization = std::nullopt,
+                .answer_told = AnswerToldOf(RuntimeOp::kDefault)};
+          },
 
           // Nothing below has a construction entry on this backend. Each says
           // so on a line of its own, because "nothing brings one of these into

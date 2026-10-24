@@ -370,6 +370,9 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           // units may hold one cell as different classes, and a type per
           // class would give that cell two types.
           [&](const mir::ManagedRefType&) { out += "lyra::value::ObjectRef"; },
+          [&](const mir::WeakManagedRefType&) {
+            out += "lyra::runtime::WeakObjectRef";
+          },
           [&](const mir::VectorType& v) {
             Write(out, "std::vector<", type(v.element), ">");
           },
@@ -537,6 +540,7 @@ auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [&](const mir::ManagedRefType& m) -> DerefSpelling {
             return DerefThroughView{.pointee = m.pointee};
           },
+          [&](const mir::WeakManagedRefType&) { return reaches_nothing(); },
           // Every other type is a value that reaches nothing, so there is
           // nothing to dereference.
           [&](const mir::IntegralType&) { return reaches_nothing(); },
@@ -620,6 +624,7 @@ auto ReceiverSpellingAsCpp(
               [&](const mir::BitsReferenceType&) { return holds_no_object(); },
               [&](const mir::ObjectWriteType&) { return holds_no_object(); },
               [&](const mir::ManagedRefType&) { return holds_no_object(); },
+              [&](const mir::WeakManagedRefType&) { return holds_no_object(); },
               [&](const mir::IntegralType&) { return holds_no_object(); },
               [&](const mir::EnumType&) { return holds_no_object(); },
               [&](const mir::UnpackedArrayType&) { return holds_no_object(); },
@@ -735,6 +740,7 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
                 "backend::cpp: the object a class handle owns is allocated by "
                 "a new-expression, so no handle is constructed");
           },
+          [&](const mir::WeakManagedRefType& t) { by_naming_itself(t); },
           [](const mir::ReferenceType&) {
             throw InternalError(
                 "backend::cpp: a reference is bound to what already exists, so "

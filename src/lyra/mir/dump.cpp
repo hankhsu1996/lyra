@@ -585,6 +585,10 @@ class MirDumper {
               return std::format(
                   "ManagedRef(pointee=Type[{}])", m.pointee.value);
             },
+            [](const WeakManagedRefType& m) -> std::string {
+              return std::format(
+                  "WeakManagedRef(pointee=Type[{}])", m.pointee.value);
+            },
             [](const VectorType& v) -> std::string {
               return std::format("Vector(elem=Type[{}])", v.element.value);
             },

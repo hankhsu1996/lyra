@@ -224,6 +224,9 @@ auto TypeImporter::Import(const Type& type) -> Type {
                 t.class_ref);
           },
           [](const ImportedClassHandleType& t) -> Type { return Type{t}; },
+          [this](const WeakHandleType& t) -> Type {
+            return Type{WeakHandleType{.handle = Import(t.handle)}};
+          },
           [this](const CovergroupHandleType& t) -> Type {
             return Type{CovergroupHandleType{
                 .covergroup = ImportCovergroupRef(t.covergroup)}};

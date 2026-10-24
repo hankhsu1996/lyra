@@ -181,6 +181,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             HashEnum(seed, t.mutability);
           },
           [&](const ManagedRefType& t) { HashId(seed, t.pointee); },
+          [&](const WeakManagedRefType& t) { HashId(seed, t.pointee); },
           [&](const VectorType& t) { HashId(seed, t.element); },
           [&](const TupleType& t) { HashIds(seed, t.elements); },
           [](const EmptyType&) {},
@@ -378,6 +379,7 @@ auto Type::IsAddressOnly() const -> bool {
           [](const PointerType&) { return false; },
           [](const ReferenceType&) { return false; },
           [](const ManagedRefType&) { return false; },
+          [](const WeakManagedRefType&) { return false; },
           [](const VectorType&) { return false; },
           [](const TupleType&) { return false; },
           [](const EmptyType&) { return false; },
@@ -462,6 +464,10 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           // address carries on its own; a chandle's value is the address, so
           // whoever holds the address holds the whole of it (LRM 6.14).
           [](const ManagedRefType&) { return true; },
+          // A weak reference is no value of the design but a hold of the
+          // library's, held by whatever holds it as a counted hold is, and
+          // ended where that holder ends.
+          [](const WeakManagedRefType&) { return false; },
           [](const ChandleType&) { return false; },
 
           // A machine quantity, which whoever holds it holds entire.
@@ -588,6 +594,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const PointerType&) -> Element { return std::nullopt; },
           [](const ReferenceType&) -> Element { return std::nullopt; },
           [](const ManagedRefType&) -> Element { return std::nullopt; },
+          [](const WeakManagedRefType&) -> Element { return std::nullopt; },
           [](const CoroutineType&) -> Element { return std::nullopt; },
           [](const MachineFunctionType&) -> Element { return std::nullopt; },
 

@@ -97,6 +97,7 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
           [&](const lir::StringType& t) { return address(t); },
           [&](const lir::AnyType& t) { return address(t); },
           [&](const lir::AnyReferenceType& t) { return address(t); },
+          [&](const lir::WeakManagedRefType& t) { return address(t); },
           [&](const lir::RealType& t) { return address(t); },
           [&](const lir::ShortRealType& t) { return address(t); },
           [&](const lir::EmptyType& t) { return address(t); },

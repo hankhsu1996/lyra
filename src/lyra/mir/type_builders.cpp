@@ -187,6 +187,9 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           // states none (LRM 15.4.9): only the mailbox holds one, and nothing
           // waits on it.
           [&](const AnyType&) { return bare(); },
+          // A weak reference is held by the object it lies in alone, and a
+          // wait reaches what it refers to only by reading it (LRM 8.30.3).
+          [&](const WeakManagedRefType&) { return bare(); },
           [&](const ErasedValueType&) { return bare(); },
           [&](const MachineCStringType&) { return bare(); },
           [&](const MachineBoolType&) { return bare(); },

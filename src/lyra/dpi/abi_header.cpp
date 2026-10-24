@@ -148,6 +148,7 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
             return crosses_no_boundary();
           },
           [&](const mir::ManagedRefType&) { return crosses_no_boundary(); },
+          [&](const mir::WeakManagedRefType&) { return crosses_no_boundary(); },
           [&](const mir::VectorType&) { return crosses_no_boundary(); },
           [&](const mir::TupleType&) { return crosses_no_boundary(); },
           [&](const mir::ObservableType&) { return crosses_no_boundary(); },

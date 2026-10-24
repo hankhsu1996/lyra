@@ -71,6 +71,7 @@
 #include "lyra/runtime/value_families.hpp"
 #include "lyra/runtime/value_handle.hpp"
 #include "lyra/runtime/var.hpp"
+#include "lyra/runtime/weak_reference.hpp"
 #include "lyra/support/callable_bounds.hpp"
 #include "lyra/value/any.hpp"
 #include "lyra/value/any_value.hpp"
@@ -2095,6 +2096,7 @@ using lyra::runtime::WaitOnPropertyEvaluation;
 using lyra::runtime::WaitRecollecting;
 using lyra::runtime::WaitUntil;
 using lyra::runtime::WatchedPlace;
+using lyra::runtime::WeakObjectRef;
 using lyra::value::AssociativeIndexOrder;
 using lyra::value::BitVec;
 using lyra::value::Chandle;
@@ -2481,6 +2483,35 @@ auto lyra_rt_object_get_randstate(void* object, void* out) -> void* {
 void lyra_rt_object_set_randstate(void* object, const void* state) {
   lyra::runtime::ObjectSetRandstate(
       static_cast<GcObject*>(object), Read<String>(state));
+}
+
+auto lyra_rt_weak_downgrade(const void* strong, void* out) -> void* {
+  return Emplace(out, lyra::runtime::Downgrade(Read<ObjectRef>(strong)));
+}
+
+auto lyra_rt_weak_upgrade(const void* weak, void* evaluation, void* out)
+    -> void* {
+  return Emplace(
+      out,
+      lyra::runtime::Upgrade(
+          Read<WeakObjectRef>(weak), static_cast<ReadReport*>(evaluation)));
+}
+
+auto lyra_rt_weak_upgrade_process(const void* weak, void* evaluation, void* out)
+    -> void* {
+  return Emplace(
+      out,
+      lyra::runtime::UpgradeProcess(
+          Read<WeakObjectRef>(weak), static_cast<ReadReport*>(evaluation)));
+}
+
+auto lyra_rt_weak_refers_to(const void* weak, const void* strong) -> bool {
+  return lyra::runtime::WeakRefersTo(
+      Read<WeakObjectRef>(weak), Read<ObjectRef>(strong));
+}
+
+auto lyra_rt_object_identity(const void* object, void* out) -> void* {
+  return Emplace(out, lyra::runtime::ObjectIdentity(Read<ObjectRef>(object)));
 }
 
 auto lyra_rt_randomize_object(void* object, void* runtime, void* out) -> void* {
@@ -5783,6 +5814,9 @@ auto lyra_rt_any_default(void* out) -> void* {
 auto lyra_rt_any_reference_default(void* out) -> void* {
   return std::construct_at(static_cast<AnyReference*>(out));
 }
+auto lyra_rt_weak_reference_default(void* out) -> void* {
+  return std::construct_at(static_cast<WeakObjectRef*>(out));
+}
 
 auto lyra_rt_any_copy(const void* value, void* out) -> void* {
   return std::construct_at(
@@ -7326,6 +7360,9 @@ void lyra_rt_reference_assign(void* storage, const void* value) {
 void lyra_rt_any_reference_assign(void* storage, const void* value) {
   *static_cast<AnyReference*>(storage) = Read<AnyReference>(value);
 }
+void lyra_rt_weak_reference_assign(void* storage, const void* value) {
+  *static_cast<WeakObjectRef*>(storage) = Read<WeakObjectRef>(value);
+}
 void lyra_rt_wait_assign(void* storage, void* value) {
   *static_cast<Wait*>(storage) = std::move(*static_cast<Wait*>(value));
 }
@@ -7391,6 +7428,9 @@ void lyra_rt_channel_cancellation_destroy(void* object) {
 }
 void lyra_rt_shared_pointer_destroy(void* object) {
   std::destroy_at(static_cast<SharedPointer*>(object));
+}
+void lyra_rt_weak_reference_destroy(void* object) {
+  std::destroy_at(static_cast<WeakObjectRef*>(object));
 }
 void lyra_rt_open_write_destroy(void* object) {
   std::destroy_at(static_cast<OpenWrite*>(object));
@@ -7470,6 +7510,9 @@ auto lyra_rt_reference_copy(const void* value, void* out) -> void* {
 auto lyra_rt_any_reference_copy(const void* value, void* out) -> void* {
   return Emplace(out, Read<AnyReference>(value));
 }
+auto lyra_rt_weak_reference_copy(const void* value, void* out) -> void* {
+  return Emplace(out, Read<WeakObjectRef>(value));
+}
 
 // A value moved into storage that takes it over. What is left behind is still
 // an object, which the body then ends.
@@ -7548,6 +7591,9 @@ auto lyra_rt_reference_move(void* value, void* out) -> void* {
 auto lyra_rt_any_reference_move(void* value, void* out) -> void* {
   return Emplace(out, Read<AnyReference>(value));
 }
+auto lyra_rt_weak_reference_move(void* value, void* out) -> void* {
+  return Emplace(out, std::move(*static_cast<WeakObjectRef*>(value)));
+}
 
 void lyra_rt_borrowed_handle_construct(void* storage) {
   BuildAt<void*>(storage);
@@ -7557,6 +7603,9 @@ void lyra_rt_reference_construct(void* storage) {
 }
 void lyra_rt_any_reference_construct(void* storage) {
   BuildAt<AnyReference>(storage);
+}
+void lyra_rt_weak_reference_construct(void* storage) {
+  BuildAt<WeakObjectRef>(storage);
 }
 void lyra_rt_string_cell_construct(void* storage) {
   BuildAt<Var<String>>(storage);

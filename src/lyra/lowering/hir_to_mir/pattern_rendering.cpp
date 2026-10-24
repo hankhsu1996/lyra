@@ -338,6 +338,7 @@ auto Renderer::BuildBody(
           [&](const hir::ChandleType& t) { return none(t); },
           [&](const hir::ClassHandleType& t) { return none(t); },
           [&](const hir::ImportedClassHandleType& t) { return none(t); },
+          [&](const hir::WeakHandleType& t) { return none(t); },
           [&](const hir::CovergroupHandleType& t) { return none(t); },
           [&](const hir::UnitObjectType& t) { return none(t); },
           [&](const hir::UnitObjectsType& t) { return none(t); },
@@ -766,6 +767,9 @@ auto PatternReadingOf(const hir::CompilationUnit& hir, hir::TypeId type)
           // An index of no declared type is a place a key of any integral width
           // is stored under, never a type a value has (LRM 7.8.1).
           [&](const hir::WildcardIndexType& t) { return not_a_value(t); },
+          // A weak handle lies only inside the class that holds it, which no
+          // pattern names (LRM 8.30).
+          [&](const hir::WeakHandleType& t) { return not_a_value(t); },
           // What only a mailbox's own messages are of (LRM 15.4.9), which no
           // pattern names.
           [&](const hir::DynamicType& t) { return not_a_value(t); },

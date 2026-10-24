@@ -1,7 +1,8 @@
 # A function reports what a call of it reads
 
 Date: 2026-09-29, revised 2026-10-18: what a call reads is recorded by the evaluation that runs it,
-as it runs, where it was stated ahead of the body. Status: accepted. Realizes
+as it runs, where it was stated ahead of the body; revised 2026-10-23: a wait watches what it read
+without keeping it. Status: accepted. Realizes
 [object-is-an-event-source](object-is-an-event-source.md) D3 and D7 for an expression that calls a
 function.
 
@@ -56,10 +57,22 @@ virtual interface as it reaches it, so what the wait watches is what this evalua
 - **What is reached through a handle is stated where it is reached**, by the one point every
   property read and every virtual interface member read is lowered through, guarded by a test that
   the report is there. A place is held for the statement by a pointer to it, which copies nothing.
-- **An object read is kept by the wait for as long as it waits on it**, as a subscription keeps what
-  it is subscribed to: the evaluation may have reached it through nothing but a variable of a
-  function that has since returned. One nothing owns yet is being constructed by this evaluation,
-  which a later evaluation constructs afresh, so it is not watched.
+- **An object read is watched, never kept** (LRM 8.29: what keeps an object is a handle, and a wait
+  is none). The evaluation holds it only until the wait has enrolled on it, since the place enrolled
+  on lies in the object. An object nothing else refers to then ends, and its end tells the waits on
+  its properties nothing: no one can write an object that is gone, so nothing they read of it can
+  change. One nothing owns yet is being constructed by this evaluation, which a later evaluation
+  constructs afresh, so it is not watched.
+- **What an event control keeps to compare against keeps nothing either.** A handle's value is which
+  object it names, so its baseline is a weak reference to that object: one that expires has changed
+  into whatever is read next, and an object made where it lay is not taken for it. The report and
+  that baseline are the wait's own, ended where the wait ends, so nothing the last evaluation read
+  is held while the statement the wait controls runs.
+- **An object a weak reference answered is watched for its expiry** (LRM 8.30.3), which does change
+  what the reference answers. The object tells those waits once it has expired, never while it is
+  being destroyed: what a wake runs at the occurrence is the design's code, so the waits are handed
+  to the runtime and told once the execution running then has handed control back, in the time slot
+  the object expired in.
 - **A place reached many times is watched once**: a function a loop calls states its cells on every
   call, and the wait enrols once per place.
 - **What runs as part of the evaluation states what it reaches there**: an array method's `with`
@@ -90,7 +103,29 @@ body takes what it needs as a parameter rather than from an implicit context, so
 and a read here is a native load, not a getter, so a cell's read is stated once at entry from the
 text rather than at each load.
 
+The baseline's comparison is the field's too. C++ orders weak and strong references by the ownership
+they share (`owner_before`), so two compare equivalent only when both are empty or both share one
+object's ownership. Rust compares two `Weak`s by the allocation they point to (`Weak::ptr_eq`,
+`library/alloc/src/rcs/rc.rs`), which a `Weak` keeps allocated, so an address cannot be taken by
+another object while one still points there. Either way an object made where an expired one lay is a
+different object, and one seen as a base and as a derived class is one object, which is what
+comparing two handles asks.
+
 ## Rejected
+
+- **Keeping every object a wait read for as long as it waits**, which this entry stated until
+  2026-10-23 on the ground that "the evaluation may have reached it through nothing but a variable
+  of a function that has since returned". An object only the wait reaches can be written by nobody,
+  so watching it loses no event, and the membership is unlinked when the object ends, so nothing
+  dangles. Keeping it made a wait a strong reference, which LRM 8.29 does not count among what keeps
+  an object, and a weak reference's referent then never expired under a wait that read it.
+- **An object's end told as a change to every property it has.** A wait whose expression makes an
+  object, reads it and lets it go then wakes itself at every evaluation, in one time slot, without
+  end; only a weak reference's answer changes when an object ends, so only its waits are told.
+- **Telling expiry from the object's destructor.** A wake can run the design's code at once (an
+  execution placed to run at the occurrence), which would run it inside the destruction.
+- **A table of watched objects by address**, consulted as each object ends. The address of an object
+  that ended may be another's next, and the watch is on the object's own place already.
 
 - **Stating ahead of the body what a call will read.** The decision this entry took first: each
   function carried a report stated from its text and run before its body, and one another function's
@@ -136,6 +171,8 @@ text rather than at each load.
 - **One change can reach a wait through several places it watches.** The places only wake the
   process, which evaluates once however many of them the change reached, so `@(p.a + p.b)` compares
   one new value against the last one.
-- **A wait keeps alive the objects its last evaluation read** until it is satisfied or evaluates
-  again.
+- **A wait keeps alive nothing it read.** Had it kept them,
+  `wait (w.get() == null || w.get().n == 10)` would hold the object `w` refers to weakly and never
+  see it expire; and a wait whose expression makes and reads an object of its own
+  (`wait (f().n == 10)`) waits on, since that object's end is no change.
 - **Each export call asks for the evaluation in progress**, and nothing else does.

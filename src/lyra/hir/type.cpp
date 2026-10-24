@@ -156,6 +156,9 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [seed](const ImportedClassHandleType& t) {
             return Combine(seed, static_cast<std::size_t>(t.klass));
           },
+          [seed](const WeakHandleType& t) {
+            return Combine(seed, t.handle.value);
+          },
           [seed](const CovergroupHandleType& t) {
             return HashCovergroupRef(seed, t.covergroup);
           },
@@ -217,6 +220,7 @@ auto Type::IsIntegral() const -> bool {
           [](const ChandleType&) { return false; },
           [](const ClassHandleType&) { return false; },
           [](const ImportedClassHandleType&) { return false; },
+          [](const WeakHandleType&) { return false; },
           [](const CovergroupHandleType&) { return false; },
           [](const UnitObjectType&) { return false; },
           [](const UnitObjectsType&) { return false; },
@@ -253,6 +257,10 @@ auto Type::IsValueChangeObservable() const -> bool {
           // on a property of the object, which the object answers.
           [](const ClassHandleType&) { return true; },
           [](const ImportedClassHandleType&) { return true; },
+          // What a weak handle refers to changes with no write to it, when the
+          // object expires, so a wait sees that through what reading it
+          // answers, never as a change of the handle (LRM 8.30.3).
+          [](const WeakHandleType&) { return false; },
           [](const CovergroupHandleType&) { return true; },
           [](const ChandleType&) { return true; },
           // Which instance a virtual interface holds is a value it is compared
@@ -315,6 +323,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const ImportedClassHandleType&) -> Element {
             return std::nullopt;
           },
+          [](const WeakHandleType&) -> Element { return std::nullopt; },
           [](const CovergroupHandleType&) -> Element { return std::nullopt; },
           [](const UnitObjectType&) -> Element { return std::nullopt; },
           [](const UnitObjectsType&) -> Element { return std::nullopt; },

@@ -342,13 +342,13 @@ class CodeGenFunction {
 
   // The body's variables, laid out as one record in its own frame the way a C++
   // compiler lays out locals: each variable's storage at its own offset, sized
-  // and aligned as the library states that storage. Opening builds each in
-  // place, a variable is its offset, and closing ends each, last first.
+  // and aligned as the library states that storage. A variable is its offset,
+  // and beginning one builds it in place there and answers where it lies.
   auto Variables() -> diag::Result<const PlacedMembers*>;
-  auto LowerOpenVariables() -> diag::Result<llvm::Value*>;
-  auto LowerVariableAddress(const lir::VariableAddressInstr& reached)
+  auto LowerVariableStorage() -> diag::Result<llvm::Value*>;
+  auto LowerBeginVariable(const lir::BeginVariableInstr& begun)
       -> diag::Result<llvm::Value*>;
-  auto LowerCloseVariables(const lir::CloseVariablesInstr& closed)
+  auto LowerEndVariable(const lir::EndVariableInstr& ended)
       -> diag::Result<llvm::Value*>;
   auto LowerOperand(const lir::Operand& operand) -> diag::Result<llvm::Value*>;
 

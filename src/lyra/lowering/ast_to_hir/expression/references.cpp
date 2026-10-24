@@ -34,7 +34,9 @@
 #include "lyra/lowering/ast_to_hir/expression/view_names.hpp"
 #include "lyra/lowering/ast_to_hir/expression/virtual_interface.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
+#include "lyra/lowering/ast_to_hir/std_classes.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -402,6 +404,44 @@ auto IsLineageOf(
   return false;
 }
 
+// The upgrade of a weak handle to an object of the kind `handle` names: a class
+// object or a process, two kinds of object a handle may name.
+auto UpgradeOf(const hir::Type& handle) -> support::BuiltinFn {
+  if (handle.Is<hir::ClassHandleType>()) {
+    return support::BuiltinFn::kWeakUpgrade;
+  }
+  if (const auto* imported = handle.As<hir::ImportedClassHandleType>()) {
+    switch (imported->klass) {
+      case support::ImportedRuntimeClass::kProcess:
+        return support::BuiltinFn::kWeakUpgradeProcess;
+    }
+  }
+  throw InternalError(
+      "a weak reference refers to an object of a kind it has no upgrade for "
+      "-- please report this as a bug");
+}
+
+// A read of a property Lyra's definitions hold weakly (LRM 8.30.3): the object
+// the weak handle refers to, or null, as the property's declared type sees it.
+auto LowerReadWeaklyHeld(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    const slang::ast::ClassPropertySymbol& prop, hir::TypeId read_as,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  auto stored = LowerWeaklyHeldStorage(unit_lowerer, prop, span);
+  if (!stored) return std::unexpected(std::move(stored.error()));
+  return hir::Expr{
+      .type = read_as,
+      .data =
+          hir::CallExpr{
+              .callee =
+                  hir::BuiltinMethodRef{
+                      .method =
+                          UpgradeOf(unit_lowerer.Unit().types.Get(read_as)),
+                      .receiver = frame.Exprs().Add(*std::move(stored))},
+              .arguments = {}},
+      .span = span};
+}
+
 auto MakeClassPropertyRefExpr(
     UnitLowerer& unit_lowerer, const WalkFrame& frame,
     const slang::ast::Symbol& sym, const slang::ast::Type& type,
@@ -428,6 +468,9 @@ auto MakeClassPropertyRefExpr(
     auto property = unit_lowerer.ResolveStaticPropertyTarget(frame, prop, span);
     if (!property) return std::unexpected(std::move(property.error()));
     return hir::MakeValueTargetRefExpr(*property, *type_id, span);
+  }
+  if (IsHeldWeakly(prop)) {
+    return LowerReadWeaklyHeld(unit_lowerer, frame, prop, *type_id, span);
   }
   const auto& owner_class =
       sym.getParentScope()->asSymbol().as<slang::ast::ClassType>();
@@ -840,6 +883,19 @@ auto LowerArbitrarySymbol(
       unit_lowerer.MakeRoutedObjectRef(
           frame.Current(), *std::move(route), object_type),
       *type_id, span);
+}
+
+auto LowerWeaklyHeldStorage(
+    UnitLowerer& unit_lowerer, const slang::ast::ClassPropertySymbol& prop,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  auto held = unit_lowerer.InternPropertyType(prop, span);
+  if (!held) return std::unexpected(std::move(held.error()));
+  const auto& owner_class =
+      prop.getParentScope()->asSymbol().as<slang::ast::ClassType>();
+  auto target = unit_lowerer.MakeClassPropertyTarget(owner_class, prop, span);
+  if (!target) return std::unexpected(std::move(target.error()));
+  return hir::MakeRefExpr(
+      hir::ClassPropertyRef{.target = *std::move(target)}, *held, span);
 }
 
 }  // namespace lyra::lowering::ast_to_hir

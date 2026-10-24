@@ -135,6 +135,7 @@ auto DescribeMemory(
           [&](const hir::ChandleType&) { return not_a_memory(); },
           [&](const hir::ClassHandleType&) { return not_a_memory(); },
           [&](const hir::ImportedClassHandleType&) { return not_a_memory(); },
+          [&](const hir::WeakHandleType&) { return not_a_memory(); },
           [&](const hir::CovergroupHandleType&) { return not_a_memory(); },
           [&](const hir::UnitObjectType&) { return not_a_memory(); },
           [&](const hir::UnitObjectsType&) { return not_a_memory(); },

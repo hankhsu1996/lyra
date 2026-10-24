@@ -562,6 +562,10 @@ class HirDumper {
                   "ImportedClassHandleType(class={})",
                   support::ImportedRuntimeClassName(c.klass));
             },
+            [](const WeakHandleType& w) -> std::string {
+              return std::format(
+                  "WeakHandleType(handle=Type[{}])", w.handle.value);
+            },
             [](const CovergroupHandleType& c) -> std::string {
               return std::format(
                   "CovergroupHandleType(covergroup={})",

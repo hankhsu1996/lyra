@@ -17,6 +17,7 @@
 
 namespace slang::ast {
 class ArbitrarySymbolExpression;
+class ClassPropertySymbol;
 class HierarchicalValueExpression;
 class NamedValueExpression;
 class Symbol;
@@ -133,5 +134,12 @@ auto LowerArbitrarySymbol(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::ArbitrarySymbolExpression& named, diag::SourceSpan span)
     -> diag::Result<hir::Expr>;
+
+// A property Lyra's definitions hold weakly (LRM 8.30) as the storage a write
+// lands in: the weak handle itself, which a read reaches only through the
+// library, as the object the handle refers to.
+auto LowerWeaklyHeldStorage(
+    UnitLowerer& unit_lowerer, const slang::ast::ClassPropertySymbol& prop,
+    diag::SourceSpan span) -> diag::Result<hir::Expr>;
 
 }  // namespace lyra::lowering::ast_to_hir

@@ -218,6 +218,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             Combine(seed, t.mutability);
           },
           [&](const ManagedRefType& t) { Combine(seed, t.pointee); },
+          [&](const WeakManagedRefType& t) { Combine(seed, t.pointee); },
           [&](const VectorType& t) { Combine(seed, t.element); },
           [&](const TupleType& t) { Combine(seed, t.elements); },
           [&](const RecordType& t) {
@@ -282,6 +283,7 @@ auto Type::KindName() const -> std::string_view {
           [](const VariableRefType&) { return "variable reference"; },
           [](const PointerType&) { return "pointer"; },
           [](const ManagedRefType&) { return "managed reference"; },
+          [](const WeakManagedRefType&) { return "weak reference"; },
           [](const VectorType&) { return "vector"; },
           [](const TupleType&) { return "tuple"; },
           [](const ResolvedType&) { return "net resolution node"; },
@@ -360,6 +362,7 @@ auto Type::Declaration() const -> std::optional<TypeDeclaration> {
           [&](const VariableRefType&) { return names_none(); },
           [&](const PointerType&) { return names_none(); },
           [&](const ManagedRefType&) { return names_none(); },
+          [&](const WeakManagedRefType&) { return names_none(); },
           [&](const VectorType&) { return names_none(); }});
 }
 
@@ -423,6 +426,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const VariableRefType&) -> Element { return std::nullopt; },
           [](const PointerType&) -> Element { return std::nullopt; },
           [](const ManagedRefType&) -> Element { return std::nullopt; },
+          [](const WeakManagedRefType&) -> Element { return std::nullopt; },
           [](const CoroutineType&) -> Element { return std::nullopt; },
           [](const MachineFunctionType&) -> Element { return std::nullopt; },
 
@@ -533,6 +537,9 @@ auto Type::HeldAs() const -> std::optional<Holding> {
           [](const AnyType&) -> Held { return ValueDomain::kAny; },
           [](const AnyReferenceType&) -> Held {
             return LibraryObject::kAnyReference;
+          },
+          [](const WeakManagedRefType&) -> Held {
+            return LibraryObject::kWeakReference;
           },
           [](const RealType&) -> Held { return ValueDomain::kReal; },
           [](const ShortRealType&) -> Held { return ValueDomain::kShortReal; },

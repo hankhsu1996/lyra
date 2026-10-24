@@ -695,6 +695,12 @@ class UnitLowerer {
   // no frontend type to take the shortcut on, so it goes straight to the pool.
   auto AddComposedType(hir::Type type) const -> hir::TypeId;
 
+  // The type a class property is held as: the type it was declared with, or a
+  // weak handle of it where Lyra's definitions hold it weakly (LRM 8.30).
+  auto InternPropertyType(
+      const slang::ast::ClassPropertySymbol& prop, diag::SourceSpan span)
+      -> diag::Result<hir::TypeId>;
+
   // Takes a type another unit published into this unit's own pool, and answers
   // with the identity this unit knows it by. The published pool's identities
   // index storage that unit carries, so what crosses is the type's structure,

@@ -9,6 +9,9 @@
 namespace lyra::runtime {
 
 class Observable;
+struct WaitMembership;
+template <class Node>
+class IntrusiveList;
 
 // The root every object the runtime holds is derived from. Whoever holds an
 // object holds it as this class, without knowing which class it is of, so the
@@ -36,11 +39,17 @@ class GcObject : public std::enable_shared_from_this<GcObject> {
 
   // The one event source every property of this object shares (LRM 9.4.2): a
   // write to any of them reevaluates every expression that reached the object,
-  // and what that expression is worth decides whether it was an event. It is
-  // made when a wait first reaches the object, since most objects are never
-  // waited on. A copy of an object starts with none: what waits on the one it
-  // was copied from waits on that one.
+  // and what that expression is worth decides whether it was an event. A wait
+  // watching it does not refer to the object (LRM 8.29), and the object's end
+  // tells it nothing: nothing can write an object that is gone, so nothing a
+  // wait read of it changes. A copy of an object starts with none: what waits
+  // on the one it was copied from waits on that one.
   [[nodiscard]] auto EventSource() -> Observable&;
+
+  // The waits that reached this object through a weak reference (LRM 8.30.3),
+  // which its expiry does change: what the weak reference answers. They are
+  // told once it has expired, never while it is being destroyed.
+  [[nodiscard]] auto Expiry() -> IntrusiveList<WaitMembership>&;
 
   // Whether a write to one of this object's properties has anyone to tell.
   [[nodiscard]] auto Watched() const -> bool;
@@ -58,7 +67,13 @@ class GcObject : public std::enable_shared_from_this<GcObject> {
   [[nodiscard]] auto TakeCreatorsShare() -> std::shared_ptr<GcObject>;
 
  private:
-  std::unique_ptr<Observable> event_source_;
+  // What waits on this object, made when a wait first reaches it, since most
+  // objects are never waited on.
+  struct Watchers;
+
+  [[nodiscard]] auto WatchersOf() -> Watchers&;
+
+  std::unique_ptr<Watchers> watchers_;
   std::shared_ptr<GcObject> creators_share_;
 };
 

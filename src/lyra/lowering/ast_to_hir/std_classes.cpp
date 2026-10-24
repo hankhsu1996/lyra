@@ -1,5 +1,6 @@
 #include "lyra/lowering/ast_to_hir/std_classes.hpp"
 
+#include <algorithm>
 #include <format>
 #include <optional>
 #include <string>
@@ -7,6 +8,7 @@
 #include <slang/ast/ASTContext.h>
 #include <slang/ast/Compilation.h>
 #include <slang/ast/Scope.h>
+#include <slang/ast/symbols/AttributeSymbol.h>
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
@@ -16,6 +18,9 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/frontend/library_texts.hpp"
+#include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
+#include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
+#include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/imported_runtime_class.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -81,6 +86,42 @@ auto ImportedRuntimeClassOf(const slang::ast::ClassType& cls)
     return std::nullopt;
   }
   return support::ImportedRuntimeClassNamed(cls.name);
+}
+
+auto RuntimeCarriedMethodOf(const slang::ast::SubroutineSymbol& method)
+    -> std::optional<support::BuiltinFn> {
+  const slang::ast::ClassType* declaring = DeclaringClassOf(method);
+  if (declaring == nullptr) return std::nullopt;
+  const slang::ast::ClassType& owner = *declaring;
+  if (const auto klass = ImportedRuntimeClassOf(owner)) {
+    switch (*klass) {
+      case support::ImportedRuntimeClass::kProcess:
+        return LowerProcessMethodName(method.name);
+    }
+    throw InternalError("RuntimeCarriedMethodOf: unknown runtime class");
+  }
+  if (IsDeclaredInStd(owner) && owner.name == "weak_reference" &&
+      method.name == "get_id") {
+    return support::BuiltinFn::kObjectIdentity;
+  }
+  return std::nullopt;
+}
+
+auto IsHeldWeakly(const slang::ast::ClassPropertySymbol& prop) -> bool {
+  const slang::ast::Scope* scope = prop.getParentScope();
+  const slang::ast::Scope* unit =
+      scope == nullptr ? nullptr : scope->asSymbol().getParentScope();
+  if (unit == nullptr ||
+      unit->asSymbol().kind != slang::ast::SymbolKind::CompilationUnit ||
+      !IsStdDefinitions(
+          unit->asSymbol().as<slang::ast::CompilationUnitSymbol>())) {
+    return false;
+  }
+  return std::ranges::any_of(
+      scope->getCompilation().getAttributes(prop),
+      [](const slang::ast::AttributeSymbol* attribute) {
+        return attribute->name == "lyra_weak";
+      });
 }
 
 auto IsStdDefinitions(const slang::ast::CompilationUnitSymbol& unit) -> bool {

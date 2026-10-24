@@ -58,9 +58,16 @@ auto LowerTimedWaitWrapper(
     hir::StmtId inner_stmt, auto build_wait) -> diag::Result<mir::Stmt> {
   mir::Block child_block;
   const WalkFrame child_frame = frame.WithBlock(&child_block);
-  auto wait_or = build_wait(child_block, child_frame);
+  // What the wait declares to watch with is its own, and ends where the wait
+  // does, so nothing it read is held while the statement it controls runs.
+  mir::Block waiting_block;
+  auto wait_or =
+      build_wait(waiting_block, child_frame.WithBlock(&waiting_block));
   if (!wait_or) return std::unexpected(std::move(wait_or.error()));
-  child_block.AppendStmt(*std::move(wait_or));
+  waiting_block.AppendStmt(*std::move(wait_or));
+  child_block.AppendStmt(
+      mir::BlockStmt{
+          .scope = child_block.child_scopes.Add(std::move(waiting_block))});
   const hir::Stmt& inner_hir = process.HirBody().stmts.Get(inner_stmt);
   auto inner_or = process.LowerStmt(inner_hir, child_frame);
   if (!inner_or) return std::unexpected(std::move(inner_or.error()));
@@ -208,14 +215,20 @@ using EntryWatches =
 
 // What the watch of one entry reads where it is asked, evaluated in the
 // closure's body (`now`); what it keeps before it is first asked, built where
-// the wait is; and whether what it kept and what it reads now differ by an
-// occurrence of the entry.
+// the wait is; what it keeps of what it read; and whether what it kept and what
+// it reads now differ by an occurrence of the entry.
 struct EntryReading {
   EntryWatches watches;
   mir::ExprId now;
   mir::ExprId kept_first;
+  std::function<mir::ExprId(mir::Block&, mir::ExprId)> kept_of;
   std::function<mir::ExprId(mir::Block&, mir::LocalId, mir::LocalId)>
       occurred_between;
+};
+
+// What a watch keeps of a value it read where it keeps the value itself.
+const auto kKeepsTheValue = [](mir::Block&, mir::ExprId value) {
+  return value;
 };
 
 // A value change's reading: the expression's value, or the least significant
@@ -249,10 +262,47 @@ auto ReadingOfValueChange(
   }();
   if (!now) return std::unexpected(std::move(now.error()));
   const mir::TypeId type = evaluation.current_block->exprs.Get(*now).type;
+  // A handle is watched for which object it names (LRM 9.4.2), and the watch
+  // keeps that as a weak reference, so that watching an object does not keep
+  // it (LRM 8.29): one that expires has changed into whatever is read next.
+  if (const auto* handle =
+          unit.types.Get(type).template As<mir::ManagedRefType>();
+      handle != nullptr && change.edge == support::EventEdge::kAnyChange) {
+    const mir::TypeId weak =
+        unit.types.Intern(mir::Type{mir::WeakManagedRefType{handle->pointee}});
+    return EntryReading{
+        .watches = std::span<const hir::SensitivityEntry>{change.cells},
+        .now = *now,
+        .kept_first = block.exprs.Add(BuildDefaultValueExpr(unit, block, weak)),
+        .kept_of =
+            [weak](mir::Block& at, mir::ExprId value) {
+              return at.exprs.Add(
+                  mir::MakeCallExpr(
+                      mir::Direct{
+                          .target = support::BuiltinFn::kWeakDowngrade,
+                          .receiver = value},
+                      {}, weak));
+            },
+        .occurred_between =
+            [unit = &unit, weak, type](
+                mir::Block& at, mir::LocalId before, mir::LocalId now) {
+              return BuildConditionNot(
+                  *unit, at,
+                  at.exprs.Add(
+                      mir::MakeCallExpr(
+                          mir::Direct{
+                              .target = support::BuiltinFn::kWeakRefersTo,
+                              .receiver = at.ReadLocal(before, weak)},
+                          {at.ReadLocal(now, type)},
+                          unit->builtins.machine_bool)));
+            },
+    };
+  }
   return EntryReading{
       .watches = std::span<const hir::SensitivityEntry>{change.cells},
       .now = *now,
       .kept_first = block.exprs.Add(BuildDefaultValueExpr(unit, block, type)),
+      .kept_of = kKeepsTheValue,
       .occurred_between =
           [unit = &unit, edge = change.edge, type](
               mir::Block& at, mir::LocalId before, mir::LocalId now) {
@@ -289,6 +339,7 @@ auto ReadingOfHeldEvent(
                       closure.Bindings().MakeBindingPlace(held, body))},
               {BuildReportHandedOn(unit, evaluation)}, count)),
       .kept_first = mir::BuildMachineIntLiteral(unit, block, 0),
+      .kept_of = kKeepsTheValue,
       .occurred_between =
           [unit = &unit, count](
               mir::Block& at, mir::LocalId before, mir::LocalId now) {
@@ -379,7 +430,7 @@ auto ArmOccurrence(
                   unit.builtins,
                   body.exprs.Add(
                       closure.Bindings().MakeBindingPlace(previous, body)),
-                  body.ReadLocal(now, watched)))});
+                  reading->kept_of(body, body.ReadLocal(now, watched))))});
 
   std::vector<mir::ExprId> arguments{BuildKeptClosure(
       unit, block,
@@ -906,19 +957,24 @@ auto LowerWaitStmt(
   wrapper.AppendStmt(
       mir::WhileStmt{.condition = waiting_id, .scope = inner_scope_id});
 
+  // The report is the wait's and ends where the wait does, so nothing the last
+  // test read is held while the body runs.
+  mir::Block whole;
+  whole.AppendStmt(
+      mir::BlockStmt{.scope = whole.child_scopes.Add(std::move(wrapper))});
   const hir::Stmt& body_hir = hir_proc.stmts.Get(w.body);
-  auto body_or = process.LowerStmt(body_hir, wrapper_frame);
+  auto body_or = process.LowerStmt(body_hir, frame.WithBlock(&whole));
   if (!body_or) {
     return std::unexpected(std::move(body_or.error()));
   }
-  wrapper.AppendStmt(*std::move(body_or));
+  whole.AppendStmt(*std::move(body_or));
 
-  const mir::BlockId wrapper_scope_id =
-      frame.current_block->child_scopes.Add(std::move(wrapper));
+  const mir::BlockId whole_scope_id =
+      frame.current_block->child_scopes.Add(std::move(whole));
 
   return mir::Stmt{
       .label = std::move(label),
-      .data = mir::BlockStmt{.scope = wrapper_scope_id}};
+      .data = mir::BlockStmt{.scope = whole_scope_id}};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

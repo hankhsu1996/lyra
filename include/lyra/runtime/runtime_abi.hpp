@@ -334,6 +334,18 @@ void lyra_rt_object_pre_randomize(void* object);
 void lyra_rt_object_post_randomize(void* object);
 void lyra_rt_object_set_randstate(void* object, const void* state);
 
+// LRM 8.30's weak reference: a handle crosses as a value of the
+// managed-reference domain, a weak reference as the library object holding
+// one, and the report of a wait evaluating the upgrade as its address, null
+// where no wait evaluates it.
+auto lyra_rt_weak_downgrade(const void* strong, void* out) -> void*;
+auto lyra_rt_weak_upgrade(const void* weak, void* evaluation, void* out)
+    -> void*;
+auto lyra_rt_weak_upgrade_process(const void* weak, void* evaluation, void* out)
+    -> void*;
+auto lyra_rt_weak_refers_to(const void* weak, const void* strong) -> bool;
+auto lyra_rt_object_identity(const void* object, void* out) -> void*;
+
 // A call of `randomize()` (LRM 18.6, 18.7, 18.11, 18.12), as the steps its
 // caller runs. The problem crosses as the address of the handle to it the
 // first step answered; a variable as a reference to it, and the value it holds
@@ -2159,6 +2171,7 @@ auto lyra_rt_see_as_any(
 auto lyra_rt_receive_any(const void* reference, const void* value) -> bool;
 auto lyra_rt_any_default(void* out) -> void*;
 auto lyra_rt_any_reference_default(void* out) -> void*;
+auto lyra_rt_weak_reference_default(void* out) -> void*;
 auto lyra_rt_any_copy(const void* value, void* out) -> void*;
 auto lyra_rt_any_move(void* value, void* out) -> void*;
 void lyra_rt_any_destroy(void* object);
@@ -2503,6 +2516,7 @@ void lyra_rt_assocarray_assign(void* storage, const void* value);
 void lyra_rt_managedref_assign(void* storage, const void* value);
 void lyra_rt_reference_assign(void* storage, const void* value);
 void lyra_rt_any_reference_assign(void* storage, const void* value);
+void lyra_rt_weak_reference_assign(void* storage, const void* value);
 // A wait is never copied, so the one written is a value the body built and
 // ends after, and the storage takes it over.
 void lyra_rt_wait_assign(void* storage, void* value);
@@ -2543,6 +2557,7 @@ void lyra_rt_dpi_logic_buffer_destroy(void* object);
 void lyra_rt_dpi_open_array_destroy(void* object);
 void lyra_rt_channel_cancellation_destroy(void* object);
 void lyra_rt_shared_pointer_destroy(void* object);
+void lyra_rt_weak_reference_destroy(void* object);
 void lyra_rt_open_write_destroy(void* object);
 void lyra_rt_object_write_destroy(void* object);
 auto lyra_rt_string_copy(const void* value, void* out) -> void*;
@@ -2568,6 +2583,7 @@ auto lyra_rt_dpi_open_array_copy(const void* value, void* out) -> void*;
 auto lyra_rt_channel_cancellation_copy(const void* value, void* out) -> void*;
 auto lyra_rt_reference_copy(const void* value, void* out) -> void*;
 auto lyra_rt_any_reference_copy(const void* value, void* out) -> void*;
+auto lyra_rt_weak_reference_copy(const void* value, void* out) -> void*;
 auto lyra_rt_string_move(void* value, void* out) -> void*;
 auto lyra_rt_bitvec_move(void* value, void* out) -> void*;
 auto lyra_rt_real_move(void* value, void* out) -> void*;
@@ -2593,6 +2609,7 @@ auto lyra_rt_dpi_open_array_move(void* value, void* out) -> void*;
 auto lyra_rt_channel_cancellation_move(void* value, void* out) -> void*;
 auto lyra_rt_reference_move(void* value, void* out) -> void*;
 auto lyra_rt_any_reference_move(void* value, void* out) -> void*;
+auto lyra_rt_weak_reference_move(void* value, void* out) -> void*;
 
 // One member's storage, built in place where its owner was laid out and ended
 // there: `lyra_rt_<domain>_<kind>_construct` / `_destroy` for storage over a
@@ -2604,6 +2621,7 @@ auto lyra_rt_any_reference_move(void* value, void* out) -> void*;
 void lyra_rt_borrowed_handle_construct(void* storage);
 void lyra_rt_reference_construct(void* storage);
 void lyra_rt_any_reference_construct(void* storage);
+void lyra_rt_weak_reference_construct(void* storage);
 void lyra_rt_string_cell_construct(void* storage);
 void lyra_rt_bitvec_cell_construct(void* storage);
 void lyra_rt_real_cell_construct(void* storage);

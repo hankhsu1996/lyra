@@ -278,6 +278,17 @@ struct ImportedClassHandleType {
   auto operator==(const ImportedClassHandleType&) const -> bool = default;
 };
 
+// A handle held weakly (LRM 8.29, 8.30): the type of the property LRM 8.30's
+// `weak_reference` keeps its referent in. It refers to the object the handle
+// type `handle` names without keeping it, so it reads no object once that
+// object has expired. No source type spells it; Lyra's own definition of the
+// class declares it.
+struct WeakHandleType {
+  TypeId handle;
+
+  auto operator==(const WeakHandleType&) const -> bool = default;
+};
+
 // The object a scope of another compilation unit is -- an instance of it, which
 // an interface port names (LRM 25.3), or a generate block inside one, which a
 // hierarchical name steps into (LRM 23.6). Named by the declaring unit and the
@@ -411,9 +422,9 @@ class Type {
       EnumType, UnpackedStructType, UnpackedUnionType, UnpackedArrayType,
       DynamicArrayType, QueueType, AssociativeArrayType, WildcardIndexType,
       StringType, EventType, RealType, ShortRealType, RealTimeType, ChandleType,
-      ClassHandleType, ImportedClassHandleType, CovergroupHandleType,
-      UnitObjectType, UnitObjectsType, VirtualInterfaceType, NullType,
-      DynamicType, VoidType>;
+      ClassHandleType, ImportedClassHandleType, WeakHandleType,
+      CovergroupHandleType, UnitObjectType, UnitObjectsType,
+      VirtualInterfaceType, NullType, DynamicType, VoidType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

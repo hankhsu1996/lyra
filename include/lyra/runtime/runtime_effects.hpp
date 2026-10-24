@@ -282,6 +282,13 @@ void ReportRaisedError(
 // handle.
 [[nodiscard]] auto current_runtime() -> RuntimeEffects&;
 
+// An object that waits reached through a weak reference has expired (LRM
+// 8.30.1): the waits on `expiry` move to the runtime attached to this thread,
+// which tells them once the execution running now has handed control back, so
+// nothing of the design runs while the object is being destroyed. With no
+// runtime attached nothing waits, and the list is left to end with its object.
+void HandOverExpiry(IntrusiveList<WaitMembership>& expiry) noexcept;
+
 // RAII publication of a `RuntimeEffects` view as the current thread's ambient
 // runtime. Save-and-restore of any previously-published handle, so a nested
 // construction (a test spawning a second Runtime while the first is still

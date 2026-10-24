@@ -36,6 +36,8 @@ enum class LibraryObject : std::uint8_t {
   kReference,
   // A reference to a value of any type (LRM 15.4.9).
   kAnyReference,
+  // A reference to an object that does not keep it (LRM 8.30).
+  kWeakReference,
 };
 
 // An object generated code holds by value: it gives the object storage in its
@@ -75,12 +77,14 @@ inline constexpr ObjectLayout kTriggerStorage{
 inline constexpr ObjectLayout kObservationStorage{
     .layout = {.size = 16, .align = 8}, .ends_with_nothing_to_do = false};
 inline constexpr ObjectLayout kReadReportStorage{
-    .layout = {.size = 96, .align = 8}, .ends_with_nothing_to_do = false};
+    .layout = {.size = 120, .align = 8}, .ends_with_nothing_to_do = false};
 inline constexpr ObjectLayout kWaitStorage{
     .layout = {.size = 8, .align = 8}, .ends_with_nothing_to_do = false};
 inline constexpr ObjectLayout kHierarchySegmentStorage{
     .layout = {.size = 56, .align = 8}, .ends_with_nothing_to_do = false};
 inline constexpr ObjectLayout kChannelCancellationStorage{
+    .layout = {.size = 24, .align = 8}, .ends_with_nothing_to_do = false};
+inline constexpr ObjectLayout kWeakReferenceStorage{
     .layout = {.size = 24, .align = 8}, .ends_with_nothing_to_do = false};
 
 // The spelling the entries over an object carry, stated once for both sides.

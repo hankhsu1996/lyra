@@ -24,6 +24,8 @@ auto MemberStorageKindName(MemberStorageKind kind) -> std::string_view {
       return "reference";
     case MemberStorageKind::kAnyReference:
       return "any_reference";
+    case MemberStorageKind::kWeakReference:
+      return "weak_reference";
     case MemberStorageKind::kSharedPointer:
       return "shared_pointer";
     case MemberStorageKind::kCancellationTarget:

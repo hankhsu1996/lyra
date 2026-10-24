@@ -533,6 +533,7 @@ void Runtime::RunRegion(Region region) {
   // region goes on to the effects after it.
   for (OwnedCall& effect : draining_.effects) {
     RunAsLanding(*this, effect);
+    TellExpired();
   }
   draining_.effects.clear();
   // A timer comes off its queue as it fires, so arming it again from what the
@@ -541,11 +542,25 @@ void Runtime::RunRegion(Region region) {
   // landing of its own too.
   while (TimerPlace* fired = draining_.timers.PopFront()) {
     RunAsLanding(*this, [fired] { fired->timer->Fire(); });
+    TellExpired();
   }
   while (QueuePlace* queued = draining_.activations.PopFront()) {
     Activation* activation = queued->activation;
     ConsumeWait(activation);
     RunProcess(activation);
+    TellExpired();
+  }
+}
+
+// What is told moves out of the list first, so an object expiring while the
+// waits are told -- by what a wake runs at the occurrence -- is told in the
+// next round, and a wait ending meanwhile takes its membership off whichever
+// list holds it.
+void Runtime::TellExpired() {
+  while (!expired_.Empty()) {
+    IntrusiveList<WaitMembership> telling;
+    telling.Append(expired_);
+    WakeParkedOn(telling, Change::Whole());
   }
 }
 

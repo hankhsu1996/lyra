@@ -691,6 +691,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_channel_cancellation_destroy",
       &lyra_rt_channel_cancellation_destroy);
   add("lyra_rt_shared_pointer_destroy", &lyra_rt_shared_pointer_destroy);
+  add("lyra_rt_weak_reference_destroy", &lyra_rt_weak_reference_destroy);
   add("lyra_rt_open_write_destroy", &lyra_rt_open_write_destroy);
   add("lyra_rt_object_write_destroy", &lyra_rt_object_write_destroy);
   add("lyra_rt_string_assign", &lyra_rt_string_assign);
@@ -705,6 +706,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_managedref_assign", &lyra_rt_managedref_assign);
   add("lyra_rt_reference_assign", &lyra_rt_reference_assign);
   add("lyra_rt_any_reference_assign", &lyra_rt_any_reference_assign);
+  add("lyra_rt_weak_reference_assign", &lyra_rt_weak_reference_assign);
   add("lyra_rt_wait_assign", &lyra_rt_wait_assign);
   add("lyra_rt_element_default", &lyra_rt_element_default);
   add("lyra_rt_discarded_write", &lyra_rt_discarded_write);
@@ -731,6 +733,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_channel_cancellation_copy", &lyra_rt_channel_cancellation_copy);
   add("lyra_rt_reference_copy", &lyra_rt_reference_copy);
   add("lyra_rt_any_reference_copy", &lyra_rt_any_reference_copy);
+  add("lyra_rt_weak_reference_copy", &lyra_rt_weak_reference_copy);
   add("lyra_rt_string_move", &lyra_rt_string_move);
   add("lyra_rt_bitvec_move", &lyra_rt_bitvec_move);
   add("lyra_rt_real_move", &lyra_rt_real_move);
@@ -756,6 +759,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_channel_cancellation_move", &lyra_rt_channel_cancellation_move);
   add("lyra_rt_reference_move", &lyra_rt_reference_move);
   add("lyra_rt_any_reference_move", &lyra_rt_any_reference_move);
+  add("lyra_rt_weak_reference_move", &lyra_rt_weak_reference_move);
   add("lyra_rt_real_add", &lyra_rt_real_add);
   add("lyra_rt_real_sub", &lyra_rt_real_sub);
   add("lyra_rt_real_mul", &lyra_rt_real_mul);
@@ -896,6 +900,11 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_object_pre_randomize", &lyra_rt_object_pre_randomize);
   add("lyra_rt_object_post_randomize", &lyra_rt_object_post_randomize);
   add("lyra_rt_object_set_randstate", &lyra_rt_object_set_randstate);
+  add("lyra_rt_weak_downgrade", &lyra_rt_weak_downgrade);
+  add("lyra_rt_weak_upgrade", &lyra_rt_weak_upgrade);
+  add("lyra_rt_weak_upgrade_process", &lyra_rt_weak_upgrade_process);
+  add("lyra_rt_weak_refers_to", &lyra_rt_weak_refers_to);
+  add("lyra_rt_object_identity", &lyra_rt_object_identity);
   add("lyra_rt_randomize_object", &lyra_rt_randomize_object);
   add("lyra_rt_randomize_object_listed", &lyra_rt_randomize_object_listed);
   add("lyra_rt_randomize_scope", &lyra_rt_randomize_scope);
@@ -1167,6 +1176,7 @@ void BindMemberOperationEntries(const auto& add) {
   add("lyra_rt_receive_any", &lyra_rt_receive_any);
   add("lyra_rt_any_default", &lyra_rt_any_default);
   add("lyra_rt_any_reference_default", &lyra_rt_any_reference_default);
+  add("lyra_rt_weak_reference_default", &lyra_rt_weak_reference_default);
   add("lyra_rt_any_copy", &lyra_rt_any_copy);
   add("lyra_rt_any_move", &lyra_rt_any_move);
   add("lyra_rt_any_destroy", &lyra_rt_any_destroy);
@@ -1245,6 +1255,7 @@ void BindStorageEntries(const auto& add) {
   add("lyra_rt_borrowed_handle_construct", &lyra_rt_borrowed_handle_construct);
   add("lyra_rt_reference_construct", &lyra_rt_reference_construct);
   add("lyra_rt_any_reference_construct", &lyra_rt_any_reference_construct);
+  add("lyra_rt_weak_reference_construct", &lyra_rt_weak_reference_construct);
   add("lyra_rt_string_cell_construct", &lyra_rt_string_cell_construct);
   add("lyra_rt_bitvec_cell_construct", &lyra_rt_bitvec_cell_construct);
   add("lyra_rt_real_cell_construct", &lyra_rt_real_cell_construct);

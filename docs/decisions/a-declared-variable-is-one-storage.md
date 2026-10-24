@@ -1,6 +1,7 @@
 # A declared variable is one storage
 
-Date: 2026-09-16 Status: accepted
+Date: 2026-09-16, revised 2026-10-23: the variable ends where its block is left (D2). Status:
+accepted.
 
 ## Context
 
@@ -35,9 +36,20 @@ looking for a reference built over each variable.
 Neither the body it sits in nor what that body does with it takes part. There is no second home to
 choose between and nothing to ask.
 
-**D2. That storage is owned by the execution that declared the variable.** It is opened before the
-body's first statement and ended on every way out of the body. A declaration reached many times is
-one storage whose contents begin afresh, which is what its own initializer does.
+**D2. That storage is owned by the execution that declared the variable.** It is reserved before the
+body's first statement and lasts the whole body. The variable in it begins where its declaration is
+reached and ends where the block declaring it is left, on every way out of that block, as LRM 6.21
+gives an automatic variable "the lifetime of the call or block". A declaration reached many times is
+one storage holding a fresh variable each time.
+
+Until 2026-10-23 this said the storage's contents ended on every way out of the body. That was right
+while nothing could tell when a variable's contents ended. A weak reference (LRM 8.30) makes an
+object's end observable, and a handle held to the end of the body then kept its object alive past
+its block. clang reserves a local's storage in the entry block and runs its destructor where its
+scope is left (`EmitAutoVarAlloca`, `EmitAutoVarCleanups` in `clang/lib/CodeGen/CGDecl.cpp`), and
+rustc schedules a local's drop on exit from its region scope (`schedule_drop_value` in
+`compiler/rustc_mir_build/src/builder/scope.rs`). Both end only what has something to end
+(`needsDestruction`, `needs_drop`), and an end with nothing to do emits nothing here either.
 
 **D3. Ending a variable is emitted by the compiler, on every way out, including the way no statement
 spells.** A body left where it stands -- ended by whoever drives it rather than run again -- runs

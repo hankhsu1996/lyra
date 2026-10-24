@@ -290,6 +290,14 @@ auto BuildDefaultValueExpr(
           [&](const mir::ManagedRefType&) -> mir::Expr {
             return mir::Expr{.data = mir::NullLiteral{}, .type = type};
           },
+          // A weak reference starts referring to nothing (LRM 8.30), the one
+          // value its construction makes.
+          [&](const mir::WeakManagedRefType&) -> mir::Expr {
+            return mir::Expr{
+                .data =
+                    mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
+                .type = type};
+          },
           // LRM 6.14: a chandle is always initialized to null.
           [&](const mir::ChandleType&) -> mir::Expr {
             return mir::Expr{.data = mir::NullLiteral{}, .type = type};

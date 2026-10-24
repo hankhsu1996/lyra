@@ -799,6 +799,7 @@ auto RuntimeSymbol(support::DeclaredMemberStorage storage, RuntimeOp op)
     case support::MemberStorageKind::kBorrowedHandle:
     case support::MemberStorageKind::kReference:
     case support::MemberStorageKind::kAnyReference:
+    case support::MemberStorageKind::kWeakReference:
     case support::MemberStorageKind::kSharedPointer:
     case support::MemberStorageKind::kCancellationTarget:
     case support::MemberStorageKind::kChannelCancellation:
@@ -838,6 +839,7 @@ auto ToldBuilding(support::DeclaredMemberStorage storage) -> Told {
     case support::MemberStorageKind::kBorrowedHandle:
     case support::MemberStorageKind::kReference:
     case support::MemberStorageKind::kAnyReference:
+    case support::MemberStorageKind::kWeakReference:
     case support::MemberStorageKind::kSharedPointer:
     case support::MemberStorageKind::kCancellationTarget:
     case support::MemberStorageKind::kChannelCancellation:
@@ -945,6 +947,10 @@ auto MemberStorageKindOf(
           [](const lir::AnyReferenceType&)
               -> std::optional<support::MemberStorageKind> {
             return support::MemberStorageKind::kAnyReference;
+          },
+          [](const lir::WeakManagedRefType&)
+              -> std::optional<support::MemberStorageKind> {
+            return support::MemberStorageKind::kWeakReference;
           },
           [&](const lir::MachineFunctionType& t) { return borrowed(t); },
           // A pointer is the one whose ownership decides the answer. A borrowed
@@ -1132,6 +1138,7 @@ auto DeclaredStorageOf(
     case support::MemberStorageKind::kBorrowedHandle:
     case support::MemberStorageKind::kReference:
     case support::MemberStorageKind::kAnyReference:
+    case support::MemberStorageKind::kWeakReference:
     case support::MemberStorageKind::kSharedPointer:
     case support::MemberStorageKind::kCancellationTarget:
     case support::MemberStorageKind::kChannelCancellation:
@@ -1998,6 +2005,11 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kObjectSrandom:
     case support::BuiltinFn::kObjectGetRandstate:
     case support::BuiltinFn::kObjectSetRandstate:
+    case support::BuiltinFn::kWeakDowngrade:
+    case support::BuiltinFn::kWeakUpgrade:
+    case support::BuiltinFn::kWeakUpgradeProcess:
+    case support::BuiltinFn::kWeakRefersTo:
+    case support::BuiltinFn::kObjectIdentity:
     case support::BuiltinFn::kRandomizeObject:
     case support::BuiltinFn::kRandomizeObjectListed:
     case support::BuiltinFn::kRandomizeScope:

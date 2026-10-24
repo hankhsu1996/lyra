@@ -69,6 +69,11 @@ class FunctionLowerer {
   struct SlotEnd {
     lir::ValueId slot;
   };
+  // A variable among the body's own, which ends with the scope declaring it
+  // while its storage lasts the whole body.
+  struct VariableEnd {
+    lir::VariablePosition position;
+  };
   struct EndPassedOn {};
   // Storage a new-expression allocated, while what it is to hold is still
   // being initialized there: a way out gives the storage back and ends
@@ -105,8 +110,8 @@ class FunctionLowerer {
   // -- built the first time something needs it and shared by every landing and
   // every scope nested inside after that.
   using ScopeKind = std::variant<
-      CleanupScope, ValueEnd, SlotEnd, EndPassedOn, StorageRelease, RegionScope,
-      HandlingScope, TerminateScope>;
+      CleanupScope, ValueEnd, SlotEnd, VariableEnd, EndPassedOn, StorageRelease,
+      RegionScope, HandlingScope, TerminateScope>;
   struct UnwindScope {
     ScopeKind kind;
     std::optional<lir::BlockId> unwind_entry;
@@ -114,11 +119,11 @@ class FunctionLowerer {
 
   // Where a source local's storage is. A local whose type the runtime holds
   // values of gets storage of its own among the body's variables, and the
-  // binding names it by the address the body opened over that storage -- which
-  // is the one storage a reference can bind and the one that outlives a
-  // suspension of the body. A local whose type is stable as it stands -- an
-  // integral value, a pointer, a code reference, a machine scalar -- is a slot
-  // of the body's own frame.
+  // binding names it by its address there, taken where its declaration begins
+  // it -- which is the one storage a reference can bind and the one that
+  // outlives a suspension of the body. A local whose type is stable as it
+  // stands -- an integral value, a pointer, a code reference, a machine scalar
+  // -- is a slot of the body's own frame.
   //
   // Nothing about what the body does with the local is consulted. The two
   // follow from the declared type alone, so a local's storage is settled where
@@ -164,8 +169,9 @@ class FunctionLowerer {
   auto LowerDiscardedInto(const mir::Block& block, mir::ExprId id)
       -> diag::Result<void>;
   // A declaration: its initializer is a full-expression, and the value it
-  // settles is the local's -- copied into storage of the local's own, or taken
-  // by the frame slot the local is, which ends it with the enclosing block.
+  // settles is the local's -- copied into the variable the local begins, or
+  // taken by the frame slot the local is; either ends with the enclosing
+  // block.
   auto DeclareLocal(
       const mir::Block& block, mir::LocalId local, mir::ExprId init)
       -> diag::Result<void>;
@@ -198,9 +204,10 @@ class FunctionLowerer {
   // of it.
   void MarkStorage(lir::StorageInstr::Op op, lir::ValueId of);
   // What a scope owes where a way out runs it: a value's end and its bytes
-  // going out of use, or storage given back.
+  // going out of use, a variable's end, or storage given back.
   void EmitScopeDrop(const ValueEnd& end);
   void EmitScopeDrop(const SlotEnd& end);
+  void EmitScopeDrop(const VariableEnd& end);
   void EmitScopeDrop(const StorageRelease& release);
   auto LowerIfInto(const mir::Block& block, const mir::IfStmt& stmt)
       -> diag::Result<void>;
@@ -276,9 +283,9 @@ class FunctionLowerer {
       -> diag::Result<lir::BlockId>;
   // Where unwinding continues once it reaches the scope at `index` on the
   // stack, or the frame's own edge below every scope: the cleanup run and
-  // passed on outward, the region's handler, or -- at the edge -- the body's
-  // variables ended and the unwinding carried out of the frame. Each is built
-  // once, and every landing and every scope nested inside reaches it.
+  // passed on outward, the region's handler, or -- at the edge -- the
+  // unwinding carried out of the frame. Each is built once, and every landing
+  // and every scope nested inside reaches it.
   auto UnwindEntryAt(std::size_t index) -> diag::Result<lir::BlockId>;
   // The entry of the scope at `index`, built where what is owed outside it is
   // reached at `outward`.
@@ -291,7 +298,7 @@ class FunctionLowerer {
   // The handler's own code follows, and closing the extent ends the handling.
   auto OpenHandler(const RegionScope& region) -> diag::Result<void>;
   // The handler of the region a coroutine's whole body stands in: what arrived
-  // ends the body's variables and completes the execution, as a departure.
+  // completes the execution, as a departure.
   auto EmitCoroutineHandler(const RegionScope& top) -> diag::Result<void>;
   // The frame storage a landing puts what is unwinding in and every handler
   // and every way out by unwinding reads it from. One serves the whole frame,
@@ -572,8 +579,8 @@ class FunctionLowerer {
   auto NewTransient(lir::TypeId type) -> lir::ValueId;
   // `value` computed into a new transient of `type`, as rustc's `as_temp`.
   auto Emit(lir::TypeId type, lir::Rvalue value) -> lir::Operand;
-  // A step that yields nothing: a write, or a frame's bytes coming into or
-  // going out of use.
+  // A step that yields nothing: a write, a frame's bytes coming into or going
+  // out of use, a variable ending, or a handler's extent beginning or ending.
   void EmitStatement(lir::InstrData statement);
   // What a step yielding nothing stands as where a value is wanted.
   auto VoidValue() -> lir::Operand;
@@ -581,10 +588,6 @@ class FunctionLowerer {
   // A new frame slot of `type`, its bytes in use from here where it is to own
   // what it holds, not yet holding a value.
   auto NewLiveSlot(lir::TypeId type) -> lir::ValueId;
-  // Answers the frame slot the local became where that slot owns its value,
-  // for the caller to end with the extent the local belongs to.
-  auto BindLocal(mir::LocalId local, lir::TypeId type, lir::Operand init)
-      -> std::optional<lir::ValueId>;
   // The frame slot a local the body gave no storage of its own becomes, in
   // use from here and not yet holding a value.
   auto OpenLocalSlot(mir::LocalId local, lir::TypeId type) -> lir::ValueId;
@@ -607,14 +610,15 @@ class FunctionLowerer {
   // time the caller read it.
   auto AllocateCompletionFor(lir::TypeId payload) -> lir::Operand;
 
-  // Brings the storage this body's variables live in into existence and binds
-  // each of them to the address of its own piece of it. Runs once, before
+  // Reserves the storage this body's variables live in. Runs once, before
   // anything the body does, because a declaration reached many times is one
-  // variable in one storage and only its contents begin afresh.
-  void OpenVariables();
-  // Ends that storage, and with it every variable in it. Owed on every way out
-  // of the body, including the one no statement of it spells.
-  void CloseVariables();
+  // storage, and only the variable in it begins afresh.
+  void ReserveVariableStorage();
+  // Begins the variable `local` in its piece of that storage, binds the local
+  // to it, and owes its end where the scope declaring it is left -- before its
+  // initial value is made, so a way out taken while making it ends it too.
+  // Returns the variable's cell.
+  auto BeginVariable(mir::LocalId local) -> lir::Operand;
   // Installs a cell's representation and initial contents, the one write it
   // takes before it will accept a store.
   void InitializeCell(lir::Operand cell, lir::Operand value);
@@ -634,8 +638,8 @@ class FunctionLowerer {
   // included: the argument it is handed. One handed over rather than lent is
   // the body's from here, and ends on every way out of the body.
   auto TakeParam(mir::LocalId param) -> lir::ValueId;
-  // Binds a taken parameter's local to its argument, which needs the body's
-  // variables open.
+  // Binds a taken parameter's local to its argument, which needs the storage
+  // the body's variables live in.
   void BindParam(mir::LocalId param, lir::ValueId argument);
   // A coroutine body stops before its first statement, so that whoever drives
   // it runs every stretch of it, the first included. Ended there, it ends what
@@ -670,8 +674,8 @@ class FunctionLowerer {
   // it one, and what each local has resolved to so far.
   std::vector<std::optional<std::uint32_t>> variable_slot_;
   std::vector<std::optional<LocalBinding>> locals_;
-  // The storage this body's variables live in, opened at entry and ended on
-  // every way out. Absent where the body declares nothing that needs one.
+  // The storage this body's variables live in, reserved at entry for the
+  // whole body. Absent where the body declares nothing that needs one.
   std::optional<lir::Operand> variables_;
   // Where this body writes the value it finishes with: storage its caller
   // allocated and handed over as the call's last argument, and the type of the

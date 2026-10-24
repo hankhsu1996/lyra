@@ -318,6 +318,14 @@ struct ManagedRefType {
   auto operator==(const ManagedRefType&) const -> bool = default;
 };
 
+// A weak reference to an object a managed reference names (LRM 8.30), which
+// does not keep the object: the library object holding one.
+struct WeakManagedRefType {
+  TypeId pointee;
+
+  auto operator==(const WeakManagedRefType&) const -> bool = default;
+};
+
 struct VectorType {
   TypeId element;
 
@@ -469,10 +477,10 @@ class Type {
       ShortRealType, ChandleType, VoidType, EmptyType, ObjectType,
       CrossUnitClassType, RuntimeClassType, ClosureType, ErasedCallableType,
       RuntimeEffectsType, FilesType, DiagnosticType, RuntimeLibraryType,
-      CoroutineType, VariableRefType, PointerType, ManagedRefType, VectorType,
-      TupleType, RecordType, ResolvedType, DriverType, ObservableType,
-      SampledHistoryType, EvaluationAttemptsType, LoopBlocksType, OpenWriteType,
-      DesignationType>;
+      CoroutineType, VariableRefType, PointerType, ManagedRefType,
+      WeakManagedRefType, VectorType, TupleType, RecordType, ResolvedType,
+      DriverType, ObservableType, SampledHistoryType, EvaluationAttemptsType,
+      LoopBlocksType, OpenWriteType, DesignationType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {
