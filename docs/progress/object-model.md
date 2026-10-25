@@ -276,10 +276,13 @@ cyclic reclamation). Current backend coverage:
 Both backends reclaim by shared ownership, and both leak an unreachable cycle. A handle has one
 shape on both, the object's identity, which shares its ownership, plus the view a static type
 reaches it through -- a class view is the object's start and an interface view is that interface's
-part. Acyclic garbage is reclaimed as the last handle drops. One feature makes a cycle of every
-object using it: a class embedding a covergroup and that covergroup refer to each other (LRM 19.4),
-and a program may keep the covergroup past its last handle to the object, so neither reference can
-be weakened, and every such object stays until the run ends.
+part. Acyclic garbage is reclaimed as the last handle drops, and a handle a call has read -- the one
+reaching the object it is entered on, or one handed to it -- holds its object until the call takes
+it, so an argument evaluated after it that drops every other handle does not reclaim the object
+first. One feature makes a cycle of every object using it: a class embedding a covergroup and that
+covergroup refer to each other (LRM 19.4), and a program may keep the covergroup past its last
+handle to the object, so neither reference can be weakened, and every such object stays until the
+run ends.
 
 Nothing above is visible to any IR: no rule in HIR, MIR, LIR, or lowering states a reference count,
 a shared owner, or a control block. The one exception is the operation recovering a handle from the

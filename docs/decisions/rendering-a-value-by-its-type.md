@@ -109,12 +109,12 @@ returns.**
   mechanisms for one clause, and it does not answer the execution backend at all: `%p` of
   `int arr[3]` refuses there for the same reason `%p` of a structure does.
 
-- **Binding the text to a local of a block expression the operand then escapes.** A block expression
-  is an immediately-invoked lambda on the C++ backend, so a name bound in one dies at its return and
-  a borrow taken out of it dangles. What the steps have to contain is the call that borrows, not the
-  operand alone -- so naming each operand and formatting through those names are the steps of one
-  block expression, which is also what keeps an operand the arg mentions twice from being evaluated
-  twice.
+- **Binding the text to a local of a block expression the operand then escapes.** A block
+  expression's scope ends when it yields, so a name bound in one ends there and a borrow taken out
+  of it would outlive what it refers to; MIR's verification refuses such a yield. What the steps
+  have to contain is the call that borrows, not the operand alone -- so naming each operand and
+  formatting through those names are the steps of one block expression, which is also what keeps an
+  operand the arg mentions twice from being evaluated twice.
 
 - **Giving the aggregate's text to the value slot as well, so every operand has one.** It makes the
   slot mean two things -- how this operand reads by conversion, and the one text it has -- and the

@@ -2383,12 +2383,15 @@ enough to warrant its own focused review.
       execution backend decides it lowering MIR to LIR, which states each copy and each end but the
       copies an aggregate's operands are taken into, which its code generator makes; the C++ backend
       is told nothing and takes C++'s own answer -- a copy for every by-value pass, an end at every
-      scope exit, and whatever elision C++ allows. Nothing keeps the two in step: a copy one makes
-      and the other does not costs time rather than correctness, but an end one omits is a leak. The
-      target states it once, above both, as Swift's SIL states `copy_value` / `destroy_value` and
-      Rust's MIR states moves, copies and drops (both recalled, to be read), and each backend
-      follows it. What a type's own copy and end do stays below MIR: in SystemVerilog a program
-      cannot define it, so it is member by member with no choice, as layout is.
+      scope exit, and whatever elision C++ allows. Nothing keeps the two in step: an end one omits
+      is a leak, and a copy both omit can be a read of storage that is gone -- an operand read in
+      place while a later operand drops the last handle to its object read freed memory on both
+      backends until the rewrite ordering an evaluation took such a read into a temporary. Where a
+      block expression's storage ends is now stated in MIR too. The target states the rest once,
+      above both, as Swift's SIL states `load [copy]` beside `load_borrow` and `copy_value` /
+      `destroy_value` (its instruction reference) and Rust's MIR states moves, copies and drops, and
+      each backend follows it. What a type's own copy and end do stays below MIR: in SystemVerilog a
+      program cannot define it, so it is member by member with no choice, as layout is.
 
       What stands in the way is `mir.md`'s forbidden "lifecycle node family for value copy or move",
       whose stated reason -- MIR states only what a program spells -- does not hold: MIR already
@@ -3202,17 +3205,13 @@ source, or not yet tried.
       call whose receiver is not of that class or one derived from it, and one handing an operand of
       another type. Not blocked.
 
-- [ ] R253 -- Where a value a block expression declares ends is stated two ways. The lowering to the
-      machine model ends what a block expression's steps declare with the full-expression the block
-      expression stands in; the C++ backend writes a block expression as a lambda called where it
-      stands, so what its steps declare ends when the lambda returns, before the rest of that
-      full-expression runs, and so does a temporary its value makes. The producers read keep to the
-      shorter end: the block builder reads a place it ends with as a value, and the one producer
-      handing it a reference -- a select of a queue's element -- does so only where the queue
-      outlives the steps, and yields the element's value otherwise. The lowering to MIR thus assumes
-      a lifetime MIR's own contract does not state. Target: the lifetime is MIR's to state once and
-      both backends realize it; on the C++ side that means storage for such a declaration outside
-      the lambda, or a form that is not a lambda. Not blocked.
+- [x] R253 -- Where a value a block expression declares ends is stated once, in MIR: the block's
+      scope ends when it yields, once the value is taken out, as rustc ends a block's scopes after
+      building its tail into the destination. Both backends end it there -- the C++ backend's lambda
+      already did, and the lowering to the machine model no longer keeps the steps' storage to the
+      end of the enclosing full-expression. MIR's verification refuses a yield that reaches a local
+      the block declares or a value it makes, through borrows, composites, closure captures and
+      calls answering a reference into what they are handed.
 - [ ] R254 -- Every kind of thing one unit can name of another -- a class, a covergroup, a method, a
       static property, a virtual behavior, a scope's published class -- has its own pair of forms,
       one for this unit and one for another, and its own place where a name that turns out to be

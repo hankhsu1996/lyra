@@ -33,8 +33,10 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/external_class.hpp"
+#include "lyra/mir/field.hpp"
 #include "lyra/mir/frame_size.hpp"
 #include "lyra/mir/integral_constant_folding.hpp"
+#include "lyra/mir/local.hpp"
 #include "lyra/mir/object_lifetime.hpp"
 #include "lyra/mir/operand_use.hpp"
 #include "lyra/mir/record_decl.hpp"
@@ -574,6 +576,185 @@ void VerifyReferenceBindings(
   }
   for (const BlockId id : block.child_scopes.Ids()) {
     VerifyReferenceBindings(unit, block.child_scopes.Get(id), describe);
+  }
+}
+
+// Where `local` is declared within `scope` or a block inside it: the block
+// declaring it and what initializes it.
+struct LocalDeclaration {
+  const Block* block;
+  ExprId init;
+};
+
+auto DeclarationWithin(const Block& scope, LocalId local)
+    -> std::optional<LocalDeclaration> {
+  for (const Stmt& stmt : scope.stmts) {
+    if (const auto* decl = std::get_if<LocalDeclStmt>(&stmt.data);
+        decl != nullptr && decl->target == local) {
+      return LocalDeclaration{.block = &scope, .init = decl->init};
+    }
+  }
+  for (const Block& inner : scope.child_scopes) {
+    if (auto found = DeclarationWithin(inner, local)) {
+      return found;
+    }
+  }
+  return std::nullopt;
+}
+
+auto RefersToStorageEndingWith(
+    const CompilationUnit& unit, const Block& scope, const Block& in,
+    ExprId value) -> bool;
+
+// Whether the storage the place `place` of `in` names ends with the block
+// `scope`, `in` being `scope` or a block inside it: a local declared there, a
+// part of one, or a part of a value made there and held for the place's sake.
+// A dereference of an owner held in a place reaches storage that ends with the
+// owner, and one of a pointer value reaches what that pointer refers to; a
+// class handle keeps its object by itself, so what it reaches is not followed.
+auto PlaceEndsWith(
+    const CompilationUnit& unit, const Block& scope, const Block& in,
+    ExprId place) -> bool {
+  const ExprData& data = in.exprs.Get(place).data;
+  if (const std::optional<LocalId> local = ReferencedLocal(data)) {
+    return DeclarationWithin(scope, *local).has_value();
+  }
+  if (const auto* field = std::get_if<FieldAccessExpr>(&data)) {
+    return !IsPlace(in.exprs.Get(field->receiver).data) ||
+           PlaceEndsWith(unit, scope, in, field->receiver);
+  }
+  if (const auto* deref = std::get_if<DerefExpr>(&data)) {
+    return IsPlace(in.exprs.Get(deref->pointer).data)
+               ? PlaceEndsWith(unit, scope, in, deref->pointer)
+               : RefersToStorageEndingWith(unit, scope, in, deref->pointer);
+  }
+  return false;
+}
+
+// Whether the value `value` of `in` refers to storage that ends with `scope`,
+// through a reference or a borrowed pointer it is or carries. A call
+// answering one is taken to refer into what it is entered on, or into its
+// operands where it is entered on nothing.
+auto RefersToStorageEndingWith(
+    const CompilationUnit& unit, const Block& scope, const Block& in,
+    ExprId value) -> bool {
+  const auto refers = [&](ExprId operand) {
+    return IsPlace(in.exprs.Get(operand).data)
+               ? PlaceEndsWith(unit, scope, in, operand)
+               : RefersToStorageEndingWith(unit, scope, in, operand);
+  };
+  const auto any_refers = [&](const auto& operands, const auto& of) {
+    return std::ranges::any_of(
+        operands, [&](const auto& operand) { return refers(of(operand)); });
+  };
+  const auto itself = [](ExprId operand) { return operand; };
+  const Expr& expr = in.exprs.Get(value);
+  // A reference a local holds, read or moved out of it, is what its
+  // declaration bound it to.
+  const auto held_reference = [&](ExprId place) {
+    if (!RefersWithoutOwning(unit.types, expr.type)) {
+      return false;
+    }
+    const std::optional<LocalId> local =
+        ReferencedLocal(in.exprs.Get(place).data);
+    if (!local.has_value()) {
+      return false;
+    }
+    const std::optional<LocalDeclaration> declared =
+        DeclarationWithin(scope, *local);
+    return declared.has_value() &&
+           RefersToStorageEndingWith(
+               unit, scope, *declared->block, declared->init);
+  };
+  return std::visit(
+      Overloaded{
+          [&](const BorrowExpr& borrow) {
+            return !IsPlace(in.exprs.Get(borrow.operand).data) ||
+                   PlaceEndsWith(unit, scope, in, borrow.operand);
+          },
+          [&](const AddressOfExpr& address) {
+            return PlaceEndsWith(unit, scope, in, address.operand);
+          },
+          [&](const CopyExpr& read) { return held_reference(read.place); },
+          [&](const MoveExpr& move) { return held_reference(move.operand); },
+          // A reference into what the call is entered on, where that is a
+          // value the block makes, ends with it.
+          [&](const CallExpr& call) {
+            if (!RefersWithoutOwning(unit.types, expr.type)) {
+              return false;
+            }
+            if (const std::optional<ExprId> receiver =
+                    CalleeReceiver(call.callee)) {
+              return (AnswersReferenceIntoReceiver(call) &&
+                      !IsPlace(in.exprs.Get(*receiver).data)) ||
+                     refers(*receiver);
+            }
+            return any_refers(call.arguments, itself);
+          },
+          [&](const CastExpr& cast) { return refers(cast.operand); },
+          [&](const CompositeExpr& composite) {
+            return any_refers(composite.parts, itself);
+          },
+          [&](const UnionExpr& u) { return refers(u.value); },
+          [&](const ClosureExpr& closure) {
+            return any_refers(closure.field_inits, [](const FieldInit& init) {
+              return init.value;
+            });
+          },
+          [&](const ConditionalExpr& choice) {
+            return refers(choice.then_value) || refers(choice.else_value);
+          },
+          [&](const BlockExpr& steps) {
+            const Block& inner = in.child_scopes.Get(steps.scope);
+            return RefersToStorageEndingWith(unit, scope, inner, steps.value);
+          },
+          // What else a value can be refers to nothing a block makes: a
+          // constant, a name of storage, an operator's or a new-expression's
+          // result, a suspension's completion.
+          [](const StringLiteral&) { return false; },
+          [](const NullLiteral&) { return false; },
+          [](const MachineBoolLiteral&) { return false; },
+          [](const MachineIntLiteral&) { return false; },
+          [](const MachineFloatLiteral&) { return false; },
+          [](const ReferenceExpr&) { return false; },
+          [](const UnaryExpr&) { return false; },
+          [](const BinaryExpr&) { return false; },
+          [](const AssignExpr&) { return false; },
+          [](const NewExpr&) { return false; },
+          [](const DerefExpr&) { return false; },
+          [](const DiscriminantExpr&) { return false; },
+          [](const FieldAccessExpr&) { return false; },
+          [](const AwaitExpr&) { return false; },
+          [](const WaitExpr&) { return false; },
+          [](const VectorGetExpr&) { return false; },
+      },
+      expr.data);
+}
+
+// A block expression's scope ends when it yields, after what it yields is
+// taken out, so what it yields refers to nothing that ends there: no local it
+// declares and no value made among its nodes. The check follows the forms a
+// reference is built from and refuses those it sees reaching into the block;
+// it proves no lifetime, since MIR's references carry none.
+void VerifyYieldsOutliveTheirBlocks(
+    const CompilationUnit& unit, const Block& block, const auto& describe) {
+  for (const ExprId id : block.exprs.Ids()) {
+    const auto* steps = std::get_if<BlockExpr>(&block.exprs.Get(id).data);
+    if (steps == nullptr) continue;
+    const Block& scope = block.child_scopes.Get(steps->scope);
+    if (RefersToStorageEndingWith(unit, scope, scope, steps->value)) {
+      throw InternalError(
+          std::format(
+              "mir verify: {} yields, from the block expression at expression "
+              "{} of its block, {} of type {} referring to storage that ends "
+              "with that block -- please report this as a bug",
+              describe(), id.value,
+              Describe(scope.exprs.Get(steps->value).data),
+              DumpType(unit, scope.exprs.Get(steps->value).type)));
+    }
+  }
+  for (const BlockId id : block.child_scopes.Ids()) {
+    VerifyYieldsOutliveTheirBlocks(unit, block.child_scopes.Get(id), describe);
   }
 }
 
@@ -1708,6 +1889,7 @@ void VerifyCode(
   VerifyStorageWithoutAnAddress(unit, *code.body, describe);
   VerifyMemberReceivers(unit, *code.body, describe);
   VerifyReferenceBindings(unit, *code.body, describe);
+  VerifyYieldsOutliveTheirBlocks(unit, *code.body, describe);
   VerifyTypeArguments(*code.body, describe);
   VerifyTypeOperationCalls(unit, *code.body, describe);
   VerifyUnionValues(unit, *code.body, describe);

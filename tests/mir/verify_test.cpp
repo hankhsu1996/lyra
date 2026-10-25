@@ -1219,5 +1219,162 @@ TEST(MirVerifyTest, AUnitStatesEachTypeOperationOnceAndCallsOnlyThose) {
   ExpectRefused(twice, "a type has one operation stated twice");
 }
 
+// A block expression's scope ends when it yields, so what it yields refers to
+// nothing that ends there -- not a local its steps declare, not a value it
+// makes, not an element of a container it declares or makes, not what a
+// reference its steps hold was bound to there -- while it may refer to
+// storage that outlives it, reached by a position one of its locals holds.
+TEST(MirVerifyTest, ABlockExpressionYieldsNothingThatEndsWithIt) {
+  // What a yield is built from: the steps, a local they declare and one the
+  // body declares outside them, both arrays of `int`, and a position the steps
+  // declare.
+  struct Yielding {
+    CompilationUnit& unit;
+    CallableCode& code;
+    Block& steps;
+    TypeId array;
+    LocalId outer;
+    LocalId own;
+    LocalId at;
+  };
+  const auto yielding = [](const auto& yield) {
+    return UnitWithCode([&](CompilationUnit& u, CallableCode& code) {
+      const TypeId array = u.types.Intern(
+          Type{DynamicArrayType{.element_type = u.builtins.int_type}});
+      Block& body = code.Body();
+      const LocalId outer = code.locals.Add(LocalDecl{.type = array});
+      body.AppendStmt(
+          LocalDeclStmt{
+              .target = outer,
+              .init =
+                  body.exprs.Add(Expr{.data = NullLiteral{}, .type = array})});
+      Block steps;
+      const LocalId own = code.locals.Add(LocalDecl{.type = array});
+      steps.AppendStmt(
+          LocalDeclStmt{
+              .target = own,
+              .init =
+                  steps.exprs.Add(Expr{.data = NullLiteral{}, .type = array})});
+      const LocalId at =
+          code.locals.Add(LocalDecl{.type = PositionType(u.types)});
+      steps.AppendStmt(
+          LocalDeclStmt{
+              .target = at,
+              .init = steps.exprs.Add(
+                  Expr{.data = NullLiteral{}, .type = PositionType(u.types)})});
+      Yielding given{
+          .unit = u,
+          .code = code,
+          .steps = steps,
+          .array = array,
+          .outer = outer,
+          .own = own,
+          .at = at};
+      const ExprId value = yield(given);
+      const TypeId type = steps.exprs.Get(value).type;
+      const BlockId scope = body.child_scopes.Add(std::move(steps));
+      body.AppendStmt(
+          ExprStmt{
+              .expr = body.exprs.Add(
+                  Expr{
+                      .data = BlockExpr{.scope = scope, .value = value},
+                      .type = type})});
+    });
+  };
+  const auto reference_to = [](CompilationUnit& u, TypeId referent) {
+    return u.types.Intern(
+        Type{ReferenceType{
+            .referent = referent, .mutability = Mutability::kReadOnly}});
+  };
+  const auto borrow = [&](const Yielding& y, ExprId operand) {
+    return y.steps.exprs.Add(
+        Expr{
+            .data = BorrowExpr{.operand = operand},
+            .type = reference_to(y.unit, y.steps.exprs.Get(operand).type)});
+  };
+  // An element of what `receiver` names, at the position the steps hold.
+  const auto element_of = [&](const Yielding& y, ExprId receiver) {
+    return y.steps.exprs.Add(
+        Expr{
+            .data =
+                CallExpr{
+                    .callee =
+                        Direct{
+                            .target = support::BuiltinFn::kElement,
+                            .receiver = receiver},
+                    .arguments = {y.steps.ReadLocal(
+                        y.at, PositionType(y.unit.types))}},
+            .type = reference_to(y.unit, y.unit.builtins.int_type)});
+  };
+  // A reference to `bound`, held by a local of the steps and read or moved
+  // out of it.
+  const auto held = [&](const Yielding& y, LocalId bound, bool moved) {
+    const ExprId reference = borrow(y, y.steps.LocalPlace(bound, y.array));
+    const TypeId type = y.steps.exprs.Get(reference).type;
+    const LocalId holder = y.code.locals.Add(LocalDecl{.type = type});
+    y.steps.AppendStmt(LocalDeclStmt{.target = holder, .init = reference});
+    const ExprId place = y.steps.LocalPlace(holder, type);
+    return moved ? y.steps.exprs.Add(
+                       Expr{.data = MoveExpr{.operand = place}, .type = type})
+                 : y.steps.Read(place);
+  };
+  constexpr std::string_view kWhy =
+      "referring to storage that ends with that block";
+
+  ExpectRefused(
+      yielding([&](const Yielding& y) {
+        return borrow(y, y.steps.LocalPlace(y.own, y.array));
+      }),
+      kWhy);
+  ExpectRefused(
+      yielding([&](const Yielding& y) {
+        const ExprId literal = y.steps.exprs.Add(
+            Expr{
+                .data = MachineIntLiteral{.value = 1},
+                .type = y.unit.builtins.int_type});
+        return borrow(y, AddSum(y.unit, y.steps, literal, literal));
+      }),
+      kWhy);
+  ExpectRefused(
+      yielding([&](const Yielding& y) {
+        const ExprId reference = borrow(y, y.steps.LocalPlace(y.own, y.array));
+        return y.steps.exprs.Add(
+            Expr{
+                .data = CompositeExpr{.parts = {reference}},
+                .type = y.unit.types.Intern(
+                    Type{TupleType{
+                        .elements = {y.steps.exprs.Get(reference).type}}})});
+      }),
+      kWhy);
+  ExpectRefused(
+      yielding([&](const Yielding& y) {
+        return element_of(y, y.steps.LocalPlace(y.own, y.array));
+      }),
+      kWhy);
+  ExpectRefused(
+      yielding([&](const Yielding& y) {
+        return element_of(
+            y, y.steps.exprs.Add(Expr{.data = NullLiteral{}, .type = y.array}));
+      }),
+      kWhy);
+  ExpectRefused(
+      yielding([&](const Yielding& y) { return held(y, y.own, false); }), kWhy);
+  ExpectRefused(
+      yielding([&](const Yielding& y) { return held(y, y.own, true); }), kWhy);
+
+  EXPECT_NO_THROW(Verify(yielding([&](const Yielding& y) {
+    return borrow(y, y.steps.LocalPlace(y.outer, y.array));
+  })));
+  EXPECT_NO_THROW(Verify(yielding([&](const Yielding& y) {
+    return element_of(y, y.steps.LocalPlace(y.outer, y.array));
+  })));
+  EXPECT_NO_THROW(Verify(
+      yielding([&](const Yielding& y) { return held(y, y.outer, false); })));
+  EXPECT_NO_THROW(Verify(
+      yielding([&](const Yielding& y) { return held(y, y.outer, true); })));
+  EXPECT_NO_THROW(Verify(yielding(
+      [&](const Yielding& y) { return y.steps.ReadLocal(y.own, y.array); })));
+}
+
 }  // namespace
 }  // namespace lyra::mir

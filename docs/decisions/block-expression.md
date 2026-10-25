@@ -92,7 +92,42 @@ D4. A closure is the other concept and keeps its own job: a callable value, for 
 
 D5. A block expression always yields a value. A sequence of steps that settles none is a statement, and
     a block statement over the same scope is what says so.
+
+D6. A block expression's scope ends when it yields. The value is taken out first; then what the
+    value's evaluation made ends, then what the steps declared. What it yields refers to none of
+    that: it is a value of its own, or a reference to storage that outlives the block.
 ```
+
+### Why D6 ends the scope at the block
+
+MIR is read by two backends, and before D6 it stated no end, so each chose one. The C++ backend
+writes a block expression as a lambda called where it stands, so what the steps declare ends when
+the lambda returns; the lowering to the machine model kept it to the end of the enclosing
+full-expression. One MIR was two programs wherever what a block yields still depended on its own
+storage, and the difference showed up on one backend only: a lease put in a step's local ended
+before the call that needed it on C++ and not on the other.
+
+The field ends a block's own storage at the block. rustc builds a block's tail expression into its
+destination and then pops the block's scopes (`rustc_mir_build`, `builder/block.rs`,
+`ast_block_stmts`), and from the 2024 edition the tail's temporaries end there too
+(`rustc_hir_analysis`, `check/region.rs`). clang copy-initializes a GNU statement expression's
+result (`Sema::ActOnStmtExprResult`), so its compound statement's locals end before the value is
+used and no reference leaves it.
+
+Ending it at the enclosing full-expression instead would serve no producer -- every one already
+yields a value of its own or a reference to storage outside the block -- and the C++ backend could
+realize it only by moving the steps' declarations out of the lambda, which is a render deciding
+where storage lives.
+
+The verification is a structural check, not a proof of lifetime: MIR's references carry no lifetime,
+as C++'s do not, and it does not reason about any. It follows what a yielded value is formed from --
+a borrow, a composite, a closure's captures, a choice's arms, a reference a step's local was bound
+to -- and takes a call answering a reference to refer into what it is entered on, or into its
+operands where it is entered on nothing. It refuses a yield it sees reaching a local the block
+declares or a value made among its nodes. It does not look through an owner or a class handle, and a
+call whose answer refers into storage other than what it was handed is beyond it; whatever keeps an
+object a yielded reference reaches into alive is what the language's handles keep, not something the
+block's end decides.
 
 ### Why D5 admits no valueless form
 
@@ -189,10 +224,12 @@ same boundary, met while designing a different construct.
   boundary whose foreign side returns nothing -- have a statement form beside their expression one.
   Each is reached from statement position, which is the only position the frontend admits them in.
 - The node does not survive lowering to the machine model. Below MIR it is the steps' instructions
-  followed by the value's, which is what a flattened form would have produced -- so the node costs
-  its expressive power and nothing else.
-- A backend whose target lacks the construct spells it with a function, and D3 is what keeps that
-  spelling faithful.
+  followed by the value's, then the end of the block's own storage, which is what a flattened form
+  would have produced -- so the node costs its expressive power and a copy of a value it yields that
+  is only lent, wherever it lies, which a C++ `return` makes too. A block with no steps ends nothing
+  and is its value.
+- A backend whose target lacks the construct spells it with a function, and D3 and D6 are what keep
+  that spelling faithful: a function's locals end at its return, as D6 has the block's end.
 
 ## Cross-references
 

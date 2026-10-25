@@ -157,8 +157,10 @@ the detail lives in the entry itself.
   value and a capture of a type too large for a frame are held through a uniquely owning pointer a
   MIR-to-MIR rewrite writes, sized by one query over MIR types; a large value is made in its box, a
   conditional's arm and a block's value are made where its value is, no body answers a box, and a
-  closure kept past its statement is made in a box its keeper takes. Each backend deciding from a
-  shared constant, the render choosing per position, and a body answering a box are rejected.
+  closure kept past its statement is made in a box its keeper takes. The rewrite making those
+  temporaries also takes an operand read out of storage into one before a later operand may change
+  or end it, so a call's object is not reclaimed under it. Each backend deciding from a shared
+  constant, the render choosing per position, and a body answering a box are rejected.
 - [an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md)
   -- what a position of an array holds before it is written (LRM 7.4.5, Table 7-1) is a fact of the
   element type, for a fixed-size array, a dynamic array, a queue and an associative array alike. A
@@ -327,7 +329,8 @@ the detail lives in the entry itself.
   callable value (code + bound environment), with no kind tag on the body.
 - [block-expression](block-expression.md) -- several steps in value position are a block expression,
   the one node that lifts any statement sequence into an expression; it sequences and nothing else,
-  so its steps do not return. A closure invoked where it is built is rejected.
+  so its steps do not return, and its scope ends when it yields, so what it yields refers to nothing
+  its steps declare or its value makes. A closure invoked where it is built is rejected.
 - [closure-environment-and-activation-frame](closure-environment-and-activation-frame.md) -- a
   closure (`ClosureType`, an anonymous concrete callable value: captures plus one invoke) is its own
   category, and a lifted automatic local is its own cell held through a shared pointer; the two
