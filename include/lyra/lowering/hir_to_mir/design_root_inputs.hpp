@@ -5,10 +5,10 @@
 #include <string>
 #include <vector>
 
+#include "lyra/hir/scope_class_id.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
 #include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
-#include "lyra/support/def_path.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -18,7 +18,7 @@ namespace lyra::lowering::hir_to_mir {
 // takes after where the object hangs, its segment and its construction table,
 // in the design root's own types.
 struct PublishedObjectEntry {
-  support::DefPath published_class;
+  hir::ScopeClassId published_class;
   std::vector<hir::TypeId> handed;
 };
 

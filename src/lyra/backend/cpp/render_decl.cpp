@@ -208,6 +208,11 @@ void RenderClassCallableDecl(
   std::visit(
       Overloaded{
           [](mir::DefinedHere) {}, [&](mir::LeftAbstract) { out += " = 0"; },
+          [](mir::DefinedByAnotherUnit) {
+            throw InternalError(
+                "RenderClassCallableDecl: a class this unit renders defines "
+                "every body it has -- please report this as a bug");
+          },
           [](mir::DefinedByForeignCode) {
             throw InternalError(
                 "RenderClassCallableDecl: a foreign function belongs to no "
@@ -297,6 +302,7 @@ struct ClassNesting {
 auto NestingOf(const mir::CompilationUnit& unit) -> ClassNesting {
   std::map<support::DefPath, mir::ClassId> published_at;
   for (const mir::ClassId id : unit.classes.Ids()) {
+    if (mir::IsDefinedElsewhere(unit, id)) continue;
     if (const auto& path = unit.GetClass(id).path) {
       published_at.emplace(*path, id);
     }
@@ -307,6 +313,7 @@ auto NestingOf(const mir::CompilationUnit& unit) -> ClassNesting {
       .declares_inside =
           std::vector<std::vector<mir::ClassId>>(unit.classes.size())};
   for (const mir::ClassId id : unit.classes.Ids()) {
+    if (mir::IsDefinedElsewhere(unit, id)) continue;
     const std::optional<support::DefPath>& path = unit.GetClass(id).path;
     if (!path.has_value() || !IsNestedClass(*path)) continue;
     const auto enclosing = published_at.find(support::EnclosingPath(*path));
@@ -335,25 +342,18 @@ void AppendClassInDependencyOrder(
     const mir::CompilationUnit& unit, UnitRenderReport& report,
     const ClassNesting& nesting, mir::ClassId id, std::vector<bool>& emitted,
     UnitClasses& text) {
-  if (emitted[id.value]) return;
+  // A class another unit defines is declared in that unit's own header, which
+  // the file declaring a class resting on it includes.
+  if (emitted[id.value] || mir::IsDefinedElsewhere(unit, id)) return;
   emitted[id.value] = true;
   const mir::Class& cls = unit.GetClass(id);
   if (const auto& enclosing = nesting.declared_inside[id.value]) {
     AppendClassInDependencyOrder(
         unit, report, nesting, *enclosing, emitted, text);
   }
-  for (const mir::DeclaredClassRef& rests_on :
-       mir::RestsOnDeclaredClasses(cls)) {
-    std::visit(
-        Overloaded{
-            [&](const mir::IntraUnitClassRef& intra) {
-              AppendClassInDependencyOrder(
-                  unit, report, nesting, intra.class_id, emitted, text);
-            },
-            // Another unit's class is declared in that unit's own header,
-            // which the file declaring this one includes.
-            [](const mir::CrossUnitClassRef&) {}},
-        rests_on);
+  for (const mir::ClassId rests_on : mir::RestsOnDeclaredClasses(cls)) {
+    AppendClassInDependencyOrder(
+        unit, report, nesting, rests_on, emitted, text);
   }
   const std::span<const mir::ClassId> declares_inside =
       nesting.declares_inside[id.value];
@@ -407,9 +407,9 @@ void RenderClass(
   if (s.base.has_value()) {
     bases.push_back(Base{.of = *s.base, .is_interface_class = false});
   }
-  for (const mir::DeclaredClassRef& implemented : s.implements) {
+  for (const mir::ClassId implemented : s.implements) {
     bases.push_back(
-        Base{.of = mir::AsClassRef(implemented), .is_interface_class = true});
+        Base{.of = mir::ClassRef{implemented}, .is_interface_class = true});
   }
   if (!bases.empty()) {
     out += " : ";
@@ -524,6 +524,9 @@ auto RenderFreeCallableLinkage(const mir::NamespaceReach& reach)
           [](const mir::ReachedAsObjectEntry&) -> std::string_view {
             return "";
           },
+          [](const mir::ReachedInAnotherUnit&) -> std::string_view {
+            return "";
+          },
           [](const mir::ReachedByPosition&) -> std::string_view { return ""; }},
       reach);
 }
@@ -617,6 +620,7 @@ auto RenderUnitForwardDeclarations(const mir::CompilationUnit& unit)
     -> UnitText {
   UnitText text;
   for (const mir::ClassId id : unit.classes.Ids()) {
+    if (mir::IsDefinedElsewhere(unit, id)) continue;
     const mir::Class& cls = unit.GetClass(id);
     if (cls.path.has_value() && IsNestedClass(*cls.path)) continue;
     TargetText& out = mir::IsPublished(unit, id) ? text.signature : text.code;
@@ -747,6 +751,8 @@ auto RenderUnitCallables(
   // An import has no body here; the user's C code defines it.
   for (const mir::CallableId id : unit.callables.Ids()) {
     const mir::CallableDecl& callable = unit.callables.Get(id);
+    // Another unit's header declares a function of its own namespace.
+    if (callable.defining_unit.has_value()) continue;
     UnitText& out = std::visit(
         Overloaded{
             [&](const mir::ReachedByLinkageName&) -> UnitText& {
@@ -760,6 +766,11 @@ auto RenderUnitCallables(
             },
             [&](const mir::ReachedAsObjectEntry&) -> UnitText& {
               return text.of_body;
+            },
+            [&](const mir::ReachedInAnotherUnit&) -> UnitText& {
+              throw InternalError(
+                  "backend::cpp: a function another unit's namespace defines "
+                  "is rendered here -- please report this as a bug");
             },
             [&](const mir::ReachedByPosition&) -> UnitText& {
               return text.of_artifact;
@@ -783,6 +794,8 @@ auto RenderUnitRecords(
   UnitRecords records;
   TargetText definitions;
   for (const mir::RecordId id : unit.records.Ids()) {
+    // A record another unit defines is rendered by that unit.
+    if (unit.GetRecord(id).defining_unit.has_value()) continue;
     TargetText declared;
     const TargetText::Section defined_section(definitions);
     RenderRecord(unit, report, id, declared, definitions);
@@ -802,6 +815,8 @@ auto RenderUnitRecords(
 auto RenderUnitStaticVariables(const mir::CompilationUnit& unit) -> UnitText {
   UnitText text;
   for (const mir::StaticVariableId id : unit.static_variables.Ids()) {
+    // Another unit's header declares a variable of its own namespace.
+    if (unit.static_variables.Get(id).defining_unit.has_value()) continue;
     const CppType type(unit, unit.static_variables.Get(id).type);
     const CppName name = CppStaticVariableName(unit.named_static_variables, id);
     WriteDeclaration(

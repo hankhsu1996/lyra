@@ -47,6 +47,7 @@ struct PairBody {
   auto RecordOfTwo(RecordKind kind) -> TypeId {
     const RecordId id = unit.records.Add(
         RecordDecl{
+            .defining_unit = std::nullopt,
             .path = {},
             .linkage = Linkage::kExternal,
             .kind = kind,

@@ -55,7 +55,7 @@ auto ClimbedEndpoint(
           [&](const hir::ProceduralStaticLeaf& l) {
             return declaring.ProceduralStaticField(l.body, l.var);
           },
-          [&](const hir::ExternalMemberLeaf&) { return not_this_unit(); }},
+          [&](const hir::PublishedMemberLeaf&) { return not_this_unit(); }},
       leaf);
   return EndpointAt(
       lowerer.Owner().Unit(),

@@ -153,7 +153,7 @@ auto IsPropertyOfTheReceiver(const Primary& primary) -> bool {
           [](const RoutedObjectRef&) { return false; },
           [](const IterationBindingRef&) { return false; },
           [](const PatternVarRef&) { return false; },
-          [](const ExternalUnitValueRef&) { return false; }},
+          [](const NamespaceValueRef&) { return false; }},
       primary);
 }
 
@@ -180,7 +180,7 @@ auto IsDeclaredByABody(const Primary& primary) -> bool {
           [](const StaticPropertyRef&) { return false; },
           [](const RoutedValueRef&) { return false; },
           [](const RoutedObjectRef&) { return false; },
-          [](const ExternalUnitValueRef&) { return false; }},
+          [](const NamespaceValueRef&) { return false; }},
       primary);
 }
 

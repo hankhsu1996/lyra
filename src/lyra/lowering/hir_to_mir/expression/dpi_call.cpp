@@ -1042,7 +1042,8 @@ auto MakeForeignImportDecl(
           unit, import.params, import.ret_abi, import.is_task),
       .foreign = mir::ForeignLinkage{.foreign_name = import.foreign_name},
       .virtual_dispatch = std::nullopt,
-      .type_parameters = {}};
+      .type_parameters = {},
+      .defining_unit = std::nullopt};
 }
 
 template <ExprLowerer Lowerer>

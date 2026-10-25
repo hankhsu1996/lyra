@@ -187,9 +187,8 @@ void ReachCallee(const SubroutineRef& callee, const auto& reach) {
             }
           },
           [](const PastValueRef&) {}, [](const ValueChangeRef&) {},
-          [](const ForeignImportRef&) {},
-          [](const ExternalUnitSubroutineRef&) {},
-          [&](const ExternalUnitMethodRef& ref) {
+          [](const ForeignImportRef&) {}, [](const NamespaceSubroutineRef&) {},
+          [&](const PublishedScopeMethodRef& ref) {
             std::visit(
                 Overloaded{
                     [](const RoutedObjectRef&) {},
@@ -604,7 +603,7 @@ auto KindOf(const Primary& primary) -> std::string_view {
           [](const PatternVarRef&) -> std::string_view {
             return "a pattern variable reference";
           },
-          [](const ExternalUnitValueRef&) -> std::string_view {
+          [](const NamespaceValueRef&) -> std::string_view {
             return "a namespace variable reference";
           }},
       primary);
@@ -646,10 +645,10 @@ auto DescribeCall(const SubroutineRef& callee) -> std::string {
           [](const ForeignImportRef&) -> std::string {
             return "a foreign import call";
           },
-          [](const ExternalUnitSubroutineRef&) -> std::string {
+          [](const NamespaceSubroutineRef&) -> std::string {
             return "a namespace subroutine call";
           },
-          [](const ExternalUnitMethodRef&) -> std::string {
+          [](const PublishedScopeMethodRef&) -> std::string {
             return "a call on another unit's scope";
           }},
       callee);
@@ -1160,8 +1159,9 @@ void VerifySubroutine(
   // A prototype states a signature and has no statement to enter at (LRM
   // 8.21).
   const std::vector<StmtId> entered_at =
-      subroutine.is_prototype ? std::vector<StmtId>{}
-                              : std::vector<StmtId>{subroutine.root_stmt};
+      subroutine.root_stmt.has_value()
+          ? std::vector<StmtId>{*subroutine.root_stmt}
+          : std::vector<StmtId>{};
   VerifyBody(
       subroutine.body, entered_at,
       [&](ArenaReaches& reaches) {
@@ -1185,6 +1185,15 @@ void VerifyClass(
     VerifySubroutine(
         decl, [](ArenaReaches&) {},
         [&] { return std::format("method '{}' of {}", decl.name, owner()); },
+        lines);
+  }
+  for (const InterfaceForward& forward : cls.interface_forwards) {
+    VerifySubroutine(
+        forward.method, [](ArenaReaches&) {},
+        [&] {
+          return std::format(
+              "the forward of '{}' of {}", forward.method.name, owner());
+        },
         lines);
   }
   VerifySubroutine(
@@ -1684,10 +1693,10 @@ void Verify(const CompilationUnit& unit) {
   VerifyScope(
       unit.root_scope, std::format("the root scope of unit '{}'", unit.name),
       lines);
-  for (const ClassId id : unit.classes.Ids()) {
+  for (const ClassId id : unit.classes.OwnIds()) {
     VerifyClass(unit, id, lines);
   }
-  for (const CovergroupId id : unit.covergroups.Ids()) {
+  for (const CovergroupId id : unit.covergroups.OwnIds()) {
     VerifyCovergroup(unit, id, lines);
   }
   std::string report;

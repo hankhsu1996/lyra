@@ -57,7 +57,7 @@ auto PortConnectionUnsupported(
 struct ConnectedChild {
   const slang::ast::InstanceSymbol* instance = nullptr;
   const hir::UnitSignature* signature = nullptr;
-  hir::ExternalScopeClassId scope_class;
+  hir::ScopeClassId scope_class;
   hir::OwnedChildStep step;
   ScopeFrameId home_frame;
   diag::SourceSpan span;
@@ -68,7 +68,7 @@ struct ConnectedChild {
 // signature describes (LRM 23.3.3). Every connection reaches the child's side
 // this way, whichever kind of port it is.
 auto PublishedMemberRoute(
-    const ConnectedChild& child, hir::ExternalMemberLeaf member)
+    const ConnectedChild& child, hir::PublishedMemberLeaf member)
     -> hir::ValueRoute {
   return hir::ValueRoute{
       .base = hir::InUnitBase{.hops = {}},
@@ -89,17 +89,17 @@ auto PortDefault(
   const ScopeRoute onto_child{
       .base = hir::InUnitBase{.hops = {}},
       .steps = {hir::AsPathStep(child.step)},
-      .place = InExternalScope{.scope_class = child.scope_class, .within = {}},
+      .place = InPublishedScope{.scope_class = child.scope_class, .within = {}},
       .open = {}};
   return hir::Expr{
       .type = unit_lowerer.Unit()
-                  .external_scope_classes.Get(child.scope_class)
-                  .signature.callables.Get(evaluate)
+                  .scope_classes.Get(child.scope_class)
+                  .callables.Get(evaluate)
                   .result_type,
       .data =
           hir::CallExpr{
               .callee =
-                  hir::ExternalUnitMethodRef{
+                  hir::PublishedScopeMethodRef{
                       .receiver = unit_lowerer.MakeRoutedObjectRef(
                           child.home_frame, onto_child, object_type),
                       .scope_class = child.scope_class,
@@ -347,8 +347,8 @@ auto ConnectInterfacePort(
   // instance belongs at each position and how many there are, taken into this
   // unit's pool, so the parent's record of the connection rests on what the
   // child published rather than on a second reading of the frontend.
-  hir::ExternalMemberLeaf member =
-      unit_lowerer.ExternalMemberLeafOf(child.scope_class, published.member);
+  hir::PublishedMemberLeaf member =
+      unit_lowerer.PublishedMemberLeafOf(child.scope_class, published.member);
   const auto* published_objects =
       unit_lowerer.Unit().types.Get(member.type).As<hir::UnitObjectsType>();
   if (published_objects == nullptr) {
@@ -424,8 +424,8 @@ auto ConnectDataPort(
   // The storage behind the part, as the child states it. Its type is wider
   // than the part's whenever the child named only a piece of it (LRM
   // 23.2.2.2), and the descent between the two is published alongside.
-  const hir::ExternalMemberLeaf member =
-      unit_lowerer.ExternalMemberLeafOf(child.scope_class, projection->member);
+  const hir::PublishedMemberLeaf member =
+      unit_lowerer.PublishedMemberLeafOf(child.scope_class, projection->member);
   const auto* internal =
       port->internalSymbol == nullptr
           ? nullptr
@@ -628,8 +628,7 @@ auto ConnectElementPorts(
   const ConnectedChild child{
       .instance = &inst,
       .signature = &child_signature,
-      .scope_class =
-          unit_lowerer.ExternalScopeClassOf(child_signature.unit_name),
+      .scope_class = unit_lowerer.ScopeClassOf(child_signature.unit_name),
       .step = std::move(step),
       .home_frame = home_frame,
       .span = frontend::PointSpanOf(inst.location)};

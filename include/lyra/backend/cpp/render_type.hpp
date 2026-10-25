@@ -204,18 +204,17 @@ void WriteOne(TargetText& out, const CppCallSignature& signature);
 // needed. A class's name says so as it is written, as a struct's does, so a
 // file's includes are what its own text asked for.
 
-// A class a reference names, as C++: its own name for a class of this unit,
-// `::Unit::Name` for another unit's, and the runtime's name for a runtime
-// class. An object is reached through a pointer, so the name needs the class
-// declared and no more.
+// A class a reference names, as C++: its own name for a class this unit
+// defines, `::Unit::Name` for one another unit defines, and the runtime's name
+// for a runtime class. An object is reached through a pointer, so the name
+// needs the class declared and no more.
 class CppClassRef {
  public:
   CppClassRef(const mir::CompilationUnit& unit, mir::ClassRef ref)
       : unit_(&unit), ref_(std::move(ref)) {
   }
-  CppClassRef(
-      const mir::CompilationUnit& unit, const mir::DeclaredClassRef& ref)
-      : CppClassRef(unit, mir::AsClassRef(ref)) {
+  CppClassRef(const mir::CompilationUnit& unit, mir::ClassId id)
+      : CppClassRef(unit, mir::ClassRef{id}) {
   }
   [[nodiscard]] auto Unit() const -> const mir::CompilationUnit& {
     return *unit_;

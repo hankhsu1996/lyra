@@ -1,170 +1,79 @@
 #pragma once
 
 #include <compare>
-#include <cstdint>
+#include <cstddef>
+#include <functional>
 #include <string>
 #include <variant>
 
-#include "lyra/base/pool_id.hpp"
+#include "lyra/base/hash.hpp"
 #include "lyra/hir/class_id.hpp"
 #include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/field_id.hpp"
 #include "lyra/hir/method_id.hpp"
-#include "lyra/hir/published_method.hpp"
 #include "lyra/hir/static_property_id.hpp"
 #include "lyra/support/def_path.hpp"
 
 namespace lyra::hir {
 
-// A reference to a class declared by this compilation unit. Named by its
-// canonical local identity; the unit's class registry resolves the id to the
-// declaration.
-struct LocalClassRef {
-  ClassId class_id;
-
-  auto operator==(const LocalClassRef&) const -> bool = default;
-};
-
-// A reference to a class declared by another compilation unit. Named by the
-// declaring unit's name and the class's path inside that unit. The producer
-// (the unit naming itself) and every consumer (a referring unit naming a class
-// it reaches) compute the same path from the same declarations and bindings by
-// the same deterministic function, so a cross-unit reference matches with no
-// shared table.
-struct ExternalClassRef {
+// The name every unit gives one class: the unit declaring it and the class's
+// path in that unit. The declaring unit and every unit reaching the class
+// compute the same pair from the same declarations by the same deterministic
+// function, so it is what a signature writes and what a symbol is spelled from.
+// Inside one unit a class is named by its `ClassId` instead, which the unit's
+// class table maps to and from this pair.
+struct ClassKey {
   std::string unit_name;
   support::DefPath class_path;
 
-  auto operator==(const ExternalClassRef&) const -> bool = default;
+  auto operator<=>(const ClassKey&) const -> std::strong_ordering = default;
+  // Two equal keys display alike, which is all a pool needs of a hash; equality
+  // decides which key is which.
+  struct Hash {
+    auto operator()(const ClassKey& key) const -> std::size_t {
+      std::size_t seed = std::hash<std::string>{}(key.unit_name);
+      base::HashField(seed, support::DisplayOf(key.class_path));
+      return seed;
+    }
+  };
 };
 
-// A reference naming a class from a use site: a base's target, a `new`'s
-// target, a receiver's declared class, an override's declaring class.
-// Intra-unit identity is a compiler-owned id; cross-unit identity is a
-// by-name reference resolved against another unit's signature at link time.
-// The two never share a key space.
-using ClassRef = std::variant<LocalClassRef, ExternalClassRef>;
-
-// A reference to a class property (LRM 8.4) at an access site: the class
-// arena the property is declared in, and the slot within that arena. Owner
-// is the declaring class, not the receiver's class; the two coincide when
-// the receiver's class declares the property itself and diverge when the
-// property is inherited from a base.
-struct LocalClassPropertyTarget {
+// A class property (LRM 8.4) at an access site: the class declaring it, and
+// which of that class's properties it is. The declaring class is the owner, not
+// the receiver's class; the two coincide when the receiver's class declares the
+// property itself and diverge when the property is inherited from a base.
+struct ClassPropertyTarget {
   ClassId owner;
   FieldId field;
 
-  auto operator==(const LocalClassPropertyTarget&) const -> bool = default;
+  auto operator==(const ClassPropertyTarget&) const -> bool = default;
 };
 
-// Which of the properties a class declares one is, counted in the order the
-// class declares them (LRM 8.5). The class and every unit reading its signature
-// count it out of the same list, so neither states a position to the other.
-struct PublishedPropertyId {
-  std::uint32_t value = base::kUnassignedId;
-
-  auto operator<=>(const PublishedPropertyId&) const
-      -> std::strong_ordering = default;
-};
-
-// A reference to a class property (LRM 8.4) declared by another compilation
-// unit: the declaring unit, the class's path in it, and which of that class's
-// properties this is. It names the class that declares the property,
-// which is often an ancestor of the one the source wrote and is the one the
-// front end resolved the name to.
-struct ExternalClassPropertyTarget {
-  std::string unit_name;
-  support::DefPath class_path;
-  PublishedPropertyId property;
-
-  auto operator==(const ExternalClassPropertyTarget&) const -> bool = default;
-};
-
-using ClassPropertyTarget =
-    std::variant<LocalClassPropertyTarget, ExternalClassPropertyTarget>;
-
-// A reference to a class static property (LRM 8.9) at an access site: the
-// declaring class and the slot within its static-property arena. Owner-
-// qualified because the type-associated cell belongs to the declaring class
-// even when the source reached it through a derived name.
-struct LocalStaticPropertyTarget {
+// A class static property (LRM 8.9) at an access site: the declaring class and
+// which of its static properties it is. Owner-qualified because the
+// type-associated cell belongs to the declaring class even when the source
+// reached it through a derived name.
+struct ClassStaticPropertyTarget {
   ClassId owner;
   StaticPropertyId prop;
 
-  auto operator<=>(const LocalStaticPropertyTarget&) const
+  auto operator<=>(const ClassStaticPropertyTarget&) const
       -> std::strong_ordering = default;
 };
 
-// A reference to a class static property (LRM 8.9) declared by another
-// compilation unit: the declaring unit, the class's path in it, and the
-// property's source name.
-struct ExternalStaticPropertyTarget {
-  std::string unit_name;
-  support::DefPath class_path;
-  std::string property_name;
-
-  auto operator<=>(const ExternalStaticPropertyTarget&) const
-      -> std::strong_ordering = default;
-};
-
-// A reference to a class method (LRM 8.6 / 8.10) at an access site: the
-// declaring class arena and the method slot within it. The declaring class
-// is the owner, not the receiver's class.
-struct LocalClassMethodTarget {
+// A class method (LRM 8.6 / 8.10) at an access site: the declaring class and
+// which of its methods it is. The declaring class is the owner, not the
+// receiver's class.
+//
+// It also names a behavior (LRM 8.20) -- what a method overrides, what a call
+// dispatches on, what an interface class's behavior is and is answered by --
+// as the method that introduced it, which is the one identity every class
+// overriding it agrees on.
+struct ClassMethodTarget {
   ClassId owner;
   MethodId method;
 
-  auto operator==(const LocalClassMethodTarget&) const -> bool = default;
+  auto operator==(const ClassMethodTarget&) const -> bool = default;
 };
-
-// A reference to a class method (LRM 8.6 / 8.10) declared by another
-// compilation unit: the declaring unit, the class's path in it, and the
-// method's source name. The declaring unit's arena position is not visible
-// here, so the method is named directly.
-struct ExternalClassMethodTarget {
-  std::string unit_name;
-  support::DefPath class_path;
-  std::string method_name;
-
-  auto operator==(const ExternalClassMethodTarget&) const -> bool = default;
-};
-
-using ClassMethodTarget =
-    std::variant<LocalClassMethodTarget, ExternalClassMethodTarget>;
-
-// One behavior a class of another compilation unit introduced (LRM 8.20): the
-// declaring unit, that class's path in it, and which of the behaviors it
-// published this is. It names the class that introduced the behavior, never the
-// one a call happened to reach it through, because every class extending the
-// introducer answers the same behavior under the same name -- so the class
-// named here is often an ancestor of the one the source wrote, found by walking
-// what each published about the class it extends.
-struct ExternalDispatchSlot {
-  std::string unit_name;
-  support::DefPath class_path;
-  PublishedBehaviorId behavior;
-
-  auto operator==(const ExternalDispatchSlot&) const -> bool = default;
-};
-
-// The method a class of this unit makes one of its embedded covergroups by
-// (LRM 19.4.1), which a class extending it overrides where its covergroup
-// extends this one. No method of the source stands for it, so it is named by
-// the covergroup.
-struct LocalCovergroupFactory {
-  CovergroupId covergroup;
-
-  auto operator==(const LocalCovergroupFactory&) const -> bool = default;
-};
-
-// A behavior (LRM 8.20), as what a method overrides, what a call dispatches
-// on, and what an interface class's behavior is and is answered by. One a
-// class of this unit introduced is named by this unit's identity for a method
-// answering it -- the one a method overrides, the introducing one, or the
-// factory of an embedded covergroup -- whichever unit's lineage the name was
-// reached through; one a class of another unit introduced is named by the
-// coordinate that class published, since no identity of this unit reaches it.
-using VirtualBehavior = std::variant<
-    LocalClassMethodTarget, LocalCovergroupFactory, ExternalDispatchSlot>;
 
 }  // namespace lyra::hir

@@ -6,10 +6,11 @@
 // name, through this, through a handle -- whether the declaring class is
 // defined in another unit or defines its hook outside its body, whether one or
 // two classes in between declare none, and whether the lineage begins at a
-// built-in class, which declares none. The hooks are not virtual, so a
-// base handle calling one runs the base's, while randomize() through the same
-// handle runs the object's. A method every class has is called by plain name
-// from another method the same way (LRM 18.13.3, 18.8).
+// built-in class, which declares none. randomize() of such a class runs them
+// too, as it does for a class declaring only one of the two. The hooks are not
+// virtual, so a base handle calling one runs the base's, while randomize()
+// through the same handle runs the object's. A method every class has is
+// called by plain name from another method the same way (LRM 18.13.3, 18.8).
 package hooks;
   class Root;
     int log = 0;
@@ -30,6 +31,18 @@ package hooks;
 
   class Mid extends Base;
   endclass
+
+  // A specialization is compiled apart from the package declaring it, and its
+  // lineage comes back to a class of this package.
+  class Spec #(type T = int) extends Base;
+  endclass
+
+  function automatic int through_spec();
+    Spec #(byte) s = new;
+    s.pre_randomize();
+    void'(s.randomize());
+    return s.log;
+  endfunction
 endpackage
 
 class Mid2 extends hooks::Mid;
@@ -42,6 +55,15 @@ class ThroughMids extends Mid2;
     log = log * 10 + 3;
   endfunction
 
+  function void post_randomize();
+    super.post_randomize();
+    log = log * 10 + 2;
+  endfunction
+endclass
+
+// Declares only post_randomize, so randomize() runs the pre_randomize a class
+// of another unit declares.
+class PostOnly extends Mid2;
   function void post_randomize();
     super.post_randomize();
     log = log * 10 + 2;
@@ -126,6 +148,9 @@ module Top;
   int root_by_handle = -1;
   int base_handle_hook = -1;
   int base_handle_randomize = -1;
+  int declares_none = -1;
+  int post_only = -1;
+  int specialization = -1;
 
   initial begin
     ThroughMids t;
@@ -135,6 +160,7 @@ module Top;
     OverSemaphore os;
     FromMailbox fm;
     Mid2 m;
+    PostOnly po;
     hooks::Root r;
     hooks::Base h;
 
@@ -181,6 +207,12 @@ module Top;
     base_handle_hook = t.log;
     t.log = 0;
     if (h.randomize() == 1) base_handle_randomize = t.log;
+
+    m = new;
+    if (m.randomize() == 1) declares_none = m.log;
+    po = new;
+    if (po.randomize() == 1) post_only = po.log;
+    specialization = hooks::through_spec();
   end
 
   final begin
@@ -217,6 +249,16 @@ module Top;
     if (base_handle_randomize !== 5312)
       $fatal(1, "randomize() through a base handle left %0d, expected 5312",
              base_handle_randomize);
+    // pre: Base's 5; post: Base's 1, then PostOnly's 2.
+    if (declares_none !== 51)
+      $fatal(1, "randomize() of a class declaring no hook left %0d, expected 51",
+             declares_none);
+    if (post_only !== 512)
+      $fatal(1, "randomize() of a class declaring only post left %0d, expected 512",
+             post_only);
+    // The plain call: Base's 5; then randomize(): 5, then 1.
+    if (specialization !== 551)
+      $fatal(1, "hooks of a specialization left %0d, expected 551", specialization);
     $display("All checks passed");
   end
 endmodule

@@ -85,9 +85,9 @@ auto ReachThroughHandle(
         .unit_name = unit_lowerer.Specialization().NameOf(*instance)};
   }
 
-  const hir::ExternalScopeClassId scope_class = descent->place.scope_class;
+  const hir::ScopeClassId scope_class = descent->place.scope_class;
   const hir::ScopeClassSignature& scope =
-      unit_lowerer.Unit().external_scope_classes.Get(scope_class).signature;
+      unit_lowerer.Unit().scope_classes.Get(scope_class);
   const auto published = scope.FindMember(
       item->name, support::Extended(scope.class_path, descent->place.within));
   if (!published.has_value()) {
@@ -117,7 +117,7 @@ auto DescendThroughHandle(
   // interface it instantiates, a generate block, a named block or subroutine --
   // is one that instance's interface published (LRM 23.6), stepped through the
   // way a hierarchical name steps through the scope classes it reaches.
-  const hir::ExternalScopeClassId held =
+  const hir::ScopeClassId held =
       unit_lowerer.ScopeClassOfInstance(handle_type.iface);
   std::optional<PublishedDescent> descended =
       unit_lowerer.DescendPublished(held, handle_type.iface.body, scope);
@@ -130,7 +130,7 @@ auto DescendThroughHandle(
   }
   // A descent to a scope selects one object at every step, since a scope is
   // inside one of them.
-  auto* place = std::get_if<InExternalScope>(&descended->place);
+  auto* place = std::get_if<InPublishedScope>(&descended->place);
   if (place == nullptr) {
     throw InternalError(
         "DescendThroughHandle: a descent to a scope stands on one object");
@@ -154,8 +154,7 @@ auto LowerVirtualInterfaceMember(
   return std::visit(
       Overloaded{
           [&](HeldViewName& view) {
-            const hir::ExternalScopeClassId scope_class =
-                view.instance.scope_class;
+            const hir::ScopeClassId scope_class = view.instance.scope_class;
             return LowerViewNameOnInstance(
                 unit_lowerer, frame,
                 ViewNameOnInstance{

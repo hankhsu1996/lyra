@@ -874,9 +874,6 @@ auto MemberSlotRoleOf(const lir::TypeDeclaration& declaration)
   return std::visit(
       Overloaded{
           [](const lir::ObjectType&) { return MemberSlotRole::kVariable; },
-          [](const lir::CrossUnitClassType&) {
-            return MemberSlotRole::kVariable;
-          },
           [](const lir::ClosureType&) { return MemberSlotRole::kSnapshot; }},
       declaration);
 }
@@ -1087,7 +1084,6 @@ auto MemberStorageKindOf(
           [&](const lir::MachineArrayType& t) { return none(t); },
           [&](const lir::VoidType& t) { return none(t); },
           [&](const lir::ObjectType& t) { return none(t); },
-          [&](const lir::CrossUnitClassType& t) { return none(t); },
           [&](const lir::RuntimeClassType& t) { return none(t); },
           [&](const lir::ClosureType& t) { return none(t); },
           [&](const lir::ErasedCallableType& t) { return none(t); },
@@ -2014,10 +2010,13 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kProcessSrandom:
     case support::BuiltinFn::kProcessGetRandstate:
     case support::BuiltinFn::kProcessSetRandstate:
-    // A class object's generator and the steps of a call of `randomize()`:
-    // each is one library function, whatever class it acts on and whatever
-    // type a variable it names is of, since every variable crosses with its
-    // type.
+      // A class object's hooks and generator, and the steps of a call of
+      // `randomize()`:
+      // each is one library function, whatever class it acts on and whatever
+      // type a variable it names is of, since every variable crosses with its
+      // type.
+    case support::BuiltinFn::kBuiltinPreRandomize:
+    case support::BuiltinFn::kBuiltinPostRandomize:
     case support::BuiltinFn::kObjectPreRandomize:
     case support::BuiltinFn::kObjectPostRandomize:
     case support::BuiltinFn::kObjectSrandom:

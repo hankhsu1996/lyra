@@ -1,16 +1,12 @@
 #pragma once
 
 #include <optional>
-#include <string>
 #include <variant>
 
-#include "lyra/mir/behavior_ordinal.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_id.hpp"
-#include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
-#include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
 
 namespace lyra::mir {
@@ -35,26 +31,19 @@ struct ManagedObjectRootRef {
   auto operator==(const ManagedObjectRootRef&) const -> bool = default;
 };
 
-// A reference to the class an object extends: one this unit declares, one
-// another unit declares, the root of the design hierarchy, or the root of every
-// object the program builds. They are reached differently -- a registry lookup,
-// a name resolved against a consumed signature, a target's own realization of
-// either root -- so each is its own arm.
-using ClassRef = std::variant<
-    IntraUnitClassRef, CrossUnitClassRef, ObjectTreeRootRef,
-    ManagedObjectRootRef>;
-
-[[nodiscard]] inline auto AsClassRef(const DeclaredClassRef& declared)
-    -> ClassRef {
-  return std::visit([](const auto& ref) -> ClassRef { return ref; }, declared);
-}
+// A reference to the class an object extends: a class some unit declares,
+// which this unit names by the identity its registry gives it whichever unit
+// defines it, the root of the design hierarchy, or the root of every object the
+// program builds. A class is a registry entry and each root is a target's own
+// realization, so each is its own arm.
+using ClassRef = std::variant<ClassId, ObjectTreeRootRef, ManagedObjectRootRef>;
 
 // The class a value of type `object` is an object of -- which is how a
 // construction of that value names what it builds. Only a class some unit
 // declares is ever built, so a type naming any other object, or no object, is a
 // producer's defect.
 [[nodiscard]] auto ClassOfObject(const TypePool& types, TypeId object)
-    -> DeclaredClassRef;
+    -> ClassId;
 
 // The object a value of type `reaches` reaches, as the class it is reached as:
 // the class a handle is of, what a pointer points at, or the class a write in
@@ -69,46 +58,33 @@ using ClassRef = std::variant<
 // identity, because a slot carries nothing beyond what the introducer's
 // declaration holds -- a name, a signature, participation in dispatch. Which
 // behavior answers an interface class's slot is stated by the class answering
-// it, not by the slot.
+// it, not by the slot. Pure where the class declares it with no body (LRM
+// 8.21), leaving it to what extends the class.
 struct IntroducesVirtualSlot {
+  bool is_pure = false;
+
   auto operator==(const IntroducesVirtualSlot&) const -> bool = default;
 };
 
-// Identity of a virtual dispatch slot introduced by a class in this
-// compilation unit: the introducing class and the callable arena position
-// where the slot was first declared. The receiver's dynamic type is what
-// decides which implementation runs; the slot is the canonical logical
-// identity a backend reads to reach the method's name and signature.
-struct LocalVirtualSlot {
+// Identity of a virtual dispatch slot: the class that introduced it and the
+// callable arena position where it was first declared, whichever unit defines
+// that class. The receiver's dynamic type is what decides which implementation
+// runs; the slot is the canonical logical identity a backend reads to reach the
+// method's name and signature.
+struct VirtualSlot {
   ClassId owner_class;
   CallableId slot;
 
-  auto operator==(const LocalVirtualSlot&) const -> bool = default;
+  auto operator==(const VirtualSlot&) const -> bool = default;
 };
-
-// Identity of a behavior a class of another compilation unit introduced. The
-// introducing class carries no unit-local id here, so it is named by (declaring
-// unit, class path) together with which of that class's introductions
-// this is, counted out of what it published -- the same coordinate an
-// intra-unit slot carries, with the class named by its parts.
-struct ExternalVirtualSlot {
-  std::string unit_name;
-  support::DefPath class_path;
-  BehaviorOrdinal ordinal;
-
-  auto operator==(const ExternalVirtualSlot&) const -> bool = default;
-};
-
-// The slot a virtual call and an override name: a class of this unit names it
-// by position, and a class of another unit by the coordinate that unit
-// published, since the identity follows the compilation-unit boundary.
-using VirtualSlot = std::variant<LocalVirtualSlot, ExternalVirtualSlot>;
 
 // A method that overrides a behavior an ancestor introduced (LRM 8.20), named
 // by that behavior's slot: invariant across every override in the chain, so a
 // call site names it in one read and no consumer walks an override chain.
+// Pure where the class restates the behavior with no body (LRM 8.21).
 struct OverridesVirtualSlot {
   VirtualSlot overridden;
+  bool is_pure = false;
 
   auto operator==(const OverridesVirtualSlot&) const -> bool = default;
 };
@@ -139,5 +115,9 @@ using VirtualDispatchRole = std::variant<
 // this.
 [[nodiscard]] auto IntroducesSlot(
     const std::optional<VirtualDispatchRole>& role) -> bool;
+
+// Whether the role is a behavior the class leaves to what extends it (LRM
+// 8.21).
+[[nodiscard]] auto IsLeftAbstract(const VirtualDispatchRole& role) -> bool;
 
 }  // namespace lyra::mir

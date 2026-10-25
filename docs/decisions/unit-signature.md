@@ -9,6 +9,12 @@
 Accepted. Widens the segment classifier of `hierarchical-reference-routing.md` D2 and
 `front-end-semantic-boundary.md` D3; neither is reversed.
 
+**D4 is narrowed by [a-class-has-one-identity-in-a-unit](a-class-has-one-identity-in-a-unit.md)
+(2026-10-24).** A referrer names another unit's member by its own identity for what declares it -- a
+class, or the other unit's namespace -- and the member's position there; the target unit, the class
+and the member's name D4 lists are the declaration's key and the member's published name, which the
+referrer declares once where it reads the signature and every symbol is spelled from.
+
 **D1 and D5 are reversed by
 [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md).**
 What a module publishes is every declaration a hierarchical name may reach (LRM 23.6), not what an
@@ -301,8 +307,8 @@ neither can the placement of one that it did
   its four other cross-unit reference kinds already form. A textual name remains forbidden as the
   identity of an in-artifact segment, and remains correct for a signature member, where it is the
   identity both units derive.
-- The interface port needs no vocabulary of its own: its member is a borrowed handle to an
-  external-unit object, and a member access through it is D4.
+- The interface port needs no vocabulary of its own: its member is a borrowed handle to an object of
+  a class another unit defines, and a member access through it is D4.
 - The by-name machinery narrows to D5's escape hatch. Every reference on a signature loses a
   registry entry, a lookup, a stored endpoint, and a cast.
 

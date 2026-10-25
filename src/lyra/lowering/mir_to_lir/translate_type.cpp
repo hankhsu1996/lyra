@@ -103,25 +103,7 @@ auto UnitLowerer::TranslateTypes(std::span<const mir::TypeId> source)
   return types;
 }
 
-auto UnitLowerer::TranslateDeclaration(const mir::TypeDeclarationRef& ref)
-    -> lir::TypeDeclarationRef {
-  return lir::TypeDeclarationRef{.unit_name = ref.unit_name, .path = ref.path};
-}
-
 auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
-  // A record of this unit is the declaration it took here, and one another
-  // unit declares is named by that declaration.
-  const auto record_of = [&](const mir::RecordRef& record) -> lir::RecordRef {
-    return std::visit(
-        Overloaded{
-            [&](mir::RecordId id) -> lir::RecordRef {
-              return RecordDeclaration(id);
-            },
-            [&](const mir::TypeDeclarationRef& ref) -> lir::RecordRef {
-              return TranslateDeclaration(ref);
-            }},
-        record);
-  };
   return ty.Visit(
       Overloaded{
           [&](const mir::IntegralType& integral) -> lir::Type {
@@ -206,24 +188,8 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
           [](const mir::EmptyType&) -> lir::Type {
             return lir::Type{lir::EmptyType{}};
           },
-          // The execution model tells a class whose definition this unit
-          // emits from one it only declares, as LLVM tells a defined struct
-          // from an opaque one: that is what a class of this unit and one of
-          // another unit are below MIR.
           [&](const mir::ObjectType& ob) -> lir::Type {
-            return std::visit(
-                Overloaded{
-                    [&](const mir::IntraUnitClassRef& own) {
-                      return lir::Type{lir::ObjectType{
-                          .class_id =
-                              class_identities_.Get(own.class_id).lir_class}};
-                    },
-                    [](const mir::CrossUnitClassRef& other) {
-                      return lir::Type{lir::CrossUnitClassType{
-                          .unit_name = other.unit_name,
-                          .class_path = other.class_path}};
-                    }},
-                ob.of);
+            return Types().Get(ClassValueType(ob.of));
           },
           [](const mir::RuntimeClassType& e) -> lir::Type {
             return lir::Type{lir::RuntimeClassType{.which = e.which}};
@@ -341,8 +307,8 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
             return lir::Type{lir::LoopBlocksType{}};
           },
           [&](const mir::RecordType& r) -> lir::Type {
-            return lir::Type{
-                lir::RecordType{.declaration = record_of(r.declaration)}};
+            return lir::Type{lir::RecordType{
+                .declaration = RecordDeclaration(r.declaration)}};
           },
           [&](const mir::ClosureType& c) -> lir::Type {
             return lir::Type{lir::ClosureType{

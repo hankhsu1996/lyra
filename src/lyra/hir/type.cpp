@@ -10,7 +10,7 @@
 #include "lyra/base/hash.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/hir/class_ref.hpp"
+#include "lyra/hir/class_id.hpp"
 #include "lyra/hir/type_id.hpp"
 
 namespace lyra::hir {
@@ -64,32 +64,6 @@ auto Combine(std::size_t seed, const T& value) -> std::size_t {
 
 auto HashTypeId(std::size_t seed, TypeId id) -> std::size_t {
   return Combine(seed, id.value);
-}
-
-auto HashClassRef(std::size_t seed, const ClassRef& ref) -> std::size_t {
-  return std::visit(
-      Overloaded{
-          [seed](const LocalClassRef& local) {
-            return Combine(seed, local.class_id.value);
-          },
-          [seed](const ExternalClassRef& external) {
-            return Combine(
-                Combine(seed, external.unit_name), external.class_path);
-          }},
-      ref);
-}
-
-auto HashCovergroupRef(std::size_t seed, const CovergroupRef& ref)
-    -> std::size_t {
-  return std::visit(
-      Overloaded{
-          [seed](const LocalCovergroupRef& local) {
-            return Combine(seed, local.covergroup.value);
-          },
-          [seed](const ExternalCovergroupRef& external) {
-            return Combine(Combine(seed, external.unit_name), external.path);
-          }},
-      ref);
 }
 
 // The identities a field list names. Field names are left to equality: two
@@ -151,7 +125,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             return HashTypeId(HashTypeId(seed, t.element_type), t.key_type);
           },
           [seed](const ClassHandleType& t) {
-            return HashClassRef(seed, t.class_ref);
+            return Combine(seed, t.class_id.value);
           },
           [seed](const ImportedClassHandleType& t) {
             return Combine(seed, static_cast<std::size_t>(t.klass));
@@ -160,10 +134,10 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             return Combine(seed, t.handle.value);
           },
           [seed](const CovergroupHandleType& t) {
-            return HashCovergroupRef(seed, t.covergroup);
+            return Combine(seed, t.covergroup.value);
           },
           [seed](const UnitObjectType& t) {
-            return Combine(Combine(seed, t.unit_name), t.class_path);
+            return Combine(seed, t.scope_class.value);
           },
           [seed](const UnitObjectsType& t) {
             std::size_t h = seed;
@@ -171,7 +145,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
               h = Combine(Combine(h, range.left), range.right);
             }
             for (const UnitObjectType& kind : t.kinds) {
-              h = Combine(Combine(h, kind.unit_name), kind.class_path);
+              h = Combine(h, kind.scope_class.value);
             }
             for (const std::uint32_t taken : t.taken) {
               h = Combine(h, static_cast<std::size_t>(taken));

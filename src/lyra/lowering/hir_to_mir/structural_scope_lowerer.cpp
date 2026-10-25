@@ -102,8 +102,8 @@ constexpr mir::ParamId kParentPrefix{0};
 // by.
 auto BorrowedPointerTo(mir::CompilationUnit& unit, mir::ClassId cls)
     -> mir::TypeId {
-  const mir::TypeId object = unit.types.Intern(
-      mir::Type{mir::ObjectType{.of = mir::IntraUnitClassRef{cls}}});
+  const mir::TypeId object =
+      unit.types.Intern(mir::Type{mir::ObjectType{.of = cls}});
   return unit.types.Intern(
       mir::Type{mir::PointerType{
           .pointee = object, .ownership = mir::PointerOwnership::kBorrowed}});
@@ -203,8 +203,9 @@ auto BuildPublishedClass(
         id, mir::CallableDecl{
                 .code = subroutine.prototype,
                 .foreign = std::nullopt,
-                .virtual_dispatch = mir::IntroducesVirtualSlot{},
-                .type_parameters = {}});
+                .virtual_dispatch = mir::IntroducesVirtualSlot{.is_pure = true},
+                .type_parameters = {},
+                .defining_unit = std::nullopt});
     cls.named_callables.push_back(
         mir::NamedCallable{.name = subroutine.name, .body = id});
   }
@@ -218,7 +219,7 @@ auto BuildPublishedClass(
 auto MakeUniqueObjectPointer(UnitLowerer& unit_lowerer, mir::ClassId class_id)
     -> mir::TypeId {
   const mir::TypeId object_type = unit_lowerer.Unit().types.Intern(
-      mir::Type{mir::ObjectType{.of = mir::IntraUnitClassRef{class_id}}});
+      mir::Type{mir::ObjectType{.of = class_id}});
   return mir::BoxOf(unit_lowerer.Unit().types, object_type);
 }
 
@@ -384,10 +385,8 @@ auto ObjectEntryTypes(
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   std::map<std::string, mir::TypeId, std::less<>> types;
   for (const auto& [made, entry] : entries) {
-    const mir::TypeId object = unit.types.Intern(
-        mir::Type{mir::ObjectType{
-            .of = mir::CrossUnitClassRef{
-                .unit_name = made, .class_path = entry.published_class}}});
+    const mir::TypeId object =
+        unit_lowerer.UnitObjectType(entry.published_class);
     const mir::TypeId owning = mir::BoxOf(unit.types, object);
     types.emplace(made, ObjectEntryType(unit_lowerer, entry.handed, owning));
   }
@@ -849,9 +848,9 @@ auto DeclareReaches(
 struct InOwnScope {
   const StructuralScopeLowerer* scope;
 };
-struct InExternalScope {};
+struct InPublishedScope {};
 
-using RoutePlace = std::variant<InOwnScope, InExternalScope>;
+using RoutePlace = std::variant<InOwnScope, InPublishedScope>;
 
 struct ReachedPlace {
   mir::ExprId expr{};
@@ -929,7 +928,7 @@ auto BuildRouteAnchor(
                     .ownership = mir::PointerOwnership::kBorrowed}});
             return ReachedPlace{
                 .expr = ObjectAs(block, found, object_pointer),
-                .place = InExternalScope{}};
+                .place = InPublishedScope{}};
           }},
       base);
 }
@@ -981,7 +980,7 @@ auto StepToOwnedChild(
           }},
       anchor.reach);
   if (anchor.target_scope == nullptr) {
-    return ReachedPlace{.expr = reached, .place = InExternalScope{}};
+    return ReachedPlace{.expr = reached, .place = InPublishedScope{}};
   }
   return ReachedPlace{
       .expr = ObjectAs(
@@ -1007,7 +1006,7 @@ auto StepThroughInterfacePort(
       .expr = SelectedMember(
           unit_lowerer, block, from,
           scope.TranslateInterfacePort(hir::StructuralHops{0}, port), selects),
-      .place = InExternalScope{}};
+      .place = InPublishedScope{}};
 }
 
 // Projects the borrowed-pointer value the slot takes out of a typed place: the
@@ -1053,7 +1052,7 @@ auto MaterializeLeaf(
           },
           // A published member is reached through the target unit's own
           // object, whose pointer the step before it produced.
-          [&](const hir::ExternalMemberLeaf& l) {
+          [&](const hir::PublishedMemberLeaf& l) {
             return ReadPublishedMember(
                 unit_lowerer, block, reached.expr, l.scope_class, l.member);
           }},
@@ -1089,7 +1088,7 @@ auto MaterializeLeaf(
                 unit_lowerer, block, reached, scope.DisableTargetField(l.scope),
                 pointer_type);
           },
-          [&](const hir::ExternalDisableTargetLeaf& l) {
+          [&](const hir::PublishedDisableTargetLeaf& l) {
             return ReachPublishedDisableTarget(
                 unit_lowerer, block, reached.expr, l);
           }},
@@ -1119,12 +1118,12 @@ auto BuildRouteWalk(
             },
             // What another unit published belongs to that unit, so the route
             // has left this artifact.
-            [&](const hir::ExternalScopeRef& published) {
+            [&](const hir::PublishedScopeRef& published) {
               return ReachedPlace{
                   .expr = StepThroughPublished(
                       unit_lowerer, block, reached.expr, published,
                       step.selects),
-                  .place = InExternalScope{}};
+                  .place = InPublishedScope{}};
             }},
         step.names);
   }
@@ -1156,9 +1155,7 @@ void FillScopeSlot(
   const mir::ExprId target = block.exprs.Add(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(unit, block, self),
-          mir::ClassFieldTarget{
-              .owner = mir::IntraUnitClassRef{frame.current_class.id},
-              .slot = slot},
+          mir::ClassFieldTarget{.owner = frame.current_class.id, .slot = slot},
           slot_type));
   const mir::ExprId assign =
       block.exprs.Add(mir::MakeAssignExpr(unit.builtins, target, value));
@@ -1653,8 +1650,7 @@ auto BindInputPort(
             mir::MakeFieldAccessExpr(
                 BuildObjectDeref(unit, block, self),
                 mir::ClassFieldTarget{
-                    .owner = mir::IntraUnitClassRef{in.current_class.id},
-                    .slot = kept},
+                    .owner = in.current_class.id, .slot = kept},
                 cell_type)),
         .descent = {}};
   };
@@ -1879,7 +1875,7 @@ auto BuildOwnedChildHandle(
         mir::MakeFieldAccessExpr(
             BuildObjectDeref(unit_lowerer.Unit(), arm_block, self_read()),
             mir::ClassFieldTarget{
-                .owner = mir::IntraUnitClassRef{arm_frame.current_class.id},
+                .owner = arm_frame.current_class.id,
                 .slot = *runtime_parent_handle},
             owner_class.fields.Get(*runtime_parent_handle).type));
   };
@@ -2493,8 +2489,8 @@ auto StructuralScopeLowerer::ForScope(
     -> std::unique_ptr<StructuralScopeLowerer> {
   auto lowerer = std::make_unique<StructuralScopeLowerer>(
       unit_lowerer, parent, hir_scope, instantiations, std::move(design_root));
-  lowerer->published_class_id_ = unit_lowerer.TakePublishedScopeClass(
-      hir_scope.published.signature.class_path);
+  lowerer->published_class_id_ =
+      unit_lowerer.ScopeClassIdentity(hir_scope.published.scope_class);
   lowerer->generate_children_.reserve(hir_scope.generates.size());
   for (const hir::GenerateId generate : hir_scope.generates.Ids()) {
     const base::Arena<hir::GenerateBlock, hir::StructuralScopeId>& held =
@@ -2526,8 +2522,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
 
   ClassShape shape;
   // The scope stands in the tree through what its unit published of it.
-  shape.base =
-      mir::ClassRef{mir::IntraUnitClassRef{.class_id = published_class_id_}};
+  shape.base = mir::ClassRef{published_class_id_};
   shape.is_final = true;
   shape.self_pointer_type = self_pointer_type;
   shape.time_resolution = hir_scope.time_resolution;
@@ -2560,8 +2555,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   const PublishedScopeLayout& layout =
       unit_lowerer.SettlePublishedScope(owner, hir_scope.published.signature);
   const auto on_published = [&](mir::FieldId slot) {
-    return mir::ClassFieldTarget{
-        .owner = mir::IntraUnitClassRef{owner}, .slot = slot};
+    return mir::ClassFieldTarget{.owner = owner, .slot = slot};
   };
 
   std::vector<std::optional<mir::ClassFieldTarget>> data_object_fields(
@@ -2608,7 +2602,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
                       }},
                   local.body);
             },
-            [&](const hir::LocalStaticPropertyTarget& property) {
+            [&](const hir::ClassStaticPropertyTarget& property) {
               placed_class_statics[property.owner].push_back(
                   PlacedProperty{.property = property.prop, .field = field});
             },
@@ -2652,7 +2646,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     const mir::TypeId cell = unit_lowerer.MemberCellType(
         unit_lowerer.TranslateType(d.type), hir::PublishedStorageOf(d));
     data_object_fields[id.value] = mir::ClassFieldTarget{
-        .owner = mir::IntraUnitClassRef{class_id_},
+        .owner = class_id_,
         .slot = hir::AnsweredByName(d) ? shape.AddNamedField(d.name, cell)
                                        : shape.AddField(cell)};
   }
@@ -2866,7 +2860,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
        hir_scope.published.callables.Ids()) {
     dispatch[hir_scope.published.callables.Get(published).value] =
         mir::OverridesVirtualSlot{
-            .overridden = mir::LocalVirtualSlot{
+            .overridden = mir::VirtualSlot{
                 .owner_class = published_class_id_,
                 .slot = PublishedMethodOf(published)}};
   }
@@ -2929,8 +2923,8 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   class_lowerers_.reserve(hir_scope.replicated_classes.size());
   for (const hir::ClassId hir_class : hir_scope.replicated_classes) {
     class_lowerers_.emplace_back(
-        unit_lowerer, hir_class, unit_lowerer.TranslateClass(hir_class),
-        unit_lowerer.ClassObjectType(hir_class),
+        unit_lowerer, hir_class, unit_lowerer.ClassIdentity(hir_class),
+        unit_lowerer.ClassPointee(hir_class),
         unit_lowerer.Hir().classes.Get(hir_class), this);
   }
   for (auto&& [class_lowerer, hir_class] :
@@ -2983,10 +2977,7 @@ void ConstructBaseFirst(
       unit, body, body.ReadLocal(self, ctor_code.locals.Get(self).type));
   const mir::DirectTarget target = std::visit(
       Overloaded{
-          [](const mir::IntraUnitClassRef& extended) -> mir::DirectTarget {
-            return mir::ConstructorTarget{.cls = extended};
-          },
-          [](const mir::CrossUnitClassRef& extended) -> mir::DirectTarget {
+          [](const mir::ClassId& extended) -> mir::DirectTarget {
             return mir::ConstructorTarget{.cls = extended};
           },
           [](const mir::ObjectTreeRootRef&) -> mir::DirectTarget {
@@ -3049,9 +3040,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   }
   // The object is of this class, which is the only one that knows it, so its
   // constructor hands the published class the definition the tree is told.
-  const std::array<mir::ExprId, 1> definition{BuildDefinitionRead(
-      unit_lowerer.Unit(), ctor_code.Body(),
-      mir::IntraUnitClassRef{.class_id = class_id_})};
+  const std::array<mir::ExprId, 1> definition{
+      BuildDefinitionRead(unit_lowerer.Unit(), ctor_code.Body(), class_id_)};
   // Every body of the scope is the instance its outward references count from.
   const WalkFrame scope_frame =
       parent_frame
@@ -3375,7 +3365,6 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   // leave it empty.
   const auto call_namespace_unit = [&](const std::string& unit_name,
                                        mir::BringUpEntry entry) {
-    unit_lowerer.Unit().ConsumeNamespaceOf(unit_name);
     const mir::ExprId call = initialize_block.exprs.Add(
         mir::Expr{
             .data =
@@ -3422,8 +3411,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     }
     node_ctor_code.result_type = void_type;
     const std::array<mir::ExprId, 1> node_definition{BuildDefinitionRead(
-        unit_lowerer.Unit(), node_ctor_code.Body(),
-        mir::IntraUnitClassRef{.class_id = name_node.class_id})};
+        unit_lowerer.Unit(), node_ctor_code.Body(), name_node.class_id)};
     ConstructBaseFirst(
         unit_lowerer.Unit(), node_class.base.value(), node_ctor_code,
         node_ctor_code.params.front(), node_ctor_prefix_local_ids,
@@ -3444,7 +3432,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
               .foreign = std::nullopt,
               .virtual_dispatch =
                   mir::OverridesLibraryVirtual{.function = phase},
-              .type_parameters = {}});
+              .type_parameters = {},
+              .defining_unit = std::nullopt});
     };
     empty_phase(support::LibraryVirtual::kScopeResolve);
     empty_phase(support::LibraryVirtual::kScopeInitialize);
@@ -3470,8 +3459,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         unit_lowerer, ctor_frame, parent_handle, scope.source_name.value_or(""),
         name_node.class_id,
         mir::ClassFieldTarget{
-            .owner = mir::IntraUnitClassRef{class_id_},
-            .slot = name_node.borrowed_handle},
+            .owner = class_id_, .slot = name_node.borrowed_handle},
         {});
     for (const hir::ProceduralScopeId child : scope.child_scopes) {
       self_ref(self_ref, child, name_node.borrowed_handle);
@@ -3500,7 +3488,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     ProcessLowerer subroutine_lowerer(
         unit_lowerer, this, hir_scope.time_resolution, src.body, src.root_stmt,
         ctor_frame, scopes_, declared.statics);
-    auto code_or = subroutine_lowerer.Run(src);
+    auto code_or = subroutine_lowerer.Run(src, CallableForm::kInstanceMember);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
     mir_class.callables.Define(
         declared.callable,
@@ -3510,7 +3498,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             .virtual_dispatch = unit_lowerer.GetClassShape(class_id_)
                                     .callable_signatures.Get(declared.callable)
                                     .virtual_dispatch,
-            .type_parameters = {}});
+            .type_parameters = {},
+            .defining_unit = std::nullopt});
     subroutine_callables.push_back(declared.callable);
     for (const StaticVarBinding& binding : declared.statics) {
       auto integ = IntegrateStaticInitializer(
@@ -3553,7 +3542,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             .code = std::move(entry.code),
             .foreign = std::nullopt,
             .virtual_dispatch = std::nullopt,
-            .type_parameters = {}});
+            .type_parameters = {},
+            .defining_unit = std::nullopt});
     exports.push_back(
         mir::NamedCallable{
             .name = std::move(entry.linkage.foreign_name), .body = entry_id});
@@ -3572,7 +3562,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             .code = *std::move(code_or),
             .foreign = std::nullopt,
             .virtual_dispatch = std::nullopt,
-            .type_parameters = {}});
+            .type_parameters = {},
+            .defining_unit = std::nullopt});
     // A final procedure is called when the simulation ends, and every other
     // kind starts with the scope (LRM 9.2), registered as the kind it is. What
     // an `always_comb` is at time zero holds of an `always_latch` too (LRM
@@ -3802,7 +3793,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             .code = std::move(code),
             .foreign = std::nullopt,
             .virtual_dispatch = mir::OverridesLibraryVirtual{.function = phase},
-            .type_parameters = {}});
+            .type_parameters = {},
+            .defining_unit = std::nullopt});
   };
   add_body(
       resolve_code, resolve_self_id, support::LibraryVirtual::kScopeResolve);

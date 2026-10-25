@@ -92,7 +92,7 @@ auto HoldsAnywhere(
   if (holds(resolved)) {
     return true;
   }
-  if (const mir::RecordRef* record = mir::RecordOf(resolved)) {
+  if (const mir::RecordId* record = mir::RecordOf(resolved)) {
     return std::ranges::any_of(
         mir::RecordElements(unit, *record), [&](mir::TypeId element) {
           return HoldsAnywhere(unit, element, holds);
@@ -150,7 +150,7 @@ auto FixedStreamShapeOf(const mir::CompilationUnit& unit, mir::TypeId type)
   }
   // A structure streams its members end to end, an untagged union as its first
   // member, and a tagged union not at all (LRM 11.4.14.1).
-  if (const mir::RecordRef* record = mir::RecordOf(resolved)) {
+  if (const mir::RecordId* record = mir::RecordOf(resolved)) {
     const std::span<const mir::TypeId> members =
         mir::RecordElements(unit, *record);
     switch (mir::RecordKindOf(unit, *record)) {
@@ -214,7 +214,7 @@ auto StreamFillOf(const mir::CompilationUnit& unit, mir::TypeId type)
         .first_element = element.first_element,
         .multiplier = element.multiplier};
   }
-  if (const mir::RecordRef* record = mir::RecordOf(resolved)) {
+  if (const mir::RecordId* record = mir::RecordOf(resolved)) {
     return FillOfParts(unit, mir::RecordElements(unit, *record));
   }
   throw InternalError(

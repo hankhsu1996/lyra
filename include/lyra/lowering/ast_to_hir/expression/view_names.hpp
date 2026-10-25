@@ -12,9 +12,9 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/external_scope_class.hpp"
 #include "lyra/hir/interface_member_access.hpp"
 #include "lyra/hir/published_modport.hpp"
+#include "lyra/hir/scope_class.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
@@ -32,14 +32,14 @@ namespace lyra::lowering::ast_to_hir {
 // a virtual interface holds when the name is evaluated (LRM 25.9).
 struct ViewNameOnInstance {
   std::variant<ScopeRoute, hir::InterfaceInstanceAccessExpr> instance;
-  hir::ExternalScopeClassId scope_class;
+  hir::ScopeClassId scope_class;
   hir::ViewDefinedName meaning;
 };
 
 // What the interface class `scope_class` records published, in its view
 // `modport`, as the meaning of the name `name`.
 auto PublishedViewNameMeaning(
-    const UnitLowerer& unit_lowerer, hir::ExternalScopeClassId scope_class,
+    const UnitLowerer& unit_lowerer, hir::ScopeClassId scope_class,
     std::string_view modport, std::string_view name) -> hir::ViewDefinedName;
 
 // LRM 25.5.4: a name a view defines is either the storage its expression

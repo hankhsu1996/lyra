@@ -86,32 +86,33 @@ auto TranslateMemberTypes(
 auto UnitLowerer::TranslateRecordType(
     const hir::TypeDeclarationRef& source, mir::RecordKind kind,
     std::vector<mir::TypeId> elements) -> mir::RecordType {
-  if (hir_->IsItself(source.unit_name)) {
-    const mir::RecordId id = unit_.records.Add(
-        mir::RecordDecl{
-            .path = source.path,
-            .kind = kind,
-            .elements = std::move(elements)});
-    if (unit_.record_methods.Declare() != id) {
-      throw InternalError(
-          "hir_to_mir: a record's methods and its declaration took different "
-          "identities -- please report this as a bug");
-    }
-    return mir::RecordType{.declaration = id};
-  }
-  mir::TypeDeclarationRef declaration{
+  const mir::TypeDeclarationRef declaration{
       .unit_name = source.unit_name, .path = source.path};
-  // A record another unit declares brings that unit's statement of its
-  // operations with it, which is a dependency on that unit.
-  unit_.ConsumeNamespaceOf(declaration.unit_name);
-  if (mir::FindExternalRecord(unit_, declaration) == nullptr) {
-    unit_.external_records.push_back(
-        mir::ExternalRecord{
-            .declaration = declaration,
-            .kind = kind,
-            .elements = std::move(elements)});
+  if (const auto known = record_translations_.find(declaration);
+      known != record_translations_.end()) {
+    return mir::RecordType{.declaration = known->second};
   }
-  return mir::RecordType{.declaration = std::move(declaration)};
+  // A record another unit declares brings that unit's statement of its
+  // operations with it.
+  const bool is_own = hir_->IsItself(source.unit_name);
+  const mir::RecordId id = unit_.records.Add(
+      mir::RecordDecl{
+          .defining_unit =
+              is_own ? std::nullopt : std::optional{source.unit_name},
+          .path = source.path,
+          .kind = kind,
+          .elements = std::move(elements)});
+  if (unit_.record_methods.Declare() != id) {
+    throw InternalError(
+        "hir_to_mir: a record's methods and its declaration took different "
+        "identities -- please report this as a bug");
+  }
+  // Another unit states the methods of a record it declares.
+  if (!is_own) {
+    unit_.record_methods.Define(id, mir::RecordMethods{});
+  }
+  record_translations_.emplace(declaration, id);
+  return mir::RecordType{.declaration = id};
 }
 
 auto UnitLowerer::UnionMemberTypes(const hir::UnpackedUnionType& src)
@@ -131,19 +132,16 @@ auto UnitLowerer::UnionMemberTypes(const hir::UnpackedUnionType& src)
 void UnitLowerer::DefineRecordMethods(
     const hir::Type& source, mir::RecordId id, mir::TypeId type) {
   const mir::RecordDecl declared = unit_.GetRecord(id);
-  const mir::TypeDeclarationRef declaration{
-      .unit_name = unit_.name, .path = declared.path};
   unit_.record_methods.Define(id, [&] {
     switch (declared.kind) {
       case mir::RecordKind::kStruct:
         return StructMethodsOf(
-            *this, source.Get<hir::UnpackedStructType>(), declaration, type,
+            *this, source.Get<hir::UnpackedStructType>(), id, type,
             declared.elements);
       case mir::RecordKind::kUnion:
-        return UnionMethodsOf(*this, declaration, type, declared.elements);
+        return UnionMethodsOf(*this, id, type, declared.elements);
       case mir::RecordKind::kTaggedUnion:
-        return TaggedUnionMethodsOf(
-            *this, declaration, type, declared.elements);
+        return TaggedUnionMethodsOf(*this, id, type, declared.elements);
     }
     throw InternalError("hir_to_mir: unknown record kind");
   }());
@@ -264,21 +262,10 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
           [](const hir::ChandleType&) -> mir::Type {
             return mir::Type{mir::ChandleType{}};
           },
+          // A class handle is a managed reference to the class object.
           [&](const hir::ClassHandleType& src) -> mir::Type {
-            // A class handle is a managed reference to the class object: the
-            // pointee is the object type naming the class's registry identity
-            // (local) or the class's fully qualified name (external). The
-            // external arm routes through the unit-lowerer's builder so the
-            // cross-unit dependency is recorded in the same step as the type
-            // intern.
-            if (const auto* local =
-                    std::get_if<hir::LocalClassRef>(&src.class_ref)) {
-              return mir::Type{mir::ManagedRefType{
-                  .pointee = ClassObjectType(local->class_id)}};
-            }
-            return mir::Type{mir::ManagedRefType{
-                .pointee = MakeExternalClassPointee(
-                    std::get<hir::ExternalClassRef>(src.class_ref))}};
+            return mir::Type{
+                mir::ManagedRefType{.pointee = ClassPointee(src.class_id)}};
           },
           [&](const hir::ImportedClassHandleType& src) -> mir::Type {
             // A handle to an imported runtime-library class is the same managed
@@ -307,8 +294,8 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
           // unit depends on that unit for is decided by what it reads, and the
           // name alone reads nothing.
           [&](const hir::UnitObjectType& src) -> mir::Type {
-            return mir::Type{mir::ObjectType{
-                .of = ClassIdentityOf(src.unit_name, src.class_path)}};
+            return mir::Type{
+                mir::ObjectType{.of = ScopeClassIdentity(src.scope_class)}};
           },
           // A set of objects is a sequence per dimension, never a value array:
           // an object is reached by its address and has no value form, and
@@ -320,9 +307,8 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
           [&](const hir::UnitObjectsType& src) -> mir::Type {
             mir::Type held = src.kinds.size() == 1
                                  ? mir::Type{mir::ObjectType{
-                                       .of = ClassIdentityOf(
-                                           src.kinds.front().unit_name,
-                                           src.kinds.front().class_path)}}
+                                       .of = ScopeClassIdentity(
+                                           src.kinds.front().scope_class)}}
                                  : mir::Type{mir::RuntimeClassType{
                                        .which = support::RuntimeClass::kScope}};
             for (std::size_t d = 0; d < src.ranges.size(); ++d) {

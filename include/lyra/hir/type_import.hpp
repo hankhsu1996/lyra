@@ -1,28 +1,30 @@
 #pragma once
 
+#include <functional>
 #include <optional>
-#include <string_view>
 #include <vector>
 
-#include "lyra/hir/class_ref.hpp"
-#include "lyra/hir/class_registry.hpp"
-#include "lyra/hir/covergroup.hpp"
+#include "lyra/hir/class_id.hpp"
+#include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/published_covergroup.hpp"
+#include "lyra/hir/scope_class_id.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
 
 namespace lyra::hir {
 
-// The unit a source pool still belongs to, for a pool whose class references
-// are that unit's own ids. A pool that has left its unit -- a
-// signature's -- names every class by declaring unit and class path instead, so
-// it has no owner, and a local id appearing in one is a compiler-bug invariant
-// rather than a case to translate.
-struct TypePoolOwner {
-  std::string_view unit_name;
-  const ClassRegistry* classes;
-  const CovergroupRegistry* covergroups;
-};
+// The identity a class of the source pool's context has in the destination's.
+// A pool names a class by the identity its own context gives it -- a unit's
+// registry, a signature's class list -- so moving a type between the two maps
+// each class it names, as rustc maps each crate number of the metadata it
+// decodes.
+using ClassIdMap = std::function<ClassId(ClassId)>;
+
+// The same for a covergroup the source pool names.
+using CovergroupIdMap = std::function<CovergroupId(CovergroupId)>;
+
+// The same for the class of a scope of the design hierarchy.
+using ScopeClassIdMap = std::function<ScopeClassId(ScopeClassId)>;
 
 // What one source pool's identities became in a destination pool. Held outside
 // the importer so a consumer taking types out of the same source over the
@@ -38,8 +40,9 @@ using TypeImportMemo = std::vector<std::optional<TypeId>>;
 class TypeImporter {
  public:
   TypeImporter(
-      const TypePool& source, std::optional<TypePoolOwner> source_owner,
-      TypePool& destination, TypeImportMemo& memo);
+      const TypePool& source, TypePool& destination, TypeImportMemo& memo,
+      ClassIdMap classes, CovergroupIdMap covergroups,
+      ScopeClassIdMap scope_classes);
 
   auto Import(TypeId id) -> TypeId;
 
@@ -48,23 +51,27 @@ class TypeImporter {
   // naming one is.
   auto Import(const PublishedCovergroup& published) -> PublishedCovergroup;
 
+  // The identity the class `id` of the source's context has in the
+  // destination's.
+  [[nodiscard]] auto ImportClass(ClassId id) const -> ClassId;
+
+  // The identity the covergroup `id` of the source's context has in the
+  // destination's.
+  [[nodiscard]] auto ImportCovergroup(CovergroupId id) const -> CovergroupId;
+
+  // The identity the scope class `id` of the source's context has in the
+  // destination's.
+  [[nodiscard]] auto ImportScopeClass(ScopeClassId id) const -> ScopeClassId;
+
  private:
   auto Import(const Type& type) -> Type;
 
-  // The class a reference names, as the destination reaches it. A class the
-  // source's own unit declares is renamed to that unit and the class's path,
-  // which is what identifies it from anywhere; a class already named that way
-  // needs nothing.
-  [[nodiscard]] auto ImportClassRef(const ClassRef& ref) const -> ClassRef;
-
-  // The same for a covergroup a reference names.
-  [[nodiscard]] auto ImportCovergroupRef(const CovergroupRef& ref) const
-      -> CovergroupRef;
-
   const TypePool* source_;
-  std::optional<TypePoolOwner> source_owner_;
   TypePool* destination_;
   TypeImportMemo* memo_;
+  ClassIdMap classes_;
+  CovergroupIdMap covergroups_;
+  ScopeClassIdMap scope_classes_;
 };
 
 }  // namespace lyra::hir

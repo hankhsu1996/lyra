@@ -14,15 +14,13 @@ each stage establishes, not how.
 
 ## Sub-Steps
 
-- [x] An object's base is one generic nominal-object reference -- a runtime-library, intra-unit, or
-      cross-unit base -- resolved through one path, not a closed runtime-base classification. A
-      runtime-library base is an imported library declaration whose name renders through the one
-      type-mapping path; whether the object is a runtime tree node, whether it exposes a def-name,
-      and its constructor prefix are facts stated on the base and read off it, never decided in the
-      backend. Behavior-neutral: the emitted module shape is unchanged. (Only the runtime-library
-      arm has a producer today; the intra-unit arm -- naming the registry's canonical local identity
-      -- and the cross-unit by-name arm land with class inheritance, each adding one arm and one
-      resolver case with no consumer change.)
+- [x] An object's base is one generic nominal-object reference -- a runtime-library declaration or a
+      class of the unit's registry, whichever unit defines it -- resolved through one path, not a
+      closed runtime-base classification. A runtime-library base is an imported library declaration
+      whose name renders through the one type-mapping path; whether the object is a runtime tree
+      node, whether it exposes a def-name, and its constructor prefix are facts stated on the base
+      and read off it, never decided in the backend. Behavior-neutral: the emitted module shape is
+      unchanged.
 
 - [x] Each post-construction lifecycle body (the scope's resolve / initialize / activate work) is an
       ordinary method of the class that supplies it, and that class states the three together as how

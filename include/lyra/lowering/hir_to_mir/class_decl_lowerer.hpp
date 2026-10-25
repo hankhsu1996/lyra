@@ -1,12 +1,13 @@
 #pragma once
 
 #include <span>
+#include <vector>
 
 #include "lyra/base/translation.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/class_decl.hpp"
+#include "lyra/hir/class_declaration.hpp"
 #include "lyra/hir/method_id.hpp"
-#include "lyra/lowering/hir_to_mir/declared_callable.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -83,6 +84,9 @@ class ClassDeclLowerer {
       -> diag::Result<void>;
 
  private:
+  // What the class declares, which states what its bodies here compile against.
+  [[nodiscard]] auto Declared() const -> const hir::ClassDeclaration&;
+
   // The frame a body of this class lowers under: the class as the write target,
   // standing where the scope that declares it stands, and the member of the
   // object holding the instance its outward references count from. A body the
@@ -105,7 +109,10 @@ class ClassDeclLowerer {
   const hir::ClassDecl* hir_class_;
   const StructuralScopeLowerer* declaring_scope_;
 
-  base::Translation<hir::MethodId, DeclaredCallable> declared_methods_;
+  // The cells each method's and each interface forward's static-lifetime
+  // variables took, in the order the class lists them.
+  base::Translation<hir::MethodId, StaticVarBindings> method_statics_;
+  std::vector<StaticVarBindings> forward_statics_;
   StaticVarBindings ctor_static_bindings_;
   DeclaredScopes scopes_;
 };

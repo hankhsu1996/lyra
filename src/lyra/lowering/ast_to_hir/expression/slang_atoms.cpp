@@ -172,6 +172,13 @@ auto LowerEnumMethodName(std::string_view name)
   return std::nullopt;
 }
 
+auto LowerRandomizationHookName(std::string_view name)
+    -> std::optional<hir::RandomizationHook> {
+  if (name == "pre_randomize") return hir::RandomizationHook::kPreRandomize;
+  if (name == "post_randomize") return hir::RandomizationHook::kPostRandomize;
+  return std::nullopt;
+}
+
 auto LowerStringMethodName(std::string_view name)
     -> std::optional<support::BuiltinFn> {
   if (name == "len") return support::BuiltinFn::kLen;

@@ -17,12 +17,14 @@
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
+#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/local.hpp"
+#include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
@@ -30,6 +32,8 @@
 #include "lyra/mir/type_parameter_index.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
+#include "lyra/support/def_path.hpp"
+#include "lyra/support/value_operation.hpp"
 
 namespace lyra::mir {
 namespace {
@@ -62,7 +66,8 @@ void AddAwaitingBody(CompilationUnit& unit, TypeId result) {
           .code = std::move(code),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt,
-          .type_parameters = {}});
+          .type_parameters = {},
+          .defining_unit = std::nullopt});
   unit.named_callables.push_back(NamedCallable{.name = "f", .body = id});
 }
 
@@ -111,7 +116,8 @@ TEST(MirVerifyTest, ASuspensionWaitsOnWhatItsKindWaitsOn) {
           .code = std::move(code),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt,
-          .type_parameters = {}});
+          .type_parameters = {},
+          .defining_unit = std::nullopt});
   try {
     Verify(unit);
     FAIL() << "an await on a park's answer was accepted";
@@ -158,7 +164,8 @@ auto UnitWithCode(const Fill& fill) -> CompilationUnit {
           .code = std::move(code),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt,
-          .type_parameters = {}});
+          .type_parameters = {},
+          .defining_unit = std::nullopt});
   unit.named_callables.push_back(NamedCallable{.name = "f", .body = id});
   return unit;
 }
@@ -468,7 +475,7 @@ TEST(MirVerifyTest, AFieldIsAccessedOnTheObjectAPointerReaches) {
               .expr = inner.Read(inner.exprs.Add(MakeFieldAccessExpr(
                   receiver,
                   ClassFieldTarget{
-                      .owner = IntraUnitClassRef{ClassId{.value = 0}},
+                      .owner = ClassId{.value = 0},
                       .slot = FieldId{.value = 0}},
                   u.builtins.int_type)))});
       const BlockId scope = body.child_scopes.Add(std::move(inner));
@@ -507,14 +514,17 @@ TEST(MirVerifyTest, AMemberFunctionIsEnteredOnTheObjectAPointerReaches) {
               ? body.exprs.Add(MakeDerefExpr(pointer, u.builtins.int_type))
               : pointer;
       // The member function called, of a class of the unit, entered on its
-      // object alone.
+      // object alone, with a body that does nothing.
       Class cls;
+      CallableCode member = CallableCode::Defined();
+      member.result_type = u.builtins.void_type;
       cls.callables.Add(
           CallableDecl{
-              .code = CallableCode{},
+              .code = std::move(member),
               .foreign = std::nullopt,
               .virtual_dispatch = std::nullopt,
-              .type_parameters = {}});
+              .type_parameters = {},
+              .defining_unit = std::nullopt});
       u.DefineClass(u.DeclareClass(), std::move(cls));
       body.AppendStmt(
           ExprStmt{
@@ -1414,7 +1424,8 @@ auto UnitCallingGeneric(
             .code = std::move(generic),
             .foreign = std::nullopt,
             .virtual_dispatch = std::nullopt,
-            .type_parameters = parameters_of(u)});
+            .type_parameters = parameters_of(u),
+            .defining_unit = std::nullopt});
     Block& body = code.Body();
     body.AppendStmt(
         ExprStmt{
@@ -1533,7 +1544,8 @@ TEST(MirVerifyTest, ABodyReachesThroughABoundOnlyOnAParameterThatGrantsIt) {
               .code = std::move(code),
               .foreign = std::nullopt,
               .virtual_dispatch = std::nullopt,
-              .type_parameters = {TypeParameter{.bounds = {bound_of(u)}}}});
+              .type_parameters = {TypeParameter{.bounds = {bound_of(u)}}},
+              .defining_unit = std::nullopt});
     });
   };
   const auto keeper = [](const CompilationUnit&) -> ParameterBound {
@@ -1604,6 +1616,150 @@ TEST(MirVerifyTest, APlacementMakesItsValueInStorageItDoesNotOwn) {
   ExpectRefused(
       placing(support::BuiltinFn::kNbaEffects, PointerOwnership::kBorrowed),
       "places a value in storage from what allocates none");
+}
+
+// An entry another unit defines is declared here and holds nothing this unit
+// emits: a record states none of its methods, a subroutine has no body, and
+// each is named as that unit published it, by a unit other than this one.
+TEST(MirVerifyTest, AnEntryAnotherUnitDefinesHoldsNothingOfItsOwn) {
+  struct Declared {
+    bool own_unit = false;
+    bool record_methods = false;
+    bool subroutine_body = false;
+    bool named = true;
+  };
+  const auto unit_declaring = [](Declared declared) {
+    return UnitWithBody([&](CompilationUnit& u, Block&) {
+      const std::string defining = declared.own_unit ? u.name : "Pkg";
+      u.records.Add(
+          RecordDecl{
+              .defining_unit = defining,
+              .path = {},
+              .kind = RecordKind::kStruct,
+              .elements = {}});
+      u.record_methods.Declare();
+      u.record_methods.Define(
+          RecordId{0}, declared.record_methods
+                           ? RecordMethods{RecordMethod{
+                                 .answers = support::ValueOperator::kEquality,
+                                 .code = CallableCode::Defined()}}
+                           : RecordMethods{});
+      const CallableId subroutine = u.callables.Add(
+          CallableDecl{
+              .code = declared.subroutine_body ? CallableCode::Defined()
+                                               : CallableCode{},
+              .foreign = std::nullopt,
+              .virtual_dispatch = std::nullopt,
+              .type_parameters = {},
+              .defining_unit = defining});
+      const StaticVariableId variable = u.static_variables.Add(
+          StaticVariableDecl{
+              .type = u.builtins.int_type, .defining_unit = defining});
+      if (declared.named) {
+        u.named_callables.push_back(
+            NamedCallable{.name = "g", .body = subroutine});
+        u.named_static_variables.push_back(
+            NamedStaticVariable{.name = "v", .variable = variable});
+      }
+    });
+  };
+
+  EXPECT_NO_THROW(Verify(unit_declaring({})));
+  ExpectRefused(
+      unit_declaring({.own_unit = true}),
+      "declares as another unit's its own record");
+  ExpectRefused(
+      unit_declaring({.record_methods = true}),
+      "states methods of its own for the record");
+  ExpectRefused(
+      unit_declaring({.subroutine_body = true}),
+      "holds a body for a subroutine another unit defines");
+  ExpectRefused(
+      unit_declaring({.named = false}),
+      "declares with no name a subroutine another unit defines");
+}
+
+// A class another unit defines is declared here once, under that unit's name,
+// and holds nothing this unit emits; a method of a class this unit defines and
+// a subroutine of its own namespace have their bodies here, since no other
+// unit defines one.
+TEST(MirVerifyTest, ADeclaredClassHoldsNothingAndAnOwnBodyIsHere) {
+  struct Declared {
+    bool own_unit = false;
+    bool twice = false;
+    bool method_body = false;
+    bool object_record = false;
+    bool own_method_without_body = false;
+    bool own_subroutine_without_body = false;
+  };
+  const auto unit_declaring = [](Declared declared) {
+    return UnitWithBody([&](CompilationUnit& u, Block&) {
+      const auto declare = [&] {
+        Class cls;
+        cls.defining_unit = declared.own_unit ? u.name : "Pkg";
+        cls.path = support::DefPath{
+            .data = {
+                support::ClassStep{.name = "C", .arguments = std::nullopt}}};
+        cls.base = ClassRef{ManagedObjectRootRef{}};
+        if (declared.method_body) {
+          cls.callables.Add(
+              CallableDecl{
+                  .code = CallableCode::Defined(),
+                  .foreign = std::nullopt,
+                  .virtual_dispatch = std::nullopt,
+                  .type_parameters = {},
+                  .defining_unit = std::nullopt});
+        }
+        if (declared.object_record) {
+          cls.object_definition_initializer.value =
+              cls.object_definition_initializer.body.exprs.Add(
+                  Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
+        }
+        u.DefineClass(u.DeclareClass(), std::move(cls));
+      };
+      declare();
+      if (declared.twice) declare();
+      if (declared.own_method_without_body) {
+        Class own;
+        own.base = ClassRef{ManagedObjectRootRef{}};
+        own.callables.Add(
+            CallableDecl{
+                .code = CallableCode{},
+                .foreign = std::nullopt,
+                .virtual_dispatch = std::nullopt,
+                .type_parameters = {},
+                .defining_unit = std::nullopt});
+        u.DefineClass(u.DeclareClass(), std::move(own));
+      }
+      if (declared.own_subroutine_without_body) {
+        u.callables.Add(
+            CallableDecl{
+                .code = CallableCode{},
+                .foreign = std::nullopt,
+                .virtual_dispatch = std::nullopt,
+                .type_parameters = {},
+                .defining_unit = std::nullopt});
+      }
+    });
+  };
+
+  EXPECT_NO_THROW(Verify(unit_declaring({})));
+  ExpectRefused(
+      unit_declaring({.own_unit = true}),
+      "declares as another unit's its own class");
+  ExpectRefused(unit_declaring({.twice = true}), "declares twice the class");
+  ExpectRefused(
+      unit_declaring({.method_body = true}),
+      "holds code or data of its own for the class");
+  ExpectRefused(
+      unit_declaring({.object_record = true}),
+      "holds code or data of its own for the class");
+  ExpectRefused(
+      unit_declaring({.own_method_without_body = true}),
+      "leaves with no body a method of a class it defines");
+  ExpectRefused(
+      unit_declaring({.own_subroutine_without_body = true}),
+      "leaves with no body its own subroutine");
 }
 
 }  // namespace

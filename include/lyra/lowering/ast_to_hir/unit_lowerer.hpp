@@ -33,6 +33,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/hir/subroutine_prototype.hpp"
 #include "lyra/hir/type_import.hpp"
 #include "lyra/hir/unit_body_ref.hpp"
 #include "lyra/hir/unit_signature.hpp"
@@ -359,8 +360,8 @@ struct InOwnScope {};
 // through, outermost first (LRM 23.9). Those are no objects, so they take no
 // step; a declaration the name reaches there is one the scope published as
 // held by the scope those lead to.
-struct InExternalScope {
-  hir::ExternalScopeClassId scope_class;
+struct InPublishedScope {
+  hir::ScopeClassId scope_class;
   std::vector<support::DefPathData> within;
 };
 
@@ -370,7 +371,7 @@ struct InExternalScope {
 // the set, as a connection binding a port to several instances does.
 struct OnSeveralObjects {};
 
-using RoutePlace = std::variant<InOwnScope, InExternalScope, OnSeveralObjects>;
+using RoutePlace = std::variant<InOwnScope, InPublishedScope, OnSeveralObjects>;
 
 // How a reader reaches a scope elsewhere on the elaborated hierarchy: where
 // navigation starts, the descent from there, and where that leaves it. What
@@ -463,7 +464,7 @@ struct Descent {
 // only through what each published: it stands on one of them, or on several
 // objects of a set it left a dimension of unselected.
 struct PublishedDescent {
-  std::vector<hir::ExternalStep> steps;
+  std::vector<hir::PublishedStep> steps;
   RoutePlace place;
   std::vector<OpenDimension> open;
 };
@@ -701,6 +702,15 @@ class UnitLowerer {
       const slang::ast::ClassPropertySymbol& prop, diag::SourceSpan span)
       -> diag::Result<hir::TypeId>;
 
+  // A type importer taking this unit's types into its own signature, naming
+  // every class the way the signature does.
+  auto PublishingImporter(hir::TypeImportMemo& memo) -> hir::TypeImporter;
+
+  // A type importer taking `signature`'s types into this unit's pool, naming
+  // every class the way this unit does.
+  auto ReadingImporter(const hir::UnitSignature& signature)
+      -> hir::TypeImporter;
+
   // Takes a type another unit published into this unit's own pool, and answers
   // with the identity this unit knows it by. The published pool's identities
   // index storage that unit carries, so what crosses is the type's structure,
@@ -724,40 +734,41 @@ class UnitLowerer {
   // This unit's record of the class `instance` is an object of: the class of
   // the unit its specialization compiled to.
   auto ScopeClassOfInstance(const slang::ast::InstanceSymbol& instance)
-      -> hir::ExternalScopeClassId;
+      -> hir::ScopeClassId;
 
   // This unit's record of the class an instance of `unit_name` is an object
   // of, taken from that unit's signature the first time one is reached and
   // answered with the same identity every later time. Reaching another unit's
   // object is what declares the dependency on it, so its signature is in hand
   // here.
-  auto ExternalScopeClassOf(const std::string& unit_name)
-      -> hir::ExternalScopeClassId;
+  auto ScopeClassOf(const std::string& unit_name) -> hir::ScopeClassId;
 
   // The same record of the scope class `class_path` that unit published: the
   // class of an instance of it, or of a generate block inside one.
-  auto ExternalScopeClassOf(
+  auto ScopeClassOf(
       const std::string& unit_name, const support::DefPath& class_path)
-      -> hir::ExternalScopeClassId;
+      -> hir::ScopeClassId;
+
+  // The scope class `scope_class` names, with what its unit published of it
+  // recorded, which a name reaching into it reads.
+  auto RecordedScopeClass(hir::ScopeClassId scope_class) -> hir::ScopeClassId;
 
   // The type of an object of the scope class `scope_class` records.
-  [[nodiscard]] auto ScopeClassTypeOf(
-      hir::ExternalScopeClassId scope_class) const -> hir::TypeId;
+  [[nodiscard]] auto ScopeClassTypeOf(hir::ScopeClassId scope_class) const
+      -> hir::TypeId;
 
   // Where a route ends that reaches the member the scope class `scope_class`
   // records published at `member`: what storage that member is and its type,
   // as that class stated them.
-  [[nodiscard]] auto ExternalMemberLeafOf(
-      hir::ExternalScopeClassId scope_class,
-      hir::PublishedMemberId member) const -> hir::ExternalMemberLeaf;
+  [[nodiscard]] auto PublishedMemberLeafOf(
+      hir::ScopeClassId scope_class, hir::PublishedMemberId member) const
+      -> hir::PublishedMemberLeaf;
 
-  // This unit's record of what `unit_name` published about its class
-  // `class_path`, taken from that unit's signature the first time this unit
-  // asks and answered from the record every later time. Every class a unit
-  // declares is published, so the record always exists.
-  auto ExternalClassOf(
-      const std::string& unit_name, const support::DefPath& class_path)
-      -> const hir::ExternalClass&;
+  // What the class `cls` declares: for a class of this unit, what interning it
+  // computed; for one of another unit, what that unit published, taken from
+  // its signature the first time this unit asks. Every class a unit declares
+  // is published, so the answer always exists.
+  auto DeclarationOf(hir::ClassId cls) -> const hir::ClassDeclaration&;
 
   // Which storage the declaration `value` holds. One answer, so what this unit
   // publishes about a declaration and what a route to it reaches cannot differ.
@@ -816,43 +827,38 @@ class UnitLowerer {
   // A repeat call for the same class is idempotent: the cache entry the first
   // mint installed returns without re-work, which admits mutual reference
   // during body population.
-  auto InternLocalClass(const slang::ast::ClassType& cls, diag::SourceSpan span)
+  auto InternOwnClass(const slang::ast::ClassType& cls, diag::SourceSpan span)
       -> diag::Result<hir::ClassId>;
 
-  // Translates a slang class pointer -- reached from an expression site or a
-  // base-class link -- into HIR's owner-qualified reference form. The result
-  // is a `LocalClassRef` when this unit holds the class, an
-  // `ExternalClassRef{unit_name, class_path}` when another does.
+  // The identity a slang class -- reached from an expression site or a
+  // base-class link -- has in this unit, whichever unit declares it.
   // Classification runs at most once per class per unit: the first encounter
   // walks `cls.getParentScope()` to find the unit holding it and caches the
-  // answer; every later encounter reads it. A local class not yet
+  // answer; every later encounter reads it. A class of this unit not yet
   // interned is minted lazily on this path, so a body reads the same identity
   // regardless of which route saw the class first.
-  auto ResolveClassRef(const slang::ast::ClassType& cls, diag::SourceSpan span)
-      -> diag::Result<hir::ClassRef>;
+  auto ResolveClass(const slang::ast::ClassType& cls, diag::SourceSpan span)
+      -> diag::Result<hir::ClassId>;
 
-  // The same for a covergroup (LRM 19.3), which is identified as a class is: a
-  // `LocalCovergroupRef` where this unit holds it, minted on first reach, and
-  // an `ExternalCovergroupRef` whose published form this unit records where
-  // another does.
-  auto ResolveCovergroupRef(
+  // The same for a covergroup (LRM 19.3), which is identified as a class is.
+  auto ResolveCovergroup(
       const slang::ast::CovergroupType& covergroup, diag::SourceSpan span)
-      -> diag::Result<hir::CovergroupRef>;
-  auto InternLocalCovergroup(
+      -> diag::Result<hir::CovergroupId>;
+  auto InternOwnCovergroup(
       const slang::ast::CovergroupType& covergroup, diag::SourceSpan span)
       -> diag::Result<hir::CovergroupId>;
 
-  // This unit's record of what `unit_name` published about its covergroup
-  // `path`, taken from that unit's signature the first time this unit asks.
-  auto ExternalCovergroupOf(
-      const std::string& unit_name, const support::DefPath& path)
+  // What the covergroup `covergroup` declares, whichever unit declares it: this
+  // unit's own as it publishes it, or another unit's as that unit published
+  // it, taken from its signature the first time this unit asks.
+  auto CovergroupDeclarationOf(hir::CovergroupId covergroup)
       -> const hir::PublishedCovergroup&;
 
   // The method a class embedding `covergroup` publishes for making it (LRM
   // 19.4.1).
   auto PublishedFactoryOf(
       const slang::ast::CovergroupType& covergroup, diag::SourceSpan span)
-      -> diag::Result<hir::PublishedMethod>;
+      -> diag::Result<hir::DeclaredMethod>;
 
   // Records what each other unit published about every covergroup of its that
   // a type of this unit names, once the bodies have lowered.
@@ -883,97 +889,55 @@ class UnitLowerer {
   [[nodiscard]] auto Defining(const slang::ast::SubroutineSymbol& method) const
       -> const slang::ast::SubroutineSymbol*;
 
-  // Builds a class-method target from a class reference and the resolved
-  // callee symbol. Local when the class was interned by this unit -- the
-  // method's arena position is queryable through the `SubroutineSymbol`-keyed
-  // cache the interning populated. External when the class lives in another
-  // compilation unit -- the method is named by (declaring unit, class path,
-  // method name).
+  // The method `method` of the class `owner` declares, at its position among
+  // that class's methods: for a class of this unit the one the interning
+  // registered for the symbol, and for another unit's the one of that name its
+  // signature published.
   [[nodiscard]] auto MakeClassMethodTarget(
-      const hir::ClassRef& class_ref,
-      const slang::ast::SubroutineSymbol& method) const
+      hir::ClassId owner, const slang::ast::SubroutineSymbol& method)
       -> hir::ClassMethodTarget;
 
-  // The method a call reaches. Intra-unit that is the slot alone, since the
-  // declaration it resolves to answers everything else about the callee;
-  // cross-unit there is no such declaration to reach, so the callee also
-  // carries its dispatch role (LRM 8.20) and the interface a call marshals
-  // against (LRM 13.5). `owner` declares the method.
-  auto MakeMethodCallee(
+  // The same for a method a call reaches, `owner` being the slang class
+  // declaring it.
+  auto MakeClassMethodTarget(
       const slang::ast::ClassType& owner,
       const slang::ast::SubroutineSymbol& method, diag::SourceSpan span)
-      -> diag::Result<hir::MethodCallee>;
+      -> diag::Result<hir::ClassMethodTarget>;
 
-  // A class as this unit reads it: one it declares, read off its own
-  // declaration, or one another unit declares, read off that unit's signature.
-  using LocalOrPublishedClass =
-      std::variant<const slang::ast::ClassType*, hir::ExternalClassRef>;
-
-  // Which of the two the class `type` names is.
-  auto ReadAsLocalOrPublished(
-      const slang::ast::Type& type, diag::SourceSpan span)
-      -> diag::Result<LocalOrPublishedClass>;
-
-  // Which of the two a class a signature names is: this unit's own where the
-  // signature names this unit, as a lineage another unit published may.
-  [[nodiscard]] auto AsLocalOrPublished(
-      const hir::ExternalClassRef& named) const -> LocalOrPublishedClass;
-
-  // What a class this unit declares would publish to another unit, and what
-  // each method of that signature is in this unit, at its position: a method
-  // of the class, or the method making a covergroup it embeds, which no method
-  // of the source stands for. The second is kept beside the signature rather
-  // than in it, since no other unit reaches this unit's own identities.
-  struct OwnClass {
-    hir::ClassSignature signature;
-    std::vector<hir::VirtualBehavior> methods;
-  };
-
-  // What this unit publishes about its own class `class_path`, with what each
-  // of its methods is in this unit.
-  [[nodiscard]] auto OwnClassAt(const support::DefPath& class_path) const
-      -> const OwnClass&;
+  // The identity of the class the type `type` names.
+  auto ResolveClassType(const slang::ast::Type& type, diag::SourceSpan span)
+      -> diag::Result<hir::ClassId>;
 
   // What a class's declaration names beside itself: the class it extends, and
   // the interface classes it implements or, for an interface class, extends
   // (LRM 8.26.2), in the order written.
   struct ClassParents {
-    std::optional<LocalOrPublishedClass> base;
-    std::vector<LocalOrPublishedClass> implements;
+    std::optional<hir::ClassId> base;
+    std::vector<hir::ClassId> implements;
   };
-  auto ParentsOf(const LocalOrPublishedClass& cls, diag::SourceSpan span)
-      -> diag::Result<ClassParents>;
-
-  // The declaring unit of `cls` and its path there, which identify it whichever
-  // way it was read.
-  [[nodiscard]] auto NameOf(const LocalOrPublishedClass& cls) const
-      -> hir::ExternalClassRef;
+  auto ParentsOf(hir::ClassId cls) -> ClassParents;
 
   // The names of the methods the interface class `iface` declares.
-  auto MethodNamesOf(const LocalOrPublishedClass& iface)
-      -> std::vector<std::string>;
+  auto MethodNamesOf(hir::ClassId iface) -> std::vector<std::string>;
 
   // Appends the interface class `iface`, then every interface class it extends
   // (LRM 8.26.2), skipping one already in `reached`: an interface class is one
   // however many ways it is arrived at (LRM 8.26.6.3). What each extends is
   // read where that class states it, so one of another unit is its signature
   // consumed.
-  auto ReachInterface(
-      const LocalOrPublishedClass& iface, diag::SourceSpan span,
-      std::vector<LocalOrPublishedClass>& reached) -> diag::Result<void>;
+  void ReachInterface(hir::ClassId iface, std::vector<hir::ClassId>& reached);
 
   // Every interface class a value of `cls` is also a value of (LRM 8.26.5):
   // the ones the class it extends is (LRM 8.26), then the ones `cls` names and
   // the ones those extend.
-  auto AllInterfacesOf(const LocalOrPublishedClass& cls, diag::SourceSpan span)
-      -> diag::Result<std::vector<LocalOrPublishedClass>>;
+  auto AllInterfacesOf(hir::ClassId cls) -> std::vector<hir::ClassId>;
 
-  // What the unit declaring the class of `method` published about it, or
-  // nothing where the class is this unit's own, which leaves the declaration as
-  // all there is to read.
-  auto PublishedMethodOf(
+  // What the class of `method` declares of it, or nothing for a method the
+  // front end supplies every class (LRM 18.6, 18.8), which no declaration
+  // lists.
+  auto DeclaredMethodOf(
       const slang::ast::SubroutineSymbol& method, diag::SourceSpan span)
-      -> diag::Result<std::optional<hir::PublishedMethod>>;
+      -> diag::Result<std::optional<hir::DeclaredMethod>>;
 
   // Whether the class method `method` is one of the class rather than of an
   // object of it (LRM 8.10), so a call hands it no object.
@@ -982,11 +946,11 @@ class UnitLowerer {
       -> diag::Result<bool>;
 
   // What a call to the class method `method` passes and awaits and what it
-  // yields: what the declaring unit published where there is such a thing, and
-  // the method's own declaration otherwise.
+  // yields: what the class declares of it, and for a method the front end
+  // supplies, the method's own symbol.
   auto ClassMethodPrototype(
       const slang::ast::SubroutineSymbol& method, diag::SourceSpan span)
-      -> diag::Result<hir::PublishedCallable>;
+      -> diag::Result<hir::SubroutinePrototype>;
 
   // For a class that is not an interface class, states which behavior of its
   // lineage answers each behavior of every interface class it is also a value
@@ -996,115 +960,58 @@ class UnitLowerer {
       const slang::ast::ClassType& cls, diag::SourceSpan span,
       hir::ClassDecl& decl) -> diag::Result<void>;
 
-  // The behavior `method` states -- a method, or a constraint block, which is
-  // overridden as one (LRM 18.5.2) -- with the class declaring it named the
-  // way the boundary it sits on names one: what a member overriding it
-  // overrides, and what an interface class's behavior is answered by.
-  auto MakeVirtualBehavior(
+  // The behavior `method` is part of -- a method, or a constraint block, which
+  // is overridden as one (LRM 18.5.2) -- named by the member that introduced
+  // it, whichever unit declares that member's class: what a member overriding
+  // it overrides, and what an interface class's behavior is answered by.
+  auto IntroducingMethodTarget(
       const slang::ast::Symbol& method, diag::SourceSpan span)
-      -> diag::Result<hir::VirtualBehavior>;
-
-  // The behavior named `method_name` that `cls` answers, refused where no
-  // signature up that lineage publishes one, which leaves nothing to name the
-  // behavior by.
-  auto MakeVirtualBehavior(
-      const hir::ExternalClassRef& cls, std::string_view method_name,
-      diag::SourceSpan span) -> diag::Result<hir::VirtualBehavior>;
-
-  // The behavior named `method_name` that `cls` answers, named by the class of
-  // its lineage that introduced it: by this unit's identity for it where that
-  // class is this unit's, which a lineage another unit published may pass back
-  // through, and by the coordinate its unit published otherwise. Nothing where
-  // no signature up the lineage publishes it.
-  auto FindVirtualBehavior(
-      const hir::ExternalClassRef& cls, std::string_view method_name)
-      -> std::optional<hir::VirtualBehavior>;
+      -> diag::Result<hir::ClassMethodTarget>;
 
   // The interface a subroutine's own declaration states: its call protocol and
   // each formal's direction and type (LRM 13.5), in this unit's types. It is
   // what a unit publishes about a subroutine it declares, and what a call to
   // one of this unit's own namespace subroutines takes.
-  auto MakeExternalCalleeInterface(
+  auto MakeCalleeInterface(
       const slang::ast::SubroutineSymbol& sym, diag::SourceSpan span)
-      -> diag::Result<hir::ExternalCalleeInterface>;
+      -> diag::Result<hir::CalleeInterface>;
 
   // The interface a call to `sym` is made through, where `sym` is declared in
   // the namespace of the unit named `unit_name` (LRM 26.3). Another unit's is
   // read off that unit's signature; this unit's own is its own declaration.
   auto NamespaceCalleeInterface(
       const std::string& unit_name, const slang::ast::SubroutineSymbol& sym,
-      diag::SourceSpan span) -> diag::Result<hir::ExternalCalleeInterface>;
+      diag::SourceSpan span) -> diag::Result<hir::CalleeInterface>;
 
-  // The instance-property peer of `MakeClassMethodTarget`. Local when the class
-  // was interned by this unit; external when the class lives in another
-  // compilation unit, in which case the property is named by its position in
-  // what that class published.
+  // The property `prop` of the class `owner`, at the position the property of
+  // that name has in the class's declaration, whichever unit declares it.
   [[nodiscard]] auto MakeClassPropertyTarget(
       const slang::ast::ClassType& owner,
       const slang::ast::ClassPropertySymbol& prop, diag::SourceSpan span)
       -> diag::Result<hir::ClassPropertyTarget>;
 
-  // Records a frontend method symbol's HIR arena identity as the class
-  // interning that owns it adds the method. Downstream consumers translate a
-  // frontend symbol into the HIR-side identity through this cache, so the
-  // slang enumeration order is walked once (at class interning) and never
-  // again at a resolution site. A constraint block (LRM 18.5) is a method of
-  // its class too, and is recorded the same way.
-  void RegisterMethodId(const slang::ast::Symbol& method, hir::MethodId id) {
-    method_cache_.emplace(&method, id);
-  }
+  // The position the member named `name` has in the declaration of `cls`,
+  // whichever unit declares it.
+  auto MethodPositionOf(hir::ClassId cls, std::string_view name)
+      -> hir::MethodId;
+  auto PropertyPositionOf(hir::ClassId cls, std::string_view name)
+      -> hir::FieldId;
+  auto StaticPropertyPositionOf(hir::ClassId cls, std::string_view name)
+      -> hir::StaticPropertyId;
 
-  [[nodiscard]] auto LookupMethodId(const slang::ast::Symbol& method) const
-      -> hir::MethodId {
-    if (const auto it = method_cache_.find(&method);
-        it != method_cache_.end()) {
-      return it->second;
-    }
+  // The position `found` names, which a class the front end resolved a name in
+  // always has.
+  template <typename Id>
+  auto Positioned(
+      hir::ClassId cls, std::string_view name, std::optional<Id> found) const
+      -> Id {
+    if (found.has_value()) return *found;
+    const hir::ClassKey& key = unit_.classes.KeyOf(cls);
     throw InternalError(
-        "UnitLowerer::LookupMethodId: method has no HIR identity; the "
-        "owning class was not interned before this lookup");
-  }
-
-  // Records the HIR `FieldId` a class property received when the owning
-  // class was minted. A downstream `handle.field` access reads the id in
-  // O(1) through this lookup instead of re-walking the property list at
-  // every reference site.
-  void RegisterClassPropertyFieldId(
-      const slang::ast::ClassPropertySymbol& prop, hir::FieldId id) {
-    class_property_field_ids_.emplace(&prop, id);
-  }
-
-  [[nodiscard]] auto LookupClassPropertyFieldId(
-      const slang::ast::ClassPropertySymbol& prop) const -> hir::FieldId {
-    if (const auto it = class_property_field_ids_.find(&prop);
-        it != class_property_field_ids_.end()) {
-      return it->second;
-    }
-    throw InternalError(
-        "UnitLowerer::LookupClassPropertyFieldId: property has no recorded "
-        "id; the owning class was not interned before this lookup");
-  }
-
-  // Records the HIR `StaticPropertyId` a static class property (LRM 8.9)
-  // received when the owning class was minted, so a downstream `Cls::prop`
-  // or `handle.prop` (static-lifetime) access reads the id in O(1) rather
-  // than re-walking the arena. The type-associated storage counterpart to
-  // the instance-property registry above.
-  void RegisterClassPropertyStaticId(
-      const slang::ast::ClassPropertySymbol& prop, hir::StaticPropertyId id) {
-    class_property_static_ids_.emplace(&prop, id);
-  }
-
-  [[nodiscard]] auto LookupClassPropertyStaticId(
-      const slang::ast::ClassPropertySymbol& prop) const
-      -> hir::StaticPropertyId {
-    if (const auto it = class_property_static_ids_.find(&prop);
-        it != class_property_static_ids_.end()) {
-      return it->second;
-    }
-    throw InternalError(
-        "UnitLowerer::LookupClassPropertyStaticId: static property has no "
-        "recorded id; the owning class was not interned before this lookup");
+        std::format(
+            "UnitLowerer: class '{}' of unit '{}' declares no member '{}' a "
+            "name resolved to -- please report this as a bug",
+            support::DisplayOf(key.class_path), key.unit_name, name));
   }
 
   [[nodiscard]] auto Sensitivity() const -> SensitivityAnalyzer& {
@@ -1309,8 +1216,8 @@ class UnitLowerer {
       const slang::ast::Symbol& type) const -> bool;
 
   // Whether a construction of `cls` and a call of a method of the class itself
-  // are handed the instance it belongs to, as the class states it: its own
-  // declaration where this unit holds it, and its signature otherwise.
+  // are handed the instance it belongs to, as the class's declaration states
+  // it.
   auto TakesDeclaringInstance(
       const slang::ast::ClassType& cls, diag::SourceSpan span)
       -> diag::Result<bool>;
@@ -1635,7 +1542,7 @@ class UnitLowerer {
   // not stand in `from_scope`, or a scope on the way published nothing the
   // descent names.
   [[nodiscard]] auto DescendPublished(
-      hir::ExternalScopeClassId from, const slang::ast::Scope& from_scope,
+      hir::ScopeClassId from, const slang::ast::Scope& from_scope,
       const slang::ast::Scope& to) -> std::optional<PublishedDescent>;
 
  private:
@@ -1709,7 +1616,7 @@ class UnitLowerer {
   // one `standing` records: each hop resolved against what the class standing
   // above it published.
   [[nodiscard]] auto DescendPublishedFrom(
-      hir::ExternalScopeClassId standing, std::span<NamedHop> hops)
+      hir::ScopeClassId standing, std::span<NamedHop> hops)
       -> std::optional<PublishedDescent>;
 
   // What a process waiting on a name a modport offers observes: every member
@@ -1817,7 +1724,7 @@ class UnitLowerer {
 
   // A published callable as this unit's own types state it.
   auto PublishedCallableOf(const ScopePublicationRecord::Callable& callable)
-      -> diag::Result<hir::PublishedCallable>;
+      -> diag::Result<hir::SubroutinePrototype>;
 
   // What the identity walk recorded for `scope`.
   [[nodiscard]] auto PublicationOf(const slang::ast::Scope& scope) const
@@ -1878,17 +1785,6 @@ class UnitLowerer {
   // many connections name it.
   std::unordered_map<const hir::UnitSignature*, hir::TypeImportMemo>
       signature_type_memos_;
-  // Each class this unit declares, taken where that class's own arenas are
-  // built so the signature and the class count the same positions. Only the
-  // classes the unit's namespace declares reach its signature.
-  std::unordered_map<const slang::ast::ClassType*, OwnClass> own_classes_;
-  // Each class this unit holds, by the path it publishes it under, which is how
-  // a lineage another unit published names one coming back through this unit.
-  std::map<support::DefPath, const slang::ast::ClassType*> own_classes_by_path_;
-  // Which record this unit made of each referenced scope class, by unit and
-  // class, so every reference into one names the same entry.
-  std::map<std::pair<std::string, support::DefPath>, hir::ExternalScopeClassId>
-      external_scope_classes_;
   // What each of this unit's interface ports stands for.
   std::unordered_map<const slang::ast::Symbol*, hir::TypeId>
       interface_port_types_;
@@ -1910,19 +1806,13 @@ class UnitLowerer {
       scope_classes_;
 
   std::unordered_map<const slang::ast::Type*, hir::TypeId> type_cache_;
-  // The classification of every class this unit's lowering has resolved: the
-  // Local / External arm chosen by walking slang's parent chain to find the
-  // class's declaring compilation unit. Caching the classification -- not just
-  // the local id -- lets an external class's parent-chain walk run once per
-  // class per unit; a second reference to the same slang `ClassType` reads
-  // the answer, whether it is Local or External.
-  std::unordered_map<const slang::ast::ClassType*, hir::ClassRef> class_cache_;
-  // The same for each covergroup this unit's lowering has resolved, and for
-  // one this unit holds, the path it publishes it under.
-  std::unordered_map<const slang::ast::CovergroupType*, hir::CovergroupRef>
+  // The identity of every class this unit's lowering has resolved, so the walk
+  // up slang's parent chain finding the unit declaring a class runs once per
+  // class.
+  std::unordered_map<const slang::ast::ClassType*, hir::ClassId> class_cache_;
+  // The same for each covergroup this unit's lowering has resolved.
+  std::unordered_map<const slang::ast::CovergroupType*, hir::CovergroupId>
       covergroup_cache_;
-  std::map<support::DefPath, const slang::ast::CovergroupType*>
-      own_covergroups_by_path_;
   // A covergroup whose identity is minted and whose declaration is not: its
   // expressions name what encloses it, so it lowers with the scope
   // replicating it.
@@ -1938,12 +1828,6 @@ class UnitLowerer {
       covergroups_by_scope_;
   std::unordered_map<const slang::ast::Scope*, std::vector<PendingClassBody>>
       pending_class_bodies_;
-  std::unordered_map<const slang::ast::Symbol*, hir::MethodId> method_cache_;
-  std::unordered_map<const slang::ast::ClassPropertySymbol*, hir::FieldId>
-      class_property_field_ids_;
-  std::unordered_map<
-      const slang::ast::ClassPropertySymbol*, hir::StaticPropertyId>
-      class_property_static_ids_;
   StructuralDataObjectBindings structural_data_object_bindings_;
   std::unordered_map<const slang::ast::Symbol*, InterfacePortBinding>
       interface_port_bindings_;

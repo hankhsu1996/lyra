@@ -240,16 +240,6 @@ struct ObjectType {
   auto operator==(const ObjectType&) const -> bool = default;
 };
 
-// A class another compilation unit declares, named by that unit and the class's
-// path in it. A backend spells the pair in its own target language; nothing
-// here composes one.
-struct CrossUnitClassType {
-  std::string unit_name;
-  support::DefPath class_path;
-
-  auto operator==(const CrossUnitClassType&) const -> bool = default;
-};
-
 // A class the runtime library defines. It belongs to no compilation unit, so
 // which class it is is the whole identity.
 struct RuntimeClassType {
@@ -352,18 +342,15 @@ struct TupleType {
   auto operator==(const TupleType&) const -> bool = default;
 };
 
-// The declaration a record type is: one this unit declares, by its position in
-// the unit's registry, or one another unit declares, by that unit and which
-// declaration of it the record is.
-using RecordRef = std::variant<RecordId, TypeDeclarationRef>;
-
 // A structure, a union or a tagged union named by its declaration, as clang's
 // record type names its record declaration: two with the same members are
 // still two types (LRM 6.22.1). Which aggregate it is and its members' types
 // are the declaration's, as are the operations on a whole value of one; a
 // member is reached by its position.
 struct RecordType {
-  RecordRef declaration;
+  // Where the declaration sits in the unit's record registry, whichever unit
+  // defines it.
+  RecordId declaration;
 
   auto operator==(const RecordType&) const -> bool = default;
 };
@@ -436,14 +423,12 @@ struct DesignationType {
   auto operator==(const DesignationType&) const -> bool = default;
 };
 
-// The declaration of member-bearing storage a type names: a class this unit
-// compiles, a class another unit declares, or a closure a lowering introduces
-// that no source declaration stands behind. What identifies each differs -- a
-// position in this unit's registry, or a name its own unit gave it -- so a
-// consumer reaching what the declaration holds asks which of the three it met
-// rather than asking every type there is.
-using TypeDeclaration =
-    std::variant<ObjectType, CrossUnitClassType, ClosureType>;
+// The declaration of member-bearing storage a type names: a class, whichever
+// unit defines it, or a closure a lowering introduces that no source
+// declaration stands behind. Each is a position in its own registry of this
+// unit, so a consumer reaching what the declaration holds asks which of the two
+// it met rather than asking every type there is.
+using TypeDeclaration = std::variant<ObjectType, ClosureType>;
 
 // What a value is held as: an integral value as the bits its type declares,
 // whose layout this layer does not state; any other value of the design as an
@@ -477,11 +462,11 @@ class Type {
       AnyReferenceType, MachineCStringType, MachineBoolType, MachineIntType,
       MachineFloatType, MachineArrayType, MachineFunctionType, RealType,
       ShortRealType, ChandleType, VoidType, EmptyType, ObjectType,
-      CrossUnitClassType, RuntimeClassType, ClosureType, ErasedCallableType,
-      RuntimeEffectsType, FilesType, DiagnosticType, RuntimeLibraryType,
-      CoroutineType, VariableRefType, PointerType, ManagedRefType,
-      WeakManagedRefType, VectorType, TupleType, RecordType, ResolvedType,
-      DriverType, ObservableType, SampledHistoryType, EvaluationAttemptsType,
+      RuntimeClassType, ClosureType, ErasedCallableType, RuntimeEffectsType,
+      FilesType, DiagnosticType, RuntimeLibraryType, CoroutineType,
+      VariableRefType, PointerType, ManagedRefType, WeakManagedRefType,
+      VectorType, TupleType, RecordType, ResolvedType, DriverType,
+      ObservableType, SampledHistoryType, EvaluationAttemptsType,
       LoopBlocksType, OpenWriteType, DesignationType>;
 
  public:

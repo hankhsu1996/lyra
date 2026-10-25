@@ -4,6 +4,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/arena.hpp"
@@ -24,6 +25,7 @@
 #include "lyra/mir/value_build.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/dump_kind.hpp"
+#include "lyra/support/runtime_class.hpp"
 #include "lyra/support/scope_execution.hpp"
 
 namespace lyra::mir {
@@ -97,6 +99,13 @@ struct ConformingBehavior {
 };
 
 struct Class {
+  // The unit that defines the class, where it is another unit's. Such a class
+  // is declared here and defined there, as an imported declaration is: its
+  // fields are its storage as that unit published it, the named ones first and
+  // the rest by type alone; its callables state each method's name and
+  // dispatch and nothing of its code; and it has no constructor, constant or
+  // record value here, which are that unit's to emit.
+  std::optional<std::string> defining_unit;
   // The path another unit reaches this class by, absent where nothing outside
   // this unit ever names it -- a class the lowering builds for its own use.
   // Present for a class the source declared (LRM 8.3) and for what a scope of
@@ -109,7 +118,7 @@ struct Class {
   // The interfaces the class's declaration names, in the order written. A
   // value of the class is also a value of each, of every interface those
   // extend, and of whatever its base is; none of that is restated here.
-  std::vector<DeclaredClassRef> implements;
+  std::vector<ClassId> implements;
   // For each behavior of each interface a value of this class is also a value
   // of, what answers it. Empty for an interface class, which answers nothing.
   std::vector<ConformingBehavior> conforming;
@@ -190,6 +199,23 @@ struct Class {
   // `constants`, and its type is the same for every class, which is why only
   // its value is here.
   ValueBuild object_definition_initializer;
+
+  // The callable giving the library's `function` a body for this class, or
+  // nothing where the class gives it none.
+  [[nodiscard]] auto LibraryOverride(support::LibraryVirtual function) const
+      -> std::optional<CallableId> {
+    for (const CallableId callable : callables.Ids()) {
+      const std::optional<VirtualDispatchRole>& role =
+          callables.Get(callable).virtual_dispatch;
+      const auto* library = role.has_value()
+                                ? std::get_if<OverridesLibraryVirtual>(&*role)
+                                : nullptr;
+      if (library != nullptr && library->function == function) {
+        return callable;
+      }
+    }
+    return std::nullopt;
+  }
 
   // Which of the dispatch positions this class introduces (LRM 8.20)
   // `callable` is, or nothing where it introduces none. The positions are

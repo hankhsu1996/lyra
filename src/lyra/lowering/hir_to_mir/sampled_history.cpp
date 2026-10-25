@@ -91,9 +91,7 @@ auto BuildSampledHistoryExpr(
   return block.exprs.Add(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(lowerer.Owner().Unit(), block, self),
-          mir::ClassFieldTarget{
-              .owner = mir::IntraUnitClassRef{frame.current_class.id},
-              .slot = field},
+          mir::ClassFieldTarget{.owner = frame.current_class.id, .slot = field},
           frame.current_class.cls->fields.Get(field).type));
 }
 
@@ -170,7 +168,8 @@ auto LowerSampledHistorySampler(
       .code = std::move(code),
       .foreign = std::nullopt,
       .virtual_dispatch = std::nullopt,
-      .type_parameters = {}};
+      .type_parameters = {},
+      .defining_unit = std::nullopt};
 }
 
 template <ExprLowerer Lowerer>

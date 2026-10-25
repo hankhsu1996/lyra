@@ -42,9 +42,6 @@ class LirDumper {
       Line(std::format("[{}] {}", id.value, DescribeType(id)));
     }
     Dedent();
-    for (const ExternalClass& cls : unit_->external_classes) {
-      DumpExternalClass(cls);
-    }
     for (const StaticStorage& storage : unit_->static_storage) {
       Line(
           std::format(
@@ -70,9 +67,6 @@ class LirDumper {
     for (const ClosureId id : unit_->closures.Ids()) {
       DumpClosure(id);
     }
-    for (const ExternalRecord& external : unit_->external_records) {
-      DumpExternalRecord(external);
-    }
     for (const RecordId id : unit_->records.Ids()) {
       DumpRecord(id);
     }
@@ -88,8 +82,11 @@ class LirDumper {
     const RecordDecl& declared = unit_->records.Get(id);
     Line(
         std::format(
-            R"({} "{}" (#{}))", RecordKindName(declared.kind),
-            support::DisplayOf(declared.path), id.value));
+            R"({} "{}" (#{}){})", RecordKindName(declared.kind),
+            support::DisplayOf(declared.path), id.value,
+            declared.defining_unit.has_value()
+                ? std::format(" of {}", *declared.defining_unit)
+                : std::string{}));
     Indent();
     DumpElements(declared.elements);
     for (const RecordMethod& method : declared.methods) {
@@ -101,51 +98,24 @@ class LirDumper {
     Dedent();
   }
 
-  void DumpExternalRecord(const ExternalRecord& external) {
-    Line(
-        std::format(
-            R"(external {} "{}.{}")", RecordKindName(external.kind),
-            external.declaration.unit_name,
-            support::DisplayOf(external.declaration.path)));
-    Indent();
-    DumpElements(external.elements);
-    Dedent();
-  }
-
   void DumpElements(const std::vector<TypeId>& elements) {
     for (std::size_t i = 0; i < elements.size(); ++i) {
       Line(std::format("part[{}] : {}", i, FormatType(elements[i])));
     }
   }
 
-  void DumpExternalClass(const ExternalClass& cls) {
-    Line(
-        std::format(
-            "ExternalClass \"{}.{}\"", cls.unit_name,
-            support::DisplayOf(cls.class_path)));
-    Indent();
-    if (cls.base.has_value()) {
-      Line(std::format("base: {}", FormatType(*cls.base)));
-    }
-    for (std::size_t i = 0; i < cls.members.size(); ++i) {
-      Line(std::format("member[{}] : {}", i, FormatType(cls.members[i].type)));
-    }
-    DumpDispatch(cls.dispatch);
-    for (const TypeId iface : cls.implements) {
-      Line(std::format("implements: {}", FormatType(iface)));
-    }
-    Dedent();
-  }
-
   void DumpClass(ClassId id) {
     const Class& cls = unit_->classes.Get(id);
     Line(
         std::format(
-            "Class{} (#{})",
+            "Class{} (#{}){}",
             cls.path.has_value()
                 ? std::format(" \"{}\"", support::DisplayOf(*cls.path))
                 : std::string{},
-            id.value));
+            id.value,
+            cls.defining_unit.has_value()
+                ? std::format(" of {}", *cls.defining_unit)
+                : std::string{}));
     Indent();
     if (cls.base.has_value()) {
       Line(std::format("base: {}", FormatType(*cls.base)));
@@ -640,10 +610,10 @@ class LirDumper {
     if (const std::optional<TypeId> target = type.DerefTarget()) {
       return std::format("{}({})", type.KindName(), FormatType(*target));
     }
-    if (const RecordRef* record = RecordOf(type)) {
+    if (const RecordId* record = RecordOf(type)) {
       return std::format(
-          "{}({})", RecordKindName(RecordKindOf(*unit_, *record)),
-          FormatRecordRef(*record));
+          "{}(#{})", RecordKindName(RecordKindOf(*unit_, *record)),
+          record->value);
     }
     return std::string{type.KindName()};
   }
@@ -659,19 +629,6 @@ class LirDumper {
         return "tagged union";
     }
     throw InternalError("LirDumper: unknown record kind");
-  }
-
-  [[nodiscard]] static auto FormatRecordRef(const RecordRef& ref)
-      -> std::string {
-    return std::visit(
-        Overloaded{
-            [](RecordId id) { return std::format("#{}", id.value); },
-            [](const TypeDeclarationRef& declared) {
-              return std::format(
-                  "{}.{}", declared.unit_name,
-                  support::DisplayOf(declared.path));
-            }},
-        ref);
   }
 
   void Line(std::string_view text) {

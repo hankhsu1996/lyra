@@ -6,11 +6,11 @@
 
 #include "lyra/base/component_index.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/callee_interface.hpp"
 #include "lyra/hir/class_ref.hpp"
-#include "lyra/hir/external_callee.hpp"
 #include "lyra/hir/param_direction.hpp"
-#include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/subroutine_kind.hpp"
+#include "lyra/hir/subroutine_prototype.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -146,13 +146,12 @@ auto CalleeFormalsOf(UnitLowerer& unit_lowerer, const hir::SubroutineDecl& decl)
 // The same, for a callee this unit has no declaration of, read off the
 // interface a call recomputed for it.
 auto CalleeFormalsOf(
-    UnitLowerer& unit_lowerer, const hir::ExternalCalleeInterface& interface)
+    UnitLowerer& unit_lowerer, const hir::CalleeInterface& interface)
     -> std::vector<CalleeFormal>;
 
 // The formals a construction of the class `cls` is entered with (LRM 8.7),
-// read off its declaration where this unit has one and off what its own unit
-// published otherwise.
-auto ConstructorFormalsOf(UnitLowerer& unit_lowerer, const hir::ClassRef& cls)
+// read off its declaration, whichever unit defines it.
+auto ConstructorFormalsOf(UnitLowerer& unit_lowerer, hir::ClassId cls)
     -> std::vector<CalleeFormal>;
 
 // The type a call to `decl` yields: its completion under the protocol its kind
@@ -165,7 +164,7 @@ auto SubroutineCallTypeOf(
 // The same, for a callee this unit has no declaration of, read off the
 // interface and the result its unit published.
 auto SubroutineCallTypeOf(
-    UnitLowerer& unit_lowerer, const hir::ExternalCalleeInterface& interface,
+    UnitLowerer& unit_lowerer, const hir::CalleeInterface& interface,
     hir::TypeId result_type) -> mir::TypeId;
 
 // `decl` as a method of an object `self` points at that declares it and leaves
@@ -178,7 +177,7 @@ auto PrototypeOf(
 // The same, for a subroutine read off what its unit published rather than off
 // its declaration.
 auto PrototypeOf(
-    UnitLowerer& unit_lowerer, const hir::PublishedCallable& published,
+    UnitLowerer& unit_lowerer, const hir::SubroutinePrototype& published,
     mir::TypeId self) -> mir::CallableCode;
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -7,12 +7,13 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/hir/class_id.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/covergroup.hpp"
-#include "lyra/hir/external_class.hpp"
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/published_covergroup.hpp"
+#include "lyra/hir/subroutine_prototype.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type_id.hpp"
 
@@ -32,12 +33,12 @@ class CoverageLibrary {
 
   // A method of `cls` or of a class it extends, as a call names it.
   struct Method {
-    hir::MethodCallee callee;
-    hir::PublishedCallable prototype;
+    hir::ClassMethodTarget callee;
+    hir::SubroutinePrototype prototype;
   };
 
-  [[nodiscard]] auto MethodOf(
-      const hir::ClassRef& cls, std::string_view name) const -> Method;
+  [[nodiscard]] auto MethodOf(hir::ClassId cls, std::string_view name) const
+      -> Method;
 
   // A property of `cls` or of a class it extends.
   struct Property {
@@ -45,17 +46,16 @@ class CoverageLibrary {
     hir::TypeId type;
   };
 
-  [[nodiscard]] auto PropertyOf(
-      const hir::ClassRef& cls, std::string_view name) const -> Property;
+  [[nodiscard]] auto PropertyOf(hir::ClassId cls, std::string_view name) const
+      -> Property;
 
   // The type of each formal of `cls`'s constructor.
-  [[nodiscard]] auto ConstructorParamTypes(const hir::ClassRef& cls) const
+  [[nodiscard]] auto ConstructorParamTypes(hir::ClassId cls) const
       -> std::vector<hir::TypeId>;
 
-  // Whether a construction of `cls` is handed the instance it belongs to: a
-  // class of this unit specialized on a type of an instance is (LRM 6.22).
-  [[nodiscard]] auto TakesDeclaringInstance(const hir::ClassRef& cls) const
-      -> bool;
+  // Whether a construction of `cls` is handed the instance it belongs to (LRM
+  // 6.22).
+  [[nodiscard]] auto TakesDeclaringInstance(hir::ClassId cls) const -> bool;
 
   // The value the enumerator `name` of the library's enumeration `type`
   // stands for.
@@ -63,11 +63,6 @@ class CoverageLibrary {
       -> const hir::IntegralConstant&;
 
  private:
-  [[nodiscard]] auto Record(const hir::ExternalClassRef& ref) const
-      -> const hir::ExternalClass&;
-  [[nodiscard]] auto SlotOf(hir::ExternalClassRef from, std::string_view name)
-      const -> hir::ExternalDispatchSlot;
-
   const hir::CompilationUnit* unit_;
   const hir::CoverageLibraryRefs* refs_;
 };

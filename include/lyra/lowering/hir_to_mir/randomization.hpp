@@ -40,7 +40,7 @@ class UnitLowerer;
 // unit declaring the class, the class's path in it, and the block's name, so
 // every unit naming the block names the one mode.
 [[nodiscard]] auto StaticConstraintModeKey(
-    const hir::CompilationUnit& unit, const hir::ClassRef& introducer,
+    const hir::CompilationUnit& unit, hir::ClassId introducer,
     std::string_view block) -> std::string;
 
 // What a constraint block states (LRM 18.5), in the body of the method it is.

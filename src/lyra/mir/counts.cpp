@@ -11,9 +11,11 @@
 #include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/consumed_signatures.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/operand_use.hpp"
+#include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/statistics.hpp"
@@ -24,6 +26,7 @@ namespace {
 
 // What the classes of a unit hold between them.
 struct HeldByClasses {
+  std::uint64_t declared = 0;
   std::uint64_t fields = 0;
   std::uint64_t constructors = 0;
   std::uint64_t callables = 0;
@@ -41,8 +44,13 @@ auto IsCoroutine(const CompilationUnit& unit, const CallableCode& code)
 // does not compile here until it is said what kind of thing it is, or that it
 // is none.
 void Add(const CompilationUnit& unit, const Class& cls, HeldByClasses& held) {
-  const auto& [path, base, implements, conforming, is_final, is_interface_class, self_pointer_type, time_resolution, execution, dumped_as, fields, named_fields, constructor, contained, callables, static_properties, named_static_properties, named_callables, constants, object_definition_initializer] =
+  const auto& [defining_unit, path, base, implements, conforming, is_final, is_interface_class, self_pointer_type, time_resolution, execution, dumped_as, fields, named_fields, constructor, contained, callables, static_properties, named_static_properties, named_callables, constants, object_definition_initializer] =
       cls;
+  // What another unit defines is declared here, and held there.
+  if (defining_unit.has_value()) {
+    ++held.declared;
+    return;
+  }
   held.fields += fields.size();
   held.constructors += constructor.has_value() ? 1 : 0;
   held.callables += callables.size();
@@ -117,7 +125,8 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
   // As for a class: every member of the unit is named here. The layouts kept
   // on it are answers to questions asked of it, which no unit states, so they
   // are not counted.
-  const auto& [name, body_name, source_name, types, integral_constants, enum_tables, builtins, classes, content, external_classes, callables, named_callables, type_operations, static_variables, named_static_variables, foreign_scope_entries, records, record_methods, external_records, closures, layouts, consumed_signatures] = unit;
+  const auto& [name, body_name, source_name, types, integral_constants, enum_tables, builtins, classes, content, callables, named_callables, type_operations, static_variables, named_static_variables, foreign_scope_entries, records, record_methods, closures, layouts] =
+      unit;
 
   HeldByClasses in_classes;
   for (const Class& cls : classes) {
@@ -125,8 +134,21 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
   }
 
   std::uint64_t coroutines = in_classes.coroutines;
+  std::uint64_t declared_callables = 0;
   for (const CallableDecl& callable : callables) {
+    if (callable.defining_unit.has_value()) {
+      ++declared_callables;
+      continue;
+    }
     coroutines += IsCoroutine(unit, callable.code) ? 1 : 0;
+  }
+  std::uint64_t declared_static_variables = 0;
+  for (const StaticVariableDecl& variable : static_variables) {
+    declared_static_variables += variable.defining_unit.has_value() ? 1 : 0;
+  }
+  std::uint64_t declared_records = 0;
+  for (const RecordDecl& record : records) {
+    declared_records += record.defining_unit.has_value() ? 1 : 0;
   }
   std::uint64_t methods_of_records = 0;
   for (const RecordMethods& methods : record_methods) {
@@ -139,26 +161,31 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
   }
 
   return {
-      {.kind = "classes", .held = classes.size()},
+      {.kind = "classes", .held = classes.size() - in_classes.declared},
+      {.kind = "declared classes", .held = in_classes.declared},
       {.kind = "fields", .held = in_classes.fields},
       {.kind = "constructors", .held = in_classes.constructors},
-      {.kind = "callables", .held = callables.size() + in_classes.callables},
+      {.kind = "callables",
+       .held = callables.size() - declared_callables + in_classes.callables},
+      {.kind = "declared callables", .held = declared_callables},
       {.kind = "coroutines", .held = coroutines},
       {.kind = "closures", .held = closures.size()},
       {.kind = "captures", .held = captures},
-      {.kind = "records", .held = records.size()},
+      {.kind = "records", .held = records.size() - declared_records},
+      {.kind = "declared records", .held = declared_records},
       {.kind = "record methods", .held = methods_of_records},
       {.kind = "type operations", .held = type_operations.size()},
-      {.kind = "static variables", .held = static_variables.size()},
+      {.kind = "static variables",
+       .held = static_variables.size() - declared_static_variables},
+      {.kind = "declared static variables", .held = declared_static_variables},
       {.kind = "static properties", .held = in_classes.static_properties},
       {.kind = "class constants", .held = in_classes.constants},
       {.kind = "integral constants", .held = integral_constants.size()},
       {.kind = "enum tables", .held = enum_tables.size()},
       {.kind = "types", .held = types.size()},
       {.kind = "foreign scope entries", .held = foreign_scope_entries.size()},
-      {.kind = "external classes", .held = external_classes.size()},
-      {.kind = "external records", .held = external_records.size()},
-      {.kind = "consumed signatures", .held = consumed_signatures.size()},
+      {.kind = "consumed signatures",
+       .held = ConsumedSignaturesOf(unit).size()},
   };
 }
 

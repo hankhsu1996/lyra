@@ -186,17 +186,6 @@ auto LocalLabel(const mir::CallableCode& code, mir::LocalId local)
   return name.has_value() ? std::string{*name} : std::string{};
 }
 
-// A method of another unit's class is reached by the symbol that unit emits it
-// under, composed from the same parts that unit composed it from.
-auto ExternalMethodSymbol(
-    std::string_view unit_name, const support::DefPath& class_path,
-    std::string_view method_name) -> lir::SymbolTarget {
-  return lir::SymbolTarget{
-      .symbol = lir::ClassCallableSymbol(
-          unit_name, lir::SymbolPartOf(class_path),
-          lir::SymbolPart::Name(method_name))};
-}
-
 // Whether a local is a cell as MIR declared it -- a variable the source
 // declared, which reports its writes -- rather than a value the body keeps.
 auto IsDeclaredCell(const mir::CompilationUnit& unit, mir::TypeId declared)
@@ -226,8 +215,7 @@ auto FunctionLowerer::LowerCallTarget(
                 Overloaded{
                     [&](const mir::CallableTarget& t)
                         -> diag::Result<lir::CallTarget> {
-                      return lir::CallTarget{lir::FunctionTarget{
-                          .function = unit_->MethodFunction(t.owner, t.slot)}};
+                      return unit_->CallableCallTarget(t.owner, t.slot);
                     },
                     [&](const mir::ClosureTarget& t)
                         -> diag::Result<lir::CallTarget> {
@@ -274,11 +262,11 @@ auto FunctionLowerer::LowerCallTarget(
                     },
                     [&](const mir::UnitCallableTarget& t)
                         -> diag::Result<lir::CallTarget> {
-                      // A body this unit's own namespace owns is reached by the
-                      // symbol this unit emits it under, which it composes from
-                      // the position the body sits at where nothing names it.
-                      // A generic one is reached by the instance made at the
-                      // types the call names.
+                      // A body of a unit's namespace is reached by the symbol
+                      // the unit owning it emits it under, which composes it
+                      // from the position the body sits at where nothing names
+                      // it. A generic one is reached by the instance made at
+                      // the types the call names.
                       if (!d.type_arguments.empty()) {
                         return lir::CallTarget{lir::SymbolTarget{
                             .symbol = unit_->GenericInstanceSymbol(
@@ -287,43 +275,21 @@ auto FunctionLowerer::LowerCallTarget(
                       return lir::CallTarget{lir::SymbolTarget{
                           .symbol = unit_->UnitCallableSymbol(t.slot)}};
                     },
-                    [&](const mir::ExternalUnitCallableTarget& t)
-                        -> diag::Result<lir::CallTarget> {
-                      // A callable of another unit's namespace is outside this
-                      // unit and is reached by its symbol, which carries that
-                      // unit because a namespace name is unique only inside it.
-                      // Only a body that unit published can be named this way,
-                      // so the name is the whole of the part.
-                      return lir::CallTarget{lir::SymbolTarget{
-                          .symbol = lir::NamespaceCallableSymbol(
-                              t.unit_name,
-                              lir::SymbolPart::Name(t.callable_name))}};
-                    },
-                    [&](const mir::ExternalUnitClassMethodTarget& t)
-                        -> diag::Result<lir::CallTarget> {
-                      return lir::CallTarget{ExternalMethodSymbol(
-                          t.unit_name, t.class_path, t.method_name)};
-                    },
                     // A base's constructor, entered on the object the call is
                     // made on, as a `new` enters the class's own.
                     [&](const mir::ConstructorTarget& t)
                         -> diag::Result<lir::CallTarget> {
                       return ConstructorOf(t.cls).callee;
                     },
-                    [&](const mir::ExternalLibraryOverrideTarget& t)
-                        -> diag::Result<lir::CallTarget> {
-                      return lir::CallTarget{lir::SymbolTarget{
-                          .symbol = lir::ClassCallableSymbol(
-                              t.unit_name, lir::SymbolPartOf(t.class_path),
-                              lir::SymbolPart::LibraryVirtual(t.function))}};
-                    },
                     // Reached by the symbol its declaring unit emits it under,
                     // from that unit and from any other alike.
                     [&](const mir::RecordMethodTarget& t)
                         -> diag::Result<lir::CallTarget> {
+                      const mir::TypeDeclarationRef declaration =
+                          mir::RecordDeclarationOf(unit_->Mir(), t.record);
                       return lir::CallTarget{lir::SymbolTarget{
                           .symbol = lir::RecordMethodSymbol(
-                              t.declaration.unit_name, t.declaration.path,
+                              declaration.unit_name, declaration.path,
                               t.answers)}};
                     },
                     // A body this unit states for the type, which no other
@@ -581,25 +547,10 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   return std::move(fn_);
 }
 
-auto FunctionLowerer::ConstructorOf(const mir::DeclaredClassRef& cls)
-    -> EnteredConstructor {
-  return std::visit(
-      Overloaded{
-          [&](const mir::IntraUnitClassRef& intra) {
-            return EnteredConstructor{
-                .object_type = unit_->ClassValueType(intra.class_id),
-                .callee = lir::CallTarget{lir::FunctionTarget{
-                    .function = unit_->ConstructorFunction(intra.class_id)}}};
-          },
-          [&](const mir::CrossUnitClassRef& ext) {
-            return EnteredConstructor{
-                .object_type = unit_->ExternalClassValueType(
-                    ext.unit_name, ext.class_path),
-                .callee = lir::CallTarget{lir::SymbolTarget{
-                    .symbol = lir::ConstructorSymbol(
-                        ext.unit_name, lir::SymbolPartOf(ext.class_path))}}};
-          }},
-      cls);
+auto FunctionLowerer::ConstructorOf(mir::ClassId cls) -> EnteredConstructor {
+  return EnteredConstructor{
+      .object_type = unit_->ClassValueType(cls),
+      .callee = unit_->ConstructorCallTarget(cls)};
 }
 
 auto FunctionLowerer::UnwindingType() -> lir::TypeId {
@@ -1913,18 +1864,7 @@ auto FunctionLowerer::FieldStep(const mir::FieldRef& field) -> lir::Projection {
   return std::visit(
       Overloaded{
           [&](const mir::ClassFieldTarget& t) {
-            return member(
-                std::visit(
-                    Overloaded{
-                        [&](const mir::IntraUnitClassRef& own) {
-                          return unit_->ClassValueType(own.class_id);
-                        },
-                        [&](const mir::CrossUnitClassRef& other) {
-                          return unit_->ExternalClassValueType(
-                              other.unit_name, other.class_path);
-                        }},
-                    t.owner),
-                t.slot);
+            return member(unit_->ClassValueType(t.owner), t.slot);
           },
           [&](const mir::ClosureFieldTarget& t) {
             return member(unit_->ClosureValueType(t.owner), t.slot);
@@ -2223,9 +2163,7 @@ auto FunctionLowerer::ReferenceValue(
       Overloaded{
           [&](const mir::LocalRef&) { return storage(); },
           [&](const mir::StaticVariableRef&) { return storage(); },
-          [&](const mir::ExternalUnitVariableRef&) { return storage(); },
           [&](const mir::StaticPropertyRef&) { return storage(); },
-          [&](const mir::ExternalStaticPropertyRef&) { return storage(); },
           [&](const mir::EnumTableRef& ref) -> diag::Result<lir::Operand> {
             return lir::Operand{lir::EnumTableRef{
                 .table = UnitLowerer::TranslateEnumTable(ref.table),
@@ -2321,24 +2259,11 @@ auto FunctionLowerer::ReferencePlace(
           },
           // A variable of a unit's namespace is one cell for the whole program
           // that no instance holds, so it is reached by the symbol it links
-          // under rather than through a receiver -- by the unit that declares
-          // it exactly as by any other, since a namespace has no instance.
+          // under rather than through a receiver -- by the unit that owns it
+          // exactly as by any other, since a namespace has no instance.
           [&](const mir::StaticVariableRef& ref) -> diag::Result<lir::Place> {
-            const mir::CompilationUnit& mir = unit_->Mir();
             return SymbolPlace(
-                lir::NamespaceVariableSymbol(
-                    mir.name,
-                    lir::SymbolPartOf(
-                        mir::NameOf(mir.named_static_variables, ref.variable),
-                        ref.variable.value)),
-                type);
-          },
-          [&](const mir::ExternalUnitVariableRef& ref)
-              -> diag::Result<lir::Place> {
-            return SymbolPlace(
-                lir::NamespaceVariableSymbol(
-                    ref.unit_name, lir::SymbolPart::Name(ref.variable_name)),
-                type);
+                unit_->StaticVariableSymbolOf(ref.variable), type);
           },
           // A cell a class owns rather than an object of it (LRM 8.9) is that
           // same one cell for the whole program, so it is reached the same way
@@ -2347,23 +2272,7 @@ auto FunctionLowerer::ReferencePlace(
           // source spelled it, so the symbol is settled without reading what
           // any other class holds.
           [&](const mir::StaticPropertyRef& ref) -> diag::Result<lir::Place> {
-            const mir::Class& cls = unit_->Mir().GetClass(ref.owner);
-            return SymbolPlace(
-                lir::StaticPropertySymbol(
-                    unit_->Mir().name,
-                    lir::SymbolPartOf(cls.path, ref.owner.value),
-                    lir::SymbolPartOf(
-                        mir::NameOf(cls.named_static_properties, ref.prop),
-                        ref.prop.value)),
-                type);
-          },
-          [&](const mir::ExternalStaticPropertyRef& ref)
-              -> diag::Result<lir::Place> {
-            return SymbolPlace(
-                lir::StaticPropertySymbol(
-                    ref.unit_name, lir::SymbolPartOf(ref.class_path),
-                    lir::SymbolPart::Name(ref.property_name)),
-                type);
+            return SymbolPlace(unit_->StaticPropertySymbolOf(ref), type);
           },
           // A class's definition is a constant the declaring unit emits, so
           // the place opens at its address.
@@ -2371,7 +2280,7 @@ auto FunctionLowerer::ReferencePlace(
             return lir::Place{
                 .base =
                     lir::DefinitionRef{
-                        .defined = unit_->ClassRefValueType(r.of),
+                        .defined = unit_->ClassValueType(r.of),
                         .type = unit_->Types().Intern(
                             lir::Type{lir::PointerType{
                                 .pointee = unit_->TranslateType(type),
@@ -2628,15 +2537,22 @@ auto FunctionLowerer::LowerCallOperands(
 auto FunctionLowerer::ObjectAddress(
     const mir::Block& block, mir::ExprId reaches)
     -> diag::Result<lir::Operand> {
-  auto object = WrapperContentsPlace(block, reaches);
-  if (!object) {
-    return std::unexpected(std::move(object.error()));
+  auto part = WrapperContentsPlace(block, reaches);
+  if (!part) {
+    return std::unexpected(std::move(part.error()));
   }
-  return AddressOf(
-      *std::move(object),
+  const lir::Operand reached = AddressOf(
+      *std::move(part),
       unit_->TranslateType(
           mir::ObjectReachedThrough(
               unit_->Mir().types, block.exprs.Get(reaches).type)));
+  // The library takes an object as the part every object starts with, which an
+  // interface class's part is not.
+  return Emit(
+      AddressType(unit_->Types().Intern(
+          lir::Type{
+              lir::RuntimeClassType{.which = support::RuntimeClass::kObject}})),
+      lir::CastInstr{.operand = reached});
 }
 
 auto FunctionLowerer::LowerNew(
@@ -2777,7 +2693,7 @@ auto FunctionLowerer::LowerObjectNew(
 }
 
 auto FunctionLowerer::EnterConstructor(
-    const mir::DeclaredClassRef& cls, const lir::Operand& object,
+    mir::ClassId cls, const lir::Operand& object,
     std::vector<lir::Operand> arguments) -> diag::Result<void> {
   const EnteredConstructor constructor = ConstructorOf(cls);
   // The object leads its arguments the way a receiver leads any body's

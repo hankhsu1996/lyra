@@ -21,7 +21,7 @@ auto CanonicalVirtualSlot(
   return std::visit(
       Overloaded{
           [&](const mir::IntroducesVirtualSlot&) -> mir::VirtualSlot {
-            return mir::LocalVirtualSlot{
+            return mir::VirtualSlot{
                 .owner_class = self_owner, .slot = self_slot};
           },
           [](const mir::OverridesVirtualSlot& o) -> mir::VirtualSlot {
@@ -31,9 +31,8 @@ auto CanonicalVirtualSlot(
           // call of the source names the behavior such a method answers.
           [](const mir::OverridesLibraryVirtual&) -> mir::VirtualSlot {
             throw InternalError(
-                "CanonicalVirtualSlot: a call names a phase of the library's "
-                "scope, which only the library calls -- please report this as "
-                "a bug");
+                "CanonicalVirtualSlot: a call names a function of the library, "
+                "which only the library calls -- please report this as a bug");
           }},
       role);
 }
@@ -41,21 +40,8 @@ auto CanonicalVirtualSlot(
 auto AsIntroducer(
     const mir::TypePool& types, mir::Block& block, mir::ExprId receiver,
     const mir::VirtualSlot& slot) -> mir::ExprId {
-  const mir::TypeId introducer = types.Intern(
-      mir::Type{mir::ObjectType{
-          .of = std::visit(
-              Overloaded{
-                  [](const mir::LocalVirtualSlot& local)
-                      -> mir::DeclaredClassRef {
-                    return mir::IntraUnitClassRef{local.owner_class};
-                  },
-                  [](const mir::ExternalVirtualSlot& external)
-                      -> mir::DeclaredClassRef {
-                    return mir::CrossUnitClassRef{
-                        .unit_name = external.unit_name,
-                        .class_path = external.class_path};
-                  }},
-              slot)}});
+  const mir::TypeId introducer =
+      types.Intern(mir::Type{mir::ObjectType{.of = slot.owner_class}});
   const auto& held =
       types.Get(block.exprs.Get(receiver).type).Get<mir::PointerType>();
   return ObjectAs(
@@ -81,6 +67,7 @@ auto ClassShape::AddField(mir::TypeId type) -> mir::FieldId {
 
 auto ClassShape::OpenClass() const -> mir::Class {
   mir::Class cls{
+      .defining_unit = std::nullopt,
       .path = path,
       .base = base,
       .implements = implements,

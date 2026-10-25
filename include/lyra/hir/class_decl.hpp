@@ -7,7 +7,6 @@
 #include "lyra/base/arena.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/hir/class_ref.hpp"
-#include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/field_id.hpp"
 #include "lyra/hir/fixed_name.hpp"
@@ -20,41 +19,6 @@
 #include "lyra/hir/value_ref.hpp"
 
 namespace lyra::hir {
-
-// A class property (LRM 8.4): a named member variable of a class, with its
-// own per-object storage. The declared `= value` initializer (LRM 8.7),
-// when the source writes one, is a construction-protocol fact and lives on
-// `ClassDecl.field_inits`, not on the property's declaration -- the two
-// facets belong to different concerns.
-struct ClassField {
-  std::string name;
-  TypeId type;
-  // Whether a unit other than this one may name the property. A `local` one
-  // (LRM 8.18) is reachable nowhere outside the class it is declared in, so no
-  // other unit can name it or count past it; anything else is reachable
-  // through the class or through an extension of it, and an extension may be
-  // declared anywhere.
-  bool is_published = true;
-  RandomQualifier random = RandomQualifier::kNone;
-
-  auto operator==(const ClassField&) const -> bool = default;
-};
-
-// A class static property (LRM 8.9): a named type-associated storage cell
-// the class owns, shared by every instance. Distinct from `ClassField` (an
-// instance member replicated per object) because a static property is one
-// cell owned by the type, not a field the instance member set includes.
-// The declared `= value` initializer, when the source writes one, is a
-// design-init fact (LRM 10.5) and lives on `ClassDecl.static_property_inits`
-// -- it runs once before any initial or always procedure, not inside the
-// constructor.
-struct ClassStaticProperty {
-  std::string name;
-  TypeId type;
-  RandomQualifier random = RandomQualifier::kNone;
-
-  auto operator==(const ClassStaticProperty&) const -> bool = default;
-};
 
 // A source-written property initializer (LRM 8.7): the assignment that
 // runs against the receiver during construction, before the user
@@ -113,18 +77,29 @@ struct BaseCall {
 // behavior. Nothing answers it where the class is abstract and leaves the
 // implementation to a class extending it.
 struct ConformingBehavior {
-  VirtualBehavior interface_behavior;
-  std::optional<VirtualBehavior> answered_by;
+  ClassMethodTarget interface_behavior;
+  std::optional<ClassMethodTarget> answered_by;
 
   auto operator==(const ConformingBehavior&) const -> bool = default;
 };
 
-// A SystemVerilog class declaration (LRM 8). The class's properties and its
-// instance methods; references to a class name resolve to this declaration's
-// id. The name is not part of a declaration: a class variable may be declared
-// before the class itself is (LRM 8.27), so what a class is called has to be
-// readable while its declaration does not yet exist, and it travels with the
-// identity. A class is a scope of the name tree (LRM 23.9), and the scope that
+// A method a class answers an interface class's behavior with where it inherits
+// the implementation rather than declaring one (LRM 8.26.2): its body enters
+// that implementation, and it overrides the implementation's behavior. No
+// declaration of the source stands for it, so it is no member of the class and
+// takes no position among them.
+struct InterfaceForward {
+  SubroutineDecl method;
+  ClassMethodTarget overrides;
+
+  auto operator==(const InterfaceForward&) const -> bool = default;
+};
+
+// The bodies of a class this unit declares (LRM 8): what lowering the class
+// compiles, beside what the class declares, which every unit reading it asks
+// about and which the class's declaration states -- what it extends and
+// implements, whether it is an interface class, what each method is in
+// dispatch. A class is a scope of the name tree (LRM 23.9), and the scope that
 // declares it says so -- a class declared inside a structural scope is a type
 // of that scope's instance (LRM 6.22), so its bodies name that instance's
 // declarations and count their hops from it. Each method (LRM 8.6) is a
@@ -132,41 +107,10 @@ struct ConformingBehavior {
 // properties through it. A method's identity exists before its lowered form
 // does: one method's body may name another the source declared later
 // (LRM 13.7), and a method declared `extern` has its body outside the class
-// body entirely (LRM 8.24).
-//
-// `is_interface_class` marks an `interface class` declaration (LRM 8.26): a
-// class whose body carries only pure virtual method contracts -- no
-// instance storage, no constructor, no static storage. Interface classes
-// and regular classes share this one declaration form because their
-// object-model shape coincides: an interface class is a regular class
-// whose non-contract slots are empty by LRM 8.26 syntax. The bit is what
-// consumers read to route emission and dispatch; the "which slots are
-// empty" facts hold because the frontend admits only the LRM 8.26 syntax
-// for a class flagged interface.
-//
-// `takes_declaring_instance` says whether a construction of the class and a
-// call of a method of the class itself are handed the instance the class
-// belongs to (LRM 6.22). A class a design element declares keeps what it holds
-// for itself on that instance, so it takes it; a class a namespace unit
-// declares belongs to no instance, and an interface class keeps nothing and
-// runs no body (LRM 8.26), so neither takes one. What a site hands over and
-// what the class's own bodies take both follow from it.
-//
-// `base` names the class this one extends (LRM 8.13), absent when the class
-// extends no other. Only own members appear in `fields` / `methods`;
-// inherited members are reached through the base's registry entry. An
-// interface class carries no concrete base -- its parent interface classes
-// live in `implements`.
-//
-// `implements` names the interface classes this one commits to satisfying
-// (LRM 8.26.2): for a regular class, the source `implements` clause; for
-// an interface class, the source `extends` clause, which aggregates parent
-// interface class contracts into this one's requirement set. The two
-// source keywords land in one field because at the object-model layer
-// they name the same relation -- aggregate these interface classes' pure
-// virtual method contracts. Multiple entries are allowed (multiple
-// inheritance among interface class contracts is legal, LRM 8.26.2); the
-// concrete-base single-value rule stays with `base`.
+// body entirely (LRM 8.24). Every member is at the position the class's
+// declaration gives it, so the declaration and the bodies are read with one
+// coordinate: a property's is where the class places it, and a method's is its
+// position among the methods the class declares.
 //
 // `conforming` states, for every behavior of every interface class a value of
 // this class is also a value of (LRM 8.26.5) -- the ones it names, the ones
@@ -185,9 +129,10 @@ struct ConformingBehavior {
 // class-level construction fact, not a statement inside the ctor body (LRM
 // 8.7) -- the source may state it nowhere, or on the extends specifier, and it
 // happens either way. Any argument expression referencing the ctor's own
-// formals lives in that body's arena. It is read only where `base` is present,
-// and is complete there: a class that extends another enters that base's
-// construction, so "nobody computed the arguments" is not a state this reaches.
+// formals lives in that body's arena. It is read only where the class extends
+// another, and is complete there: a class that extends another enters that
+// base's construction, so "nobody computed the arguments" is not a state this
+// reaches.
 //
 // `field_inits` peers with `constructor` for the same reason: an initializer
 // executes as part of the class's construction protocol before the user
@@ -195,10 +140,6 @@ struct ConformingBehavior {
 // arena. Only fields the source declared with an explicit `= value` appear
 // here; a field without one takes its type's Table 7-1 default at
 // construction.
-//
-// `static_properties` peers with `fields` but stores type-associated cells
-// (LRM 8.9), not instance members. Inherited static properties are reached
-// through the base's registry entry, same as inherited instance fields.
 //
 // `static_init` is the arena hosting each static property's initializer
 // expression tree (LRM 10.5), kept separate from the constructor body because
@@ -223,14 +164,9 @@ struct ConformingBehavior {
 // processes', so a body reaches its scope tree the same way wherever it was
 // declared.
 struct ClassDecl {
-  bool is_interface_class = false;
-  bool takes_declaring_instance = false;
-  std::optional<ClassRef> base;
-  std::vector<ClassRef> implements;
   std::vector<ConformingBehavior> conforming;
-  base::Arena<ClassField, FieldId> fields;
-  base::Arena<ClassStaticProperty, StaticPropertyId> static_properties;
   base::Registry<SubroutineDecl, MethodId> methods;
+  std::vector<InterfaceForward> interface_forwards;
   SubroutineDecl constructor;
   BaseCall base_call;
   std::vector<FieldInit> field_inits;
@@ -238,16 +174,6 @@ struct ClassDecl {
   std::vector<StaticPropertyInit> static_property_inits;
   base::Registry<ProceduralScopeDecl, ProceduralScopeId> procedural_scopes;
   FixedName fixed_name;
-  // The covergroups the class embeds (LRM 19.4), in the order its signature
-  // publishes the method making each: the one at position `i` is made by the
-  // method `i` places after every method the source declares.
-  std::vector<CovergroupId> embedded_covergroups;
-  // The `pre_randomize` and `post_randomize` the class declares, where it
-  // declares one. `randomize()` calls them on an object of the class, so the
-  // one a class declares replaces its base's, though neither is virtual (LRM
-  // 18.6.2).
-  std::optional<MethodId> pre_randomize;
-  std::optional<MethodId> post_randomize;
 
   auto operator==(const ClassDecl&) const -> bool = default;
 };

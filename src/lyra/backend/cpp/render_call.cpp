@@ -308,9 +308,11 @@ void WriteDirectCallee(
     CallWriter& callee) {
   std::visit(
       Overloaded{
-          // Qualified by the owning class, `obj.Base::f()`. For a virtual
-          // method called directly (LRM 8.15 `super`) that is what makes C++
-          // skip virtual dispatch; for any other method it changes nothing.
+          // Qualified by the owning class, `obj.Base::f()`, or
+          // `obj.::Pkg::C::f()` for a class another unit defines, found once
+          // that unit's header is included. For a virtual method called
+          // directly (LRM 8.15 `super`) that is what makes C++ skip virtual
+          // dispatch; for any other method it changes nothing.
           [&](const mir::CallableTarget& t) {
             const auto& cls = view.Unit().GetClass(t.owner);
             callee.Named(
@@ -339,15 +341,16 @@ void WriteDirectCallee(
             }
             throw InternalError("backend::cpp: unknown ClosureKind");
           },
-          // A function of this unit's namespace is qualified the same way as
-          // another unit's: `::Top::f`, and a generic one names the types it
-          // is called at as its template's arguments, `::Top::f<A, B>`.
+          // A function of a unit's namespace is qualified by that unit's,
+          // `::Top::f`, this unit's own included, and a generic one names the
+          // types it is called at as its template's arguments, `::Top::f<A,
+          // B>`.
           [&](const mir::UnitCallableTarget& t) {
             const std::vector<TemplateArgument> stated =
                 TemplateArgumentsOf(view.Unit(), direct.type_arguments, {});
             callee.Named(
                 ReceiverPlacement::kIntoCalleeName,
-                CppUnitScope(view.Unit().name),
+                CppUnitScope(CppUnitCallableOwner(view.Unit(), t.slot)),
                 "::", CppUnitCallableName(view.Unit(), t.slot),
                 TemplateArgumentList{
                     .unit = &view.Unit(), .arguments = stated});
@@ -372,22 +375,6 @@ void WriteDirectCallee(
                 view, support::RuntimeEntryOf(id), direct, arguments,
                 result_type, callee);
           },
-          // A function of another unit (LRM 26.3): `::Pkg::f`.
-          [&](const mir::ExternalUnitCallableTarget& t) {
-            callee.Named(
-                ReceiverPlacement::kIntoCalleeName, CppUnitScope(t.unit_name),
-                "::", ToCppName(t.callable_name));
-          },
-          // A method of another unit's class, `obj.::Pkg::C::f()`, found once
-          // that unit's header is included. The class qualifier skips virtual
-          // dispatch, as a direct call to a virtual method requires (LRM 8.15
-          // `super`).
-          [&](const mir::ExternalUnitClassMethodTarget& t) {
-            callee.Named(
-                ReceiverPlacement::kIntoCalleeName,
-                CppExternalClassPath(t.unit_name, t.class_path),
-                "::", ToCppName(t.method_name));
-          },
           // A base's constructor on the object being constructed,
           // `(*self).Base::sv_construct(args)`, qualified as a direct call to a
           // member is.
@@ -397,23 +384,16 @@ void WriteDirectCallee(
                 CppClassRef(view.Unit(), t.cls),
                 "::", CppConstructorMemberName());
           },
-          // Another unit's class's override of a library class's function,
-          // `obj.::Pkg::C::sv_constrain(p)`, qualified so it does not dispatch.
-          [&](const mir::ExternalLibraryOverrideTarget& t) {
-            callee.Named(
-                ReceiverPlacement::kIntoCalleeName,
-                CppExternalClassPath(t.unit_name, t.class_path), "::",
-                VerbatimName{.text = support::LibraryVirtualName(t.function)});
-          },
           // A method of a struct or a union, qualified by its type the way a
           // class method is: `v.::Pkg::sv_types::s::IsBitIdentical(w)` on the
           // value it is asked of, `::Pkg::sv_types::s::FromBitstream(b)` for a
           // question asked of the type.
           [&](const mir::RecordMethodTarget& t) {
+            const mir::TypeDeclarationRef declaration =
+                mir::RecordDeclarationOf(view.Unit(), t.record);
             callee.Named(
                 ReceiverPlacement::kIntoCalleeName,
-                CppRecordQualifiedName(
-                    t.declaration.unit_name, t.declaration.path),
+                CppRecordQualifiedName(declaration.unit_name, declaration.path),
                 "::", CppValueOperationMemberName(t.answers));
           },
           // An operation a fixed-size array answers is the library

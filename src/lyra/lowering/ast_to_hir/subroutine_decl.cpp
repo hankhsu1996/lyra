@@ -65,25 +65,6 @@ auto IsMadeOnAnObject(
           !callee.flags.has(slang::ast::MethodFlags::Static));
 }
 
-auto RandomizationHookReached(const slang::ast::SubroutineSymbol& method)
-    -> const slang::ast::SubroutineSymbol* {
-  const slang::ast::SubroutineSymbol* hook = &method;
-  if (method.name != "pre_randomize" && method.name != "post_randomize") {
-    return hook;
-  }
-  while (hook->flags.has(slang::ast::MethodFlags::BuiltIn)) {
-    const slang::ast::Type* base = DeclaringClassOf(*hook)->getBaseClass();
-    if (base == nullptr || base->isError()) break;
-    const slang::ast::Symbol* inherited =
-        base->getCanonicalType().as<slang::ast::ClassType>().find(method.name);
-    const slang::ast::SubroutineSymbol* declared =
-        inherited == nullptr ? nullptr : SubroutineOf(*inherited);
-    if (declared == nullptr) break;
-    hook = declared;
-  }
-  return hook;
-}
-
 auto ParamDirectionOf(const slang::ast::FormalArgumentSymbol& formal)
     -> hir::ParamDirection {
   switch (formal.direction) {
@@ -446,8 +427,6 @@ auto LowerSubroutineDeclImpl(
               .result_var = result_var,
               .body = std::move(body),
               .root_stmt = root_stmt,
-              .is_virtual = false,
-              .overrides = std::nullopt,
               .reads = std::move(reads)},
       .base_arguments = std::move(base_arguments)};
 }
@@ -533,9 +512,7 @@ auto LowerMethodPrototypeDecl(
       .params = std::move(params),
       .result_var = std::nullopt,
       .body = std::move(body),
-      .is_virtual = true,
-      .is_prototype = true,
-      .overrides = std::nullopt,
+      .root_stmt = std::nullopt,
       .reads = {},
   };
 }

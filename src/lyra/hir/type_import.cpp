@@ -1,13 +1,12 @@
 #include "lyra/hir/type_import.hpp"
 
 #include <optional>
-#include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/hir/class_ref.hpp"
+#include "lyra/hir/class_id.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
 
@@ -47,12 +46,15 @@ auto ImportUnpackedFields(
 }  // namespace
 
 TypeImporter::TypeImporter(
-    const TypePool& source, std::optional<TypePoolOwner> source_owner,
-    TypePool& destination, TypeImportMemo& memo)
+    const TypePool& source, TypePool& destination, TypeImportMemo& memo,
+    ClassIdMap classes, CovergroupIdMap covergroups,
+    ScopeClassIdMap scope_classes)
     : source_(&source),
-      source_owner_(source_owner),
       destination_(&destination),
-      memo_(&memo) {
+      memo_(&memo),
+      classes_(std::move(classes)),
+      covergroups_(std::move(covergroups)),
+      scope_classes_(std::move(scope_classes)) {
 }
 
 auto TypeImporter::Import(TypeId id) -> TypeId {
@@ -70,45 +72,16 @@ auto TypeImporter::Import(TypeId id) -> TypeId {
   return here;
 }
 
-auto TypeImporter::ImportClassRef(const ClassRef& ref) const -> ClassRef {
-  return std::visit(
-      Overloaded{
-          [this](const LocalClassRef& local) -> ClassRef {
-            if (!source_owner_.has_value()) {
-              throw InternalError(
-                  "TypeImporter: a pool that has left its unit names every "
-                  "class by declaring unit and path, so a local class id "
-                  "cannot appear in one");
-            }
-            return ExternalClassRef{
-                .unit_name = std::string{source_owner_->unit_name},
-                .class_path = source_owner_->classes->PathOf(local.class_id)};
-          },
-          [](const ExternalClassRef& external) -> ClassRef {
-            return external;
-          }},
-      ref);
+auto TypeImporter::ImportClass(ClassId id) const -> ClassId {
+  return classes_(id);
 }
 
-auto TypeImporter::ImportCovergroupRef(const CovergroupRef& ref) const
-    -> CovergroupRef {
-  return std::visit(
-      Overloaded{
-          [this](const LocalCovergroupRef& local) -> CovergroupRef {
-            if (!source_owner_.has_value()) {
-              throw InternalError(
-                  "TypeImporter: a pool that has left its unit names every "
-                  "covergroup by declaring unit and path, so a local "
-                  "covergroup id cannot appear in one");
-            }
-            return ExternalCovergroupRef{
-                .unit_name = std::string{source_owner_->unit_name},
-                .path = source_owner_->covergroups->PathOf(local.covergroup)};
-          },
-          [](const ExternalCovergroupRef& external) -> CovergroupRef {
-            return external;
-          }},
-      ref);
+auto TypeImporter::ImportCovergroup(CovergroupId id) const -> CovergroupId {
+  return covergroups_(id);
+}
+
+auto TypeImporter::ImportScopeClass(ScopeClassId id) const -> ScopeClassId {
+  return scope_classes_(id);
 }
 
 auto TypeImporter::Import(const PublishedCovergroup& published)
@@ -133,19 +106,18 @@ auto TypeImporter::Import(const PublishedCovergroup& published)
         PublishedCoverpoint{
             .name = point.name,
             .value_type = Import(point.value_type),
-            .library_class = ImportClassRef(point.library_class)});
+            .library_class = ImportClass(point.library_class)});
   }
   return PublishedCovergroup{
       .path = published.path,
       .formals = formals(published.formals),
       .sample_formals = formals(published.sample_formals),
       .embedding = published.embedding.transform(
-          [&](const ClassRef& cls) { return ImportClassRef(cls); }),
+          [&](ClassId cls) { return ImportClass(cls); }),
       .coverpoints = std::move(coverpoints),
       .crosses = published.crosses,
-      .base = published.base.transform([&](const CovergroupRef& base) {
-        return ImportCovergroupRef(base);
-      })};
+      .base = published.base.transform(
+          [&](CovergroupId base) { return ImportCovergroup(base); })};
 }
 
 auto TypeImporter::Import(const Type& type) -> Type {
@@ -212,16 +184,7 @@ auto TypeImporter::Import(const Type& type) -> Type {
           [](const RealTimeType& t) -> Type { return Type{t}; },
           [](const ChandleType& t) -> Type { return Type{t}; },
           [this](const ClassHandleType& t) -> Type {
-            return std::visit(
-                Overloaded{
-                    [this](const LocalClassRef& local) -> Type {
-                      return Type{
-                          ClassHandleType{.class_ref = ImportClassRef(local)}};
-                    },
-                    [](const ExternalClassRef& external) -> Type {
-                      return Type{ClassHandleType{.class_ref = external}};
-                    }},
-                t.class_ref);
+            return Type{ClassHandleType{.class_id = ImportClass(t.class_id)}};
           },
           [](const ImportedClassHandleType& t) -> Type { return Type{t}; },
           [this](const WeakHandleType& t) -> Type {
@@ -229,10 +192,19 @@ auto TypeImporter::Import(const Type& type) -> Type {
           },
           [this](const CovergroupHandleType& t) -> Type {
             return Type{CovergroupHandleType{
-                .covergroup = ImportCovergroupRef(t.covergroup)}};
+                .covergroup = ImportCovergroup(t.covergroup)}};
           },
-          [](const UnitObjectType& t) -> Type { return Type{t}; },
-          [](const UnitObjectsType& t) -> Type { return Type{t}; },
+          [this](const UnitObjectType& t) -> Type {
+            return Type{
+                UnitObjectType{.scope_class = ImportScopeClass(t.scope_class)}};
+          },
+          [this](const UnitObjectsType& t) -> Type {
+            UnitObjectsType imported = t;
+            for (UnitObjectType& kind : imported.kinds) {
+              kind.scope_class = ImportScopeClass(kind.scope_class);
+            }
+            return Type{std::move(imported)};
+          },
           [](const VirtualInterfaceType& t) -> Type { return Type{t}; },
           [](const NullType& t) -> Type { return Type{t}; },
           [](const DynamicType& t) -> Type { return Type{t}; },

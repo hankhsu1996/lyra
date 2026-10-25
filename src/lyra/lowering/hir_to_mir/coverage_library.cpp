@@ -12,8 +12,8 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/class_decl.hpp"
+#include "lyra/hir/class_declaration.hpp"
 #include "lyra/hir/compilation_unit.hpp"
-#include "lyra/hir/external_class.hpp"
 #include "lyra/hir/published_covergroup.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type.hpp"
@@ -31,135 +31,57 @@ namespace {
           what));
 }
 
-// The prototype a call of a method of this unit's own is made through.
-auto PrototypeOf(const hir::SubroutineDecl& method) -> hir::PublishedCallable {
-  hir::PublishedCallable prototype{
-      .name = method.name,
-      .interface =
-          hir::ExternalCalleeInterface{.kind = method.kind, .params = {}},
-      .result_type = method.result_type};
-  for (const hir::SubroutineParam& param : method.params) {
-    prototype.interface.params.push_back(
-        hir::ExternalCalleeParam{
-            .direction = param.direction,
-            .type = method.body.procedural_vars.Get(param.var).type});
-  }
-  return prototype;
-}
-
 }  // namespace
 
 CoverageLibrary::CoverageLibrary(const hir::CompilationUnit& unit)
     : unit_(&unit), refs_(&*unit.coverage_library) {
 }
 
-auto CoverageLibrary::MethodOf(
-    const hir::ClassRef& cls, std::string_view name) const -> Method {
-  for (std::optional<hir::ClassRef> at = cls; at.has_value();) {
-    if (const auto* local = std::get_if<hir::LocalClassRef>(&*at)) {
-      const hir::ClassDecl& decl = unit_->classes.Get(local->class_id);
-      for (const hir::MethodId id : decl.methods.Ids()) {
-        const hir::SubroutineDecl& method = decl.methods.Get(id);
-        if (method.name != name) continue;
-        return Method{
-            .callee =
-                hir::LocalClassMethodTarget{
-                    .owner = local->class_id, .method = id},
-            .prototype = PrototypeOf(method)};
-      }
-      at = decl.base;
-      continue;
-    }
-    const auto& external = std::get<hir::ExternalClassRef>(*at);
-    const hir::ExternalClass& record = Record(external);
-    if (const hir::PublishedMethod* method =
-            hir::FindMethod(record.methods, name)) {
-      const bool is_virtual = std::visit(
-          Overloaded{
-              [](const hir::TypeAssociated&) { return false; },
-              [](const hir::NotVirtual&) { return false; },
-              [](const hir::IntroducesVirtual&) { return true; },
-              [](const hir::OverridesVirtual&) { return true; }},
-          method->dispatch);
+auto CoverageLibrary::MethodOf(hir::ClassId cls, std::string_view name) const
+    -> Method {
+  for (std::optional<hir::ClassId> at = cls; at.has_value();
+       at = unit_->classes.BaseOf(*at)) {
+    const hir::DeclaredMethods& methods =
+        unit_->classes.Declaration(*at).methods;
+    if (const std::optional<hir::MethodId> method =
+            hir::FindMethod(methods, name)) {
       return Method{
-          .callee =
-              hir::ExternalMethodCallee{
-                  .target =
-                      hir::ExternalClassMethodTarget{
-                          .unit_name = external.unit_name,
-                          .class_path = external.class_path,
-                          .method_name = std::string{name}},
-                  .behavior = is_virtual
-                                  ? std::optional<hir::VirtualBehavior>{SlotOf(
-                                        external, name)}
-                                  : std::nullopt,
-                  .interface = method->prototype.interface},
-          .prototype = method->prototype};
+          .callee = hir::ClassMethodTarget{.owner = *at, .method = *method},
+          .prototype = methods.Get(*method).prototype};
     }
-    at = record.base.transform(
-        [](const hir::ExternalClassRef& base) { return hir::ClassRef{base}; });
   }
   Unpublished(std::format("method '{}'", name));
 }
 
-auto CoverageLibrary::PropertyOf(
-    const hir::ClassRef& cls, std::string_view name) const -> Property {
-  for (std::optional<hir::ClassRef> at = cls; at.has_value();) {
-    if (const auto* local = std::get_if<hir::LocalClassRef>(&*at)) {
-      const hir::ClassDecl& decl = unit_->classes.Get(local->class_id);
-      for (const hir::FieldId id : decl.fields.Ids()) {
-        if (decl.fields.Get(id).name != name) continue;
-        return Property{
-            .target =
-                hir::LocalClassPropertyTarget{
-                    .owner = local->class_id, .field = id},
-            .type = decl.fields.Get(id).type};
-      }
-      at = decl.base;
-      continue;
-    }
-    const auto& external = std::get<hir::ExternalClassRef>(*at);
-    const hir::ExternalClass& record = Record(external);
-    if (const auto id = hir::FindProperty(record.properties, name)) {
+auto CoverageLibrary::PropertyOf(hir::ClassId cls, std::string_view name) const
+    -> Property {
+  for (std::optional<hir::ClassId> at = cls; at.has_value();
+       at = unit_->classes.BaseOf(*at)) {
+    const hir::DeclaredProperties& properties =
+        unit_->classes.Declaration(*at).properties;
+    if (const std::optional<hir::FieldId> field =
+            hir::FindProperty(properties, name)) {
       return Property{
-          .target =
-              hir::ExternalClassPropertyTarget{
-                  .unit_name = external.unit_name,
-                  .class_path = external.class_path,
-                  .property = *id},
-          .type = record.properties.Get(*id).type};
+          .target = hir::ClassPropertyTarget{.owner = *at, .field = *field},
+          .type = properties.Get(*field).type};
     }
-    at = record.base.transform(
-        [](const hir::ExternalClassRef& base) { return hir::ClassRef{base}; });
   }
   Unpublished(std::format("property '{}'", name));
 }
 
-auto CoverageLibrary::ConstructorParamTypes(const hir::ClassRef& cls) const
+auto CoverageLibrary::ConstructorParamTypes(hir::ClassId cls) const
     -> std::vector<hir::TypeId> {
   std::vector<hir::TypeId> types;
-  if (const auto* local = std::get_if<hir::LocalClassRef>(&cls)) {
-    const hir::SubroutineDecl& constructor =
-        unit_->classes.Get(local->class_id).constructor;
-    for (const hir::SubroutineParam& param : constructor.params) {
-      types.push_back(constructor.body.procedural_vars.Get(param.var).type);
-    }
-    return types;
-  }
-  const hir::ExternalClass& record =
-      Record(std::get<hir::ExternalClassRef>(cls));
+  const hir::ClassDeclaration& record = unit_->classes.Declaration(cls);
   if (!record.constructor.has_value()) Unpublished("constructor");
-  for (const hir::ExternalCalleeParam& param : record.constructor->params) {
+  for (const hir::CalleeParam& param : record.constructor->params) {
     types.push_back(param.type);
   }
   return types;
 }
 
-auto CoverageLibrary::TakesDeclaringInstance(const hir::ClassRef& cls) const
-    -> bool {
-  const auto* local = std::get_if<hir::LocalClassRef>(&cls);
-  return local != nullptr &&
-         unit_->classes.Get(local->class_id).takes_declaring_instance;
+auto CoverageLibrary::TakesDeclaringInstance(hir::ClassId cls) const -> bool {
+  return unit_->classes.Declaration(cls).takes_declaring_instance;
 }
 
 auto CoverageLibrary::EnumeratorOf(hir::TypeId type, std::string_view name)
@@ -172,35 +94,6 @@ auto CoverageLibrary::EnumeratorOf(hir::TypeId type, std::string_view name)
     if (member.name == name) return member.value;
   }
   Unpublished(std::format("enumerator '{}'", name));
-}
-
-auto CoverageLibrary::Record(const hir::ExternalClassRef& ref) const
-    -> const hir::ExternalClass& {
-  const hir::ExternalClass* record = hir::FindExternalClass(
-      unit_->external_classes, ref.unit_name, ref.class_path);
-  if (record == nullptr) {
-    Unpublished(
-        std::format("record of '{}'", support::DisplayOf(ref.class_path)));
-  }
-  return *record;
-}
-
-// The behavior a virtual method answers, named by the class that introduced it
-// (LRM 8.20).
-auto CoverageLibrary::SlotOf(hir::ExternalClassRef from, std::string_view name)
-    const -> hir::ExternalDispatchSlot {
-  for (std::optional<hir::ExternalClassRef> at = from; at.has_value();) {
-    const hir::ExternalClass& record = Record(*at);
-    if (const auto behavior =
-            hir::FindIntroducedVirtual(record.methods, name)) {
-      return hir::ExternalDispatchSlot{
-          .unit_name = at->unit_name,
-          .class_path = at->class_path,
-          .behavior = *behavior};
-    }
-    at = record.base;
-  }
-  Unpublished(std::format("introduction of virtual method '{}'", name));
 }
 
 auto CovergroupLayoutOf(const hir::PublishedCovergroup& published)

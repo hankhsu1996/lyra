@@ -780,10 +780,11 @@ the detail lives in the entry itself.
   either reading. Undoing the conversions in the lowering, changing the front end, and recording the
   wider value as a defect are rejected.
 - [a-class-has-one-identity-in-a-unit](a-class-has-one-identity-in-a-unit.md) -- a class is named by
-  one identity, intra-unit or external-unit, and a class of this unit is intra-unit however the name
-  reaching it was written; what is known of a class is its own declaration or another unit's record;
-  fields are named alike while callables keep their two coordinate spaces; a loop generate's blocks
-  stay held as the scope every block is, since which blocks share a body is a fact of the bodies.
+  one identity in a unit whichever unit declares it, the registry turning its key into that identity
+  once; what is known of a class is one answer computed for this unit's and read back for another's;
+  every member is named in one coordinate space, a behavior by the class that introduced it; a loop
+  generate's blocks stay held as the scope every block is, since which blocks share a body is a fact
+  of the bodies.
 - [a-specialization-is-held-where-its-arguments-are](a-specialization-is-held-where-its-arguments-are.md)
   -- a generic's specialization is held by the design element whose instances replicate it, or is a
   unit of its own where none does, never by the unit declaring the generic; the scope replicating a
@@ -792,9 +793,9 @@ the detail lives in the entry itself.
   struct. Making it in every naming unit, in the first unit needing it, or keeping it in the
   generic's unit are rejected.
 - [cross-unit-class-translation](cross-unit-class-translation.md) -- AST-to-HIR splits class
-  interning into a top-down `InternLocalClass` (never asks "which CU?") and a boundary
-  `ResolveClassRef` (walks slang's parent chain only when a class is not already cached);
-  design-wide precomputed maps and single-conflated interning are rejected.
+  interning into a top-down `InternOwnClass` (never asks "which CU?") and a boundary `ResolveClass`
+  (walks slang's parent chain only when a class is not already cached); design-wide precomputed maps
+  and single-conflated interning are rejected.
 - [class-declared-in-a-structural-scope](class-declared-in-a-structural-scope.md) -- a class a
   module, interface, or generate block declares is a type of that scope's instance (LRM 6.22, 23.9),
   so the object records which instance it belongs to and construction supplies it -- one per class
@@ -1165,13 +1166,13 @@ the detail lives in the entry itself.
   on are rejected.
 - [reaching-past-a-published-class](reaching-past-a-published-class.md) -- a class promises what it
   declares and the class it extends, never what it inherited, so a referrer resolves an inherited
-  property or behavior by walking that chain and the coordinate names where the walk landed; reading
-  each promise is what records the dependency, so reaching past a class makes the introducer's unit
-  a real dependency, and nothing bounds in advance which promises it may read. Flattening the
-  promise at publish, resolving the chain at elaboration, a pre-computed consumed set, and
-  publishing what a class keeps to itself are rejected. That last rejection and D1's are superseded
-  by [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), where a
-  promise states the type of every property, unnamed where `local`, and every method's prototype.
+  property or behavior by walking that chain and the coordinate names where the walk landed; what a
+  unit's output reads of each promise is its dependency, so reaching past a class makes the
+  introducer's unit a real dependency, and nothing bounds in advance which promises it may read.
+  Flattening the promise at publish, resolving the chain at elaboration, a pre-computed consumed
+  set, and publishing what a class keeps to itself are rejected. That last rejection and D1's are
+  superseded by [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md),
+  where a promise states every property, `local` ones included, and every method's prototype.
 - [published-member-placement](published-member-placement.md) -- a published member's position is
   its position in the signature, computed by producer and consumer and carried by neither; the
   referrer records the object it compiled against in its own IR, in a registry separate from the

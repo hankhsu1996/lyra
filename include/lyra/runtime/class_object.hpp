@@ -71,6 +71,18 @@ class ClassObject : public GcObject {
 // object starts with gives them, and a call naming them reaches that part's
 // own rather than dispatching, as a call naming any method a class inherits
 // does.
+void BuiltinPreRandomize(GcObject* object);
+void BuiltinPostRandomize(GcObject* object);
+inline void BuiltinPreRandomize(const value::ObjectRef& handle) {
+  BuiltinPreRandomize(ObjectRootOf(handle));
+}
+inline void BuiltinPostRandomize(const value::ObjectRef& handle) {
+  BuiltinPostRandomize(ObjectRootOf(handle));
+}
+
+// The hooks the object's own class runs, as `randomize()` runs them: the two an
+// interface class contains are virtual (LRM 8.26.9), so a call naming them
+// through its handle dispatches on the object.
 void ObjectPreRandomize(GcObject* object);
 void ObjectPostRandomize(GcObject* object);
 inline void ObjectPreRandomize(const value::ObjectRef& handle) {

@@ -323,6 +323,13 @@ class CodeGenFunction {
   // non-null `view`, where the declared types say it has one.
   auto ConvertView(llvm::Value* view, lir::TypeId from, lir::TypeId to)
       -> diag::Result<llvm::Value*>;
+  // Whether `address` is a pointer to the part every object starts with, which
+  // is how the library takes an object.
+  [[nodiscard]] auto IsLibraryObjectAddress(lir::TypeId address) const -> bool;
+  // Where the object starts whose interface class part is at the non-null
+  // `part`, whose table is at `table`: the table holds how far back that is
+  // (C++ ABI 2.5.2 offset to top).
+  auto ObjectStartOf(llvm::Value* part, llvm::Value* table) -> llvm::Value*;
   // The class a handle or a pointer to an object is of, where it is of one of
   // the source's classes.
   [[nodiscard]] auto ClassBehind(lir::TypeId reference) const

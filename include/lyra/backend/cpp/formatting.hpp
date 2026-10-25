@@ -58,7 +58,7 @@ struct VariableDeclaration {
   Constness constness = Constness::kMutable;
   CppType type;
   CppName name;
-  std::optional<OwnClassPath> qualifier = std::nullopt;
+  std::optional<ClassPath> qualifier = std::nullopt;
 };
 
 [[nodiscard]] inline auto StorageSpecifiers(VariableForm form)

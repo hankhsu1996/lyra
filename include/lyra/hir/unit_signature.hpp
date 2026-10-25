@@ -7,16 +7,25 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/arena.hpp"
 #include "lyra/base/internal_error.hpp"
-#include "lyra/hir/external_class.hpp"
-#include "lyra/hir/external_scope_class.hpp"
+#include "lyra/base/interner.hpp"
+#include "lyra/hir/class_declaration.hpp"
+#include "lyra/hir/class_id.hpp"
+#include "lyra/hir/class_ref.hpp"
+#include "lyra/hir/class_registry.hpp"
+#include "lyra/hir/covergroup.hpp"
+#include "lyra/hir/covergroup_ref.hpp"
+#include "lyra/hir/declared_method.hpp"
 #include "lyra/hir/port_direction.hpp"
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/published_covergroup.hpp"
 #include "lyra/hir/published_member.hpp"
-#include "lyra/hir/published_method.hpp"
 #include "lyra/hir/published_scope.hpp"
 #include "lyra/hir/published_target.hpp"
+#include "lyra/hir/scope_class.hpp"
+#include "lyra/hir/scope_class_id.hpp"
+#include "lyra/hir/subroutine_prototype.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/hir/type_import.hpp"
@@ -74,62 +83,6 @@ struct PortDecl {
   auto operator==(const PortDecl&) const -> bool = default;
 };
 
-// One class of the source language a unit publishes (LRM 26.2 puts a package's
-// declarations on its signature), named by the path a referrer reaches it
-// under. It is the class's own declaration as the front end
-// elaborated it, so everything another unit's compiled output depends on about
-// the class is here and a change to any of it is a change to the signature.
-// The lists are ordered rather than sets: a property's slot and a virtual
-// method's ordinal are counted out of them, so their order is as much a part of
-// the signature as their contents.
-//
-// A class states what it declares and nothing that follows from another class's
-// declaration -- no property or method of a class it extends, and no interface
-// class it is only by way of one it names -- so a referrer reads each of those
-// off the class that declares it.
-struct ClassSignature {
-  support::DefPath class_path;
-  // The class this one extends, named the way every class named on a signature
-  // is -- by declaring unit and path in it -- and absent where it extends
-  // nothing. A referrer reaches an inherited property or method by walking
-  // this chain, reading each class's own signature.
-  std::optional<ExternalClassRef> base;
-  // Whether this is an interface class (LRM 8.26), which holds no storage and
-  // whose methods a class implementing it answers through a part of their own.
-  bool is_interface_class = false;
-  // The interface classes its declaration names, in the order written (LRM
-  // 8.26.2): what a class implements, or what an interface class extends.
-  std::vector<ExternalClassRef> implements;
-  // The properties another unit may name, in the order the class declares them,
-  // which the class places at the start of its own storage -- so adding a
-  // `local` property moves no slot a referrer counted.
-  PublishedProperties properties;
-  // The type of every `local` property (LRM 8.18), in the order the class
-  // places them after those. None is named, so no referrer reaches one; a class
-  // of another unit extending this one still has to know how much storage they
-  // take, because its own properties are placed after them.
-  std::vector<TypeId> local_property_types;
-  // The properties of the class itself rather than of an object of it (LRM
-  // 8.9) that another unit may name. Where a namespace unit holds the class,
-  // each is one cell that unit holds and a referrer reaches by name, so no
-  // position is counted out of this list; where a design element holds it,
-  // each is a cell of the instance the class belongs to (LRM 6.22), which the
-  // scope replicating the class publishes among its members.
-  std::vector<PublishedProperty> static_properties;
-  // What a construction of the class is entered with (LRM 8.7): each formal's
-  // direction and type, as a method's prototype states them. Absent for an
-  // interface class, of which no object is constructed (LRM 8.26.5).
-  std::optional<ExternalCalleeInterface> constructor;
-  // Every method the class declares, in the order it declares them.
-  std::vector<PublishedMethod> methods;
-  // Whether a construction of the class and a call of a method of the class
-  // itself are handed the instance the class belongs to (LRM 6.22), as the
-  // class's own declaration states it.
-  bool takes_declaring_instance = false;
-
-  auto operator==(const ClassSignature&) const -> bool = default;
-};
-
 // What a design element (LRM 23.2.1) publishes beside its classes, which exists
 // to be instantiated and wired: its ports, what an instance is handed when it
 // is built, the object an instance of it is, and the class of every generate
@@ -168,15 +121,15 @@ struct PublishedDesignElement {
 // by name on no object (LRM 26.3), what a call to each passes and awaits. It
 // roots no object, so nothing reaches it through a receiver.
 struct PublishedNamespace {
-  std::vector<PublishedCallable> subroutines;
+  std::vector<SubroutinePrototype> subroutines;
 
   auto operator==(const PublishedNamespace&) const -> bool = default;
 
   // The subroutine published under `name`, or nothing where the unit published
   // no such name.
   [[nodiscard]] auto FindSubroutine(std::string_view name) const
-      -> const PublishedCallable* {
-    for (const PublishedCallable& published : subroutines) {
+      -> const SubroutinePrototype* {
+    for (const SubroutinePrototype& published : subroutines) {
       if (published.name == name) return &published;
     }
     return nullptr;
@@ -194,13 +147,23 @@ struct UnitSignature {
   // The types the published declarations name, held here rather than named in
   // the publishing unit's pool: a signature is read where that unit's arenas
   // are not, so an identity on one has to index storage the signature carries.
-  // For the same reason a class named in here is named by declaring unit and
-  // path in it, never by an id.
   TypePool types;
+  // Every class anything here names, under the pair every unit names it by. A
+  // class named in here is named by its position in this list: an identity of
+  // the publishing unit means nothing where the signature is read, so the
+  // signature carries its own, and a reader maps each to one of its own in one
+  // step, as rustc remaps the crate numbers of the metadata it decodes.
+  base::Interner<ClassKey, ClassId, ClassKey::Hash> class_keys;
+  // The same for every covergroup anything here names.
+  base::Interner<CovergroupKey, CovergroupId, CovergroupKey::Hash>
+      covergroup_keys;
+  // The same for every scope class anything here names.
+  base::Interner<ScopeClassKey, ScopeClassId, ScopeClassKey::Hash>
+      scope_class_keys;
   // The classes of the source language this unit declares and other units may
   // name (LRM 26.2), each reached by its own name rather than through any
   // instance.
-  std::vector<ClassSignature> classes;
+  std::vector<ClassDeclaration> classes;
   // The covergroups this unit declares and other units may name (LRM 19.3,
   // 26.2), each by its own path, as a class is.
   std::vector<PublishedCovergroup> covergroups;
@@ -218,11 +181,43 @@ struct UnitSignature {
     return nullptr;
   }
 
+  // The pair the scope class named `id` here is named by everywhere.
+  [[nodiscard]] auto ScopeClassKeyOf(ScopeClassId id) const
+      -> const ScopeClassKey& {
+    return scope_class_keys.Get(id);
+  }
+
+  // The identity `key` has here, taken the first time it is named.
+  auto ScopeClassIdOf(const ScopeClassKey& key) -> ScopeClassId {
+    return scope_class_keys.Intern(key);
+  }
+
+  // The pair the covergroup named `id` here is named by everywhere.
+  [[nodiscard]] auto CovergroupKeyOf(CovergroupId id) const
+      -> const CovergroupKey& {
+    return covergroup_keys.Get(id);
+  }
+
+  // The identity `key` has here, taken the first time it is named.
+  auto CovergroupIdOf(const CovergroupKey& key) -> CovergroupId {
+    return covergroup_keys.Intern(key);
+  }
+
+  // The pair the class named `id` here is named by everywhere.
+  [[nodiscard]] auto ClassKeyOf(ClassId id) const -> const ClassKey& {
+    return class_keys.Get(id);
+  }
+
+  // The identity `key` has here, taken the first time it is named.
+  auto ClassIdOf(const ClassKey& key) -> ClassId {
+    return class_keys.Intern(key);
+  }
+
   // The class published under `class_path`, or nothing where the unit published
   // no such class.
   [[nodiscard]] auto FindClass(const support::DefPath& class_path) const
-      -> const ClassSignature* {
-    for (const ClassSignature& published : classes) {
+      -> const ClassDeclaration* {
+    for (const ClassDeclaration& published : classes) {
       if (published.class_path == class_path) return &published;
     }
     return nullptr;
@@ -243,37 +238,40 @@ struct UnitSignature {
   return *element;
 }
 
-// The record a referrer keeps of the scope class `published` of `signature`,
-// with the member types taken into `into` -- the referrer's own pool, since an
-// identity on a signature indexes storage the signature carries. The whole
-// published list crosses, not the part a referrer happens to name: a member's
-// position is counted out of that list.
-[[nodiscard]] auto ImportExternalScopeClass(
-    const UnitSignature& signature, const ScopeClassSignature& published,
-    TypePool& into) -> ExternalScopeClass;
+// An importer taking `signature`'s types into a reader's pool `into`, naming
+// every class and covergroup the way the reader's registries do: an identity
+// on a signature indexes the lists the signature carries, so each is answered
+// again by the reader, once.
+[[nodiscard]] auto ReaderImporter(
+    const UnitSignature& signature, TypePool& into, ClassRegistry& classes,
+    CovergroupRegistry& covergroups, ScopeClassRegistry& scope_classes,
+    TypeImportMemo& memo) -> TypeImporter;
 
-// The record a referrer keeps of one class `signature` publishes, on the same
-// terms: the whole published list crosses and the types are answered again out
-// of the reader's pool.
-[[nodiscard]] auto ImportExternalClass(
-    const UnitSignature& signature, const ClassSignature& published,
-    TypePool& into) -> ExternalClass;
+// What `declared` is in the context `importer` takes it into: the same
+// declaration with every type and every identity in it answered again there.
+// Publishing a class and reading one back are this one step, in opposite
+// directions.
+[[nodiscard]] auto ImportClassDeclaration(
+    TypeImporter& importer, const ClassDeclaration& declared)
+    -> ClassDeclaration;
 
 // `interface` and `callable` with every type they name taken into the pool
 // `importer` writes, which is the part of each that cannot cross from one pool
 // to another as it stands.
 [[nodiscard]] auto ImportCalleeInterface(
-    TypeImporter& importer, ExternalCalleeInterface interface)
-    -> ExternalCalleeInterface;
+    TypeImporter& importer, CalleeInterface interface) -> CalleeInterface;
 [[nodiscard]] auto ImportCallable(
-    TypeImporter& importer, PublishedCallable callable) -> PublishedCallable;
+    TypeImporter& importer, SubroutinePrototype callable)
+    -> SubroutinePrototype;
 
 // The same for the part of a declaration a port or a view names, whose descent
 // states the type each step lands on.
 [[nodiscard]] auto ImportProjection(
     TypeImporter& importer, MemberProjection projection) -> MemberProjection;
 
-// The same for a whole scope class, every type anywhere on it.
+// The same for a whole scope class, every type anywhere on it. The whole
+// published list crosses, not the part a referrer happens to name: a member's
+// position is counted out of that list.
 [[nodiscard]] auto ImportScopeClass(
     TypeImporter& importer, ScopeClassSignature published)
     -> ScopeClassSignature;
@@ -283,13 +281,12 @@ struct UnitSignature {
     TypeImporter& importer, std::span<const TypeId> types)
     -> std::vector<TypeId>;
 [[nodiscard]] auto ImportProperties(
-    TypeImporter& importer, const PublishedProperties& properties)
-    -> PublishedProperties;
+    TypeImporter& importer, const DeclaredProperties& properties)
+    -> DeclaredProperties;
 [[nodiscard]] auto ImportStaticProperties(
-    TypeImporter& importer, std::span<const PublishedProperty> properties)
-    -> std::vector<PublishedProperty>;
+    TypeImporter& importer, const DeclaredStaticProperties& properties)
+    -> DeclaredStaticProperties;
 [[nodiscard]] auto ImportMethods(
-    TypeImporter& importer, std::span<const PublishedMethod> methods)
-    -> std::vector<PublishedMethod>;
+    TypeImporter& importer, const DeclaredMethods& methods) -> DeclaredMethods;
 
 }  // namespace lyra::hir

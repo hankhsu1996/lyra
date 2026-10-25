@@ -846,9 +846,9 @@ void CodeGenValueTypes::ForHeldMember(
 auto CodeGenValueTypes::OwnOperations(lir::TypeId type) const
     -> std::vector<OwnOperation> {
   std::vector<OwnOperation> operations;
-  if (const lir::RecordRef* record = lir::RecordOf(unit_->types.Get(type))) {
+  if (const lir::RecordId* record = lir::RecordOf(unit_->types.Get(type))) {
     for (const lir::RecordMethod& method :
-         unit_->records.Get(std::get<lir::RecordId>(*record)).methods) {
+         unit_->records.Get(*record).methods) {
       operations.push_back(
           OwnOperation{.answers = method.answers, .function = method.function});
     }
@@ -899,13 +899,13 @@ auto CodeGenValueTypes::GetAddrOfLaidOutType(lir::TypeId type)
   // A struct or a union has one type in the program, the declaring unit's,
   // linked as its declaration is, since that unit is the one stating its
   // methods; another unit refers to it and fills nothing.
-  if (const lir::RecordRef* record = lir::RecordOf(stated)) {
-    const auto* own = std::get_if<lir::RecordId>(record);
-    if (own == nullptr) {
+  if (const lir::RecordId* record = lir::RecordOf(stated)) {
+    const lir::RecordDecl& declared = unit_->records.Get(*record);
+    if (declared.defining_unit.has_value()) {
       constant->setLinkage(llvm::GlobalValue::ExternalLinkage);
       return constant;
     }
-    constant->setLinkage(LinkageOf(unit_->records.Get(*own).linkage));
+    constant->setLinkage(LinkageOf(declared.linkage));
   }
   const std::vector<OwnOperation> operations = OwnOperations(type);
 
@@ -1147,6 +1147,8 @@ auto CodeGenValueTypes::Defined(
 
 auto CodeGenValueTypes::EmitDeclared() -> void {
   for (const lir::RecordId id : unit_->records.Ids()) {
+    // A record another unit defines is laid out by that unit.
+    if (unit_->records.Get(id).defining_unit.has_value()) continue;
     GetAddrOfLaidOutType(
         unit_->types.Intern(lir::Type{lir::RecordType{.declaration = id}}));
   }
@@ -1154,7 +1156,7 @@ auto CodeGenValueTypes::EmitDeclared() -> void {
 
 auto CodeGenValueTypes::DeclarationOf(lir::TypeId type) const
     -> std::optional<lir::TypeDeclarationRef> {
-  const lir::RecordRef* record = lir::RecordOf(unit_->types.Get(type));
+  const lir::RecordId* record = lir::RecordOf(unit_->types.Get(type));
   if (record == nullptr) {
     return std::nullopt;
   }

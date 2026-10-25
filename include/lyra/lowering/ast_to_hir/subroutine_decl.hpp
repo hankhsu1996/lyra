@@ -44,17 +44,6 @@ auto IsMadeOnAnObject(
     const slang::ast::CallExpression& call,
     const slang::ast::SubroutineSymbol& callee) -> bool;
 
-// The method a call naming `method` runs. Every class has a `pre_randomize()`
-// and a `post_randomize()` (LRM 18.6.2), and the front end gives a class it
-// reads from source its own of each it does not declare, which invokes its
-// base's; the hooks are never virtual, so a call naming such a hook runs the
-// one the nearest class above declares. Where none above declares one -- the
-// lineage ends, or reaches a class the front end makes itself, which has none
-// -- it is the one every class object has, which does nothing. Any other
-// method is the one the call runs.
-auto RandomizationHookReached(const slang::ast::SubroutineSymbol& method)
-    -> const slang::ast::SubroutineSymbol*;
-
 // Classifies a slang formal's argument direction into its HIR ParamDirection
 // (LRM 13.5). slang has no ConstRef direction (LRM 13.5.2): a `const ref`
 // formal carries direction Ref with the Const variable flag, so const-ness is
@@ -124,13 +113,10 @@ auto LowerConstructorDecl(
     -> diag::Result<ConstructorAndBaseArguments>;
 
 // Lowers a slang `pure virtual` class method prototype (LRM 8.21) into a
-// hir::SubroutineDecl with `is_prototype = true` and `is_virtual = true`.
-// The signature -- return type, parameter list, and the parameter binding
-// arena -- is populated so a backend can emit the C++ pure declaration; the
-// body arenas are left at construction default. The caller records the
-// result in the owning class's method arena, exactly like an ordinary
-// instance method, and sets `overrides` if slang identified the prototype
-// as re-declaring an existing pure slot in an abstract descendant.
+// hir::SubroutineDecl with no statement to enter at. The signature -- return
+// type, parameter list, and the parameter binding arena -- is populated so a
+// backend can emit the pure declaration. The caller records the result in the
+// owning class's method arena, exactly like an ordinary instance method.
 auto LowerMethodPrototypeDecl(
     UnitLowerer& unit_lowerer, const slang::ast::MethodPrototypeSymbol& proto,
     WalkFrame class_frame) -> diag::Result<hir::SubroutineDecl>;

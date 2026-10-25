@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <unordered_map>
 #include <utility>
 
@@ -50,6 +51,15 @@ class Interner {
     const Id id = storage_.Add(value);
     index_.emplace(std::move(value), id);
     return id;
+  }
+
+  // The identity this pool knows `value` by, or nothing where it has never been
+  // asked for that content.
+  [[nodiscard]] auto Find(const T& value) const -> std::optional<Id> {
+    if (const auto it = index_.find(value); it != index_.end()) {
+      return it->second;
+    }
+    return std::nullopt;
   }
 
   // A reference this returns stays good across a later `Intern`, as an

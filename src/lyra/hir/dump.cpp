@@ -17,20 +17,22 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/case_keyword.hpp"
+#include "lyra/hir/class_declaration.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/external_scope_ref.hpp"
 #include "lyra/hir/owned_child_ref.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/process.hpp"
+#include "lyra/hir/published_scope_ref.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
+#include "lyra/hir/subroutine_prototype.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/unary_op.hpp"
@@ -238,32 +240,12 @@ auto FormatStructuralDataObject(const StructuralDataObjectDecl& decl)
       decl.kind);
 }
 
-auto FormatClassRef(const ClassRef& ref) -> std::string {
-  return std::visit(
-      Overloaded{
-          [](const LocalClassRef& r) -> std::string {
-            return std::format("Class[{}]", r.class_id.value);
-          },
-          [](const ExternalClassRef& r) -> std::string {
-            return std::format(
-                "Class[external={}::{}]", r.unit_name,
-                support::DisplayOf(r.class_path));
-          }},
-      ref);
+auto FormatClass(ClassId id) -> std::string {
+  return std::format("Class[{}]", id.value);
 }
 
-auto FormatCovergroupRef(const CovergroupRef& ref) -> std::string {
-  return std::visit(
-      Overloaded{
-          [](const LocalCovergroupRef& r) -> std::string {
-            return std::format("Covergroup[{}]", r.covergroup.value);
-          },
-          [](const ExternalCovergroupRef& r) -> std::string {
-            return std::format(
-                "Covergroup[external={}::{}]", r.unit_name,
-                support::DisplayOf(r.path));
-          }},
-      ref);
+auto FormatCovergroup(CovergroupId id) -> std::string {
+  return std::format("Covergroup[{}]", id.value);
 }
 
 auto CovergroupMethodLabel(CovergroupMethod method) -> std::string_view {
@@ -288,17 +270,7 @@ auto CovergroupMethodLabel(CovergroupMethod method) -> std::string_view {
 // type where no instance is named, and on one of its items where one is.
 auto FormatClassPropertyTarget(const ClassPropertyTarget& target)
     -> std::string {
-  return std::visit(
-      Overloaded{
-          [](const LocalClassPropertyTarget& t) -> std::string {
-            return std::format("Class[{}].{}", t.owner.value, t.field.value);
-          },
-          [](const ExternalClassPropertyTarget& t) -> std::string {
-            return std::format(
-                "Class[external={}::{}].{}", t.unit_name,
-                support::DisplayOf(t.class_path), t.property.value);
-          }},
-      target);
+  return std::format("Class[{}].{}", target.owner.value, target.field.value);
 }
 
 auto FormatStaticPropertyTarget(const StaticPropertyTarget& target)
@@ -310,33 +282,14 @@ auto FormatStaticPropertyTarget(const StaticPropertyTarget& target)
                 "Class[{}].{} of instance hops:{}", t.property.owner.value,
                 t.property.prop.value, t.hops.value);
           },
-          [](const LocalStaticPropertyTarget& t) -> std::string {
+          [](const ClassStaticPropertyTarget& t) -> std::string {
             return std::format("Class[{}].{}", t.owner.value, t.prop.value);
-          },
-          [](const ExternalStaticPropertyTarget& t) -> std::string {
-            return std::format(
-                "Class[external={}::{}].{}", t.unit_name,
-                support::DisplayOf(t.class_path), t.property_name);
           }},
       target);
 }
 
-auto FormatLocalClassMethod(const LocalClassMethodTarget& t) -> std::string {
+auto FormatClassMethod(const ClassMethodTarget& t) -> std::string {
   return std::format("Class[{}].{}", t.owner.value, t.method.value);
-}
-
-auto FormatExternalClassMethod(const ExternalClassMethodTarget& t)
-    -> std::string {
-  return std::format(
-      "Class[external={}::{}].{}", t.unit_name,
-      support::DisplayOf(t.class_path), t.method_name);
-}
-
-auto FormatExternalDispatchSlot(const ExternalDispatchSlot& slot)
-    -> std::string {
-  return std::format(
-      "Class[external={}::{}]#{}", slot.unit_name,
-      support::DisplayOf(slot.class_path), slot.behavior.value);
 }
 
 auto SubroutineKindName(SubroutineKind kind) -> std::string_view {
@@ -353,35 +306,48 @@ auto SubroutineKindName(SubroutineKind kind) -> std::string_view {
   throw InternalError("SubroutineKindName: unknown subroutine kind");
 }
 
-auto FormatVirtualBehavior(const VirtualBehavior& behavior) -> std::string {
+// A method's part in dispatch, as its class declares it, written after its
+// name.
+auto FormatMethodDispatch(const MethodDispatch& dispatch) -> std::string {
+  const auto pure = [](bool is_pure) {
+    return is_pure ? std::string{" pure"} : std::string{};
+  };
   return std::visit(
       Overloaded{
-          [](const LocalClassMethodTarget& t) {
-            return FormatLocalClassMethod(t);
+          [](const TypeAssociated&) { return std::string{" static"}; },
+          [](const NotVirtual&) { return std::string{}; },
+          [&](const IntroducesVirtual& introduces) {
+            return " virtual" + pure(introduces.is_pure);
           },
-          [](const LocalCovergroupFactory& f) {
-            return std::format("factory of Covergroup[{}]", f.covergroup.value);
-          },
-          [](const ExternalDispatchSlot& s) {
-            return FormatExternalDispatchSlot(s);
+          [&](const OverridesVirtual& overrides) {
+            return std::format(
+                " virtual{} overrides=Class[{}].{}", pure(overrides.is_pure),
+                overrides.introducer.value, overrides.name);
           }},
-      behavior);
+      dispatch);
 }
 
-auto FormatMethodCallee(const MethodCallee& callee) -> std::string {
+auto FormatRandomizationHook(RandomizationHook hook) -> std::string_view {
+  switch (hook) {
+    case RandomizationHook::kPreRandomize:
+      return "pre_randomize";
+    case RandomizationHook::kPostRandomize:
+      return "post_randomize";
+  }
+  throw InternalError("FormatRandomizationHook: unknown hook");
+}
+
+auto FormatInstanceMethodCallee(const InstanceMethodCallee& callee)
+    -> std::string {
   return std::visit(
       Overloaded{
-          [](const LocalClassMethodTarget& t) {
-            return FormatLocalClassMethod(t);
+          [](const ClassMethodTarget& declared) {
+            return FormatClassMethod(declared);
           },
-          [](const ExternalMethodCallee& c) {
+          [](const BuiltinHookCallee& hook) {
             return std::format(
-                "{} {}{}", FormatExternalClassMethod(c.target),
-                SubroutineKindName(c.interface.kind),
-                c.behavior.has_value()
-                    ? std::format(
-                          " virtual={}", FormatVirtualBehavior(*c.behavior))
-                    : "");
+                "BuiltinHook \"{}\" class={}",
+                FormatRandomizationHook(hook.hook), FormatClass(hook.cls));
           }},
       callee);
 }
@@ -558,7 +524,7 @@ class HirDumper {
             [](const ChandleType&) -> std::string { return "ChandleType"; },
             [](const ClassHandleType& c) -> std::string {
               return std::format(
-                  "ClassHandleType(class={})", FormatClassRef(c.class_ref));
+                  "ClassHandleType(class={})", FormatClass(c.class_id));
             },
             [](const ImportedClassHandleType& c) -> std::string {
               return std::format(
@@ -572,12 +538,11 @@ class HirDumper {
             [](const CovergroupHandleType& c) -> std::string {
               return std::format(
                   "CovergroupHandleType(covergroup={})",
-                  FormatCovergroupRef(c.covergroup));
+                  FormatCovergroup(c.covergroup));
             },
             [](const UnitObjectType& u) -> std::string {
               return std::format(
-                  "UnitObjectType(unit={}, class={})", u.unit_name,
-                  support::DisplayOf(u.class_path));
+                  "UnitObjectType(scope_class={})", u.scope_class.value);
             },
             [](const UnitObjectsType& u) -> std::string {
               std::string ranges;
@@ -587,8 +552,8 @@ class HirDumper {
               std::string kinds;
               for (const UnitObjectType& kind : u.kinds) {
                 kinds += std::format(
-                    "{}{}::{}", kinds.empty() ? "" : " | ", kind.unit_name,
-                    support::DisplayOf(kind.class_path));
+                    "{}ScopeClass[{}]", kinds.empty() ? "" : " | ",
+                    kind.scope_class.value);
               }
               // Which kind each position takes says nothing where there is one.
               std::string taken;
@@ -768,9 +733,9 @@ class HirDumper {
             [](const PatternVarRef& r) -> std::string {
               return std::format("PatternVar[{}]", r.pattern.value);
             },
-            [](const ExternalUnitValueRef& r) -> std::string {
+            [](const NamespaceValueRef& r) -> std::string {
               return std::format(
-                  "ExternalUnitValue({}::{})", r.unit_name, r.variable_name);
+                  "NamespaceValue({}::{})", r.unit_name, r.variable_name);
             },
         },
         p);
@@ -782,7 +747,7 @@ class HirDumper {
             [](const RoutedValueRef& r) -> std::string {
               return std::format("routed_ref={}", r.id.value);
             },
-            [](const ExternalUnitValueRef& r) -> std::string {
+            [](const NamespaceValueRef& r) -> std::string {
               return std::format("var={}::{}", r.unit_name, r.variable_name);
             },
             [](const StaticPropertyRef& r) -> std::string {
@@ -1109,12 +1074,12 @@ class HirDumper {
                       }},
                   m.receiver);
               return std::format(
-                  "Method target={} recv={}", FormatMethodCallee(m.callee),
-                  recv);
+                  "Method target={} recv={}",
+                  FormatInstanceMethodCallee(m.callee), recv);
             },
             [](const StaticMethodCallRef& s) -> std::string {
               return std::format(
-                  "StaticMethod target={} {}", FormatMethodCallee(s.callee),
+                  "StaticMethod target={} {}", FormatClassMethod(s.callee),
                   FormatDeclaringInstance(s.declaring_instance));
             },
             [](const SystemSubroutineRef& s) -> std::string {
@@ -1162,16 +1127,16 @@ class HirDumper {
                       : "declaring_scope=none",
                   decl.name);
             },
-            [](const ExternalUnitSubroutineRef& e) -> std::string {
+            [](const NamespaceSubroutineRef& e) -> std::string {
               return std::format(
-                  "ExternalUnitSubroutine {} \"{}::{}\"",
+                  "NamespaceSubroutine {} \"{}::{}\"",
                   SubroutineKindName(e.interface.kind), e.unit_name,
                   e.subroutine_name);
             },
-            [this](const ExternalUnitMethodRef& e) -> std::string {
+            [this](const PublishedScopeMethodRef& e) -> std::string {
               const ScopeClassSignature& published =
-                  unit_->external_scope_classes.Get(e.scope_class).signature;
-              const PublishedCallable& callable =
+                  unit_->scope_classes.Get(e.scope_class);
+              const SubroutinePrototype& callable =
                   published.callables.Get(e.callable);
               const std::string receiver = std::visit(
                   Overloaded{
@@ -1185,7 +1150,7 @@ class HirDumper {
                       }},
                   e.receiver);
               return std::format(
-                  "ExternalUnitMethod {} \"{}::{}\" recv={}",
+                  "PublishedScopeMethod {} \"{}::{}\" recv={}",
                   SubroutineKindName(callable.interface.kind),
                   support::DisplayOf(published.class_path), callable.name,
                   receiver);
@@ -1302,7 +1267,7 @@ class HirDumper {
             },
             [](const StaticConstraintBlockMode& m) -> std::string {
               return std::format(
-                  "static_block={}::{}", FormatClassRef(m.introducer), m.block);
+                  "static_block={}::{}", FormatClass(m.introducer), m.block);
             }},
         target);
   }
@@ -1417,15 +1382,15 @@ class HirDumper {
                   "InterfaceInstanceAccessExpr handle=Expr[{}] interface={} "
                   "steps={}",
                   sel.handle.value,
-                  unit_->external_scope_classes.Get(sel.scope_class).unit_name,
+                  unit_->scope_classes.KeyOf(sel.scope_class).unit_name,
                   sel.steps.size());
             },
             [this](const InterfaceMemberAccessExpr& sel) -> std::string {
               return std::format(
                   "InterfaceMemberAccessExpr handle=Expr[{}] interface={} "
-                  "steps={} ExternalScopeClass[{}].member[{}]",
+                  "steps={} ScopeClass[{}].member[{}]",
                   sel.instance.handle.value,
-                  unit_->external_scope_classes.Get(sel.instance.scope_class)
+                  unit_->scope_classes.KeyOf(sel.instance.scope_class)
                       .unit_name,
                   sel.instance.steps.size(), sel.scope_class.value,
                   sel.member.value);
@@ -1528,9 +1493,8 @@ class HirDumper {
                 args += std::format("Expr[{}]", n.arguments[i].value);
               }
               return std::format(
-                  "ClassNewExpr class={} args=[{}] {}",
-                  FormatClassRef(n.class_ref), args,
-                  FormatDeclaringInstance(n.declaring_instance));
+                  "ClassNewExpr class={} args=[{}] {}", FormatClass(n.class_id),
+                  args, FormatDeclaringInstance(n.declaring_instance));
             },
             [](const AssociativeAssignmentPatternExpr& a) -> std::string {
               std::string entries;
@@ -1580,7 +1544,7 @@ class HirDumper {
                       : std::string{};
               return std::format(
                   "CovergroupNewExpr covergroup={} args=[{}]{} {}",
-                  FormatCovergroupRef(n.covergroup), args, embedding,
+                  FormatCovergroup(n.covergroup), args, embedding,
                   FormatDeclaringInstance(n.declaring_instance));
             },
             [](const CovergroupMethodCallExpr& c) -> std::string {
@@ -1594,14 +1558,14 @@ class HirDumper {
               return std::format(
                   "CovergroupMethodCallExpr covergroup={} {} method={} "
                   "args=[{}]",
-                  FormatCovergroupRef(c.covergroup),
+                  FormatCovergroup(c.covergroup),
                   FormatCovergroupReach(c.receiver, c.item),
                   CovergroupMethodLabel(c.method), args);
             },
             [](const CovergroupOptionExpr& o) -> std::string {
               return std::format(
                   "CovergroupOptionExpr covergroup={} {} {}",
-                  FormatCovergroupRef(o.covergroup),
+                  FormatCovergroup(o.covergroup),
                   FormatCovergroupReach(o.receiver, o.item), o.field);
             },
             [](const RandomizeExpr& r) -> std::string {
@@ -1683,7 +1647,14 @@ class HirDumper {
       Line("Classes:");
       Indent();
       for (const ClassId id : u.classes.Ids()) {
-        if (!u.classes.IsDefined(id)) {
+        if (!u.classes.IsOwn(id)) {
+          Line(
+              std::format(
+                  "[{}] of {} \"{}\"", id.value, u.classes.KeyOf(id).unit_name,
+                  support::DisplayOf(u.classes.PathOf(id))));
+          continue;
+        }
+        if (!u.classes.HasBodies(id)) {
           Line(
               std::format(
                   "[{}] <declared> \"{}\"", id.value,
@@ -1691,7 +1662,8 @@ class HirDumper {
           continue;
         }
         DumpClass(
-            id, support::DisplayOf(u.classes.PathOf(id)), u.classes.Get(id));
+            id, support::DisplayOf(u.classes.PathOf(id)),
+            u.classes.Declaration(id), u.classes.Get(id));
       }
       Dedent();
     }
@@ -1700,6 +1672,14 @@ class HirDumper {
       Line("Covergroups:");
       Indent();
       for (const CovergroupId id : u.covergroups.Ids()) {
+        if (!u.covergroups.IsOwn(id)) {
+          Line(
+              std::format(
+                  "[{}] of {} \"{}\"", id.value,
+                  u.covergroups.KeyOf(id).unit_name,
+                  support::DisplayOf(u.covergroups.PathOf(id))));
+          continue;
+        }
         DumpCovergroup(
             id, support::DisplayOf(u.covergroups.PathOf(id)),
             u.covergroups.Get(id));
@@ -1707,20 +1687,26 @@ class HirDumper {
       Dedent();
     }
 
-    if (!u.external_scope_classes.empty()) {
-      Line("ExternalScopeClasses:");
+    if (!u.scope_classes.empty()) {
+      Line("ScopeClasses:");
       Indent();
-      for (const ExternalScopeClassId id : u.external_scope_classes.Ids()) {
-        const ExternalScopeClass& record = u.external_scope_classes.Get(id);
+      for (const ScopeClassId id : u.scope_classes.Ids()) {
+        const ScopeClassKey& key = u.scope_classes.KeyOf(id);
+        if (!u.scope_classes.IsRecorded(id)) {
+          Line(
+              std::format(
+                  "[{}] {}::{} <named>", id.value, key.unit_name,
+                  support::DisplayOf(key.class_path)));
+          continue;
+        }
+        const ScopeClassSignature& record = u.scope_classes.Get(id);
         Line(
             std::format(
-                "[{}] {}::{}", id.value, record.unit_name,
-                support::DisplayOf(record.signature.class_path)));
+                "[{}] {}::{}", id.value, key.unit_name,
+                support::DisplayOf(key.class_path)));
         Indent();
-        for (const PublishedMemberId member_id :
-             record.signature.members.Ids()) {
-          const PublishedMember& member =
-              record.signature.members.Get(member_id);
+        for (const PublishedMemberId member_id : record.members.Ids()) {
+          const PublishedMember& member = record.members.Get(member_id);
           Line(
               std::format(
                   "[{}] \"{}\" : Type[{}]{}", member_id.value, member.name,
@@ -1912,7 +1898,7 @@ class HirDumper {
       Line(std::format("Embedding: ProceduralVar[{}]", c.embedding->value));
     }
     if (c.base.has_value()) {
-      Line(std::format("Extends: {}", FormatCovergroupRef(*c.base)));
+      Line(std::format("Extends: {}", FormatCovergroup(*c.base)));
     }
     std::visit(
         Overloaded{
@@ -1969,7 +1955,9 @@ class HirDumper {
     scope_stack_ = outer;
   }
 
-  void DumpClass(ClassId id, std::string_view name, const ClassDecl& c) {
+  void DumpClass(
+      ClassId id, std::string_view name, const ClassDeclaration& declared,
+      const ClassDecl& c) {
     // A class body's outward references count hops from the scope that
     // declares the class, so the chain that scope sits on is what resolves
     // them -- the same reading a process of that scope gets from the walk.
@@ -1981,29 +1969,33 @@ class HirDumper {
     }
     const std::vector<const StructuralScope*> outer =
         std::exchange(scope_stack_, chain->second);
-    const std::string kind = c.is_interface_class ? "interface class" : "class";
+    const std::string kind =
+        declared.is_interface_class ? "interface class" : "class";
     Line(std::format("[{}] {} \"{}\"", id.value, kind, name));
     Indent();
-    if (c.takes_declaring_instance) {
+    if (declared.takes_declaring_instance) {
       Line("Takes: the instance it belongs to");
     }
-    if (c.base.has_value()) {
-      Line(std::format("Extends: {}", FormatClassRef(*c.base)));
+    if (declared.base.has_value()) {
+      Line(std::format("Extends: {}", FormatClass(*declared.base)));
     }
-    for (const auto& impl : c.implements) {
-      Line(std::format("Implements: {}", FormatClassRef(impl)));
+    for (const auto& impl : declared.implements) {
+      Line(std::format("Implements: {}", FormatClass(impl)));
     }
     for (const ConformingBehavior& answered : c.conforming) {
       Line(
           std::format(
               "Conforms: {} <- {}",
-              FormatVirtualBehavior(answered.interface_behavior),
+              FormatClassMethod(answered.interface_behavior),
               answered.answered_by.has_value()
-                  ? FormatVirtualBehavior(*answered.answered_by)
+                  ? FormatClassMethod(*answered.answered_by)
                   : std::string{"nothing"}));
     }
-    for (const auto& field : c.fields) {
+    for (const DeclaredProperty& field : declared.properties) {
       Line(std::format("{}:Type[{}]", field.name, field.type.value));
+    }
+    for (const DeclaredProperty& field : declared.static_properties) {
+      Line(std::format("static {}:Type[{}]", field.name, field.type.value));
     }
     for (const auto& init : c.field_inits) {
       Line(
@@ -2013,10 +2005,17 @@ class HirDumper {
     }
     for (const MethodId id : c.methods.Ids()) {
       DumpSubroutine(
-          "Method", id.value, c.methods.Get(id), c.procedural_scopes);
+          "Method", id.value, c.methods.Get(id), c.procedural_scopes,
+          FormatMethodDispatch(declared.methods.Get(id).dispatch));
     }
-    DumpSubroutine("Constructor", 0, c.constructor, c.procedural_scopes);
-    if (c.base.has_value()) {
+    for (std::size_t i = 0; i < c.interface_forwards.size(); ++i) {
+      const InterfaceForward& forward = c.interface_forwards[i];
+      DumpSubroutine(
+          "InterfaceForward", i, forward.method, c.procedural_scopes,
+          std::format(" overrides={}", FormatClassMethod(forward.overrides)));
+    }
+    DumpSubroutine("Constructor", 0, c.constructor, c.procedural_scopes, "");
+    if (declared.base.has_value()) {
       std::string args;
       for (std::size_t i = 0; i < c.base_call.arguments.size(); ++i) {
         if (i != 0) args += ", ";
@@ -2101,7 +2100,7 @@ class HirDumper {
                             }},
                         local.body));
               },
-              [](const LocalStaticPropertyTarget& property) {
+              [](const ClassStaticPropertyTarget& property) {
                 return std::format(
                     "StaticProperty[{}] of Class[{}]", property.prop.value,
                     property.owner.value);
@@ -2152,26 +2151,26 @@ class HirDumper {
         names);
   }
 
-  static auto FormatExternalScopeRef(const ExternalScopeRef& names)
+  static auto FormatPublishedScopeRef(const PublishedScopeRef& names)
       -> std::string {
     return std::visit(
         Overloaded{
-            [](const ExternalMemberRef& member) {
+            [](const PublishedMemberRef& member) {
               return std::format(
-                  "ExternalScopeClass[{}].member[{}]", member.scope_class.value,
+                  "ScopeClass[{}].member[{}]", member.scope_class.value,
                   member.member.value);
             },
-            [](const ExternalGenerateLoopRef& loop) {
+            [](const PublishedGenerateLoopRef& loop) {
               return std::format(
-                  "ExternalScopeClass[{}].loop[{}].index{} as "
-                  "ExternalScopeClass[{}]",
+                  "ScopeClass[{}].loop[{}].index{} as "
+                  "ScopeClass[{}]",
                   loop.scope_class.value, loop.loop.value, loop.index,
                   loop.result_class.value);
             },
-            [](const ExternalGenerateBlockRef& block) {
+            [](const PublishedGenerateBlockRef& block) {
               return std::format(
-                  "ExternalScopeClass[{}].choice[{}] as "
-                  "ExternalScopeClass[{}]",
+                  "ScopeClass[{}].choice[{}] as "
+                  "ScopeClass[{}]",
                   block.scope_class.value, block.choice.value,
                   block.result_class.value);
             },
@@ -2233,7 +2232,7 @@ class HirDumper {
             },
             [](const EnclosingScopeBase& b) {
               return std::format(
-                  "enclosing ExternalScopeClass[{}]", b.scope_class.value);
+                  "enclosing ScopeClass[{}]", b.scope_class.value);
             }},
         base);
     for (const PathStep& step : steps) {
@@ -2245,8 +2244,8 @@ class HirDumper {
               [](const InterfacePortId& port) {
                 return std::format("InterfacePort[{}]", port.value);
               },
-              [](const ExternalScopeRef& published) {
-                return FormatExternalScopeRef(published);
+              [](const PublishedScopeRef& published) {
+                return FormatPublishedScopeRef(published);
               }},
           step.names);
       out += std::format(" . {}{}", names, FormatIndices(step.selects));
@@ -2273,9 +2272,9 @@ class HirDumper {
                   l.body);
               return std::format(" . {}.ProceduralVar[{}]", body, l.var.value);
             },
-            [](const ExternalMemberLeaf& l) {
+            [](const PublishedMemberLeaf& l) {
               return std::format(
-                  " . ExternalScopeClass[{}].member[{}]", l.scope_class.value,
+                  " . ScopeClass[{}].member[{}]", l.scope_class.value,
                   l.member.value);
             }},
         leaf);
@@ -2296,10 +2295,10 @@ class HirDumper {
               return std::format(
                   " . ProceduralScope[{}] : disable target", l.scope.value);
             },
-            [](const ExternalDisableTargetLeaf& l) {
+            [](const PublishedDisableTargetLeaf& l) {
               return std::format(
-                  " . ExternalScopeClass[{}].disable_target[{}]",
-                  l.scope_class.value, l.target.value);
+                  " . ScopeClass[{}].disable_target[{}]", l.scope_class.value,
+                  l.target.value);
             }},
         leaf);
   }
@@ -2343,7 +2342,7 @@ class HirDumper {
     for (const StructuralSubroutineId id : s.structural_subroutines.Ids()) {
       DumpSubroutine(
           "StructuralSubroutine", id.value, s.structural_subroutines.Get(id),
-          s.procedural_scopes);
+          s.procedural_scopes, "");
     }
     for (const ForeignExportDecl& exported : s.foreign_exports) {
       Line(
@@ -2403,7 +2402,7 @@ class HirDumper {
       std::string built_as;
       for (const InstanceAlternative& alternative : im.alternatives) {
         built_as += std::format(
-            "{}ExternalScopeClass[{}] {}", built_as.empty() ? "" : " | ",
+            "{}ScopeClass[{}] {}", built_as.empty() ? "" : " | ",
             alternative.scope_class.value,
             FormatAssignments(alternative.assignments));
       }
@@ -2495,14 +2494,10 @@ class HirDumper {
 
   void DumpSubroutine(
       std::string_view label, std::size_t index, const SubroutineDecl& d,
-      const base::Registry<ProceduralScopeDecl, ProceduralScopeId>& scopes) {
-    std::string flags;
-    if (d.is_virtual) flags += " virtual";
-    if (d.is_prototype) flags += " prototype";
-    if (d.overrides.has_value()) {
-      flags +=
-          std::format(" overrides={}", FormatVirtualBehavior(*d.overrides));
-    }
+      const base::Registry<ProceduralScopeDecl, ProceduralScopeId>& scopes,
+      std::string_view dispatch) {
+    std::string flags{dispatch};
+    if (!d.root_stmt.has_value()) flags += " prototype";
     Line(
         std::format(
             "{}[{}] {} \"{}\" : Type[{}]{}", label, index,
@@ -2522,10 +2517,10 @@ class HirDumper {
     // A pure virtual method is a prototype with no implementation (LRM 8.21):
     // its formals and the scope owning them are real declarations, but there
     // is no statement tree behind the signature to walk.
-    if (d.is_prototype) {
-      DumpProceduralDeclarations(d.body, scopes);
+    if (d.root_stmt.has_value()) {
+      DumpProceduralBody(d.body, *d.root_stmt, scopes);
     } else {
-      DumpProceduralBody(d.body, d.root_stmt, scopes);
+      DumpProceduralDeclarations(d.body, scopes);
     }
     Dedent();
   }

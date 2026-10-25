@@ -122,6 +122,8 @@ auto CodeGenModule::Run() -> diag::Result<EmittedModule> {
     return EmitCreations(declared, linkage);
   };
   for (const lir::ClassId id : unit_->classes.Ids()) {
+    // A class another unit defines is described and built there.
+    if (unit_->classes.Get(id).defining_unit.has_value()) continue;
     const lir::TypeId type =
         unit_->types.Intern(lir::Type{lir::ObjectType{.class_id = id}});
     // An interface class is described too, since a cast to one and a class
@@ -426,7 +428,7 @@ auto CodeGenModule::EndOwnedStorage(
         {storage});
     return {};
   }
-  if (pointed.Is<lir::ObjectType>() || pointed.Is<lir::CrossUnitClassType>()) {
+  if (pointed.Is<lir::ObjectType>()) {
     EndObject(builder, storage);
     return {};
   }
@@ -786,21 +788,6 @@ auto CodeGenModule::DeclarationOf(lir::TypeId type) const -> Declared {
   if (const auto* object = named.As<lir::ObjectType>()) {
     return DeclaredClass(object->class_id);
   }
-  if (const auto* cross = named.As<lir::CrossUnitClassType>()) {
-    const lir::ExternalClass* published =
-        lir::FindExternalClass(*unit_, cross->unit_name, cross->class_path);
-    if (published == nullptr) {
-      throw InternalError(
-          "llvm codegen: a class of another unit is read that this unit "
-          "consumed no signature of -- please report this as a bug");
-    }
-    return Declared{
-        .definition = *lir::DefinitionSymbol(*unit_, type),
-        .base = published->base,
-        .members = published->members,
-        .dispatch = &published->dispatch,
-        .implements = published->implements};
-  }
   throw InternalError(
       std::format(
           "llvm codegen: {} is read as a declaration a value holds part of -- "
@@ -813,10 +800,8 @@ auto CodeGenModule::DeclaredLinkage(lir::TypeId type) const -> lir::Linkage {
   if (const auto* object = declared.As<lir::ObjectType>()) {
     return unit_->classes.Get(object->class_id).linkage;
   }
-  if (const lir::RecordRef* record = lir::RecordOf(declared)) {
-    if (const auto* own = std::get_if<lir::RecordId>(record)) {
-      return unit_->records.Get(*own).linkage;
-    }
+  if (const lir::RecordId* record = lir::RecordOf(declared)) {
+    return unit_->records.Get(*record).linkage;
   }
   return lir::Linkage::kExternal;
 }
@@ -1084,10 +1069,6 @@ auto CodeGenModule::PlacedMembersOf(lir::TypeId type)
                     [&](const lir::ObjectType&) -> diag::Result<PlacedMembers> {
                       return LayOut(DeclarationOf(type));
                     },
-                    [&](const lir::CrossUnitClassType&)
-                        -> diag::Result<PlacedMembers> {
-                      return LayOut(DeclarationOf(type));
-                    },
                     [&](const lir::ClosureType& closure)
                         -> diag::Result<PlacedMembers> {
                       return LayOutCaptures(closure.closure_id);
@@ -1117,7 +1098,6 @@ auto CodeGenModule::AllocationLayoutOf(lir::TypeId type)
   return std::visit(
       Overloaded{
           [&](const lir::ObjectType&) { return object(); },
-          [&](const lir::CrossUnitClassType&) { return object(); },
           // A closure is as large as its captures are laid out.
           [&](const lir::ClosureType&) -> diag::Result<support::Layout> {
             auto placed = PlacedMembersOf(type);
@@ -1573,9 +1553,9 @@ auto CodeGenModule::TypeInfoOf(lir::TypeId type) -> llvm::Constant* {
   if (llvm::GlobalVariable* named = module_->getNamedGlobal(symbol)) {
     return named;
   }
-  // A class of another unit is described where it is declared.
-  const lir::Type& described = unit_->types.Get(type);
-  if (!described.Is<lir::ObjectType>()) {
+  // A class of another unit is described where it is defined.
+  if (unit_->classes.Get(unit_->types.Get(type).Get<lir::ObjectType>().class_id)
+          .defining_unit.has_value()) {
     return module_->getOrInsertGlobal(symbol, types_.Ptr());
   }
   auto* ptr_ty = types_.Ptr();

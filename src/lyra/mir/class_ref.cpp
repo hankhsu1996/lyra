@@ -41,21 +41,20 @@ auto ObjectReachedThrough(const TypePool& types, TypeId reaches) -> TypeId {
       "this as a bug");
 }
 
-auto ClassOfObject(const TypePool& types, TypeId object) -> DeclaredClassRef {
-  const auto refers_to_no_class =
-      [](std::string_view what) -> DeclaredClassRef {
+auto ClassOfObject(const TypePool& types, TypeId object) -> ClassId {
+  const auto refers_to_no_class = [](std::string_view what) -> ClassId {
     throw InternalError(
         std::format(
             "mir: an object built of {} names no class -- please report this "
             "as a bug",
             what));
   };
-  const auto not_an_object = [&]() -> DeclaredClassRef {
+  const auto not_an_object = [&]() -> ClassId {
     return refers_to_no_class("something that is not an object");
   };
   return types.Get(object).Visit(
       Overloaded{
-          [](const ObjectType& o) -> DeclaredClassRef { return o.of; },
+          [](const ObjectType& o) -> ClassId { return o.of; },
           // A class the runtime library defines: a symbol is its whole
           // identity, so no declaration of this unit stands behind it.
           [&](const RuntimeClassType&) {
@@ -109,6 +108,19 @@ auto ClassOfObject(const TypePool& types, TypeId object) -> DeclaredClassRef {
           [&](const ClosureType&) { return not_an_object(); },
           [&](const ErasedCallableType&) { return not_an_object(); },
           [&](const TypeParameterType&) { return not_an_object(); }});
+}
+
+auto IsLeftAbstract(const VirtualDispatchRole& role) -> bool {
+  return std::visit(
+      Overloaded{
+          [](const IntroducesVirtualSlot& introduces) {
+            return introduces.is_pure;
+          },
+          [](const OverridesVirtualSlot& overrides) {
+            return overrides.is_pure;
+          },
+          [](const OverridesLibraryVirtual&) { return false; }},
+      role);
 }
 
 }  // namespace lyra::mir

@@ -113,9 +113,9 @@ auto BuildObservableCellExpr(
             return block.exprs.Add(EndpointCellExpr(
                 frame, unit, BindRouted(lowerer, frame, reference)));
           },
-          [&](const hir::ExternalUnitValueRef& pkg) -> mir::ExprId {
+          [&](const hir::NamespaceValueRef& pkg) -> mir::ExprId {
             return block.exprs.Add(
-                LowerExternalUnitValueRefExpr(lowerer.Owner(), pkg));
+                LowerNamespaceValueRefExpr(lowerer.Owner(), pkg));
           },
           [&](const hir::StaticPropertyRef& property) -> mir::ExprId {
             return block.exprs.Add(
@@ -173,7 +173,7 @@ auto BuildObservablePtrExpr(
               return EndpointObservablePtr(
                   block, frame, unit, BindRouted(lowerer, frame, reference));
             },
-            [&](const hir::ExternalUnitValueRef&) -> mir::ExprId {
+            [&](const hir::NamespaceValueRef&) -> mir::ExprId {
               return address_of_cell(sealed);
             },
             [&](const hir::StaticPropertyRef&) -> mir::ExprId {

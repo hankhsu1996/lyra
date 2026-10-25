@@ -23,7 +23,8 @@ auto AddBody(mir::Class& cls, mir::CallableCode code) -> mir::CallableId {
           .code = std::move(code),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt,
-          .type_parameters = {}});
+          .type_parameters = {},
+          .defining_unit = std::nullopt});
 }
 
 // Ends `body` with `call`, a call resulting in `result`, completing as that

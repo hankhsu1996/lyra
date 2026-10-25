@@ -30,7 +30,7 @@ namespace lyra::lowering::ast_to_hir {
 // what that scope published.
 struct HeldDescent {
   hir::InterfaceInstanceAccessExpr instance;
-  InExternalScope place;
+  InPublishedScope place;
 };
 
 auto DescendThroughHandle(

@@ -10,12 +10,11 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/class_registry.hpp"
 #include "lyra/hir/covergroup.hpp"
-#include "lyra/hir/external_class.hpp"
-#include "lyra/hir/external_scope_class.hpp"
 #include "lyra/hir/fixed_name.hpp"
 #include "lyra/hir/foreign_import.hpp"
 #include "lyra/hir/foreign_import_id.hpp"
 #include "lyra/hir/published_covergroup.hpp"
+#include "lyra/hir/scope_class.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
@@ -104,16 +103,10 @@ struct CompilationUnit {
   // What every covergroup this unit declares or names is written over, present
   // where there is one.
   std::optional<CoverageLibraryRefs> coverage_library;
-  // One entry per class of another unit's scope this one reaches an object of,
-  // recorded where that unit's signature was consumed.
-  base::Arena<ExternalScopeClass, ExternalScopeClassId> external_scope_classes;
-  // One entry per class of another unit this one names, and per class above
-  // one in its lineage, recorded where what that class published was read.
-  // Found by the pair that names the class, which is the same pair every
-  // reference to one carries, so a reference and its record cannot come apart.
-  base::Arena<ExternalClass, ExternalClassId> external_classes;
-  // The same for each covergroup of another unit this one names.
-  std::vector<ExternalCovergroup> external_covergroups;
+  // Every class of a scope of the design hierarchy this unit names: the ones it
+  // publishes of its own scopes, and each one of another unit's scope it
+  // reaches an object of, recorded where that unit's signature was consumed.
+  ScopeClassRegistry scope_classes;
   // Every DPI-C import this unit takes part in (LRM 35.4), whether declared
   // inside it or declared elsewhere and called from it. The unit owns them
   // rather than any scope because an import's foreign symbol is program-global,
@@ -126,7 +119,10 @@ struct CompilationUnit {
   CompilationUnit(std::string name, std::string body_name)
       : name(std::move(name)),
         body_name(std::move(body_name)),
-        builtins(MakeBuiltins(types)) {
+        builtins(MakeBuiltins(types)),
+        classes(this->name),
+        covergroups(this->name),
+        scope_classes(this->name) {
   }
 
   auto operator==(const CompilationUnit&) const -> bool = default;

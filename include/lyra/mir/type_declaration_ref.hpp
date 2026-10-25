@@ -1,5 +1,6 @@
 #pragma once
 
+#include <compare>
 #include <string>
 
 #include "lyra/support/def_path.hpp"
@@ -15,7 +16,8 @@ struct TypeDeclarationRef {
   std::string unit_name;
   support::DefPath path;
 
-  auto operator==(const TypeDeclarationRef&) const -> bool = default;
+  auto operator<=>(const TypeDeclarationRef&) const
+      -> std::strong_ordering = default;
 };
 
 }  // namespace lyra::mir

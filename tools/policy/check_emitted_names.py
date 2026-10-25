@@ -22,8 +22,7 @@ So the rule is positional rather than semantic, which is what makes it
 checkable, and it is written to fail closed. Everything an emitter does with a
 name ends in the artifact, whether the name is formatted into a larger string or
 returned as the whole of one, so a name an emitter reads is a violation unless
-it is an argument of the map, an argument of a call that looks something up
-rather than writing it, or listed below with the reason it is neither.
+it is an argument of the map or listed below with the reason it is not.
 """
 
 from __future__ import annotations
@@ -53,7 +52,6 @@ EMITTERS = [
 # been mapped by definition; the rest of this script is about names that are
 # not.
 MAPPERS = [
-    "ToCppName",
     "UnitNamespaceOf",
     "CppUnitScope",
     "BodyNamespaceOf",
@@ -66,7 +64,6 @@ MAPPERS = [
     "UnitRecordFileOf",
     "ClassDeclarationFileOf",
     "ClassDefinitionFileOf",
-    "CppExternalClassPath",
     "CppRecordName",
     "CppRecordQualifiedName",
     "CppClassCallableName",
@@ -104,21 +101,7 @@ CHAR_LITERAL = re.compile(r"'(?:[^'\\\n]|\\.)'")
 # comparison.
 NAME_MEMBER = re.compile(
     r"(?:\.|->)\s*(?:[A-Za-z_][A-Za-z0-9_]*_)?name\b(?!\s*=[^=])")
-# A name can also arrive as an element of a list of names rather than as a
-# member, and a class's behaviors are the one such list an emitter reads. A list
-# added beside it is invisible here until it is named, which is the one way this
-# check can be wrong in the direction that matters.
-NAME_ELEMENT = re.compile(r"(?:\.|->)\s*behaviors\s*\[")
 MAPPER_CALL = re.compile(rf"\b(?:{'|'.join(MAPPERS)})\s*\(")
-# The calls that take a name to find or collect something rather than to write
-# it, which is what a name may be read for without being spelled.
-LOOKUPS: dict[str, str] = {
-    "FindExternalClass": (
-        "resolves a consumed signature by the unit and class it names, so the "
-        "name is a key rather than a spelling"
-    ),
-}
-LOOKUP_CALL = re.compile(rf"\b(?:{'|'.join(LOOKUPS)})\s*\(")
 # What an expression may be spelled out of, walking back from a name to the
 # whole read it belongs to. Brackets are matched so an arena's subscript stays
 # part of the expression rather than ending it.
@@ -212,9 +195,6 @@ def stale(blob: str, exercised: set[str]) -> list[str]:
     for name in MAPPERS:
         if not re.search(rf"\b{re.escape(name)}\s*\(", blob):
             out.append(f"{name}: listed as a mapper but no emitter calls it")
-    for name in LOOKUPS:
-        if not re.search(rf"\b{re.escape(name)}\s*\(", blob):
-            out.append(f"{name}: listed as a lookup but no emitter calls it")
     for written in ADMITTED:
         if written not in exercised:
             out.append(f"`{written}`: admitted but no emitter writes it")
@@ -233,9 +213,7 @@ def violations() -> list[str]:
         source = Source(relative, blanked(path.read_text()))
         sources.append(source)
         mapped = argument_spans(source.code, MAPPER_CALL)
-        looked_up = argument_spans(source.code, LOOKUP_CALL)
         reads = list(NAME_MEMBER.finditer(source.code))
-        reads += list(NAME_ELEMENT.finditer(source.code))
         for member in reads:
             position = member.start()
             written = " ".join(
@@ -245,8 +223,6 @@ def violations() -> list[str]:
                 exercised.add(written)
                 continue
             if any(start <= position < end for start, end in mapped):
-                continue
-            if any(start <= position < end for start, end in looked_up):
                 continue
             found.append(
                 f"{relative}:{source.line_of(position)}: `{written}` "

@@ -268,10 +268,6 @@ auto DefinitionSymbol(const CompilationUnit& unit, TypeId type)
           [&](const ObjectType& o) {
             return DefinitionSymbol(unit, o.class_id);
           },
-          [](const CrossUnitClassType& c) {
-            return ClassDefinitionSymbol(
-                c.unit_name, SymbolPartOf(c.class_path));
-          },
           [&](const ClosureType& c) {
             return DefinitionSymbol(unit, c.closure_id);
           }},
@@ -285,9 +281,11 @@ auto QualifierOf(
 }
 
 auto DefinitionSymbol(const CompilationUnit& unit, ClassId id) -> std::string {
-  const std::optional<support::DefPath>& path = unit.classes.Get(id).path;
+  const Class& cls = unit.classes.Get(id);
   return ClassDefinitionSymbol(
-      QualifierOf(unit, path), SymbolPartOf(path, id.value));
+      cls.defining_unit.has_value() ? std::string_view{*cls.defining_unit}
+                                    : QualifierOf(unit, cls.path),
+      SymbolPartOf(cls.path, id.value));
 }
 
 // A closure has no declaration of the source to take a name from, so what

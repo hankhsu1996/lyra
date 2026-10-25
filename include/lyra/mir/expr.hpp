@@ -19,7 +19,6 @@
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure.hpp"
-#include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/enum_table_id.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
@@ -217,34 +216,20 @@ struct ForeignSymbolTarget {
   auto operator==(const ForeignSymbolTarget&) const -> bool = default;
 };
 
-// Identity of a receiver-less callable this unit's own namespace owns -- a
-// package function or task (LRM 26.3), and the type-associated functions the
-// compiler synthesizes. Its identity is the position its declaration sits at,
-// which every body has; being reachable by an identifier is a separate relation
-// the namespace holds over that position, stated only where the source declared
-// one, so a synthesized body takes no part in it and needs no name of the
-// compiler's own. This is the same shape a namespace's storage already has,
-// whose pool likewise holds cells the source never named.
+// Identity of a receiver-less callable of a unit's namespace -- a package
+// function or task (LRM 26.3), and the type-associated functions the compiler
+// synthesizes -- whichever unit's namespace defines it: one of another unit's
+// is declared among this unit's callables. Its identity is the position its
+// declaration sits at, which every body has; being reachable by an identifier
+// is a separate relation the namespace holds over that position, stated only
+// where the source declared one, so a synthesized body takes no part in it and
+// needs no name of the compiler's own. This is the same shape a namespace's
+// storage already has, whose pool likewise holds cells the source never named.
 struct UnitCallableTarget {
   CallableId slot;
 
   auto operator<=>(const UnitCallableTarget&) const
       -> std::strong_ordering = default;
-};
-
-// Identity of a receiver-less callable *another* unit's namespace owns -- a
-// package function or task (LRM 26.3) reached across the boundary. It carries
-// no unit-local id, because a position means nothing outside the arena that
-// minted it: it names the owning unit and the callable by name, resolved
-// against that unit's interface at link time, exactly as a class of another
-// unit is named. Only a body the source
-// declared can be named this way, which is the whole of what a namespace
-// publishes.
-struct ExternalUnitCallableTarget {
-  std::string unit_name;
-  std::string callable_name;
-
-  auto operator==(const ExternalUnitCallableTarget&) const -> bool = default;
 };
 
 // Identity of a body another unit's namespace publishes for bringing its cells
@@ -261,54 +246,23 @@ struct ExternalBringUpTarget {
   auto operator==(const ExternalBringUpTarget&) const -> bool = default;
 };
 
-// Identity of a method another compilation unit declares on a class -- an
-// instance method (LRM 8.6), a type-associated method (LRM 8.10), or a
-// subroutine a scope of the design hierarchy published, which a hierarchical
-// name calls on that scope's object (LRM 23.6). The declaring class carries no
-// unit-local id here, so the target names the declaring unit, the class's
-// path in it, and the method's source name, resolved
-// against that unit's signature at link time. Whether the call dispatches on an
-// object is the presence of the callee's receiver, so every form is one
-// identity here.
-struct ExternalUnitClassMethodTarget {
-  std::string unit_name;
-  support::DefPath class_path;
-  std::string method_name;
-
-  auto operator==(const ExternalUnitClassMethodTarget&) const -> bool = default;
-};
-
 // The constructor of a class some unit declares, entered on the object the
 // call's receiver names: how a constructor constructs its base (LRM 8.7, 8.17),
 // as Java's constructor invokes its superclass's on `this`. The object is
 // already of its own class, so nothing about it changes as the base's
 // constructor runs.
 struct ConstructorTarget {
-  DeclaredClassRef cls;
+  ClassId cls;
 
   auto operator==(const ConstructorTarget&) const -> bool = default;
 };
 
-// Identity of the body another compilation unit's class gives a function of
-// the runtime library's classes it overrides: the declaring unit, the class's
-// path in it, and the function. The function is its name in every unit, so a
-// derived class reaches its base's override with no name the source wrote, the
-// way a qualified call reaches a base's method without dispatching.
-struct ExternalLibraryOverrideTarget {
-  std::string unit_name;
-  support::DefPath class_path;
-  support::LibraryVirtual function;
-
-  auto operator==(const ExternalLibraryOverrideTarget&) const -> bool = default;
-};
-
 // Identity of a method a record's declaration has: the structure or the union,
-// and the operation on a whole value the method answers. A record the source
-// declared is identified by its declaration wherever it is named (LRM 6.22),
-// and it has one method per operation, so the pair names the method from the
-// declaring unit and from any other alike.
+// and the operation on a whole value the method answers. A record has one
+// method per operation, so the pair names the method whichever unit declares
+// the record.
 struct RecordMethodTarget {
-  TypeDeclarationRef declaration;
+  RecordId record;
   support::ValueOperation answers;
 
   auto operator==(const RecordMethodTarget&) const -> bool = default;
@@ -330,11 +284,11 @@ struct TypeOperationTarget {
 // field, and the slot that class gave it. Owner is the declaring class, not the
 // receiver's class; the two coincide when the receiver's class declares the
 // field itself and diverge when the field is inherited from a base (LRM 8.14).
-// A class of another unit is known by what it published, whose properties are
-// the first of its fields in the order it published them, so the slot is the
-// same coordinate whichever unit declares the class.
+// A class another unit defines is declared here with what it published, whose
+// properties are the first of its fields in the order it published them, so
+// the slot is the same coordinate whichever unit defines the class.
 struct ClassFieldTarget {
-  DeclaredClassRef owner;
+  ClassId owner;
   FieldId slot;
 
   auto operator==(const ClassFieldTarget&) const -> bool = default;
@@ -376,31 +330,24 @@ using FieldRef =
 using CallPart = std::variant<base::ComponentIndex, ClassFieldTarget>;
 
 // The target of a `Direct` call -- the symbol identity. Each alternative is one
-// identity space, told apart by the table that resolves the name: a class of
-// this unit (`CallableTarget`), a closure of this unit (`ClosureTarget`), the
-// closure a type parameter is made concrete at (`BoundCallTarget`), the commit
-// of the keeper one is made concrete at (`BoundCommitTarget`), this
-// unit's own namespace (`UnitCallableTarget`), the closed set of runtime
-// library entries (`BuiltinFn`), another compilation unit's namespace
-// (`ExternalUnitCallableTarget`) or one of its classes
-// (`ExternalUnitClassMethodTarget`), a class's constructor, of this unit or
-// another (`ConstructorTarget`), the override another unit's class gives a
-// runtime library class's function (`ExternalLibraryOverrideTarget`), a
-// declared struct's or union's methods (`RecordMethodTarget`), the operations
-// this unit states for a type with no declaration (`TypeOperationTarget`), the
-// bodies another unit's namespace is brought up through
-// (`ExternalBringUpTarget`), and the DPI-C name space
-// (`ForeignSymbolTarget`, LRM 35.4). Inside this unit a body is named by its
-// position and outside it by what the namespace published, so the two
-// namespace alternatives are total and do not overlap. Nothing here says
+// identity space, told apart by the table that resolves the name: a class this
+// unit names, whichever unit defines it (`CallableTarget`), a closure of this
+// unit (`ClosureTarget`), the closure a type parameter is made concrete at
+// (`BoundCallTarget`), the commit of the keeper one is made concrete at
+// (`BoundCommitTarget`), a unit's namespace, whichever unit it is
+// (`UnitCallableTarget`), the closed set of runtime library entries
+// (`BuiltinFn`), a class's constructor (`ConstructorTarget`), a declared
+// struct's or union's methods (`RecordMethodTarget`), the operations this unit
+// states for a type with no declaration (`TypeOperationTarget`), the bodies
+// another unit's namespace is brought up through (`ExternalBringUpTarget`), and
+// the DPI-C name space (`ForeignSymbolTarget`, LRM 35.4). Nothing here says
 // whether the call dispatches on an object -- that is the callee's receiver --
 // and none is recovered from the receiver's runtime type.
 using DirectTarget = std::variant<
     CallableTarget, ClosureTarget, BoundCallTarget, BoundCommitTarget,
-    UnitCallableTarget, support::BuiltinFn, ExternalUnitCallableTarget,
-    ExternalUnitClassMethodTarget, ConstructorTarget,
-    ExternalLibraryOverrideTarget, RecordMethodTarget, TypeOperationTarget,
-    ExternalBringUpTarget, ForeignSymbolTarget>;
+    UnitCallableTarget, support::BuiltinFn, ConstructorTarget,
+    RecordMethodTarget, TypeOperationTarget, ExternalBringUpTarget,
+    ForeignSymbolTarget>;
 
 // A direct call whose callee is settled at compile time. The single shape for
 // every direct invocation: a user method, a built-in, a subroutine of this
@@ -667,13 +614,12 @@ struct VectorGetExpr {
   ExprId index;
 };
 
-// The definition every object of one class carries, which the unit declaring
+// The definition every object of one class carries, which the unit defining
 // the class emits as a constant. Only a class some unit declares has one, and
-// whichever unit that is, it is reached the same way -- so a class of this unit
-// and one past it are one node. `Expr::type` is the runtime class definition
-// itself, so a use wanting its address takes it.
+// whichever unit defines it, it is reached the same way. `Expr::type` is the
+// runtime class definition itself, so a use wanting its address takes it.
 struct DefinitionRef {
-  DeclaredClassRef of;
+  ClassId of;
 };
 
 // The members an enumeration declares, named by the entry holding them: what
@@ -707,37 +653,14 @@ struct StaticPropertyRef {
   StaticPropertyId prop;
 };
 
-// A place naming a variable this unit's own namespace owns (LRM 26.2), by the
-// position the variable's declaration sits at. A namespace has no instance and
-// no receiver, so the variable is reached directly rather than through a
-// `self`-based field access; what makes this the intra-unit form is that the
-// arena holding the declaration is in hand, exactly as it is for a property of
-// a class this unit declares. `Expr::type` is the variable's observable-cell
-// type, so a read wraps it in `Get` and a write in `Set`.
+// A place naming a variable a unit's namespace owns (LRM 26.2), by the position
+// the variable's declaration sits at, whichever unit's namespace owns it: one
+// of another unit's is declared among this unit's cells. A namespace has no
+// instance and no receiver, so the variable is reached directly rather than
+// through a `self`-based field access. `Expr::type` is the variable's
+// observable-cell type, so a read wraps it in `Get` and a write in `Set`.
 struct StaticVariableRef {
   StaticVariableId variable;
-};
-
-// The same storage, named from another compilation unit, where no arena is in
-// hand and the unit's published name for it is the whole of what a referrer
-// has (`unit_name::variable_name`). The storage dual of
-// `ExternalUnitCallableTarget`, and the peer of `ExternalStaticPropertyRef` on
-// the namespace-versus-class axis.
-struct ExternalUnitVariableRef {
-  std::string unit_name;
-  std::string variable_name;
-};
-
-// A static property (LRM 8.9 / 8.10) declared on a class of another
-// compilation unit. Its owner has no unit-local id here; the property is
-// named by (declaring unit, class path, property name), which a
-// backend resolves once it has taken in what that unit published. `Expr::type`
-// is the property's observable-cell type, exactly as on the intra-unit
-// reference, so the two read alike.
-struct ExternalStaticPropertyRef {
-  std::string unit_name;
-  support::DefPath class_path;
-  std::string property_name;
 };
 
 // A constant a class of this unit holds, by the position it sits at in that
@@ -747,10 +670,10 @@ struct ClassConstantRef {
   ClassConstantId constant;
 };
 
-// A body of a class of this unit, named as the code it is rather than called.
-// `Expr::type` is the machine function type the body has: every parameter it
-// takes, the receiver among them, and what it results in. Read as a value it is
-// the body's address, the way a function's name is in C.
+// A body of a class this unit defines, named as the code it is rather than
+// called. `Expr::type` is the machine function type the body has: every
+// parameter it takes, the receiver among them, and what it results in. Read as
+// a value it is the body's address, the way a function's name is in C.
 struct FunctionRef {
   CallableTarget body;
 };
@@ -773,8 +696,7 @@ struct ExternalObjectEntryRef {
 // that exists whether or not this expression names it.
 using ReferenceTarget = std::variant<
     LocalRef, DefinitionRef, EnumTableRef, IntegralConstantRef,
-    StaticPropertyRef, StaticVariableRef, ExternalUnitVariableRef,
-    ExternalStaticPropertyRef, ClassConstantRef, FunctionRef,
+    StaticPropertyRef, StaticVariableRef, ClassConstantRef, FunctionRef,
     ExternalObjectEntryRef>;
 
 // Names a declared thing. Reading it loads what the name reaches, assigning to

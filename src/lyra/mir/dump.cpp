@@ -90,18 +90,8 @@ auto FormatExprList(std::span<const ExprId> ids) -> std::string {
   return text;
 }
 
-auto FormatClass(const DeclaredClassRef& cls) -> std::string {
-  return std::visit(
-      Overloaded{
-          [](const IntraUnitClassRef& intra) {
-            return std::format("Class[{}]", intra.class_id.value);
-          },
-          [](const CrossUnitClassRef& cross) {
-            return std::format(
-                "Class[{}::{}]", cross.unit_name,
-                support::DisplayOf(cross.class_path));
-          }},
-      cls);
+auto FormatClass(ClassId cls) -> std::string {
+  return std::format("Class[{}]", cls.value);
 }
 
 auto FormatField(const ClassFieldTarget& t) -> std::string {
@@ -228,14 +218,6 @@ class MirDumper {
       }
       Dedent();
     }
-    if (!unit.external_records.empty()) {
-      Line("ExternalRecords:");
-      Indent();
-      for (const ExternalRecord& external : unit.external_records) {
-        DumpExternalRecord(external);
-      }
-      Dedent();
-    }
     if (unit.closures.size() > 0) {
       Line("Closures:");
       Indent();
@@ -307,32 +289,16 @@ class MirDumper {
     throw InternalError("MirDumper: unknown record kind");
   }
 
-  // The declaration a struct or a union is: `[3]` for one this unit declares,
-  // `(Pkg::name)` for another unit's.
-  static auto FormatRecordRef(const RecordRef& ref) -> std::string {
-    return std::visit(
-        Overloaded{
-            [](RecordId id) { return std::format("[{}]", id.value); },
-            [](const TypeDeclarationRef& declared) {
-              return std::format(
-                  "({}::{})", declared.unit_name,
-                  support::DisplayOf(declared.path));
-            }},
-        ref);
-  }
-
   [[nodiscard]] auto FormatClassRef(const ClassRef& ref) const -> std::string {
     return std::visit(
         Overloaded{
-            [this](const IntraUnitClassRef& i) -> std::string {
+            [this](const ClassId& id) -> std::string {
+              const Class& cls = unit_->GetClass(id);
               return std::format(
-                  "IntraUnit[#{}]{}", i.class_id.value,
-                  FormatPath(unit_->GetClass(i.class_id).path));
-            },
-            [](const CrossUnitClassRef& e) -> std::string {
-              return std::format(
-                  "CrossUnit(\"{}::{}\")", e.unit_name,
-                  support::DisplayOf(e.class_path));
+                  "Class[#{}]{}{}", id.value, FormatPath(cls.path),
+                  cls.defining_unit.has_value()
+                      ? std::format(" of {}", *cls.defining_unit)
+                      : std::string{});
             },
             [](const ObjectTreeRootRef&) -> std::string {
               return "ObjectTreeRoot";
@@ -343,27 +309,16 @@ class MirDumper {
         ref);
   }
 
-  [[nodiscard]] auto FormatClassRef(const DeclaredClassRef& ref) const
-      -> std::string {
-    return FormatClassRef(AsClassRef(ref));
+  [[nodiscard]] auto FormatClassRef(ClassId id) const -> std::string {
+    return FormatClassRef(ClassRef{id});
   }
 
   [[nodiscard]] auto FormatVirtualSlot(const VirtualSlot& s) const
       -> std::string {
-    return std::visit(
-        Overloaded{
-            [this](const LocalVirtualSlot& l) -> std::string {
-              const auto& owner = unit_->GetClass(l.owner_class);
-              return std::format(
-                  "Class[{}].{}(Callable[{}])", l.owner_class.value,
-                  CallableLabel(owner.named_callables, l.slot), l.slot.value);
-            },
-            [](const ExternalVirtualSlot& e) -> std::string {
-              return std::format(
-                  "External({}::{}#{})", e.unit_name,
-                  support::DisplayOf(e.class_path), e.ordinal.value);
-            }},
-        s);
+    const auto& owner = unit_->GetClass(s.owner_class);
+    return std::format(
+        "Class[{}].{}(Callable[{}])", s.owner_class.value,
+        CallableLabel(owner.named_callables, s.slot), s.slot.value);
   }
 
   [[nodiscard]] auto FormatType(const Type& t) const -> std::string {
@@ -534,8 +489,8 @@ class MirDumper {
             },
             [this](const RecordType& r) -> std::string {
               return std::format(
-                  "{}{}", RecordKindName(RecordKindOf(*unit_, r.declaration)),
-                  FormatRecordRef(r.declaration));
+                  "{}[{}]", RecordKindName(RecordKindOf(*unit_, r.declaration)),
+                  r.declaration.value);
             },
             [](const ClosureType& c) -> std::string {
               return std::format("Closure[{}]", c.closure_id.value);
@@ -749,28 +704,12 @@ class MirDumper {
               return std::format(
                   "builtin=\"{}\"", support::RuntimeEntryOf(id).name);
             },
-            [](const ExternalUnitCallableTarget& e) -> std::string {
-              return std::format(
-                  R"(external_unit={}::{})", e.unit_name, e.callable_name);
-            },
-            [](const ExternalUnitClassMethodTarget& e) -> std::string {
-              return std::format(
-                  "external_class_method={}::{}::{}", e.unit_name,
-                  support::DisplayOf(e.class_path), e.method_name);
-            },
             [this](const ConstructorTarget& c) -> std::string {
               return std::format("constructor={}", FormatClassRef(c.cls));
             },
-            [](const ExternalLibraryOverrideTarget& e) -> std::string {
-              return std::format(
-                  "external_library_override={}::{}::{}", e.unit_name,
-                  support::DisplayOf(e.class_path),
-                  support::LibraryVirtualName(e.function));
-            },
             [](const RecordMethodTarget& s) -> std::string {
               return std::format(
-                  R"(struct_method={}::{} "{}")", s.declaration.unit_name,
-                  support::DisplayOf(s.declaration.path),
+                  R"(struct_method=Record[{}] "{}")", s.record.value,
                   support::ValueOperationName(s.answers));
             },
             [](const TypeOperationTarget& t) -> std::string {
@@ -851,16 +790,6 @@ class MirDumper {
               return std::format(
                   "StaticVariableRef variable=StaticVariable[{}]",
                   r.variable.value);
-            },
-            [](const ExternalUnitVariableRef& r) -> std::string {
-              return std::format(
-                  "ExternalUnitVariableRef unit={} variable={}", r.unit_name,
-                  r.variable_name);
-            },
-            [](const ExternalStaticPropertyRef& r) -> std::string {
-              return std::format(
-                  "ExternalStaticPropertyRef external={}::{}::{}", r.unit_name,
-                  support::DisplayOf(r.class_path), r.property_name);
             },
             [](const ClassConstantRef& r) -> std::string {
               return std::format(
@@ -1196,8 +1125,12 @@ class MirDumper {
   void DumpRecord(RecordId id, const RecordDecl& decl) {
     Line(
         std::format(
-            R"({} (#{}) "{}" elems=[{}])", RecordKindName(decl.kind), id.value,
-            support::DisplayOf(decl.path), FormatTypeList(decl.elements)));
+            R"({} (#{}) "{}"{} elems=[{}])", RecordKindName(decl.kind),
+            id.value, support::DisplayOf(decl.path),
+            decl.defining_unit.has_value()
+                ? std::format(" of {}", *decl.defining_unit)
+                : std::string{},
+            FormatTypeList(decl.elements)));
     Indent();
     for (const RecordMethod& method : unit_->GetRecordMethods(id)) {
       Line(
@@ -1211,15 +1144,6 @@ class MirDumper {
       Dedent();
     }
     Dedent();
-  }
-
-  void DumpExternalRecord(const ExternalRecord& external) {
-    Line(
-        std::format(
-            "{}({}::{}) elems=[{}]", RecordKindName(external.kind),
-            external.declaration.unit_name,
-            support::DisplayOf(external.declaration.path),
-            FormatTypeList(external.elements)));
   }
 
   void DumpParams(const CallableCode& code) {

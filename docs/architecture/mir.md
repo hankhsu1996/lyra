@@ -59,29 +59,29 @@ what the construct means.
   integer is a number a runtime entry takes or returns. Every value a runtime entry returns as a
   plain scalar, every table a runtime record reads as raw storage, and every value that crosses a
   foreign-call boundary is one of these.
-- The type system: value types (integral, real, string, ...); one object type, naming a class by its
-  identity, which is one of two forms -- an intra-unit class (a class of this unit, however the name
-  reaching it was written) and an external-unit class (a class another compilation unit published,
-  named by that unit and the class); three composing wrappers, pointer, reference and vector, a
-  pointer stating its ownership -- unique, shared or borrowed, the last two written `Shared<T>` and
-  `Borrowed<T>` in these docs -- and a reference, as in Rust and C++, being bound once to a referent
-  that exists elsewhere and never null, so holding one says only that the referent is read where it
-  lies rather than copied; and five categories: the **tuple**, the structural product (positional;
-  interned by its components, so two with the same components are one type); the **record**, a
-  declared struct, union or tagged union (positional like the tuple, but its identity is its
-  declaration, so two with the same members are two types); the **closure**, an anonymous concrete
-  callable value (capture fields plus one invoke body, a distinct type per site); the **erased
-  callable**, a closure of a type unknown where it is called, reached only through a box or a
-  borrow, of a signature of machine types and nothing else (`compiler_generated_storage.md`
-  invariant 10); and the **object** (`mir::Class`), the rich nominal object with methods and
-  dispatch. A component of a tuple or a record is reached the same way: by its position, as a field
-  step on the place holding it, whether that place is a variable, a dereference or a value held for
-  the full-expression; a union's members all lie at its start. The closure and the object share a
-  **field substrate** -- a field declaration, a field id keyed within one declaration, and one
-  access node -- while staying distinct types; an access names the declaration it reaches into, so
-  what the substrate shares is the vocabulary and never the identity. Structural versus nominal, and
-  storage versus callable, are the ordinary generic-language distinctions (C++/Rust/LLVM carry
-  them).
+- The type system: value types (integral, real, string, ...); one object type, naming a class by the
+  identity the unit's class registry gives it, whichever unit defines it -- a class another
+  compilation unit defines is an entry there declared with what that unit published, as a record
+  declaration of clang's may be defined or only declared; three composing wrappers, pointer,
+  reference and vector, a pointer stating its ownership -- unique, shared or borrowed, the last two
+  written `Shared<T>` and `Borrowed<T>` in these docs -- and a reference, as in Rust and C++, being
+  bound once to a referent that exists elsewhere and never null, so holding one says only that the
+  referent is read where it lies rather than copied; and five categories: the **tuple**, the
+  structural product (positional; interned by its components, so two with the same components are
+  one type); the **record**, a declared struct, union or tagged union (positional like the tuple,
+  but its identity is its declaration, so two with the same members are two types); the **closure**,
+  an anonymous concrete callable value (capture fields plus one invoke body, a distinct type per
+  site); the **erased callable**, a closure of a type unknown where it is called, reached only
+  through a box or a borrow, of a signature of machine types and nothing else
+  (`compiler_generated_storage.md` invariant 10); and the **object** (`mir::Class`), the rich
+  nominal object with methods and dispatch. A component of a tuple or a record is reached the same
+  way: by its position, as a field step on the place holding it, whether that place is a variable, a
+  dereference or a value held for the full-expression; a union's members all lie at its start. The
+  closure and the object share a **field substrate** -- a field declaration, a field id keyed within
+  one declaration, and one access node -- while staying distinct types; an access names the
+  declaration it reaches into, so what the substrate shares is the vocabulary and never the
+  identity. Structural versus nominal, and storage versus callable, are the ordinary
+  generic-language distinctions (C++/Rust/LLVM carry them).
 - A record is an unpacked structure, union or tagged union the source declared (LRM 7.2, 7.3), as
   rustc's struct, union and enum are one kind of declared type. It carries its kind, its members'
   types, the name another unit reaches it by and a method for each operation the language defines on
@@ -233,19 +233,18 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
    flag beside its type; the type is the classification. _Programming-language consequence: the type
    system carries every fact about a member; no parallel discriminator exists, and no name has to be
    invented for a declaration the source did not write._
-8. A class is named by exactly one of two forms: intra-unit, naming a class of this unit, or
-   external-unit, naming a class another compilation unit published. Which one is a fact about the
-   class, never about the name that reached it: a class of this unit is intra-unit even where a name
-   reaches it through another instance of this unit or through a signature naming this unit, so one
-   class has one identity in a unit. For an owned child the distinction is its runtime scope kind --
-   a named generate scope versus a module instance -- and nothing else encodes scope kind.
-   _Programming-language consequence: a class reference is either local to this translation unit or
-   names an external one, as a Rust definition is of the local crate or another; there is no third
-   kind, and no class is both._
+8. A class has one identity in a unit: the registry entry naming it, whichever unit defines it and
+   however the name reaching it was written -- through another instance of this unit, or through a
+   signature naming this unit. Whether this unit defines the class or declares another unit's is a
+   fact of the entry, never of the reference, and a declared entry holds nothing this unit emits.
+   For an owned child that fact is its runtime scope kind -- a named generate scope's class is
+   defined here, a module instance's by its unit -- and nothing else encodes scope kind.
+   _Programming-language consequence: a class reference is one kind, as a Rust `DefId` names a local
+   or an extern item alike; which crate defines it is a property of the item._
 9. Instance multiplicity is the vector wrapper, a property of the member's type, and is orthogonal
-   to whether the owned object is an intra-unit scope or an external unit. The same wrapper composes
-   over either object form and to any depth. _Programming-language consequence: cardinality and kind
-   compose through generic type wrappers._
+   to which unit defines the owned object's class. The same wrapper composes over any object type
+   and to any depth. _Programming-language consequence: cardinality and kind compose through generic
+   type wrappers._
 10. Every semantic decision is explicit in MIR's structure, expressed in MIR's existing primitive
     set. MIR is consumed by more than one backend; each chooses only how to represent MIR's stated
     semantics in its target, by a fixed function of the node kind. A backend reads a semantic fact
@@ -526,10 +525,10 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
   consumption time. The form that produced a reference is consumed at AST-to-HIR; no MIR consumer
   reads it.
 - An identity for a route step inside the emitting artifact that is a textual name. A step whose
-  source and target classes the artifact both owns has a stable in-artifact identity. A name is the
-  right identity in exactly one other place: a member another unit's scope published, where producer
-  and consumer derive the same name independently and the referrer's compiler checks it. No step
-  carries a name for the runtime to match.
+  source and target classes the artifact both owns has a stable in-artifact identity. A step into a
+  member another unit's scope published names the reader's declared entry for it; the name that unit
+  published is that entry's spelling, which producer and consumer derive independently and the
+  referrer's compiler checks. No step carries a name for the runtime to match.
 - A MIR shape that decides a sealed reference's storage placement at this layer. Whether a sealed
   endpoint is materialized as a stored member, hoisted into a local, or rematerialized at each use
   is a layout choice owned by LIR; MIR states the reference's identity, its route, and the protocol
@@ -554,13 +553,13 @@ a debug view. The C++ surface syntax happens to map naturally onto MIR's vocabul
 share many concepts, but C++ is not MIR's semantics and more than one backend may exist.
 
 A module instance, a named generate scope, and an instance array differ only in one member's type:
-`owning-ptr(external-unit object)`, `owning-ptr(intra-unit object)`, and `vector(owning-ptr(...))`
-respectively. A two-dimensional array is `vector(vector(owning-ptr(...)))`. Because the
-classification lives entirely in the type, a consumer that recurses on the type -- a vector layer
-recurses on its element, an owning pointer to an object reaches the object -- handles every
-combination, including arrays of any dimensionality, with no per-form branch. A consumer that
-switches on whether a member "is an instance" or "is a generate scope" or "is an array" is
-reconstructing what the type already states.
+`owning-ptr(object of a class its unit defines)`, `owning-ptr(object of a class this unit defines)`,
+and `vector(owning-ptr(...))` respectively. A two-dimensional array is
+`vector(vector(owning-ptr(...)))`. Because the classification lives entirely in the type, a consumer
+that recurses on the type -- a vector layer recurses on its element, an owning pointer to an object
+reaches the object -- handles every combination, including arrays of any dimensionality, with no
+per-form branch. A consumer that switches on whether a member "is an instance" or "is a generate
+scope" or "is an array" is reconstructing what the type already states.
 
 The primitive expression set above is shaped by the downstream optimizer. Each backend
 (`backend::cpp` today, the LLVM backend via LIR) consumes MIR as primitives that its optimizer can

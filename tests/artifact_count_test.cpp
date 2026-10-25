@@ -1460,7 +1460,7 @@ endmodule
 auto DeclaresAClassNamed(const LoweredUnits& design, std::string_view name)
     -> bool {
   for (const lyra::hir::CompilationUnit& unit : design) {
-    for (const lyra::hir::ClassId id : unit.classes.Ids()) {
+    for (const lyra::hir::ClassId id : unit.classes.OwnIds()) {
       if (lyra::support::DisplayOf(unit.classes.PathOf(id)) == name) {
         return true;
       }

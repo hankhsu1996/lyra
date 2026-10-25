@@ -21,6 +21,7 @@
 #include "lyra/lir/symbol_name.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lowering/mir_to_lir/function_lowerer.hpp"
+#include "lyra/mir/behavior_ordinal.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_constant_id.hpp"
@@ -69,6 +70,9 @@ auto UnitCallableLinkage(const mir::NamespaceReach& reach) -> lir::Linkage {
           [](const mir::ReachedAsObjectEntry&) {
             return lir::Linkage::kExternal;
           },
+          [](const mir::ReachedInAnotherUnit&) {
+            return lir::Linkage::kExternal;
+          },
           [](const mir::ReachedByPosition&) {
             return lir::Linkage::kInternal;
           }},
@@ -101,7 +105,7 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   }
   class_identities_ = {mir_->classes.size(), std::move(classes)};
 
-  // So is every record this unit declares, since what another unit published
+  // So is every record this unit names, since what another unit published
   // may hold one -- a specialization of its generic on this unit's record.
   std::vector<lir::RecordId> records;
   records.reserve(mir_->records.size());
@@ -109,49 +113,6 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     records.push_back(out_.records.Declare());
   }
   record_identities_ = {mir_->records.size(), std::move(records)};
-
-  // What each class of another unit published, taken whole: a property step on
-  // one names a slot counted out of the published list, and a class extending
-  // one is placed after all of its storage and fills its table from all of its
-  // bodies. A body of it is reached by the symbol its unit emits it under,
-  // composed from the names that unit composed it from.
-  for (const mir::ExternalClass& cls : mir_->external_classes) {
-    lir::ExternalClass record{
-        .unit_name = cls.unit_name,
-        .class_path = cls.class_path,
-        .base = cls.base.transform(
-            [&](const mir::ClassRef& base) { return BaseType(base); }),
-        .members = {},
-        .dispatch = {},
-        .implements = {}};
-    for (const mir::DeclaredClassRef& iface : cls.implements) {
-      record.implements.push_back(ClassRefValueType(iface));
-    }
-    record.members.reserve(cls.fields.size() + cls.private_field_types.size());
-    for (const mir::FieldId id : cls.fields.Ids()) {
-      record.members.push_back(
-          lir::Member{.type = TranslateType(cls.fields.Get(id).type)});
-    }
-    for (const mir::TypeId type : cls.private_field_types) {
-      record.members.push_back(lir::Member{.type = TranslateType(type)});
-    }
-    const auto body = [&](std::string_view method) {
-      return lir::ClassCallableSymbol(
-          cls.unit_name, lir::SymbolPartOf(cls.class_path),
-          lir::SymbolPart::Name(method));
-    };
-    for (const mir::PublishedBehavior& behavior : cls.behaviors) {
-      record.dispatch.introduces.push_back(
-          behavior.is_pure ? std::nullopt : std::optional{body(behavior.name)});
-    }
-    for (const mir::PublishedOverride& overriding : cls.overrides) {
-      record.dispatch.overrides.push_back(
-          lir::Override{
-              .behavior = SlotRef(overriding.behavior),
-              .body = body(overriding.method)});
-    }
-    out_.external_classes.push_back(std::move(record));
-  }
 
   std::vector<ClosureIdentities> closures;
   closures.reserve(mir_->closures.size());
@@ -169,18 +130,14 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   // record is a declaration of the unit another unit names (LRM 7.2, 7.3),
   // which no body's code adds to, so every body states it alike and the link
   // keeps one.
-  for (const mir::ExternalRecord& external : mir_->external_records) {
-    out_.external_records.push_back(
-        lir::ExternalRecord{
-            .declaration = TranslateDeclaration(external.declaration),
-            .kind = TranslateRecordKind(external.kind),
-            .elements = TranslateTypes(external.elements)});
-  }
   for (const mir::RecordId id : mir_->records.Ids()) {
     const mir::RecordDecl& decl = mir_->GetRecord(id);
+    // A record another unit declares is that unit's to link.
     lir::RecordDecl lowered{
+        .defining_unit = decl.defining_unit,
         .path = decl.path,
-        .linkage = lir::Linkage::kShared,
+        .linkage = decl.defining_unit.has_value() ? lir::Linkage::kExternal
+                                                  : lir::Linkage::kShared,
         .kind = TranslateRecordKind(decl.kind),
         .elements = TranslateTypes(decl.elements),
         .methods = {}};
@@ -215,13 +172,12 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   // instance holds, so the unit publishes it under a symbol instead. Every
   // reader reaches it by that name, this unit's own bodies included, since a
   // namespace has no instance for a receiver to arrive through.
+  // A variable of another unit's namespace is that unit's to hold.
   for (const mir::StaticVariableId id : mir_->static_variables.Ids()) {
+    if (mir_->static_variables.Get(id).defining_unit.has_value()) continue;
     out_.static_storage.push_back(
         lir::StaticStorage{
-            .symbol = lir::NamespaceVariableSymbol(
-                mir_->name,
-                lir::SymbolPartOf(
-                    mir::NameOf(mir_->named_static_variables, id), id.value)),
+            .symbol = StaticVariableSymbolOf(id),
             .type = TranslateType(mir_->static_variables.Get(id).type)});
   }
 
@@ -232,15 +188,13 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   // declared by survives only in the name.
   for (const mir::ClassId id : mir_->classes.Ids()) {
     const mir::Class& cls = mir_->GetClass(id);
+    // A class another unit defines holds its cells there.
+    if (cls.defining_unit.has_value()) continue;
     for (const mir::StaticPropertyId prop_id : cls.static_properties.Ids()) {
       out_.static_storage.push_back(
           lir::StaticStorage{
-              .symbol = lir::StaticPropertySymbol(
-                  lir::QualifierOf(out_, cls.path),
-                  lir::SymbolPartOf(cls.path, id.value),
-                  lir::SymbolPartOf(
-                      mir::NameOf(cls.named_static_properties, prop_id),
-                      prop_id.value)),
+              .symbol = StaticPropertySymbolOf(
+                  mir::StaticPropertyRef{.owner = id, .prop = prop_id}),
               .type = TranslateType(cls.static_properties.Get(prop_id).type)});
     }
   }
@@ -318,7 +272,14 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   }
 
   for (const mir::ClassId id : mir_->classes.Ids()) {
-    auto cls = LowerClass(id, mir_->GetClass(id));
+    const mir::Class& declared = mir_->GetClass(id);
+    if (declared.defining_unit.has_value()) {
+      out_.classes.Define(
+          class_identities_.Get(id).lir_class,
+          LowerDeclaredClass(id, declared));
+      continue;
+    }
+    auto cls = LowerClass(id, declared);
     if (!cls) {
       return std::unexpected(std::move(cls.error()));
     }
@@ -457,6 +418,11 @@ auto UnitLowerer::UnitCallableSymbol(mir::CallableId id) const -> std::string {
           [&](const mir::ReachedAsObjectEntry&) {
             return lir::ObjectEntrySymbol(mir_->name, mir_->body_name);
           },
+          // Another unit spells a body of its namespace the same way.
+          [](const mir::ReachedInAnotherUnit& r) {
+            return lir::NamespaceCallableSymbol(
+                r.unit_name, lir::SymbolPart::Name(r.name));
+          },
           [&](const mir::ReachedByPosition& r) {
             return lir::NamespaceCallableSymbol(
                 lir::QualifierOf(out_, std::nullopt),
@@ -465,30 +431,14 @@ auto UnitLowerer::UnitCallableSymbol(mir::CallableId id) const -> std::string {
       mir::NamespaceReachOf(*mir_, id));
 }
 
-auto UnitLowerer::ClassRefValueType(const mir::DeclaredClassRef& of)
-    -> lir::TypeId {
-  return std::visit(
-      Overloaded{
-          [&](const mir::IntraUnitClassRef& intra) {
-            return ClassValueType(intra.class_id);
-          },
-          [&](const mir::CrossUnitClassRef& cross) {
-            return ExternalClassValueType(cross.unit_name, cross.class_path);
-          }},
-      of);
-}
-
 auto UnitLowerer::BaseType(const mir::ClassRef& base) -> lir::TypeId {
   const auto library_class = [&](support::RuntimeClass which) {
     return out_.types.Intern(lir::Type{lir::RuntimeClassType{.which = which}});
   };
   return std::visit(
       Overloaded{
-          [&](const mir::IntraUnitClassRef& intra) {
-            return ClassRefValueType(intra);
-          },
-          [&](const mir::CrossUnitClassRef& cross) {
-            return ClassRefValueType(cross);
+          [&](const mir::ClassId& declared) {
+            return ClassValueType(declared);
           },
           [&](const mir::ObjectTreeRootRef&) {
             return library_class(support::RuntimeClass::kScope);
@@ -510,7 +460,7 @@ auto UnitLowerer::ClassBodySymbol(
                             ? std::get_if<mir::OverridesLibraryVirtual>(&*role)
                             : nullptr;
   return lir::ClassCallableSymbol(
-      lir::QualifierOf(out_, cls.path), std::move(class_part),
+      ClassQualifier(cls), std::move(class_part),
       library != nullptr
           ? lir::SymbolPart::LibraryVirtual(library->function)
           : lir::SymbolPartOf(mir::NameOf(cls.named_callables, id), id.value));
@@ -568,12 +518,10 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
   // unique program-wide.
   if (cls.constructor.has_value()) {
     const lir::FunctionId function = ConstructorFunction(owner);
-    auto constructor =
-        FunctionLowerer(
-            *this, cls.constructor->code,
-            lir::ConstructorSymbol(
-                qualifier, lir::SymbolPartOf(cls.path, owner.value)))
-            .Run();
+    auto constructor = FunctionLowerer(
+                           *this, cls.constructor->code,
+                           lir::ConstructorSymbol(qualifier, ClassPart(owner)))
+                           .Run();
     if (!constructor) {
       return std::unexpected(std::move(constructor.error()));
     }
@@ -589,11 +537,10 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     if (!body.has_value()) {
       continue;
     }
-    auto fn =
-        FunctionLowerer(
-            *this, cls.callables.Get(cid).code,
-            ClassBodySymbol(lir::SymbolPartOf(cls.path, owner.value), cls, cid))
-            .Run();
+    auto fn = FunctionLowerer(
+                  *this, cls.callables.Get(cid).code,
+                  ClassBodySymbol(ClassPart(owner), cls, cid))
+                  .Run();
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
     }
@@ -601,8 +548,8 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     out_.functions.Define(*body, *std::move(fn));
   }
   out.dispatch = LowerDispatch(owner, cls);
-  for (const mir::DeclaredClassRef& iface : cls.implements) {
-    out.implements.push_back(ClassRefValueType(iface));
+  for (const mir::ClassId iface : cls.implements) {
+    out.implements.push_back(ClassValueType(iface));
   }
   for (const mir::ConformingBehavior& answered : cls.conforming) {
     out.conforming.push_back(
@@ -611,8 +558,7 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
             .answered_by = answered.answered_by.transform(
                 [&](const mir::VirtualSlot& slot) { return SlotRef(slot); })});
   }
-  const std::string definition =
-      DefinitionSymbolOf(mir::IntraUnitClassRef{.class_id = owner});
+  const std::string definition = DefinitionSymbolOf(owner);
   for (const mir::ClassConstantId constant : cls.constants.Ids()) {
     const mir::ValueBuild& initializer =
         cls.constants.Get(constant).initializer;
@@ -632,29 +578,74 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
   return out;
 }
 
-auto UnitLowerer::DefinitionSymbolOf(const mir::DeclaredClassRef& of) const
+auto UnitLowerer::DefinitionSymbolOf(mir::ClassId of) const -> std::string {
+  const mir::Class& cls = mir_->GetClass(of);
+  return lir::ClassDefinitionSymbol(ClassQualifier(cls), ClassPart(of));
+}
+
+auto UnitLowerer::StaticVariableSymbolOf(mir::StaticVariableId variable) const
     -> std::string {
-  return std::visit(
-      Overloaded{
-          [&](const mir::IntraUnitClassRef& intra) {
-            const std::optional<support::DefPath>& path =
-                mir_->GetClass(intra.class_id).path;
-            return lir::ClassDefinitionSymbol(
-                lir::QualifierOf(out_, path),
-                lir::SymbolPartOf(path, intra.class_id.value));
-          },
-          [](const mir::CrossUnitClassRef& cross) {
-            return lir::ClassDefinitionSymbol(
-                cross.unit_name, lir::SymbolPartOf(cross.class_path));
-          }},
-      of);
+  return lir::NamespaceVariableSymbol(
+      mir::DefiningUnitOf(
+          *mir_, mir_->static_variables.Get(variable).defining_unit),
+      lir::SymbolPartOf(
+          mir::NameOf(mir_->named_static_variables, variable), variable.value));
+}
+
+auto UnitLowerer::StaticPropertySymbolOf(
+    const mir::StaticPropertyRef& ref) const -> std::string {
+  const mir::Class& cls = mir_->GetClass(ref.owner);
+  return lir::StaticPropertySymbol(
+      ClassQualifier(cls), ClassPart(ref.owner),
+      lir::SymbolPartOf(
+          mir::NameOf(cls.named_static_properties, ref.prop), ref.prop.value));
+}
+
+auto UnitLowerer::ClassPart(mir::ClassId id) const -> lir::SymbolPart {
+  const mir::Class& cls = mir_->GetClass(id);
+  if (cls.path.has_value()) {
+    return lir::SymbolPartOf(*cls.path);
+  }
+  // A class nothing outside this artifact names is spelled by its position
+  // among this unit's classes, as every backend spells it.
+  return lir::SymbolPart::Ordinal(class_identities_.Get(id).lir_class.value);
+}
+
+auto UnitLowerer::ClassQualifier(const mir::Class& cls) const
+    -> std::string_view {
+  if (cls.defining_unit.has_value()) {
+    return *cls.defining_unit;
+  }
+  return lir::QualifierOf(out_, cls.path);
+}
+
+auto UnitLowerer::LowerDeclaredClass(mir::ClassId id, const mir::Class& cls)
+    -> lir::Class {
+  lir::Class record{
+      .defining_unit = cls.defining_unit,
+      .path = cls.path,
+      .linkage = lir::Linkage::kExternal,
+      .base = cls.base.transform(
+          [&](const mir::ClassRef& base) { return BaseType(base); }),
+      .members = {},
+      .dispatch = LowerDispatch(id, cls),
+      .implements = {},
+      .conforming = {}};
+  for (const mir::ClassId iface : cls.implements) {
+    record.implements.push_back(ClassValueType(iface));
+  }
+  record.members.reserve(cls.fields.size());
+  for (const mir::FieldId field : cls.fields.Ids()) {
+    record.members.push_back(
+        lir::Member{.type = TranslateType(cls.fields.Get(field).type)});
+  }
+  return record;
 }
 
 auto UnitLowerer::ClassConstantSymbolOf(
     const mir::ClassConstantRef& constant) const -> std::string {
   return lir::ClassConstantSymbol(
-      DefinitionSymbolOf(mir::IntraUnitClassRef{.class_id = constant.owner}),
-      constant.constant.value);
+      DefinitionSymbolOf(constant.owner), constant.constant.value);
 }
 
 auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
@@ -720,12 +711,6 @@ auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
                     },
                     [&](const mir::StaticVariableRef&) {
                       return not_data("a static variable");
-                    },
-                    [&](const mir::ExternalUnitVariableRef&) {
-                      return not_data("another unit's variable");
-                    },
-                    [&](const mir::ExternalStaticPropertyRef&) {
-                      return not_data("another unit's static property");
                     }},
                 r.target);
           },
@@ -770,13 +755,6 @@ auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
                     },
                     [&](const mir::StaticVariableRef&) {
                       return not_data("the address of a static variable");
-                    },
-                    [&](const mir::ExternalUnitVariableRef&) {
-                      return not_data("the address of another unit's variable");
-                    },
-                    [&](const mir::ExternalStaticPropertyRef&) {
-                      return not_data(
-                          "the address of another unit's static property");
                     }},
                 named->target);
           },
@@ -835,16 +813,28 @@ auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
 
 auto UnitLowerer::SlotRef(const mir::VirtualSlot& slot)
     -> lir::StatedDispatchRef {
-  return std::visit(
-      Overloaded{
-          [&](const mir::LocalVirtualSlot& local) {
-            return MethodRef(local.owner_class, local.slot);
-          },
-          [&](const mir::ExternalVirtualSlot& external) {
-            return ExternalMethodRef(
-                external.unit_name, external.class_path, external.ordinal);
-          }},
-      slot);
+  const std::optional<lir::DispatchOrdinal>& ordinal =
+      class_identities_.Get(slot.owner_class).ordinals.Get(slot.slot);
+  // A dispatch names the callable that introduced the behavior, which is the
+  // one identity every class answering it agrees on, so a callable naming no
+  // introduction is a producer that built the slot identity wrongly.
+  if (!ordinal.has_value()) {
+    throw InternalError(
+        "mir_to_lir: a dispatch names a callable that introduces no behavior");
+  }
+  return lir::StatedDispatchRef{
+      .introduced_by = ClassValueType(slot.owner_class), .ordinal = *ordinal};
+}
+
+// The library's class introduced it, at the position its class declares it
+// among its own.
+auto UnitLowerer::LibraryVirtualRef(support::LibraryVirtual function) const
+    -> lir::StatedDispatchRef {
+  return lir::StatedDispatchRef{
+      .introduced_by = out_.types.Intern(
+          lir::Type{lir::RuntimeClassType{
+              .which = support::DeclaringClassOf(function)}}),
+      .ordinal = lir::DispatchOrdinal{support::OrdinalOf(function)}};
 }
 
 auto UnitLowerer::LowerDispatch(mir::ClassId owner, const mir::Class& cls)
@@ -855,13 +845,18 @@ auto UnitLowerer::LowerDispatch(mir::ClassId owner, const mir::Class& cls)
     if (!callable.virtual_dispatch.has_value()) {
       continue;
     }
-    // Every body of the class is emitted under the symbol it composes here, so
-    // naming one by it is naming the function.
+    // Every body of a class is emitted under the symbol it composes here, by
+    // the unit defining the class, so naming one by it is naming the function.
+    const bool has_body = std::visit(
+        Overloaded{
+            [](const mir::DefinedHere&) { return true; },
+            [](const mir::DefinedByAnotherUnit&) { return true; },
+            [](const mir::LeftAbstract&) { return false; },
+            [](const mir::DefinedByForeignCode&) { return false; }},
+        mir::FormOf(callable));
     const std::optional<std::string> body =
-        class_identities_.Get(owner).methods.Get(cid).has_value()
-            ? std::optional{ClassBodySymbol(
-                  lir::SymbolPartOf(cls.path, owner.value), cls, cid)}
-            : std::nullopt;
+        has_body ? std::optional{ClassBodySymbol(ClassPart(owner), cls, cid)}
+                 : std::nullopt;
     const auto override_with_body = [&](lir::StatedDispatchRef behavior) {
       // Overriding a behavior without a body leaves it as the lineage already
       // had it (LRM 8.21, one abstract class extending another).
@@ -878,17 +873,8 @@ auto UnitLowerer::LowerDispatch(mir::ClassId owner, const mir::Class& cls)
             [&](const mir::OverridesVirtualSlot& o) {
               override_with_body(SlotRef(o.overridden));
             },
-            // The library's class introduced it, at the position its class
-            // declares it among its own.
             [&](const mir::OverridesLibraryVirtual& overridden) {
-              override_with_body(
-                  lir::StatedDispatchRef{
-                      .introduced_by = out_.types.Intern(
-                          lir::Type{lir::RuntimeClassType{
-                              .which = support::DeclaringClassOf(
-                                  overridden.function)}}),
-                      .ordinal = lir::DispatchOrdinal{
-                          support::OrdinalOf(overridden.function)}});
+              override_with_body(LibraryVirtualRef(overridden.function));
             }},
         *callable.virtual_dispatch);
   }
@@ -906,27 +892,27 @@ auto UnitLowerer::MethodFunction(
   return *fn;
 }
 
-auto UnitLowerer::MethodRef(mir::ClassId owner, mir::CallableId callable)
-    -> lir::StatedDispatchRef {
-  const std::optional<lir::DispatchOrdinal>& ordinal =
-      class_identities_.Get(owner).ordinals.Get(callable);
-  // A dispatch names the callable that introduced the behavior, which is the
-  // one identity every class answering it agrees on, so a callable naming no
-  // introduction is a producer that built the slot identity wrongly.
-  if (!ordinal.has_value()) {
-    throw InternalError(
-        "mir_to_lir: a dispatch names a callable that introduces no behavior");
+auto UnitLowerer::CallableCallTarget(
+    mir::ClassId owner, mir::CallableId callable) const -> lir::CallTarget {
+  const mir::Class& cls = mir_->GetClass(owner);
+  if (!cls.defining_unit.has_value()) {
+    return lir::CallTarget{
+        lir::FunctionTarget{.function = MethodFunction(owner, callable)}};
   }
-  return lir::StatedDispatchRef{
-      .introduced_by = ClassValueType(owner), .ordinal = *ordinal};
+  return lir::CallTarget{lir::SymbolTarget{
+      .symbol = ClassBodySymbol(ClassPart(owner), cls, callable)}};
 }
 
-auto UnitLowerer::ExternalMethodRef(
-    const std::string& unit_name, const support::DefPath& class_path,
-    mir::BehaviorOrdinal ordinal) const -> lir::StatedDispatchRef {
-  return lir::StatedDispatchRef{
-      .introduced_by = ExternalClassValueType(unit_name, class_path),
-      .ordinal = lir::DispatchOrdinal{ordinal.value}};
+auto UnitLowerer::ConstructorCallTarget(mir::ClassId cls) const
+    -> lir::CallTarget {
+  const mir::Class& declared = mir_->GetClass(cls);
+  if (!declared.defining_unit.has_value()) {
+    return lir::CallTarget{
+        lir::FunctionTarget{.function = ConstructorFunction(cls)}};
+  }
+  return lir::CallTarget{lir::SymbolTarget{
+      .symbol =
+          lir::ConstructorSymbol(ClassQualifier(declared), ClassPart(cls))}};
 }
 
 auto UnitLowerer::ConstructorFunction(mir::ClassId cls) const
@@ -983,14 +969,6 @@ auto UnitLowerer::ClassValueType(mir::ClassId cls) -> lir::TypeId {
   return out_.types.Intern(
       lir::Type{
           lir::ObjectType{.class_id = class_identities_.Get(cls).lir_class}});
-}
-
-auto UnitLowerer::ExternalClassValueType(
-    const std::string& unit_name, const support::DefPath& class_path) const
-    -> lir::TypeId {
-  return out_.types.Intern(
-      lir::Type{lir::CrossUnitClassType{
-          .unit_name = unit_name, .class_path = class_path}});
 }
 
 }  // namespace lyra::lowering::mir_to_lir

@@ -5,8 +5,8 @@
 #include <variant>
 
 #include "lyra/base/overloaded.hpp"
+#include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
-#include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::mir {
@@ -25,22 +25,19 @@ class CompilationUnit;
 enum class ObjectLifetime : std::uint8_t { kTheRun, kWhileReferenced };
 
 // The lifetime of an object of a class whose lineage passes through `of`.
-// `base_of` answers the class a declared class extends, for a class another
-// unit declares as for one of this unit: an instance of another module is a
-// class of that unit. An interface class extends none, and only a value the
-// program makes is ever one (LRM 8.26).
+// `base_of` answers the class a class extends, whichever unit defines it: an
+// instance of another module is a class of that unit. An interface class
+// extends none, and only a value the program makes is ever one (LRM 8.26).
 template <typename BaseOf>
 [[nodiscard]] auto LifetimeOfLineage(const ClassRef& of, const BaseOf& base_of)
     -> ObjectLifetime {
-  const auto through = [&](const DeclaredClassRef& declared) {
-    const std::optional<ClassRef> base = base_of(declared);
-    return base.has_value() ? LifetimeOfLineage(*base, base_of)
-                            : ObjectLifetime::kWhileReferenced;
-  };
   return std::visit(
       Overloaded{
-          [&](const IntraUnitClassRef& own) { return through(own); },
-          [&](const CrossUnitClassRef& other) { return through(other); },
+          [&](const ClassId& cls) {
+            const std::optional<ClassRef> base = base_of(cls);
+            return base.has_value() ? LifetimeOfLineage(*base, base_of)
+                                    : ObjectLifetime::kWhileReferenced;
+          },
           [](const ObjectTreeRootRef&) { return ObjectLifetime::kTheRun; },
           [](const ManagedObjectRootRef&) {
             return ObjectLifetime::kWhileReferenced;

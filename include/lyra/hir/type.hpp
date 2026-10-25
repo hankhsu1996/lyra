@@ -16,6 +16,7 @@
 #include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/random_qualifier.hpp"
+#include "lyra/hir/scope_class_id.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/imported_runtime_class.hpp"
@@ -249,12 +250,12 @@ struct VoidType {
 };
 
 // LRM 8.3 class handle: the type of a variable that refers to a class object.
-// Null is a legal value, the object is reached through the handle, and the
-// referenced class is named by a `ClassRef`: a local declaration id when the
-// class is declared by this unit, or a by-name reference resolved against
-// another unit's signature when the class is declared elsewhere.
+// Null is a legal value and the object is reached through the handle. The
+// class is named by the identity the pool's own context gives it: the unit's
+// class registry for a unit's pool, a signature's class list for a
+// signature's.
 struct ClassHandleType {
-  ClassRef class_ref;
+  ClassId class_id;
 
   auto operator==(const ClassHandleType&) const -> bool = default;
 };
@@ -263,7 +264,7 @@ struct ClassHandleType {
 // is reached through it as an object of a class is, made by `new` and null
 // until then.
 struct CovergroupHandleType {
-  CovergroupRef covergroup;
+  CovergroupId covergroup;
 
   auto operator==(const CovergroupHandleType&) const -> bool = default;
 };
@@ -289,16 +290,14 @@ struct WeakHandleType {
   auto operator==(const WeakHandleType&) const -> bool = default;
 };
 
-// The object a scope of another compilation unit is -- an instance of it, which
-// an interface port names (LRM 25.3), or a generate block inside one, which a
-// hierarchical name steps into (LRM 23.6). Named by the declaring unit and the
-// class that unit published the scope as: the object is always another unit's,
-// so there is no local form, and the pair is what identifies it from anywhere,
-// which is what lets the type cross a signature unchanged. Only what that unit
-// published is reachable through it.
+// The object a scope of a compilation unit is -- an instance of it, which an
+// interface port names (LRM 25.3), or a generate block inside one, which a
+// hierarchical name steps into (LRM 23.6). Named by the class the unit
+// published the scope as, under the identity the pool's own context gives it,
+// as a class handle names its class. Only what that unit published is
+// reachable through it.
 struct UnitObjectType {
-  std::string unit_name;
-  support::DefPath class_path;
+  ScopeClassId scope_class;
 
   auto operator==(const UnitObjectType&) const -> bool = default;
 };

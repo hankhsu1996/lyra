@@ -124,11 +124,13 @@ Done when:
       reaches; a call that finds no answer returns 0, runs no `post_randomize` and leaves every
       variable as it was. A call the source writes naming a hook of a class that declares none, by
       `super`, by its name, through `this` or through a handle, runs the one the nearest class above
-      declares, or nothing where none does (LRM 18.6.2).
+      declares, or nothing where none does (LRM 18.6.2). `randomize()` of a class extending a class
+      of another unit runs the hooks that class declares, as it does for a class of its own unit.
 
-- [ ] `randomize()` and the hooks called through an interface class handle (LRM 8.26.9): on the
-      execution backend the run stops at an internal error, and on the C++ backend a hook called
-      that way runs the empty one where the object's own should run.
+- [x] `randomize()`, `srandom`, `get_randstate`, `set_randstate` and the hooks called through an
+      interface class handle (LRM 8.26.9) act on the object the handle refers to, and a hook called
+      that way runs the one the object's own class runs, since an interface class's hooks are
+      virtual.
 
 - [x] Inline constraints added at the call site, a call listing the variables it chooses, an array
       among them standing for its elements and its size, every handle it does not list held, and the

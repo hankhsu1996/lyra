@@ -397,24 +397,24 @@ auto ProcessLowerer::Run(const hir::Process& src)
 }
 
 auto ProcessLowerer::EnterSubroutineBody(
-    const hir::SubroutineDecl& src, mir::CallableCode& code,
-    CallableBindings& bindings) -> BoundImplicitParameters {
+    const hir::SubroutineDecl& src, std::optional<CallableForm> member_form,
+    mir::CallableCode& code, CallableBindings& bindings)
+    -> BoundImplicitParameters {
   const WalkFrame& parent = owner_ctor_frame_;
   // A task or function is a scope the source named (LRM 23.9), so the body
   // starts inside it and `%m` there reports the task, not the scope around
   // it. What it takes ahead of its formals is what the class declaring it
-  // states; a subroutine of a namespace unit (LRM 26.3) has no class and takes
-  // nothing.
+  // states; a subroutine of a namespace unit (LRM 26.3) is a member of no
+  // class and takes nothing.
   const WalkFrame entry_frame =
       InRootScope(parent.WithBlock(&code.Body()).WithBindings(&bindings))
           .WithBodyCanWait(CanWait(src.kind));
-  if (parent.current_class.cls == nullptr) {
+  if (!member_form.has_value()) {
     return BoundImplicitParameters{.params = {}, .frame = entry_frame};
   }
   return BindImplicitParameters(
       *owner_, entry_frame, owner_->GetClassShape(parent.current_class.id),
-      src.is_static ? CallableForm::kTypeAssociated
-                    : CallableForm::kInstanceMember);
+      *member_form);
 }
 
 auto ProcessLowerer::DeclareReferenceFormal(
@@ -428,11 +428,12 @@ auto ProcessLowerer::DeclareReferenceFormal(
 
 template <typename AfterFormals>
 auto ProcessLowerer::LowerSubroutine(
-    const hir::SubroutineDecl& src, AfterFormals after_formals)
-    -> diag::Result<mir::CallableCode> {
+    const hir::SubroutineDecl& src, std::optional<CallableForm> member_form,
+    AfterFormals after_formals) -> diag::Result<mir::CallableCode> {
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(owner_->Unit(), code);
-  BoundImplicitParameters bound = EnterSubroutineBody(src, code, bindings);
+  BoundImplicitParameters bound =
+      EnterSubroutineBody(src, member_form, code, bindings);
   WalkFrame body_frame = bound.frame;
   std::vector<mir::LocalId> params = std::move(bound.params);
   const mir::CompilationUnit& unit = owner_->Unit();
@@ -534,7 +535,8 @@ auto ProcessLowerer::LowerSubroutine(
   return code;
 }
 
-auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
+auto ProcessLowerer::Run(
+    const hir::SubroutineDecl& src, std::optional<CallableForm> member_form)
     -> diag::Result<mir::CallableCode> {
   switch (src.kind) {
     case hir::SubroutineKind::kTask:
@@ -546,7 +548,7 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
     case hir::SubroutineKind::kConstraintBlock:
     case hir::SubroutineKind::kStaticConstraintBlock:
       return LowerSubroutine(
-          src,
+          src, member_form,
           [&](mir::CallableCode&, CallableBindings& bindings, WalkFrame& frame,
               std::vector<mir::LocalId>& params) -> diag::Result<void> {
             mir::CompilationUnit& unit = owner_->Unit();
@@ -573,7 +575,7 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   // A task is never run by a waited evaluation, so it has one form.
   if (!report_type.has_value()) {
     return LowerSubroutine(
-        src,
+        src, member_form,
         [](mir::CallableCode&, CallableBindings&, WalkFrame&,
            std::vector<mir::LocalId>&) -> diag::Result<void> { return {}; });
   }
@@ -586,7 +588,7 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   // nothing of what one does, and hands the functions it calls none.
   ProcessLowerer recording_lowerer = *this;
   auto recording_code = recording_lowerer.LowerSubroutine(
-      src,
+      src, member_form,
       [&](mir::CallableCode&, CallableBindings& bindings, WalkFrame& frame,
           std::vector<mir::LocalId>& params) -> diag::Result<void> {
         const mir::LocalId report = bindings.DeclareAnonymous(*report_type);
@@ -607,7 +609,8 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
       .code = *std::move(recording_code),
       .foreign = std::nullopt,
       .virtual_dispatch = std::nullopt,
-      .type_parameters = {}};
+      .type_parameters = {},
+      .defining_unit = std::nullopt};
   mir::DirectTarget recording;
   if (mir::Class* declaring = owner_ctor_frame_.current_class.cls;
       declaring != nullptr) {
@@ -620,7 +623,7 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   }
 
   return LowerSubroutine(
-      src,
+      src, member_form,
       [&](mir::CallableCode& code, CallableBindings& bindings, WalkFrame& frame,
           std::vector<mir::LocalId>& params) -> diag::Result<void> {
         const mir::LocalId report = bindings.DeclareAnonymous(*report_type);

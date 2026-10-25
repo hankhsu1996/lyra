@@ -18,6 +18,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/consumed_signatures.hpp"
 #include "lyra/mir/enum_table_id.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/support/runtime_prelude.hpp"
@@ -309,7 +310,8 @@ auto RenderUnitFiles(
   for (const HeaderFile& class_file : class_files) {
     include_once(class_file.relpath);
   }
-  for (const mir::ConsumedSignature& consumed : unit.consumed_signatures) {
+  for (const mir::ConsumedSignature& consumed :
+       mir::ConsumedSignaturesOf(unit)) {
     include_once(FileConsumed(consumed));
   }
   for (const std::string& required : realized.RequiredFiles()) {

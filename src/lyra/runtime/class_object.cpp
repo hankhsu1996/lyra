@@ -9,7 +9,6 @@
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
-#include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/object_ref.hpp"
 #include "lyra/value/string.hpp"
@@ -40,6 +39,9 @@ ClassObject::ClassObject(const ClassObject& other)
 // Assigning changes what an object holds, and its generator is not among
 // what the source can assign.
 auto ClassObject::operator=(const ClassObject& other) -> ClassObject& {
+  if (this == &other) {
+    return *this;
+  }
   GcObject::operator=(other);
   return *this;
 }
@@ -66,12 +68,20 @@ void ClassObject::sv_pre_randomize() {
 void ClassObject::sv_post_randomize() {
 }
 
-void ObjectPreRandomize(GcObject* object) {
+void BuiltinPreRandomize(GcObject* object) {
   AsClassObject(object).ClassObject::sv_pre_randomize();
 }
 
-void ObjectPostRandomize(GcObject* object) {
+void BuiltinPostRandomize(GcObject* object) {
   AsClassObject(object).ClassObject::sv_post_randomize();
+}
+
+void ObjectPreRandomize(GcObject* object) {
+  AsClassObject(object).sv_pre_randomize();
+}
+
+void ObjectPostRandomize(GcObject* object) {
+  AsClassObject(object).sv_post_randomize();
 }
 
 auto AsClassObject(GcObject* object) -> ClassObject& {

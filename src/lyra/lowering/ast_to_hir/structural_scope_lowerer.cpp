@@ -418,7 +418,7 @@ auto StructuralScopeLowerer::BuildInstanceMember(
         static_cast<std::uint32_t>(member.alternatives.size()));
     member.alternatives.push_back(
         hir::InstanceAlternative{
-            .scope_class = owner_->ExternalScopeClassOf(built.unit),
+            .scope_class = owner_->ScopeClassOf(built.unit),
             .body = built.body,
             .assignments = *std::move(assignments)});
     distinct.push_back(std::move(built));
@@ -1000,10 +1000,6 @@ auto StructuralScopeLowerer::DefineEvaluator(
                                        .result_var = result_var,
                                        .body = std::move(body),
                                        .root_stmt = root_stmt,
-                                       .is_virtual = false,
-                                       .is_prototype = false,
-                                       .is_static = false,
-                                       .overrides = std::nullopt,
                                        .reads = std::move(reads)});
   return {};
 }

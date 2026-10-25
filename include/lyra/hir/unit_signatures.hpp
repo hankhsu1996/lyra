@@ -19,9 +19,9 @@ namespace lyra::hir {
 //
 // A unit is found by name, which is the identity a reference carries across the
 // boundary; there is no shared table of ids to match on. Which units a unit
-// ends up depending on is exactly the set of signatures it read, so reading is
-// the act that records a dependency -- a set decided in advance would be an
-// approximation, and it cannot be one: a class first named inside a body is
+// ends up depending on is read off what it compiled to rather than decided in
+// advance -- a set decided in advance would be an approximation, and it
+// cannot be one: a class first named inside a body is
 // reached after any such set was fixed, and a name is on a signature or not
 // whether or not the reader declared anything.
 class UnitSignatures {

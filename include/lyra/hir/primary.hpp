@@ -72,6 +72,6 @@ using Primary = std::variant<
     IntegerLiteral, StringLiteral, RealLiteral, NullLiteral, ThisHandle,
     RandomizedObject, QueueLastIndex, ProceduralVarRef, ClassPropertyRef,
     StaticPropertyRef, RoutedValueRef, RoutedObjectRef, IterationBindingRef,
-    PatternVarRef, ExternalUnitValueRef>;
+    PatternVarRef, NamespaceValueRef>;
 
 }  // namespace lyra::hir

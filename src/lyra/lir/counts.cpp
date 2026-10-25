@@ -14,13 +14,19 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
   // Every member of the unit is taken apart by name, so a member added to it
   // does not compile here until it is said what kind of thing it is, or that
   // it is none.
-  const auto& [name, body_name, types, classes, closures, records, external_records, external_classes, functions, type_operations, static_storage, constants, enum_tables, integral_constants, root] =
+  const auto& [name, body_name, types, classes, closures, records, functions, type_operations, static_storage, constants, enum_tables, integral_constants, root] =
       unit;
 
+  std::uint64_t declared = 0;
   std::uint64_t members = 0;
   for (const Class& cls : classes) {
-    const auto& [path, linkage, base, own, dispatch, implements, conforming] =
+    const auto& [defining_unit, path, linkage, base, own, dispatch, implements, conforming] =
         cls;
+    // What another unit defines is declared here, and held there.
+    if (defining_unit.has_value()) {
+      ++declared;
+      continue;
+    }
     members += own.size();
   }
   std::uint64_t captures = 0;
@@ -34,7 +40,8 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
   }
 
   return {
-      {.kind = "classes", .held = classes.size()},
+      {.kind = "classes", .held = classes.size() - declared},
+      {.kind = "declared classes", .held = declared},
       {.kind = "members", .held = members},
       {.kind = "functions", .held = functions.size()},
       {.kind = "coroutines", .held = coroutines},
@@ -47,8 +54,6 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
       {.kind = "integral constants", .held = integral_constants.size()},
       {.kind = "enum tables", .held = enum_tables.size()},
       {.kind = "types", .held = types.size()},
-      {.kind = "external classes", .held = external_classes.size()},
-      {.kind = "external records", .held = external_records.size()},
   };
 }
 

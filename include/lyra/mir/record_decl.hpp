@@ -1,10 +1,11 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
+#include <string>
 #include <vector>
 
 #include "lyra/mir/callable_code.hpp"
-#include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/value_operation.hpp"
@@ -30,13 +31,17 @@ enum class RecordKind : std::uint8_t {
   kTaggedUnion,
 };
 
-// A structure or a union this unit declares, as clang's record declaration is
-// either: which declaration of the unit it is, which is what another unit
+// A structure or a union a unit declares, as clang's record declaration is
+// either: which declaration of its unit it is, which is what another unit
 // reaches it by, which aggregate it is, and its members' types in declaration
 // order, which an access reaches by position. Its methods are stated beside it
 // (`RecordMethods`), as rustc's derived implementation is an item beside the
 // definition it derives from, since a method reaches the record's own members.
 struct RecordDecl {
+  // The unit that defines the record, where it is another unit's. Such a
+  // record is declared here as that unit published it, and this unit states
+  // none of its methods, which are that unit's.
+  std::optional<std::string> defining_unit;
   support::DefPath path;
   RecordKind kind;
   std::vector<TypeId> elements;
@@ -47,14 +52,5 @@ struct RecordDecl {
 // stream at all (LRM 11.4.14.1), and a member not valid for a net nothing to
 // resolve (LRM 6.7.1).
 using RecordMethods = std::vector<RecordMethod>;
-
-// A structure or a union another unit declares, as this unit reads it: the
-// declaration it is, which aggregate it is, and its members' types, which is
-// what a value of it needs here.
-struct ExternalRecord {
-  TypeDeclarationRef declaration;
-  RecordKind kind;
-  std::vector<TypeId> elements;
-};
 
 }  // namespace lyra::mir

@@ -22,8 +22,6 @@
 #include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/dumped_declaration.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/external_scope_class.hpp"
-#include "lyra/hir/external_scope_ref.hpp"
 #include "lyra/hir/foreign_export.hpp"
 #include "lyra/hir/owned_child_ref.hpp"
 #include "lyra/hir/pattern.hpp"
@@ -33,7 +31,9 @@
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/published_scope.hpp"
+#include "lyra/hir/published_scope_ref.hpp"
 #include "lyra/hir/sampled_history.hpp"
+#include "lyra/hir/scope_class.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/subroutine.hpp"
@@ -56,7 +56,7 @@ struct InterfacePortId {
 // during elaboration, past which everything belongs to the unit the port names
 // -- or something a scope of another unit published.
 using StepTarget =
-    std::variant<OwnedChildRef, InterfacePortId, ExternalScopeRef>;
+    std::variant<OwnedChildRef, InterfacePortId, PublishedScopeRef>;
 
 using PathStep = PathElement<StepTarget>;
 
@@ -88,7 +88,7 @@ struct InUnitBase {
 // so the class is what the route states and the scope is found where it
 // resolves.
 struct EnclosingScopeBase {
-  ExternalScopeClassId scope_class;
+  ScopeClassId scope_class;
 
   auto operator==(const EnclosingScopeBase&) const -> bool = default;
 };
@@ -158,7 +158,7 @@ struct CovergroupBlockEvent {
 // same thing -- a borrowed pointer to another unit's object -- and differ only
 // in what this scope does with it.
 using PublishedDecl = std::variant<
-    StructuralDataObjectId, PublishedStatic, LocalStaticPropertyTarget,
+    StructuralDataObjectId, PublishedStatic, ClassStaticPropertyTarget,
     CovergroupBlockEvent, InstanceMemberId, InterfacePortId>;
 
 // What a scope published: `signature` is the class the unit's signature states
@@ -173,6 +173,9 @@ using PublishedDecl = std::variant<
 // those whose code uses their index are that class realized by a scope per
 // value of it.
 struct ScopePublication {
+  // The class this scope is published as, which every scope published under
+  // the same path is.
+  ScopeClassId scope_class;
   ScopeClassSignature signature;
   base::Translation<PublishedMemberId, PublishedDecl> members;
   base::Translation<PublishedLoopId, GenerateId> loops;
@@ -187,17 +190,17 @@ struct ScopePublication {
 // The route ends at a member another unit published, at the position that
 // unit's signature gave it. The name was resolved where this unit compiles, so
 // a renamed member fails there rather than while the design elaborates.
-struct ExternalMemberLeaf {
-  ExternalScopeClassId scope_class;
+struct PublishedMemberLeaf {
+  ScopeClassId scope_class;
   PublishedMemberId member;
   PublishedStorage storage;
   TypeId type;
 
-  auto operator==(const ExternalMemberLeaf&) const -> bool = default;
+  auto operator==(const PublishedMemberLeaf&) const -> bool = default;
 };
 
 using DataLeaf = std::variant<
-    StructuralDataObjectLeaf, ProceduralStaticLeaf, ExternalMemberLeaf>;
+    StructuralDataObjectLeaf, ProceduralStaticLeaf, PublishedMemberLeaf>;
 
 // A cell of the storage the declaring unit says a data end is, holding a value
 // of `type`.
@@ -217,7 +220,7 @@ struct DataCell {
           [](const ProceduralStaticLeaf& l) {
             return DataCell{.storage = VariableStorage{}, .type = l.type};
           },
-          [](const ExternalMemberLeaf& l) {
+          [](const PublishedMemberLeaf& l) {
             return DataCell{.storage = l.storage, .type = l.type};
           }},
       leaf);
@@ -246,14 +249,14 @@ struct DisableTargetLeaf {
 
 // The route ends at the same thing in a scope another unit published, at the
 // position its signature gave that disable target among the scope's own.
-struct ExternalDisableTargetLeaf {
-  ExternalScopeClassId scope_class;
+struct PublishedDisableTargetLeaf {
+  ScopeClassId scope_class;
   PublishedDisableTargetId target;
 
-  auto operator==(const ExternalDisableTargetLeaf&) const -> bool = default;
+  auto operator==(const PublishedDisableTargetLeaf&) const -> bool = default;
 };
 
-using DisableLeaf = std::variant<DisableTargetLeaf, ExternalDisableTargetLeaf>;
+using DisableLeaf = std::variant<DisableTargetLeaf, PublishedDisableTargetLeaf>;
 
 // How to navigate from a scope to what a name reaches: `base` is where
 // navigation starts, `steps` carries the descent from there, and `leaf` is
@@ -338,7 +341,7 @@ struct ParameterValueAssignment {
 // construction makes there, and what each instantiation says of each parameter
 // the unit takes at construction, in the order the unit declares them.
 struct InstanceAlternative {
-  ExternalScopeClassId scope_class;
+  ScopeClassId scope_class;
   std::string body;
   std::vector<ParameterValueAssignment> assignments;
 

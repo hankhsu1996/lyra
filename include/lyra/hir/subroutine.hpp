@@ -29,30 +29,17 @@ struct SubroutineParam {
 // arena for that variable; it is absent for void functions and tasks, which
 // yield no value.
 //
-// Two facts on a class method carry its participation in virtual dispatch
-// (LRM 8.20); each is atomic and reflects the source directly. `is_virtual`
-// records the `virtual` keyword. `overrides`, when present, is the frontend-
-// resolved reference to the base method this one overrides -- carried as an
-// already-resolved identity so downstream consumers never repeat the name and
-// signature matching the frontend has done.
+// A class method's part in dispatch (LRM 8.20) is what the class declares of
+// it, not a fact of its body, so no body carries one.
 //
-// `is_prototype` records that the source declared this method as a pure
-// virtual prototype (LRM 8.21 `pure virtual function ...;`) -- the signature
-// exists but the source supplied no body. `body.procedural_vars` still
-// carries the parameter var arena so a backend can emit the declaration, and
-// `body.root_scope` still names the scope those parameters are declared in;
-// `root_stmt` is left at construction default and never consumed, there being
-// no statement for a call to enter at. This bit is source-level
-// truth: a bodyless prototype and a legal empty body (LRM 8.21 note) are
-// distinct forms that emptiness alone cannot separate. Only class methods
-// carry it; free subroutines and processes always ship a body.
-//
-// `is_static` records that the source declared this method with the `static`
-// keyword (LRM 8.10) -- the method has no receiver, cannot be virtual, and
-// cannot be a constructor. At HIR-to-MIR this bit decides whether the lowered
-// `CallableCode.params` prepends `self`: instance methods do, static methods
-// omit it. Only class methods carry it; free subroutines and processes are
-// never static in this sense.
+// `root_stmt` is the statement a call enters at, absent for a method the
+// source declared as a pure virtual prototype (LRM 8.21 `pure virtual function
+// ...;`), which has a signature and no body. That is distinct from a legal
+// empty body (LRM 8.21 note), which has a statement to enter at. The
+// parameters are still in `body.procedural_vars` and their scope in
+// `body.root_scope`, so a backend can emit the declaration. Whether a method
+// has a receiver (LRM 8.10) is what its class declares of it, not a fact of
+// its body.
 //
 // `reads` is what a call of a function can read (LRM 9.4.2), stated in terms of
 // its own formals and the object it runs on so a wait calling it can ask. A
@@ -64,11 +51,7 @@ struct SubroutineDecl {
   std::vector<SubroutineParam> params;
   std::optional<ProceduralVarId> result_var;
   ProceduralBody body;
-  StmtId root_stmt{};
-  bool is_virtual = false;
-  bool is_prototype = false;
-  bool is_static = false;
-  std::optional<VirtualBehavior> overrides;
+  std::optional<StmtId> root_stmt;
   Reads reads;
 
   auto operator==(const SubroutineDecl&) const -> bool = default;

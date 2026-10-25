@@ -89,8 +89,7 @@ struct ProceduralVarRef {
 // declaring class and the slot within its property arena. Owner-qualified
 // (not derived from the enclosing method body's class) because under
 // inheritance (LRM 8.13) a bare name may resolve to a property declared on
-// an ancestor class. The external arm is used when the property's declaring
-// class lives in another compilation unit.
+// an ancestor class.
 struct ClassPropertyRef {
   ClassPropertyTarget target;
 
@@ -101,16 +100,18 @@ struct ClassPropertyRef {
 // declares: the property, and how far out of the body's own structural scope
 // the instance keeping its cell sits.
 struct InstanceStaticPropertyTarget {
-  LocalStaticPropertyTarget property;
+  ClassStaticPropertyTarget property;
   StructuralHops hops;
 
   auto operator<=>(const InstanceStaticPropertyTarget&) const
       -> std::strong_ordering = default;
 };
 
-using StaticPropertyTarget = std::variant<
-    InstanceStaticPropertyTarget, LocalStaticPropertyTarget,
-    ExternalStaticPropertyTarget>;
+// A static property is a cell of an instance where a structural scope
+// replicates its class, and otherwise one cell the class keeps, whichever unit
+// declares the class.
+using StaticPropertyTarget =
+    std::variant<InstanceStaticPropertyTarget, ClassStaticPropertyTarget>;
 
 // A reference to a class static property (LRM 8.9). `target` names the
 // declaring class and the slot within its static-property arena. A static
@@ -124,19 +125,15 @@ using StaticPropertyTarget = std::variant<
 //
 // How many such cells exist follows from how many times the class declaration
 // is replicated, which is what the arms of `target` tell apart. A class a
-// namespace unit declares has one cell, the program's, named by the class --
-// this unit's own, or another unit's by name. A class a structural scope of
-// this unit declares is a type of each instance of that scope (LRM 6.22), so
-// each instance has that type's cell of its own, reached through the instance.
-// One another design element declares is a cell of that element's instance,
-// which a route reaches rather than this reference.
+// namespace unit declares has one cell, the program's, named by the class,
+// whichever unit declares it. A class a structural scope of this unit declares
+// is a type of each instance of that scope (LRM 6.22), so each instance has
+// that type's cell of its own, reached through the instance. One another design
+// element declares is a cell of that element's instance, which a route reaches
+// rather than this reference. What the cell holds is what the class's
+// declaration states of the property.
 struct StaticPropertyRef {
   StaticPropertyTarget target;
-  // The cell's own type. It rides on the reference rather than on an
-  // expression built from one because a change observation reaches the cell
-  // with no expression standing anywhere, and because the declaring class may
-  // compile separately, in which case no member of this unit states it.
-  TypeId value_type;
 
   auto operator<=>(const StaticPropertyRef&) const
       -> std::strong_ordering = default;
@@ -172,14 +169,14 @@ struct PatternVarRef {
 // by a route out of anyone's storage. The same by-name form serves a referrer
 // in another unit and the declaring unit's own body, neither of which has a
 // receiver to reach it through.
-struct ExternalUnitValueRef {
+struct NamespaceValueRef {
   std::string unit_name;
   std::string variable_name;
-  // The cell's type. The declaring unit compiles separately, so no member of
-  // this unit states it; it crosses as part of that unit's signature.
+  // The cell's type. A referrer in another unit declares nothing of the cell,
+  // so the type crosses as part of the declaring unit's signature.
   TypeId value_type;
 
-  auto operator<=>(const ExternalUnitValueRef&) const
+  auto operator<=>(const NamespaceValueRef&) const
       -> std::strong_ordering = default;
 };
 
@@ -194,6 +191,6 @@ struct ExternalUnitValueRef {
 // constant folds where it is used, leaving nothing to read through and nothing
 // to observe.
 using ValueTarget =
-    std::variant<RoutedValueRef, ExternalUnitValueRef, StaticPropertyRef>;
+    std::variant<RoutedValueRef, NamespaceValueRef, StaticPropertyRef>;
 
 }  // namespace lyra::hir
