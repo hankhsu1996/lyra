@@ -15,8 +15,8 @@
 #include "lyra/lir/type.hpp"
 #include "lyra/runtime/class_definition.hpp"
 #include "lyra/runtime/construction_table.hpp"
+#include "lyra/runtime/dump_writer.hpp"
 #include "lyra/runtime/scope_info.hpp"
-#include "lyra/runtime/value_dump.hpp"
 #include "lyra/value/value_type.hpp"
 
 namespace lyra::backend::llvm_backend {
@@ -215,6 +215,8 @@ auto LayoutOfLibraryRecord(lir::RuntimeLibraryKind kind)
     case lir::RuntimeLibraryKind::kObjectWrite:
     case lir::RuntimeLibraryKind::kCancellationTarget:
     case lir::RuntimeLibraryKind::kTimer:
+    case lir::RuntimeLibraryKind::kDeferredEffects:
+    case lir::RuntimeLibraryKind::kViolationReportKeeper:
     case lir::RuntimeLibraryKind::kControlEffect:
       break;
   }

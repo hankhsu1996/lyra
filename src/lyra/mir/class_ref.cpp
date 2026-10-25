@@ -107,7 +107,8 @@ auto ClassOfObject(const TypePool& types, TypeId object) -> DeclaredClassRef {
           [&](const LoopBlocksType&) { return not_an_object(); },
           [&](const RecordType&) { return not_an_object(); },
           [&](const ClosureType&) { return not_an_object(); },
-          [&](const ErasedCallableType&) { return not_an_object(); }});
+          [&](const ErasedCallableType&) { return not_an_object(); },
+          [&](const TypeParameterType&) { return not_an_object(); }});
 }
 
 }  // namespace lyra::mir

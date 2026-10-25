@@ -140,7 +140,7 @@ auto LowerHirDynamicCastExpr(
             mir::MakeCallExpr(
                 mir::Direct{
                     .target = support::BuiltinFn::kDynamicCast,
-                    .type_argument = destination_type},
+                    .type_arguments = {destination_type}},
                 {source}, destination_type)));
         return read_value(body);
     }

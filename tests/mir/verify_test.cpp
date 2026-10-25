@@ -2,10 +2,12 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <gtest/gtest.h>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/mir/binary_op.hpp"
@@ -25,7 +27,9 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/mir/type_parameter_index.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/callable_bounds.hpp"
 
 namespace lyra::mir {
 namespace {
@@ -57,7 +61,8 @@ void AddAwaitingBody(CompilationUnit& unit, TypeId result) {
       CallableDecl{
           .code = std::move(code),
           .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt});
+          .virtual_dispatch = std::nullopt,
+          .type_parameters = {}});
   unit.named_callables.push_back(NamedCallable{.name = "f", .body = id});
 }
 
@@ -105,7 +110,8 @@ TEST(MirVerifyTest, ASuspensionWaitsOnWhatItsKindWaitsOn) {
       CallableDecl{
           .code = std::move(code),
           .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt});
+          .virtual_dispatch = std::nullopt,
+          .type_parameters = {}});
   try {
     Verify(unit);
     FAIL() << "an await on a park's answer was accepted";
@@ -151,7 +157,8 @@ auto UnitWithCode(const Fill& fill) -> CompilationUnit {
       CallableDecl{
           .code = std::move(code),
           .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt});
+          .virtual_dispatch = std::nullopt,
+          .type_parameters = {}});
   unit.named_callables.push_back(NamedCallable{.name = "f", .body = id});
   return unit;
 }
@@ -506,7 +513,8 @@ TEST(MirVerifyTest, AMemberFunctionIsEnteredOnTheObjectAPointerReaches) {
           CallableDecl{
               .code = CallableCode{},
               .foreign = std::nullopt,
-              .virtual_dispatch = std::nullopt});
+              .virtual_dispatch = std::nullopt,
+              .type_parameters = {}});
       u.DefineClass(u.DeclareClass(), std::move(cls));
       body.AppendStmt(
           ExprStmt{
@@ -771,7 +779,7 @@ TEST(MirVerifyTest, BitsAreWrittenThroughAnElementsWriteForm) {
                           Direct{
                               .target = support::BuiltinFn::kSliceMut,
                               .receiver = element,
-                              .type_argument = nibble},
+                              .type_arguments = {nibble}},
                       .arguments = {at}},
               .type = u.types.Intern(Type{BitsReferenceType{.bits = nibble}})});
       const ExprId value =
@@ -1374,6 +1382,228 @@ TEST(MirVerifyTest, ABlockExpressionYieldsNothingThatEndsWithIt) {
       yielding([&](const Yielding& y) { return held(y, y.outer, true); })));
   EXPECT_NO_THROW(Verify(yielding(
       [&](const Yielding& y) { return y.steps.ReadLocal(y.own, y.array); })));
+}
+
+// The type `type_parameters` numbers `index` among a definition's own.
+auto ParameterType(CompilationUnit& unit, std::uint32_t index) -> TypeId {
+  return unit.types.Intern(
+      Type{TypeParameterType{.index = TypeParameterIndex{.value = index}}});
+}
+
+// The keeper of a region's deferred effects, as a type a call can name.
+auto RegionKeeper(const CompilationUnit& unit) -> TypeId {
+  return unit.types.Get(unit.builtins.deferred_effects_ptr)
+      .Get<PointerType>()
+      .pointee;
+}
+
+// A unit whose `f` calls a generic definition of it, stating the parameters
+// `parameters_of` answers and doing nothing, at the types `arguments_of`
+// answers.
+auto UnitCallingGeneric(
+    const std::function<std::vector<TypeParameter>(const CompilationUnit&)>&
+        parameters_of,
+    const std::function<std::vector<TypeId>(CompilationUnit&)>& arguments_of)
+    -> CompilationUnit {
+  return UnitWithCode([&](CompilationUnit& u, CallableCode& code) {
+    CallableCode generic = CallableCode::Defined();
+    generic.result_type = u.builtins.void_type;
+    generic.Body().AppendStmt(ReturnStmt{.value = std::nullopt});
+    const CallableId definition = u.callables.Add(
+        CallableDecl{
+            .code = std::move(generic),
+            .foreign = std::nullopt,
+            .virtual_dispatch = std::nullopt,
+            .type_parameters = parameters_of(u)});
+    Block& body = code.Body();
+    body.AppendStmt(
+        ExprStmt{
+            .expr = body.exprs.Add(
+                Expr{
+                    .data =
+                        CallExpr{
+                            .callee =
+                                Direct{
+                                    .target =
+                                        UnitCallableTarget{.slot = definition},
+                                    .type_arguments = arguments_of(u)},
+                            .arguments = {}},
+                    .type = u.builtins.void_type})});
+  });
+}
+
+// A call of a generic definition names one type for each parameter it states,
+// and each meets the parameter's bounds: a closure where the definition calls
+// one, a keeper of deferred effects where it keeps them.
+TEST(MirVerifyTest, AGenericIsCalledAtTypesItsBoundsAdmit) {
+  const auto keeper = [](const CompilationUnit&) {
+    return std::vector{TypeParameter{.bounds = {KeeperBound{}}}};
+  };
+  const auto called = [](const CompilationUnit& u) {
+    return std::vector{TypeParameter{
+        .bounds = {CalledClosureBound{
+            .asks = support::ClosureKind::kFn,
+            .params = {},
+            .result = u.builtins.void_type,
+            .kept = support::CallableHold::kForTheCall}}}};
+  };
+  const auto at = [](const auto& type_of) {
+    return [type_of](CompilationUnit& u) {
+      return std::vector<TypeId>{type_of(u)};
+    };
+  };
+  const auto integer = [](const CompilationUnit& u) {
+    return u.builtins.int_type;
+  };
+
+  EXPECT_NO_THROW(Verify(UnitCallingGeneric(keeper, at(RegionKeeper))));
+  ExpectRefused(
+      UnitCallingGeneric(
+          keeper, [](CompilationUnit&) { return std::vector<TypeId>{}; }),
+      "states a type for other than each parameter it has");
+  ExpectRefused(
+      UnitCallingGeneric(keeper, at(integer)),
+      "a keeper that keeps no deferred effects");
+  ExpectRefused(
+      UnitCallingGeneric(called, at(integer)),
+      "a type it calls that is no closure");
+}
+
+// What a generic body reaches through a bound it reaches on a value of one of
+// its own type parameters whose bound grants it: a keeper's commit and a
+// placement's allocation on a keeper, a call on a closure it calls in place.
+TEST(MirVerifyTest, ABodyReachesThroughABoundOnlyOnAParameterThatGrantsIt) {
+  enum class Reach : std::uint8_t { kCall, kCommit, kAllocation };
+  const auto reaching = [](Reach reach, const auto& bound_of) {
+    return UnitWithCode([&](CompilationUnit& u, CallableCode& f_code) {
+      f_code.Body().AppendStmt(ReturnStmt{.value = std::nullopt});
+      const TypeId parameter = ParameterType(u, 0);
+      const TypeId pointer = u.types.Intern(
+          Type{PointerType{
+              .pointee = parameter,
+              .ownership = PointerOwnership::kBorrowed,
+              .mutability = Mutability::kMutable}});
+      CallableCode code = CallableCode::Defined();
+      code.result_type = u.builtins.void_type;
+      const LocalId held = code.AddLocal(pointer);
+      code.params = {held};
+      Block& body = code.Body();
+      const auto direct = [&](DirectTarget target) {
+        return body.exprs.Add(
+            Expr{
+                .data =
+                    CallExpr{
+                        .callee =
+                            Direct{
+                                .target = target,
+                                .receiver = body.Deref(
+                                    u.types, body.LocalPlace(held, pointer),
+                                    parameter)},
+                        .arguments = {}},
+                .type = u.builtins.void_type});
+      };
+      switch (reach) {
+        case Reach::kCall:
+          body.AppendStmt(ExprStmt{.expr = direct(BoundCallTarget{})});
+          break;
+        case Reach::kCommit:
+          body.AppendStmt(ExprStmt{.expr = direct(BoundCommitTarget{})});
+          break;
+        case Reach::kAllocation: {
+          const ExprId value = body.exprs.Add(
+              Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
+          body.AppendStmt(
+              ExprStmt{
+                  .expr = body.exprs.Add(MakePlacementNewExpr(
+                      value,
+                      PlacementAllocation{
+                          .allocate = BoundAllocation{},
+                          .arguments = {body.ReadLocal(held, pointer)}},
+                      u.types.Intern(
+                          Type{PointerType{
+                              .pointee = u.builtins.int_type,
+                              .ownership = PointerOwnership::kBorrowed,
+                              .mutability = Mutability::kMutable}})))});
+          break;
+        }
+      }
+      body.AppendStmt(ReturnStmt{.value = std::nullopt});
+      u.callables.Add(
+          CallableDecl{
+              .code = std::move(code),
+              .foreign = std::nullopt,
+              .virtual_dispatch = std::nullopt,
+              .type_parameters = {TypeParameter{.bounds = {bound_of(u)}}}});
+    });
+  };
+  const auto keeper = [](const CompilationUnit&) -> ParameterBound {
+    return KeeperBound{};
+  };
+  const auto called = [](support::ClosureKind asks) {
+    return [asks](const CompilationUnit& u) -> ParameterBound {
+      return CalledClosureBound{
+          .asks = asks,
+          .params = {},
+          .result = u.builtins.void_type,
+          .kept = support::CallableHold::kForTheCall};
+    };
+  };
+
+  EXPECT_NO_THROW(Verify(reaching(Reach::kCommit, keeper)));
+  EXPECT_NO_THROW(Verify(reaching(Reach::kAllocation, keeper)));
+  EXPECT_NO_THROW(
+      Verify(reaching(Reach::kCall, called(support::ClosureKind::kFn))));
+  ExpectRefused(
+      reaching(Reach::kCommit, called(support::ClosureKind::kFn)),
+      "commits through a bound on what is no keeper parameter of its own");
+  ExpectRefused(
+      reaching(Reach::kAllocation, called(support::ClosureKind::kFn)),
+      "allocates through a bound from what is no keeper parameter of its own");
+  ExpectRefused(
+      reaching(Reach::kCall, keeper),
+      "calls through a bound on what is no parameter of its own it may call "
+      "in place");
+  ExpectRefused(
+      reaching(Reach::kCall, called(support::ClosureKind::kFnOnce)),
+      "calls through a bound on what is no parameter of its own it may call "
+      "in place");
+}
+
+// A placement new-expression makes its value in storage its allocation
+// function hands out and owns, so it answers a pointer owning nothing, from a
+// function that hands storage out.
+TEST(MirVerifyTest, APlacementMakesItsValueInStorageItDoesNotOwn) {
+  const auto placing = [](support::BuiltinFn allocate,
+                          PointerOwnership answered) {
+    return UnitWithBody([=](CompilationUnit& u, Block& body) {
+      const ExprId keeper = body.exprs.Add(
+          Expr{.data = NullLiteral{}, .type = u.builtins.deferred_effects_ptr});
+      const ExprId value = body.exprs.Add(
+          Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
+      body.AppendStmt(
+          ExprStmt{
+              .expr = body.exprs.Add(MakePlacementNewExpr(
+                  value,
+                  PlacementAllocation{
+                      .allocate = allocate, .arguments = {keeper}},
+                  u.types.Intern(
+                      Type{PointerType{
+                          .pointee = u.builtins.int_type,
+                          .ownership = answered}})))});
+    });
+  };
+
+  EXPECT_NO_THROW(Verify(placing(
+      support::BuiltinFn::kDeferredEffectsAllocate,
+      PointerOwnership::kBorrowed)));
+  ExpectRefused(
+      placing(
+          support::BuiltinFn::kDeferredEffectsAllocate,
+          PointerOwnership::kUnique),
+      "places a value but answers other than a pointer owning nothing");
+  ExpectRefused(
+      placing(support::BuiltinFn::kNbaEffects, PointerOwnership::kBorrowed),
+      "places a value in storage from what allocates none");
 }
 
 }  // namespace

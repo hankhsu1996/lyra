@@ -26,6 +26,7 @@
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/record_decl.hpp"
+#include "lyra/mir/type_parameter_index.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
@@ -818,6 +819,13 @@ inline void WriteOne(TargetText& out, const RecordQualifiedName& ref) {
 // list of closures, since the source names none.
 [[nodiscard]] inline auto CppClosureName(mir::ClosureId id) -> MintedName {
   return MintedCppName("closure", id.value);
+}
+
+// The name of a generic definition's type parameter, `sv_type_<n>`: the
+// template parameter it is written as, which the source never named.
+[[nodiscard]] inline auto CppTypeParameterName(mir::TypeParameterIndex index)
+    -> MintedName {
+  return MintedCppName("type", index.value);
 }
 
 // The name of a closure capture, `sv_capture_<n>`. A capture is a member of

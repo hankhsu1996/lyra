@@ -561,17 +561,27 @@ auto lyra_rt_enumeration_prev(
     const void* enumeration, const void* value, std::int64_t value_width,
     bool value_is_four_state, std::int64_t count, void* out) -> void*;
 
-// Hands a callable to the region that will run it (LRM 4.4): the write a
-// non-blocking assignment defers, the print a `$strobe` postpones, and the
-// report a violation leaves for the observed region. Each takes ownership of
-// the closure, which is what lets the closure outlive the body that built it.
-void lyra_rt_submit_nba(void* runtime, void* closure);
-void lyra_rt_submit_postponed(void* runtime, void* closure);
-void lyra_rt_submit_observed(void* runtime, void* closure);
-void lyra_rt_submit_violation_report(void* runtime, void* closure);
+// The keepers a closure the program defers is made in (LRM 4.4): the deferred
+// effects of the region that will run it -- the write a non-blocking assignment
+// defers, the print a `$strobe` postpones, an assertion's tick -- and where a
+// violation report is kept for the observed region. The program makes the
+// closure at the address `*_allocate` hands out, `size` bytes at a multiple of
+// `alignment`, and `*_commit` takes over the closure made at `made`: it is
+// ended once it has run, or once it is dropped unrun.
+auto lyra_rt_nba_effects(void* runtime) -> void*;
+auto lyra_rt_postponed_effects(void* runtime) -> void*;
+auto lyra_rt_observed_effects(void* runtime) -> void*;
+auto lyra_rt_violation_reports(void* runtime) -> void*;
+auto lyra_rt_deferred_effects_allocate(
+    void* effects, std::uint64_t size, std::uint64_t alignment) -> void*;
+void lyra_rt_deferred_effects_commit(void* effects, void* made);
+auto lyra_rt_violation_reports_allocate(
+    void* keeper, std::uint64_t size, std::uint64_t alignment) -> void*;
+void lyra_rt_violation_reports_commit(void* keeper, void* made);
 
-// The same for what is owed once the simulation has ended, after the final
-// procedures: writing the coverage database (LRM 19.9).
+// Hands a callable to what is owed once the simulation has ended, after the
+// final procedures: writing the coverage database (LRM 19.9). It takes the
+// closure's box over.
 void lyra_rt_submit_at_run_end(void* runtime, void* closure);
 
 // Queues a deferred assertion's action, which is started as an execution of
@@ -580,16 +590,16 @@ void lyra_rt_submit_at_run_end(void* runtime, void* closure);
 void lyra_rt_submit_deferred_observed(void* runtime, void* body);
 void lyra_rt_submit_deferred_final(void* runtime, void* body);
 
-// The NBA commit of an effect carrying a delay control (LRM 9.4.5): the region
+// The NBA region of an effect carrying a delay control (LRM 9.4.5): the region
 // is the same, the slot is the one `duration` steps of the scope's time unit
 // (`unit_power`) away, read and rounded exactly as a delay control's amount is.
-void lyra_rt_submit_nba_after(
+auto lyra_rt_nba_effects_after(
     void* runtime, const void* duration, std::int64_t duration_width,
     bool duration_is_signed, bool duration_is_four_state,
-    std::int64_t unit_power, std::int64_t precision_power, void* closure);
-void lyra_rt_submit_nba_after_real(
+    std::int64_t unit_power, std::int64_t precision_power) -> void*;
+auto lyra_rt_nba_effects_after_real(
     void* runtime, const void* duration, std::int64_t unit_power,
-    std::int64_t precision_power, void* closure);
+    std::int64_t precision_power) -> void*;
 
 // The NBA commit of an effect carrying an event control (LRM 9.4.5, 15.5.1),
 // which cannot name its slot where the statement is reached. What crosses is

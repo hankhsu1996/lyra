@@ -22,6 +22,7 @@
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/coverage.hpp"
 #include "lyra/runtime/diagnostic.hpp"
+#include "lyra/runtime/effect_storage.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
 #include "lyra/runtime/mem_file.hpp"
@@ -315,12 +316,14 @@ class Runtime final : public RuntimeEffects {
   // can expire into it.
   IntrusiveList<WaitMembership> expired_;
   std::unique_ptr<Design> design_;
+  // Where every deferred effect of the run gets its bytes, whichever slot and
+  // region holds it, so it outlives every slot.
+  EffectStorage effect_storage_;
   // LRM 4.4 divides the event set first by time, into the current slot and
   // later ones, and each slot by region. Nearly every event -- a wake, a
   // nonblocking update with no delay -- is placed in the current slot, so it is
-  // held for the whole run and its queues keep their storage from one slot to
-  // the next.
-  TimeSlot current_slot_;
+  // held for the whole run rather than made for each time the run reaches.
+  TimeSlot current_slot_{effect_storage_};
   // Every later slot something was placed in, earliest first. Naming a later
   // time creates its slot, which is what lets a nonblocking assignment carrying
   // a delay reach the NBA region of a future slot (LRM 4.4.2.4, 10.4.2). One
@@ -344,9 +347,10 @@ class Runtime final : public RuntimeEffects {
   // settled can be answered before the finals run.
   std::vector<EvaluationAttempts*> concurrent_assertions_;
   // What a region pass is working through, held apart from the region it came
-  // out of, which meanwhile collects the next pass's work (LRM 9.3.2). Held for
-  // the whole run so its storage outlives each pass.
-  RegionQueue draining_;
+  // out of, which meanwhile collects the next pass's work (LRM 9.3.2).
+  RegionQueue draining_{effect_storage_};
+  // Where a violation report raised now is kept.
+  ViolationReportKeeper violation_reports_{*this};
   BoundMembers bound_members_;
   std::unordered_set<const VariableCell*> driven_continuously_;
   // Every execution no process started and no program keeps. Released before

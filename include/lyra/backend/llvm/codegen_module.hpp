@@ -251,10 +251,11 @@ class CodeGenModule {
   [[nodiscard]] auto ClosureLayout(lir::TypeId closure) const
       -> support::Layout;
 
-  // The size of a complete object of `type` -- the whole layout of the
-  // declaration it names, or what any other value is laid out in -- which is
-  // what `operator new` is asked for and sized `operator delete` told.
-  auto CompleteObjectSize(lir::TypeId type) -> diag::Result<std::uint64_t>;
+  // The layout an allocation of a complete object of `type` asks for -- the
+  // whole layout of the declaration it names, or what any other value is laid
+  // out in -- whose size is what `operator new` is asked for and sized
+  // `operator delete` told, and what a type's size or alignment answers.
+  auto AllocationLayoutOf(lir::TypeId type) -> diag::Result<support::Layout>;
 
   // `storage`, holding a complete object of `pointee` no longer, given back to
   // the host's sized deallocation function, as clang's `EmitDeleteCall` does.

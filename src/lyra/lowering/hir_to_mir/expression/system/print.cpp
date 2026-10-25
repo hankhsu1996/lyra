@@ -84,7 +84,6 @@ auto LowerStrobeCall(
     -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
   auto& unit = process.Owner().Unit();
-  const mir::TypeId void_type = unit.builtins.void_type;
   const std::int64_t time_unit_power =
       static_cast<std::int64_t>(process.Resolution().unit_power);
   const bool is_file_sink = print.sink_kind == support::PrintSinkKind::kFile;
@@ -164,19 +163,10 @@ auto LowerStrobeCall(
       process, body, items_array, body_fd, print.append_newline);
   body.AppendStmt(mir::ExprStmt{.expr = write_call});
 
-  const mir::ExprId closure_id =
-      BuildKeptClosure(unit, block, closure.BuildVoid());
-  const mir::ExprId runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = support::BuiltinFn::kSubmitPostponed,
-                      .receiver = runtime_id},
-              .arguments = {closure_id}},
-      .type = void_type};
+  mir::Expr keeper = BuildRegionEffectsCallExpr(
+      process.Owner(), block, support::BuiltinFn::kPostponedEffects);
+  return BuildEmplacedClosure(
+      process.Owner(), frame, std::move(keeper), closure.BuildVoid());
 }
 
 }  // namespace

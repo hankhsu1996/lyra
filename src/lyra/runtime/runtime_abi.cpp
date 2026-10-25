@@ -1977,6 +1977,7 @@ using lyra::runtime::Coroutine;
 using lyra::runtime::current_runtime;
 using lyra::runtime::CurrentExportScope;
 using lyra::runtime::CurrentForeignProcess;
+using lyra::runtime::DeferredEffects;
 using lyra::runtime::Delay;
 using lyra::runtime::DelayReal;
 using lyra::runtime::DelayTicks;
@@ -2127,6 +2128,7 @@ using lyra::runtime::VariableAt;
 using lyra::runtime::VariableOf;
 using lyra::runtime::VectorPropagationDelay;
 using lyra::runtime::ViewOf;
+using lyra::runtime::ViolationReportKeeper;
 using lyra::runtime::Wait;
 using lyra::runtime::WaitFork;
 using lyra::runtime::WaitOn;
@@ -2964,28 +2966,34 @@ auto lyra_rt_shared_pointer_deref(void* handle) -> void* {
   return Read<SharedPointer>(handle).Pointee();
 }
 
-void lyra_rt_submit_nba(void* runtime, void* closure) {
-  static_cast<RuntimeEffects*>(runtime)->SubmitNba(
-      AdoptClosure<lyra::support::EffectSignature>(closure));
+auto lyra_rt_nba_effects(void* runtime) -> void* {
+  return static_cast<RuntimeEffects*>(runtime)->NbaEffects();
 }
 
-void lyra_rt_submit_nba_after(
+auto lyra_rt_nba_effects_after(
     void* runtime, const void* duration, std::int64_t duration_width,
     bool duration_is_signed, bool duration_is_four_state,
-    std::int64_t unit_power, std::int64_t precision_power, void* closure) {
+    std::int64_t unit_power, std::int64_t precision_power) -> void* {
   const lyra::value::LoadedWords amount = NumberAt(
       duration, duration_width, duration_is_signed, duration_is_four_state);
-  static_cast<RuntimeEffects*>(runtime)->SubmitNbaAfter(
-      amount.View(), unit_power, precision_power,
-      AdoptClosure<lyra::support::EffectSignature>(closure));
+  return static_cast<RuntimeEffects*>(runtime)->NbaEffectsAfter(
+      amount.View(), unit_power, precision_power);
 }
 
-void lyra_rt_submit_nba_after_real(
+auto lyra_rt_nba_effects_after_real(
     void* runtime, const void* duration, std::int64_t unit_power,
-    std::int64_t precision_power, void* closure) {
-  static_cast<RuntimeEffects*>(runtime)->SubmitNbaAfterReal(
-      Read<Real>(duration), unit_power, precision_power,
-      AdoptClosure<lyra::support::EffectSignature>(closure));
+    std::int64_t precision_power) -> void* {
+  return static_cast<RuntimeEffects*>(runtime)->NbaEffectsAfterReal(
+      Read<Real>(duration), unit_power, precision_power);
+}
+
+auto lyra_rt_deferred_effects_allocate(
+    void* effects, std::uint64_t size, std::uint64_t alignment) -> void* {
+  return static_cast<DeferredEffects*>(effects)->Allocate(size, alignment);
+}
+
+void lyra_rt_deferred_effects_commit(void* effects, void* made) {
+  static_cast<DeferredEffects*>(effects)->Commit(made);
 }
 
 void lyra_rt_run_detached(void* runtime, void* carrier) {
@@ -3003,19 +3011,25 @@ void lyra_rt_submit_at_run_end(void* runtime, void* closure) {
       AdoptClosure<lyra::support::EffectSignature>(closure));
 }
 
-void lyra_rt_submit_postponed(void* runtime, void* closure) {
-  static_cast<RuntimeEffects*>(runtime)->SubmitPostponed(
-      AdoptClosure<lyra::support::EffectSignature>(closure));
+auto lyra_rt_postponed_effects(void* runtime) -> void* {
+  return static_cast<RuntimeEffects*>(runtime)->PostponedEffects();
 }
 
-void lyra_rt_submit_observed(void* runtime, void* closure) {
-  static_cast<RuntimeEffects*>(runtime)->SubmitObserved(
-      AdoptClosure<lyra::support::EffectSignature>(closure));
+auto lyra_rt_observed_effects(void* runtime) -> void* {
+  return static_cast<RuntimeEffects*>(runtime)->ObservedEffects();
 }
 
-void lyra_rt_submit_violation_report(void* runtime, void* closure) {
-  static_cast<RuntimeEffects*>(runtime)->SubmitViolationReport(
-      AdoptClosure<lyra::support::EffectSignature>(closure));
+auto lyra_rt_violation_reports(void* runtime) -> void* {
+  return static_cast<RuntimeEffects*>(runtime)->ViolationReports();
+}
+
+auto lyra_rt_violation_reports_allocate(
+    void* keeper, std::uint64_t size, std::uint64_t alignment) -> void* {
+  return static_cast<ViolationReportKeeper*>(keeper)->Allocate(size, alignment);
+}
+
+void lyra_rt_violation_reports_commit(void* keeper, void* made) {
+  static_cast<ViolationReportKeeper*>(keeper)->Commit(made);
 }
 
 void lyra_rt_submit_deferred_observed(void* runtime, void* body) {

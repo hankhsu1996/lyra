@@ -203,7 +203,8 @@ auto BuildPublishedClass(
         id, mir::CallableDecl{
                 .code = subroutine.prototype,
                 .foreign = std::nullopt,
-                .virtual_dispatch = mir::IntroducesVirtualSlot{}});
+                .virtual_dispatch = mir::IntroducesVirtualSlot{},
+                .type_parameters = {}});
     cls.named_callables.push_back(
         mir::NamedCallable{.name = subroutine.name, .body = id});
   }
@@ -3442,7 +3443,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
               .code = std::move(code),
               .foreign = std::nullopt,
               .virtual_dispatch =
-                  mir::OverridesLibraryVirtual{.function = phase}});
+                  mir::OverridesLibraryVirtual{.function = phase},
+              .type_parameters = {}});
     };
     empty_phase(support::LibraryVirtual::kScopeResolve);
     empty_phase(support::LibraryVirtual::kScopeInitialize);
@@ -3507,7 +3509,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             .foreign = std::nullopt,
             .virtual_dispatch = unit_lowerer.GetClassShape(class_id_)
                                     .callable_signatures.Get(declared.callable)
-                                    .virtual_dispatch});
+                                    .virtual_dispatch,
+            .type_parameters = {}});
     subroutine_callables.push_back(declared.callable);
     for (const StaticVarBinding& binding : declared.statics) {
       auto integ = IntegrateStaticInitializer(
@@ -3549,7 +3552,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         mir::CallableDecl{
             .code = std::move(entry.code),
             .foreign = std::nullopt,
-            .virtual_dispatch = std::nullopt});
+            .virtual_dispatch = std::nullopt,
+            .type_parameters = {}});
     exports.push_back(
         mir::NamedCallable{
             .name = std::move(entry.linkage.foreign_name), .body = entry_id});
@@ -3567,7 +3571,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         mir::CallableDecl{
             .code = *std::move(code_or),
             .foreign = std::nullopt,
-            .virtual_dispatch = std::nullopt});
+            .virtual_dispatch = std::nullopt,
+            .type_parameters = {}});
     // A final procedure is called when the simulation ends, and every other
     // kind starts with the scope (LRM 9.2), registered as the kind it is. What
     // an `always_comb` is at time zero holds of an `always_latch` too (LRM
@@ -3796,8 +3801,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         mir::CallableDecl{
             .code = std::move(code),
             .foreign = std::nullopt,
-            .virtual_dispatch =
-                mir::OverridesLibraryVirtual{.function = phase}});
+            .virtual_dispatch = mir::OverridesLibraryVirtual{.function = phase},
+            .type_parameters = {}});
   };
   add_body(
       resolve_code, resolve_self_id, support::LibraryVirtual::kScopeResolve);

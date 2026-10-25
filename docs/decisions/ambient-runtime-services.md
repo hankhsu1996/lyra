@@ -4,8 +4,8 @@ Date: 2026-07-20 (deferred-check attribution revised 2026-07-24) Status: accepte
 
 ## Context
 
-Runtime effects (`Diagnostic`, `Files`, `TimeFormat`, `SubmitNba`, `SubmitPostponed`,
-`SubmitObserved`, ...) are declared on `RuntimeEffects`, the narrow surface a generated body may
+Runtime effects (`Diagnostic`, `Files`, `TimeFormat`, `NbaEffects`, `PostponedEffects`,
+`ObservedEffects`, ...) are declared on `RuntimeEffects`, the narrow surface a generated body may
 reach. The concrete `Runtime` (a `final : public RuntimeEffects`) adds the host orchestration
 methods -- `BindDesign`, `Run` -- that are not visible through the effects view. Every emitted body
 reaches an effect through a MIR builtin call.
@@ -143,7 +143,7 @@ incidentally coupled under the module-only design; they are semantically indepen
 - **`RuntimeEffects` as a virtual polymorphic interface.** Give the capability surface a vtable so
   alternative concrete implementations (a `MockRuntime` for unit tests, a stable-ABI DPI-C boundary)
   can be swapped in. Rejected because there is exactly one concrete implementation (`Runtime`,
-  declared `final`), runtime-effect methods are called on hot paths (`Now`, `SubmitNba`, `Files`)
+  declared `final`), runtime-effect methods are called on hot paths (`Now`, `NbaEffects`, `Files`)
   where a vtable indirection is a real cost, and no consumer today needs alternative dispatch.
   Non-polymorphic inheritance with a protected `Runtime` destructor gets the type boundary without
   vtable overhead; if a genuine multi-impl need arises later, adding `virtual` to the effect methods

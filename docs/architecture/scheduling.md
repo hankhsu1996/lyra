@@ -4,9 +4,10 @@ A lyra simulation runs as a set of coroutines coordinated by a stratified event 
 SystemVerilog process -- `initial`, `always*` -- runs as a coroutine. The scheduler pulls coroutines
 from time-slot region queues and resumes them; a coroutine runs until it suspends, and lands on
 whichever queue its own `await_suspend` chose. Deferred effects (`<=` writes, `$strobe` prints) are
-not yields: the coroutine snapshots its inputs into a closure, hands the closure to the engine, and
-continues running. The engine invokes those closures when their owning region runs, and where the
-slot to run in is not yet knowable, what is handed over is an execution that finds it.
+not yields: the coroutine makes a closure of its inputs in the run's storage for effects, keeps it
+in the region it is due in, and continues running. The engine invokes those closures when their
+owning region runs, and where the slot to run in is not yet knowable, what is handed over is an
+execution that finds it.
 
 This doc covers the decisions behind the engine itself: process model, suspension protocol, region
 structure, deferred work, how a run ends, and the MIR boundary. Sensitivity tracking, change
@@ -103,6 +104,17 @@ closure (see `mir.md` for the MIR-level shape) and submits the closure to a plac
 running. A submit takes the same placement a suspension does, which is what lets a nonblocking
 assignment carrying a delay reach the NBA region of a later slot (LRM 4.4.2.4, 10.4.2) with no
 second mechanism.
+
+**An effect lasts exactly as long as its region holds it, and is made where its region's keeper
+says.** Every execution schedules an update of its own (LRM 4.9.4), from the statement until the
+region runs it, and every effect a region holds -- the program's and the library's own alike -- ends
+there. So the region holds its effects in the order they were made and runs them in it, ending each
+once it has run or, never run, once the region's effects end. Each is made in bytes the run keeps
+for its effects, which go back once it has ended, so what is held follows how many effects are
+pending at once and never how many times they are due at, as SystemC's kernel keeps its timed events
+on one free list. A pass owns what it runs alone; what is submitted meanwhile goes to the region it
+is due in, never into the pass. A later slot's effects become the current slot's by joining two
+orders, with nothing moved.
 
 **What an effect is and when it is due are two questions, and only the second decides the shape.**
 The standard writes the second one the same way wherever it appears: a nonblocking assignment and a
@@ -294,11 +306,11 @@ Three questions are kept apart, because each has its own owner and none answers 
   is about that one.
 
 How long a closure can run, measured against the body that made it, is one of three, and the runtime
-entry it is handed to states which, beside the kind it asks of the closure
-(`compiler_generated_storage.md` invariant 10), as a Rust callee bounds a callable parameter by a
-kind and a lifetime, the lifetime being none past the call for `sort_by`, the scope's for a scoped
-thread and `'static` for `spawn`. The erased type the closure is handed over at carries its kind and
-its signature and no lifetime:
+entry it is handed to, or the bound of the generic function that makes it in a keeper, states which,
+beside the kind it asks of the closure (`compiler_generated_storage.md` invariant 10), as a Rust
+callee bounds a callable parameter by a kind and a lifetime, the lifetime being none past the call
+for `sort_by`, the scope's for a scoped thread and `'static` for `spawn`. Where the closure is
+erased, the type it is handed over at carries its kind and its signature and no lifetime:
 
 | How it is handed on                         | Examples                                                                         | What its references must reach                                                                                                                                                        |
 | ------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -450,7 +450,7 @@ auto Runtime::FutureSlotAt(SimTime when) -> TimeSlot& {
         "Runtime::FutureSlotAt: only a time after the current one has a future "
         "slot -- please report this as a bug");
   }
-  return future_slots_[when];
+  return future_slots_.try_emplace(when, effect_storage_).first->second;
 }
 
 auto Runtime::AdvanceToNextSlot() -> bool {
@@ -522,21 +522,18 @@ void Runtime::RunRegion(Region region) {
   RegionQueue& queue = current_slot_[region];
   // LRM 9.3.2: work arriving while this pass runs belongs to the next pass, so
   // what the region holds moves out of it and new arrivals accumulate behind.
-  // The effects trade storage with the pass, so both keep what they grew to
-  // from one pass and one slot to the next.
   draining_.activations.Append(queue.activations);
   draining_.timers.Append(queue.timers);
-  std::swap(queue.effects, draining_.effects);
+  draining_.effects.Append(queue.effects);
   // LRM 4.6: nonblocking updates are performed in the order they were placed.
   // A deferred effect -- a nonblocking update, a report maturing, an
   // assertion's action -- runs with no activation holding it, so each runs as
   // a landing of its own: a run-time error it raises is reported and the
   // region goes on to the effects after it.
-  for (OwnedCall& effect : draining_.effects) {
+  draining_.effects.Drain([this](const auto& effect) {
     RunAsLanding(*this, effect);
     TellExpired();
-  }
-  draining_.effects.clear();
+  });
   // A timer comes off its queue as it fires, so arming it again from what the
   // firing wakes queues a new event rather than moving this one. What it does
   // runs with no activation holding it, as a deferred effect does, so it is a

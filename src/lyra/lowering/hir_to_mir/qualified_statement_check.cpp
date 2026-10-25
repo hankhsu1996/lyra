@@ -90,24 +90,17 @@ void AppendReportEmit(
 
 // A pending violation report is scheduled where the check was decided and
 // matures a region later (LRM 12.4.2.1), so every report is reached through a
-// body the region runs rather than emitted in place.
-void SubmitToObservedRegion(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::Expr body) {
-  const mir::ExprId body_id =
-      BuildKeptClosure(unit_lowerer.Unit(), block, std::move(body));
-  const mir::ExprId runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
-  const mir::ExprId submit_id = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kSubmitViolationReport,
-                          .receiver = runtime_id},
-                  .arguments = {body_id}},
-          .type = unit_lowerer.Unit().builtins.void_type});
-  block.AppendStmt(mir::ExprStmt{.expr = submit_id});
+// body the region runs rather than emitted in place. It is made where the
+// keeper of violation reports says, which keeps it in the Observed region on
+// the condition that the process raising it reaches no flush point first.
+// `frame`'s block is the one the report's captures were read in.
+void KeepInObservedRegion(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::Expr body) {
+  mir::Block& block = *frame.current_block;
+  mir::Expr keeper = BuildViolationReportsCallExpr(unit_lowerer, block);
+  const mir::ExprId kept = block.exprs.Add(BuildEmplacedClosure(
+      unit_lowerer, frame, std::move(keeper), std::move(body)));
+  block.AppendStmt(mir::ExprStmt{.expr = kept});
 }
 
 // Whether one arm held, frozen at check time as a bit: the local holding it,
@@ -203,7 +196,8 @@ auto BuildTotalityReportScope(
   AppendReportEmit(
       unit_lowerer.Unit(), closure.Body(), std::move(items),
       diag::RuntimeOriginOf(span, unit_lowerer.SourceManager()));
-  SubmitToObservedRegion(unit_lowerer, scope, closure.BuildVoid());
+  KeepInObservedRegion(
+      unit_lowerer, frame.WithBlock(&scope), closure.BuildVoid());
   return scope;
 }
 
@@ -259,8 +253,8 @@ auto BuildUniquenessCheck(
     arms.push_back({.local = local, .origin = origin});
     locals.push_back(local);
   }
-  SubmitToObservedRegion(
-      unit_lowerer, block,
+  KeepInObservedRegion(
+      unit_lowerer, frame,
       BuildUniquenessReportBody(
           unit_lowerer, frame, check, arm_kind, arms,
           diag::RuntimeOriginOf(span, unit_lowerer.SourceManager())));

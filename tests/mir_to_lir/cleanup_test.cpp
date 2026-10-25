@@ -27,7 +27,8 @@ auto AddEmptyBody(mir::CompilationUnit& unit) -> mir::CallableId {
       mir::CallableDecl{
           .code = std::move(code),
           .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt});
+          .virtual_dispatch = std::nullopt,
+          .type_parameters = {}});
 }
 
 // A namespace unit whose one named body holds an extent, the extent's cleanup
@@ -55,7 +56,8 @@ auto UnitWithCleanupCalling(support::BuiltinFn in_cleanup)
       mir::CallableDecl{
           .code = std::move(code),
           .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt});
+          .virtual_dispatch = std::nullopt,
+          .type_parameters = {}});
   unit.named_callables.push_back(mir::NamedCallable{.name = "g", .body = id});
   return unit;
 }
@@ -84,7 +86,8 @@ auto UnitCallingTwice(support::BuiltinFn callee) -> mir::CompilationUnit {
       mir::CallableDecl{
           .code = std::move(code),
           .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt});
+          .virtual_dispatch = std::nullopt,
+          .type_parameters = {}});
   unit.named_callables.push_back(mir::NamedCallable{.name = "f", .body = id});
   return unit;
 }

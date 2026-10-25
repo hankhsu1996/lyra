@@ -866,7 +866,8 @@ auto LowerDisableWatcher(
   return mir::CallableDecl{
       .code = std::move(code),
       .foreign = std::nullopt,
-      .virtual_dispatch = std::nullopt};
+      .virtual_dispatch = std::nullopt,
+      .type_parameters = {}};
 }
 
 // LRM 16.14.5 gives a declarative concurrent assertion always semantics, and
@@ -919,22 +920,11 @@ auto LowerProcess(
                           .arguments = {}},
                   .type = void_type})});
 
-  const mir::ExprId closure_id =
-      BuildKeptClosure(unit, body_block, closure.BuildVoid());
-  const mir::ExprId runtime_id =
-      body_block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
-  body_block.AppendStmt(
-      mir::ExprStmt{
-          .expr = body_block.exprs.Add(
-              mir::Expr{
-                  .data =
-                      mir::CallExpr{
-                          .callee =
-                              mir::Direct{
-                                  .target = support::BuiltinFn::kSubmitObserved,
-                                  .receiver = runtime_id},
-                          .arguments = {closure_id}},
-                  .type = void_type})});
+  mir::Expr keeper = BuildRegionEffectsCallExpr(
+      lowerer.Owner(), body_block, support::BuiltinFn::kObservedEffects);
+  const mir::ExprId kept = body_block.exprs.Add(BuildEmplacedClosure(
+      lowerer.Owner(), body_frame, std::move(keeper), closure.BuildVoid()));
+  body_block.AppendStmt(mir::ExprStmt{.expr = kept});
 
   const mir::BlockId body_scope_id =
       code.Body().child_scopes.Add(std::move(body_block));
@@ -950,7 +940,8 @@ auto LowerProcess(
   return mir::CallableDecl{
       .code = std::move(code),
       .foreign = std::nullopt,
-      .virtual_dispatch = std::nullopt};
+      .virtual_dispatch = std::nullopt,
+      .type_parameters = {}};
 }
 
 }  // namespace
@@ -1006,17 +997,20 @@ auto LowerConcurrentAssertion(
       mir::CallableDecl{
           .code = *std::move(pass),
           .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt});
+          .virtual_dispatch = std::nullopt,
+          .type_parameters = {}});
   const mir::CallableId fail_id = mir_class.callables.Add(
       mir::CallableDecl{
           .code = *std::move(fail),
           .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt});
+          .virtual_dispatch = std::nullopt,
+          .type_parameters = {}});
   const mir::CallableId advance_id = mir_class.callables.Add(
       mir::CallableDecl{
           .code = *std::move(advance),
           .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt});
+          .virtual_dispatch = std::nullopt,
+          .type_parameters = {}});
 
   auto process = LowerProcess(
       action, lowerer, ctor_frame, dispositions.spec->clock, advance_id);

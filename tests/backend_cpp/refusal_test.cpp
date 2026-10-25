@@ -23,7 +23,8 @@ auto AddBody(mir::CompilationUnit& unit, mir::CallableCode code)
       mir::CallableDecl{
           .code = std::move(code),
           .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt});
+          .virtual_dispatch = std::nullopt,
+          .type_parameters = {}});
 }
 
 // A namespace unit whose one body evaluates a null of `type` twice, so a

@@ -284,6 +284,10 @@ struct BuiltinMirTypes {
   TypeId wait;
   // What each stop at a wait is handed.
   TypeId wait_ptr;
+  // The keepers a deferred closure is emplaced in: where a region keeps its
+  // effects, and where a violation report is kept.
+  TypeId deferred_effects_ptr;
+  TypeId violation_report_keeper_ptr;
   TypeId coroutine_void;
   TypeId wildcard_index;
 };
@@ -520,6 +524,19 @@ struct CompilationUnit {
             .wait = types.Intern(
                 Type{RuntimeLibraryType{.kind = RuntimeLibraryKind::kWait}}),
             .wait_ptr = TypeId{},
+            .deferred_effects_ptr = types.Intern(
+                Type{PointerType{
+                    .pointee = types.Intern(
+                        Type{RuntimeLibraryType{
+                            .kind = RuntimeLibraryKind::kDeferredEffects}}),
+                    .ownership = PointerOwnership::kBorrowed}}),
+            .violation_report_keeper_ptr = types.Intern(
+                Type{PointerType{
+                    .pointee = types.Intern(
+                        Type{RuntimeLibraryType{
+                            .kind =
+                                RuntimeLibraryKind::kViolationReportKeeper}}),
+                    .ownership = PointerOwnership::kBorrowed}}),
             .coroutine_void = TypeId{},
             .wildcard_index = types.Intern(Type{WildcardIndexType{}}),
         } {

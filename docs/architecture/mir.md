@@ -4,9 +4,11 @@
 
 MIR is a generic software programming language IR. Its conceptual peers are C++, Rust, and Python --
 high-level programming languages with rich type systems, first-class functions, structured control
-flow, and object-oriented features. MIR is not a hardware description language IR and not a
-machine-execution model; it sits in the middle of the pipeline, expressing the program as software
-in a generic programming-language vocabulary.
+flow, and object-oriented features. Among compiler IRs it sits where clang's AST and rustc's THIR
+sit, and it is **not** rustc's MIR, which is a control-flow graph over places and corresponds to
+Lyra's LIR (`compiler_overview.md` maps every layer). MIR is not a hardware description language IR
+and not a machine-execution model; it sits in the middle of the pipeline, expressing the program as
+software in a generic programming-language vocabulary.
 
 MIR's vocabulary is what those languages share:
 
@@ -145,20 +147,35 @@ what the construct means.
   storage a pointer or a class handle owns and evaluates its initializer into that storage rather
   than handing it over as an argument -- for an object, its construction, which first creates the
   object whole and then enters its constructor on it, so the object is of its own class while every
-  constructor runs -- and the borrow, which binds a reference to a place, or to a value it holds to
-  the end of the full-expression as a C++ reference bound to a temporary does. An element of an
-  array is no node. It is a call answering a reference, a read form or a write form, because the
-  language gives a read and a write of an element different outcomes, and the dereference of what it
-  answers is the place. Bits of a packed value are no node either: they are read by the value's
-  `slice` and written through the reference to them its `slice_mut` answers, as a C++ library's
-  `bitset::operator[]` answers a reference to a bit. The set is closed under what a generic
-  programming-language AST needs to express; it does not grow to model a particular backend's
-  storage realization or runtime library shape.
+  constructor runs -- and in its placement form evaluates its initializer into storage an allocation
+  function hands out and answers a pointer owning nothing, as C++'s `new (p) T(x)` does, and the
+  borrow, which binds a reference to a place, or to a value it holds to the end of the
+  full-expression as a C++ reference bound to a temporary does. An element of an array is no node.
+  It is a call answering a reference, a read form or a write form, because the language gives a read
+  and a write of an element different outcomes, and the dereference of what it answers is the place.
+  Bits of a packed value are no node either: they are read by the value's `slice` and written
+  through the reference to them its `slice_mut` answers, as a C++ library's `bitset::operator[]`
+  answers a reference to a bit. The set is closed under what a generic programming-language AST
+  needs to express; it does not grow to model a particular backend's storage realization or runtime
+  library shape.
 - Which values are held through a uniquely owning pointer because a value of their type is too large
   for a frame: a local, a parameter taken by value wherever its signature is stated, a made value
   and a capture, each written as a box by a rewrite of the stage before any consumer reads the unit,
   so every backend keeps such a value off the stack by translating what it is given. A closure kept
-  past the statement building it is likewise made in a box its keeper takes.
+  past the statement building it is made where its keeper keeps it: a deferred effect is made in the
+  effects of the region that holds it, by the unit's generic function that allocates from a keeper,
+  builds there what a maker answers, and commits it, as C++'s `emplace` does; a closure any other
+  keeper holds in a box that keeper takes.
+- Generic definitions: a callable of the unit may be generic over types, each stated with what the
+  definition asks of the type a call names for it -- a closure it calls at a signature and keeps as
+  long as it says, or a keeper of deferred effects -- as a Rust `where` clause bounds a parameter. A
+  call names the types it is made at and is held to the bounds, and the body is checked at its
+  definition to use only what they grant. A body holds values of a parameter type as any body holds
+  values. Making a definition concrete is the first pass of the lowering into the dialect the
+  backends read, so both backends receive concrete bodies; no generic definition is in that dialect.
+  Not yet so: today the lowering to LIR makes the instances, the C++ backend renders a template, a
+  body reaches a value of a parameter type only through a pointer, and a body is held at its
+  definition only in what it reaches through its bounds.
 - Action shapes for constructs that bind behavior to schedule events (always blocks, continuous
   assignments, deferred assertions, concurrent assertions).
 - A textual dumper that serializes MIR for inspection. The dumper is not a backend; its output is
@@ -167,10 +184,11 @@ what the construct means.
 ## Does Not Own
 
 - Control-flow graphs, basic blocks, branches, or phi nodes.
-- Storage placement, offsets, or memory layout on a node. A rewrite of the stage asks how large a
-  value of a type is, to decide which values are held through a box, as rustc's passes ask a type's
-  layout; no node carries the answer, and how the box and its target are laid out stays each
-  backend's.
+- Storage offsets or memory layout on a node -- where within storage a value lies. Whose storage a
+  value is made in -- a box's, or the storage a placement's allocation function hands out -- is
+  MIR's. A rewrite of the stage asks how large a value of a type is, to decide which values are held
+  through a box, as rustc's passes ask a type's layout; no node carries the answer, and how the box
+  and its target are laid out stays each backend's.
 - A source language's coordinate system: a declared range, its direction, which part-select form the
   source wrote. HIR-to-MIR reads it, and a select states where it lands in the selected value's own
   numbering -- a bit from a packed value's least significant end, an element from an unpacked

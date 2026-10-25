@@ -144,6 +144,7 @@ auto OperandType(const Function& fn, const Operand& operand) -> TypeId {
           [](const NullConst& c) { return c.type; },
           [](const BoolConst& c) { return c.type; },
           [](const VoidConst& c) { return c.type; },
+          [](const LayoutConst& c) { return c.type; },
           [](const EnumTableRef& c) { return c.type; },
           [](const IntegralConstantRef& c) { return c.type; },
           [](const StaticRef& s) { return s.type; },

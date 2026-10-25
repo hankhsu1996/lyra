@@ -269,14 +269,14 @@ auto MakeBuiltinCall(
                            : std::span<const ExprId>(arguments));
   return MakeBuiltinCall(
       unit, block, called, receiver, std::nullopt,
-      BuiltinCalleeAnswering(called, receiver, result_type).type_argument,
+      BuiltinCalleeAnswering(called, receiver, result_type).type_arguments,
       std::move(arguments), result_type);
 }
 
 auto MakeBuiltinCall(
     const CompilationUnit& unit, const Block& block, support::BuiltinFn stated,
     std::optional<ExprId> receiver, std::optional<CallPart> part,
-    std::optional<TypeId> type_argument, std::vector<ExprId> arguments,
+    std::vector<TypeId> type_arguments, std::vector<ExprId> arguments,
     TypeId result_type) -> Expr {
   std::vector<ExprId> operands;
   if (receiver) {
@@ -293,7 +293,7 @@ auto MakeBuiltinCall(
                       .target = entry,
                       .receiver = receiver,
                       .part = part,
-                      .type_argument = type_argument},
+                      .type_arguments = std::move(type_arguments)},
               .arguments = std::move(arguments)},
       .type = result_type};
   // An entry that is not an operation over integral values has no value this

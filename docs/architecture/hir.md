@@ -17,9 +17,10 @@ classes are classes; the abstraction level is the language the user wrote, not w
 later turns it into.
 
 HIR's role between AST and MIR mirrors the role a language's own semantic IR plays in other
-compilers: a language-faithful representation the compiler owns, with frontend syntactic noise
-removed and canonical compiler-owned identity in its place, but with the language's vocabulary still
-visible. The translation away from that vocabulary is the next layer's job, not HIR's.
+compilers -- rustc's HIR and THIR, clang's AST (`compiler_overview.md` maps every layer): a
+language-faithful representation the compiler owns, with frontend syntactic noise removed and
+canonical compiler-owned identity in its place, but with the language's vocabulary still visible.
+The translation away from that vocabulary is the next layer's job, not HIR's.
 
 ## Owns
 

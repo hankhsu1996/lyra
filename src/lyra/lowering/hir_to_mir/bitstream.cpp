@@ -362,8 +362,8 @@ auto BuildRunLoad(
       mir::PackedVectorOf(unit.types, shape.width, shape.state_kind);
   return block.exprs.Add(
       mir::MakeBuiltinCall(
-          unit, block, support::BuiltinFn::kBitVecLoad, run, std::nullopt, bits,
-          {at}, bits));
+          unit, block, support::BuiltinFn::kBitVecLoad, run, std::nullopt,
+          {bits}, {at}, bits));
 }
 
 auto BuildFromBitstream(

@@ -429,6 +429,17 @@ cc_test(
 )
 
 cc_test(
+    name = "runtime_deferred_effects_test",
+    srcs = ["runtime/deferred_effects_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:base",
+        "//:runtime",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "runtime_rng_test",
     srcs = ["runtime/rng_test.cpp"],
     copts = LYRA_COPTS,

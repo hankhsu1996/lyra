@@ -136,7 +136,7 @@ template <std::ranges::sized_range Ranges>
 [[nodiscard]] auto MakeBuiltinCall(
     const CompilationUnit& unit, const Block& block, support::BuiltinFn stated,
     std::optional<ExprId> receiver, std::optional<CallPart> part,
-    std::optional<TypeId> type_argument, std::vector<ExprId> arguments,
+    std::vector<TypeId> type_arguments, std::vector<ExprId> arguments,
     TypeId result_type) -> Expr;
 // `operand` held to `type`, which lays a value out as the operand's own type
 // does -- an enumeration and its base (LRM 6.19.3, 6.24.1), a reference and

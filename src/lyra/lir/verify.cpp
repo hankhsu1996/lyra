@@ -16,6 +16,7 @@
 #include "lyra/lir/place_query.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lir {
 
@@ -95,31 +96,48 @@ void RequireCallWellFormed(
   RequireBitsStoreWellFormed(unit, fn, bits->value, bits->parts, args.back());
 }
 
+// Whether a call of `target` answers storage of dynamic duration holding no
+// value yet: the heap's, or what an allocation function of the library hands
+// out.
+auto AllocatesStorage(const CallTarget& target) -> bool {
+  if (const auto* storage = std::get_if<DynamicStorageTarget>(&target)) {
+    switch (storage->op) {
+      case DynamicStorageTarget::Op::kAllocate:
+        return true;
+      case DynamicStorageTarget::Op::kDeallocate:
+        return false;
+    }
+    throw InternalError("lir verify: unknown dynamic-storage operation");
+  }
+  if (const auto* entry = std::get_if<BuiltinTarget>(&target)) {
+    return support::RuntimeEntryOf(entry->fn).hands_out_storage;
+  }
+  return false;
+}
+
 // The values that name storage of dynamic duration just allocated, by value
-// id: storage holding no value yet, as a frame slot is before its first.
+// id: storage holding no value yet, as a frame slot is before its first. An
+// allocation that may raise is an invoke, and defines its value the same way.
 auto AllocatedStorage(const Function& fn) -> std::vector<bool> {
   std::vector<bool> allocated(fn.values.size(), false);
+  const auto record = [&](const Destination& destination,
+                          const CallTarget& target) {
+    const auto* defined = std::get_if<Transient>(&destination);
+    if (defined != nullptr && AllocatesStorage(target)) {
+      allocated.at(defined->value.value) = true;
+    }
+  };
   for (const BasicBlock& block : fn.blocks) {
     for (const Instr& instr : block.instrs) {
       const auto* assign = std::get_if<AssignInstr>(&instr.data);
       const auto* call =
           assign != nullptr ? std::get_if<CallInstr>(&assign->value) : nullptr;
-      const auto* storage =
-          call != nullptr ? std::get_if<DynamicStorageTarget>(&call->target)
-                          : nullptr;
-      const auto* defined = assign != nullptr
-                                ? std::get_if<Transient>(&assign->destination)
-                                : nullptr;
-      if (storage == nullptr || defined == nullptr) {
-        continue;
+      if (call != nullptr) {
+        record(assign->destination, call->target);
       }
-      switch (storage->op) {
-        case DynamicStorageTarget::Op::kAllocate:
-          allocated.at(defined->value.value) = true;
-          break;
-        case DynamicStorageTarget::Op::kDeallocate:
-          break;
-      }
+    }
+    if (const auto* invoke = std::get_if<InvokeTerm>(&block.terminator.data)) {
+      record(invoke->destination, invoke->target);
     }
   }
   return allocated;

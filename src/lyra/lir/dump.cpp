@@ -597,6 +597,18 @@ class LirDumper {
               return std::format("bool:{}", c.value ? "true" : "false");
             },
             [](const VoidConst&) -> std::string { return "void"; },
+            [](const LayoutConst& c) -> std::string {
+              const auto measure = [&]() -> std::string_view {
+                switch (c.measure) {
+                  case LayoutConst::Measure::kSize:
+                    return "size";
+                  case LayoutConst::Measure::kAlignment:
+                    return "align";
+                }
+                throw InternalError("lir dump: unknown layout measure");
+              };
+              return std::format("{}_of:type[{}]", measure(), c.of.value);
+            },
             [](const EnumTableRef& c) -> std::string {
               return std::format("enumtable:{}", c.table.value);
             },

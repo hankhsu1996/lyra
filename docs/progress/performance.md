@@ -124,11 +124,16 @@ operation is a call into a separately compiled runtime, and the optimizer cannot
       its stop, and a process inside a named block joins the block's disable target once rather than
       at every stop.
 
-- [x] A closure the execution backend builds -- the expression an event control watches, the effect
-      a nonblocking assignment defers -- is made once, with its captures in it, in the box whatever
-      keeps it takes rather than as a moved copy; a capture is read at a fixed distance from the
-      closure instead of through a runtime call. A wait reads its leaves where the waiting body
-      built them instead of copying them into a list first.
+- [x] A closure the execution backend builds -- the expression an event control watches -- is made
+      once, with its captures in it, in the box whatever keeps it takes rather than as a moved copy;
+      a capture is read at a fixed distance from the closure instead of through a runtime call. A
+      wait reads its leaves where the waiting body built them instead of copying them into a list
+      first.
+
+- [x] An effect a region holds -- a nonblocking update, a postponed `$strobe`, an assertion's tick,
+      a violation report, and the runtime's own -- is made in bytes the run keeps for its effects,
+      which an ended one gives back for the next, rather than in an allocation of its own that the
+      region frees after running it, on both backends.
 
 - [x] Converting a packed value between widths or between the two- and four-state domains no longer
       walks it one bit at a time. It was the single largest cost in both profiled programs, and the

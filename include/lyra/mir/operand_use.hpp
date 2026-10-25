@@ -92,7 +92,16 @@ void ForEachOperand(Data& data, const auto& reach) {
               value(argument);
             }
           },
-          [&](AsConstAs<Data, NewExpr>& e) { value(e.initializer); },
+          // A placement's arguments are evaluated before the storage is asked
+          // for, and that before the initializer ([expr.new]).
+          [&](AsConstAs<Data, NewExpr>& e) {
+            if (e.placement.has_value()) {
+              for (Id& argument : e.placement->arguments) {
+                value(argument);
+              }
+            }
+            value(e.initializer);
+          },
           [&](AsConstAs<Data, DerefExpr>& e) {
             reach(e.pointer, OperandUse::kPointer);
           },

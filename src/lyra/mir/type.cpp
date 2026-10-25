@@ -210,7 +210,8 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             HashEnum(seed, t.kind);
             HashIds(seed, t.params);
             HashId(seed, t.result);
-          }});
+          },
+          [&](const TypeParameterType& t) { HashField(seed, t.index.value); }});
   return seed;
 }
 
@@ -248,12 +249,15 @@ auto Type::IsVariableRef() const -> bool {
 namespace {
 
 // Whether an object of the library's of `kind` is storage reached by its
-// address, as LIR states it: what a disable names, and what a delayed
-// continuous assignment propagates through.
+// address, as LIR states it: what a disable names, what a delayed continuous
+// assignment propagates through, and the keepers a deferred closure is emplaced
+// in.
 auto IsReachedByAddress(RuntimeLibraryKind kind) -> bool {
   switch (kind) {
     case RuntimeLibraryKind::kCancellationTarget:
     case RuntimeLibraryKind::kTimer:
+    case RuntimeLibraryKind::kDeferredEffects:
+    case RuntimeLibraryKind::kViolationReportKeeper:
       return true;
     case RuntimeLibraryKind::kBitVec:
     case RuntimeLibraryKind::kPrintItem:
@@ -298,6 +302,8 @@ auto IsLibraryValue(RuntimeLibraryKind kind) -> bool {
       return true;
     case RuntimeLibraryKind::kCancellationTarget:
     case RuntimeLibraryKind::kTimer:
+    case RuntimeLibraryKind::kDeferredEffects:
+    case RuntimeLibraryKind::kViolationReportKeeper:
     case RuntimeLibraryKind::kPrintItem:
     case RuntimeLibraryKind::kPrintLiteralItem:
     case RuntimeLibraryKind::kPrintValueItem:
@@ -392,7 +398,11 @@ auto Type::IsAddressOnly() const -> bool {
           [](const ObjectWriteType&) { return false; },
           [](const RecordType&) { return false; },
           [](const ClosureType&) { return false; },
-          [](const ErasedCallableType&) { return false; }});
+          [](const ErasedCallableType&) { return false; },
+          // A value of a type a definition is generic over is held and handed
+          // only through a reference or a pointer, as Swift holds a value of a
+          // generic type it does not know the layout of.
+          [](const TypeParameterType&) { return true; }});
 }
 
 auto Type::OwnsPointee() const -> bool {
@@ -496,6 +506,13 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           [](const ObjectType&) { return false; },
           [](const ErasedCallableType&) { return false; },
           [](const RuntimeClassType&) { return false; },
+          // No body holds a value of a parameter type itself (it is reached
+          // through a reference or a pointer), so no variable is of one.
+          [](const TypeParameterType&) -> bool {
+            throw InternalError(
+                "mir: a variable of a type parameter -- please report this as "
+                "a bug");
+          },
           // A closure never moves once made: it is made where the local
           // holding it lies, and so is never a variable whose storage is
           // filled by handing it a value made elsewhere.
@@ -606,6 +623,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const RuntimeClassType&) -> Element { return std::nullopt; },
           [](const ClosureType&) -> Element { return std::nullopt; },
           [](const ErasedCallableType&) -> Element { return std::nullopt; },
+          [](const TypeParameterType&) -> Element { return std::nullopt; },
 
           // A handle to a runtime facility, and a type the library declares,
           // whose shape is the library's.

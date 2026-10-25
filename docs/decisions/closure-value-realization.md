@@ -95,9 +95,9 @@ D6. A closure's linkage name is qualified by its declaring unit. Its ordinal is 
   a capture cannot reach a storage kind an instance could not.
 - The deferred-effect submits take a built closure into the region. This entry had them move the
   value there; [construct-in-final-home](construct-in-final-home.md) replaced that: the closure is
-  made once where it will live, captures included -- for one a region keeps, a box MIR states -- and
-  the region takes the box. The engine's own surface is unchanged; it still holds one callable per
-  submitted effect.
+  made once where it will live, captures included -- for one a region keeps, storage the region's
+  effects hand out, which a generic function of the unit makes it in -- and the region takes it
+  over. The engine still holds one callable per submitted effect.
 - A closure whose body completes as a coroutine takes all of this and differs only in what becomes
   of the value it builds: the started body takes the closure's box over, because the execution
   outlives the stretch that built the captures and nothing else holds them. The schema, the

@@ -32,6 +32,7 @@
 #include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_substitution.hpp"
 #include "lyra/mir/value_build.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
@@ -263,9 +264,12 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   // A callable the unit's namespace owns -- a package's own body (LRM 26.3) --
   // is a body like any other and becomes a function of the unit. A DPI-C
   // import is reached as a foreign symbol and defined elsewhere.
+  // A generic definition is no function itself: each list of types a call
+  // names makes one of its instances, lowered below.
   for (const mir::CallableId id : mir_->callables.Ids()) {
     const mir::CallableDecl& callable = mir_->callables.Get(id);
-    if (!std::holds_alternative<mir::DefinedHere>(mir::FormOf(callable))) {
+    if (!std::holds_alternative<mir::DefinedHere>(mir::FormOf(callable)) ||
+        !callable.type_parameters.empty()) {
       continue;
     }
     auto fn =
@@ -365,6 +369,20 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   }
   out_.integral_constants = std::move(constants);
 
+  // Each concrete form of a generic definition a call named, including one an
+  // instance's own body names, lowered once every other body has named what it
+  // calls. No other unit names one, so it is internal.
+  std::size_t lowered = 0;
+  while (lowered < generic_instances_.size()) {
+    const GenericInstance& instance = generic_instances_.at(lowered++);
+    auto fn = FunctionLowerer(*this, instance.code, instance.symbol).Run();
+    if (!fn) {
+      return std::unexpected(std::move(fn.error()));
+    }
+    fn->linkage = lir::Linkage::kInternal;
+    out_.functions.Add(*std::move(fn));
+  }
+
   // An enumeration's member table is its base type and its members' names and
   // bits here.
   base::Translation<lir::EnumTableId, lir::EnumTableDecl> tables(
@@ -398,6 +416,24 @@ auto BringUpEntrySymbol(std::string_view unit_name, mir::BringUpEntry entry)
       return lir::NamespaceStorageInitializeSymbol(unit_name);
   }
   throw InternalError("mir_to_lir: unknown bring-up entry");
+}
+
+auto UnitLowerer::GenericInstanceSymbol(
+    mir::CallableId definition, std::vector<mir::TypeId> arguments)
+    -> std::string {
+  const auto [at, named_first] = generic_instance_at_.try_emplace(
+      std::pair{definition, std::move(arguments)}, generic_instances_.size());
+  if (!named_first) {
+    return generic_instances_.at(at->second).symbol;
+  }
+  std::string symbol = lir::GenericInstanceSymbol(
+      lir::QualifierOf(out_, std::nullopt),
+      static_cast<std::uint32_t>(at->second));
+  mir::CallableCode code = mir::InstantiateDefinition(
+      mir_->types, mir_->callables.Get(definition).code, at->first.second);
+  generic_instances_.push_back(
+      GenericInstance{.symbol = symbol, .code = std::move(code)});
+  return symbol;
 }
 
 auto UnitLowerer::UnitCallableSymbol(mir::CallableId id) const -> std::string {

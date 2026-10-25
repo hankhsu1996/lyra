@@ -152,15 +152,24 @@ the detail lives in the entry itself.
   slot below MIR, and a lent argument the callee empties are rejected. For a class object the
   lowering is superseded by
   [an-object-is-created-whole-then-constructed](an-object-is-created-whole-then-constructed.md).
+- [a-unit-defines-generic-functions](a-unit-defines-generic-functions.md) -- a callable may be
+  generic over types, each bounded by what its body does with a value of it, and is checked where it
+  is defined, as a Rust generic is; its body holds parameter-typed values freely; instantiation is a
+  pass of the lowering to the dialect the backends read, ahead of every representation decision, so
+  both backends receive concrete bodies; an operation is generic exactly when it can be written from
+  what its bounds grant, and is otherwise built per type by one rule. C++ templates, a node per
+  operation, a pointer-only generic body and instantiation in each backend are rejected; the last
+  section says which parts the code does not carry out yet.
 - [a-value-too-large-for-a-frame-is-held-through-a-box](a-value-too-large-for-a-frame-is-held-through-a-box.md)
   -- every type is laid out flat at every size, and a local, a parameter taken by value, a made
   value and a capture of a type too large for a frame are held through a uniquely owning pointer a
   MIR-to-MIR rewrite writes, sized by one query over MIR types; a large value is made in its box, a
   conditional's arm and a block's value are made where its value is, no body answers a box, and a
-  closure kept past its statement is made in a box its keeper takes. The rewrite making those
-  temporaries also takes an operand read out of storage into one before a later operand may change
-  or end it, so a call's object is not reclaimed under it. Each backend deciding from a shared
-  constant, the render choosing per position, and a body answering a box are rejected.
+  closure kept past its statement is made where its keeper keeps it -- a region's effect where its
+  region's keeper says, any other in a box its keeper takes. The rewrite making those temporaries
+  also takes an operand read out of storage into one before a later operand may change or end it, so
+  a call's object is not reclaimed under it. Each backend deciding from a shared constant, the
+  render choosing per position, and a body answering a box are rejected.
 - [an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md)
   -- what a position of an array holds before it is written (LRM 7.4.5, Table 7-1) is a fact of the
   element type, for a fixed-size array, a dynamic array, a queue and an associative array alike. A
@@ -515,12 +524,15 @@ the detail lives in the entry itself.
   from its promise.
 - [construct-in-final-home](construct-in-final-home.md) -- a long-lived runtime object whose
   execution state binds to its own address is constructed where it will live and never moved. MIR
-  states that home: a closure kept past its statement -- by a region, a timer, an event control's
-  observation -- is made in a box the keeper takes, one a sort borrows lies in the frame, and one
-  started as a coroutine is made in a box its execution takes over, each with its captures inline. A
-  nonblocking assignment costs one allocation instead of N + 3. Build-then-move, an entry per
-  destination, a permanent capture indirection, and relocatable slots are rejected; read its last
-  two sections for how the home came to be MIR's.
+  states that home: a closure kept past its statement is made where its keeper keeps it -- a
+  region's effect in bytes the run keeps for its effects, by the unit's generic function that builds
+  it there from a maker and commits it, one a timer or an event control's observation keeps in a box
+  the keeper takes -- one a sort borrows lies in the frame, and one started as a coroutine is made
+  in a box its execution takes over, each with its captures inline. A nonblocking assignment costs
+  no allocation of its own. Build-then-move, an entry per destination, a permanent capture
+  indirection, relocatable slots, a node of its own for making a closure in a keeper, an arena per
+  region, and an allocator carried in a box's type are rejected; read its last three sections for
+  how the home came to be MIR's.
 - [referenceable-objects-have-stable-addresses](referenceable-objects-have-stable-addresses.md) -- a
   class object a reference can point into neither moves nor is reclaimed while that reference lives,
   so a property reference is an ordinary interior pointer. Non-moving stops being a mere realization

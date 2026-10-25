@@ -123,15 +123,20 @@ Stated positively: each fixes one rule, and what is allowed or forbidden follows
     (`F: FnMut(bool) -> bool + 'static`), so the runtime entry's own declaration states them, once,
     and the unit's verification holds what is handed to it to them, reading the kind and the
     signature off the erased type handed. A body the entry starts rather than calls has no
-    signature, and the declaration says it is started instead.
+    signature, and the declaration says it is started instead. A closure made in a keeper of
+    deferred effects is no erased callable in the unit at all: the keeper takes the concrete closure
+    where it was made and holds it by the part every closure opens with, so the generic function
+    making it there states the bounds the keeper asks on the type it is made at, and the
+    verification holds the closure's own kind and signature to them where that function is called.
 
 11. **A closure value has exactly one owner at every moment, and every way out of that owner ends it
-    exactly once.** The owner is the frame that made it, the box it was made in, or whatever took
-    that box over -- a region queue, a wait, a timer, a started body. Ending a closure ends its
-    captures; ending the box it was made in does that and then frees the storage. Either happens
-    because its owner ends, by whatever path: having run, having been dropped unrun, a stopped
-    execution, the end of the run. A closure is never ended because it ran, and never shared between
-    owners.
+    exactly once.** The owner is the frame that made it, the box it was made in, whatever took that
+    box over -- a wait, a timer, a started body -- or the region that keeps it as an effect. Ending
+    a closure ends its captures; ending the box it was made in does that and then frees the storage,
+    and a region ending an effect does that and then gives the effect's bytes back to the run's
+    storage for effects. Either happens because its owner ends, by whatever path: having run, having
+    been dropped unrun, a stopped execution, the end of the run. A closure is never ended because it
+    ran, and never shared between owners.
 
 ## Boundary to Adjacent Layers
 
@@ -219,16 +224,18 @@ live-place alias : field type = VariableRef<logic>   // an observable-cell alias
 retained cell    : field type = Shared<Var<int>>     // retain a lifted local; reach it through this
 ```
 
-A closure submitted to a region queue is made in a box and erased where it is submitted, and a
-sort's order is erased as a borrow for the call:
+A closure a region keeps is emplaced into that region's effects, a watch is made in a box the wait
+takes and erased where it is handed over, and a sort's order is erased as a borrow for the call:
 
 ```text
-deferred effect : Box<C_k>  --[ cast ]--> Box<dyn () -> void>        // the region owns it, asks FnOnce
+deferred effect : C_k       --[ emplace_into ]--> region's effects   // made where the region's keeper says, which takes it over, asks FnOnce
 watch           : Box<C_w>  --[ cast ]--> Box<dyn (bool) -> bool>    // the wait owns it, asks FnMut
 sort order      : &C_s      --[ cast ]--> &dyn (i64, i64) -> bool    // lent for the call, asks Fn
 ```
 
-The erased type names no kind; what each holder asks is stated by the entry it is handed to.
+What each holder asks is stated by the entry it is handed to, or, for a closure made in a keeper, by
+the bound the generic function making it states, and a closure serves it where its own kind extends
+the kind asked.
 
 In the current implementation both backends realize the erased callable the same way: the closure's
 storage starts with a pointer to a constant table its unit emits, the entry ending the closure and

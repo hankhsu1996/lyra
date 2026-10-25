@@ -3,11 +3,13 @@
 ## Purpose
 
 LIR is a self-contained, target-neutral executable model IR. Its conceptual peers are LLVM IR and
-Rust's MIR -- compiler IRs that express a program as a control-flow graph over typed values, with
+Rust's MIR, compiler IRs that express a program as a control-flow graph over typed values, with
 explicit effect ordering and an explicit storage model, shaped so a backend can lower it to a
-target. LIR is not a high-level programming language; it is what a program looks like once
-structured control flow and the object-oriented vocabulary have been lowered into a control-flow
-graph a code generator can consume.
+target. So the layer of rustc that Lyra's LIR corresponds to is the one rustc calls MIR, whatever
+Lyra's own MIR shares with it in name; `compiler_overview.md` maps every layer. LIR is not a
+high-level programming language; it is what a program looks like once structured control flow and
+the object-oriented vocabulary have been lowered into a control-flow graph a code generator can
+consume.
 
 LIR's vocabulary is what those execution-model IRs share:
 
@@ -203,7 +205,10 @@ identity is the suspect, not the analysis.
   trees become instruction streams, callable invocation becomes a call instruction, and suspension
   (an await, a sensitivity wait) becomes suspend/resume edges with scheduler calls. Every MIR type
   and identity is translated into a LIR-owned one; a type MIR-to-LIR cannot translate is rejected at
-  the boundary with a diagnostic, never passed through as a MIR id. MIR-to-LIR introduces every fact
+  the boundary with a diagnostic, never passed through as a MIR id. MIR-to-LIR reads only concrete
+  bodies: a generic MIR definition is made concrete before it, in MIR. Not yet so: today MIR-to-LIR
+  makes each instance itself, once per unit for each set of types a call names, with its bounds
+  resolved to the closure or the entry those types answer them by. MIR-to-LIR introduces every fact
   LIR owns and that MIR does not (CFG structure, logical storage topology, effect ordering,
   scheduling-protocol edges), and it introduces no source-language interpretation -- a lowering rule
   that must decide what a MIR node means is reading a defect in MIR, not doing LIR's job.

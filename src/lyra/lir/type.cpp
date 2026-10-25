@@ -111,6 +111,10 @@ auto RuntimeLibraryKindName(RuntimeLibraryKind kind) -> const char* {
       return "cancellation target";
     case RuntimeLibraryKind::kTimer:
       return "timer";
+    case RuntimeLibraryKind::kDeferredEffects:
+      return "deferred effects";
+    case RuntimeLibraryKind::kViolationReportKeeper:
+      return "violation report keeper";
     case RuntimeLibraryKind::kControlEffect:
       return "control effect";
     case RuntimeLibraryKind::kObjectDefinition:
@@ -478,9 +482,12 @@ auto Type::IsAddressOnly() const -> bool {
   if (const auto* library = As<RuntimeLibraryType>()) {
     switch (library->kind) {
       // Storage an owner holds and reaches by its address: what a disable
-      // names, and what a delayed continuous assignment propagates through.
+      // names, what a delayed continuous assignment propagates through, and
+      // the keepers a deferred closure is emplaced in.
       case RuntimeLibraryKind::kCancellationTarget:
       case RuntimeLibraryKind::kTimer:
+      case RuntimeLibraryKind::kDeferredEffects:
+      case RuntimeLibraryKind::kViolationReportKeeper:
         return true;
       case RuntimeLibraryKind::kBitVec:
       case RuntimeLibraryKind::kEnumeration:
@@ -652,6 +659,8 @@ auto Type::HeldAs() const -> std::optional<Holding> {
               case RuntimeLibraryKind::kDpiOpenArrayHandle:
               case RuntimeLibraryKind::kCancellationTarget:
               case RuntimeLibraryKind::kTimer:
+              case RuntimeLibraryKind::kDeferredEffects:
+              case RuntimeLibraryKind::kViolationReportKeeper:
               case RuntimeLibraryKind::kControlEffect:
               case RuntimeLibraryKind::kObjectDefinition:
               case RuntimeLibraryKind::kScopeInfo:

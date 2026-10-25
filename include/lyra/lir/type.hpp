@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <span>
 #include <string>
 #include <variant>
 #include <vector>
@@ -71,6 +70,8 @@ enum class RuntimeLibraryKind : std::uint8_t {
   kObjectWrite,
   kCancellationTarget,
   kTimer,
+  kDeferredEffects,
+  kViolationReportKeeper,
   kControlEffect,
   // The definition every object of one class carries. A body names it to ask
   // the class a question, and forwards its address without reading inside it,

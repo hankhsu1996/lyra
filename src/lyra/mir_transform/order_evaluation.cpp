@@ -41,10 +41,10 @@ enum class TakenAs : std::uint8_t {
   // a one is likewise made in a temporary for.
   kInPlace,
   // Built into storage the node or its callee owns -- what a new-expression
-  // allocates, a capture, an argument of a body this program compiles, which
-  // takes a large one in a box built where it is handed -- so a large one is
-  // made there unless a later operand's step has to follow it, and a small one
-  // is read.
+  // allocates, from the heap or from its placement, a capture, an argument of
+  // a body this program compiles, which takes a large one in a box built where
+  // it is handed -- so a large one is made there unless a later operand's step
+  // has to follow it, and a small one is read.
   kHandedOver,
   // Formed where its node is, with no temporary of its own: a place a read or
   // a move takes, or the pointer a dereference opens, which is that place's
@@ -79,8 +79,13 @@ auto Taking(
   if (std::holds_alternative<mir::BorrowExpr>(node.data)) {
     return TakenAs::kReferredTo;
   }
-  if (std::holds_alternative<mir::NewExpr>(node.data) ||
-      std::holds_alternative<mir::ClosureExpr>(node.data)) {
+  if (std::holds_alternative<mir::ClosureExpr>(node.data)) {
+    return TakenAs::kHandedOver;
+  }
+  // A new-expression's initializer is made in the storage it allocates; a
+  // placement's arguments are values handed to the allocation function.
+  if (const auto* allocation = std::get_if<mir::NewExpr>(&node.data);
+      allocation != nullptr && operand == allocation->initializer) {
     return TakenAs::kHandedOver;
   }
   if (const auto* call = std::get_if<mir::CallExpr>(&node.data)) {

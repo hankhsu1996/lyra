@@ -226,6 +226,13 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           [&](const LoopBlocksType&) { return bare(); },
           [&](const ClosureType&) { return bare(); },
           [&](const ErasedCallableType&) { return bare(); },
+          // A variable the source declares has a type of the program, never a
+          // generic definition's parameter.
+          [](const TypeParameterType&) -> TypeId {
+            throw InternalError(
+                "mir: a variable's storage is of a type parameter -- please "
+                "report this as a bug");
+          },
       });
 }
 
