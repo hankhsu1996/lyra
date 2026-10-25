@@ -185,6 +185,25 @@ struct ClosureTarget {
   auto operator==(const ClosureTarget&) const -> bool = default;
 };
 
+// The body of the closure the call's receiver is, where the receiver's type is
+// one of the definition's type parameters and that parameter's bound says the
+// definition calls it, as rustc's `Fn::call` is called on a `Self` that is a
+// parameter. Which body runs is the one of the closure the parameter is made
+// concrete at, so a generic body names the call this way and each concrete
+// form of it names that closure's body.
+struct BoundCallTarget {
+  auto operator==(const BoundCallTarget&) const -> bool = default;
+};
+
+// The commit of the keeper the call's receiver is, where the receiver's type is
+// one of the definition's type parameters and that parameter's bound says it
+// keeps deferred effects: which entry commits is the one the keeper type it is
+// made concrete at implements the commit by, as a Rust trait method called on a
+// parameter resolves to the impl of the type it is made at.
+struct BoundCommitTarget {
+  auto operator==(const BoundCommitTarget&) const -> bool = default;
+};
+
 // Identity of a symbol in the DPI-C name space (LRM 35.4): the program-global
 // linkage names imported and exported subroutines resolve to, a name space of
 // its own that no compilation-unit scope contains. It is therefore neither a
@@ -358,7 +377,9 @@ using CallPart = std::variant<base::ComponentIndex, ClassFieldTarget>;
 
 // The target of a `Direct` call -- the symbol identity. Each alternative is one
 // identity space, told apart by the table that resolves the name: a class of
-// this unit (`CallableTarget`), a closure of this unit (`ClosureTarget`), this
+// this unit (`CallableTarget`), a closure of this unit (`ClosureTarget`), the
+// closure a type parameter is made concrete at (`BoundCallTarget`), the commit
+// of the keeper one is made concrete at (`BoundCommitTarget`), this
 // unit's own namespace (`UnitCallableTarget`), the closed set of runtime
 // library entries (`BuiltinFn`), another compilation unit's namespace
 // (`ExternalUnitCallableTarget`) or one of its classes
@@ -375,10 +396,11 @@ using CallPart = std::variant<base::ComponentIndex, ClassFieldTarget>;
 // whether the call dispatches on an object -- that is the callee's receiver --
 // and none is recovered from the receiver's runtime type.
 using DirectTarget = std::variant<
-    CallableTarget, ClosureTarget, UnitCallableTarget, support::BuiltinFn,
-    ExternalUnitCallableTarget, ExternalUnitClassMethodTarget,
-    ConstructorTarget, ExternalLibraryOverrideTarget, RecordMethodTarget,
-    TypeOperationTarget, ExternalBringUpTarget, ForeignSymbolTarget>;
+    CallableTarget, ClosureTarget, BoundCallTarget, BoundCommitTarget,
+    UnitCallableTarget, support::BuiltinFn, ExternalUnitCallableTarget,
+    ExternalUnitClassMethodTarget, ConstructorTarget,
+    ExternalLibraryOverrideTarget, RecordMethodTarget, TypeOperationTarget,
+    ExternalBringUpTarget, ForeignSymbolTarget>;
 
 // A direct call whose callee is settled at compile time. The single shape for
 // every direct invocation: a user method, a built-in, a subroutine of this
@@ -398,16 +420,17 @@ using DirectTarget = std::variant<
 // part named has a type of its own, so a target with a type system settles the
 // part where it settles types -- which is naming the operation, not handing it
 // a value. Absent for every entry that names no part.
-// `type_argument` is the type a callee generic over one is called at, where its
-// operands do not settle it: the destination of a conversion, the type some
-// bits of a value are read or written at. It is part of which function is
-// called, and what the call answers with follows from it. Absent for every
-// callee that is generic over no type.
+// `type_arguments` are the types a callee generic over types is called at, one
+// per parameter it states, as a C++ call names a template's arguments: the
+// destination of a conversion, the type some bits of a value are read or
+// written at, the types a generic definition of this unit is made concrete at.
+// They are part of which function is called, and what the call answers with
+// follows from them. Empty for every callee that is generic over none.
 struct Direct {
   DirectTarget target;
   std::optional<ExprId> receiver = std::nullopt;
   std::optional<CallPart> part = std::nullopt;
-  std::optional<TypeId> type_argument = std::nullopt;
+  std::vector<TypeId> type_arguments = {};
 };
 
 // A call through a code address the program computed -- the indirect-call
@@ -452,6 +475,22 @@ struct CallExpr {
   std::vector<ExprId> arguments;
 };
 
+// The allocation function a placement reaches through the bound of the type
+// parameter its first argument points to: the one the keeper type a call names
+// for that parameter allocates by, named once the parameter is made concrete.
+struct BoundAllocation {
+  auto operator==(const BoundAllocation&) const -> bool = default;
+};
+
+using AllocationFunction = std::variant<support::BuiltinFn, BoundAllocation>;
+
+// Where a placement new-expression's storage comes from: the allocation
+// function, and the arguments handed to it.
+struct PlacementAllocation {
+  AllocationFunction allocate;
+  std::vector<ExprId> arguments;
+};
+
 // Allocates storage for one value of the pointee type and initializes it from
 // `initializer`, whose value is formed in that storage rather than handed over
 // as an argument: C++'s `new T(init)`, and SV's `new` (LRM 8.7). `Expr::type`
@@ -461,8 +500,19 @@ struct CallExpr {
 // created whole, every member of every class of its lineage in existence and
 // its own class's tables in place, and its constructor is then entered on it,
 // so it is of its own class while every constructor runs (LRM 8.17).
+//
+// `placement`, where present, is where the storage comes from instead of the
+// heap: a placement new-expression, `new (args) T(init)`, which names the
+// allocation function it calls and the arguments handed to it, as clang's
+// `CXXNewExpr` names its `operator new` and its placement arguments. The
+// function is asked for storage of the size and alignment of a value of the
+// pointee type, which the backend supplies, and owns that storage, so the
+// expression answers a pointer owning nothing, and an initializer that raises
+// gives nothing back (no deallocation function matches, as in C++). The
+// function is a library entry, or the one a keeper type allocates by.
 struct NewExpr {
   ExprId initializer;
+  std::optional<PlacementAllocation> placement = std::nullopt;
 };
 
 // Names the place its operand stands for: the object a borrowed pointer or a
@@ -806,9 +856,9 @@ struct Expr {
   return Direct{
       .target = entry,
       .receiver = receiver,
-      .type_argument = support::RuntimeEntryOf(entry).takes_a_type_argument
-                           ? std::optional(answer)
-                           : std::nullopt};
+      .type_arguments = support::RuntimeEntryOf(entry).takes_a_type_argument
+                            ? std::vector{answer}
+                            : std::vector<TypeId>{}};
 }
 
 [[nodiscard]] inline auto MakeFieldAccessExpr(
@@ -858,6 +908,17 @@ struct Expr {
 [[nodiscard]] inline auto MakeNewExpr(ExprId initializer, TypeId owner)
     -> Expr {
   return Expr{.data = NewExpr{.initializer = initializer}, .type = owner};
+}
+
+// `new (arguments) T(initializer)` in storage `allocate` hands out, answering
+// `place`, a pointer owning nothing.
+[[nodiscard]] inline auto MakePlacementNewExpr(
+    ExprId initializer, PlacementAllocation placement, TypeId place) -> Expr {
+  return Expr{
+      .data =
+          NewExpr{
+              .initializer = initializer, .placement = std::move(placement)},
+      .type = place};
 }
 
 // The construction of an object of `object_type` by its constructor, which a

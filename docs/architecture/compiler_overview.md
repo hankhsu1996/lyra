@@ -88,6 +88,27 @@ so what a unit reads cannot be elaborated in advance short of elaborating every 
 frontend shares. Each unit reads the AST in turn, and everything from its HIR onward runs beside the
 other units.
 
+## Which layer of another compiler each layer corresponds to
+
+Lyra's layer names collide with other compilers' and do not line up with them. **Lyra's MIR is not
+Rust's MIR; Lyra's LIR is.** A design question about a layer is surveyed against the layer that
+plays the same role elsewhere, never against the one that shares its name.
+
+| Lyra        | What it is                                                                                                     | rustc                                                                                                                                                  | clang                                                                                      | Swift                |
+| ----------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ | -------------------- |
+| HIR         | the source language as written, typed, with compiler identity                                                  | HIR and THIR (`rustc_hir`, `rustc_middle/src/thir.rs`)                                                                                                 | the AST Sema builds                                                                        | the type-checked AST |
+| HIR-to-MIR  | the source language restated as a generic programming language                                                 | no counterpart: Rust needs no translation into a programming language                                                                                  | no counterpart, for the same reason                                                        | no counterpart       |
+| MIR         | a generic high-level programming language: expression trees, structured control flow, classes, closures, calls | THIR's level (`rustc_middle/src/thir.rs`): typed expression trees with structured control flow, before any control-flow graph                          | the AST (`clang/include/clang/AST/Expr.h`, `Stmt.h`)                                       | the type-checked AST |
+| MIR-to-LIR  | expression trees and structured control flow into a control-flow graph over places                             | MIR building (`rustc_mir_build/src/builder`), THIR to MIR                                                                                              | CodeGen's statement and expression emission (`clang/lib/CodeGen/CGStmt.cpp`, `CGExpr.cpp`) | SILGen               |
+| LIR         | a control-flow graph over typed places and values, with no physical layout                                     | MIR (`rustc_middle/src/mir/syntax.rs`), with its shims and monomorphization (`rustc_mir_transform/src/shim.rs`, `rustc_monomorphize/src/collector.rs`) | no counterpart: clang goes from its AST to LLVM IR directly                                | SIL                  |
+| LIR-to-LLVM | translation, answering every size, alignment and offset                                                        | codegen (`rustc_codegen_ssa/src/mir`)                                                                                                                  | the rest of CodeGen                                                                        | IRGen                |
+| LLVM IR     | LLVM IR                                                                                                        | LLVM IR                                                                                                                                                | LLVM IR                                                                                    | LLVM IR              |
+
+So a question about what a MIR node should be is asked of clang's AST and rustc's THIR. A question
+about what LIR should hold, or where a body built for one type belongs on the execution backend, is
+asked of rustc's MIR. A question about how an expression becomes a control-flow graph is asked of
+rustc's MIR building and clang's CodeGen.
+
 ## Core Invariants
 
 1. The compiler pipeline is HIR -> MIR -> LIR -> LLVM IR. No stage skips a layer.

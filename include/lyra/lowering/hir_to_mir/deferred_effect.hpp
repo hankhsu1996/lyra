@@ -19,9 +19,9 @@
 namespace lyra::lowering::hir_to_mir {
 
 // The effect is due in a region this statement can name: this slot's, or the
-// one `delay` names. The region is handed the closure and the procedure carries
-// on (LRM 4.4.2.4, 9.4.5).
-auto SubmitToDueRegion(
+// one `delay` names. The closure is made where that region's effects say and
+// kept by them, and the procedure carries on (LRM 4.4.2.4, 9.4.5).
+auto KeepInDueRegion(
     ProcessLowerer& process, WalkFrame frame,
     const std::optional<hir::DelayControl>& delay, mir::Expr closure)
     -> diag::Result<mir::Expr>;
@@ -66,7 +66,8 @@ auto BuildDeferredEffect(
     Apply apply) -> diag::Result<mir::Expr> {
   // An event control is the one form whose slot is not knowable here, so it is
   // the one that needs an execution of its own to find it, which takes the
-  // closure over; every other form hands the region a closure and is done.
+  // closure over; every other form makes the closure where the region's effects
+  // say and is done.
   const auto* delay =
       control.has_value() ? std::get_if<hir::DelayControl>(&*control) : nullptr;
   if (control.has_value() && delay == nullptr) {
@@ -87,7 +88,7 @@ auto BuildDeferredEffect(
   auto captured = capture(closure);
   if (!captured) return std::unexpected(std::move(captured.error()));
   apply(closure.Body(), *captured);
-  return SubmitToDueRegion(
+  return KeepInDueRegion(
       process, frame,
       delay != nullptr ? std::optional<hir::DelayControl>{*delay}
                        : std::nullopt,

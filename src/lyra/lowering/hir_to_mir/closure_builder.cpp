@@ -2,14 +2,18 @@
 
 #include <optional>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
+#include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/closure_signature.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/field.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/storage_part.hpp"
@@ -50,7 +54,8 @@ auto Unsized(
   return block.exprs.Add(
       mir::MakeCallExpr(
           mir::Direct{
-              .target = support::BuiltinFn::kUnsize, .type_argument = erased},
+              .target = support::BuiltinFn::kUnsize,
+              .type_arguments = {erased}},
           {held}, type));
 }
 
@@ -124,6 +129,79 @@ auto BuildKeptClosure(
   const mir::TypeId erased = ErasedOf(unit, closure.type);
   const mir::ExprId box = BuildClosureBox(unit, block, std::move(closure));
   return Unsized(block, box, erased, mir::BoxOf(unit.types, erased));
+}
+
+auto BuildEmplacedClosure(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::Expr keeper,
+    mir::Expr closure) -> mir::Expr {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const mir::TypePool& types = unit.types;
+  mir::Block& block = *frame.current_block;
+  auto& effect = std::get<mir::ClosureExpr>(closure.data);
+
+  // The maker refers to each value the effect is made of where it lies, a
+  // value made by its source first held where the maker's call outlasts it,
+  // and its body reads each through that reference into the effect it answers.
+  const mir::ClosureId maker_id = unit.DeclareClosure();
+  const mir::TypeId maker_type =
+      types.Intern(mir::Type{mir::ClosureType{.closure_id = maker_id}});
+  mir::ClosureDecl maker;
+  const mir::TypeId receiver_type =
+      mir::ClosureReceiverType(types, maker_id, support::ClosureKind::kFn);
+  const mir::LocalId receiver = maker.invoke.AddLocal(receiver_type);
+  maker.invoke.receiver = receiver;
+  maker.invoke.result_type = closure.type;
+  mir::Block& body = maker.invoke.Body();
+  std::vector<mir::FieldInit> referred;
+  for (mir::FieldInit& init : effect.field_inits) {
+    const mir::TypeId value_type = block.exprs.Get(init.value).type;
+    const mir::ExprId lying =
+        mir::ValueLiesInStorage(unit, block, init.value)
+            ? init.value
+            : block.ReadLocal(DeclareLocal(frame, init.value), value_type);
+    const mir::ExprId reference = mir::Borrow(unit, block, lying);
+    const mir::TypeId reference_type = block.exprs.Get(reference).type;
+    const mir::FieldId field =
+        maker.fields.Add(mir::FieldDecl{.type = reference_type});
+    maker.field_order.push_back(field);
+    referred.push_back(mir::FieldInit{.target = field, .value = reference});
+    const mir::ExprId held = body.exprs.Add(
+        mir::MakeFieldAccessExpr(
+            body.Deref(
+                types, body.LocalPlace(receiver, receiver_type), maker_type),
+            mir::ClosureFieldTarget{.owner = maker_id, .slot = field},
+            reference_type));
+    init.value = body.Read(body.Deref(types, held, value_type));
+  }
+  const mir::TypeId effect_type = closure.type;
+  body.AppendStmt(mir::ReturnStmt{.value = body.exprs.Add(std::move(closure))});
+  unit.DefineClosure(maker_id, std::move(maker));
+
+  // The maker lies in this frame for the call, which is handed its address.
+  const mir::LocalId make = DeclareLocal(
+      frame,
+      block.exprs.Add(
+          mir::Expr{
+              .data =
+                  mir::ClosureExpr{
+                      .closure = maker_id, .field_inits = std::move(referred)},
+              .type = maker_type}));
+  const mir::ExprId make_address = block.exprs.Add(
+      mir::MakeAddressOfExpr(
+          block.LocalPlace(make, maker_type),
+          types.Intern(
+              mir::Type{mir::PointerType{
+                  .pointee = maker_type,
+                  .ownership = mir::PointerOwnership::kBorrowed,
+                  .mutability = mir::Mutability::kReadOnly}})));
+  const mir::TypeId keeper_type =
+      types.Get(keeper.type).Get<mir::PointerType>().pointee;
+  return mir::MakeCallExpr(
+      mir::Direct{
+          .target = unit_lowerer.EmplaceInto(),
+          .type_arguments = {keeper_type, effect_type, maker_type}},
+      {block.exprs.Add(std::move(keeper)), make_address},
+      unit.builtins.void_type);
 }
 
 auto BuildBorrowedClosure(

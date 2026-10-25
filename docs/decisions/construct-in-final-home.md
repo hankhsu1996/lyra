@@ -1,7 +1,8 @@
 # Construct in the final home, never build and move
 
 Date: 2026-09-11 Status: accepted; realized 2026-09-25 with D2, D4 and D5 revised; D2 restored and
-D5 reread for a sort's order 2026-10-17 (see the last two sections)
+D5 reread for a sort's order 2026-10-17; the region path made where its keeper says 2026-10-24 (see
+the last three sections)
 
 ## Context
 
@@ -176,8 +177,63 @@ caller's.
   address first as a constructor stores a class's table address; no library entry makes it. Nothing
   moves a closure once made, which invariant 1 requires.
 
+## Revised again, 2026-10-24: a region's effect is made where its keeper says
+
+The 2026-10-17 revision made MIR state the home and left the region path at "one allocation per
+nonblocking assignment": a box of its own, which the region took and freed after running it. That
+allocation and its release were about a fifth of the instructions of a benchmark that does little
+but nonblocking updates. D1 as first written already named the home -- the region path constructs
+the region-owned value directly -- and what was missing was a way for MIR to say so.
+
+- An effect lasts exactly as long as its region holds it, so the region's effects are a keeper: they
+  hand out where to make one, and they commit what was made there, named by the address it was made
+  at, so nothing is remembered between the two. Making an effect there is one generic function of
+  the unit, `emplace_into<K, T, F>(K* keeper, const F* make)`: it asks the keeper for storage sized
+  and aligned for `T`, builds `T` there from what calling `make` answers, and commits it. That is
+  C++'s `emplace`, which builds its element where the container holds it from arguments it is handed
+  by reference; `F`, a closure answering `T`, stands for those arguments, since MIR has no argument
+  pack, as Rust bounds such a parameter by `F: FnOnce() -> T`. The body uses nothing but MIR's own
+  construction and call: a placement new-expression, whose allocation function the keeper's type
+  supplies, and the keeper's commit.
+- The values the effect is made of are read into the frame where the statement is reached, before a
+  delay is evaluated (LRM 9.4.5), and the maker refers to each where it lies there, so the effect is
+  built once, in the keeper's storage.
+- The keeper's type says which protocol it keeps by -- a region's effects, or the keeper of
+  violation reports, which keeps a report in the Observed region unless its process is flushed first
+  -- as a Rust trait's impls do: the definition bounds `K` by keeping deferred effects, and each
+  keeper type answers that bound by its own allocate and commit entries.
+- A node of its own for making a closure in a keeper, naming the keeper and the closure's
+  construction, was built first and dropped: it wrote one library type's operation as an IR node,
+  which neither clang nor rustc has, where both state the same thing as a library function over
+  placement new. A placement new-expression with a keep after it at every site was dropped too: the
+  keeper was stated twice per site, once where the closure was made and once where it was kept. The
+  generic function states it once, as its argument.
+- A region's commit allocates nothing, so an effect made for a region is always kept. The keeper of
+  violation reports commits a report by making, in the Observed region, the condition that holds it,
+  so its commit can raise for a failed allocation alone, and the report then ends unrun, as the
+  statement that raised keeps nothing. A maker that raises leaves bytes handed out and never
+  committed, which are never handed out again; only a failed allocation can raise there.
+- The pointer type gains no allocator. A box carrying its allocator in its type (Rust's `Box<T, A>`)
+  was considered and rejected: its one reader would be the keep that takes it at once, so the
+  allocator would be stated in a type only to be read off by the next node.
+- Where the bytes come from is the run's, not the region's: one storage for every effect of the run,
+  a free list per size class refilled a block at a time, as SystemC keeps its timed events
+  (`sc_event.cpp`, `sc_event_timed::allocate`). An effect's bytes go back when it ends, so what is
+  held follows how many effects are pending at once and how large each is. This is a closure type's
+  free list stated for a runtime told sizes rather than types: every closure of one size shares a
+  class.
+- An arena per region, made new after each pass, was built first and dropped. Every region of every
+  later slot that held an effect took a first chunk of its own, so 100,000 updates each due at a
+  time of its own held 513 MB at their peak, where one allocation per update had held 88 MB. LLVM's
+  `BumpPtrAllocator` and rustc's arenas are built for a few long-lived arenas holding many objects,
+  not one per due time.
+- Every effect a region holds is made so, the library's own included; closures of any other keeper
+  keep a box.
+
 ## Cross-references
 
+- [a-unit-defines-generic-functions](a-unit-defines-generic-functions.md) -- the generic function a
+  region's effect is made by.
 - [closure-value-realization](closure-value-realization.md) -- the closure value this changes the
   construction of; its transfer consequence is what this replaces.
 - [inline-member-slots](inline-member-slots.md) -- the condition a closure now meets, removing its

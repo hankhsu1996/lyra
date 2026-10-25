@@ -179,7 +179,8 @@ class HookBody {
     return mir::CallableDecl{
         .code = std::move(code_),
         .foreign = std::nullopt,
-        .virtual_dispatch = mir::OverridesLibraryVirtual{.function = function}};
+        .virtual_dispatch = mir::OverridesLibraryVirtual{.function = function},
+        .type_parameters = {}};
   }
 
  private:
@@ -1030,7 +1031,7 @@ auto ClassDeclLowerer::PopulateBodies(
                                  .code = std::move(proto_code),
                                  .foreign = std::nullopt,
                                  .virtual_dispatch = method_dispatch,
-                             });
+                                 .type_parameters = {}});
       continue;
     }
     ScopeChainNode method_link{};
@@ -1048,7 +1049,7 @@ auto ClassDeclLowerer::PopulateBodies(
                                .code = *std::move(method_code_or),
                                .foreign = std::nullopt,
                                .virtual_dispatch = method_dispatch,
-                           });
+                               .type_parameters = {}});
   }
 
   // The method making each covergroup the class embeds (LRM 19.4.1), named by
@@ -1073,7 +1074,8 @@ auto ClassDeclLowerer::PopulateBodies(
             .code = *std::move(factory),
             .foreign = std::nullopt,
             .virtual_dispatch =
-                shape.callable_signatures.Get(callable).virtual_dispatch});
+                shape.callable_signatures.Get(callable).virtual_dispatch,
+            .type_parameters = {}});
   }
   if (const std::optional<RandomizationHooks>& hooks =
           unit_lowerer.RandomizationHooksOf(hir_class_id_)) {

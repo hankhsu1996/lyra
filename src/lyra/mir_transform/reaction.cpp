@@ -386,7 +386,8 @@ auto PartDecl(mir::CallableCode code) -> mir::CallableDecl {
   return mir::CallableDecl{
       .code = std::move(code),
       .foreign = std::nullopt,
-      .virtual_dispatch = std::nullopt};
+      .virtual_dispatch = std::nullopt,
+      .type_parameters = {}};
 }
 
 // `self = (Object*)object; wait_local = (Wait*)wait;`, the two statements

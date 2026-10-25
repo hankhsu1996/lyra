@@ -444,11 +444,12 @@ auto CodeGenModule::EndOwnedStorage(
 auto CodeGenModule::EmitDeleteCall(
     llvm::IRBuilderBase& builder, lir::TypeId pointee, llvm::Value* storage)
     -> diag::Result<void> {
-  auto size = CompleteObjectSize(pointee);
-  if (!size) {
-    return std::unexpected(std::move(size.error()));
+  auto layout = AllocationLayoutOf(pointee);
+  if (!layout) {
+    return std::unexpected(std::move(layout.error()));
   }
-  builder.CreateCall(SizedOperatorDelete(), {storage, builder.getInt64(*size)});
+  builder.CreateCall(
+      SizedOperatorDelete(), {storage, builder.getInt64(layout->size)});
   return {};
 }
 
@@ -1098,32 +1099,32 @@ auto CodeGenModule::PlacedMembersOf(lir::TypeId type)
   return &placed_members_.emplace(type, *std::move(laid)).first->second;
 }
 
-auto CodeGenModule::CompleteObjectSize(lir::TypeId type)
-    -> diag::Result<std::uint64_t> {
+auto CodeGenModule::AllocationLayoutOf(lir::TypeId type)
+    -> diag::Result<support::Layout> {
   // A value no declaration lays out takes what its type lays it out in.
   const std::optional<lir::TypeDeclaration> declaration =
       unit_->types.Get(type).Declaration();
   if (!declaration.has_value()) {
-    return types_.LayoutOf(type).layout.size;
+    return types_.LayoutOf(type).layout;
   }
-  const auto object = [&]() -> diag::Result<std::uint64_t> {
+  const auto object = [&]() -> diag::Result<support::Layout> {
     auto whole = CompleteObjectLayoutOf(DeclarationOf(type));
     if (!whole) {
       return std::unexpected(std::move(whole.error()));
     }
-    return whole->layout.size;
+    return whole->layout;
   };
   return std::visit(
       Overloaded{
           [&](const lir::ObjectType&) { return object(); },
           [&](const lir::CrossUnitClassType&) { return object(); },
           // A closure is as large as its captures are laid out.
-          [&](const lir::ClosureType&) -> diag::Result<std::uint64_t> {
+          [&](const lir::ClosureType&) -> diag::Result<support::Layout> {
             auto placed = PlacedMembersOf(type);
             if (!placed) {
               return std::unexpected(std::move(placed.error()));
             }
-            return (*placed)->layout.size;
+            return (*placed)->layout;
           }},
       *declaration);
 }

@@ -1460,13 +1460,13 @@ auto CodeGenFunction::LowerCall(
           [&](const lir::DynamicStorageTarget& storage) -> Lowered {
             switch (storage.op) {
               case lir::DynamicStorageTarget::Op::kAllocate: {
-                auto size = module_->CompleteObjectSize(
+                auto layout = module_->AllocationLayoutOf(
                     *module_->Unit().types.Get(result_type).Pointee());
-                if (!size) {
-                  return std::unexpected(std::move(size.error()));
+                if (!layout) {
+                  return std::unexpected(std::move(layout.error()));
                 }
                 return builder_.CreateCall(
-                    module_->OperatorNew(), {builder_.getInt64(*size)});
+                    module_->OperatorNew(), {builder_.getInt64(layout->size)});
               }
               case lir::DynamicStorageTarget::Op::kDeallocate: {
                 auto given = LowerOperand(call.args.at(0));
@@ -2011,6 +2011,25 @@ auto CodeGenFunction::LowerOperand(const lir::Operand& operand)
           // The void value has no bits, so nothing stands for it.
           [](const lir::VoidConst&) -> diag::Result<llvm::Value*> {
             return nullptr;
+          },
+          // A type's size or alignment is a number of its layout, which this
+          // layer lays the type out to answer.
+          [&](const lir::LayoutConst& c) -> diag::Result<llvm::Value*> {
+            auto layout = module_->AllocationLayoutOf(c.of);
+            if (!layout) {
+              return std::unexpected(std::move(layout.error()));
+            }
+            const auto measured = [&]() -> std::uint64_t {
+              switch (c.measure) {
+                case lir::LayoutConst::Measure::kSize:
+                  return layout->size;
+                case lir::LayoutConst::Measure::kAlignment:
+                  return layout->align;
+              }
+              throw InternalError("llvm_backend: unknown layout measure");
+            };
+            return llvm::ConstantInt::get(
+                llvm::Type::getInt64Ty(module_->Context()), measured());
           },
           // A member table is data of the module, named by its address.
           [&](const lir::EnumTableRef& c) -> diag::Result<llvm::Value*> {

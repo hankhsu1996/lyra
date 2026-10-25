@@ -101,6 +101,10 @@ SV ---> slang AST ---> HIR ---> MIR ---> backend::cpp ---> C++ source + runtime
 The pipeline is HIR -> MIR -> LIR -> LLVM IR; `docs/architecture/compiler_overview.md` holds the
 binding contract.
 
+**Lyra's MIR is not rustc's MIR.** Lyra's MIR sits where clang's AST and rustc's THIR sit; Lyra's
+LIR is what corresponds to rustc's MIR. Survey another compiler against the layer that plays the
+same role, never the one with the same name -- the table in `compiler_overview.md` maps every layer.
+
 - Semantic modeling lives in HIR and MIR; execution modeling lives in LIR and below.
 - A compilation unit is the top-level semantic boundary (module, package, interface).
 - Compile time produces class-level artifacts; runtime constructs objects and installs relations.

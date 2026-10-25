@@ -582,8 +582,8 @@ auto NewLibraryObject(
 }
 
 // `entry` handed `closure`, a closure kept for the runtime, which runs it
-// where the entry places it: an execution of its own that may wait, the
-// Postponed region, or after the final procedures (LRM 19.3, 19.7, 19.9).
+// where the entry places it: an execution of its own that may wait, or after
+// the final procedures (LRM 19.3, 19.9).
 void HandToRuntime(
     const Writer& e, support::BuiltinFn entry, mir::ExprId closure) {
   const mir::ExprId runtime =
@@ -1759,10 +1759,12 @@ class ClassWriter {
                       later.Read(Record(later)), Refs().group_instance,
                       "strobe_taken"));
                   sample(later);
-                  HandToRuntime(
-                      claimed, support::BuiltinFn::kSubmitPostponed,
-                      BuildKeptClosure(
-                          unit, claimed.Block(), postponed.BuildVoid()));
+                  mir::Expr keeper = BuildRegionEffectsCallExpr(
+                      claimed.Lowering(), claimed.Block(),
+                      support::BuiltinFn::kPostponedEffects);
+                  claimed.Do(BuildEmplacedClosure(
+                      claimed.Lowering(), claimed.Frame(), std::move(keeper),
+                      postponed.BuildVoid()));
                 });
           },
           sample);
@@ -1824,7 +1826,8 @@ class ClassWriter {
         kSample, mir::CallableDecl{
                      .code = function.Finish(std::nullopt),
                      .foreign = std::nullopt,
-                     .virtual_dispatch = RoleIn(*u_, Self(), kSampleBehavior)});
+                     .virtual_dispatch = RoleIn(*u_, Self(), kSampleBehavior),
+                     .type_parameters = {}});
     return {};
   }
 
@@ -1913,7 +1916,8 @@ class ClassWriter {
             .code =
                 function.Finish(ConvertToType(Unit(), e.Block(), made, record)),
             .foreign = std::nullopt,
-            .virtual_dispatch = RoleIn(*u_, Self(), kMakeRecordBehavior)});
+            .virtual_dispatch = RoleIn(*u_, Self(), kMakeRecordBehavior),
+            .type_parameters = {}});
   }
 
   // The type's record (LRM 19.11.3), found in the run's registry by the
@@ -1971,7 +1975,8 @@ class ClassWriter {
         mir::CallableDecl{
             .code = function.Finish(e.Block().ReadLocal(found, type)),
             .foreign = std::nullopt,
-            .virtual_dispatch = std::nullopt});
+            .virtual_dispatch = std::nullopt,
+            .type_parameters = {}});
   }
 
   // What the declaration states of its type: its items, and the type options
@@ -2043,7 +2048,8 @@ class ClassWriter {
         kDeclareType, mir::CallableDecl{
                           .code = function.Finish(std::nullopt),
                           .foreign = std::nullopt,
-                          .virtual_dispatch = std::nullopt});
+                          .virtual_dispatch = std::nullopt,
+                          .type_parameters = {}});
     return {};
   }
 
@@ -2533,7 +2539,7 @@ auto InstanceAs(
       mir::MakeCallExpr(
           mir::Direct{
               .target = support::BuiltinFn::kDynamicCast,
-              .type_argument = type},
+              .type_arguments = {type}},
           {handle}, type));
 }
 

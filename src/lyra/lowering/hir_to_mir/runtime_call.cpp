@@ -121,6 +121,41 @@ auto BuildFilesCallExpr(const UnitLowerer& unit_lowerer, mir::Block& block)
       .type = builtins.files};
 }
 
+namespace {
+
+// `current_runtime().<keeper>(arguments...)`, answering the keeper of deferred
+// effects `keeper_type` points to.
+auto BuildKeeperCallExpr(
+    const UnitLowerer& unit_lowerer, mir::Block& block,
+    support::BuiltinFn keeper, std::vector<mir::ExprId> arguments,
+    mir::TypeId keeper_type) -> mir::Expr {
+  const mir::ExprId runtime_id =
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee = mir::Direct{.target = keeper, .receiver = runtime_id},
+              .arguments = std::move(arguments)},
+      .type = keeper_type};
+}
+
+}  // namespace
+
+auto BuildRegionEffectsCallExpr(
+    const UnitLowerer& unit_lowerer, mir::Block& block,
+    support::BuiltinFn entry, std::vector<mir::ExprId> arguments) -> mir::Expr {
+  return BuildKeeperCallExpr(
+      unit_lowerer, block, entry, std::move(arguments),
+      unit_lowerer.Unit().builtins.deferred_effects_ptr);
+}
+
+auto BuildViolationReportsCallExpr(
+    const UnitLowerer& unit_lowerer, mir::Block& block) -> mir::Expr {
+  return BuildKeeperCallExpr(
+      unit_lowerer, block, support::BuiltinFn::kViolationReports, {},
+      unit_lowerer.Unit().builtins.violation_report_keeper_ptr);
+}
+
 auto BuildDiagnosticCallExpr(
     const mir::CompilationUnit& unit, mir::Block& block) -> mir::Expr {
   return mir::Expr{

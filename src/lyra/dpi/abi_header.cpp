@@ -103,6 +103,8 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
               case mir::RuntimeLibraryKind::kCancellationTarget:
               case mir::RuntimeLibraryKind::kControlEffect:
               case mir::RuntimeLibraryKind::kTimer:
+              case mir::RuntimeLibraryKind::kDeferredEffects:
+              case mir::RuntimeLibraryKind::kViolationReportKeeper:
               case mir::RuntimeLibraryKind::kObjectDefinition:
               case mir::RuntimeLibraryKind::kScopeInfo:
               case mir::RuntimeLibraryKind::kScopeCallable:
@@ -166,7 +168,8 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
           [&](const mir::LoopBlocksType&) { return crosses_no_boundary(); },
           [&](const mir::RecordType&) { return crosses_no_boundary(); },
           [&](const mir::ClosureType&) { return crosses_no_boundary(); },
-          [&](const mir::ErasedCallableType&) {
+          [&](const mir::ErasedCallableType&) { return crosses_no_boundary(); },
+          [&](const mir::TypeParameterType&) {
             return crosses_no_boundary();
           }});
 }

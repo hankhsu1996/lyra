@@ -78,6 +78,10 @@ auto RuntimeLibraryCppType(mir::RuntimeLibraryKind kind) -> std::string_view {
       return "lyra::runtime::CancellationTarget";
     case mir::RuntimeLibraryKind::kTimer:
       return "lyra::runtime::Timer";
+    case mir::RuntimeLibraryKind::kDeferredEffects:
+      return "lyra::runtime::DeferredEffects";
+    case mir::RuntimeLibraryKind::kViolationReportKeeper:
+      return "lyra::runtime::ViolationReportKeeper";
     case mir::RuntimeLibraryKind::kControlEffect:
       return "lyra::runtime::ControlEffect";
     case mir::RuntimeLibraryKind::kFormatSpec:
@@ -437,6 +441,11 @@ void WriteOne(TargetText& out, const CppType& spelling) {
                 "the box or the borrow holding it -- please report this as a "
                 "bug");
           },
+          // A generic definition is written as a function template, and its
+          // type parameter as the template parameter.
+          [&](const mir::TypeParameterType& t) {
+            Write(out, CppTypeParameterName(t.index));
+          },
       });
 }
 
@@ -584,6 +593,7 @@ auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [&](const mir::RecordType&) { return reaches_nothing(); },
           [&](const mir::ClosureType&) { return reaches_nothing(); },
           [&](const mir::ErasedCallableType&) { return reaches_nothing(); },
+          [&](const mir::TypeParameterType&) { return reaches_nothing(); },
       });
 }
 
@@ -672,6 +682,7 @@ auto ReceiverSpellingAsCpp(
               [&](const mir::RecordType&) { return holds_no_object(); },
               [&](const mir::ClosureType&) { return holds_no_object(); },
               [&](const mir::ErasedCallableType&) { return holds_no_object(); },
+              [&](const mir::TypeParameterType&) { return holds_no_object(); },
           });
 }
 
@@ -806,6 +817,11 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
             throw InternalError(
                 "backend::cpp: a closure of no known type is made by a cast "
                 "of the box or the borrow holding it, so none is constructed");
+          },
+          [](const mir::TypeParameterType&) {
+            throw InternalError(
+                "backend::cpp: a value of a type parameter is made only by "
+                "the call its initializer is, which names no constructor");
           },
       });
 }

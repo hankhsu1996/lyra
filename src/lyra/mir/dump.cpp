@@ -471,6 +471,10 @@ class MirDumper {
                   return "RuntimeLibrary(CancellationTarget)";
                 case RuntimeLibraryKind::kTimer:
                   return "RuntimeLibrary(Timer)";
+                case RuntimeLibraryKind::kDeferredEffects:
+                  return "RuntimeLibrary(DeferredEffects)";
+                case RuntimeLibraryKind::kViolationReportKeeper:
+                  return "RuntimeLibrary(ViolationReportKeeper)";
                 case RuntimeLibraryKind::kControlEffect:
                   return "RuntimeLibrary(ControlEffect)";
                 case RuntimeLibraryKind::kFormatSpec:
@@ -545,6 +549,9 @@ class MirDumper {
               return std::format(
                   "ErasedCallable({}({}) -> Type[{}])",
                   support::ClosureKindName(e.kind), params, e.result.value);
+            },
+            [](const TypeParameterType& p) -> std::string {
+              return std::format("TypeParameter({})", p.index.value);
             },
             [](const VariableRefType& r) -> std::string {
               return std::format(
@@ -727,6 +734,12 @@ class MirDumper {
             [](const ClosureTarget& c) -> std::string {
               return std::format("closure=Closure[{}]", c.closure.value);
             },
+            [](const BoundCallTarget&) -> std::string {
+              return "bound=the receiver's closure";
+            },
+            [](const BoundCommitTarget&) -> std::string {
+              return "bound=the receiver's keeper commit";
+            },
             [this](const UnitCallableTarget& c) -> std::string {
               return std::format(
                   R"(callable=Unit.{} "{}")", c.slot.value,
@@ -788,13 +801,14 @@ class MirDumper {
                   d.part.has_value()
                       ? std::format(" at={}", FormatCallPart(*d.part))
                       : std::string{};
-              const std::string type_argument =
-                  d.type_argument.has_value()
-                      ? std::format(" of=type[{}]", d.type_argument->value)
-                      : std::string{};
+              const std::string type_arguments =
+                  d.type_arguments.empty()
+                      ? std::string{}
+                      : std::format(
+                            " of=[{}]", FormatTypeList(d.type_arguments));
               return std::format(
                   "Direct[{}{}{}{}]", FormatDirectTarget(d.target), receiver,
-                  part, type_argument);
+                  part, type_arguments);
             },
             [](const Indirect& i) -> std::string {
               return std::format("Indirect[code=Expr[{}]]", i.code.value);
@@ -949,8 +963,27 @@ class MirDumper {
                   FormatExprList(c.arguments));
             },
             [](const NewExpr& n) -> std::string {
+              const std::string placement =
+                  n.placement.has_value()
+                      ? std::format(
+                            " in={}({})",
+                            std::visit(
+                                Overloaded{
+                                    [](support::BuiltinFn allocate) {
+                                      return std::string{
+                                          support::RuntimeEntryOf(allocate)
+                                              .name};
+                                    },
+                                    [](BoundAllocation) {
+                                      return std::string{
+                                          "bound=the keeper's allocate"};
+                                    }},
+                                n.placement->allocate),
+                            FormatExprList(n.placement->arguments))
+                      : std::string{};
               return std::format(
-                  "NewExpr initializer=Expr[{}]", n.initializer.value);
+                  "NewExpr{} initializer=Expr[{}]", placement,
+                  n.initializer.value);
             },
             [](const FieldAccessExpr& m) -> std::string {
               return std::format(
@@ -1131,6 +1164,27 @@ class MirDumper {
     }
     if (d.foreign.has_value()) {
       DumpForeignLinkage(*d.foreign);
+    }
+    for (std::size_t at = 0; at < d.type_parameters.size(); ++at) {
+      std::string bounds;
+      for (const ParameterBound& bound : d.type_parameters[at].bounds) {
+        bounds += std::visit(
+            Overloaded{
+                [](const CalledClosureBound& called) -> std::string {
+                  return std::format(
+                      " {}({}) -> Type[{}]{}",
+                      support::ClosureKindName(called.asks),
+                      FormatTypeList(called.params), called.result.value,
+                      support::OutlivesTheCaller(called.kept)
+                          ? " past the caller"
+                          : "");
+                },
+                [](const KeeperBound&) -> std::string {
+                  return " keeps deferred effects";
+                }},
+            bound);
+      }
+      Line(std::format("TypeParameter({}):{}", at, bounds));
     }
     DumpParams(d.code);
     if (d.code.body.has_value()) {

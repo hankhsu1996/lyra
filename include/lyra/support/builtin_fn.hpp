@@ -506,8 +506,7 @@ enum class BuiltinFn : std::uint16_t {
   // evaluation carries; driving states what that evaluation produced, as a
   // value of what the target holds, and answers whether it still holds any
   // positions, which is how an evaluation superseded by a later takeover, or
-  // ended
-  // by a `deassign` or `release`, learns to stop.
+  // ended by a `deassign` or `release`, learns to stop.
   kBeginTakeover,
   kDriveTakeover,
   kEndTakeover,
@@ -517,20 +516,17 @@ enum class BuiltinFn : std::uint16_t {
   // uniformly and without a receiver. Backed by a per-thread pointer the
   // attached Runtime publishes for its lifetime.
   kCurrentRuntime,
-  // Runtime scheduler submit operations, each a `RuntimeEffects` method taking
-  // a closure: the NBA (LRM 4.4.2), postponed (LRM 4.4.2 / 21.2.2), and
-  // Observed (LRM 12.4.2.1 violation report maturing) region commits
-  // respectively. A submitted violation report is pending on behalf of the
-  // executing process, which the runtime reads ambiently, so the call carries
-  // only the closure.
-  kSubmitNba,
-  // LRM 9.4.5: the same NBA commit, into the region of the slot a delay control
-  // names (LRM 4.4.2.4). The delay crosses as an amount in the scope's time
-  // unit with that scope's unit and precision powers, the way a delay control's
-  // does, because LRM 9.4.1 reads the amount before any scaling. One entry per
-  // amount representation.
-  kSubmitNbaAfter,
-  kSubmitNbaAfterReal,
+  // LRM 4.4.2: the NBA region's effects of the current slot, a `RuntimeEffects`
+  // method answering the keeper a closure the program defers there is emplaced
+  // into, as each entry below answering a keeper is.
+  kNbaEffects,
+  // LRM 9.4.5: the same NBA region, of the slot a delay control names (LRM
+  // 4.4.2.4). The delay crosses as an amount in the scope's time unit with that
+  // scope's unit and precision powers, the way a delay control's does, because
+  // LRM 9.4.1 reads the amount before any scaling. One entry per amount
+  // representation.
+  kNbaEffectsAfter,
+  kNbaEffectsAfterReal,
   // LRM 9.4.5, 15.5.1: an effect whose control is an event cannot say, where
   // the statement is reached, which slot it lands in, so it is carried by an
   // execution that waits for the event and then applies it. `RunDetached` takes
@@ -545,18 +541,29 @@ enum class BuiltinFn : std::uint16_t {
   // occurrence, as though the execution making it occur called `sample`, so
   // the execution that waits for the event runs inside each occurrence.
   kRunObserving,
-  kSubmitPostponed,
+  // LRM 4.4.2, 21.2.2: the Postponed region's effects of the current slot.
+  kPostponedEffects,
   // LRM 19.9: the coverage database is written once the run has ended, after
   // the final procedures.
   kSubmitAtRunEnd,
-  // LRM 16.5: a concurrent assertion's tick is evaluated in the Observed
-  // region, and nothing withdraws it -- what it reads is sampled, so a flush
-  // point of whatever submitted it cannot change the answer.
-  kSubmitObserved,
-  // LRM 12.4.2.1: a `unique` / `unique0` / `priority` violation report matures
-  // in the Observed region unless the process that raised it reaches a flush
-  // point first.
-  kSubmitViolationReport,
+  // LRM 16.5, 12.4.2.1: the Observed region's effects of the current slot,
+  // where a concurrent assertion's tick is evaluated and a violation report
+  // matures.
+  kObservedEffects,
+  // LRM 12.4.2.1: where a `unique` / `unique0` / `priority` violation report
+  // is kept, which matures in the Observed region unless the process that
+  // raised it reaches a flush point first; that process is the executing one,
+  // which the runtime reads ambiently.
+  kViolationReports,
+  // What each keeper of deferred effects implements keeping by: storage for
+  // one effect, which a placement new-expression naming the keeper asks for,
+  // and the commit of the effect made in it, which takes it over. Each keeper
+  // type has its own pair, and a generic definition names them through the
+  // keeper's bound.
+  kDeferredEffectsAllocate,
+  kDeferredEffectsCommit,
+  kViolationReportsAllocate,
+  kViolationReportsCommit,
   // LRM 16.4 deferred immediate assertion action commits, each a
   // `RuntimeEffects` method taking the coroutine the action runs as. The
   // observed (`#0`) form matures in Observed and runs its action in Reactive;
@@ -1423,6 +1430,11 @@ struct Method {
   std::string_view identifier;
 };
 
+// The method every keeper of deferred effects commits an effect by, so a
+// generic definition spelling the commit through its keeper's bound names
+// what each keeper's own entry names.
+inline constexpr std::string_view kKeeperCommitMethod = "Commit";
+
 // A factory on the type the entry builds. There is no object to act on, and
 // the type it is reached on is the type of the value the call answers with.
 struct StaticFactory {
@@ -1614,6 +1626,11 @@ struct RuntimeEntry {
   // written names it there, and one calling code compiled once for every type
   // hands over what that code needs of it.
   bool takes_a_type_argument = false;
+  // Whether the entry is an allocation function a placement new-expression
+  // may name: it is handed the expression's placement arguments, then the size
+  // and the alignment of the value placed, and answers storage it owns, as a
+  // C++ `operator new(std::size_t, Args...)` is.
+  bool hands_out_storage = false;
   // What a target resolving types where the call is written names for that
   // type. A target laying values out itself reads what it needs off the type.
   TypeArgumentNamed type_argument_named = TypeArgumentNamed::kTheType;

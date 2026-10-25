@@ -31,32 +31,16 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// The commit of `closure_id` into this slot's region, which is where an effect
-// carrying no control is due (LRM 4.4.2.4).
-auto BuildNbaSubmitCall(
-    const mir::CompilationUnit& unit, mir::ExprId runtime_id,
-    mir::ExprId closure_id) -> mir::Expr {
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = support::BuiltinFn::kSubmitNba,
-                      .receiver = runtime_id},
-              .arguments = {closure_id}},
-      .type = unit.builtins.void_type};
-}
-
-// The same commit into the region of the slot a delay names (LRM 9.4.5). The
+// The effects of the NBA region of the slot a delay names (LRM 9.4.5). The
 // amount crosses unscaled with its scope's powers, because LRM 9.4.1 reads a
 // delay expression's own value before any scaling.
 //
 // Which entry carries it follows the amount's own type, because the language
 // reads the same written value differently in each: an integral amount counts
 // whole time units, while a real one may name a fraction of one.
-auto BuildNbaSubmitAfterCall(
-    ProcessLowerer& process, WalkFrame frame, const hir::DelayControl& delay,
-    mir::ExprId runtime_id, mir::ExprId closure_id) -> diag::Result<mir::Expr> {
+auto BuildNbaEffectsAfterCall(
+    ProcessLowerer& process, WalkFrame frame, const hir::DelayControl& delay)
+    -> diag::Result<mir::Expr> {
   auto& unit = process.Owner().Unit();
   auto& block = *frame.current_block;
   auto duration_or =
@@ -76,18 +60,11 @@ auto BuildNbaSubmitAfterCall(
   const mir::ExprId precision_power_id = mir::BuildMachineIntLiteral(
       unit, block,
       static_cast<std::int64_t>(process.Resolution().precision_power));
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = is_real
-                                    ? support::BuiltinFn::kSubmitNbaAfterReal
-                                    : support::BuiltinFn::kSubmitNbaAfter,
-                      .receiver = runtime_id},
-              .arguments =
-                  {duration_id, unit_power_id, precision_power_id, closure_id}},
-      .type = unit.builtins.void_type};
+  return BuildRegionEffectsCallExpr(
+      process.Owner(), block,
+      is_real ? support::BuiltinFn::kNbaEffectsAfterReal
+              : support::BuiltinFn::kNbaEffectsAfter,
+      {duration_id, unit_power_id, precision_power_id});
 }
 
 // The wait an event control is, built into the carrier's body. A repeat count
@@ -132,20 +109,20 @@ auto BuildDueSlotWaitStmt(
 
 }  // namespace
 
-auto SubmitToDueRegion(
+auto KeepInDueRegion(
     ProcessLowerer& process, WalkFrame frame,
     const std::optional<hir::DelayControl>& delay, mir::Expr closure)
     -> diag::Result<mir::Expr> {
-  auto& block = *frame.current_block;
-  const mir::ExprId closure_id =
-      BuildKeptClosure(process.Owner().Unit(), block, std::move(closure));
-  const mir::ExprId runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-  if (!delay.has_value()) {
-    return BuildNbaSubmitCall(process.Owner().Unit(), runtime_id, closure_id);
-  }
-  return BuildNbaSubmitAfterCall(
-      process, frame, *delay, runtime_id, closure_id);
+  // An effect carrying no control is due in this slot's NBA region (LRM
+  // 4.4.2.4).
+  auto effects = delay.has_value()
+                     ? BuildNbaEffectsAfterCall(process, frame, *delay)
+                     : diag::Result<mir::Expr>(BuildRegionEffectsCallExpr(
+                           process.Owner(), *frame.current_block,
+                           support::BuiltinFn::kNbaEffects));
+  if (!effects) return std::unexpected(std::move(effects.error()));
+  return BuildEmplacedClosure(
+      process.Owner(), frame, *std::move(effects), std::move(closure));
 }
 
 auto AppendArrivalAtDueRegion(

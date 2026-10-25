@@ -15,6 +15,7 @@
 #include "lyra/mir/record_id.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/mir/type_parameter_index.hpp"
 #include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/runtime_class.hpp"
 #include "lyra/value/integral_fwd.hpp"
@@ -403,6 +404,17 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // assignment, bound once to what it fires and armed again in place of the
   // event pending whenever the right-hand side changes to a new value.
   kTimer,
+  // LRM 4.4 the effects one region of one time slot holds pending:
+  // `lyra::runtime::DeferredEffects`, kept by the run and reached by address.
+  // A closure a region keeps is emplaced in it: made in the storage it hands
+  // out and kept there, the region taking the closure over.
+  kDeferredEffects,
+  // LRM 12.4.2.1 where a violation report is kept:
+  // `lyra::runtime::ViolationReportKeeper`, kept by the run and reached by
+  // address. It keeps as a region's deferred effects do: a report is made in
+  // it, and it keeps the report on the condition that the raising process
+  // reaches no flush point first.
+  kViolationReportKeeper,
   // What every object of one class carries, so the object answers what its
   // class extends and what a class of the design hierarchy states of its
   // instances: `lyra::runtime::ObjectDefinition`. The class's unit emits it as
@@ -500,6 +512,18 @@ struct ErasedCallableType {
   TypeId result;
 
   auto operator==(const ErasedCallableType&) const -> bool = default;
+};
+
+// A type the generic definition it is written in leaves open: that
+// definition's type parameter at `index`, as clang's `TemplateTypeParmType`
+// and rustc's `ty::Param` are. It stands for a type only inside that
+// definition, and a call of the definition says which type it is, so the
+// definition's body is made concrete once for each list of types its calls
+// name.
+struct TypeParameterType {
+  TypeParameterIndex index;
+
+  auto operator==(const TypeParameterType&) const -> bool = default;
 };
 
 // The write capability a reference or borrow grants its holder (the
@@ -790,7 +814,7 @@ class Type {
       EmptyType, ObservableType, ResolvedType, DriverType, OpenWriteType,
       DesignationType, BitsReferenceType, ObjectWriteType, SampledHistoryType,
       EvaluationAttemptsType, LoopBlocksType, RecordType, ClosureType,
-      ErasedCallableType>;
+      ErasedCallableType, TypeParameterType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

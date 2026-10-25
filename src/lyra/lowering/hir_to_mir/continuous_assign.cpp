@@ -616,7 +616,8 @@ auto LowerContinuousDrive(
   return mir::CallableDecl{
       .code = std::move(code),
       .foreign = std::nullopt,
-      .virtual_dispatch = std::nullopt};
+      .virtual_dispatch = std::nullopt,
+      .type_parameters = {}};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

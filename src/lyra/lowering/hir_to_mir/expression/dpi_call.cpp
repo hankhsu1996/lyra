@@ -535,7 +535,7 @@ auto BuildBoundaryReadback(
             return read(
                 mir::Direct{
                     .target = VectorReadBuiltin(vector),
-                    .type_argument = sv_type},
+                    .type_arguments = {sv_type}},
                 {BuildBufferDataCall(
                     unit, block, object, carrier_type, vector)});
           },
@@ -544,7 +544,7 @@ auto BuildBoundaryReadback(
                 mir::Direct{
                     .target = support::BuiltinFn::kDpiOpenArrayValue,
                     .receiver = object,
-                    .type_argument = sv_type},
+                    .type_arguments = {sv_type}},
                 {});
           }},
       carrier);
@@ -1041,7 +1041,8 @@ auto MakeForeignImportDecl(
       .code = MakeForeignSignature(
           unit, import.params, import.ret_abi, import.is_task),
       .foreign = mir::ForeignLinkage{.foreign_name = import.foreign_name},
-      .virtual_dispatch = std::nullopt};
+      .virtual_dispatch = std::nullopt,
+      .type_parameters = {}};
 }
 
 template <ExprLowerer Lowerer>
@@ -1372,7 +1373,7 @@ auto SynthesizeForeignExportEntry(
                       .callee =
                           mir::Direct{
                               .target = VectorReadBuiltin(*vec),
-                              .type_argument = sv_type},
+                              .type_arguments = {sv_type}},
                       .arguments = {param_ref(body, i)}},
               .type = sv_type});
     } else {

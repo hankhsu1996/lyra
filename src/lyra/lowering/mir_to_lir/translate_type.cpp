@@ -352,6 +352,13 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
             return lir::Type{lir::ErasedCallableType{
                 .params = TranslateTypes(e.params),
                 .result = TranslateType(e.result)}};
+          },
+          // A generic definition reaches this layer only made concrete, with
+          // every type parameter replaced by the type a call names for it.
+          [](const mir::TypeParameterType&) -> lir::Type {
+            throw InternalError(
+                "mir_to_lir: a type parameter reached the layer below -- "
+                "please report this as a bug");
           }});
 }
 
@@ -412,6 +419,10 @@ auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
       return mirror(lir::RuntimeLibraryKind::kCancellationTarget);
     case mir::RuntimeLibraryKind::kTimer:
       return mirror(lir::RuntimeLibraryKind::kTimer);
+    case mir::RuntimeLibraryKind::kDeferredEffects:
+      return mirror(lir::RuntimeLibraryKind::kDeferredEffects);
+    case mir::RuntimeLibraryKind::kViolationReportKeeper:
+      return mirror(lir::RuntimeLibraryKind::kViolationReportKeeper);
     case mir::RuntimeLibraryKind::kControlEffect:
       return mirror(lir::RuntimeLibraryKind::kControlEffect);
     case mir::RuntimeLibraryKind::kObjectDefinition:

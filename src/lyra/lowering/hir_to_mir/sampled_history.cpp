@@ -149,23 +149,11 @@ auto LowerSampledHistorySampler(
                       closure.Body(), closure.Frame(), lowerer, id),
                   captured, void_type))});
 
-  const mir::ExprId closure_id =
-      BuildKeptClosure(unit, body_block, closure.BuildVoid());
-  const mir::ExprId runtime_id =
-      body_block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
-  body_block.AppendStmt(
-      mir::ExprStmt{
-          .expr = body_block.exprs.Add(
-              mir::Expr{
-                  .data =
-                      mir::CallExpr{
-                          .callee =
-                              mir::Direct{
-                                  .target =
-                                      support::BuiltinFn::kSubmitPostponed,
-                                  .receiver = runtime_id},
-                          .arguments = {closure_id}},
-                  .type = void_type})});
+  mir::Expr keeper = BuildRegionEffectsCallExpr(
+      lowerer.Owner(), body_block, support::BuiltinFn::kPostponedEffects);
+  const mir::ExprId kept = body_block.exprs.Add(BuildEmplacedClosure(
+      lowerer.Owner(), body_frame, std::move(keeper), closure.BuildVoid()));
+  body_block.AppendStmt(mir::ExprStmt{.expr = kept});
 
   const mir::BlockId body_scope_id =
       code.Body().child_scopes.Add(std::move(body_block));
@@ -181,7 +169,8 @@ auto LowerSampledHistorySampler(
   return mir::CallableDecl{
       .code = std::move(code),
       .foreign = std::nullopt,
-      .virtual_dispatch = std::nullopt};
+      .virtual_dispatch = std::nullopt,
+      .type_parameters = {}};
 }
 
 template <ExprLowerer Lowerer>

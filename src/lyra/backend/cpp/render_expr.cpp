@@ -333,6 +333,15 @@ void RenderNewExpr(
     TargetText& out) {
   const mir::Expr& initializer = view.Expr(n.initializer);
   const CppType built = CppType(view.Unit(), initializer.type);
+  // A placement form is C++'s own, `new (args) T(init)`: the allocation
+  // function the library declares for those arguments is the one the
+  // expression names, and the initializer is formed in what it answers.
+  if (n.placement.has_value()) {
+    out += "new (";
+    WriteCommaSeparated(view, out, n.placement->arguments);
+    Write(view, out, ") ", built, "(", n.initializer, ")");
+    return;
+  }
   if (!view.Unit().types.Get(initializer.type).Is<mir::ObjectType>()) {
     Write(
         view, out, CppNewOwner{.of = CppType(view.Unit(), owner)}, "(new ",

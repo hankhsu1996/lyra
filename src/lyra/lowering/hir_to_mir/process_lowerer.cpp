@@ -606,7 +606,8 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   mir::CallableDecl recording_decl{
       .code = *std::move(recording_code),
       .foreign = std::nullopt,
-      .virtual_dispatch = std::nullopt};
+      .virtual_dispatch = std::nullopt,
+      .type_parameters = {}};
   mir::DirectTarget recording;
   if (mir::Class* declaring = owner_ctor_frame_.current_class.cls;
       declaring != nullptr) {

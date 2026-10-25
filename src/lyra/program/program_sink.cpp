@@ -146,16 +146,21 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_enumeration_name", &lyra_rt_enumeration_name);
   add("lyra_rt_enumeration_next", &lyra_rt_enumeration_next);
   add("lyra_rt_enumeration_prev", &lyra_rt_enumeration_prev);
-  add("lyra_rt_submit_nba", &lyra_rt_submit_nba);
-  add("lyra_rt_submit_nba_after", &lyra_rt_submit_nba_after);
-  add("lyra_rt_submit_nba_after_real", &lyra_rt_submit_nba_after_real);
+  add("lyra_rt_nba_effects", &lyra_rt_nba_effects);
+  add("lyra_rt_nba_effects_after", &lyra_rt_nba_effects_after);
+  add("lyra_rt_nba_effects_after_real", &lyra_rt_nba_effects_after_real);
   add("lyra_rt_run_detached", &lyra_rt_run_detached);
   add("lyra_rt_run_observing", &lyra_rt_run_observing);
   add("lyra_rt_resume_in_nba_region", &lyra_rt_resume_in_nba_region);
-  add("lyra_rt_submit_postponed", &lyra_rt_submit_postponed);
+  add("lyra_rt_postponed_effects", &lyra_rt_postponed_effects);
   add("lyra_rt_submit_at_run_end", &lyra_rt_submit_at_run_end);
-  add("lyra_rt_submit_observed", &lyra_rt_submit_observed);
-  add("lyra_rt_submit_violation_report", &lyra_rt_submit_violation_report);
+  add("lyra_rt_observed_effects", &lyra_rt_observed_effects);
+  add("lyra_rt_violation_reports", &lyra_rt_violation_reports);
+  add("lyra_rt_deferred_effects_allocate", &lyra_rt_deferred_effects_allocate);
+  add("lyra_rt_deferred_effects_commit", &lyra_rt_deferred_effects_commit);
+  add("lyra_rt_violation_reports_allocate",
+      &lyra_rt_violation_reports_allocate);
+  add("lyra_rt_violation_reports_commit", &lyra_rt_violation_reports_commit);
   add("lyra_rt_submit_deferred_observed", &lyra_rt_submit_deferred_observed);
   add("lyra_rt_submit_deferred_final", &lyra_rt_submit_deferred_final);
   add("lyra_rt_delay", &lyra_rt_delay);

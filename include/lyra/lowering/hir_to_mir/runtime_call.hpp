@@ -87,6 +87,22 @@ void AppendRuntimeEffectStmt(
 [[nodiscard]] auto BuildFilesCallExpr(
     const UnitLowerer& unit_lowerer, mir::Block& block) -> mir::Expr;
 
+// Builds `current_runtime().<entry>(arguments...)`, the deferred effects of
+// the region `entry` answers -- this slot's or a delayed slot's NBA region, or
+// the Postponed or the Observed region -- which a closure that region keeps is
+// emplaced into. Returns the call detached; the engine handle is interned into
+// `block` as a child.
+[[nodiscard]] auto BuildRegionEffectsCallExpr(
+    const UnitLowerer& unit_lowerer, mir::Block& block,
+    support::BuiltinFn entry, std::vector<mir::ExprId> arguments = {})
+    -> mir::Expr;
+
+// Builds `current_runtime().ViolationReports()`, the keeper a violation report
+// is emplaced into, which keeps it in the Observed region unless the process
+// that made it is flushed first. Returns the call detached, as above.
+[[nodiscard]] auto BuildViolationReportsCallExpr(
+    const UnitLowerer& unit_lowerer, mir::Block& block) -> mir::Expr;
+
 // Builds the diagnostic broker expression `current_runtime().Diagnostic()`:
 // a `Diagnostic` method call on the engine handle, typed as the unit's
 // `diagnostic` builtin. Returns the call detached; the caller interns it. The

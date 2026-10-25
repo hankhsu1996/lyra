@@ -48,11 +48,11 @@ using TemplateArgument = std::variant<CppType, CppCallSignature, mir::CallPart>;
 // The template arguments a callee states, in the order the library declares
 // its template parameters: the type, then the part.
 auto TemplateArgumentsOf(
-    const mir::CompilationUnit& unit, std::optional<mir::TypeId> type,
+    const mir::CompilationUnit& unit, std::span<const mir::TypeId> types,
     const std::optional<mir::CallPart>& part) -> std::vector<TemplateArgument> {
   std::vector<TemplateArgument> arguments;
-  if (type.has_value()) {
-    arguments.emplace_back(CppType(unit, *type));
+  for (const mir::TypeId type : types) {
+    arguments.emplace_back(CppType(unit, type));
   }
   if (part.has_value()) {
     arguments.emplace_back(*part);
@@ -73,6 +73,13 @@ auto ClassesSeen(
   return {class_of(handed), class_of(called_at)};
 }
 
+// The template arguments a callee states, `<A, B>`, written after its name;
+// none writes nothing.
+struct TemplateArgumentList {
+  const mir::CompilationUnit* unit;
+  std::span<const TemplateArgument> arguments;
+};
+
 // A runtime function name, followed by the template arguments its callee
 // states.
 struct OperationName {
@@ -82,17 +89,24 @@ struct OperationName {
   NameReachedThrough reached;
 };
 
+void WriteOne(TargetText& out, const TemplateArgumentList& list);
+
 void WriteOne(TargetText& out, const OperationName& name) {
-  if (name.arguments.empty()) {
-    out += name.identifier;
-    return;
-  }
-  if (name.reached == NameReachedThrough::kAValue) {
+  if (!name.arguments.empty() && name.reached == NameReachedThrough::kAValue) {
     out += "template ";
   }
-  Write(out, name.identifier, "<");
+  Write(
+      out, name.identifier,
+      TemplateArgumentList{.unit = name.unit, .arguments = name.arguments});
+}
+
+void WriteOne(TargetText& out, const TemplateArgumentList& list) {
+  if (list.arguments.empty()) {
+    return;
+  }
+  out += "<";
   std::string_view separator;
-  for (const TemplateArgument& argument : name.arguments) {
+  for (const TemplateArgument& argument : list.arguments) {
     out += separator;
     separator = ", ";
     std::visit(
@@ -108,7 +122,7 @@ void WriteOne(TargetText& out, const OperationName& name) {
                         Write(out, position.value);
                       },
                       [&](const mir::ClassFieldTarget& property) {
-                        WriteMemberPointer(out, *name.unit, property);
+                        WriteMemberPointer(out, *list.unit, property);
                       }},
                   part);
             }},
@@ -192,12 +206,12 @@ auto FactoryType(
   if (!entry.takes_a_type_argument) {
     return result_type;
   }
-  if (!direct.type_argument.has_value()) {
+  if (direct.type_arguments.size() != 1) {
     throw InternalError(
         "Direct call: a factory generic over the type it builds is called at "
-        "none -- please report this as a bug");
+        "other than one -- please report this as a bug");
   }
-  return *direct.type_argument;
+  return direct.type_arguments.front();
 }
 
 // A runtime library function, spelled the way its shared declaration says: a
@@ -216,7 +230,7 @@ void WriteEntryCallee(
               switch (entry.type_argument_named) {
                 case support::TypeArgumentNamed::kTheType:
                   return TemplateArgumentsOf(
-                      unit, direct.type_argument, direct.part);
+                      unit, direct.type_arguments, direct.part);
                 case support::TypeArgumentNamed::kTheClassesSeen:
                   return ClassesSeen(
                       unit, view.Expr(arguments.front()).type,
@@ -245,7 +259,7 @@ void WriteEntryCallee(
                   "none -- please report this as a bug");
             }
             const auto stated =
-                TemplateArgumentsOf(unit, direct.type_argument, direct.part);
+                TemplateArgumentsOf(unit, direct.type_arguments, direct.part);
             callee.Named(
                 ReceiverPlacement::kIntoCalleeName,
                 OperationName{
@@ -260,8 +274,7 @@ void WriteEntryCallee(
           // over the type it builds is called at the type its callee states,
           // and one building a single type answers with it.
           [&](const support::StaticFactory& s) {
-            const auto stated =
-                TemplateArgumentsOf(unit, std::nullopt, direct.part);
+            const auto stated = TemplateArgumentsOf(unit, {}, direct.part);
             callee.Named(
                 ReceiverPlacement::kIntoCalleeName,
                 CppType(unit, FactoryType(entry, direct, result_type)), "::",
@@ -327,12 +340,32 @@ void WriteDirectCallee(
             throw InternalError("backend::cpp: unknown ClosureKind");
           },
           // A function of this unit's namespace is qualified the same way as
-          // another unit's: `::Top::f`.
+          // another unit's: `::Top::f`, and a generic one names the types it
+          // is called at as its template's arguments, `::Top::f<A, B>`.
           [&](const mir::UnitCallableTarget& t) {
+            const std::vector<TemplateArgument> stated =
+                TemplateArgumentsOf(view.Unit(), direct.type_arguments, {});
             callee.Named(
                 ReceiverPlacement::kIntoCalleeName,
                 CppUnitScope(view.Unit().name),
-                "::", CppUnitCallableName(view.Unit(), t.slot));
+                "::", CppUnitCallableName(view.Unit(), t.slot),
+                TemplateArgumentList{
+                    .unit = &view.Unit(), .arguments = stated});
+          },
+          // The closure a type parameter is made concrete at, called in place
+          // as the parameter's bound asks: `f.operator()(x)`, which every
+          // closure called in place declares, so a template body names it
+          // without knowing which closure it is.
+          [&](const mir::BoundCallTarget&) {
+            callee.Named(ReceiverPlacement::kIntoCalleeName, "operator()");
+          },
+          // The keeper a type parameter is made concrete at, committing the
+          // effect made at an address it handed out, `k.Commit(made)`, which
+          // every keeper the bound admits declares.
+          [&](const mir::BoundCommitTarget&) {
+            callee.Named(
+                ReceiverPlacement::kIntoCalleeName,
+                VerbatimName{.text = support::kKeeperCommitMethod});
           },
           [&](const support::BuiltinFn& id) {
             WriteEntryCallee(

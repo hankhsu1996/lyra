@@ -578,7 +578,8 @@ auto SeenAsAny(
   return block.exprs.Add(
       mir::MakeCallExpr(
           mir::Direct{
-              .target = support::BuiltinFn::kSeeAsAny, .type_argument = kept},
+              .target = support::BuiltinFn::kSeeAsAny,
+              .type_arguments = {kept}},
           {reference_to(incoming, kept),
            IdentityText(unit_lowerer, block, type), lent},
           reference));

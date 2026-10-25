@@ -15,7 +15,6 @@
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/delay.hpp"
 #include "lyra/runtime/observable.hpp"
-#include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/program_threads.hpp"
 #include "lyra/runtime/property_wait.hpp"
 #include "lyra/runtime/runtime.hpp"
@@ -91,8 +90,7 @@ auto AssertionReportValidity(RuntimeProcess& process)
 // lineage in the context of whatever reached the statement. No thread creates
 // it, so its generator is the next of that context's initialization RNG (LRM
 // 18.14.1), and the draws of whatever reached the statement do not move.
-auto StartWhenDue(RuntimeEffects& effects, Coroutine<void> action)
-    -> OwnedCall {
+auto StartWhenDue(RuntimeEffects& effects, Coroutine<void> action) {
   Runtime& runtime = AsRuntime(effects);
   const ExecutionContext context = runtime.RunningContext().WithoutLineage();
   return [&runtime, context, rng = context.SplitInitializationRng(),
@@ -192,79 +190,86 @@ void RuntimeEffects::Wake(Activation* activation) {
   throw InternalError("RuntimeEffects::Wake: unknown wake placement");
 }
 
-void RuntimeEffects::Submit(SimTime when, Region region, OwnedCall effect) {
-  AsRuntime(*this).SlotAt(when)[region].effects.push_back(std::move(effect));
+auto RuntimeEffects::EffectsAt(SimTime when, Region region)
+    -> DeferredEffects& {
+  return AsRuntime(*this).SlotAt(when)[region].effects;
 }
 
-void RuntimeEffects::SubmitNba(OwnedClosure<support::EffectSignature> closure) {
+auto RuntimeEffects::NbaEffects() -> DeferredEffects* {
   RequireMayScheduleAfterReturn(AsRuntime(*this).RunningContext());
-  Submit(Now(), RunningNbaRegion(*this), std::move(closure));
+  return &EffectsAt(Now(), RunningNbaRegion(*this));
 }
 
-void RuntimeEffects::SubmitNbaAfter(
+auto RuntimeEffects::NbaEffectsAfter(
     const value::ConstIntegralView& duration, std::int64_t unit_power,
-    std::int64_t precision_power,
-    OwnedClosure<support::EffectSignature> closure) {
+    std::int64_t precision_power) -> DeferredEffects* {
   RequireMayScheduleAfterReturn(AsRuntime(*this).RunningContext());
   const auto unit = static_cast<std::int8_t>(unit_power);
   const auto precision = static_cast<std::int8_t>(precision_power);
-  Submit(
+  return &EffectsAt(
       DelayDeadline(*this, DelayTicks(duration, unit, precision), precision),
-      RunningNbaRegion(*this), std::move(closure));
+      RunningNbaRegion(*this));
 }
 
-void RuntimeEffects::SubmitNbaAfterReal(
+auto RuntimeEffects::NbaEffectsAfterReal(
     const value::Real& duration, std::int64_t unit_power,
-    std::int64_t precision_power,
-    OwnedClosure<support::EffectSignature> closure) {
+    std::int64_t precision_power) -> DeferredEffects* {
   RequireMayScheduleAfterReturn(AsRuntime(*this).RunningContext());
   const auto unit = static_cast<std::int8_t>(unit_power);
   const auto precision = static_cast<std::int8_t>(precision_power);
-  Submit(
+  return &EffectsAt(
       DelayDeadline(
           *this, DelayTicksReal(duration, unit, precision), precision),
-      RunningNbaRegion(*this), std::move(closure));
+      RunningNbaRegion(*this));
 }
 
-void RuntimeEffects::SubmitPostponed(
-    OwnedClosure<support::EffectSignature> closure) {
-  Submit(Now(), Region::kPostponed, std::move(closure));
+auto RuntimeEffects::PostponedEffects() -> DeferredEffects* {
+  return &EffectsAt(Now(), Region::kPostponed);
 }
 
 void RuntimeEffects::RegisterConcurrentAssertion(EvaluationAttempts& attempts) {
   AsRuntime(*this).concurrent_assertions_.push_back(&attempts);
 }
 
-void RuntimeEffects::SubmitObserved(
-    OwnedClosure<support::EffectSignature> effect) {
-  Submit(Now(), Region::kObserved, std::move(effect));
+auto RuntimeEffects::ObservedEffects() -> DeferredEffects* {
+  return &EffectsAt(Now(), Region::kObserved);
 }
 
-void RuntimeEffects::SubmitViolationReport(
-    OwnedClosure<support::EffectSignature> report) {
-  RuntimeProcess* process = AsRuntime(*this).current_process_;
+auto RuntimeEffects::ViolationReports() -> ViolationReportKeeper* {
+  return &AsRuntime(*this).violation_reports_;
+}
+
+auto ViolationReportKeeper::Allocate(std::size_t size, std::size_t alignment)
+    -> void* {
+  return effects_->ObservedEffects()->Allocate(size, alignment);
+}
+
+void ViolationReportKeeper::Commit(void* made) {
+  DeferredEffects& observed = *effects_->ObservedEffects();
+  RuntimeProcess* process = effects_->TryCurrentProcess();
   if (process == nullptr) {
     // A check that fires before any procedure runs -- a static variable's
     // initializer (LRM 6.8) -- belongs to no process, so there is no deferred
     // report queue for a flush point to clear and it always matures (LRM
     // 12.4.2.1).
-    Submit(Now(), Region::kObserved, std::move(report));
+    observed.Commit(made);
     return;
   }
-  Submit(
-      Now(), Region::kObserved,
-      [validity = ViolationReportValidity(*process),
-       report = std::move(report)]() mutable {
-        // LRM 12.4.2.1: a pass that no longer stands is a flush point the
-        // process reached before this report could mature.
-        if (validity.Holds()) {
-          report();
-        }
-      });
+  // The condition kept on the report holds it, so the two end together,
+  // whether or not the condition lets it run; the report's own place in the
+  // order is never committed, since the condition stands in it.
+  observed.Emplace([validity = ViolationReportValidity(*process),
+                    report = observed.Take(made)] {
+    // LRM 12.4.2.1: a pass that no longer stands is a flush point the
+    // process reached before this report could mature.
+    if (validity.Holds()) {
+      report.Call();
+    }
+  });
 }
 
 void RuntimeEffects::SubmitDeferredObserved(Coroutine<void> body) {
-  OwnedCall action = StartWhenDue(*this, std::move(body));
+  auto action = StartWhenDue(*this, std::move(body));
   RuntimeProcess* process = AsRuntime(*this).current_process_;
   if (process == nullptr) {
     // A deferred assertion outside any process (a static variable's
@@ -287,7 +292,7 @@ void RuntimeEffects::SubmitDeferredObserved(Coroutine<void> body) {
 }
 
 void RuntimeEffects::SubmitDeferredFinal(Coroutine<void> body) {
-  OwnedCall action = StartWhenDue(*this, std::move(body));
+  auto action = StartWhenDue(*this, std::move(body));
   RuntimeProcess* process = AsRuntime(*this).current_process_;
   if (process == nullptr) {
     Submit(Now(), Region::kPostponed, std::move(action));
@@ -566,3 +571,14 @@ void RuntimeEffects::ResetTimeFormat() {
 }
 
 }  // namespace lyra::runtime
+
+auto operator new(
+    std::size_t size, lyra::runtime::ViolationReportKeeper* keeper) -> void* {
+  return keeper->Allocate(size, __STDCPP_DEFAULT_NEW_ALIGNMENT__);
+}
+
+auto operator new(
+    std::size_t size, std::align_val_t alignment,
+    lyra::runtime::ViolationReportKeeper* keeper) -> void* {
+  return keeper->Allocate(size, static_cast<std::size_t>(alignment));
+}

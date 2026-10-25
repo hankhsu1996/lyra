@@ -1017,6 +1017,10 @@ auto MemberStorageKindOf(
               case lir::RuntimeLibraryKind::kLeasedReference:
               case lir::RuntimeLibraryKind::kObjectWrite:
               case lir::RuntimeLibraryKind::kControlEffect:
+              // The keepers a deferred closure is emplaced in, which the run
+              // holds.
+              case lir::RuntimeLibraryKind::kDeferredEffects:
+              case lir::RuntimeLibraryKind::kViolationReportKeeper:
               // What a constant is made of, which no member holds.
               case lir::RuntimeLibraryKind::kScopeInfo:
               case lir::RuntimeLibraryKind::kScopeCallable:
@@ -1802,16 +1806,20 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kEventOccurrences:
     case support::BuiltinFn::kEventReportsTo:
     case support::BuiltinFn::kCurrentRuntime:
-    case support::BuiltinFn::kSubmitNba:
-    case support::BuiltinFn::kSubmitNbaAfter:
-    case support::BuiltinFn::kSubmitNbaAfterReal:
+    case support::BuiltinFn::kNbaEffects:
+    case support::BuiltinFn::kNbaEffectsAfter:
+    case support::BuiltinFn::kNbaEffectsAfterReal:
     case support::BuiltinFn::kRunDetached:
     case support::BuiltinFn::kRunObserving:
     case support::BuiltinFn::kResumeInNbaRegion:
-    case support::BuiltinFn::kSubmitPostponed:
+    case support::BuiltinFn::kPostponedEffects:
     case support::BuiltinFn::kSubmitAtRunEnd:
-    case support::BuiltinFn::kSubmitObserved:
-    case support::BuiltinFn::kSubmitViolationReport:
+    case support::BuiltinFn::kObservedEffects:
+    case support::BuiltinFn::kViolationReports:
+    case support::BuiltinFn::kDeferredEffectsAllocate:
+    case support::BuiltinFn::kDeferredEffectsCommit:
+    case support::BuiltinFn::kViolationReportsAllocate:
+    case support::BuiltinFn::kViolationReportsCommit:
     case support::BuiltinFn::kSubmitDeferredObserved:
     case support::BuiltinFn::kSubmitDeferredFinal:
     case support::BuiltinFn::kFiles:

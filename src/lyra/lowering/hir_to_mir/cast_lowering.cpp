@@ -44,7 +44,8 @@ auto MakeRealConversionCall(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::Direct{.target = entry, .type_argument = dst_type},
+              .callee =
+                  mir::Direct{.target = entry, .type_arguments = {dst_type}},
               .arguments = {operand_id}},
       .type = dst_type};
 }
@@ -242,7 +243,7 @@ auto ToClassHandle(
     return mir::MakeCallExpr(
         mir::Direct{
             .target = support::BuiltinFn::kDerivedToBase,
-            .type_argument = destination},
+            .type_arguments = {destination}},
         {operand}, destination);
   }
   RefuseConversion("a class handle");
@@ -362,6 +363,7 @@ auto BuildValueConversion(
           [&](const mir::RecordType& t) { return none(t); },
           [&](const mir::ClosureType& t) { return none(t); },
           [&](const mir::ErasedCallableType& t) { return none(t); },
+          [&](const mir::TypeParameterType& t) { return none(t); },
       });
 }
 

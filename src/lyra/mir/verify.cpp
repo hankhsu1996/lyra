@@ -36,6 +36,7 @@
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/frame_size.hpp"
 #include "lyra/mir/integral_constant_folding.hpp"
+#include "lyra/mir/keeper.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/object_lifetime.hpp"
 #include "lyra/mir/operand_use.hpp"
@@ -45,6 +46,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/mir/type_substitution.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/def_path.hpp"
@@ -758,13 +760,14 @@ void VerifyYieldsOutliveTheirBlocks(
   }
 }
 
-// A callee generic over a type states the type it is called at, and no other
-// callee states one: a target that resolves types where the call is written
-// names the type there, so one left out is a call it cannot write, and one a
-// callee does not take is a type argument the library never declared. A
-// factory is reached on the type it builds, so the type it is called at is the
-// type the call answers with.
-void VerifyTypeArguments(const Block& block, const auto& describe) {
+// A callee generic over types states one type for each it is generic over,
+// and no other callee states one: a target that resolves types where the call
+// is written names the type there, so one left out is a call it cannot write,
+// and one a callee does not take is a type argument the library never declared.
+// A factory is reached on the type it builds, so the type it is called at is
+// the type the call answers with.
+void VerifyTypeArguments(
+    const CompilationUnit& unit, const Block& block, const auto& describe) {
   const auto refuse = [&](ExprId id, std::string_view what) {
     throw InternalError(
         std::format(
@@ -782,23 +785,34 @@ void VerifyTypeArguments(const Block& block, const auto& describe) {
     if (direct == nullptr) {
       continue;
     }
+    // A definition of this unit is generic over the parameters it states; any
+    // other callee but a library entry over none.
+    if (const auto* own = std::get_if<UnitCallableTarget>(&direct->target)) {
+      if (direct->type_arguments.size() !=
+          unit.callables.Get(own->slot).type_parameters.size()) {
+        refuse(id, "states a type for other than each parameter it has");
+      }
+      continue;
+    }
     const auto* entry = std::get_if<support::BuiltinFn>(&direct->target);
     if (entry == nullptr) {
-      if (direct->type_argument.has_value()) {
+      if (!direct->type_arguments.empty()) {
         refuse(id, "states a type argument to a callee generic over none");
       }
       continue;
     }
     const support::RuntimeEntry declared = support::RuntimeEntryOf(*entry);
-    if (declared.takes_a_type_argument && !direct->type_argument.has_value()) {
-      refuse(id, "calls an entry generic over a type and states none");
+    if (direct->type_arguments.size() !=
+        (declared.takes_a_type_argument ? 1U : 0U)) {
+      refuse(
+          id, declared.takes_a_type_argument
+                  ? "calls an entry generic over one type and states other "
+                    "than one"
+                  : "states a type argument to an entry generic over none");
     }
-    if (!declared.takes_a_type_argument && direct->type_argument.has_value()) {
-      refuse(id, "states a type argument to an entry generic over none");
-    }
-    if (direct->type_argument.has_value() &&
+    if (!direct->type_arguments.empty() &&
         std::holds_alternative<support::StaticFactory>(declared.declaration) &&
-        *direct->type_argument != expr.type) {
+        direct->type_arguments.front() != expr.type) {
       refuse(
           id,
           "calls a factory at one type and answers with a value of "
@@ -806,7 +820,7 @@ void VerifyTypeArguments(const Block& block, const auto& describe) {
     }
   }
   for (const BlockId id : block.child_scopes.Ids()) {
-    VerifyTypeArguments(block.child_scopes.Get(id), describe);
+    VerifyTypeArguments(unit, block.child_scopes.Get(id), describe);
   }
 }
 
@@ -1387,12 +1401,16 @@ void VerifyValuesMeetTheirTypes(
       return &unit.GetClass(own->class_id).constructor->code;
     };
     const CallableCode* callee = nullptr;
+    // The types a generic callee is called at, which its parameters' types
+    // are read at.
+    std::span<const TypeId> called_at;
     if (const auto* direct = std::get_if<Direct>(&call->callee)) {
       if (const auto* method = std::get_if<CallableTarget>(&direct->target)) {
         callee = &unit.GetClass(method->owner).callables.Get(method->slot).code;
       } else if (
           const auto* free = std::get_if<UnitCallableTarget>(&direct->target)) {
         callee = &unit.callables.Get(free->slot).code;
+        called_at = direct->type_arguments;
       } else if (
           const auto* constructor =
               std::get_if<ConstructorTarget>(&direct->target)) {
@@ -1409,7 +1427,8 @@ void VerifyValuesMeetTheirTypes(
     if (callee != nullptr) {
       for (const LocalId param : callee->params) {
         if (param != callee->receiver) {
-          parameters.push_back(callee->locals.Get(param).type);
+          parameters.push_back(SubstituteTypeParameters(
+              unit.types, callee->locals.Get(param).type, called_at));
         }
       }
     } else if (const auto* indirect = std::get_if<Indirect>(&call->callee)) {
@@ -1585,7 +1604,8 @@ void VerifyConstantsAreFolded(
 // Storage a uniquely owning pointer or a class handle owns comes into existence
 // only by a new-expression, whose initializer has the type allocated -- a value
 // evaluated into that storage, or an object's construction, entered on the
-// object once it is created whole.
+// object once it is created whole. A placement new-expression's storage is its
+// allocation function's instead.
 void VerifyAllocations(
     const CompilationUnit& unit, const Block& block, const auto& describe) {
   const auto refuse = [&](ExprId id, std::string_view what) {
@@ -1608,6 +1628,31 @@ void VerifyAllocations(
     if (allocation == nullptr) {
       continue;
     }
+    // Storage a placement's allocation function hands out is that function's,
+    // so the expression answers a pointer owning nothing, to a value of the
+    // initializer's type.
+    if (allocation->placement.has_value()) {
+      const auto* place = unit.types.Get(expr.type).As<PointerType>();
+      if (place == nullptr || place->ownership != PointerOwnership::kBorrowed ||
+          block.exprs.Get(allocation->initializer).type != place->pointee) {
+        refuse(
+            id,
+            "places a value but answers other than a pointer owning nothing "
+            "to it");
+      }
+      std::visit(
+          Overloaded{
+              [&](support::BuiltinFn allocate) {
+                if (!support::RuntimeEntryOf(allocate).hands_out_storage) {
+                  refuse(
+                      id, "places a value in storage from what allocates none");
+                }
+              },
+              // Checked with the other operations reached through a bound.
+              [](BoundAllocation) {}},
+          allocation->placement->allocate);
+      continue;
+    }
     if (!allocated.has_value()) {
       refuse(id, "yields a type that owns no storage it allocates");
     }
@@ -1625,6 +1670,97 @@ void VerifyAllocations(
   }
   for (const BlockId id : block.child_scopes.Ids()) {
     VerifyAllocations(unit, block.child_scopes.Get(id), describe);
+  }
+}
+
+// Each operation a body reaches through a bound -- a call of a closure, a
+// keeper's commit, a placement's allocation through a keeper -- reaches it on a
+// value of one of the body's own type parameters whose bound grants it, as a
+// Rust body calls a trait method on `T` only under `T: Trait`. The receiver of
+// a call or a commit is that value, and a placement reaches the keeper its
+// first argument points to. A closure called through a bound is called in
+// place, so its bound asks to read it or to change it; consuming one is not
+// carried out by any definition.
+void VerifyReachesThroughBounds(
+    const CompilationUnit& unit, const Block& block,
+    std::span<const TypeParameter> parameters, const auto& describe) {
+  const auto refuse = [&](ExprId id, std::string_view what) {
+    throw InternalError(
+        std::format(
+            "mir verify: {} holds {} (expression {} of its block), which {} -- "
+            "please report this as a bug",
+            describe(), Describe(block.exprs.Get(id).data), id.value, what));
+  };
+  // The bounds of the parameter `type` is, where it is one of the body's own.
+  const auto bounds_of =
+      [&](std::optional<TypeId> type) -> std::span<const ParameterBound> {
+    if (!type.has_value()) {
+      return {};
+    }
+    const auto* parameter = unit.types.Get(*type).As<TypeParameterType>();
+    if (parameter == nullptr || parameter->index.value >= parameters.size()) {
+      return {};
+    }
+    return parameters[parameter->index.value].bounds;
+  };
+  const auto receiver_type = [&](const Direct& direct) {
+    return direct.receiver.has_value()
+               ? std::optional{block.exprs.Get(*direct.receiver).type}
+               : std::nullopt;
+  };
+  const auto keeps = [](std::span<const ParameterBound> bounds) {
+    return std::ranges::any_of(bounds, [](const ParameterBound& bound) {
+      return std::holds_alternative<KeeperBound>(bound);
+    });
+  };
+  for (const ExprId id : block.exprs.Ids()) {
+    const ExprData& data = block.exprs.Get(id).data;
+    if (const auto* allocation = std::get_if<NewExpr>(&data);
+        allocation != nullptr && allocation->placement.has_value() &&
+        std::holds_alternative<BoundAllocation>(
+            allocation->placement->allocate)) {
+      const std::vector<ExprId>& arguments = allocation->placement->arguments;
+      const auto* keeper =
+          arguments.empty()
+              ? nullptr
+              : unit.types.Get(block.exprs.Get(arguments.front()).type)
+                    .As<PointerType>();
+      if (keeper == nullptr || !keeps(bounds_of(keeper->pointee))) {
+        refuse(
+            id,
+            "allocates through a bound from what is no keeper parameter of "
+            "its own");
+      }
+      continue;
+    }
+    const auto* call = std::get_if<CallExpr>(&data);
+    const auto* direct =
+        call == nullptr ? nullptr : std::get_if<Direct>(&call->callee);
+    if (direct == nullptr) {
+      continue;
+    }
+    if (std::holds_alternative<BoundCommitTarget>(direct->target) &&
+        !keeps(bounds_of(receiver_type(*direct)))) {
+      refuse(
+          id,
+          "commits through a bound on what is no keeper parameter of its own");
+    }
+    if (std::holds_alternative<BoundCallTarget>(direct->target) &&
+        !std::ranges::any_of(
+            bounds_of(receiver_type(*direct)), [](const ParameterBound& bound) {
+              const auto* called = std::get_if<CalledClosureBound>(&bound);
+              return called != nullptr &&
+                     called->asks != support::ClosureKind::kFnOnce;
+            })) {
+      refuse(
+          id,
+          "calls through a bound on what is no parameter of its own it may "
+          "call in place");
+    }
+  }
+  for (const BlockId id : block.child_scopes.Ids()) {
+    VerifyReachesThroughBounds(
+        unit, block.child_scopes.Get(id), parameters, describe);
   }
 }
 
@@ -1671,7 +1807,8 @@ void VerifyErasures(
       RefuseErasure(
           id, "from anything but its own box or a borrow of it", describe);
     }
-    if (std::get<Direct>(call->callee).type_argument != erasure->erased) {
+    if (std::get<Direct>(call->callee).type_arguments !=
+        std::vector<TypeId>{erasure->erased}) {
       RefuseErasure(
           id, "at a type other than the one its answer holds", describe);
     }
@@ -1687,13 +1824,14 @@ void VerifyErasures(
 }
 
 // A value too large for a frame is made only in the storage a new-expression
-// allocates for it, or, where a body answers its caller, in the storage the
-// caller takes its answer in; it is otherwise only read where it lies. A
-// conditional made in storage makes the arm it chooses there, and a block
-// expression its value, as clang and rustc evaluate both into the destination
-// of what yields them. `made_by_enclosing` are the nodes of `block` the block
-// enclosing it makes in storage this way. The address of code takes such a
-// value in a box, as the body it addresses does.
+// allocates for it, from the heap or from its placement, or, where a body
+// answers its caller, in the storage the caller takes its answer in; it is
+// otherwise only read where it lies. A conditional made in storage makes the
+// arm it chooses there, and a block expression its value, as clang and rustc
+// evaluate both into the destination of what yields them. `made_by_enclosing`
+// are the nodes of `block` the block enclosing it makes in storage this way.
+// The address of code takes such a value in a box, as the body it addresses
+// does.
 void VerifyLargeValuesLieInStorage(
     const CompilationUnit& unit, const Block& block, bool answers_caller,
     std::span<const ExprId> made_by_enclosing, const auto& describe) {
@@ -1890,7 +2028,7 @@ void VerifyCode(
   VerifyMemberReceivers(unit, *code.body, describe);
   VerifyReferenceBindings(unit, *code.body, describe);
   VerifyYieldsOutliveTheirBlocks(unit, *code.body, describe);
-  VerifyTypeArguments(*code.body, describe);
+  VerifyTypeArguments(unit, *code.body, describe);
   VerifyTypeOperationCalls(unit, *code.body, describe);
   VerifyUnionValues(unit, *code.body, describe);
   VerifyOrdinals(unit, *code.body, describe);
@@ -2082,6 +2220,12 @@ class HandedClosures {
       if (call == nullptr) {
         continue;
       }
+      if (const auto* direct = std::get_if<Direct>(&call->callee)) {
+        if (const auto* generic =
+                std::get_if<UnitCallableTarget>(&direct->target)) {
+          CheckTypeArguments(*generic, *direct, describe);
+        }
+      }
       const std::optional<support::BuiltinFn> builtin = DirectBuiltinFn(*call);
       if (!builtin.has_value()) {
         continue;
@@ -2115,6 +2259,70 @@ class HandedClosures {
     }
     for (const BlockId id : block.child_scopes.Ids()) {
       CheckHandOns(code, block.child_scopes.Get(id), describe);
+    }
+  }
+
+  // Each type a call of a generic definition names meets what the definition
+  // asks of it, as a Rust `where` clause is checked where the generic is
+  // applied: a type it calls is a closure whose body serves the kind asked,
+  // takes the parameters and answers the result the bound states at these
+  // arguments, and, kept past the caller, refers to nothing the caller's frame
+  // holds; a keeper is a type that keeps deferred effects.
+  void CheckTypeArguments(
+      const UnitCallableTarget& generic, const Direct& direct,
+      const auto& describe) {
+    const auto refuse = [&](std::string_view what) {
+      throw InternalError(
+          std::format(
+              "mir verify: {} calls a generic definition at {} -- please "
+              "report this as a bug",
+              describe(), what));
+    };
+    const CallableDecl& callee = unit_->callables.Get(generic.slot);
+    const auto substituted = [&](TypeId type) {
+      return SubstituteTypeParameters(
+          unit_->types, type, direct.type_arguments);
+    };
+    for (std::size_t at = 0; at < callee.type_parameters.size(); ++at) {
+      for (const ParameterBound& bound : callee.type_parameters[at].bounds) {
+        std::visit(
+            Overloaded{
+                [&](const CalledClosureBound& called) {
+                  const auto* closure =
+                      unit_->types.Get(direct.type_arguments[at])
+                          .As<ClosureType>();
+                  if (closure == nullptr) {
+                    refuse("a type it calls that is no closure");
+                  }
+                  const ClosureDecl& decl =
+                      unit_->GetClosure(closure->closure_id);
+                  if (!support::Extends(
+                          ClosureKindOf(unit_->types, decl), called.asks)) {
+                    refuse("a closure of a kind it does not ask");
+                  }
+                  const CallableCode& invoke = decl.invoke;
+                  const bool takes = std::ranges::equal(
+                      invoke.params, called.params,
+                      [&](LocalId param, TypeId asked) {
+                        return invoke.locals.Get(param).type ==
+                               substituted(asked);
+                      });
+                  if (!takes ||
+                      invoke.result_type != substituted(called.result)) {
+                    refuse("a closure of a signature it does not call");
+                  }
+                  if (support::OutlivesTheCaller(called.kept)) {
+                    CheckDetached(closure->closure_id, describe);
+                  }
+                },
+                [&](const KeeperBound&) {
+                  if (!KeeperEntriesOf(unit_->types, direct.type_arguments[at])
+                           .has_value()) {
+                    refuse("a keeper that keeps no deferred effects");
+                  }
+                }},
+            bound);
+      }
     }
   }
 
@@ -2593,6 +2801,16 @@ void Verify(const CompilationUnit& unit, Phase phase, std::string_view when) {
   };
   ForEachCode(unit, [&](const CodeSource& at, const CallableCode& code) {
     VerifyCode(unit, phase, code, describer(at));
+    // Only a definition of the unit's own namespace is generic.
+    const auto* own = std::get_if<UnitCallableTarget>(&at);
+    if (code.body.has_value()) {
+      VerifyReachesThroughBounds(
+          unit, *code.body,
+          own == nullptr
+              ? std::span<const TypeParameter>{}
+              : std::span{unit.callables.Get(own->slot).type_parameters},
+          describer(at));
+    }
   });
   // Every body is checked on its own first, since a closure handed over in one
   // is followed into the bodies that made what it captured.

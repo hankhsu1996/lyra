@@ -19,6 +19,8 @@ class CompilationUnit;
 
 namespace lyra::lowering::hir_to_mir {
 
+class UnitLowerer;
+
 // A closure under construction: a per-closure-site anonymous concrete callable
 // value (captured fields plus one invoke body) that a referencing site
 // constructs. The builder mints the closure identity up front, owns the closure
@@ -42,11 +44,11 @@ namespace lyra::lowering::hir_to_mir {
 // (`Fn`).
 //
 // Whatever the protocol, the closure is a value of its closure type, and the
-// protocol is what calling it answers. What the site then does with it --
-// keep it in a box for the runtime, lend it for one call, or call it to start
-// its body -- is the site's concern, not the builder's. A body that runs where
-// it is written is no callable value at all and takes the block-expression
-// shape instead.
+// protocol is what calling it answers. What the site then does with it -- keep
+// it in a box for the runtime, make it in a region's effects, lend it for
+// one call, or call it to start its body -- is the site's concern, not the
+// builder's. A body that runs where it is written is no callable value at all
+// and takes the block-expression shape instead.
 // Non-movable: `Frame()` and `Bindings()` hand out references into the owned
 // closure and binding context.
 class ClosureBuilder {
@@ -116,6 +118,21 @@ class ClosureBuilder {
 auto BuildKeptClosure(
     mir::CompilationUnit& unit, mir::Block& block, mir::Expr closure)
     -> mir::ExprId;
+
+// `closure`, a synchronous closure value, made in the storage `keeper`, a
+// pointer to a keeper of deferred effects, hands out and kept there, since it
+// lasts exactly as long as the region running it holds it. It is the call
+// `emplace_into(keeper, &make)` of the unit's generic function, where `make` is
+// a closure referring to each value `closure` is made of and answering
+// `closure` made from them, as C++'s `emplace` is handed references to what its
+// element is constructed from: a value made here is held in this frame first,
+// and the closure is built only in the keeper's storage. A value that already
+// lies in storage is read only when the maker runs, after `keeper` is
+// evaluated, so whatever `keeper` evaluates must not write it. `frame`'s block
+// is the one the closure's captures were read in.
+auto BuildEmplacedClosure(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::Expr keeper,
+    mir::Expr closure) -> mir::Expr;
 
 // The closure lying at `closure`, a place in `block`, borrowed by a library
 // compiled before the program for as long as the statement borrowing it runs:

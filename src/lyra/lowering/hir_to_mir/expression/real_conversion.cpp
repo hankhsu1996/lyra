@@ -44,7 +44,7 @@ auto LowerRealConversionCall(
                 .callee =
                     mir::Direct{
                         .target = support::BuiltinFn::kFromBits,
-                        .type_argument = result_type},
+                        .type_arguments = {result_type}},
                 .arguments = {bits}},
         .type = result_type};
   }

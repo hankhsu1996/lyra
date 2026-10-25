@@ -860,25 +860,22 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "current_runtime",
           .declaration = RuntimeFunction("current_runtime"),
           .ending = CallEnding::kReturns};
-    case BuiltinFn::kSubmitNba:
+    case BuiltinFn::kNbaEffects:
       return {
-          .name = "submit_nba",
-          .declaration = Method{"SubmitNba"},
-          .takes_the_runtime_handle = true,
-          .callables = {kEffectFnOncePastTheCaller}};
-    case BuiltinFn::kSubmitNbaAfter:
+          .name = "nba_effects",
+          .declaration = Method{"NbaEffects"},
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kNbaEffectsAfter:
       return {
-          .name = "submit_nba_after",
-          .declaration = Method{"SubmitNbaAfter"},
+          .name = "nba_effects_after",
+          .declaration = Method{"NbaEffectsAfter"},
           .takes_the_runtime_handle = true,
-          .operands = {kMachine, kNumber},
-          .callables = {kEffectFnOncePastTheCaller}};
-    case BuiltinFn::kSubmitNbaAfterReal:
+          .operands = {kMachine, kNumber}};
+    case BuiltinFn::kNbaEffectsAfterReal:
       return {
-          .name = "submit_nba_after_real",
-          .declaration = Method{"SubmitNbaAfterReal"},
-          .takes_the_runtime_handle = true,
-          .callables = {kEffectFnOncePastTheCaller}};
+          .name = "nba_effects_after_real",
+          .declaration = Method{"NbaEffectsAfterReal"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kRunDetached:
       return {
           .name = "run_detached",
@@ -895,30 +892,45 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "resume_in_nba_region",
           .declaration = RuntimeFunction("ResumeInNbaRegion")};
-    case BuiltinFn::kSubmitPostponed:
+    case BuiltinFn::kPostponedEffects:
       return {
-          .name = "submit_postponed",
-          .declaration = Method{"SubmitPostponed"},
-          .takes_the_runtime_handle = true,
-          .callables = {kEffectFnOncePastTheCaller}};
+          .name = "postponed_effects",
+          .declaration = Method{"PostponedEffects"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kSubmitAtRunEnd:
       return {
           .name = "submit_at_run_end",
           .declaration = Method{"SubmitAtRunEnd"},
           .takes_the_runtime_handle = true,
           .callables = {kEffectFnOncePastTheCaller}};
-    case BuiltinFn::kSubmitObserved:
+    case BuiltinFn::kObservedEffects:
       return {
-          .name = "submit_observed",
-          .declaration = Method{"SubmitObserved"},
-          .takes_the_runtime_handle = true,
-          .callables = {kEffectFnOncePastTheCaller}};
-    case BuiltinFn::kSubmitViolationReport:
+          .name = "observed_effects",
+          .declaration = Method{"ObservedEffects"},
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kViolationReports:
       return {
-          .name = "submit_violation_report",
-          .declaration = Method{"SubmitViolationReport"},
-          .takes_the_runtime_handle = true,
-          .callables = {kEffectFnOncePastTheCaller}};
+          .name = "violation_reports",
+          .declaration = Method{"ViolationReports"},
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kDeferredEffectsAllocate:
+      return {
+          .name = "deferred_effects_allocate",
+          .declaration = Method{"Allocate"},
+          .hands_out_storage = true};
+    case BuiltinFn::kDeferredEffectsCommit:
+      return {
+          .name = "deferred_effects_commit",
+          .declaration = Method{kKeeperCommitMethod}};
+    case BuiltinFn::kViolationReportsAllocate:
+      return {
+          .name = "violation_reports_allocate",
+          .declaration = Method{"Allocate"},
+          .hands_out_storage = true};
+    case BuiltinFn::kViolationReportsCommit:
+      return {
+          .name = "violation_reports_commit",
+          .declaration = Method{kKeeperCommitMethod}};
     case BuiltinFn::kSubmitDeferredObserved:
       return {
           .name = "submit_deferred_observed",

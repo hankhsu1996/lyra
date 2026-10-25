@@ -512,6 +512,11 @@ class FunctionLowerer {
   auto LowerNew(
       const mir::Block& block, const mir::NewExpr& allocation,
       mir::TypeId owner) -> diag::Result<lir::Operand>;
+  // A placement new-expression: storage from the allocation function it names,
+  // which owns it, initialized from the initializer and answered as it is.
+  auto LowerPlacementNew(
+      const mir::Block& block, const mir::NewExpr& allocation, lir::TypeId held)
+      -> diag::Result<lir::Operand>;
   // A new-expression of an object: its construction's arguments, then the
   // object created whole and held by `owner`, then its constructor entered on
   // it (LRM 8.7, 8.29).

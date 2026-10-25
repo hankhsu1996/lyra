@@ -108,6 +108,17 @@ struct VoidConst {
   TypeId type;
 };
 
+// How large a value of `of` is, or what its address is a multiple of, as a
+// number of `type`: rustc's MIR names `size_of::<T>()` and `align_of::<T>()`
+// the same way, with no number in it. Laying the type out is the layer
+// below's, so that layer answers it.
+struct LayoutConst {
+  enum class Measure : std::uint8_t { kSize, kAlignment };
+  TypeId of;
+  Measure measure;
+  TypeId type;
+};
+
 // An enumeration's member table, named by the entry holding it. Its contents
 // are data the unit states and an operand is a leaf, so what the operand
 // carries is which table it is.
@@ -157,7 +168,8 @@ struct FunctionRef {
 // name -- it is materialized at the use site.
 using Operand = std::variant<
     Use, IntConst, StrConst, RealConst, NullConst, BoolConst, VoidConst,
-    EnumTableRef, IntegralConstantRef, StaticRef, DefinitionRef, FunctionRef>;
+    LayoutConst, EnumTableRef, IntegralConstantRef, StaticRef, DefinitionRef,
+    FunctionRef>;
 
 // A runtime-library entry. `position` names the part the entry acts on where
 // the call itself fixes it, carried on the callee rather than among the

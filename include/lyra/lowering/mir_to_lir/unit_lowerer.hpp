@@ -1,5 +1,6 @@
 #pragma once
 
+#include <deque>
 #include <map>
 #include <optional>
 #include <span>
@@ -169,6 +170,15 @@ class UnitLowerer {
   [[nodiscard]] auto UnitCallableSymbol(mir::CallableId id) const
       -> std::string;
 
+  // The symbol of the concrete form of the generic definition `definition` at
+  // `arguments`, as rustc collects an instance per generic and its arguments:
+  // the first call naming the pair makes it one of the unit's instances, which
+  // are lowered once every other body has been, and every later call names the
+  // same one.
+  [[nodiscard]] auto GenericInstanceSymbol(
+      mir::CallableId definition, std::vector<mir::TypeId> arguments)
+      -> std::string;
+
   // The type of the values a class some unit declares builds, however the
   // reference names that class.
   [[nodiscard]] auto ClassRefValueType(const mir::DeclaredClassRef& of)
@@ -262,6 +272,21 @@ class UnitLowerer {
   // operations for, by the type and the operation.
   std::map<std::pair<lir::TypeId, support::ValueOperation>, lir::FunctionId>
       type_operation_functions_;
+
+  // One concrete form of a generic definition this unit's calls name: the
+  // symbol it is emitted under, and its body with the types it is made at
+  // substituted.
+  struct GenericInstance {
+    std::string symbol;
+    mir::CallableCode code;
+  };
+  // Every instance named so far, in the order a call first named it; lowering
+  // one may name more, which a deque adds without moving those before it.
+  std::deque<GenericInstance> generic_instances_;
+  // Where each instance lies among them, by the definition and the types it is
+  // made at.
+  std::map<std::pair<mir::CallableId, std::vector<mir::TypeId>>, std::size_t>
+      generic_instance_at_;
 };
 
 }  // namespace lyra::lowering::mir_to_lir

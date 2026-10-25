@@ -106,15 +106,16 @@ function compiled once for every type that needs a whole value of its own -- a c
 permutation, the first member of a union read for a comparison -- keeps it beside itself only while
 it is small, and in storage of its own past that.
 
-**D6. A closure kept past the statement building it is made in a box MIR states, and whatever keeps
-it takes the box.** A region it is submitted to, a timer, an observation, an assertion's action and
-a foreign fiber each outlive the frame that built the closure, so it never lies there, as Rust's
-thread spawn keeps the closure it is handed in a `Box`. A closure borrowed for a call -- the order a
-sort is handed -- lies where its value is. A closure started as a coroutine is made in a box MIR
-states and called through it, and the started body takes the box over. No backend places a closure
-on its own account: a box of a closure of a known type is an ordinary box, which both backends spell
-and end as they do any box, and each builds the closure, its library's part included, where its
-value lies.
+**D6. A closure kept past the statement building it is made where MIR states its keeper keeps it.**
+A region it is submitted to, a timer, an observation, an assertion's action and a foreign fiber each
+outlive the frame that built the closure, so it never lies there. A region holds an effect exactly
+until it runs it, so the effect is made in the storage the region's effects hand out, and they take
+it over; every other keeper takes a box MIR states, as Rust's thread spawn keeps the closure it is
+handed in a `Box`. A closure borrowed for a call -- the order a sort is handed -- lies where its
+value is. A closure started as a coroutine is made in a box MIR states and called through it, and
+the started body takes the box over. No backend places a closure on its own account: a box of a
+closure of a known type is an ordinary box, which both backends spell and end as they do any box,
+and each builds the closure, its library's part included, where its value lies.
 
 ## Where Lyra differs, and why
 

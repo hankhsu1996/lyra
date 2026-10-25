@@ -39,7 +39,7 @@ auto ReceiverOf(const mir::CallExpr& call) -> mir::ExprId {
 }
 
 auto TypeArgumentOf(const mir::CallExpr& call) -> mir::TypeId {
-  return *std::get<mir::Direct>(call.callee).type_argument;
+  return std::get<mir::Direct>(call.callee).type_arguments.front();
 }
 
 // Whether the position `id` names is the first, which every select's numbering

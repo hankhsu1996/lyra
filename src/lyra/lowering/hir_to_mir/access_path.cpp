@@ -70,7 +70,7 @@ auto EntryToQueueRun(StepUse use) -> support::BuiltinFn {
 struct StepCall {
   support::BuiltinFn entry;
   std::optional<mir::CallPart> part = std::nullopt;
-  std::optional<mir::TypeId> type_argument = std::nullopt;
+  std::vector<mir::TypeId> type_arguments = {};
   std::vector<mir::ExprId> arguments;
 };
 
@@ -187,7 +187,7 @@ auto ElementRunStepTaken(
     case StepUse::kRead:
       return StepCall{
           .entry = support::BuiltinFn::kElementSlice,
-          .type_argument = step.part_type,
+          .type_arguments = {step.part_type},
           .arguments = std::move(bounds)};
     case StepUse::kWrite:
     case StepUse::kDesignate:
@@ -211,7 +211,7 @@ auto BitsStepTaken(StepUse use, const DescentStep& step, mir::ExprId start)
     case StepUse::kRead:
       return StepCall{
           .entry = support::BuiltinFn::kSlice,
-          .type_argument = step.part_type,
+          .type_arguments = {step.part_type},
           .arguments = {start}};
     case StepUse::kWrite:
     case StepUse::kDesignate:
@@ -329,7 +329,7 @@ auto StepCallExpr(StepCall call, mir::ExprId receiver, mir::TypeId type)
                       .target = call.entry,
                       .receiver = receiver,
                       .part = call.part,
-                      .type_argument = call.type_argument},
+                      .type_arguments = std::move(call.type_arguments)},
               .arguments = std::move(call.arguments)},
       .type = type};
 }
@@ -372,7 +372,8 @@ auto StepExpr(
           [&](StepCall call) {
             return mir::MakeBuiltinCall(
                 unit, block, call.entry, receiver, call.part,
-                call.type_argument, std::move(call.arguments), type);
+                std::move(call.type_arguments), std::move(call.arguments),
+                type);
           }},
       StepTakenFor(unit, block, step, use));
 }
@@ -869,7 +870,7 @@ auto CarriedReference(
   return block.exprs.Add(
       mir::MakeBuiltinCall(
           unit, block, support::BuiltinFn::kLeasedReference, leased,
-          std::nullopt, pointee, {},
+          std::nullopt, {pointee}, {},
           unit.types.Intern(
               mir::Type{mir::VariableRefType{
                   .pointee = pointee,
@@ -1391,7 +1392,7 @@ auto StoreBitsExpr(
     reference = block.exprs.Add(
         mir::MakeBuiltinCall(
             unit, block, support::BuiltinFn::kSliceMut, reference, std::nullopt,
-            step.part_type, {std::get<StepToBits>(step.to).start},
+            {step.part_type}, {std::get<StepToBits>(step.to).start},
             unit.types.Intern(
                 mir::Type{mir::BitsReferenceType{.bits = step.part_type}})));
   }

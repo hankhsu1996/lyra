@@ -532,6 +532,14 @@ class UnitLowerer {
     return mir::UnitCallableTarget{.slot = it->second};
   }
 
+  // The generic function that makes a closure in the storage a keeper of
+  // deferred effects hands out and keeps it there, as C++'s `emplace` builds
+  // its element where the container holds it: given the keeper and a closure
+  // making the effect, it allocates the effect's storage, builds the effect
+  // there by calling the maker, and commits it. The unit defines it the first
+  // time a body asks for it.
+  [[nodiscard]] auto EmplaceInto() -> mir::UnitCallableTarget;
+
  private:
   // Lowers a scope whose root is an object type into the unit's top class,
   // which the unit then names as its root. `design_root` is present for the
@@ -620,6 +628,7 @@ class UnitLowerer {
   // holds the only authoritative class representation.
   base::SymbolTable<mir::ClassId, ClassShape> declarations_;
   std::unordered_map<hir::TypeId, mir::CallableId> assignment_pattern_texts_;
+  std::optional<mir::CallableId> emplace_into_;
 };
 
 }  // namespace lyra::lowering::hir_to_mir
