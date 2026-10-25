@@ -215,7 +215,7 @@ void WriteOne(TargetText& out, const CppType& spelling) {
   const mir::TypeId type_id = spelling.Type();
   const auto type = [&unit](mir::TypeId t) { return CppType(unit, t); };
   // A struct or a union is named by its declaration, wherever it is declared.
-  const auto record = [&](const mir::RecordRef& declaration) {
+  const auto record = [&](mir::RecordId declaration) {
     const mir::TypeDeclarationRef ref =
         mir::RecordDeclarationOf(unit, declaration);
     Write(out, CppRecordQualifiedName(ref.unit_name, ref.path));
@@ -912,19 +912,16 @@ void WriteOne(TargetText& out, const CppClassRef& ref) {
   const mir::CompilationUnit& unit = ref.Unit();
   std::visit(
       Overloaded{
-          // A class no other unit names is declared in the unit's code file,
-          // the one file that names it.
-          [&](const mir::IntraUnitClassRef& i) {
-            if (const std::optional<support::DefPath>& path =
-                    unit.GetClass(i.class_id).path;
-                path.has_value()) {
-              out.Require(ClassDeclarationFileOf(unit.name, *path));
+          // A class with a path is declared in a file of the unit defining it,
+          // which the text naming it includes; one no other unit names is
+          // declared in the unit's code file, the one file that names it.
+          [&](const mir::ClassId& id) {
+            const mir::Class& cls = unit.GetClass(id);
+            if (cls.path.has_value()) {
+              out.Require(ClassDeclarationFileOf(
+                  cls.defining_unit.value_or(unit.name), *cls.path));
             }
-            Write(out, CppClassPath(unit, i.class_id));
-          },
-          [&](const mir::CrossUnitClassRef& e) {
-            out.Require(ClassDeclarationFileOf(e.unit_name, e.class_path));
-            Write(out, CppExternalClassPath(e.unit_name, e.class_path));
+            Write(out, CppClassPath(unit, id));
           },
           // The tree's root is the library's scope class, spelled as a value
           // of that class's type is.
@@ -941,17 +938,16 @@ void WriteOne(TargetText& out, const CppBaseClass& base) {
   const mir::CompilationUnit& unit = base.of.Unit();
   std::visit(
       Overloaded{
-          // A class no other unit names is defined in the unit's code file,
-          // ahead of the classes there that derive from it.
-          [&](const mir::IntraUnitClassRef& i) {
-            if (const std::optional<support::DefPath>& path =
-                    unit.GetClass(i.class_id).path;
-                path.has_value()) {
-              out.Require(ClassDefinitionFileOf(unit.name, *path));
+          // A class with a path is defined in a file of the unit defining it,
+          // which the text naming it as a base includes; one no other unit
+          // names is defined in the unit's code file, ahead of the classes
+          // deriving from it.
+          [&](const mir::ClassId& id) {
+            const mir::Class& cls = unit.GetClass(id);
+            if (cls.path.has_value()) {
+              out.Require(ClassDefinitionFileOf(
+                  cls.defining_unit.value_or(unit.name), *cls.path));
             }
-          },
-          [&](const mir::CrossUnitClassRef& e) {
-            out.Require(ClassDefinitionFileOf(e.unit_name, e.class_path));
           },
           [](const mir::ObjectTreeRootRef&) {},
           [](const mir::ManagedObjectRootRef&) {}},

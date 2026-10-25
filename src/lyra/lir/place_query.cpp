@@ -61,16 +61,6 @@ auto DeclaredMembers(const CompilationUnit& unit, TypeId type)
                 .owner = cls.path.has_value() ? support::DisplayOf(*cls.path)
                                               : "a class the lowering built"};
           },
-          [&](const CrossUnitClassType& cls) -> std::optional<MemberList> {
-            const ExternalClass* record =
-                FindExternalClass(unit, cls.unit_name, cls.class_path);
-            if (record == nullptr) {
-              return std::nullopt;
-            }
-            return MemberList{
-                .members = record->members,
-                .owner = support::DisplayOf(record->class_path)};
-          },
           [&](const ClosureType& closure) -> std::optional<MemberList> {
             const Closure& decl = unit.closures.Get(closure.closure_id);
             // A closure carries no name of its own, so what a reader can be

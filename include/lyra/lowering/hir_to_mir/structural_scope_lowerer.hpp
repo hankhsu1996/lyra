@@ -34,9 +34,7 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_id.hpp"
-#include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/external_class.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -579,15 +577,7 @@ class StructuralScopeLowerer {
 template <typename Lowerer>
 auto PropertyNameOf(Lowerer& lowerer, const hir::ClassPropertyTarget& target)
     -> mir::ClassFieldTarget {
-  return std::visit(
-      Overloaded{
-          [&](const hir::LocalClassPropertyTarget& local) {
-            return lowerer.Owner().TranslateClassPropertyTarget(local);
-          },
-          [&](const hir::ExternalClassPropertyTarget& published) {
-            return lowerer.Owner().MakeCrossUnitClassFieldTarget(published);
-          }},
-      target);
+  return lowerer.Owner().TranslateClassPropertyTarget(target);
 }
 
 // The storage one class property access reaches, over `receiver` (LRM 8.4).
@@ -602,30 +592,18 @@ auto BuildClassPropertyAccess(
 }
 
 // The type `field` was declared with: read off its class's shape, which is
-// settled before any body lowers, for a class of this unit, and off the record
-// of what another unit published for one of that unit's.
+// settled before any body lowers, for a class this unit defines, and off the
+// declaration of one another unit defines.
 [[nodiscard]] inline auto FieldTypeOf(
     const UnitLowerer& unit_lowerer, const mir::ClassFieldTarget& field)
     -> mir::TypeId {
-  return std::visit(
-      Overloaded{
-          [&](const mir::IntraUnitClassRef& own) {
-            return unit_lowerer.GetClassShape(own.class_id)
-                .fields.Get(field.slot)
-                .type;
-          },
-          [&](const mir::CrossUnitClassRef& other) {
-            const mir::ExternalClass* published = mir::FindExternalClass(
-                unit_lowerer.Unit().external_classes, other.unit_name,
-                other.class_path);
-            if (published == nullptr) {
-              throw InternalError(
-                  "FieldTypeOf: a field of another unit's class is reached "
-                  "through what that unit published, which this unit records");
-            }
-            return published->fields.Get(field.slot).type;
-          }},
-      field.owner);
+  if (mir::IsDefinedElsewhere(unit_lowerer.Unit(), field.owner)) {
+    return unit_lowerer.Unit()
+        .GetClass(field.owner)
+        .fields.Get(field.slot)
+        .type;
+  }
+  return unit_lowerer.GetClassShape(field.owner).fields.Get(field.slot).type;
 }
 
 // A value the walk has reached, and the type it has there.

@@ -217,39 +217,19 @@ auto LowerProceduralVarRefExpr(
 // A variable of a unit's namespace (LRM 26.2) is reached without a `self`-based
 // route: a namespace has no instance for a receiver to arrive through. The
 // result is the variable's observable-cell type, so the dispatcher reaches its
-// value one dereference further, exactly as an intra-unit signal's cell.
-auto LowerExternalUnitValueRefExpr(
-    UnitLowerer& unit_lowerer, const hir::ExternalUnitValueRef& r)
-    -> mir::Expr {
+// value one dereference further, exactly as a signal's cell.
+auto LowerNamespaceValueRefExpr(
+    UnitLowerer& unit_lowerer, const hir::NamespaceValueRef& r) -> mir::Expr {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   const mir::TypeId cell_type = mir::ObservableCellOf(
       unit.types, unit_lowerer.TranslateType(r.value_type));
-  // A reference into this unit's own namespace has the arena the storage lives
-  // in, so it names the position; one into another unit has only the identifier
-  // that unit published, and consuming that signature is what makes the unit a
-  // dependency whose header and link edge the backend then emits.
-  if (unit_lowerer.Hir().IsItself(r.unit_name)) {
-    const std::optional<mir::StaticVariableId> variable =
-        mir::StaticVariableNamed(unit.named_static_variables, r.variable_name);
-    if (!variable.has_value()) {
-      throw InternalError(
-          "LowerExternalUnitValueRefExpr: this unit's namespace publishes no "
-          "variable under the identifier a reference inside it spells");
-    }
-    return mir::Expr{
-        .data =
-            mir::ReferenceExpr{
-                .target = mir::StaticVariableRef{.variable = *variable}},
-        .type = cell_type};
-  }
-  unit.ConsumeNamespaceOf(r.unit_name);
   return mir::Expr{
       .data =
           mir::ReferenceExpr{
               .target =
-                  mir::ExternalUnitVariableRef{
-                      .unit_name = r.unit_name,
-                      .variable_name = r.variable_name}},
+                  mir::StaticVariableRef{
+                      .variable =
+                          unit_lowerer.NamespaceVariable(r, cell_type)}},
       .type = cell_type};
 }
 
@@ -268,32 +248,25 @@ auto LowerHirIntegralConstant(const hir::IntegralConstant& c)
 auto LowerStaticPropertyRefExpr(
     UnitLowerer& unit_lowerer, const WalkFrame& frame,
     const hir::StaticPropertyRef& r) -> mir::Expr {
-  const mir::TypeId cell_type = mir::ObservableCellOf(
-      unit_lowerer.Unit().types, unit_lowerer.TranslateType(r.value_type));
-  const auto own_cell = [&](const hir::LocalStaticPropertyTarget& property,
-                            mir::EnclosingHops hops) {
-    const mir::ClassId owner = unit_lowerer.TranslateClass(property.owner);
+  const auto cell = [&](const hir::ClassStaticPropertyTarget& property,
+                        mir::EnclosingHops hops) {
+    const hir::TypeId value_type = unit_lowerer.Hir()
+                                       .classes.Declaration(property.owner)
+                                       .static_properties.Get(property.prop)
+                                       .type;
+    const mir::TypeId cell_type = mir::ObservableCellOf(
+        unit_lowerer.Unit().types, unit_lowerer.TranslateType(value_type));
     return BuildStaticStorageAccess(
         unit_lowerer.Unit(), frame,
-        unit_lowerer.GetClassShape(owner).static_property_translation.Get(
-            property.prop),
-        cell_type, hops);
+        unit_lowerer.TranslateStaticPropertyTarget(property), cell_type, hops);
   };
   return std::visit(
       Overloaded{
           [&](const hir::InstanceStaticPropertyTarget& t) -> mir::Expr {
-            return own_cell(t.property, mir::EnclosingHops{t.hops.value});
+            return cell(t.property, mir::EnclosingHops{t.hops.value});
           },
-          [&](const hir::LocalStaticPropertyTarget& t) -> mir::Expr {
-            return own_cell(t, mir::EnclosingHops{});
-          },
-          [&](const hir::ExternalStaticPropertyTarget& t) -> mir::Expr {
-            return mir::Expr{
-                .data =
-                    mir::ReferenceExpr{
-                        .target =
-                            unit_lowerer.MakeExternalStaticPropertyRef(t)},
-                .type = cell_type};
+          [&](const hir::ClassStaticPropertyTarget& t) -> mir::Expr {
+            return cell(t, mir::EnclosingHops{});
           }},
       r.target);
 }
@@ -355,8 +328,8 @@ auto LowerHirPrimaryExprProc(
           [&](const hir::IterationBindingRef& r) -> mir::Expr {
             return LowerIterationBindingRefExpr(r, frame);
           },
-          [&](const hir::ExternalUnitValueRef& r) -> mir::Expr {
-            return LowerExternalUnitValueRefExpr(process.Owner(), r);
+          [&](const hir::NamespaceValueRef& r) -> mir::Expr {
+            return LowerNamespaceValueRefExpr(process.Owner(), r);
           },
       },
       p);
@@ -419,8 +392,8 @@ auto LowerHirPrimaryExprStructural(
           [&](const hir::IterationBindingRef& r) -> mir::Expr {
             return LowerIterationBindingRefExpr(r, frame);
           },
-          [&](const hir::ExternalUnitValueRef& r) -> mir::Expr {
-            return LowerExternalUnitValueRefExpr(lowerer.Owner(), r);
+          [&](const hir::NamespaceValueRef& r) -> mir::Expr {
+            return LowerNamespaceValueRefExpr(lowerer.Owner(), r);
           },
       },
       p);

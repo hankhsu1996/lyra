@@ -2508,14 +2508,6 @@ void lyra_rt_object_srandom(
       NumberAt(seed, seed_width, seed_is_signed, seed_is_four_state).View());
 }
 
-void lyra_rt_object_pre_randomize(void* object) {
-  lyra::runtime::ObjectPreRandomize(static_cast<GcObject*>(object));
-}
-
-void lyra_rt_object_post_randomize(void* object) {
-  lyra::runtime::ObjectPostRandomize(static_cast<GcObject*>(object));
-}
-
 auto lyra_rt_object_get_randstate(void* object, void* out) -> void* {
   return Emplace(
       out, lyra::runtime::ObjectGetRandstate(static_cast<GcObject*>(object)));
@@ -2524,6 +2516,22 @@ auto lyra_rt_object_get_randstate(void* object, void* out) -> void* {
 void lyra_rt_object_set_randstate(void* object, const void* state) {
   lyra::runtime::ObjectSetRandstate(
       static_cast<GcObject*>(object), Read<String>(state));
+}
+
+void lyra_rt_builtin_pre_randomize(void* object) {
+  lyra::runtime::BuiltinPreRandomize(static_cast<GcObject*>(object));
+}
+
+void lyra_rt_builtin_post_randomize(void* object) {
+  lyra::runtime::BuiltinPostRandomize(static_cast<GcObject*>(object));
+}
+
+void lyra_rt_object_pre_randomize(void* object) {
+  lyra::runtime::ObjectPreRandomize(static_cast<GcObject*>(object));
+}
+
+void lyra_rt_object_post_randomize(void* object) {
+  lyra::runtime::ObjectPostRandomize(static_cast<GcObject*>(object));
 }
 
 auto lyra_rt_weak_downgrade(const void* strong, void* out) -> void* {

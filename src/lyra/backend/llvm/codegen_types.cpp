@@ -115,7 +115,6 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
           // it holds: a node of the object tree, a closure's captures, and the
           // cells a declaration installs over a value.
           [&](const lir::ObjectType& t) { return address(t); },
-          [&](const lir::CrossUnitClassType& t) { return address(t); },
           [&](const lir::RuntimeClassType& t) { return address(t); },
           [&](const lir::ClosureType& t) { return address(t); },
           [&](const lir::ErasedCallableType& t) { return address(t); },
@@ -337,7 +336,7 @@ auto CodeGenTypes::FieldsOf(lir::TypeId laid_out) -> FieldsShape {
   if (stated.Is<lir::TupleType>()) {
     return &LayoutOfProduct(laid_out);
   }
-  const lir::RecordRef* record = lir::RecordOf(stated);
+  const lir::RecordId* record = lir::RecordOf(stated);
   if (record == nullptr) {
     throw InternalError(
         "llvm codegen: how parts are placed asked of a type not laid out by "

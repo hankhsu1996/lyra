@@ -107,19 +107,8 @@ auto EquivalenceIdentityOf(const UnitLowerer& unit_lowerer, hir::TypeId type)
           // A class handle is equivalent only to a handle of its own class
           // (LRM 6.22.1 d).
           [&](const hir::ClassHandleType& t) {
-            return "class " +
-                   std::visit(
-                       Overloaded{
-                           [&](const hir::LocalClassRef& local) {
-                             return DeclarationText(
-                                 hir_unit.name,
-                                 hir_unit.classes.PathOf(local.class_id));
-                           },
-                           [](const hir::ExternalClassRef& external) {
-                             return DeclarationText(
-                                 external.unit_name, external.class_path);
-                           }},
-                       t.class_ref);
+            const hir::ClassKey& key = hir_unit.classes.KeyOf(t.class_id);
+            return "class " + DeclarationText(key.unit_name, key.class_path);
           },
           [](const hir::ImportedClassHandleType& t) {
             return std::format(
@@ -129,19 +118,9 @@ auto EquivalenceIdentityOf(const UnitLowerer& unit_lowerer, hir::TypeId type)
             return no_value("a weakly held handle");
           },
           [&](const hir::CovergroupHandleType& t) {
-            return std::visit(
-                Overloaded{
-                    [&](const hir::LocalCovergroupRef& local) {
-                      return "covergroup " +
-                             DeclarationText(
-                                 hir_unit.name,
-                                 hir_unit.covergroups.PathOf(local.covergroup));
-                    },
-                    [](const hir::ExternalCovergroupRef& external) {
-                      return "covergroup " +
-                             DeclarationText(external.unit_name, external.path);
-                    }},
-                t.covergroup);
+            const hir::CovergroupKey& key =
+                hir_unit.covergroups.KeyOf(t.covergroup);
+            return "covergroup " + DeclarationText(key.unit_name, key.path);
           },
           [](const hir::VirtualInterfaceType& t) {
             return "virtual " + t.unit_name;

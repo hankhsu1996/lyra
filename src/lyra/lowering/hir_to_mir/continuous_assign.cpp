@@ -70,8 +70,7 @@ auto FieldOfSelf(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(unit, block, self),
           mir::ClassFieldTarget{
-              .owner = mir::IntraUnitClassRef{frame.current_class.id},
-              .slot = field.field},
+              .owner = frame.current_class.id, .slot = field.field},
           field.type));
 }
 
@@ -617,7 +616,8 @@ auto LowerContinuousDrive(
       .code = std::move(code),
       .foreign = std::nullopt,
       .virtual_dispatch = std::nullopt,
-      .type_parameters = {}};
+      .type_parameters = {},
+      .defining_unit = std::nullopt};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

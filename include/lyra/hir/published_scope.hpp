@@ -13,6 +13,7 @@
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/published_modport.hpp"
+#include "lyra/hir/subroutine_prototype.hpp"
 #include "lyra/support/def_path.hpp"
 
 namespace lyra::hir {
@@ -148,7 +149,7 @@ struct PublishedDisableTargetId {
 struct ScopeClassSignature {
   support::DefPath class_path;
   base::Arena<PublishedMember, PublishedMemberId> members;
-  base::Arena<PublishedCallable, PublishedCallableId> callables;
+  base::Arena<SubroutinePrototype, PublishedCallableId> callables;
   base::Arena<PublishedLoop, PublishedLoopId> loops;
   base::Arena<PublishedChoice, PublishedChoiceId> choices;
   base::Arena<PublishedDisableTarget, PublishedDisableTargetId> disable_targets;

@@ -28,6 +28,10 @@ neither is an interface class a value is only by way of the class it extends or 
 class it names. A referrer reads each of those off the class that states it, by the walk D2
 describes. D2 and D3 stand.
 
+Revised 2026-10-24, with
+[a-class-has-one-identity-in-a-unit](a-class-has-one-identity-in-a-unit.md): D1 and D2 below say
+what a promise states of an override and where a referrer finds the class a behavior came from.
+
 The rejection of a pre-computed consumed set below mentions a choice "between compiling against a
 promise and resolving during elaboration". Since
 [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md) every
@@ -68,10 +72,11 @@ Two constraints pull in opposite directions, and a third settles it.
 
 ### D1. A published class promises what it declares and the class it extends, never what it inherited
 
-The properties it declares, in the order that fixes their slots; the behaviors it introduces, in the
-order that fixes their ordinals; the class it extends, named by declaring unit and its path in that
-unit; and whether it is an interface class. Nothing that came from an ancestor appears, because the
-promise is derived from the unit's own declarations and an ancestor's may be elsewhere.
+The properties it declares, in the order that fixes their slots; the methods it declares, in the
+order that fixes their positions, each with its part in dispatch; the class it extends, named by
+declaring unit and its path in that unit; and whether it is an interface class. Nothing that came
+from an ancestor appears, because the promise is derived from the unit's own declarations and an
+ancestor's may be elsewhere.
 
 Whether it is an interface class is on the promise for the same reason its name is: a class commits
 to an interface rather than extending it, so a behavior an interface class states sits on no lineage
@@ -84,11 +89,12 @@ needs nothing: what a construction carries is settled from a declaration, so a f
 boundary to answer it would be the question asked at the wrong layer. That entry was written with
 such a fact on this list and then removed it.
 
-### D2. A referrer resolves anything inherited by walking that chain, and the coordinate names where the walk landed
+### D2. A referrer names anything inherited by the class where the front end resolved it
 
 A property is named by the class that declares it and the slot that class gave it; a behavior by the
-class that introduced it and which of that class's introductions it is. Both are found by starting
-at the class the source wrote and following what each promised about the class it extends.
+class that introduced it and the method that introduced it there. Both are where the front end
+resolved the name along the lineage of the class the source wrote, which crosses every unit that
+lineage does; an override a class publishes names the introducing class the same way.
 
 The coordinate therefore often names an ancestor of the class the source named, which is what makes
 it an identity rather than a route: every class extending the introducer answers the same behavior
@@ -96,7 +102,7 @@ under the same name (LRM 8.20), and which storage an access reaches is fixed by 
 names rather than by the object it runs on (LRM 8.14). The class the source happened to write is
 neither of those.
 
-### D3. Reading a promise is what records the dependency, so the walk makes a transitive dependency real
+### D3. What a unit's output reads of a promise is its dependency, so naming the introducer makes a transitive dependency real
 
 A unit that reaches a behavior introduced two units up depends on the unit that introduced it, and a
 change to what that class introduces re-emits it. This is not a cost the design tolerates; it is the
@@ -106,8 +112,9 @@ are not independent and a graph that said otherwise would be wrong.
 It follows that the set of promises a unit consumed cannot be decided before its bodies lower. A
 class first met inside a body -- a local whose type is another unit's class -- is reached after any
 such set is fixed, and a name is on a promise or not whether or not the reader declared anything in
-advance. `incremental_build.md` invariant 11 already states the rule this obeys: a unit's dependency
-on another is exactly the set of signatures it consumed, enumerable rather than discovered.
+advance. `incremental_build.md` invariant 11 states the rule this obeys: a unit's dependency on
+another is what its compiled output reads of that unit's signature, read off the output rather than
+decided before it.
 
 ## Where other systems put this
 
@@ -210,6 +217,6 @@ class, and the position is fixed when that class is realized.
 - `publishing-an-owned-instance.md` -- the bound on what a lowering may read, which D3 here removes;
   the rest of that entry, including the demand-driven record, is untouched.
 - `../architecture/incremental_build.md` -- invariant 8 on what deriving a signature may read, and
-  invariant 11 on consumption recording a dependency.
+  invariant 11 on what a unit's output reads being its dependency.
 - `../architecture/compilation_unit_model.md` -- the unit boundary and the signature as its only
   cross-boundary surface.

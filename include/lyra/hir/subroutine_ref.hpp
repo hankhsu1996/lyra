@@ -6,16 +6,18 @@
 #include <vector>
 
 #include "lyra/hir/array_iterator_method.hpp"
+#include "lyra/hir/callee_interface.hpp"
+#include "lyra/hir/class_id.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/enum_method.hpp"
 #include "lyra/hir/expr_id.hpp"
-#include "lyra/hir/external_callee.hpp"
-#include "lyra/hir/external_scope_class.hpp"
 #include "lyra/hir/foreign_import_id.hpp"
 #include "lyra/hir/interface_member_access.hpp"
 #include "lyra/hir/owned_child_ref.hpp"
 #include "lyra/hir/published_callable.hpp"
+#include "lyra/hir/randomization_hook.hpp"
 #include "lyra/hir/sampled_history.hpp"
+#include "lyra/hir/scope_class.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/subroutine_id.hpp"
 #include "lyra/hir/value_ref.hpp"
@@ -97,36 +99,28 @@ struct SuperReceiver {
 using MethodReceiver =
     std::variant<HandleReceiver, SelfReceiver, SuperReceiver>;
 
-// Calls a class method whose declaring class is in another compilation unit.
-// Beside naming the callee it carries the facts this unit cannot look up about
-// one: the behavior the method answers, absent for a method that answers none
-// (LRM 8.20), and its interface, which shapes the arguments the call passes and
-// the completion it consumes. Both are read off the signature of the class
-// declaring the method where this callee is minted. A method that answers a
-// behavior can be dispatched on; whether a given call is, is that call's own
-// question, since naming the base's implementation demands it whatever the
-// callee answers (LRM 8.15). Whether the method is type-associated (LRM 8.10)
-// is not among them: a call to one is a different reference, which is where
-// that shows.
-struct ExternalMethodCallee {
-  ExternalClassMethodTarget target;
-  std::optional<VirtualBehavior> behavior;
-  ExternalCalleeInterface interface;
+// A hook `randomize()` runs that class `cls` has without declaring it (LRM
+// 18.6.2), as the front end gives every class one of each it does not declare:
+// `cls` is the class the call names, the one a handle is of, the class of the
+// method writing the call, or that class's base through `super`. Which body
+// runs follows from that class, since an interface class's hooks are virtual
+// (LRM 8.26.9) and a class's are not (LRM 18.6.2).
+struct BuiltinHookCallee {
+  ClassId cls;
+  RandomizationHook hook{};
 
-  auto operator==(const ExternalMethodCallee&) const -> bool = default;
+  auto operator==(const BuiltinHookCallee&) const -> bool = default;
 };
 
-// The method a call reaches. Intra-unit it is a slot in a class's own method
-// arena, and everything the call needs follows from the declaration that slot
-// resolves to; cross-unit there is no such declaration to reach, so the callee
-// carries what the call would have read off one.
-using MethodCallee = std::variant<LocalClassMethodTarget, ExternalMethodCallee>;
+// The method an instance-method call names: one a class declares, or a hook a
+// class has without declaring it.
+using InstanceMethodCallee = std::variant<ClassMethodTarget, BuiltinHookCallee>;
 
 // Calls an instance method (LRM 8.6). `receiver` states which object the call
 // runs against, whichever source form named it.
 struct MethodCallRef {
   MethodReceiver receiver;
-  MethodCallee callee;
+  InstanceMethodCallee callee;
 
   auto operator==(const MethodCallRef&) const -> bool = default;
 };
@@ -207,19 +201,19 @@ struct ValueChangeRef {
   auto operator==(const ValueChangeRef&) const -> bool = default;
 };
 
-// Calls a subroutine that belongs to another compilation unit -- a package
-// function or task (LRM 26.3), reached by name. The target lives outside this
-// unit, so it carries no unit-local id: the referring unit names the package
-// and the subroutine by name and resolves against that interface at link time,
-// the way an instantiated child names its unit, and never through an
-// enclosing-scope hop within this unit. `interface` is what the call passes
-// and awaits, read off the declaring unit's signature where this is minted.
-struct ExternalUnitSubroutineRef {
+// Calls a subroutine of a namespace unit -- a package function or task (LRM
+// 26.3) -- by the unit and the subroutine's name, whichever unit's namespace
+// declares it, the declaring unit's own bodies included: a namespace has no
+// instance to reach it through, so it is never an enclosing-scope hop, and the
+// name is resolved at link time, the way an instantiated child names its unit.
+// `interface` is what the call passes and awaits, read off the declaring
+// unit's declarations where this is minted.
+struct NamespaceSubroutineRef {
   std::string unit_name;
   std::string subroutine_name;
-  ExternalCalleeInterface interface;
+  CalleeInterface interface;
 
-  auto operator==(const ExternalUnitSubroutineRef&) const -> bool = default;
+  auto operator==(const NamespaceSubroutineRef&) const -> bool = default;
 };
 
 // The object a call on another unit's instance is made on: one a route reaches,
@@ -229,21 +223,20 @@ struct ExternalUnitSubroutineRef {
 using UnitObjectReceiver =
     std::variant<RoutedObjectRef, InterfaceInstanceAccessExpr>;
 
-// Calls a subroutine another compilation unit declares in one of its scopes --
-// its own body or a generate block in it -- enabled on one object of that scope
-// (LRM 23.6, 25.7): reached through a port bound to an instance, through a
-// hierarchical name, or through a virtual interface holding one. `receiver` is
-// how that object is reached, and it is passed as the callable's first
-// argument. `scope_class` is this unit's record of what the other unit
-// published of the scope, and `callable` the entry the name resolved to, so
-// what the call passes and what it awaits come from what was published rather
-// than from the declaration behind it.
-struct ExternalUnitMethodRef {
+// Calls a subroutine a unit declares in one of its scopes -- its own body or a
+// generate block in it -- enabled on one object of that scope (LRM 23.6, 25.7):
+// reached through a port bound to an instance, through a hierarchical name, or
+// through a virtual interface holding one. `receiver` is how that object is
+// reached, and it is passed as the callable's first argument. `scope_class` is
+// the class the declaring unit published the scope as, and `callable` the
+// entry the name resolved to, so what the call passes and what it awaits come
+// from what was published rather than from the declaration behind it.
+struct PublishedScopeMethodRef {
   UnitObjectReceiver receiver;
-  ExternalScopeClassId scope_class;
+  ScopeClassId scope_class;
   PublishedCallableId callable;
 
-  auto operator==(const ExternalUnitMethodRef&) const -> bool = default;
+  auto operator==(const PublishedScopeMethodRef&) const -> bool = default;
 };
 
 // Calls a static class method (LRM 8.10). Distinct from `MethodCallRef`
@@ -260,7 +253,7 @@ struct ExternalUnitMethodRef {
 // has no object to reach one through. Present exactly where the class takes
 // the instance, which is the class's own declaration to say.
 struct StaticMethodCallRef {
-  MethodCallee callee;
+  ClassMethodTarget callee;
   std::optional<DeclaringInstanceReach> declaring_instance;
 
   auto operator==(const StaticMethodCallRef&) const -> bool = default;
@@ -270,6 +263,6 @@ using SubroutineRef = std::variant<
     StructuralSubroutineRef, MethodCallRef, StaticMethodCallRef,
     SystemSubroutineRef, BuiltinMethodRef, EnumMethodRef,
     ArrayIteratorMethodRef, PastValueRef, ValueChangeRef, ForeignImportRef,
-    ExternalUnitSubroutineRef, ExternalUnitMethodRef>;
+    NamespaceSubroutineRef, PublishedScopeMethodRef>;
 
 }  // namespace lyra::hir

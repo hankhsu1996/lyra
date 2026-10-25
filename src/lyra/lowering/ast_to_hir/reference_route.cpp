@@ -305,15 +305,14 @@ auto UnitLowerer::MakeRoutedMemberRef(
   return hir::MakeRefExpr(hir::RoutedValueRef{.id = id}, type, span);
 }
 
-auto UnitLowerer::ExternalMemberLeafOf(
-    hir::ExternalScopeClassId scope_class, hir::PublishedMemberId member) const
-    -> hir::ExternalMemberLeaf {
+auto UnitLowerer::PublishedMemberLeafOf(
+    hir::ScopeClassId scope_class, hir::PublishedMemberId member) const
+    -> hir::PublishedMemberLeaf {
   // The member's type is already in this unit's pool, because the record
   // brought it there.
   const hir::PublishedMember& published =
-      unit_.external_scope_classes.Get(scope_class)
-          .signature.members.Get(member);
-  return hir::ExternalMemberLeaf{
+      unit_.scope_classes.Get(scope_class).members.Get(member);
+  return hir::PublishedMemberLeaf{
       .scope_class = scope_class,
       .member = member,
       .storage = published.storage,
@@ -339,13 +338,13 @@ auto UnitLowerer::ResolveRouteTarget(
           // the unit that declared it. Every declaration a name may reach is
           // published (LRM 23.6), so one that is not is a form this compiler
           // does not publish yet.
-          [&](const InExternalScope& on) -> diag::Result<hir::DataLeaf> {
+          [&](const InPublishedScope& on) -> diag::Result<hir::DataLeaf> {
             const hir::ScopeClassSignature& published =
-                unit_.external_scope_classes.Get(on.scope_class).signature;
+                unit_.scope_classes.Get(on.scope_class);
             const auto member = published.FindMember(
                 value.name, support::Extended(published.class_path, on.within));
             if (!member.has_value()) return unsupported();
-            return ExternalMemberLeafOf(on.scope_class, *member);
+            return PublishedMemberLeafOf(on.scope_class, *member);
           },
           // A route that stays in this unit's layout names this unit's own
           // declaration. For a static a name reaches through a procedural
@@ -444,14 +443,14 @@ auto UnitLowerer::DisableTargetOf(
   std::optional<hir::DisableLeaf> leaf;
   if (minted.has_value()) {
     leaf = hir::DisableTargetLeaf{.scope = minted->scope};
-  } else if (const auto* on = std::get_if<InExternalScope>(&route->place)) {
+  } else if (const auto* on = std::get_if<InPublishedScope>(&route->place)) {
     const hir::ScopeClassSignature& signature =
-        unit_.external_scope_classes.Get(on->scope_class).signature;
+        unit_.scope_classes.Get(on->scope_class);
     const std::optional<hir::PublishedDisableTargetId> published =
         signature.FindDisableTarget(
             support::Extended(signature.class_path, on->within));
     if (published.has_value()) {
-      leaf = hir::ExternalDisableTargetLeaf{
+      leaf = hir::PublishedDisableTargetLeaf{
           .scope_class = on->scope_class, .target = *published};
     }
   }
@@ -749,9 +748,8 @@ auto UnitLowerer::PlaceThroughPort(
   const hir::UnitObjectsType objects = InterfacePortObjects(port);
   if (selects.size() != objects.ranges.size()) return OnSeveralObjects{};
   const hir::UnitObjectType& kind = objects.KindAt(selects);
-  return InExternalScope{
-      .scope_class = ExternalScopeClassOf(kind.unit_name, kind.class_path),
-      .within = {}};
+  return InPublishedScope{
+      .scope_class = RecordedScopeClass(kind.scope_class), .within = {}};
 }
 
 auto UnitLowerer::ReachOwnScope(
@@ -886,7 +884,7 @@ auto UnitLowerer::RouteToScope(
       const auto* inst =
           owned->as<slang::ast::InstanceBodySymbol>().parentInstance;
       if (inst == nullptr) return std::nullopt;
-      place = InExternalScope{
+      place = InPublishedScope{
           .scope_class = ScopeClassOfInstance(*inst), .within = {}};
       // The step is the member registered for the instance, which is the whole
       // array where it is an element of one.
@@ -949,7 +947,7 @@ auto UnitLowerer::ClassifyDescent(ScopeRoute& route, std::span<DescentHop> hops)
       Overloaded{
           [](const hir::InUnitBase&) -> RoutePlace { return InOwnScope{}; },
           [](const hir::EnclosingScopeBase& base) -> RoutePlace {
-            return InExternalScope{
+            return InPublishedScope{
                 .scope_class = base.scope_class, .within = {}};
           }},
       route.base);
@@ -962,7 +960,7 @@ auto UnitLowerer::ClassifyDescent(ScopeRoute& route, std::span<DescentHop> hops)
 }
 
 auto UnitLowerer::DescendPublished(
-    hir::ExternalScopeClassId from, const slang::ast::Scope& from_scope,
+    hir::ScopeClassId from, const slang::ast::Scope& from_scope,
     const slang::ast::Scope& to) -> std::optional<PublishedDescent> {
   auto hops = NamedHopsDown(from_scope, to);
   if (!hops.has_value()) return std::nullopt;
@@ -988,7 +986,7 @@ auto UnitLowerer::DescendFrom(RoutePlace standing, std::span<DescentHop> hops)
 
   // What a scope published is what the rest is resolved against, so the walk
   // has to stand on one.
-  const auto* on = std::get_if<InExternalScope>(&descended.place);
+  const auto* on = std::get_if<InPublishedScope>(&descended.place);
   if (on == nullptr) return std::nullopt;
   std::vector<NamedHop> named;
   named.reserve(hops.size() - at);
@@ -999,7 +997,7 @@ auto UnitLowerer::DescendFrom(RoutePlace standing, std::span<DescentHop> hops)
   }
   auto published = DescendPublishedFrom(on->scope_class, named);
   if (!published.has_value()) return std::nullopt;
-  for (hir::ExternalStep& step : published->steps) {
+  for (hir::PublishedStep& step : published->steps) {
     descended.steps.push_back(hir::AsPathStep(std::move(step)));
   }
   descended.place = std::move(published->place);
@@ -1008,11 +1006,11 @@ auto UnitLowerer::DescendFrom(RoutePlace standing, std::span<DescentHop> hops)
 }
 
 auto UnitLowerer::DescendPublishedFrom(
-    hir::ExternalScopeClassId standing, std::span<NamedHop> hops)
+    hir::ScopeClassId standing, std::span<NamedHop> hops)
     -> std::optional<PublishedDescent> {
   PublishedDescent descended{
       .steps = {},
-      .place = InExternalScope{.scope_class = standing, .within = {}},
+      .place = InPublishedScope{.scope_class = standing, .within = {}},
       .open = {}};
   // A hop onto an instance, or a set of them, is a step onto the member the
   // scope published for it; that member's type says how many objects it
@@ -1020,10 +1018,10 @@ auto UnitLowerer::DescendPublishedFrom(
   // position land on the scope of the kind there; selects leaving a dimension
   // open stand on several objects, past which no name resolves (LRM 23.6), and
   // whoever picks one out of them reads its kind off the same set.
-  const auto onto_instance = [&](const InExternalScope& on,
+  const auto onto_instance = [&](const InPublishedScope& on,
                                  InstanceHop& instance) -> bool {
     const hir::ScopeClassSignature& record =
-        unit_.external_scope_classes.Get(on.scope_class).signature;
+        unit_.scope_classes.Get(on.scope_class);
     const auto member = record.FindMember(instance.name, record.class_path);
     if (!member.has_value()) return false;
     const auto* objects = unit_.types.Get(record.members.Get(*member).type)
@@ -1036,45 +1034,43 @@ auto UnitLowerer::DescendPublishedFrom(
             ? std::optional{objects->KindAt(instance.indices)}
             : std::nullopt;
     descended.steps.push_back(
-        hir::ExternalStep{
+        hir::PublishedStep{
             .names =
-                hir::ExternalMemberRef{
+                hir::PublishedMemberRef{
                     .scope_class = on.scope_class, .member = *member},
             .selects = std::move(instance.indices)});
     if (!lands_on.has_value()) {
       descended.place = OnSeveralObjects{};
       return true;
     }
-    descended.place = InExternalScope{
-        .scope_class =
-            ExternalScopeClassOf(lands_on->unit_name, lands_on->class_path),
-        .within = {}};
+    descended.place = InPublishedScope{
+        .scope_class = RecordedScopeClass(lands_on->scope_class), .within = {}};
     return true;
   };
 
   // A hop into a generate block lands on the class that block was published
   // as, which this unit records under the unit holding the block; the step
   // names the block as the hop says.
-  const auto class_of_block = [&](const InExternalScope& on,
+  const auto class_of_block = [&](const InPublishedScope& on,
                                   const support::DefPath& class_path) {
     const std::string unit_name =
-        unit_.external_scope_classes.Get(on.scope_class).unit_name;
-    return ExternalScopeClassOf(unit_name, class_path);
+        unit_.scope_classes.KeyOf(on.scope_class).unit_name;
+    return ScopeClassOf(unit_name, class_path);
   };
-  const auto step_into_block = [&](hir::ExternalScopeRef names,
-                                   hir::ExternalScopeClassId result_class) {
+  const auto step_into_block = [&](hir::PublishedScopeRef names,
+                                   hir::ScopeClassId result_class) {
     descended.open.clear();
     descended.steps.push_back(
-        hir::ExternalStep{.names = std::move(names), .selects = {}});
+        hir::PublishedStep{.names = std::move(names), .selects = {}});
     descended.place =
-        InExternalScope{.scope_class = result_class, .within = {}};
+        InPublishedScope{.scope_class = result_class, .within = {}};
     return true;
   };
 
   // A named block or subroutine is no object, so nothing below one is either
   // and no step follows it. Nothing resolves past several objects either.
   for (NamedHop& hop : hops) {
-    auto* on = std::get_if<InExternalScope>(&descended.place);
+    auto* on = std::get_if<InPublishedScope>(&descended.place);
     if (on == nullptr) return std::nullopt;
     const bool past_procedural = !on->within.empty();
     const bool resolved = std::visit(
@@ -1088,14 +1084,12 @@ auto UnitLowerer::DescendPublishedFrom(
             [&](const LoopBlockHop& block) {
               if (past_procedural) return false;
               const auto found = FindPublishedLoopBlock(
-                  unit_.external_scope_classes.Get(on->scope_class)
-                      .signature.loops,
-                  block);
+                  unit_.scope_classes.Get(on->scope_class).loops, block);
               if (!found.has_value()) return false;
-              const hir::ExternalScopeClassId result_class =
+              const hir::ScopeClassId result_class =
                   class_of_block(*on, found->class_path);
               return step_into_block(
-                  hir::ExternalGenerateLoopRef{
+                  hir::PublishedGenerateLoopRef{
                       .scope_class = on->scope_class,
                       .loop = found->loop,
                       .index = block.index,
@@ -1107,14 +1101,12 @@ auto UnitLowerer::DescendPublishedFrom(
             [&](const ChosenBlockHop& block) {
               if (past_procedural) return false;
               const auto found = FindPublishedChoice(
-                  unit_.external_scope_classes.Get(on->scope_class)
-                      .signature.choices,
-                  block);
+                  unit_.scope_classes.Get(on->scope_class).choices, block);
               if (!found.has_value()) return false;
-              const hir::ExternalScopeClassId result_class =
+              const hir::ScopeClassId result_class =
                   class_of_block(*on, found->class_path);
               return step_into_block(
-                  hir::ExternalGenerateBlockRef{
+                  hir::PublishedGenerateBlockRef{
                       .scope_class = on->scope_class,
                       .choice = found->choice,
                       .result_class = result_class},
@@ -1166,7 +1158,7 @@ auto UnitLowerer::ResolveValueTarget(
   if (const auto* unit = DeclaringNamespaceUnit(value)) {
     auto value_type = InternType(value.getType(), span);
     if (!value_type) return std::unexpected(std::move(value_type.error()));
-    return hir::ValueTarget{hir::ExternalUnitValueRef{
+    return hir::ValueTarget{hir::NamespaceValueRef{
         .unit_name = CompilationUnitName(*unit, Specialization()),
         .variable_name = std::string{value.name},
         .value_type = *value_type}};
@@ -1187,7 +1179,7 @@ auto UnitLowerer::StartInEnclosing(const slang::ast::Scope& scope)
     -> RouteStart {
   // The class is the one the unit of the instance holding `scope` published
   // the scope as, which this unit names the way that unit does.
-  const hir::ExternalScopeClassId scope_class = ExternalScopeClassOf(
+  const hir::ScopeClassId scope_class = ScopeClassOf(
       Specialization().NameOf(InstanceHolding(scope)),
       DefPathOf(scope.asSymbol(), Specialization()));
   return RouteStart{
@@ -1236,7 +1228,7 @@ auto UnitLowerer::ReachDeclaringInstance(
   if (HeldByAnotherDesignElement(type)) {
     auto route = RouteToReplicatingScope(frame, type);
     const auto* on = route.has_value()
-                         ? std::get_if<InExternalScope>(&route->place)
+                         ? std::get_if<InPublishedScope>(&route->place)
                          : nullptr;
     if (on == nullptr) {
       return diag::Fail(
@@ -1258,37 +1250,31 @@ auto UnitLowerer::ResolveStaticPropertyTarget(
     diag::SourceSpan span) -> diag::Result<hir::ValueTarget> {
   const auto& owner_class =
       prop.getParentScope()->asSymbol().as<slang::ast::ClassType>();
-  auto owner_ref = ResolveClassRef(owner_class, span);
-  if (!owner_ref) return std::unexpected(std::move(owner_ref.error()));
+  auto owner = ResolveClass(owner_class, span);
+  if (!owner) return std::unexpected(std::move(owner.error()));
 
-  // What the cell holds is read where the class states it: off the
-  // declaration where this unit declares the class, and off the signature of
-  // the unit that published it otherwise.
-  const auto local_cell =
-      [&](const hir::LocalClassRef& local) -> diag::Result<hir::ValueTarget> {
-    auto value_type = InternType(prop.getType(), span);
-    if (!value_type) return std::unexpected(std::move(value_type.error()));
-    const hir::LocalStaticPropertyTarget property{
-        .owner = local.class_id, .prop = LookupClassPropertyStaticId(prop)};
+  // A class a namespace unit declares, whichever unit that is, keeps one cell
+  // per static property, and a class one of this unit's structural scopes
+  // declares keeps one per instance of that scope (LRM 6.22). Either way the
+  // cell is named by the class and the property's position in its declaration.
+  const auto class_cell = [&]() -> diag::Result<hir::ValueTarget> {
+    const hir::ClassStaticPropertyTarget property{
+        .owner = *owner, .prop = StaticPropertyPositionOf(*owner, prop.name)};
     if (!BelongsToAnInstance(owner_class)) {
-      return hir::ValueTarget{hir::StaticPropertyRef{
-          .target = property, .value_type = *value_type}};
+      return hir::ValueTarget{hir::StaticPropertyRef{.target = property}};
     }
     auto hops = DeclaringScopeHopsFrom(owner_class, frame, span);
     if (!hops) return std::unexpected(std::move(hops.error()));
     return hir::ValueTarget{hir::StaticPropertyRef{
-        .target =
-            hir::InstanceStaticPropertyTarget{
-                .property = property, .hops = *hops},
-        .value_type = *value_type}};
+        .target = hir::InstanceStaticPropertyTarget{
+            .property = property, .hops = *hops}}};
   };
 
   // A class another design element declares inside one of its scopes is a
   // type of that scope's instance (LRM 6.22), so what the class keeps for
   // itself is a cell of the instance, which the scope published as that
   // class's. It is reached the way any declaration of another instance is.
-  const auto other_instance_cell =
-      [&](const hir::ExternalClassRef& ext) -> diag::Result<hir::ValueTarget> {
+  const auto other_instance_cell = [&]() -> diag::Result<hir::ValueTarget> {
     const auto refuse = [&] {
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedExpressionForm,
@@ -1298,11 +1284,12 @@ auto UnitLowerer::ResolveStaticPropertyTarget(
     };
     auto route = RouteToReplicatingScope(frame, owner_class);
     const auto* on = route.has_value()
-                         ? std::get_if<InExternalScope>(&route->place)
+                         ? std::get_if<InPublishedScope>(&route->place)
                          : nullptr;
     if (on == nullptr) return refuse();
-    const auto member = unit_.external_scope_classes.Get(on->scope_class)
-                            .signature.FindMember(prop.name, ext.class_path);
+    const auto member =
+        unit_.scope_classes.Get(on->scope_class)
+            .FindMember(prop.name, unit_.classes.PathOf(*owner));
     if (!member.has_value()) return refuse();
     return hir::ValueTarget{hir::RoutedValueRef{
         .id = MapOrGetRoute(
@@ -1310,41 +1297,11 @@ auto UnitLowerer::ResolveStaticPropertyTarget(
             hir::ValueRoute{
                 .base = std::move(route->base),
                 .steps = std::move(route->steps),
-                .leaf = ExternalMemberLeafOf(on->scope_class, *member)})}};
+                .leaf = PublishedMemberLeafOf(on->scope_class, *member)})}};
   };
 
-  // A class another namespace unit declares has one cell, named by the class.
-  const auto namespace_cell =
-      [&](const hir::ExternalClassRef& ext) -> diag::Result<hir::ValueTarget> {
-    for (const hir::PublishedProperty& property :
-         ExternalClassOf(ext.unit_name, ext.class_path).static_properties) {
-      if (property.name == prop.name) {
-        return hir::ValueTarget{hir::StaticPropertyRef{
-            .target =
-                hir::ExternalStaticPropertyTarget{
-                    .unit_name = ext.unit_name,
-                    .class_path = ext.class_path,
-                    .property_name = std::string{prop.name}},
-            .value_type = property.type}};
-      }
-    }
-    throw InternalError(
-        std::format(
-            "UnitLowerer::ResolveStaticPropertyTarget: '{}::{}' publishes "
-            "every static property another unit may name, and '{}' is not "
-            "among them",
-            ext.unit_name, support::DisplayOf(ext.class_path), prop.name));
-  };
-
-  return std::visit(
-      Overloaded{
-          [&](const hir::LocalClassRef& local) { return local_cell(local); },
-          [&](const hir::ExternalClassRef& ext) {
-            return HeldByAnotherDesignElement(owner_class)
-                       ? other_instance_cell(ext)
-                       : namespace_cell(ext);
-          }},
-      *owner_ref);
+  return HeldByAnotherDesignElement(owner_class) ? other_instance_cell()
+                                                 : class_cell();
 }
 
 auto UnitLowerer::ObservedThroughModport(
@@ -1368,7 +1325,7 @@ auto UnitLowerer::ObservedThroughModport(
   auto reached = RouteToScope(
       frame, *view->asSymbol().getParentScope(), std::move(origin));
   const auto* on = reached.has_value()
-                       ? std::get_if<InExternalScope>(&reached->place)
+                       ? std::get_if<InPublishedScope>(&reached->place)
                        : nullptr;
   if (on == nullptr) {
     return refuse(
@@ -1376,7 +1333,7 @@ auto UnitLowerer::ObservedThroughModport(
         "shape, is not yet supported");
   }
   const ScopeRoute& route = *reached;
-  const hir::ExternalScopeClassId scope_class = on->scope_class;
+  const hir::ScopeClassId scope_class = on->scope_class;
   const std::vector<hir::PublishedMemberId> watched =
       hir::WatchedMembers(PublishedViewNameMeaning(
           *this, scope_class, view->asSymbol().name, offered.name));
@@ -1388,7 +1345,7 @@ auto UnitLowerer::ObservedThroughModport(
         hir::ValueRoute{
             .base = route.base,
             .steps = route.steps,
-            .leaf = ExternalMemberLeafOf(scope_class, id)});
+            .leaf = PublishedMemberLeafOf(scope_class, id)});
     out.push_back(
         hir::SensitivityEntry{
             .cell = hir::RoutedValueRef{.id = reference},

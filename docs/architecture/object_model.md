@@ -83,16 +83,17 @@ reference -- destroys a distinction a consumer has to read.
    differences between these objects are expressed through generic mechanisms -- which base, which
    reference, which lifecycle -- never through a source-category discriminator on the declaration._
 
-2. **One nominal-object reference; identity representation follows the unit boundary.** Every place
-   one object type names another uses one reference abstraction. Its identity is a stable
-   compiler-owned id when the target is intra-unit, the declaring unit and the class's published
-   name, resolved against that unit's signature, when the target is in another compilation unit, and
-   an imported library declaration when the target is a runtime-library type. A class a design
-   element declares is a type of that element's instance (LRM 6.22), and its shape is one per unit,
-   so the element publishes it and a referrer outside names it like any other published class.
-   Intra-unit and cross-unit identities never share a key space. _Object-model consequence: a
-   consumer resolves any object reference through one entry point; the local-versus-external split
-   lives in the resolver, not in incompatible reference forms scattered across consumers._
+2. **One nominal-object reference; one identity per class in a unit.** Every place one object type
+   names another uses one reference abstraction, and its identity is the unit's own handle for the
+   class, whichever unit defines it, or an imported library declaration where the target is a
+   runtime-library type. Across units a class is known by its stable key, the declaring unit and the
+   class's published name; a unit turns a key into its handle once, where it reads the name, and a
+   key naming the unit itself lands on the class it defines. What is known of a class is one answer
+   for either: what this unit states of its own, or what the declaring unit published, read back. A
+   class a design element declares is a type of that element's instance (LRM 6.22), and its shape is
+   one per unit, so the element publishes it and a referrer outside names it like any other
+   published class. _Object-model consequence: no consumer tells a class of this unit from another
+   unit's to name or reach it; only what an artifact emits follows which unit defines the class._
 
 3. **Inheritance is one concrete base plus a set of interface conformances.** The concrete base
    determines instance layout and constructor chaining; an interface conformance is a method

@@ -993,6 +993,20 @@ auto CodeGenFunction::LowerCast(
   if (from.has_value() && to.has_value()) {
     return ConvertView(*operand, *from, *to);
   }
+  // A part read as the part every object starts with, which the library takes
+  // an object as: a class's part is there already, and an interface class's
+  // part is wherever the object's class placed it. A handle naming no object
+  // leaves no part, and that stays so for the library to refuse.
+  if (from.has_value() && IsLibraryObjectAddress(result_type)) {
+    if (!module_->IsInterfaceClass(*from)) {
+      return *operand;
+    }
+    return IfNotNull(
+        *operand, [&](llvm::Value* part) -> diag::Result<llvm::Value*> {
+          return ObjectStartOf(
+              part, builder_.CreateLoad(module_->Types().Ptr(), part));
+        });
+  }
   // One integral type read as another is the same bytes only where the two
   // lay a value out alike, which is what a cast between them states; a
   // difference in width or in states is a conversion, which is an operation.
@@ -1055,12 +1069,33 @@ auto CodeGenFunction::ClassBehind(lir::TypeId reference) const
   } else if (const auto* handle = referring.As<lir::ManagedRefType>()) {
     pointee = handle->pointee;
   }
-  if (!pointee.has_value() ||
-      !(types.Get(*pointee).Is<lir::ObjectType>() ||
-        types.Get(*pointee).Is<lir::CrossUnitClassType>())) {
+  if (!pointee.has_value() || !types.Get(*pointee).Is<lir::ObjectType>()) {
     return std::nullopt;
   }
   return pointee;
+}
+
+auto CodeGenFunction::IsLibraryObjectAddress(lir::TypeId address) const
+    -> bool {
+  const lir::TypePool& types = module_->Unit().types;
+  const auto* pointer = types.Get(address).As<lir::PointerType>();
+  if (pointer == nullptr) {
+    return false;
+  }
+  const auto* library = types.Get(pointer->pointee).As<lir::RuntimeClassType>();
+  return library != nullptr && library->which == support::RuntimeClass::kObject;
+}
+
+auto CodeGenFunction::ObjectStartOf(llvm::Value* part, llvm::Value* table)
+    -> llvm::Value* {
+  llvm::Value* to_top = builder_.CreateLoad(
+      builder_.getInt64Ty(),
+      builder_.CreateGEP(
+          module_->Types().Ptr(), table,
+          llvm::ConstantInt::getSigned(
+              builder_.getInt64Ty(),
+              -static_cast<std::int64_t>(kOffsetToTopEntry))));
+  return builder_.CreateGEP(builder_.getInt8Ty(), part, to_top);
 }
 
 // Every class part of an object starts where the object does, so reaching one
@@ -1669,7 +1704,6 @@ auto CodeGenFunction::ResolveCallee(
               return std::unexpected(std::move(at.error()));
             }
             llvm::Type* ptr_ty = module_->Types().Ptr();
-            llvm::Type* byte_ty = builder_.getInt8Ty();
             const auto body_at = [&](llvm::Value* table, std::uint64_t slot) {
               return builder_.CreateLoad(
                   ptr_ty,
@@ -1681,19 +1715,10 @@ auto CodeGenFunction::ResolveCallee(
                       return body_at(
                           builder_.CreateLoad(ptr_ty, args[0]), lineage.slot);
                     },
-                    // The part's table holds how far back the value's start
-                    // is.
+                    // The body is entered where the object starts.
                     [&](const InterfaceSlot& part) -> llvm::Value* {
                       llvm::Value* table = builder_.CreateLoad(ptr_ty, args[0]);
-                      llvm::Value* to_top = builder_.CreateLoad(
-                          builder_.getInt64Ty(),
-                          builder_.CreateGEP(
-                              ptr_ty, table,
-                              llvm::ConstantInt::getSigned(
-                                  builder_.getInt64Ty(),
-                                  -static_cast<std::int64_t>(
-                                      kOffsetToTopEntry))));
-                      args[0] = builder_.CreateGEP(byte_ty, args[0], to_top);
+                      args[0] = ObjectStartOf(args[0], table);
                       return body_at(table, part.slot);
                     }},
                 *at);

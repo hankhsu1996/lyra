@@ -6,7 +6,6 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -180,7 +179,8 @@ class HookBody {
         .code = std::move(code_),
         .foreign = std::nullopt,
         .virtual_dispatch = mir::OverridesLibraryVirtual{.function = function},
-        .type_parameters = {}};
+        .type_parameters = {},
+        .defining_unit = std::nullopt};
   }
 
  private:
@@ -197,45 +197,26 @@ class HookBody {
   std::optional<Handed> problem_;
 };
 
-// One of the functions every class overrides for `randomize()` that a class
-// extending another starts by calling its base's for: the library's function,
-// and where a class's hooks hold the body it gives it.
-struct ExtendedHook {
-  support::LibraryVirtual function;
-  mir::CallableId RandomizationHooks::* body;
-};
-constexpr ExtendedHook kRandVariablesHook{
-    .function = support::LibraryVirtual::kClassRandVariables,
-    .body = &RandomizationHooks::rand_variables};
-constexpr ExtendedHook kConstrainHook{
-    .function = support::LibraryVirtual::kClassConstrain,
-    .body = &RandomizationHooks::constrain};
-constexpr ExtendedHook kRandObjectsHook{
-    .function = support::LibraryVirtual::kClassRandObjects,
-    .body = &RandomizationHooks::rand_objects};
-
-// The body the class `base` gives `hook`, which a class extending it calls
-// directly to do what its base does first.
+// The body the class `base` gives `function`, one of the functions every class
+// overrides for `randomize()`, which a class extending it calls directly to do
+// what its base does first.
 auto BaseHookTarget(
-    UnitLowerer& unit_lowerer, const hir::ClassRef& base,
-    const ExtendedHook& hook) -> mir::DirectTarget {
-  return std::visit(
-      Overloaded{
-          [&](const hir::LocalClassRef& local) -> mir::DirectTarget {
-            return mir::CallableTarget{
-                .owner = unit_lowerer.TranslateClass(local.class_id),
-                .slot = (*unit_lowerer.RandomizationHooksOf(local.class_id)).*
-                        hook.body};
-          },
-          [&](const hir::ExternalClassRef& external) -> mir::DirectTarget {
-            unit_lowerer.Unit().ConsumeClassOf(
-                external.unit_name, external.class_path);
-            return mir::ExternalLibraryOverrideTarget{
-                .unit_name = external.unit_name,
-                .class_path = external.class_path,
-                .function = hook.function};
-          }},
-      base);
+    UnitLowerer& unit_lowerer, hir::ClassId base,
+    support::LibraryVirtual function) -> mir::DirectTarget {
+  if (unit_lowerer.Hir().classes.IsOwn(base)) {
+    return mir::CallableTarget{
+        .owner = unit_lowerer.ClassIdentity(base),
+        .slot = unit_lowerer.RandomizationHooksOf(base)->BodyOf(function)};
+  }
+  const mir::ClassId declared = unit_lowerer.ClassIdentity(base);
+  const std::optional<mir::CallableId> body =
+      unit_lowerer.Unit().GetClass(declared).LibraryOverride(function);
+  if (!body.has_value()) {
+    throw InternalError(
+        "BaseHookTarget: a class of another unit gives no body to a function "
+        "every class overrides for randomize() -- please report this as a bug");
+  }
+  return mir::CallableTarget{.owner = declared, .slot = *body};
 }
 
 // One body of the class and the static-lifetime variables it declared, paired
@@ -256,16 +237,16 @@ struct BodyStatics {
 // default in the install phase, because the storage arrives with none. A
 // source-written value then stores through the cell in the value phase, and the
 // default case needs no statement there, being fully expressed by the
-// installation already. The value order is declaration order, because an
-// initializer may read a property declared before it. A static-lifetime
-// variable of one of the class's bodies follows, its cell being the class's for
-// the same reason.
+// installation already. The values are written in the order the source declares
+// them, because an initializer may read a property declared before it. A
+// static-lifetime variable of one of the class's bodies follows, its cell being
+// the class's for the same reason.
 auto LowerStaticStorageInto(
     UnitLowerer& unit_lowerer, const StructuralScopeLowerer* declaring_scope,
-    const hir::ClassDecl& hir_class, const ClassShape& shape,
-    const mir::Class& mir_class, const DeclaredScopes& scopes,
-    std::span<const BodyStatics> body_statics, const StorageBringUp& bring_up)
-    -> diag::Result<void> {
+    const hir::ClassDecl& hir_class, const hir::ClassDeclaration& declared,
+    const ClassShape& shape, const mir::Class& mir_class,
+    const DeclaredScopes& scopes, std::span<const BodyStatics> body_statics,
+    const StorageBringUp& bring_up) -> diag::Result<void> {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   const WalkFrame& frame = bring_up.value;
   mir::Block& block = *frame.current_block;
@@ -274,48 +255,38 @@ auto LowerStaticStorageInto(
       unit_lowerer, declaring_scope, mir_class.time_resolution,
       hir_class.static_init, std::nullopt, frame, scopes, {});
 
-  // Index the source-declared initializers by their target so the per-property
-  // loop reads each one in O(1): the source names only the properties it wrote,
-  // and the pass visits every property.
-  std::unordered_map<hir::StaticPropertyId, hir::ExprId> initializer_of;
-  initializer_of.reserve(hir_class.static_property_inits.size());
-  for (const hir::StaticPropertyInit& init : hir_class.static_property_inits) {
-    initializer_of.emplace(init.target, init.value);
-  }
-  for (const hir::StaticPropertyId prop_id :
-       hir_class.static_properties.Ids()) {
-    const hir::ClassStaticProperty& prop =
-        hir_class.static_properties.Get(prop_id);
-    const mir::TypeId prop_type = unit_lowerer.TranslateType(prop.type);
-    const mir::TypeId cell_type = mir::ObservableCellOf(unit.types, prop_type);
-    const StaticStorageHome& home =
-        shape.static_property_translation.Get(prop_id);
-
+  const auto cell_type_of = [&](hir::StaticPropertyId property) {
+    return mir::ObservableCellOf(
+        unit.types, unit_lowerer.TranslateType(
+                        declared.static_properties.Get(property).type));
+  };
+  for (const hir::StaticPropertyId prop_id : declared.static_properties.Ids()) {
     const mir::ExprId installed =
         install_block.exprs.Add(BuildStaticStorageAccess(
-            unit, bring_up.install, home, cell_type, mir::EnclosingHops{}));
-    const mir::ExprId prototype =
-        BuildDeclaredInitialValue(unit_lowerer, bring_up.install, prop.type);
+            unit, bring_up.install,
+            shape.static_property_translation.Get(prop_id),
+            cell_type_of(prop_id), mir::EnclosingHops{}));
+    const mir::ExprId prototype = BuildDeclaredInitialValue(
+        unit_lowerer, bring_up.install,
+        declared.static_properties.Get(prop_id).type);
     install_block.AppendStmt(
         mir::ExprStmt{
             .expr = install_block.exprs.Add(
                 mir::MakeCapabilityInstallCallExpr(
                     installed, prototype, support::BuiltinFn::kInitialize,
                     unit.builtins.void_type))});
-
-    const auto written = initializer_of.find(prop_id);
-    if (written == initializer_of.end()) {
-      continue;
-    }
+  }
+  for (const hir::StaticPropertyInit& init : hir_class.static_property_inits) {
     // The initializer is written in the class, whose name a construct in it
     // reports (LRM 21.2.1.5).
     auto value_or = lowerer.LowerExpr(
-        hir_class.static_init.exprs.Get(written->second),
+        hir_class.static_init.exprs.Get(init.value),
         frame.WithScopeName(hir_class.fixed_name));
     if (!value_or) return std::unexpected(std::move(value_or.error()));
     const mir::ExprId value_id = block.exprs.Add(*std::move(value_or));
     const mir::ExprId target = block.exprs.Add(BuildStaticStorageAccess(
-        unit, frame, home, cell_type, mir::EnclosingHops{}));
+        unit, frame, shape.static_property_translation.Get(init.target),
+        cell_type_of(init.target), mir::EnclosingHops{}));
     block.AppendStmt(
         mir::ExprStmt{
             .expr = block.exprs.Add(BuildStoreExpr(
@@ -340,13 +311,36 @@ auto LowerStaticStorageInto(
   return {};
 }
 
+// A static method (LRM 8.10) belongs to the class and runs on no object; every
+// other method runs on the one it was called through.
+auto CallableFormOf(const hir::MethodDispatch& dispatch) -> CallableForm {
+  return std::visit(
+      Overloaded{
+          [](const hir::TypeAssociated&) {
+            return CallableForm::kTypeAssociated;
+          },
+          [](const hir::NotVirtual&) { return CallableForm::kInstanceMember; },
+          [](const hir::IntroducesVirtual&) {
+            return CallableForm::kInstanceMember;
+          },
+          [](const hir::OverridesVirtual&) {
+            return CallableForm::kInstanceMember;
+          }},
+      dispatch);
+}
+
 }  // namespace
+
+auto ClassDeclLowerer::Declared() const -> const hir::ClassDeclaration& {
+  return owner_->Hir().classes.Declaration(hir_class_id_);
+}
 
 auto ClassDeclLowerer::DeclareShape(
     ClassShape* declaring_shape,
     std::span<const PlacedProperty> published_statics) -> diag::Result<void> {
   UnitLowerer& unit_lowerer = *owner_;
   const hir::ClassDecl& hir_class = *hir_class_;
+  const hir::ClassDeclaration& declared = Declared();
 
   const mir::TypeId self_pointer_type = unit_lowerer.Unit().types.Intern(
       mir::Type{mir::PointerType{
@@ -358,15 +352,15 @@ auto ClassDeclLowerer::DeclareShape(
   // object does; an interface class has no object and extends nothing at all
   // (LRM 8.26).
   std::optional<mir::ClassRef> base_ref;
-  if (hir_class.base.has_value()) {
-    base_ref = mir::AsClassRef(unit_lowerer.TranslateClassRef(*hir_class.base));
-  } else if (!hir_class.is_interface_class) {
+  if (declared.base.has_value()) {
+    base_ref = mir::ClassRef(unit_lowerer.ClassIdentity(*declared.base));
+  } else if (!declared.is_interface_class) {
     base_ref = mir::ClassRef{mir::ManagedObjectRootRef{}};
   }
-  std::vector<mir::DeclaredClassRef> implements;
-  implements.reserve(hir_class.implements.size());
-  for (const hir::ClassRef& iface : hir_class.implements) {
-    implements.push_back(unit_lowerer.TranslateClassRef(iface));
+  std::vector<mir::ClassId> implements;
+  implements.reserve(declared.implements.size());
+  for (const hir::ClassId iface : declared.implements) {
+    implements.push_back(unit_lowerer.ClassIdentity(iface));
   }
 
   ClassShape shape{
@@ -384,50 +378,24 @@ auto ClassDeclLowerer::DeclareShape(
       .static_properties = {},
       .named_static_properties = {},
       .callable_signatures = {},
-      .field_translation = {},
       .static_property_translation = {},
       .contained = {},
       .is_final = false,
-      .is_interface_class = hir_class.is_interface_class};
+      .is_interface_class = declared.is_interface_class};
 
-  // A property (LRM 8.4) becomes one field of the class, so where a property
-  // lands is a fact only this loop knows. It is recorded as the loop goes;
-  // nothing downstream recomputes it.
-  //
-  // A property another unit may name sits in a fixed prefix, ahead of every
-  // `local` one (LRM 8.18), so a unit reading the signature counts the same
-  // slot out of it and adding a `local` property moves none a referrer reaches.
-  // The source order is what the signature states and what a declaration
-  // initializer runs in, so it is kept within each group.
-  shape.field_translation =
-      base::Translation<hir::FieldId, mir::FieldId>{hir_class.fields.size()};
-  std::vector<mir::FieldId> placed(hir_class.fields.size());
-  const auto place = [&](bool published) {
-    for (const hir::FieldId id : hir_class.fields.Ids()) {
-      const hir::ClassField& field = hir_class.fields.Get(id);
-      if (field.is_published != published) {
-        continue;
-      }
-      placed[id.value] = shape.AddNamedField(
-          field.name, unit_lowerer.TranslateType(field.type));
-    }
-  };
-  place(true);
-  place(false);
-  for (const mir::FieldId id : placed) {
-    shape.field_translation.Append(id);
-  }
-
-  // The instance this class's objects belong to (LRM 6.22), placed after every
-  // property, since nothing outside the unit declaring the class reads it and
-  // what another unit counts a property's position out of is the properties
-  // alone. It is a borrow: the instance is built during elaboration and
+  // A property (LRM 8.4) becomes the field at its position, laid out as every
+  // unit declaring the class lays it out. The instance the class's objects
+  // belong to (LRM 6.22) is a borrow: it is built during elaboration and
   // outlives every object of the class, so nothing here owns it. Construction
   // is where it arrives, which is why the constructor takes it as a parameter.
-  if (hir_class.takes_declaring_instance) {
-    const mir::TypeId instance_type = unit_lowerer.Unit().builtins.scope_ptr;
+  ClassFields fields = unit_lowerer.ClassFieldsOf(declared);
+  for (PropertyField& property : fields.properties) {
+    shape.AddNamedField(std::move(property.name), property.type);
+  }
+  if (fields.declaring_instance.has_value()) {
     shape.declaring_instance = DeclaringInstance{
-        .type = instance_type, .member = shape.AddField(instance_type)};
+        .type = *fields.declaring_instance,
+        .member = shape.AddField(*fields.declaring_instance)};
   }
 
   // Everything the class keeps for itself rather than per object goes to one
@@ -457,9 +425,9 @@ auto ClassDeclLowerer::DeclareShape(
   // an instance property, reachable only through a receiver, a plain value.
   shape.static_property_translation =
       base::Translation<hir::StaticPropertyId, StaticStorageHome>{
-          hir_class.static_properties.size()};
-  for (const hir::StaticPropertyId id : hir_class.static_properties.Ids()) {
-    const hir::ClassStaticProperty& sp = hir_class.static_properties.Get(id);
+          declared.static_properties.size()};
+  for (const hir::StaticPropertyId id : declared.static_properties.Ids()) {
+    const hir::DeclaredProperty& sp = declared.static_properties.Get(id);
     const mir::TypeId cell_type = mir::ObservableCellOf(
         unit_lowerer.Unit().types, unit_lowerer.TranslateType(sp.type));
     const auto published =
@@ -496,38 +464,37 @@ auto ClassDeclLowerer::DeclareShape(
   };
 
   // Everything a peer may need about a method before its body exists is
-  // settled here, in one pass over the methods. Its callable identity comes
-  // from the shape's own pool, so a call resolves whatever order the two
-  // bodies reach (LRM 13.7). Its
-  // static-lifetime variables take their cells on this same shape, so a static
-  // write from a body routes to the exact cell the shape declares.
-  std::vector<DeclaredCallable> declared_methods;
-  declared_methods.reserve(hir_class.methods.size());
+  // settled here, in one pass over what the class declares. Each method is the
+  // callable at its position, so a call resolves whatever order the two bodies
+  // reach (LRM 13.7). Its static-lifetime variables take their cells on this
+  // same shape, so a static write from a body routes to the exact cell the
+  // shape declares. The method making a covergroup the class embeds (LRM
+  // 19.4.1) is virtual, so a class extending this one makes its extension of
+  // the covergroup through it.
   std::vector<CallableSignature> signatures;
-  signatures.reserve(hir_class.methods.size());
-  for (const hir::MethodId id : hir_class.methods.Ids()) {
-    const hir::SubroutineDecl& method = hir_class.methods.Get(id);
+  signatures.reserve(declared.methods.size());
+  for (const hir::MethodId id : declared.methods.Ids()) {
     signatures.push_back(
         CallableSignature{
-            .virtual_dispatch = unit_lowerer.DispatchRoleOf(method)});
-    declared_methods.push_back(
-        DeclaredCallable{
-            .callable = unit_lowerer.TranslateMethod(hir_class_id_, id),
-            .statics = bind_statics(method)});
+            .virtual_dispatch = unit_lowerer.DispatchRoleOf(
+                hir::ClassMethodTarget{.owner = hir_class_id_, .method = id})});
   }
-  // The method making each covergroup the class embeds follows the methods the
-  // source declares (LRM 19.4.1), virtual so a class extending this one makes
-  // its extension of the covergroup through it.
-  for (const hir::CovergroupId covergroup : hir_class.embedded_covergroups) {
+  std::vector<StaticVarBindings> method_statics;
+  method_statics.reserve(hir_class.methods.size());
+  for (const hir::MethodId id : hir_class.methods.Ids()) {
+    method_statics.push_back(bind_statics(hir_class.methods.Get(id)));
+  }
+  // A forward overrides the behavior of the implementation it enters.
+  for (const hir::InterfaceForward& forward : hir_class.interface_forwards) {
     signatures.push_back(
         CallableSignature{
-            .virtual_dispatch =
-                CovergroupFactoryDispatch(unit_lowerer, covergroup)});
+            .virtual_dispatch = mir::OverridesVirtualSlot{
+                .overridden = unit_lowerer.VirtualSlotOf(forward.overrides)}});
+    forward_statics_.push_back(bind_statics(forward.method));
   }
   // What `randomize()` asks of the class (LRM 18.6) overrides what the part of
   // every object declares, each at the identity the class took for it.
-  std::size_t callable_count =
-      hir_class.methods.size() + hir_class.embedded_covergroups.size();
+  std::size_t callable_count = signatures.size();
   if (const std::optional<RandomizationHooks>& hooks =
           unit_lowerer.RandomizationHooksOf(hir_class_id_)) {
     const auto overrides = hooks->Overrides();
@@ -540,7 +507,7 @@ auto ClassDeclLowerer::DeclareShape(
     }
   }
   shape.callable_signatures = {callable_count, std::move(signatures)};
-  declared_methods_ = {hir_class.methods.size(), std::move(declared_methods)};
+  method_statics_ = {hir_class.methods.size(), std::move(method_statics)};
   ctor_static_bindings_ = bind_statics(hir_class.constructor);
 
   // No lexical scope of a method body is a place a path reaches: a class
@@ -554,7 +521,7 @@ auto ClassDeclLowerer::DeclareShape(
   // A block of a method a covergroup the class embeds is sampled at triggers
   // the event of the record of each instance the object holds (LRM 19.3).
   BlockEventTriggers block_events;
-  AddEmbeddedBlockEvents(unit_lowerer, hir_class_id_, shape, block_events);
+  AddEmbeddedBlockEvents(unit_lowerer, hir_class_id_, block_events);
   scopes_ = ScopesOwningDisableTargets(
       hir_class.procedural_scopes, hir_class.fixed_name, class_storage,
       unit_lowerer.Unit().types.Intern(
@@ -591,6 +558,7 @@ void ClassDeclLowerer::DefineRandomizationHooks(
     const RandomizationHooks& hooks) const {
   UnitLowerer& unit_lowerer = *owner_;
   const hir::ClassDecl& hir_class = *hir_class_;
+  const hir::ClassDeclaration& declared = Declared();
   const ClassShape& shape = unit_lowerer.GetClassShape(class_id_);
   const auto make_frame = [&](ScopeChainNode& link) {
     return BodyFrame(declaring_frame, mir_class, link);
@@ -598,16 +566,16 @@ void ClassDeclLowerer::DefineRandomizationHooks(
   // A hook is handed the problem as each constraint block it calls is.
   const std::optional<mir::TypeId> handed = ConstraintProblemParamTypeOf(
       unit_lowerer.Unit(), hir::SubroutineKind::kConstraintBlock);
-  const auto finish = [&](HookBody& body, const ExtendedHook& hook) {
-    mir_class.callables.Define(hooks.*hook.body, body.Finish(hook.function));
+  const auto finish = [&](HookBody& body, support::LibraryVirtual function) {
+    mir_class.callables.Define(hooks.BodyOf(function), body.Finish(function));
   };
-  const auto begin = [&](HookBody& body, const ExtendedHook& hook) {
-    if (!hir_class.base.has_value()) {
+  const auto begin = [&](HookBody& body, support::LibraryVirtual function) {
+    if (!declared.base.has_value()) {
       return;
     }
     body.Run(
         mir::Direct{
-            .target = BaseHookTarget(unit_lowerer, *hir_class.base, hook),
+            .target = BaseHookTarget(unit_lowerer, *declared.base, function),
             .receiver =
                 BuildObjectDeref(body.Unit(), body.Block(), body.Self())},
         {body.ProblemReference()});
@@ -645,12 +613,12 @@ void ClassDeclLowerer::DefineRandomizationHooks(
             member.type, member_type, member.random);
       }
     };
-    for (const hir::FieldId id : hir_class.fields.Ids()) {
-      const hir::ClassField& field = hir_class.fields.Get(id);
+    for (const hir::FieldId id : declared.properties.Ids()) {
+      const hir::DeclaredProperty& field = declared.properties.Get(id);
       if (!hir::IsRandom(field.random)) {
         continue;
       }
-      const mir::FieldId slot = shape.field_translation.Get(id);
+      const mir::FieldId slot{id.value};
       const mir::TypeId type = mir_class.fields.Get(slot).type;
       walk(
           walk,
@@ -660,15 +628,14 @@ void ClassDeclLowerer::DefineRandomizationHooks(
                       .object = body.Self(),
                       .property =
                           mir::ClassFieldTarget{
-                              .owner = mir::IntraUnitClassRef{class_id_},
-                              .slot = slot},
+                              .owner = class_id_, .slot = slot},
                       .type = type},
               .descent = {}},
           field.type, type, field.random);
     }
-    for (const hir::StaticPropertyId id : hir_class.static_properties.Ids()) {
-      const hir::ClassStaticProperty& property =
-          hir_class.static_properties.Get(id);
+    for (const hir::StaticPropertyId id : declared.static_properties.Ids()) {
+      const hir::DeclaredProperty& property =
+          declared.static_properties.Get(id);
       if (!hir::IsRandom(property.random)) {
         continue;
       }
@@ -687,7 +654,7 @@ void ClassDeclLowerer::DefineRandomizationHooks(
 
   {
     HookBody body(unit_lowerer, shape, make_frame, handed);
-    begin(body, kRandVariablesHook);
+    begin(body, support::LibraryVirtual::kClassRandVariables);
     each_random_variable(
         body, [&](const AccessPath& path, hir::TypeId hir_type,
                   mir::TypeId type, hir::RandomQualifier random) {
@@ -708,15 +675,15 @@ void ClassDeclLowerer::DefineRandomizationHooks(
                                 : support::BuiltinFn::kConstraintRand},
               {body.Problem(), named.reference, named.value});
         });
-    finish(body, kRandVariablesHook);
+    finish(body, support::LibraryVirtual::kClassRandVariables);
   }
 
   {
     HookBody body(unit_lowerer, shape, make_frame, handed);
-    begin(body, kConstrainHook);
+    begin(body, support::LibraryVirtual::kClassConstrain);
     for (const hir::MethodId id : hir_class.methods.Ids()) {
       const hir::SubroutineDecl& method = hir_class.methods.Get(id);
-      const mir::CallableId callable = declared_methods_.Get(id).callable;
+      const mir::CallableId callable{id.value};
       const std::optional<mir::VirtualDispatchRole>& role =
           shape.callable_signatures.Get(callable).virtual_dispatch;
       // A block overriding one of the class it extends is reached by that
@@ -747,8 +714,7 @@ void ClassDeclLowerer::DefineRandomizationHooks(
               mir::Direct{
                   .target = support::BuiltinFn::kStaticConstraintBlockEnabled},
               {name(StaticConstraintModeKey(
-                  unit_lowerer.Hir(), hir::LocalClassRef{hir_class_id_},
-                  method.name))},
+                  unit_lowerer.Hir(), hir_class_id_, method.name))},
               unit.builtins.machine_bool);
           break;
       }
@@ -781,12 +747,12 @@ void ClassDeclLowerer::DefineRandomizationHooks(
               .then_scope = block.child_scopes.Add(std::move(then_block)),
               .else_scope = std::nullopt});
     }
-    finish(body, kConstrainHook);
+    finish(body, support::LibraryVirtual::kClassConstrain);
   }
 
   {
     HookBody body(unit_lowerer, shape, make_frame, handed);
-    begin(body, kRandObjectsHook);
+    begin(body, support::LibraryVirtual::kClassRandObjects);
     each_random_variable(
         body, [&](const AccessPath& path, hir::TypeId hir_type,
                   mir::TypeId type, hir::RandomQualifier) {
@@ -798,7 +764,7 @@ void ClassDeclLowerer::DefineRandomizationHooks(
               mir::Direct{.target = support::BuiltinFn::kRandomizeNested},
               {body.Problem(), named.reference, named.value});
         });
-    finish(body, kRandObjectsHook);
+    finish(body, support::LibraryVirtual::kClassRandObjects);
   }
 
   // The `pre_randomize` or `post_randomize` the class declares, called on the
@@ -822,7 +788,7 @@ void ClassDeclLowerer::DefineRandomizationHooks(
                 .target =
                     mir::CallableTarget{
                         .owner = class_id_,
-                        .slot = declared_methods_.Get(method).callable},
+                        .slot = mir::CallableId{method.value}},
                 .receiver =
                     BuildObjectDeref(body.Unit(), body.Block(), body.Self())},
             std::move(arguments),
@@ -839,6 +805,7 @@ auto ClassDeclLowerer::PopulateBodies(
     -> diag::Result<void> {
   UnitLowerer& unit_lowerer = *owner_;
   const hir::ClassDecl& hir_class = *hir_class_;
+  const hir::ClassDeclaration& declared = Declared();
   const ClassShape& shape = unit_lowerer.GetClassShape(class_id_);
 
   mir::Class mir_class = shape.OpenClass();
@@ -848,7 +815,7 @@ auto ClassDeclLowerer::PopulateBodies(
             .interface_behavior =
                 unit_lowerer.VirtualSlotOf(answered.interface_behavior),
             .answered_by = answered.answered_by.transform(
-                [&](const hir::VirtualBehavior& behavior) {
+                [&](const hir::ClassMethodTarget& behavior) {
                   return unit_lowerer.VirtualSlotOf(behavior);
                 })});
   }
@@ -889,9 +856,7 @@ auto ClassDeclLowerer::PopulateBodies(
             BuildObjectDeref(
                 unit_lowerer.Unit(), ctor_block,
                 ctor_block.exprs.Add(MakeSelfRefExpr(frame))),
-            mir::ClassFieldTarget{
-                .owner = mir::IntraUnitClassRef{class_id_},
-                .slot = instance->member},
+            mir::ClassFieldTarget{.owner = class_id_, .slot = instance->member},
             instance->type));
     ctor_block.AppendStmt(
         mir::ExprStmt{
@@ -923,7 +888,7 @@ auto ClassDeclLowerer::PopulateBodies(
   // constructor after what the object records and before any property is
   // initialized. The object is already of the class it was created as (LRM
   // 8.17 NOTE 2), so the base's constructor runs on it as it is.
-  if (hir_class.base.has_value()) {
+  if (declared.base.has_value()) {
     std::vector<mir::ExprId> base_args;
     // A base belonging to an instance leads its arguments with that instance,
     // which encloses the one this class belongs to.
@@ -932,8 +897,7 @@ auto ClassDeclLowerer::PopulateBodies(
           ctor_lowerer, frame, *hir_class.base_call.declaring_instance));
     }
     auto actuals = EmitConstructionActuals(
-        ctor_lowerer, reporting, *hir_class.base,
-        hir_class.base_call.arguments);
+        ctor_lowerer, reporting, *declared.base, hir_class.base_call.arguments);
     if (!actuals) return std::unexpected(std::move(actuals.error()));
     base_args.insert(base_args.end(), actuals->begin(), actuals->end());
     // The base's construction is part of this one, so it reports where this
@@ -950,114 +914,127 @@ auto ClassDeclLowerer::PopulateBodies(
                     mir::Direct{
                         .target =
                             mir::ConstructorTarget{
-                                .cls = unit_lowerer.TranslateClassRef(
-                                    *hir_class.base)},
+                                .cls =
+                                    unit_lowerer.ClassIdentity(*declared.base)},
                         .receiver = object},
                     std::move(base_args),
                     unit_lowerer.Unit().builtins.void_type))});
   }
 
-  // Initialize each property in declaration order before the constructor body
-  // runs (LRM 8.7): every property starts as a declaration that writes none
-  // does (LRM Table 6-7), and one with an explicit initializer is then assigned
-  // that value -- lowered through the constructor lowerer so a property read
-  // resolves against the receiver -- since the initializer may read the
-  // property itself (LRM 10.5). The ordering is the single declaration-order
-  // pass because an initializer may read an earlier property whose own
-  // initialization has already run.
-  //
-  // Index the source-declared initializers by their target so the per-field
-  // loop below reads each one in O(1): the source names only the fields it
-  // wrote, and the pass visits every field.
-  std::unordered_map<hir::FieldId, hir::ExprId> initializer_of;
-  initializer_of.reserve(hir_class.field_inits.size());
-  for (const hir::FieldInit& init : hir_class.field_inits) {
-    initializer_of.emplace(init.target, init.value);
+  // Every property starts as a declaration that writes none does (LRM Table
+  // 6-7), and then each one the source wrote an initializer for is assigned
+  // that value, in the order the source declares them (LRM 8.7), before the
+  // constructor body runs -- lowered through the constructor lowerer so a
+  // property read resolves against the receiver, and in that order because an
+  // initializer may read a property declared before it (LRM 10.5).
+  const auto store = [&](hir::FieldId property, mir::ExprId value_id) {
+    const mir::FieldId slot{property.value};
+    const mir::ExprId self_ref = ctor_block.exprs.Add(MakeSelfRefExpr(frame));
+    const mir::ExprId target = ctor_block.exprs.Add(
+        mir::MakeFieldAccessExpr(
+            BuildObjectDeref(unit_lowerer.Unit(), ctor_block, self_ref),
+            mir::ClassFieldTarget{.owner = class_id_, .slot = slot},
+            mir_class.fields.Get(slot).type));
+    ctor_block.AppendStmt(
+        mir::ExprStmt{
+            .expr = ctor_block.exprs.Add(
+                mir::MakeAssignExpr(
+                    unit_lowerer.Unit().builtins, target, value_id))});
+  };
+  for (const hir::FieldId property : declared.properties.Ids()) {
+    store(
+        property,
+        BuildDeclaredInitialValue(
+            unit_lowerer, frame, declared.properties.Get(property).type));
   }
-  for (const hir::FieldId hir_field_id : hir_class.fields.Ids()) {
-    const hir::ClassField& field = hir_class.fields.Get(hir_field_id);
-    const mir::FieldId mir_field_id = shape.field_translation.Get(hir_field_id);
-    const mir::TypeId field_type = mir_class.fields.Get(mir_field_id).type;
-    const auto store = [&](mir::ExprId value_id) {
-      const mir::ExprId self_ref = ctor_block.exprs.Add(MakeSelfRefExpr(frame));
-      const mir::ExprId target = ctor_block.exprs.Add(
-          mir::MakeFieldAccessExpr(
-              BuildObjectDeref(unit_lowerer.Unit(), ctor_block, self_ref),
-              mir::ClassFieldTarget{
-                  .owner = mir::IntraUnitClassRef{class_id_},
-                  .slot = mir_field_id},
-              field_type));
-      ctor_block.AppendStmt(
-          mir::ExprStmt{
-              .expr = ctor_block.exprs.Add(
-                  mir::MakeAssignExpr(
-                      unit_lowerer.Unit().builtins, target, value_id))});
-    };
-    store(BuildDeclaredInitialValue(unit_lowerer, frame, field.type));
-    if (const auto it = initializer_of.find(hir_field_id);
-        it != initializer_of.end()) {
-      auto value_or =
-          ctor_lowerer.LowerExpr(ctor.body.exprs.Get(it->second), reporting);
-      if (!value_or) return std::unexpected(std::move(value_or.error()));
-      store(ctor_block.exprs.Add(*std::move(value_or)));
-    }
+  for (const hir::FieldInit& init : hir_class.field_inits) {
+    auto value_or =
+        ctor_lowerer.LowerExpr(ctor.body.exprs.Get(init.value), reporting);
+    if (!value_or) return std::unexpected(std::move(value_or.error()));
+    store(init.target, ctor_block.exprs.Add(*std::move(value_or)));
   }
 
-  // Each instance method (LRM 8.6) is lowered as a callable this class owns: it
-  // resolves the body's `self` to the managed handle, and the method's
-  // callable identity is the one the shape handed out, so a call site that
-  // resolved before this body lowered reaches this method.
+  // Each method (LRM 8.6) is lowered as a callable this class owns, at its
+  // position, where a call site that resolved before this body lowered already
+  // reaches it; its body resolves `self` to the managed handle. A method the
+  // source declared is what a name reaches, here and from another unit, so the
+  // class records the name against the body. A forward is named as the
+  // behavior it answers is, which is what overriding it takes.
   //
   // A pure virtual prototype (LRM 8.21) has no source-defined body to walk;
   // its MIR record still carries the signature -- receiver, named parameters,
   // and result type -- so the backend can emit the class's declaration, but
   // no body is produced, and the absence of one is what states the shape.
-  for (const hir::MethodId method_id : hir_class.methods.Ids()) {
-    const auto& method = hir_class.methods.Get(method_id);
-    const DeclaredCallable& declared = declared_methods_.Get(method_id);
-    // A method the source declared is what a name reaches, here and from
-    // another unit, so the class records the name against the body it reaches.
+  const auto lower_method =
+      [&](const hir::SubroutineDecl& method, CallableForm form,
+          mir::CallableId callable,
+          const StaticVarBindings& statics) -> diag::Result<void> {
     mir_class.named_callables.push_back(
-        mir::NamedCallable{.name = method.name, .body = declared.callable});
+        mir::NamedCallable{.name = method.name, .body = callable});
     const auto method_dispatch =
-        shape.callable_signatures.Get(declared.callable).virtual_dispatch;
-    if (method.is_prototype) {
+        shape.callable_signatures.Get(callable).virtual_dispatch;
+    if (!method.root_stmt.has_value()) {
       // A prototype declares the interface its definitions implement, so it
       // reads that interface from the same declaration they do.
-      mir::CallableCode proto_code =
-          PrototypeOf(unit_lowerer, method, shape.self_pointer_type);
       mir_class.callables.Define(
-          declared.callable, mir::CallableDecl{
-                                 .code = std::move(proto_code),
-                                 .foreign = std::nullopt,
-                                 .virtual_dispatch = method_dispatch,
-                                 .type_parameters = {}});
-      continue;
+          callable, mir::CallableDecl{
+                        .code = PrototypeOf(
+                            unit_lowerer, method, shape.self_pointer_type),
+                        .foreign = std::nullopt,
+                        .virtual_dispatch = method_dispatch,
+                        .type_parameters = {},
+                        .defining_unit = std::nullopt});
+      return {};
     }
     ScopeChainNode method_link{};
     const WalkFrame method_owner_frame =
         BodyFrame(declaring_frame, mir_class, method_link);
     ProcessLowerer method_lowerer(
         unit_lowerer, declaring_scope_, mir_class.time_resolution, method.body,
-        method.root_stmt, method_owner_frame, scopes_, declared.statics);
-    auto method_code_or = method_lowerer.Run(method);
+        method.root_stmt, method_owner_frame, scopes_, statics);
+    auto method_code_or = method_lowerer.Run(method, form);
     if (!method_code_or) {
       return std::unexpected(std::move(method_code_or.error()));
     }
     mir_class.callables.Define(
-        declared.callable, mir::CallableDecl{
-                               .code = *std::move(method_code_or),
-                               .foreign = std::nullopt,
-                               .virtual_dispatch = method_dispatch,
-                               .type_parameters = {}});
+        callable, mir::CallableDecl{
+                      .code = *std::move(method_code_or),
+                      .foreign = std::nullopt,
+                      .virtual_dispatch = method_dispatch,
+                      .type_parameters = {},
+                      .defining_unit = std::nullopt});
+    return {};
+  };
+  for (const hir::MethodId method_id : hir_class.methods.Ids()) {
+    if (auto lowered = lower_method(
+            hir_class.methods.Get(method_id),
+            CallableFormOf(declared.methods.Get(method_id).dispatch),
+            mir::CallableId{method_id.value}, method_statics_.Get(method_id));
+        !lowered) {
+      return std::unexpected(std::move(lowered.error()));
+    }
+  }
+  const std::span<const mir::CallableId> forwards =
+      unit_lowerer.InterfaceForwardsOf(hir_class_id_);
+  for (std::size_t i = 0; i < forwards.size(); ++i) {
+    if (auto lowered = lower_method(
+            hir_class.interface_forwards[i].method,
+            CallableForm::kInstanceMember, forwards[i], forward_statics_[i]);
+        !lowered) {
+      return std::unexpected(std::move(lowered.error()));
+    }
   }
 
   // The method making each covergroup the class embeds (LRM 19.4.1), named by
   // the covergroup's name, as the class's signature publishes it.
-  for (std::size_t i = 0; i < hir_class.embedded_covergroups.size(); ++i) {
-    const hir::CovergroupId covergroup = hir_class.embedded_covergroups[i];
-    const mir::CallableId callable =
-        unit_lowerer.TranslateFactory(hir_class_id_, i);
+  for (const hir::MethodId method_id : declared.methods.Ids()) {
+    const std::optional<hir::CovergroupId>& made =
+        declared.methods.Get(method_id).makes;
+    if (!made.has_value()) {
+      continue;
+    }
+    const hir::CovergroupId covergroup = *made;
+    const mir::CallableId callable{method_id.value};
     ScopeChainNode factory_link{};
     auto factory = LowerCovergroupFactory(
         unit_lowerer, BodyFrame(declaring_frame, mir_class, factory_link),
@@ -1075,7 +1052,8 @@ auto ClassDeclLowerer::PopulateBodies(
             .foreign = std::nullopt,
             .virtual_dispatch =
                 shape.callable_signatures.Get(callable).virtual_dispatch,
-            .type_parameters = {}});
+            .type_parameters = {},
+            .defining_unit = std::nullopt});
   }
   if (const std::optional<RandomizationHooks>& hooks =
           unit_lowerer.RandomizationHooksOf(hir_class_id_)) {
@@ -1092,19 +1070,28 @@ auto ClassDeclLowerer::PopulateBodies(
 
   ctor_code.params = std::move(ctor_params);
   ctor_code.result_type = unit_lowerer.Unit().builtins.void_type;
-  if (!hir_class.is_interface_class) {
+  if (!declared.is_interface_class) {
     mir_class.constructor = mir::ConstructorDecl{.code = std::move(ctor_code)};
   }
 
   std::vector<BodyStatics> body_statics;
-  body_statics.reserve(hir_class.methods.size() + 1);
+  body_statics.reserve(
+      hir_class.methods.size() + hir_class.interface_forwards.size() + 1);
   for (const hir::MethodId method_id : hir_class.methods.Ids()) {
     const auto& method = hir_class.methods.Get(method_id);
     body_statics.push_back(
         BodyStatics{
             .body = &method.body,
             .name = method.name,
-            .statics = declared_methods_.Get(method_id).statics});
+            .statics = method_statics_.Get(method_id)});
+  }
+  for (std::size_t i = 0; i < hir_class.interface_forwards.size(); ++i) {
+    const hir::SubroutineDecl& method = hir_class.interface_forwards[i].method;
+    body_statics.push_back(
+        BodyStatics{
+            .body = &method.body,
+            .name = method.name,
+            .statics = forward_statics_[i]});
   }
   body_statics.push_back(
       BodyStatics{
@@ -1120,8 +1107,8 @@ auto ClassDeclLowerer::PopulateBodies(
   // rest of what it owns. Either way once, and before any process runs (LRM
   // 10.5).
   if (auto r = LowerStaticStorageInto(
-          unit_lowerer, declaring_scope_, hir_class, shape, mir_class, scopes_,
-          body_statics, owner_bring_up);
+          unit_lowerer, declaring_scope_, hir_class, declared, shape, mir_class,
+          scopes_, body_statics, owner_bring_up);
       !r) {
     return std::unexpected(std::move(r.error()));
   }

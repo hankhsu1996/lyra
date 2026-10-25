@@ -2991,8 +2991,11 @@ enough to warrant its own focused review.
       `-Wunused-parameter`; the one spelling both accept, a name written as a comment, is a
       suppression the project's style forbids. Seen on the library value types' refusing overrides;
       the code generator fills the same slots of every table it generates with a body nothing
-      enters. Target: a type answers only the operations it has, so no override exists to refuse --
-      the operations no type of a family answers move to the family that does. Not blocked.
+      enters; and the part every class object starts with gives the three functions `randomize()`
+      asks of a class a body that ignores the problem it is handed, which every source class
+      overrides and only a covergroup's class inherits. Target: a type answers only the operations
+      it has, so no override exists to refuse -- the operations no type of a family answers move to
+      the family that does. Not blocked.
 
 - [ ] R240 -- clang-tidy reports readability-static-accessed-through-instance on the generated
       process body the runtime resumes, at the coroutine's own declaration, where nothing in the
@@ -3212,17 +3215,43 @@ source, or not yet tried.
       end of the enclosing full-expression. MIR's verification refuses a yield that reaches a local
       the block declares or a value it makes, through borrows, composites, closure captures and
       calls answering a reference into what they are handed.
-- [ ] R254 -- Every kind of thing one unit can name of another -- a class, a covergroup, a method, a
-      static property, a virtual behavior, a scope's published class -- has its own pair of forms,
-      one for this unit and one for another, and its own place where a name that turns out to be
-      this unit's own is given this unit's identity: some where a signature is read, some in the
-      lowering to MIR. Nothing states once what a unit's own entity is, how a name another unit
-      published is rebased onto the reader's identities, and which step does it, so a new kind of
-      entity a unit can name across units repeats the pair, the rebasing and the verifier's check.
-      The case that found it was a specialization's lineage coming back to the package declaring its
-      generic, which had to be answered for classes, behaviors and covergroups separately. Target:
-      one identity for each entity a unit declares, with the forms a reader holds of it derived from
-      that identity and the reader, and one rebasing step every import goes through. Not blocked.
+
+- [x] R254 -- Every kind of thing one unit can name of another -- a class, a covergroup, a method, a
+      static property, a virtual behavior, a scope's published class, a record, a member of a unit's
+      namespace -- is named by one identity in the reader, whichever unit declares it: the reader
+      turns the stable key a signature carries into its identity once, where it reads the key, and a
+      key naming the reader lands on its own declaration. What is known of a class is one answer for
+      this unit's and another's: a member is at one position in it, the same in every unit, and a
+      method's part in dispatch is stated there alone. Below that, a class, a record or a namespace
+      member another unit defines is a declared entry of the reader's own tables, holding nothing
+      the reader emits, and which of them a unit depends on is read off its finished MIR by what
+      that MIR reads, never recorded while it is lowered. The methods forwarding an interface
+      class's behaviors stay, outside the members a class declares, and go with the C++ layout
+      (R255).
+
+- [ ] R255 -- How an object is laid out for the execution backend follows the C++ ABI where
+      SystemVerilog does not ask for it, and three decisions hold each other there: an interface
+      class is a part of every object with a table of its own (a C++ virtual base), a class handle
+      carries the view of the class it is held as beside the object's identity, and the runtime
+      drives an object through C++ virtual functions of a library class every generated class
+      extends, so generated code must match the library compiler's layout of that class. The
+      language asks only that an interface class add no storage, that one reached along two paths be
+      one type (LRM 8.26.6.3), and that `$cast` between classes and interface classes test the
+      object (LRM 8.26.5). Seen on a method every class has called through an interface class
+      handle: a library entry handed an interface handle's part where it takes the object's start,
+      and a call of an interface class's virtual hook (LRM 8.26.9) realized by two library functions
+      because neither MIR nor the C++ rendering has a way to dispatch the library class's hook
+      through an interface handle. Candidates to weigh together: the object reference canonical and
+      an interface answered from class metadata the object's header names; an object pointer with an
+      interface's own table beside it, as a `dyn` reference is; MIR dispatching the library class's
+      hook on the object; the interface class carrying its two hooks as behaviors every class
+      answers. Target: language semantics -- which body a call runs, which object it is made on --
+      stated in MIR alone, and the layout, the tables and the calling convention between generated
+      code and the runtime chosen below it as one explicit boundary both backends implement; decided
+      on a matrix of hook calls through class and interface handles, interface diamonds, casts
+      between interfaces, inherited virtual and non-virtual implementations, cross-unit lineages and
+      dispatch during construction, and on measured object size, handle size, dispatch cost and
+      emitted size. Not blocked.
 
 - [ ] R256 -- MIR has generic callables, but they are shaped by what the first one needed rather
       than by a generic programming model, and the step between MIR as built and MIR as the backends

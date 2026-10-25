@@ -34,8 +34,8 @@ auto ConstructionTableLayout::LayOut(
     for (const InstanceAlternative& alternative : member.alternatives) {
       instantiated_.push_back(
           UnitBodyRef{
-              .unit = unit.external_scope_classes.Get(alternative.scope_class)
-                          .unit_name,
+              .unit =
+                  unit.scope_classes.KeyOf(alternative.scope_class).unit_name,
               .body = alternative.body});
     }
   }

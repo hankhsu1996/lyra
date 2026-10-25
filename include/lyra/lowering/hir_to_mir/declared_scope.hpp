@@ -66,7 +66,7 @@ struct TypeEventCell {
 struct HeldCovergroupEvent {
   mir::ClassFieldTarget holder;
   mir::TypeId handle_type;
-  hir::CovergroupRef covergroup;
+  hir::CovergroupId covergroup;
 };
 
 using BlockEventTrigger = std::variant<TypeEventCell, HeldCovergroupEvent>;

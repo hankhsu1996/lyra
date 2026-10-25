@@ -23,13 +23,15 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/class_decl.hpp"
+#include "lyra/hir/class_declaration.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/compilation_unit.hpp"
-#include "lyra/hir/external_scope_class.hpp"
 #include "lyra/hir/published_scope.hpp"
+#include "lyra/hir/scope_class.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
+#include "lyra/hir/subroutine_prototype.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
@@ -55,7 +57,6 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
-#include "lyra/mir/external_class.hpp"
 #include "lyra/mir/keeper.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -88,13 +89,8 @@ auto BorrowedObjectHandles(const mir::TypePool& types, mir::TypeId value_type)
 // 12.6.3) puts the arms it guards in one of its own -- so what the body reads
 // is the union over the whole tree, gathered here as the walk descends.
 void GatherUnitsReadBy(
-    const mir::Block& body, std::string_view own_unit,
+    const mir::CompilationUnit& unit, const mir::Block& body,
     std::unordered_set<std::string>& units) {
-  const auto note = [&](std::string_view unit_name) {
-    if (unit_name != own_unit) {
-      units.emplace(unit_name);
-    }
-  };
   for (const mir::ExprId id : body.exprs.Ids()) {
     const auto* reference =
         std::get_if<mir::ReferenceExpr>(&body.exprs.Get(id).data);
@@ -102,16 +98,22 @@ void GatherUnitsReadBy(
       continue;
     }
     if (const auto* ref =
-            std::get_if<mir::ExternalUnitVariableRef>(&reference->target)) {
-      note(ref->unit_name);
+            std::get_if<mir::StaticVariableRef>(&reference->target)) {
+      if (const std::optional<std::string>& defining =
+              unit.static_variables.Get(ref->variable).defining_unit) {
+        units.emplace(*defining);
+      }
     }
     if (const auto* ref =
-            std::get_if<mir::ExternalStaticPropertyRef>(&reference->target)) {
-      note(ref->unit_name);
+            std::get_if<mir::StaticPropertyRef>(&reference->target)) {
+      if (const std::optional<std::string>& defining =
+              unit.GetClass(ref->owner).defining_unit) {
+        units.emplace(*defining);
+      }
     }
   }
   for (const mir::BlockId id : body.child_scopes.Ids()) {
-    GatherUnitsReadBy(body.child_scopes.Get(id), own_unit, units);
+    GatherUnitsReadBy(unit, body.child_scopes.Get(id), units);
   }
 }
 
@@ -120,10 +122,10 @@ void GatherUnitsReadBy(
 // one kind of storage differing in how far the name is qualified. Each named
 // once and in name order, because what is done with the answer is emitting a
 // call per unit and a design compiles to the same program each time.
-auto UnitsReadBy(const mir::Block& body, std::string_view own_unit)
+auto UnitsReadBy(const mir::CompilationUnit& unit, const mir::Block& body)
     -> std::vector<std::string> {
   std::unordered_set<std::string> gathered;
-  GatherUnitsReadBy(body, own_unit, gathered);
+  GatherUnitsReadBy(unit, body, gathered);
   std::vector<std::string> units(gathered.begin(), gathered.end());
   std::ranges::sort(units);
   return units;
@@ -187,8 +189,9 @@ auto PopulateNamespaceOwnStorage(
           diag::DiagCode::kUnsupportedExpressionForm,
           "a package variable of this type is not yet supported");
     }
-    const mir::StaticVariableId variable =
-        unit.static_variables.Add(mir::StaticVariableDecl{.type = cell_type});
+    const mir::StaticVariableId variable = unit.static_variables.Add(
+        mir::StaticVariableDecl{
+            .type = cell_type, .defining_unit = std::nullopt});
     unit.named_static_variables.push_back(
         mir::NamedStaticVariable{.name = d.name, .variable = variable});
 
@@ -304,7 +307,6 @@ void GuardNamespaceInitialization(
 
   mir::Block bring_up;
   for (const std::string& read : reads) {
-    unit.ConsumeNamespaceOf(read);
     bring_up.AppendStmt(
         mir::ExprStmt{
             .expr = bring_up.exprs.Add(
@@ -344,8 +346,7 @@ void GuardNamespaceInitialization(
 void PublishNamespaceStorageBringUp(
     const UnitLowerer& unit_lowerer, mir::CompilationUnit& unit,
     mir::CallableCode install_code, mir::CallableCode value_code) {
-  const std::vector<std::string> reads =
-      UnitsReadBy(value_code.Body(), unit.name);
+  const std::vector<std::string> reads = UnitsReadBy(unit, value_code.Body());
   WrapInNamespaceStaticInitExtent(unit_lowerer, unit, value_code);
   GuardNamespaceInitialization(unit_lowerer, unit, value_code, reads);
 
@@ -355,13 +356,15 @@ void PublishNamespaceStorageBringUp(
               .code = std::move(install_code),
               .foreign = std::nullopt,
               .virtual_dispatch = std::nullopt,
-              .type_parameters = {}}),
+              .type_parameters = {},
+              .defining_unit = std::nullopt}),
       .initialize_storage = unit.callables.Add(
           mir::CallableDecl{
               .code = std::move(value_code),
               .foreign = std::nullopt,
               .virtual_dispatch = std::nullopt,
-              .type_parameters = {}})};
+              .type_parameters = {},
+              .defining_unit = std::nullopt})};
 }
 
 // Publishes the one body that makes an object of this unit. A unit that
@@ -380,8 +383,7 @@ auto PublishObjectEntry(
     std::span<const ConstructionValue> handed,
     const ConstructionTableSource& table) -> mir::CallableId {
   const auto object_of = [&](mir::ClassId cls) {
-    return unit.types.Intern(
-        mir::Type{mir::ObjectType{.of = mir::IntraUnitClassRef{cls}}});
+    return unit.types.Intern(mir::Type{mir::ObjectType{.of = cls}});
   };
   const auto owning_pointer = [&](mir::ClassId cls) {
     return mir::BoxOf(unit.types, object_of(cls));
@@ -438,17 +440,8 @@ auto PublishObjectEntry(
           .code = std::move(code),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt,
-          .type_parameters = {}});
-}
-
-// What a signature names of another unit's behavior, in MIR's terms. Naming it
-// is no dependency; a reference reaching it is.
-auto PublishedVirtualSlot(const hir::ExternalDispatchSlot& slot)
-    -> mir::ExternalVirtualSlot {
-  return mir::ExternalVirtualSlot{
-      .unit_name = slot.unit_name,
-      .class_path = slot.class_path,
-      .ordinal = mir::BehaviorOrdinal{slot.behavior.value}};
+          .type_parameters = {},
+          .defining_unit = std::nullopt});
 }
 
 }  // namespace
@@ -491,50 +484,21 @@ auto UnitLowerer::MemberCellType(
       storage);
 }
 
-auto UnitLowerer::ScopeClassIdentity(hir::ExternalScopeClassId hir_id) const
-    -> mir::DeclaredClassRef {
-  const hir::ExternalScopeClass& scope_class =
-      hir_->external_scope_classes.Get(hir_id);
-  return ClassIdentityOf(
-      scope_class.unit_name, scope_class.signature.class_path);
-}
-
-auto UnitLowerer::UnitObjectType(hir::ExternalScopeClassId hir_id) const
-    -> mir::TypeId {
-  return unit_.types.Intern(
-      mir::Type{mir::ObjectType{.of = ScopeClassIdentity(hir_id)}});
-}
-
-auto UnitLowerer::ClassIdentityOf(
-    const std::string& unit_name, const support::DefPath& class_path) const
-    -> mir::DeclaredClassRef {
-  if (hir_->IsItself(unit_name)) {
-    return mir::IntraUnitClassRef{
-        .class_id = PublishedScopeClassAt(class_path)};
-  }
-  return mir::CrossUnitClassRef{
-      .unit_name = unit_name, .class_path = class_path};
-}
-
-auto UnitLowerer::PublishedScopeClassAt(
-    const support::DefPath& class_path) const -> mir::ClassId {
-  const auto it = published_scope_classes_.find(class_path);
-  if (it == published_scope_classes_.end()) {
+auto UnitLowerer::ScopeClassIdentity(hir::ScopeClassId hir_id) const
+    -> mir::ClassId {
+  const auto it = scope_class_translations_.find(hir_id);
+  if (it == scope_class_translations_.end()) {
     throw InternalError(
-        std::format(
-            "UnitLowerer::PublishedScopeClassAt: this unit published no scope "
-            "as '{}' -- please report this as a bug",
-            support::DisplayOf(class_path)));
+        "UnitLowerer::ScopeClassIdentity: a scope class this unit names took "
+        "no identity before types translated -- please report this as a bug");
   }
   return it->second;
 }
 
-auto UnitLowerer::TakePublishedScopeClass(const support::DefPath& class_path)
-    -> mir::ClassId {
-  const auto [known, first] =
-      published_scope_classes_.try_emplace(class_path, mir::ClassId{});
-  if (first) known->second = unit_.DeclareClass();
-  return known->second;
+auto UnitLowerer::UnitObjectType(hir::ScopeClassId hir_id) const
+    -> mir::TypeId {
+  return unit_.types.Intern(
+      mir::Type{mir::ObjectType{.of = ScopeClassIdentity(hir_id)}});
 }
 
 auto UnitLowerer::SettlePublishedScope(
@@ -547,12 +511,7 @@ auto UnitLowerer::SettlePublishedScope(
   ClassShape shape;
   shape.path = signature.class_path;
   shape.base = mir::ClassRef{mir::ObjectTreeRootRef{}};
-  shape.self_pointer_type = unit_.types.Intern(
-      mir::Type{mir::PointerType{
-          .pointee = unit_.types.Intern(
-              mir::Type{
-                  mir::ObjectType{.of = mir::IntraUnitClassRef{published}}}),
-          .ownership = mir::PointerOwnership::kBorrowed}});
+  shape.self_pointer_type = SelfPointerTo(published);
   // It is the unit's object as other units see it, so it is the same time
   // scope (LRM 3.14.2.2) as the classes extending it, which is the unit's.
   shape.time_resolution = hir_->root_scope.time_resolution;
@@ -566,10 +525,12 @@ auto UnitLowerer::SettlePublishedScope(
       signature.callables.size(),
       std::vector<CallableSignature>(
           signature.callables.size(),
-          CallableSignature{.virtual_dispatch = mir::IntroducesVirtualSlot{}})};
+          CallableSignature{
+              .virtual_dispatch =
+                  mir::IntroducesVirtualSlot{.is_pure = true}})};
   base::Translation<hir::PublishedCallableId, PublishedSubroutine> subroutines{
       signature.callables.size()};
-  for (const hir::PublishedCallable& callable : signature.callables) {
+  for (const hir::SubroutinePrototype& callable : signature.callables) {
     subroutines.Append(
         PublishedSubroutine{
             .name = callable.name,
@@ -588,50 +549,52 @@ auto UnitLowerer::SettlePublishedScope(
   }
   DefineClassShape(published, std::move(shape));
   const auto settled = published_scopes_.emplace(
-      published,
-      PublishedScope{
-          .layout =
-              ScopeClassLayout{
-                  .cls = mir::IntraUnitClassRef{.class_id = published},
-                  .field_types = std::move(field_types),
-                  .published = PublishedLayoutAt(signature, slots)},
-          .subroutines = std::move(subroutines)});
+      published, PublishedScope{
+                     .layout =
+                         ScopeClassLayout{
+                             .cls = published,
+                             .field_types = std::move(field_types),
+                             .published = PublishedLayoutAt(signature, slots)},
+                     .subroutines = std::move(subroutines)});
   return settled.first->second.layout.published;
 }
 
-auto UnitLowerer::TakeClassIdentities(const hir::ClassDecl& decl)
-    -> ClassTranslation {
-  const mir::ClassId id = unit_.DeclareClass();
+auto UnitLowerer::TakeClassIdentities(hir::ClassId cls) -> ClassTranslation {
+  const hir::ClassDecl& decl = hir_->classes.Get(cls);
+  const hir::ClassDeclaration& declared = hir_->classes.Declaration(cls);
+  // Each method the class declares is the callable at its position, so a
+  // method is named alike in this unit and in every unit reading the
+  // declaration.
   base::IdAllocator<mir::CallableId> callables;
-  std::vector<mir::CallableId> methods;
-  methods.reserve(decl.methods.size());
-  for (std::size_t m = 0; m < decl.methods.size(); ++m) {
-    methods.push_back(callables.Take());
+  for (std::size_t m = 0; m < declared.methods.size(); ++m) {
+    callables.Take();
   }
-  std::vector<mir::CallableId> factories;
-  factories.reserve(decl.embedded_covergroups.size());
-  for (std::size_t f = 0; f < decl.embedded_covergroups.size(); ++f) {
-    factories.push_back(callables.Take());
+  std::vector<mir::CallableId> interface_forwards;
+  interface_forwards.reserve(decl.interface_forwards.size());
+  for (std::size_t f = 0; f < decl.interface_forwards.size(); ++f) {
+    interface_forwards.push_back(callables.Take());
   }
   const auto calls_declared = [&](hir::MethodId method) {
     return RandomizationHooks::CallsDeclared{
         .body = callables.Take(), .method = method};
   };
   std::optional<RandomizationHooks> randomization;
-  if (!decl.is_interface_class) {
+  if (!declared.is_interface_class) {
     randomization = RandomizationHooks{
         .rand_variables = callables.Take(),
         .constrain = callables.Take(),
         .rand_objects = callables.Take(),
-        .pre_randomize = decl.pre_randomize.transform(calls_declared),
-        .post_randomize = decl.post_randomize.transform(calls_declared)};
+        .pre_randomize =
+            hir::MethodReplacing(
+                declared.methods, hir::RandomizationHook::kPreRandomize)
+                .transform(calls_declared),
+        .post_randomize =
+            hir::MethodReplacing(
+                declared.methods, hir::RandomizationHook::kPostRandomize)
+                .transform(calls_declared)};
   }
   return ClassTranslation{
-      .id = id,
-      .object_type = unit_.types.Intern(
-          mir::Type{mir::ObjectType{.of = mir::IntraUnitClassRef{id}}}),
-      .methods = {decl.methods.size(), std::move(methods)},
-      .factories = std::move(factories),
+      .interface_forwards = std::move(interface_forwards),
       .randomization = randomization};
 }
 
@@ -640,28 +603,23 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
   unit_.body_name = hir_->body_name;
   unit_.source_name = hir_->source_name;
 
-  // Every identity another declaration can name is taken before any
-  // declaration settles: a class handle type resolves to the pointee that names
-  // it, and an overriding method states its dispatch role against the slot its
-  // base was given. Nothing here reads a declaration, so no declaration has to
-  // settle before another.
-  std::vector<ClassTranslation> classes;
-  classes.reserve(hir_->classes.size());
-  for (const hir::ClassId hir_id : hir_->classes.Ids()) {
-    classes.push_back(TakeClassIdentities(hir_->classes.Get(hir_id)));
-    declared_classes_.emplace(hir_->classes.PathOf(hir_id), classes.back().id);
+  // Every class the unit names takes its identity before any declaration
+  // settles, whichever unit declares it, and so does the class each covergroup
+  // is written as (LRM 19.3): a type names one, and so does a declaration
+  // naming the class it extends or whose behavior it overrides. Nothing here
+  // reads a declaration, so no declaration has to settle before another.
+  class_identities_ =
+      base::Translation<hir::ClassId, mir::ClassId>{hir_->classes.size()};
+  for (std::size_t i = 0; i < hir_->classes.size(); ++i) {
+    class_identities_.Append(unit_.DeclareClass());
   }
-  class_translations_ = {hir_->classes.size(), std::move(classes)};
-  // Each covergroup this unit declares is a class of its own (LRM 19.3), which
-  // a type naming the covergroup names, and another unit reaches by the
-  // covergroup's path.
-  covergroup_classes_ = base::Translation<hir::CovergroupId, mir::ClassId>{
+  covergroup_identities_ = base::Translation<hir::CovergroupId, mir::ClassId>{
       hir_->covergroups.size()};
-  for (const hir::CovergroupId hir_id : hir_->covergroups.Ids()) {
-    const mir::ClassId id = unit_.DeclareClass();
-    covergroup_classes_.Append(id);
-    declared_classes_.emplace(hir_->covergroups.PathOf(hir_id), id);
-    declared_covergroups_.emplace(hir_->covergroups.PathOf(hir_id), hir_id);
+  for (std::size_t i = 0; i < hir_->covergroups.size(); ++i) {
+    covergroup_identities_.Append(unit_.DeclareClass());
+  }
+  for (const hir::ClassId hir_id : hir_->classes.OwnIds()) {
+    class_translations_.emplace(hir_id, TakeClassIdentities(hir_id));
   }
 
   // Every HIR type is MIR-representable: AST-to-HIR rejects the forms MIR has
@@ -677,42 +635,41 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
     type_translations_.Append(translated);
     // A struct or a union this unit declares is settled, and its methods,
     // which take values of its type, are stated once that type is interned.
-    const mir::RecordRef* record = mir::RecordOf(unit_.types.Get(translated));
-    const auto* id =
-        record == nullptr ? nullptr : std::get_if<mir::RecordId>(record);
-    if (id == nullptr) {
+    const mir::RecordId* id = mir::RecordOf(unit_.types.Get(translated));
+    if (id == nullptr || unit_.GetRecord(*id).defining_unit.has_value()) {
       continue;
     }
     DefineRecordMethods(type, *id, translated);
   }
 
-  // Every record this unit read of what another unit published about its
-  // class, taken whole and before anything names one. A place reaching a member
-  // of a class an ancestor declares walks the lineage over these records, so a
-  // class the walk only passes through is as much needed as the one that
-  // declares the member -- which is not something the reference asking for the
-  // member can know.
-  //
-  // Holding a record is not depending on the class. A signature is read here
-  // as soon as the elaborating design asks anything of it, including of a class
-  // this unit turns out to name nowhere, so what this unit depends on is
-  // recorded where a reference takes the name rather than here.
-  for (const hir::ExternalClass& published : hir_->external_classes) {
-    TakePublishedClass(published);
+  for (const hir::ClassId published : hir_->classes.ImportedIds()) {
+    DeclarePublishedClass(published);
   }
   // The class another unit writes for each of its covergroups this one names,
   // laid out from what it published (LRM 26.3).
-  for (const hir::ExternalCovergroup& published : hir_->external_covergroups) {
-    unit_.external_classes.push_back(
-        PublishedCovergroupClass(*this, published));
+  for (const hir::CovergroupId published : hir_->covergroups.ImportedIds()) {
+    const mir::ClassId id = CovergroupClassIdentity(published);
+    if (hir_->covergroups.IsPublished(published)) {
+      unit_.DefineClass(id, PublishedCovergroupClass(*this, published));
+      continue;
+    }
+    const hir::CovergroupKey& key = hir_->covergroups.KeyOf(published);
+    DeclareIncompleteClass(id, key.unit_name, key.path);
   }
 
-  // What each unit this one references published of its scope classes, in
-  // this unit's terms, taken before any body lowers so a body reaching a
-  // child's member reads the record rather than building one.
-  for (const hir::ExternalScopeClassId id :
-       hir_->external_scope_classes.Ids()) {
-    RecordPublishedScopeClass(id, hir_->external_scope_classes.Get(id));
+  // Each scope class of another unit this unit reaches is declared before any
+  // body lowers, so a body reaching a child's member reads that declaration
+  // rather than building one. A scope class only named here -- the class of
+  // an object a type names, never reached into -- is declared with nothing of
+  // what it holds.
+  for (const hir::ScopeClassId id : hir_->scope_classes.Ids()) {
+    if (hir_->scope_classes.IsRecorded(id)) {
+      DeclarePublishedScopeClass(id, hir_->scope_classes.Get(id));
+    } else if (!hir_->scope_classes.IsOwn(id)) {
+      const hir::ScopeClassKey& key = hir_->scope_classes.KeyOf(id);
+      DeclareIncompleteClass(
+          ScopeClassIdentity(id), key.unit_name, key.class_path);
+    }
   }
 
   // The prototype of every DPI-C import this unit takes part in (LRM 35.4),
@@ -754,7 +711,8 @@ void UnitLowerer::PublishAssignmentPatternTexts() {
               .code = BuildAssignmentPatternTextCode(*this, type),
               .foreign = std::nullopt,
               .virtual_dispatch = std::nullopt,
-              .type_parameters = {}});
+              .type_parameters = {},
+              .defining_unit = std::nullopt});
     }
   }
 }
@@ -830,11 +788,8 @@ auto UnitLowerer::RunDesignRoot(DesignRootInputs design_root)
 auto UnitLowerer::PopulateModuleRoot(
     std::optional<DesignRootInputs> design_root) -> diag::Result<void> {
   WalkFrame root_frame;
-  // The tree of scope lowerers is built first, and building it takes the
-  // identity of every class the unit published of its scopes: a type a record
-  // of another unit states may name one -- wherever a name leaves an instance
-  // of this unit and reaches another -- so each exists before any type
-  // translates. What the design root brings up and states ride on the root
+  // The tree of scope lowerers is built first, each naming the class it is
+  // published as. What the design root brings up and states ride on the root
   // scope's lowering, and a source module has neither.
   const std::unique_ptr<StructuralScopeLowerer> root =
       StructuralScopeLowerer::ForScope(
@@ -965,7 +920,7 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   class_lowerers.reserve(scope.replicated_classes.size());
   for (const hir::ClassId hir_class : scope.replicated_classes) {
     class_lowerers.emplace_back(
-        *this, hir_class, TranslateClass(hir_class), ClassObjectType(hir_class),
+        *this, hir_class, ClassIdentity(hir_class), ClassPointee(hir_class),
         hir_->classes.Get(hir_class), nullptr);
   }
   for (ClassDeclLowerer& class_lowerer : class_lowerers) {
@@ -996,14 +951,15 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
     ProcessLowerer subroutine_lowerer(
         *this, nullptr, scope.time_resolution, src.body, src.root_stmt,
         namespace_frame, package_scope_nodes, subroutine_statics.Get(id));
-    auto code_or = subroutine_lowerer.Run(src);
+    auto code_or = subroutine_lowerer.Run(src, std::nullopt);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
     unit_.callables.Define(
         subroutine_callables.Get(id), mir::CallableDecl{
                                           .code = *std::move(code_or),
                                           .foreign = std::nullopt,
                                           .virtual_dispatch = std::nullopt,
-                                          .type_parameters = {}});
+                                          .type_parameters = {},
+                                          .defining_unit = std::nullopt});
   }
 
   // Each exported package subroutine (LRM 26.3, 35.7) is receiver-less: its
@@ -1027,7 +983,8 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
             .code = std::move(entry.code),
             .foreign = std::move(entry.linkage),
             .virtual_dispatch = std::nullopt,
-            .type_parameters = {}});
+            .type_parameters = {},
+            .defining_unit = std::nullopt});
   }
 
   PublishNamespaceStorageBringUp(
@@ -1037,270 +994,238 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   return std::move(unit_);
 }
 
-auto UnitLowerer::MakeExternalClassPointee(const hir::ExternalClassRef& ref)
+auto UnitLowerer::ClassPointee(hir::ClassId cls) const -> mir::TypeId {
+  return unit_.types.Intern(
+      mir::Type{mir::ObjectType{.of = ClassIdentity(cls)}});
+}
+
+auto UnitLowerer::CovergroupObjectType(hir::CovergroupId covergroup) const
     -> mir::TypeId {
   return unit_.types.Intern(
-      mir::Type{mir::ObjectType{.of = MakeExternalClassRef(ref)}});
+      mir::Type{mir::ObjectType{.of = CovergroupClassIdentity(covergroup)}});
 }
 
-auto UnitLowerer::PublishedClass(const hir::ExternalClassRef& ref) const
-    -> mir::DeclaredClassRef {
-  return DeclaredClassIdentityOf(ref.unit_name, ref.class_path);
-}
-
-auto UnitLowerer::AsLocalOrExternal(const hir::CovergroupRef& ref) const
-    -> hir::CovergroupRef {
-  const auto* external = std::get_if<hir::ExternalCovergroupRef>(&ref);
-  if (external == nullptr || !hir_->IsItself(external->unit_name)) {
-    return ref;
+auto UnitLowerer::MethodRunBy(const hir::InstanceMethodCallee& callee) const
+    -> std::optional<hir::ClassMethodTarget> {
+  const auto* builtin = std::get_if<hir::BuiltinHookCallee>(&callee);
+  if (builtin == nullptr) {
+    return std::get<hir::ClassMethodTarget>(callee);
   }
-  const auto it = declared_covergroups_.find(external->path);
-  if (it == declared_covergroups_.end()) {
-    throw InternalError(
-        std::format(
-            "UnitLowerer::AsLocalOrExternal: this unit declares no covergroup "
-            "'{}' -- please report this as a bug",
-            support::DisplayOf(external->path)));
+  if (hir_->classes.IsInterfaceClass(builtin->cls)) {
+    return std::nullopt;
   }
-  return hir::LocalCovergroupRef{.covergroup = it->second};
-}
-
-auto UnitLowerer::DeclaredClassIdentityOf(
-    const std::string& unit_name, const support::DefPath& class_path) const
-    -> mir::DeclaredClassRef {
-  if (!hir_->IsItself(unit_name)) {
-    return mir::CrossUnitClassRef{
-        .unit_name = unit_name, .class_path = class_path};
+  for (std::optional<hir::ClassId> at = builtin->cls; at.has_value();
+       at = hir_->classes.BaseOf(*at)) {
+    if (const std::optional<hir::MethodId> declared = hir::MethodReplacing(
+            hir_->classes.Declaration(*at).methods, builtin->hook)) {
+      return hir::ClassMethodTarget{.owner = *at, .method = *declared};
+    }
   }
-  const auto it = declared_classes_.find(class_path);
-  if (it == declared_classes_.end()) {
-    throw InternalError(
-        std::format(
-            "UnitLowerer::DeclaredClassIdentityOf: this unit declares no class "
-            "'{}' -- please report this as a bug",
-            support::DisplayOf(class_path)));
-  }
-  return mir::IntraUnitClassRef{.class_id = it->second};
+  return std::nullopt;
 }
 
-auto UnitLowerer::MakeExternalClassRef(const hir::ExternalClassRef& ref)
-    -> mir::DeclaredClassRef {
-  if (!hir_->IsItself(ref.unit_name)) {
-    unit_.ConsumeClassOf(ref.unit_name, ref.class_path);
-  }
-  return DeclaredClassIdentityOf(ref.unit_name, ref.class_path);
+auto UnitLowerer::SelfPointerTo(mir::ClassId cls) const -> mir::TypeId {
+  return unit_.types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = unit_.types.Intern(mir::Type{mir::ObjectType{.of = cls}}),
+          .ownership = mir::PointerOwnership::kBorrowed,
+          .mutability = mir::Mutability::kMutable}});
 }
 
-auto UnitLowerer::TranslateClassRef(const hir::ClassRef& ref)
-    -> mir::DeclaredClassRef {
-  return std::visit(
-      Overloaded{
-          [&](const hir::LocalClassRef& local) -> mir::DeclaredClassRef {
-            return mir::IntraUnitClassRef{
-                .class_id = TranslateClass(local.class_id)};
-          },
-          [&](const hir::ExternalClassRef& external) -> mir::DeclaredClassRef {
-            return MakeExternalClassRef(external);
-          }},
-      ref);
-}
-
-auto UnitLowerer::MakeCrossUnitClassFieldTarget(
-    const hir::ExternalClassPropertyTarget& target) -> mir::ClassFieldTarget {
-  // The properties a class publishes are a prefix of its own storage, so the
-  // position counted out of the signature is the slot that class gave.
-  return mir::ClassFieldTarget{
-      .owner = MakeExternalClassRef(
-          hir::ExternalClassRef{
-              .unit_name = target.unit_name, .class_path = target.class_path}),
-      .slot = mir::FieldId{target.property.value}};
-}
-
-auto UnitLowerer::CovergroupObjectType(const hir::CovergroupRef& covergroup)
-    -> mir::TypeId {
-  return std::visit(
-      Overloaded{
-          [&](const hir::LocalCovergroupRef& local) {
-            return unit_.types.Intern(
-                mir::Type{mir::ObjectType{
-                    .of = mir::IntraUnitClassRef{
-                        CovergroupClassId(local.covergroup)}}});
-          },
-          [&](const hir::ExternalCovergroupRef& external) {
-            return MakeExternalClassPointee(
-                hir::ExternalClassRef{
-                    .unit_name = external.unit_name,
-                    .class_path = external.path});
-          }},
-      AsLocalOrExternal(covergroup));
-}
-
-auto UnitLowerer::TakePublishedClass(const hir::ExternalClass& published)
+auto UnitLowerer::DeclareIncompleteClass(
+    mir::ClassId id, std::string unit_name, support::DefPath class_path)
     -> void {
+  unit_.DefineClass(
+      id, IncompleteClass(id, std::move(unit_name), std::move(class_path)));
+}
+
+auto UnitLowerer::IncompleteClass(
+    mir::ClassId id, std::string unit_name, support::DefPath class_path)
+    -> mir::Class {
+  mir::Class declared{};
+  declared.defining_unit = std::move(unit_name);
+  declared.path = std::move(class_path);
+  declared.self_pointer_type = SelfPointerTo(id);
+  return declared;
+}
+
+auto UnitLowerer::DeclarePublishedClass(hir::ClassId cls) -> void {
+  const hir::ClassKey& key = hir_->classes.KeyOf(cls);
+  const mir::ClassId id = ClassIdentity(cls);
+  // A class only named here -- a handle's type, never reached into -- is
+  // declared with nothing of what it declares, as an incomplete type is.
+  if (!hir_->classes.HasDeclaration(cls)) {
+    DeclareIncompleteClass(id, key.unit_name, key.class_path);
+    return;
+  }
+  mir::Class declared = IncompleteClass(id, key.unit_name, key.class_path);
+  const hir::ClassDeclaration& published = hir_->classes.Declaration(cls);
+  declared.is_interface_class = published.is_interface_class;
   // A class extending nothing the source wrote extends the root every built
   // object does, as a class of this unit would. An interface class holds no
   // storage and no value is built of one, so nothing is placed after it (LRM
   // 8.26).
-  std::optional<mir::ClassRef> base;
   if (!published.is_interface_class) {
-    base = published.base.has_value()
-               ? mir::AsClassRef(PublishedClass(*published.base))
-               : mir::ClassRef{mir::ManagedObjectRootRef{}};
+    declared.base = published.base.has_value()
+                        ? mir::ClassRef{ClassIdentity(*published.base)}
+                        : mir::ClassRef{mir::ManagedObjectRootRef{}};
   }
-  mir::ExternalClass record{
-      .unit_name = published.unit_name,
-      .class_path = published.class_path,
-      .base = std::move(base),
-      .is_interface_class = published.is_interface_class,
-      .implements = {},
-      .fields = {},
-      .named_fields = {},
-      .private_field_types = {},
-      .behaviors = {},
-      .overrides = {}};
-  for (const hir::PublishedPropertyId id : published.properties.Ids()) {
-    const hir::PublishedProperty& property = published.properties.Get(id);
-    record.named_fields.push_back(
+  for (const hir::ClassId iface : published.implements) {
+    declared.implements.push_back(ClassIdentity(iface));
+  }
+  ClassFields fields = ClassFieldsOf(published);
+  for (PropertyField& property : fields.properties) {
+    declared.named_fields.push_back(
         mir::NamedField{
+            .name = std::move(property.name),
+            .slot =
+                declared.fields.Add(mir::FieldDecl{.type = property.type})});
+  }
+  if (fields.declaring_instance.has_value()) {
+    declared.fields.Add(mir::FieldDecl{.type = *fields.declaring_instance});
+  }
+  for (const hir::StaticPropertyId prop : published.static_properties.Ids()) {
+    const hir::DeclaredProperty& property =
+        published.static_properties.Get(prop);
+    declared.named_static_properties.push_back(
+        mir::NamedStaticProperty{
             .name = property.name,
-            .slot = record.fields.Add(
-                mir::FieldDecl{.type = TranslateType(property.type)})});
+            .slot = declared.static_properties.Add(
+                mir::StaticPropertyDecl{
+                    .type = TranslateType(property.type)})});
   }
-  for (const hir::TypeId type : published.local_property_types) {
-    record.private_field_types.push_back(TranslateType(type));
+  // Every method it published, at the position it published it, with the part
+  // it takes in dispatch.
+  for (const hir::MethodId method : published.methods.Ids()) {
+    const hir::DeclaredMethod& declared_method = published.methods.Get(method);
+    const mir::CallableId callable = declared.callables.Add(
+        mir::CallableDecl{
+            .code = {},
+            .foreign = std::nullopt,
+            .virtual_dispatch = DispatchRoleOf(
+                hir::ClassMethodTarget{.owner = cls, .method = method}),
+            .type_parameters = {},
+            .defining_unit = std::nullopt});
+    declared.named_callables.push_back(
+        mir::NamedCallable{
+            .name = declared_method.prototype.name, .body = callable});
   }
-  // A class that is a type of the instance declaring it (LRM 6.22) holds that
-  // instance after its properties, which an object built from here has to have
-  // room for like any other.
-  if (published.takes_declaring_instance) {
-    record.private_field_types.push_back(unit_.builtins.scope_ptr);
-  }
-  for (const hir::ExternalClassRef& iface : published.implements) {
-    record.implements.push_back(PublishedClass(iface));
-  }
-  // What a class extending this one lays its table out from is the virtual
-  // methods this one introduces, in the order it declares them.
-  for (const hir::PublishedMethod& method : published.methods) {
-    if (const auto* introduced =
-            std::get_if<hir::IntroducesVirtual>(&method.dispatch)) {
-      record.behaviors.push_back(
-          mir::PublishedBehavior{
-              .name = method.prototype.name, .is_pure = introduced->is_pure});
+  // Every class but an interface class gives a body to what `randomize()` asks
+  // of every class, the hooks among them where it declares a method taking a
+  // hook's place (LRM 18.6.2).
+  if (!published.is_interface_class) {
+    for (const support::LibraryVirtual function : RandomizationOverrides(
+             hir::MethodReplacing(
+                 published.methods, hir::RandomizationHook::kPreRandomize)
+                 .has_value(),
+             hir::MethodReplacing(
+                 published.methods, hir::RandomizationHook::kPostRandomize)
+                 .has_value())) {
+      declared.callables.Add(
+          mir::CallableDecl{
+              .code = {},
+              .foreign = std::nullopt,
+              .virtual_dispatch =
+                  mir::OverridesLibraryVirtual{.function = function},
+              .type_parameters = {},
+              .defining_unit = std::nullopt});
     }
   }
-  // A behavior another unit's class introduced is named here without making
-  // that unit a dependency: holding a record of a class is not depending on
-  // it, and a body dispatching on the behavior records the dependency itself.
-  for (const hir::PublishedOverride& overriding : published.overrides) {
-    record.overrides.push_back(
-        mir::PublishedOverride{
-            .method = overriding.method,
-            .behavior = std::visit(
-                Overloaded{
-                    [&](const hir::LocalClassMethodTarget& own)
-                        -> mir::VirtualSlot { return VirtualSlotOf(own); },
-                    [&](const hir::LocalCovergroupFactory& factory)
-                        -> mir::VirtualSlot { return VirtualSlotOf(factory); },
-                    [](const hir::ExternalDispatchSlot& slot)
-                        -> mir::VirtualSlot {
-                      return PublishedVirtualSlot(slot);
-                    }},
-                overriding.behavior)});
-  }
-  unit_.external_classes.push_back(std::move(record));
+  unit_.DefineClass(id, std::move(declared));
 }
 
-auto UnitLowerer::RecordPublishedScopeClass(
-    hir::ExternalScopeClassId hir_id, const hir::ExternalScopeClass& scope)
-    -> void {
-  const support::DefPath& class_path = scope.signature.class_path;
-  // A class this unit published is its own and no dependency: every body of
-  // the unit states it alike from what the unit published, whichever of its
-  // scopes this body's instances built.
-  if (hir_->IsItself(scope.unit_name)) {
-    SettlePublishedScope(TakePublishedScopeClass(class_path), scope.signature);
+auto UnitLowerer::DeclarePublishedScopeClass(
+    hir::ScopeClassId hir_id, const hir::ScopeClassSignature& scope) -> void {
+  const hir::ScopeClassKey& key = hir_->scope_classes.KeyOf(hir_id);
+  // A class this unit published is its own: every body of the unit states it
+  // alike from what the unit published, whichever of its scopes this body's
+  // instances built.
+  const mir::ClassId id = ScopeClassIdentity(hir_id);
+  if (hir_->scope_classes.IsOwn(hir_id)) {
+    SettlePublishedScope(id, scope);
     return;
   }
-  unit_.ConsumeClassOf(scope.unit_name, class_path);
   // The class of a scope of another unit -- one of its instances, or a
   // generate block inside one -- is a class of that unit, reached the way any
   // other is. It is a scope of the design hierarchy, so it extends the
   // library's root of that tree, and what the scope published is its first
   // fields. What the unit adds while lowering its bodies is placed after them
-  // and named by nothing, so the record states none of it; no other unit
+  // and named by nothing, so the declaration states none of it; no other unit
   // extends the class, and its own unit makes every object of it, so nothing
   // here needs its size. A published subroutine is a virtual method it
   // introduces and leaves to the classes realizing the scope, in the order the
   // signature gives them.
-  mir::ExternalClass record{
-      .unit_name = scope.unit_name,
-      .class_path = class_path,
-      .base = mir::ClassRef{mir::ObjectTreeRootRef{}},
-      .is_interface_class = false,
-      .implements = {},
-      .fields = {},
-      .named_fields = {},
-      .private_field_types = {},
-      .behaviors = {},
-      .overrides = {}};
+  mir::Class declared = IncompleteClass(id, key.unit_name, key.class_path);
+  declared.base = mir::ClassRef{mir::ObjectTreeRootRef{}};
   std::vector<mir::FieldId> slots;
   std::vector<mir::TypeId> field_types;
-  for (PublishedField& field : PublishedFieldsOf(scope.signature)) {
+  for (PublishedField& field : PublishedFieldsOf(scope)) {
     const mir::FieldId slot =
-        record.fields.Add(mir::FieldDecl{.type = field.type});
+        declared.fields.Add(mir::FieldDecl{.type = field.type});
     if (field.name.has_value()) {
-      record.named_fields.push_back(
+      declared.named_fields.push_back(
           mir::NamedField{.name = *std::move(field.name), .slot = slot});
     }
     slots.push_back(slot);
     field_types.push_back(field.type);
   }
-  for (const hir::PublishedCallableId id : scope.signature.callables.Ids()) {
-    record.behaviors.push_back(
-        mir::PublishedBehavior{
-            .name = scope.signature.callables.Get(id).name, .is_pure = true});
+  for (const hir::SubroutinePrototype& callable : scope.callables) {
+    declared.named_callables.push_back(
+        mir::NamedCallable{
+            .name = callable.name,
+            .body = declared.callables.Add(
+                mir::CallableDecl{
+                    .code = {},
+                    .foreign = std::nullopt,
+                    .virtual_dispatch =
+                        mir::IntroducesVirtualSlot{.is_pure = true},
+                    .type_parameters = {},
+                    .defining_unit = std::nullopt})});
   }
-  external_scope_layouts_.emplace(
-      hir_id,
-      ScopeClassLayout{
-          .cls =
-              mir::CrossUnitClassRef{
-                  .unit_name = scope.unit_name, .class_path = class_path},
-          .field_types = std::move(field_types),
-          .published = PublishedLayoutAt(scope.signature, slots)});
-  if (mir::FindExternalClass(
-          unit_.external_classes, scope.unit_name, class_path) == nullptr) {
-    unit_.external_classes.push_back(std::move(record));
-  }
+  unit_.DefineClass(id, std::move(declared));
+  scope_layouts_.emplace(
+      hir_id, ScopeClassLayout{
+                  .cls = id,
+                  .field_types = std::move(field_types),
+                  .published = PublishedLayoutAt(scope, slots)});
 }
 
-auto UnitLowerer::ScopeClassLayoutOf(hir::ExternalScopeClassId hir_id) const
+auto UnitLowerer::ScopeClassLayoutOf(hir::ScopeClassId hir_id) const
     -> const ScopeClassLayout& {
   // What is known of a class is one question with two answers: the layout this
-  // unit gave a class of its own, and the record of what another unit
-  // published.
-  return std::visit(
-      Overloaded{
-          [&](const mir::IntraUnitClassRef& own) -> const ScopeClassLayout& {
-            const auto it = published_scopes_.find(own.class_id);
-            if (it == published_scopes_.end()) {
-              throw InternalError(
-                  "UnitLowerer::ScopeClassLayoutOf: every scope class of this "
-                  "unit is laid out before any body lowers");
-            }
-            return it->second.layout;
-          },
-          [&](const mir::CrossUnitClassRef&) -> const ScopeClassLayout& {
-            const auto it = external_scope_layouts_.find(hir_id);
-            if (it == external_scope_layouts_.end()) {
-              throw InternalError(
-                  "UnitLowerer::ScopeClassLayoutOf: every scope class of "
-                  "another unit this unit records is laid out before any body "
-                  "lowers");
-            }
-            return it->second;
-          }},
-      ScopeClassIdentity(hir_id));
+  // unit gave a class of its own, and the one it gave its declaration of
+  // another unit's.
+  if (hir_->scope_classes.IsOwn(hir_id)) {
+    const auto it = published_scopes_.find(ScopeClassIdentity(hir_id));
+    if (it == published_scopes_.end()) {
+      throw InternalError(
+          "UnitLowerer::ScopeClassLayoutOf: every scope class of this unit is "
+          "laid out before any body lowers");
+    }
+    return it->second.layout;
+  }
+  const auto it = scope_layouts_.find(hir_id);
+  if (it == scope_layouts_.end()) {
+    throw InternalError(
+        "UnitLowerer::ScopeClassLayoutOf: every scope class of another unit "
+        "this unit reaches is declared before any body lowers");
+  }
+  return it->second;
+}
+
+auto UnitLowerer::ClassFieldsOf(const hir::ClassDeclaration& declared) const
+    -> ClassFields {
+  ClassFields fields{
+      .properties = {},
+      .declaring_instance = declared.takes_declaring_instance
+                                ? std::optional{unit_.builtins.scope_ptr}
+                                : std::nullopt};
+  for (const hir::DeclaredProperty& property : declared.properties) {
+    fields.properties.push_back(
+        PropertyField{
+            .name = property.name, .type = TranslateType(property.type)});
+  }
+  return fields;
 }
 
 auto UnitLowerer::PublishedFieldsOf(const hir::ScopeClassSignature& signature)
@@ -1368,93 +1293,82 @@ auto UnitLowerer::PublishedLayoutAt(
           disable_targets, part(members + loops + choices, disable_targets)}};
 }
 
+// A member is at the position its class's declaration gives it, in this unit
+// and in every unit reading the declaration alike, so the MIR member is that
+// position of the class's MIR identity.
 auto UnitLowerer::TranslateClassPropertyTarget(
-    const hir::LocalClassPropertyTarget& local) const -> mir::ClassFieldTarget {
-  const mir::ClassId owner = TranslateClass(local.owner);
+    const hir::ClassPropertyTarget& target) -> mir::ClassFieldTarget {
   return mir::ClassFieldTarget{
-      .owner = mir::IntraUnitClassRef{owner},
-      .slot = GetClassShape(owner).field_translation.Get(local.field)};
+      .owner = ClassIdentity(target.owner),
+      .slot = mir::FieldId{target.field.value}};
 }
 
-auto UnitLowerer::MakeExternalStaticPropertyRef(
-    const hir::ExternalStaticPropertyTarget& target)
-    -> mir::ExternalStaticPropertyRef {
-  unit_.ConsumeClassOf(target.unit_name, target.class_path);
-  return mir::ExternalStaticPropertyRef{
-      .unit_name = target.unit_name,
-      .class_path = target.class_path,
-      .property_name = target.property_name};
+auto UnitLowerer::TranslateStaticPropertyTarget(
+    const hir::ClassStaticPropertyTarget& target) -> StaticStorageHome {
+  if (hir_->classes.IsOwn(target.owner)) {
+    return GetClassShape(ClassIdentity(target.owner))
+        .static_property_translation.Get(target.prop);
+  }
+  return ClassCellHome{
+      .owner = ClassIdentity(target.owner),
+      .property = mir::StaticPropertyId{target.prop.value}};
 }
 
-auto UnitLowerer::MakeExternalMethodTarget(
-    const hir::ExternalClassMethodTarget& target)
-    -> mir::ExternalUnitClassMethodTarget {
-  unit_.ConsumeClassOf(target.unit_name, target.class_path);
-  return mir::ExternalUnitClassMethodTarget{
-      .unit_name = target.unit_name,
-      .class_path = target.class_path,
-      .method_name = target.method_name};
+auto UnitLowerer::TranslateMethodTarget(const hir::ClassMethodTarget& target)
+    -> mir::CallableTarget {
+  return mir::CallableTarget{
+      .owner = ClassIdentity(target.owner),
+      .slot = mir::CallableId{target.method.value}};
 }
 
-auto UnitLowerer::MakeExternalVirtualSlot(const hir::ExternalDispatchSlot& slot)
-    -> mir::ExternalVirtualSlot {
-  unit_.ConsumeClassOf(slot.unit_name, slot.class_path);
-  return PublishedVirtualSlot(slot);
-}
-
-auto UnitLowerer::DispatchRoleOf(const hir::SubroutineDecl& method)
+auto UnitLowerer::DispatchRoleOf(const hir::ClassMethodTarget& method) const
     -> std::optional<mir::VirtualDispatchRole> {
-  if (method.overrides.has_value()) {
-    return mir::VirtualDispatchRole{mir::OverridesVirtualSlot{
-        .overridden = VirtualSlotOf(*method.overrides)}};
-  }
-  if (method.is_virtual) {
-    return mir::VirtualDispatchRole{mir::IntroducesVirtualSlot{}};
-  }
-  return std::nullopt;
-}
-
-auto UnitLowerer::LocalVirtualSlotOf(const hir::LocalClassMethodTarget& method)
-    -> std::optional<mir::VirtualSlot> {
-  const mir::ClassId owner = TranslateClass(method.owner);
-  const mir::CallableId callable = TranslateMethod(method.owner, method.method);
-  return DispatchRoleOf(
-             Hir().classes.Get(method.owner).methods.Get(method.method))
-      .transform([&](const mir::VirtualDispatchRole& role) {
-        return CanonicalVirtualSlot(owner, callable, role);
-      });
-}
-
-auto UnitLowerer::VirtualSlotOf(const hir::VirtualBehavior& behavior)
-    -> mir::VirtualSlot {
+  const hir::DeclaredMethod& declared =
+      hir_->classes.Declaration(method.owner).methods.Get(method.method);
   return std::visit(
       Overloaded{
-          [&](const hir::LocalClassMethodTarget& local) -> mir::VirtualSlot {
-            std::optional<mir::VirtualSlot> slot = LocalVirtualSlotOf(local);
-            if (!slot.has_value()) {
-              throw InternalError(
-                  "UnitLowerer::VirtualSlotOf: a behavior names a method in no "
-                  "dispatch -- please report this as a bug");
-            }
-            return *std::move(slot);
+          [](const hir::TypeAssociated&)
+              -> std::optional<mir::VirtualDispatchRole> {
+            return std::nullopt;
           },
-          [&](const hir::LocalCovergroupFactory& factory) -> mir::VirtualSlot {
-            return FactorySlot(
-                *this,
-                hir::LocalCovergroupRef{.covergroup = factory.covergroup});
+          [](const hir::NotVirtual&)
+              -> std::optional<mir::VirtualDispatchRole> {
+            return std::nullopt;
           },
-          [&](const hir::ExternalDispatchSlot& external) -> mir::VirtualSlot {
-            return MakeExternalVirtualSlot(external);
+          [](const hir::IntroducesVirtual& introduces)
+              -> std::optional<mir::VirtualDispatchRole> {
+            return mir::VirtualDispatchRole{
+                mir::IntroducesVirtualSlot{.is_pure = introduces.is_pure}};
+          },
+          [&](const hir::OverridesVirtual& overriding)
+              -> std::optional<mir::VirtualDispatchRole> {
+            return mir::VirtualDispatchRole{mir::OverridesVirtualSlot{
+                .overridden = VirtualSlotOf(hir_->classes.IntroducedBy(
+                    overriding.introducer, overriding.name)),
+                .is_pure = overriding.is_pure}};
           }},
-      behavior);
+      declared.dispatch);
+}
+
+// A behavior is named by the method introducing it, at its position.
+auto UnitLowerer::VirtualSlotOf(const hir::ClassMethodTarget& behavior) const
+    -> mir::VirtualSlot {
+  return mir::VirtualSlot{
+      .owner_class = ClassIdentity(behavior.owner),
+      .slot = mir::CallableId{behavior.method.value}};
 }
 
 auto UnitLowerer::MakeNamespaceCallableTarget(
-    const hir::ExternalUnitSubroutineRef& ref) -> mir::DirectTarget {
-  // A call into this unit's own namespace has the arena the body lives in, so
-  // it names the position; one into another unit has only the identifier that
-  // unit published, and consuming that signature is what makes the unit a
-  // dependency whose header and link edge the backend then emits.
+    const hir::NamespaceSubroutineRef& ref) -> mir::DirectTarget {
+  const auto key = std::pair{ref.unit_name, ref.subroutine_name};
+  if (const auto known = namespace_callables_.find(key);
+      known != namespace_callables_.end()) {
+    return mir::UnitCallableTarget{.slot = known->second};
+  }
+  // A subroutine of this unit's own namespace is the body declared under the
+  // identifier; one of another unit's is a body declared here for the
+  // identifier that unit published.
+  mir::CallableId callable{};
   if (hir_->IsItself(ref.unit_name)) {
     const std::optional<mir::CallableId> body =
         mir::CallableNamed(unit_.named_callables, ref.subroutine_name);
@@ -1463,30 +1377,60 @@ auto UnitLowerer::MakeNamespaceCallableTarget(
           "MakeNamespaceCallableTarget: this unit's namespace publishes no "
           "subroutine under the identifier a call inside it spells");
     }
-    return mir::UnitCallableTarget{.slot = *body};
+    callable = *body;
+  } else {
+    callable = unit_.callables.Add(
+        mir::CallableDecl{
+            .code = {},
+            .foreign = std::nullopt,
+            .virtual_dispatch = std::nullopt,
+            .type_parameters = {},
+            .defining_unit = ref.unit_name});
+    unit_.named_callables.push_back(
+        mir::NamedCallable{.name = ref.subroutine_name, .body = callable});
   }
-  unit_.ConsumeNamespaceOf(ref.unit_name);
-  return mir::ExternalUnitCallableTarget{
-      .unit_name = ref.unit_name, .callable_name = ref.subroutine_name};
+  namespace_callables_.emplace(key, callable);
+  return mir::UnitCallableTarget{.slot = callable};
+}
+
+auto UnitLowerer::NamespaceVariable(
+    const hir::NamespaceValueRef& ref, mir::TypeId cell_type)
+    -> mir::StaticVariableId {
+  const auto key = std::pair{ref.unit_name, ref.variable_name};
+  if (const auto known = namespace_variables_.find(key);
+      known != namespace_variables_.end()) {
+    return known->second;
+  }
+  // The cell a variable of this unit's own namespace holds; for one of another
+  // unit's, a cell declared here for the identifier that unit published.
+  mir::StaticVariableId variable{};
+  if (hir_->IsItself(ref.unit_name)) {
+    const std::optional<mir::StaticVariableId> own = mir::StaticVariableNamed(
+        unit_.named_static_variables, ref.variable_name);
+    if (!own.has_value()) {
+      throw InternalError(
+          "UnitLowerer::NamespaceVariable: this unit's namespace publishes no "
+          "variable under the identifier a reference inside it spells");
+    }
+    variable = *own;
+  } else {
+    variable = unit_.static_variables.Add(
+        mir::StaticVariableDecl{
+            .type = cell_type, .defining_unit = ref.unit_name});
+    unit_.named_static_variables.push_back(
+        mir::NamedStaticVariable{
+            .name = ref.variable_name, .variable = variable});
+  }
+  namespace_variables_.emplace(key, variable);
+  return variable;
 }
 
 auto UnitLowerer::PublishedSubroutineSlot(
-    hir::ExternalScopeClassId scope_class,
-    hir::PublishedCallableId callable) const -> mir::VirtualSlot {
-  return std::visit(
-      Overloaded{
-          [&](const mir::IntraUnitClassRef& own) -> mir::VirtualSlot {
-            return mir::LocalVirtualSlot{
-                .owner_class = own.class_id,
-                .slot = PublishedMethodOf(callable)};
-          },
-          [&](const mir::CrossUnitClassRef& other) -> mir::VirtualSlot {
-            return mir::ExternalVirtualSlot{
-                .unit_name = other.unit_name,
-                .class_path = other.class_path,
-                .ordinal = mir::BehaviorOrdinal{callable.value}};
-          }},
-      ScopeClassIdentity(scope_class));
+    hir::ScopeClassId scope_class, hir::PublishedCallableId callable) const
+    -> mir::VirtualSlot {
+  return mir::VirtualSlot{
+      .owner_class = ScopeClassIdentity(scope_class),
+      .slot = PublishedMethodOf(callable)};
 }
 
 auto UnitLowerer::EmplaceInto() -> mir::UnitCallableTarget {
@@ -1569,16 +1513,17 @@ auto UnitLowerer::EmplaceInto() -> mir::UnitCallableTarget {
           .code = std::move(code),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt,
-          .type_parameters = {
-              mir::TypeParameter{.bounds = {mir::KeeperBound{}}},
-              mir::TypeParameter{
-                  .bounds = {mir::KeptEffectBound(unit_.builtins.void_type)}},
-              mir::TypeParameter{
-                  .bounds = {mir::CalledClosureBound{
-                      .asks = support::ClosureKind::kFn,
-                      .params = {},
-                      .result = effect_type,
-                      .kept = support::CallableHold::kForTheCall}}}}});
+          .type_parameters =
+              {mir::TypeParameter{.bounds = {mir::KeeperBound{}}},
+               mir::TypeParameter{
+                   .bounds = {mir::KeptEffectBound(unit_.builtins.void_type)}},
+               mir::TypeParameter{
+                   .bounds = {mir::CalledClosureBound{
+                       .asks = support::ClosureKind::kFn,
+                       .params = {},
+                       .result = effect_type,
+                       .kept = support::CallableHold::kForTheCall}}}},
+          .defining_unit = std::nullopt});
   return mir::UnitCallableTarget{.slot = *emplace_into_};
 }
 

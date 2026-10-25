@@ -51,7 +51,7 @@ auto DeclareStaticCell(const StaticStorageOwner& owner, mir::TypeId cell_type)
           [&](const InstanceStorage& instance) -> StaticStorageHome {
             return InstanceFieldHome{
                 .field = mir::ClassFieldTarget{
-                    .owner = mir::IntraUnitClassRef{instance.owner},
+                    .owner = instance.owner,
                     .slot = instance.shape->AddField(cell_type)}};
           },
           [&](const ClassStorage& cls) -> StaticStorageHome {
@@ -63,7 +63,8 @@ auto DeclareStaticCell(const StaticStorageOwner& owner, mir::TypeId cell_type)
           [&](const UnitStorage& unit) -> StaticStorageHome {
             return UnitCellHome{
                 .variable = unit.variables->Add(
-                    mir::StaticVariableDecl{.type = cell_type})};
+                    mir::StaticVariableDecl{
+                        .type = cell_type, .defining_unit = std::nullopt})};
           }},
       owner);
 }

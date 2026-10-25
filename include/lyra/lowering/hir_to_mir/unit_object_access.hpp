@@ -6,9 +6,9 @@
 #include <utility>
 
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/hir/external_scope_ref.hpp"
 #include "lyra/hir/interface_member_access.hpp"
 #include "lyra/hir/published_member.hpp"
+#include "lyra/hir/published_scope_ref.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
@@ -27,7 +27,7 @@ namespace lyra::lowering::hir_to_mir {
 // pointer to that storage.
 auto ReadPublishedMember(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
-    hir::ExternalScopeClassId scope_class, hir::PublishedMemberId member)
+    hir::ScopeClassId scope_class, hir::PublishedMemberId member)
     -> mir::ExprId;
 
 // Descends one path element (LRM 23.6) from the object `object` points at,
@@ -38,14 +38,14 @@ auto ReadPublishedMember(
 // viewed as the class the element says it was published as.
 auto StepThroughPublished(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
-    const hir::ExternalScopeRef& names, std::span<const std::uint32_t> selects)
+    const hir::PublishedScopeRef& names, std::span<const std::uint32_t> selects)
     -> mir::ExprId;
 
 // What a `disable` of a block or task another unit published terminates (LRM
 // 9.6.2), on the object `object` points at, as a borrowed pointer.
 auto ReachPublishedDisableTarget(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
-    const hir::ExternalDisableTargetLeaf& leaf) -> mir::ExprId;
+    const hir::PublishedDisableTargetLeaf& leaf) -> mir::ExprId;
 
 // The rest of reaching the instance a virtual interface holds, given the handle
 // already lowered into `steps`: the handle evaluated once, checked to hold an
@@ -79,7 +79,7 @@ auto HeldInterfaceObject(
   mir::Block& block = *frame.current_block;
   mir::ExprId reached = block.exprs.Add(
       ReachHeldInterface(unit, steps, *std::move(handle_or), object_pointer));
-  for (const hir::ExternalStep& step : access.steps) {
+  for (const hir::PublishedStep& step : access.steps) {
     reached = StepThroughPublished(
         lowerer.Owner(), block, reached, step.names, step.selects);
   }

@@ -34,9 +34,9 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/expr_builders.hpp"
-#include "lyra/hir/external_scope_class.hpp"
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/sampled_history.hpp"
+#include "lyra/hir/scope_class.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
@@ -429,11 +429,11 @@ auto LowerObjectSubroutineCall(
         "a subroutine of another instance reached this way is not yet "
         "supported");
   };
-  const auto* on = std::get_if<InExternalScope>(&route.place);
+  const auto* on = std::get_if<InPublishedScope>(&route.place);
   if (on == nullptr || !on->within.empty()) return unsupported();
-  const hir::ExternalScopeClassId scope_class = on->scope_class;
+  const hir::ScopeClassId scope_class = on->scope_class;
   const hir::ScopeClassSignature& published =
-      unit_lowerer.Unit().external_scope_classes.Get(scope_class).signature;
+      unit_lowerer.Unit().scope_classes.Get(scope_class);
   const auto callable = published.FindCallable(sym.name);
   if (!callable.has_value()) return unsupported();
   const hir::TypeId result_type =
@@ -446,7 +446,7 @@ auto LowerObjectSubroutineCall(
       .data =
           hir::CallExpr{
               .callee =
-                  hir::ExternalUnitMethodRef{
+                  hir::PublishedScopeMethodRef{
                       .receiver = receiver,
                       .scope_class = scope_class,
                       .callable = *callable},
@@ -476,9 +476,7 @@ auto LowerHeldInterfaceCall(
       *sym.getParentScope(), span);
   if (!descent) return std::unexpected(std::move(descent.error()));
   const hir::ScopeClassSignature& published =
-      unit_lowerer.Unit()
-          .external_scope_classes.Get(descent->place.scope_class)
-          .signature;
+      unit_lowerer.Unit().scope_classes.Get(descent->place.scope_class);
   const auto callable = published.FindCallable(sym.name);
   if (!callable.has_value()) {
     throw InternalError(
@@ -490,7 +488,7 @@ auto LowerHeldInterfaceCall(
       .data =
           hir::CallExpr{
               .callee =
-                  hir::ExternalUnitMethodRef{
+                  hir::PublishedScopeMethodRef{
                       .receiver = std::move(descent->instance),
                       .scope_class = descent->place.scope_class,
                       .callable = *callable},
@@ -830,8 +828,9 @@ auto LowerSystemCall(
   };
 }
 
-// The object a call of `randomize()` or a mode method acts on, where the call
-// reached it through a handle; the running method's own where it named none.
+// The object a call of `randomize()`, a mode method or a method of the
+// object's generator acts on, where the call reached it through a handle; the
+// running method's own where it named none.
 template <ExprLowerer Lowerer>
 auto ObjectOfCall(
     Lowerer& lowerer, const WalkFrame& frame,
@@ -861,6 +860,23 @@ auto LowerBuiltinClassMethodCall(
   const auto expr = [&](hir::ExprData data) {
     return hir::Expr{.type = *type, .data = std::move(data), .span = span};
   };
+  // A hook is a method of the class whether or not the class declares it (LRM
+  // 18.6.2), so a call naming one is a method call like any other.
+  if (const std::optional<hir::RandomizationHook> hook =
+          LowerRandomizationHookName(sym.name)) {
+    auto cls = lowerer.Owner().ResolveClass(declaring, span);
+    if (!cls) return std::unexpected(std::move(cls.error()));
+    auto receiver = ClassifyMethodReceiver(lowerer, frame, call);
+    if (!receiver) return std::unexpected(std::move(receiver.error()));
+    return expr(
+        hir::CallExpr{
+            .callee =
+                hir::MethodCallRef{
+                    .receiver = *std::move(receiver),
+                    .callee =
+                        hir::BuiltinHookCallee{.cls = *cls, .hook = *hook}},
+            .arguments = std::move(arg_ids)});
+  }
   auto object = ObjectOfCall(lowerer, frame, call.thisClass(), declaring, span);
   if (!object) return std::unexpected(std::move(object.error()));
   const auto on_object = [&](support::BuiltinFn fn) {
@@ -868,12 +884,6 @@ auto LowerBuiltinClassMethodCall(
     operands.insert(operands.end(), arg_ids.begin(), arg_ids.end());
     return expr(BuiltinCall(fn, std::move(operands)));
   };
-  if (sym.name == "pre_randomize") {
-    return on_object(support::BuiltinFn::kObjectPreRandomize);
-  }
-  if (sym.name == "post_randomize") {
-    return on_object(support::BuiltinFn::kObjectPostRandomize);
-  }
   if (sym.name == "srandom") {
     return on_object(support::BuiltinFn::kObjectSrandom);
   }
@@ -907,15 +917,12 @@ auto LowerSubroutineCall(
     std::vector<std::optional<hir::ExprId>> arg_ids, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   auto& unit_lowerer = lowerer.Owner();
-  const auto* named =
+  const auto* sym =
       std::get<const slang::ast::SubroutineSymbol*>(call.subroutine);
-  if (named == nullptr) {
+  if (sym == nullptr) {
     throw InternalError(
         "AST->HIR call: user call missing resolved SubroutineSymbol");
   }
-  // The call is made on the object it names, whichever class the method it
-  // runs is declared in.
-  const slang::ast::SubroutineSymbol* sym = RandomizationHookReached(*named);
 
   // A method the runtime carries out routes to the library entry. A static
   // method acts on no object, whatever handle the call is written through (LRM
@@ -952,8 +959,8 @@ auto LowerSubroutineCall(
 
   // A class method the front end supplies itself has no body, so there is no
   // declaration of this unit for the call to name. Every class has such
-  // methods for its generator and its constraints (LRM 18.6, 18.8, 18.9,
-  // 18.13.3 -- 18.13.5), which the runtime carries out; those of a library
+  // methods for its generator, its constraints and the hooks `randomize()`
+  // runs (LRM 18.6, 18.8, 18.9, 18.13.3 -- 18.13.5); those of a library
   // class the runtime defines were routed above, and those of a `std` class
   // Lyra defines are that definition's methods, called as any other class's.
   if (const slang::ast::ClassType* declaring = DeclaringClassOf(*sym);
@@ -978,7 +985,8 @@ auto LowerSubroutineCall(
   }
   if (is_type_associated) {
     const auto& declaring_class = *DeclaringClassOf(*sym);
-    auto callee = unit_lowerer.MakeMethodCallee(declaring_class, *sym, span);
+    auto callee =
+        unit_lowerer.MakeClassMethodTarget(declaring_class, *sym, span);
     if (!callee) return std::unexpected(std::move(callee.error()));
     auto static_result_type = unit_lowerer.InternExpressionType(call, span);
     if (!static_result_type) {
@@ -1023,7 +1031,8 @@ auto LowerSubroutineCall(
     auto receiver_or = ClassifyMethodReceiver(lowerer, frame, call);
     if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
     const auto& declaring_class = *DeclaringClassOf(*sym);
-    auto callee = unit_lowerer.MakeMethodCallee(declaring_class, *sym, span);
+    auto callee =
+        unit_lowerer.MakeClassMethodTarget(declaring_class, *sym, span);
     if (!callee) return std::unexpected(std::move(callee.error()));
     auto method_result_type = unit_lowerer.InternExpressionType(call, span);
     if (!method_result_type) {
@@ -1080,13 +1089,13 @@ auto LowerSubroutineCall(
     };
   }
 
-  // A subroutine declared in a package or the `$unit` scope belongs to another
-  // compilation unit (LRM 26.3 / 3.12.1). It is reached by name across the unit
-  // boundary rather than through an enclosing-scope binding of this unit. Each
+  // A subroutine declared in a package or the `$unit` scope (LRM 26.3 /
+  // 3.12.1) is reached by its unit and name, from that unit's own bodies as
+  // from any other's, rather than through an enclosing-scope binding. Each
   // formal's direction and type is what marshals an output / inout / ref
-  // actual at that boundary (LRM 13.5), and the declaring unit's signature is
-  // where it is stated. The call's result type is the enclosing expression's
-  // own type and is not recorded again here.
+  // actual at that boundary (LRM 13.5), and the declaring unit's declarations
+  // are where it is stated. The call's result type is the enclosing
+  // expression's own type and is not recorded again here.
   if (const auto* unit = DeclaringNamespaceUnit(*sym)) {
     std::string unit_name =
         CompilationUnitName(*unit, unit_lowerer.Specialization());
@@ -1100,7 +1109,7 @@ auto LowerSubroutineCall(
         .data =
             hir::CallExpr{
                 .callee =
-                    hir::ExternalUnitSubroutineRef{
+                    hir::NamespaceSubroutineRef{
                         .unit_name = std::move(unit_name),
                         .subroutine_name = std::string{sym->name},
                         .interface = *std::move(interface)},
@@ -1362,13 +1371,12 @@ auto LowerRandomizationCall(
     const slang::ast::ConstraintBlockSymbol& introducing =
         IntroducingConstraintBlock(*named->block);
     if (introducing.flags.has(slang::ast::ConstraintBlockFlags::Static)) {
-      auto introducer = lowerer.Owner().ResolveClassRef(
+      auto introducer = lowerer.Owner().ResolveClass(
           introducing.getParentScope()->asSymbol().as<slang::ast::ClassType>(),
           span);
       if (!introducer) return std::unexpected(std::move(introducer.error()));
       block_target = hir::StaticConstraintBlockMode{
-          .introducer = *std::move(introducer),
-          .block = std::string{introducing.name}};
+          .introducer = *introducer, .block = std::string{introducing.name}};
     } else {
       const auto& owner = named->block->getParentScope()
                               ->asSymbol()

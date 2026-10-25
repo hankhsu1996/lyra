@@ -266,15 +266,14 @@ auto UnitLowerer::InternOwnClassDeclarations() -> diag::Result<void> {
     // A covergroup is a type of its scope as a class is (LRM 19.3), so it is
     // minted on the same walk.
     if (const auto* covergroup = member.as_if<slang::ast::CovergroupType>()) {
-      auto r = InternLocalCovergroup(*covergroup, span);
+      auto r = InternOwnCovergroup(*covergroup, span);
       if (!r) return std::unexpected(std::move(r.error()));
       return {};
     }
     if (member.kind != slang::ast::SymbolKind::ClassType) {
       return {};
     }
-    if (auto r = InternLocalClass(member.as<slang::ast::ClassType>(), span);
-        !r) {
+    if (auto r = InternOwnClass(member.as<slang::ast::ClassType>(), span); !r) {
       return std::unexpected(std::move(r.error()));
     }
     return {};
@@ -827,24 +826,9 @@ auto UnitLowerer::HeldByAnotherDesignElement(
 auto UnitLowerer::TakesDeclaringInstance(
     const slang::ast::ClassType& cls, diag::SourceSpan span)
     -> diag::Result<bool> {
-  auto ref = ResolveClassRef(cls, span);
-  if (!ref) return std::unexpected(std::move(ref.error()));
-  return std::visit(
-      Overloaded{
-          [&](const hir::LocalClassRef&) {
-            const auto own = own_classes_.find(Defining(cls));
-            if (own == own_classes_.end()) {
-              throw InternalError(
-                  "UnitLowerer::TakesDeclaringInstance: a class this unit "
-                  "holds states what it takes once it is interned");
-            }
-            return own->second.signature.takes_declaring_instance;
-          },
-          [&](const hir::ExternalClassRef& ext) {
-            return ExternalClassOf(ext.unit_name, ext.class_path)
-                .takes_declaring_instance;
-          }},
-      *ref);
+  auto id = ResolveClass(cls, span);
+  if (!id) return std::unexpected(std::move(id.error()));
+  return DeclarationOf(*id).takes_declaring_instance;
 }
 
 auto UnitLowerer::DeclaringScopeHopsFrom(
@@ -919,7 +903,10 @@ auto UnitLowerer::TakePublication(const slang::ast::Scope& scope)
   }
   const std::size_t published_loops = stated->second.loops.size();
   const std::size_t published_choices = stated->second.choices.size();
+  const hir::ScopeClassId scope_class =
+      unit_.scope_classes.DeclareOwn(stated->second.class_path);
   hir::ScopePublication publication{
+      .scope_class = scope_class,
       .signature = std::move(stated->second),
       .members =
           base::Translation<hir::PublishedMemberId, hir::PublishedDecl>{
@@ -952,14 +939,14 @@ auto UnitLowerer::TakePublication(const slang::ast::Scope& scope)
                 [&](const ScopePublicationRecord::ClassStatic& property)
                     -> hir::PublishedDecl {
                   const auto owner = class_cache_.find(property.owner);
-                  const auto* local =
-                      owner == class_cache_.end()
-                          ? nullptr
-                          : std::get_if<hir::LocalClassRef>(&owner->second);
-                  if (local == nullptr) unbound("a class's static property");
-                  return hir::LocalStaticPropertyTarget{
-                      .owner = local->class_id,
-                      .prop = LookupClassPropertyStaticId(*property.symbol)};
+                  if (owner == class_cache_.end() ||
+                      !unit_.classes.IsOwn(owner->second)) {
+                    unbound("a class's static property");
+                  }
+                  return hir::ClassStaticPropertyTarget{
+                      .owner = owner->second,
+                      .prop = StaticPropertyPositionOf(
+                          owner->second, property.symbol->name)};
                 },
                 [&](const ScopePublicationRecord::CovergroupEvent& event)
                     -> hir::PublishedDecl {
@@ -968,9 +955,7 @@ auto UnitLowerer::TakePublication(const slang::ast::Scope& scope)
                     unbound("a covergroup's block event");
                   }
                   return hir::CovergroupBlockEvent{
-                      .covergroup =
-                          std::get<hir::LocalCovergroupRef>(minted->second)
-                              .covergroup};
+                      .covergroup = minted->second};
                 },
                 [](const ScopePublicationRecord::Instance& instance)
                     -> hir::PublishedDecl { return instance.id; },

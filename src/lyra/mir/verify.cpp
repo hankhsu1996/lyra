@@ -22,17 +22,16 @@
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class.hpp"
+#include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/closure_signature.hpp"
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/dump.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
-#include "lyra/mir/external_class.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/frame_size.hpp"
 #include "lyra/mir/integral_constant_folding.hpp"
@@ -840,24 +839,20 @@ void VerifyTypeOperationCalls(
     }
     // A method of a record this unit declares is one its declaration states.
     if (const auto* method = std::get_if<RecordMethodTarget>(&direct->target);
-        method != nullptr && method->declaration.unit_name == unit.name) {
-      const auto records = unit.records.Ids();
-      const auto declared = std::ranges::find_if(records, [&](RecordId record) {
-        return unit.GetRecord(record).path == method->declaration.path;
-      });
-      if (declared == records.end() ||
-          std::ranges::none_of(
-              unit.GetRecordMethods(*declared), [&](const RecordMethod& m) {
-                return m.answers == method->answers;
-              })) {
-        throw InternalError(
-            std::format(
-                "mir verify: {} calls the method \"{}\" of record '{}' "
-                "(expression {} of its block), which its declaration does not "
-                "state -- please report this as a bug",
-                describe(), support::ValueOperationName(method->answers),
-                support::DisplayOf(method->declaration.path), id.value));
-      }
+        method != nullptr &&
+        !unit.GetRecord(method->record).defining_unit.has_value() &&
+        std::ranges::none_of(
+            unit.GetRecordMethods(method->record), [&](const RecordMethod& m) {
+              return m.answers == method->answers;
+            })) {
+      throw InternalError(
+          std::format(
+              "mir verify: {} calls the method \"{}\" of record '{}' "
+              "(expression {} of its block), which its declaration does not "
+              "state -- please report this as a bug",
+              describe(), support::ValueOperationName(method->answers),
+              support::DisplayOf(unit.GetRecord(method->record).path),
+              id.value));
     }
     const auto* target = std::get_if<TypeOperationTarget>(&direct->target);
     if (target != nullptr &&
@@ -1393,12 +1388,10 @@ void VerifyValuesMeetTheirTypes(
     }
     // The constructor of a class of this unit, which a construction of its
     // object enters with the call's arguments as one naming it does.
-    const auto constructor_of = [&](const auto& cls) -> const CallableCode* {
-      const auto* own = std::get_if<IntraUnitClassRef>(&cls);
-      if (own == nullptr || !unit.GetClass(own->class_id).constructor) {
-        return nullptr;
-      }
-      return &unit.GetClass(own->class_id).constructor->code;
+    const auto constructor_of = [&](ClassId cls) -> const CallableCode* {
+      const std::optional<ConstructorDecl>& constructor =
+          unit.GetClass(cls).constructor;
+      return constructor.has_value() ? &constructor->code : nullptr;
     };
     const CallableCode* callee = nullptr;
     // The types a generic callee is called at, which its parameters' types
@@ -1406,11 +1399,19 @@ void VerifyValuesMeetTheirTypes(
     std::span<const TypeId> called_at;
     if (const auto* direct = std::get_if<Direct>(&call->callee)) {
       if (const auto* method = std::get_if<CallableTarget>(&direct->target)) {
-        callee = &unit.GetClass(method->owner).callables.Get(method->slot).code;
+        // Another unit holds the signature of a class it defines.
+        if (const Class& owner = unit.GetClass(method->owner);
+            !owner.defining_unit.has_value()) {
+          callee = &owner.callables.Get(method->slot).code;
+        }
       } else if (
           const auto* free = std::get_if<UnitCallableTarget>(&direct->target)) {
-        callee = &unit.callables.Get(free->slot).code;
-        called_at = direct->type_arguments;
+        // Another unit holds the signature of a body of its namespace.
+        if (const CallableDecl& body = unit.callables.Get(free->slot);
+            !body.defining_unit.has_value()) {
+          callee = &body.code;
+          called_at = direct->type_arguments;
+        }
       } else if (
           const auto* constructor =
               std::get_if<ConstructorTarget>(&direct->target)) {
@@ -2567,12 +2568,6 @@ class HandedClosures {
             [](const StaticVariableRef&) -> Reached {
               return LivesForTheWholeRun{};
             },
-            [](const ExternalUnitVariableRef&) -> Reached {
-              return LivesForTheWholeRun{};
-            },
-            [](const ExternalStaticPropertyRef&) -> Reached {
-              return LivesForTheWholeRun{};
-            },
             [](const ClassConstantRef&) -> Reached {
               return LivesForTheWholeRun{};
             },
@@ -2669,66 +2664,111 @@ class HandedClosures {
       inits_;
 };
 
-// A class of this unit has one identity here, its id, however the name
-// reaching it was written -- through another instance of this unit, or a
-// signature naming this unit. Naming it as another unit's class would give one
-// class two identities in one unit, which both backends would then have to
-// agree are one.
-void VerifyOwnClassesNamedAsOwn(
-    const CompilationUnit& unit, std::string_view when) {
+// An entry has one identity here however the name reaching it was written:
+// one this unit defines is never declared as another unit's, and one another
+// unit defines is declared once, by the unit and the name it published it
+// under. Such an entry is a declaration only -- a class states its methods'
+// names and dispatch, a subroutine its signature, a record and a variable
+// their type -- and holds nothing this unit would emit, so no walk emitting
+// definitions can emit a second one of a symbol its unit already defines.
+void VerifyDeclaredEntries(const CompilationUnit& unit, std::string_view when) {
   const auto refuse = [&](const support::DefPath& class_path,
-                          std::string_view where) {
+                          std::string_view what) {
     throw InternalError(
         std::format(
-            "mir verify: unit '{}', {}, names its own class '{}' as another "
-            "unit's, in {} -- please report this as a bug",
-            unit.name, when, support::DisplayOf(class_path), where));
+            "mir verify: unit '{}', {}, {} '{}' -- please report this as a bug",
+            unit.name, when, what, support::DisplayOf(class_path)));
   };
-  for (const Type& type : unit.types) {
-    const auto* object = type.As<ObjectType>();
-    if (object == nullptr) continue;
-    const auto* other = std::get_if<CrossUnitClassRef>(&object->of);
-    if (other != nullptr && other->unit_name == unit.name) {
-      refuse(other->class_path, "a type");
+  std::vector<std::pair<std::string_view, const support::DefPath*>> declared;
+  for (const ClassId id : unit.classes.Ids()) {
+    const Class& cls = unit.GetClass(id);
+    if (!cls.defining_unit.has_value()) continue;
+    if (!cls.path.has_value()) {
+      throw InternalError(
+          std::format(
+              "mir verify: unit '{}', {}, declares a class of unit '{}' that "
+              "has no path -- please report this as a bug",
+              unit.name, when, *cls.defining_unit));
+    }
+    if (*cls.defining_unit == unit.name) {
+      refuse(*cls.path, "declares as another unit's its own class");
+    }
+    for (const auto& [unit_name, path] : declared) {
+      if (unit_name == *cls.defining_unit && *path == *cls.path) {
+        refuse(*cls.path, "declares twice the class");
+      }
+    }
+    declared.emplace_back(*cls.defining_unit, &*cls.path);
+    const bool holds_code =
+        std::ranges::any_of(cls.callables.Ids(), [&](CallableId callable) {
+          return cls.callables.Get(callable).code.body.has_value();
+        });
+    if (holds_code || cls.constructor.has_value() || !cls.contained.empty() ||
+        !cls.constants.empty() ||
+        !cls.object_definition_initializer.body.exprs.empty()) {
+      refuse(*cls.path, "holds code or data of its own for the class");
     }
   }
-  // What a record of another unit's class names may lead back to this unit,
-  // where that class's lineage passes through one of its own; a reference in a
-  // body to another unit's class is checked where it consumed the signature.
-  const auto refuse_own = [&](const CrossUnitClassRef* other,
-                              std::string_view where) {
-    if (other != nullptr && other->unit_name == unit.name) {
-      refuse(other->class_path, where);
+  for (const RecordId id : unit.records.Ids()) {
+    const RecordDecl& record = unit.GetRecord(id);
+    if (!record.defining_unit.has_value()) continue;
+    if (*record.defining_unit == unit.name) {
+      refuse(record.path, "declares as another unit's its own record");
     }
+    if (!unit.GetRecordMethods(id).empty()) {
+      refuse(record.path, "states methods of its own for the record");
+    }
+  }
+  const auto refuse_member = [&](std::string_view what, std::uint32_t at) {
+    throw InternalError(
+        std::format(
+            "mir verify: unit '{}', {}, {} {} -- please report this as a bug",
+            unit.name, when, what, at));
   };
-  for (const ExternalClass& record : unit.external_classes) {
-    if (record.unit_name == unit.name) {
-      refuse(record.class_path, "its record of what a unit published");
-    }
-    if (record.base.has_value()) {
-      refuse_own(
-          std::get_if<CrossUnitClassRef>(&*record.base),
-          "the base of its record of another unit's class");
-    }
-    for (const DeclaredClassRef& iface : record.implements) {
-      refuse_own(
-          std::get_if<CrossUnitClassRef>(&iface),
-          "what its record of another unit's class implements");
-    }
-    for (const PublishedOverride& overriding : record.overrides) {
-      const auto* other =
-          std::get_if<ExternalVirtualSlot>(&overriding.behavior);
-      if (other != nullptr && other->unit_name == unit.name) {
-        refuse(
-            other->class_path,
-            "a behavior its record of another unit's class overrides");
+  // A method of a class this unit defines has its body here unless the class
+  // leaves it to what extends it, and a subroutine of this unit's namespace
+  // has its body here unless foreign code defines it: nothing else defines one.
+  for (const ClassId id : unit.classes.Ids()) {
+    const Class& cls = unit.GetClass(id);
+    if (cls.defining_unit.has_value()) continue;
+    for (const CallableId callable : cls.callables.Ids()) {
+      if (std::holds_alternative<DefinedByAnotherUnit>(
+              FormOf(cls.callables.Get(callable)))) {
+        refuse_member(
+            "leaves with no body a method of a class it defines, slot",
+            callable.value);
       }
     }
   }
-  for (const ConsumedSignature& consumed : unit.consumed_signatures) {
-    const auto* cls = std::get_if<ConsumedClass>(&consumed);
-    if (cls != nullptr && cls->unit_name == unit.name) {
-      refuse(cls->class_path, "what it consumed of a signature");
+  for (const CallableId id : unit.callables.Ids()) {
+    const CallableDecl& callable = unit.callables.Get(id);
+    if (!callable.defining_unit.has_value()) {
+      if (std::holds_alternative<DefinedByAnotherUnit>(FormOf(callable))) {
+        refuse_member("leaves with no body its own subroutine", id.value);
+      }
+      continue;
+    }
+    if (*callable.defining_unit == unit.name) {
+      refuse_member("declares as another unit's its own subroutine", id.value);
+    }
+    if (callable.code.body.has_value()) {
+      refuse_member(
+          "holds a body for a subroutine another unit defines", id.value);
+    }
+    if (!NameOf(unit.named_callables, id).has_value()) {
+      refuse_member(
+          "declares with no name a subroutine another unit defines", id.value);
+    }
+  }
+  for (const StaticVariableId id : unit.static_variables.Ids()) {
+    const StaticVariableDecl& variable = unit.static_variables.Get(id);
+    if (!variable.defining_unit.has_value()) continue;
+    if (*variable.defining_unit == unit.name) {
+      refuse_member("declares as another unit's its own variable", id.value);
+    }
+    if (!NameOf(unit.named_static_variables, id).has_value()) {
+      refuse_member(
+          "declares with no name a variable another unit defines", id.value);
     }
   }
 }
@@ -2792,7 +2832,7 @@ auto EvaluatesNothing(const Block& block, ExprId id) -> bool {
 }
 
 void Verify(const CompilationUnit& unit, Phase phase, std::string_view when) {
-  VerifyOwnClassesNamedAsOwn(unit, when);
+  VerifyDeclaredEntries(unit, when);
   VerifyTypeOperations(unit, when);
   const auto describer = [&](const CodeSource& at) {
     return [&unit, &at, when] {

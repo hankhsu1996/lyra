@@ -295,11 +295,9 @@ struct DynamicArrayNewExpr {
 };
 
 // LRM 8.5 class object construction `new`. Allocates a new object of the named
-// class and runs its constructor, yielding a handle. The class is named by a
-// `ClassRef`: a local id when the class is declared by this unit, or a by-name
-// reference against another unit's signature when the class is declared
-// elsewhere. `Expr::type` is the class handle type. `arguments` are the
-// constructor actuals (LRM 8.7), empty for the default `new`.
+// class and runs its constructor, yielding a handle. `Expr::type` is the class
+// handle type. `arguments` are the constructor actuals (LRM 8.7), empty for
+// the default `new`.
 //
 // `declaring_instance` is how this body reaches the instance of the scope that
 // declares the class: a class declared in a structural scope is a type of that
@@ -309,7 +307,7 @@ struct DynamicArrayNewExpr {
 // the expression; it is present exactly where the class takes the instance,
 // which is the class's own declaration to say.
 struct ClassNewExpr {
-  ClassRef class_ref;
+  ClassId class_id;
   std::vector<ExprId> arguments;
   std::optional<DeclaringInstanceReach> declaring_instance;
 
@@ -321,7 +319,7 @@ struct ClassNewExpr {
 // of that class, `embedding`; one a structural scope declares is a type of
 // that scope's instance, reached as `declaring_instance` is for a class.
 struct CovergroupNewExpr {
-  CovergroupRef covergroup;
+  CovergroupId covergroup;
   std::vector<ExprId> arguments;
   std::optional<ExprId> embedding;
   std::optional<DeclaringInstanceReach> declaring_instance;
@@ -353,7 +351,7 @@ using CovergroupReceiver =
 // (`cg::get_coverage()`), and of an instance otherwise. `arguments` are as the
 // source wrote them, an absent one being left to its default.
 struct CovergroupMethodCallExpr {
-  CovergroupRef covergroup;
+  CovergroupId covergroup;
   CovergroupReceiver receiver;
   std::optional<std::string> item;
   CovergroupMethod method = CovergroupMethod::kSample;
@@ -366,7 +364,7 @@ struct CovergroupMethodCallExpr {
 // crosses where `item` names one, or `type_option.<field>` of its type (LRM
 // 19.7, 19.10), read and written as a variable is.
 struct CovergroupOptionExpr {
-  CovergroupRef covergroup;
+  CovergroupId covergroup;
   CovergroupReceiver receiver;
   std::optional<std::string> item;
   std::string field;
@@ -591,7 +589,7 @@ struct ConstraintBlockMode {
 // A static block's mode is its class's (LRM 18.5.10): the class that
 // introduced the block, whichever class's block of that name the call reached.
 struct StaticConstraintBlockMode {
-  ClassRef introducer;
+  ClassId introducer;
   std::string block;
 
   auto operator==(const StaticConstraintBlockMode&) const -> bool = default;

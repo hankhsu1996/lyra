@@ -102,6 +102,8 @@ auto IsEnteredForeign(const CompilationUnit& unit, const CodeSource& at)
 void ForEachCode(const CompilationUnit& unit, const CodeVisit& visit) {
   for (const ClassId owner : unit.classes.Ids()) {
     const Class& cls = unit.GetClass(owner);
+    // A class another unit defines holds no code here.
+    if (cls.defining_unit.has_value()) continue;
     if (cls.constructor.has_value()) {
       visit(ConstructorSource{.owner = owner}, cls.constructor->code);
     }
@@ -112,6 +114,8 @@ void ForEachCode(const CompilationUnit& unit, const CodeVisit& visit) {
     }
   }
   for (const CallableId slot : unit.callables.Ids()) {
+    // A subroutine of another unit's namespace holds no code here.
+    if (unit.callables.Get(slot).defining_unit.has_value()) continue;
     visit(UnitCallableTarget{.slot = slot}, unit.callables.Get(slot).code);
   }
   for (const RecordId record : unit.record_methods.Ids()) {

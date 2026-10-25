@@ -20,9 +20,7 @@
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
-#include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/external_class.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
@@ -36,19 +34,14 @@ class UnitLowerer;
 // wherever the covergroup is declared: what the covergroup's unit published of
 // it, and where each property of the class sits.
 struct CovergroupClass {
-  hir::CovergroupRef covergroup;
+  hir::CovergroupId covergroup;
   const hir::PublishedCovergroup* published;
   CovergroupLayout layout;
 };
 
 [[nodiscard]] auto CovergroupClassOf(
-    const UnitLowerer& unit_lowerer, const hir::CovergroupRef& covergroup)
+    const UnitLowerer& unit_lowerer, hir::CovergroupId covergroup)
     -> CovergroupClass;
-
-// The class itself, as a construction or a base names it.
-[[nodiscard]] auto CovergroupClassRef(
-    UnitLowerer& unit_lowerer, const hir::CovergroupRef& covergroup)
-    -> mir::DeclaredClassRef;
 
 // The property at `index` of the class, as a member access names it, and the
 // type it holds.
@@ -59,11 +52,10 @@ struct CovergroupClass {
     UnitLowerer& unit_lowerer, const CovergroupClass& cls, std::uint32_t index)
     -> mir::TypeId;
 
-// The record this unit keeps of the class another unit writes for its
-// covergroup, laid out from what that unit published.
+// The declaration here of the class another unit writes for its covergroup,
+// laid out from what that unit published.
 [[nodiscard]] auto PublishedCovergroupClass(
-    UnitLowerer& unit_lowerer, const hir::ExternalCovergroup& published)
-    -> mir::ExternalClass;
+    UnitLowerer& unit_lowerer, hir::CovergroupId published) -> mir::Class;
 
 // Writes the class one covergroup this unit declares is: its properties, its
 // construction over the coverage library, `sample`, the record of its type,
@@ -115,15 +107,8 @@ class CovergroupLowerer {
 // makes it by, as a call through an object of that class and an override name
 // it.
 [[nodiscard]] auto FactorySlot(
-    UnitLowerer& unit_lowerer, const hir::CovergroupRef& first)
+    const UnitLowerer& unit_lowerer, hir::CovergroupId first)
     -> mir::VirtualSlot;
-
-// The dispatch role of the method a class embedding `covergroup` makes it by
-// (LRM 19.4.1): introduced by the class embedding the first covergroup of a
-// lineage, overridden by each class embedding one extending it.
-[[nodiscard]] auto CovergroupFactoryDispatch(
-    UnitLowerer& unit_lowerer, hir::CovergroupId covergroup)
-    -> mir::VirtualDispatchRole;
 
 // The body of that method, of the class whose shape is `shape`: it makes the
 // covergroup's instance with the object as the embedding one and the arguments
@@ -137,7 +122,7 @@ class CovergroupLowerer {
 // embeds that are sampled at it (LRM 19.3), added to `triggers`: the event of
 // the record of each instance a property of the object holds.
 void AddEmbeddedBlockEvents(
-    UnitLowerer& unit_lowerer, hir::ClassId embedding, const ClassShape& shape,
+    UnitLowerer& unit_lowerer, hir::ClassId embedding,
     BlockEventTriggers& triggers);
 
 // LRM 19.3 `new` of a covergroup: the first covergroup of a lineage a class

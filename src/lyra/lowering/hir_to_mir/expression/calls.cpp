@@ -1,7 +1,6 @@
 #include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 
 #include <cstddef>
-#include <cstdint>
 #include <expected>
 #include <format>
 #include <optional>
@@ -18,12 +17,10 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
-#include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
-#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/covergroup_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/expression/array_iterator_method.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
@@ -49,6 +46,7 @@
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/sampled_history.hpp"
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
@@ -442,6 +440,57 @@ auto LowerBuiltinMethodCall(
   return BuildStoreExpr(unit, block, *written_back, block.Read(*receiver));
 }
 
+// A call of a hook a class has without declaring it, where no class of its
+// lineage declares one either or the class is an interface class -- the calls
+// the library runs, where a method of the source runs no other (the plan of a
+// method call answers those). An interface class's hook is virtual (LRM
+// 8.26.9), so it runs what the object's own class runs; a class's is not (LRM
+// 18.6.2), so it runs the built-in one, which does nothing.
+template <ExprLowerer Lowerer>
+auto LowerLibraryHookCall(
+    Lowerer& lowerer, WalkFrame frame, const hir::MethodCallRef& ref,
+    const hir::BuiltinHookCallee& hook, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  const UnitLowerer& unit_lowerer = lowerer.Owner();
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  mir::Block& block = *frame.current_block;
+  const bool runs_objects_hook =
+      unit_lowerer.Hir().classes.IsInterfaceClass(hook.cls);
+  const support::BuiltinFn fn = [&] {
+    switch (hook.hook) {
+      case hir::RandomizationHook::kPreRandomize:
+        return runs_objects_hook ? support::BuiltinFn::kObjectPreRandomize
+                                 : support::BuiltinFn::kBuiltinPreRandomize;
+      case hir::RandomizationHook::kPostRandomize:
+        return runs_objects_hook ? support::BuiltinFn::kObjectPostRandomize
+                                 : support::BuiltinFn::kBuiltinPostRandomize;
+    }
+    throw InternalError("LowerLibraryHookCall: unknown RandomizationHook");
+  }();
+  auto object = std::visit(
+      Overloaded{
+          [&](const hir::HandleReceiver& handle) -> diag::Result<mir::ExprId> {
+            auto lowered =
+                lowerer.LowerExpr(lowerer.HirExprs().Get(handle.expr), frame);
+            if (!lowered) return std::unexpected(std::move(lowered.error()));
+            return block.AsValue(
+                unit.types, block.exprs.Add(*std::move(lowered)));
+          },
+          [&](const hir::SelfReceiver&) -> diag::Result<mir::ExprId> {
+            return block.exprs.Add(BuildThisHandle(frame));
+          },
+          [&](const hir::SuperReceiver&) -> diag::Result<mir::ExprId> {
+            return block.exprs.Add(BuildThisHandle(frame));
+          }},
+      ref.receiver);
+  if (!object) return std::unexpected(std::move(object.error()));
+  return BuildBuiltinMethodCall(
+      unit_lowerer, block, fn, std::nullopt,
+      {StatedAsRead(
+          unit, block, support::RuntimeEntryOf(fn).operands.At(0), *object)},
+      result_type);
+}
+
 }  // namespace
 
 auto BuildBuiltinMethodCall(
@@ -551,10 +600,17 @@ auto LowerHirCallExpr(
                 "LowerHirCallExpr: a user subroutine call is planned before "
                 "this dispatch");
           },
-          [](const hir::MethodCallRef&) -> diag::Result<mir::Expr> {
-            throw InternalError(
-                "LowerHirCallExpr: a class method call is planned before this "
-                "dispatch");
+          // A method call the source's methods do not answer is a hook the
+          // library runs; every other is planned before this dispatch.
+          [&](const hir::MethodCallRef& ref) -> diag::Result<mir::Expr> {
+            const auto* hook = std::get_if<hir::BuiltinHookCallee>(&ref.callee);
+            if (hook == nullptr) {
+              throw InternalError(
+                  "LowerHirCallExpr: a class method call is planned before "
+                  "this dispatch");
+            }
+            return LowerLibraryHookCall(
+                lowerer, frame, ref, *hook, result_type);
           },
           [](const hir::StaticMethodCallRef&) -> diag::Result<mir::Expr> {
             throw InternalError(
@@ -580,12 +636,12 @@ auto LowerHirCallExpr(
           [&](const hir::ForeignImportRef& imp) -> diag::Result<mir::Expr> {
             return LowerForeignImportCall(lowerer, frame, c, imp, result_type);
           },
-          [](const hir::ExternalUnitSubroutineRef&) -> diag::Result<mir::Expr> {
+          [](const hir::NamespaceSubroutineRef&) -> diag::Result<mir::Expr> {
             throw InternalError(
-                "LowerHirCallExpr: a cross-unit subroutine call is planned "
+                "LowerHirCallExpr: a package subroutine call is planned "
                 "before this dispatch");
           },
-          [](const hir::ExternalUnitMethodRef&) -> diag::Result<mir::Expr> {
+          [](const hir::PublishedScopeMethodRef&) -> diag::Result<mir::Expr> {
             throw InternalError(
                 "LowerHirCallExpr: a call on another unit's object is planned "
                 "before this dispatch");

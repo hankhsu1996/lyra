@@ -7,30 +7,30 @@
 #include <vector>
 
 #include "lyra/base/overloaded.hpp"
-#include "lyra/hir/external_callee.hpp"
-#include "lyra/hir/external_class.hpp"
-#include "lyra/hir/external_scope_class.hpp"
+#include "lyra/hir/callee_interface.hpp"
+#include "lyra/hir/class_declaration.hpp"
+#include "lyra/hir/declared_method.hpp"
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/published_member.hpp"
-#include "lyra/hir/published_method.hpp"
 #include "lyra/hir/published_modport.hpp"
 #include "lyra/hir/published_target.hpp"
+#include "lyra/hir/scope_class.hpp"
+#include "lyra/hir/subroutine_prototype.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_import.hpp"
 
 namespace lyra::hir {
 
-auto ImportCalleeInterface(
-    TypeImporter& importer, ExternalCalleeInterface interface)
-    -> ExternalCalleeInterface {
-  for (ExternalCalleeParam& param : interface.params) {
+auto ImportCalleeInterface(TypeImporter& importer, CalleeInterface interface)
+    -> CalleeInterface {
+  for (CalleeParam& param : interface.params) {
     param.type = importer.Import(param.type);
   }
   return interface;
 }
 
-auto ImportCallable(TypeImporter& importer, PublishedCallable callable)
-    -> PublishedCallable {
+auto ImportCallable(TypeImporter& importer, SubroutinePrototype callable)
+    -> SubroutinePrototype {
   callable.result_type = importer.Import(callable.result_type);
   callable.interface =
       ImportCalleeInterface(importer, std::move(callable.interface));
@@ -100,44 +100,42 @@ auto ImportScopeClass(TypeImporter& importer, ScopeClassSignature published)
   return imported;
 }
 
-auto ImportExternalScopeClass(
-    const UnitSignature& signature, const ScopeClassSignature& published,
-    TypePool& into) -> ExternalScopeClass {
-  TypeImportMemo memo;
-  TypeImporter importer(signature.types, std::nullopt, into, memo);
-  return ExternalScopeClass{
-      .unit_name = signature.unit_name,
-      .signature = ImportScopeClass(importer, published)};
+auto ReaderImporter(
+    const UnitSignature& signature, TypePool& into, ClassRegistry& classes,
+    CovergroupRegistry& covergroups, ScopeClassRegistry& scope_classes,
+    TypeImportMemo& memo) -> TypeImporter {
+  return TypeImporter(
+      signature.types, into, memo,
+      [&](ClassId id) { return classes.Import(signature.ClassKeyOf(id)); },
+      [&](CovergroupId id) {
+        return covergroups.Import(signature.CovergroupKeyOf(id));
+      },
+      [&](ScopeClassId id) {
+        return scope_classes.Import(signature.ScopeClassKeyOf(id));
+      });
 }
 
-auto ImportExternalClass(
-    const UnitSignature& signature, const ClassSignature& published,
-    TypePool& into) -> ExternalClass {
-  ExternalClass cls{
-      .unit_name = signature.unit_name,
-      .class_path = published.class_path,
-      .base = published.base,
-      .is_interface_class = published.is_interface_class,
-      .implements = published.implements,
-      .properties = {},
-      .local_property_types = {},
-      .static_properties = {},
-      .constructor = std::nullopt,
-      .methods = {},
-      .overrides = {},
-      .takes_declaring_instance = published.takes_declaring_instance};
-  TypeImportMemo memo;
-  TypeImporter importer(signature.types, std::nullopt, into, memo);
-  cls.properties = ImportProperties(importer, published.properties);
-  cls.local_property_types =
-      ImportTypes(importer, published.local_property_types);
-  cls.static_properties =
-      ImportStaticProperties(importer, published.static_properties);
-  cls.constructor = published.constructor.transform(
-      [&](const ExternalCalleeInterface& stated) {
-        return ImportCalleeInterface(importer, stated);
-      });
-  cls.methods = ImportMethods(importer, published.methods);
+auto ImportClassDeclaration(
+    TypeImporter& importer, const ClassDeclaration& declared)
+    -> ClassDeclaration {
+  ClassDeclaration cls{
+      .class_path = declared.class_path,
+      .base = declared.base.transform(
+          [&](ClassId base) { return importer.ImportClass(base); }),
+      .is_interface_class = declared.is_interface_class,
+      .implements = {},
+      .properties = ImportProperties(importer, declared.properties),
+      .static_properties =
+          ImportStaticProperties(importer, declared.static_properties),
+      .constructor =
+          declared.constructor.transform([&](const CalleeInterface& stated) {
+            return ImportCalleeInterface(importer, stated);
+          }),
+      .methods = ImportMethods(importer, declared.methods),
+      .takes_declaring_instance = declared.takes_declaring_instance};
+  for (const ClassId iface : declared.implements) {
+    cls.implements.push_back(importer.ImportClass(iface));
+  }
   return cls;
 }
 
@@ -152,41 +150,56 @@ auto ImportTypes(TypeImporter& importer, std::span<const TypeId> types)
 }
 
 auto ImportProperties(
-    TypeImporter& importer, const PublishedProperties& properties)
-    -> PublishedProperties {
-  PublishedProperties imported;
-  for (const PublishedPropertyId id : properties.Ids()) {
-    const PublishedProperty& property = properties.Get(id);
-    imported.Add(
-        PublishedProperty{
-            .name = property.name, .type = importer.Import(property.type)});
+    TypeImporter& importer, const DeclaredProperties& properties)
+    -> DeclaredProperties {
+  DeclaredProperties imported;
+  for (const DeclaredProperty& property : properties) {
+    DeclaredProperty taken = property;
+    taken.type = importer.Import(property.type);
+    imported.Add(std::move(taken));
   }
   return imported;
 }
 
 auto ImportStaticProperties(
-    TypeImporter& importer, std::span<const PublishedProperty> properties)
-    -> std::vector<PublishedProperty> {
-  std::vector<PublishedProperty> imported;
-  imported.reserve(properties.size());
-  for (const PublishedProperty& property : properties) {
-    imported.push_back(
-        PublishedProperty{
-            .name = property.name, .type = importer.Import(property.type)});
+    TypeImporter& importer, const DeclaredStaticProperties& properties)
+    -> DeclaredStaticProperties {
+  DeclaredStaticProperties imported;
+  for (const DeclaredProperty& property : properties) {
+    DeclaredProperty taken = property;
+    taken.type = importer.Import(property.type);
+    imported.Add(std::move(taken));
   }
   return imported;
 }
 
-auto ImportMethods(
-    TypeImporter& importer, std::span<const PublishedMethod> methods)
-    -> std::vector<PublishedMethod> {
-  std::vector<PublishedMethod> imported;
-  imported.reserve(methods.size());
-  for (const PublishedMethod& method : methods) {
-    imported.push_back(
-        PublishedMethod{
+auto ImportMethods(TypeImporter& importer, const DeclaredMethods& methods)
+    -> DeclaredMethods {
+  DeclaredMethods imported;
+  for (const DeclaredMethod& method : methods) {
+    // Only an override names a class, the one introducing what it overrides.
+    MethodDispatch dispatch = std::visit(
+        Overloaded{
+            [&](const OverridesVirtual& overriding) -> MethodDispatch {
+              return OverridesVirtual{
+                  .is_pure = overriding.is_pure,
+                  .introducer = importer.ImportClass(overriding.introducer),
+                  .name = overriding.name};
+            },
+            [](const TypeAssociated& kept) -> MethodDispatch { return kept; },
+            [](const NotVirtual& kept) -> MethodDispatch { return kept; },
+            [](const IntroducesVirtual& kept) -> MethodDispatch {
+              return kept;
+            }},
+        method.dispatch);
+    imported.Add(
+        DeclaredMethod{
             .prototype = ImportCallable(importer, method.prototype),
-            .dispatch = method.dispatch});
+            .dispatch = std::move(dispatch),
+            .replaces = method.replaces,
+            .makes = method.makes.transform([&](CovergroupId made) {
+              return importer.ImportCovergroup(made);
+            })});
   }
   return imported;
 }

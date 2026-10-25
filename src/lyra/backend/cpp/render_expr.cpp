@@ -204,33 +204,14 @@ void RenderCastExpr(
 }
 
 // A field as the class declaring it names it, `C::x`. Its name is built from
-// the slot and the name the class gave the field: this unit's own declaration,
-// or what the declaring unit published, the same way that unit built it.
+// the slot and the name the class gave the field, which a class another unit
+// defines declares here as that unit published it, so both build it alike.
 void WriteQualifiedField(
     TargetText& out, const mir::CompilationUnit& unit,
     const mir::ClassFieldTarget& field) {
-  const std::vector<mir::NamedField>& names = std::visit(
-      Overloaded{
-          [&](const mir::IntraUnitClassRef& own)
-              -> const std::vector<mir::NamedField>& {
-            return unit.GetClass(own.class_id).named_fields;
-          },
-          [&](const mir::CrossUnitClassRef& other)
-              -> const std::vector<mir::NamedField>& {
-            const mir::ExternalClass* declaring = mir::FindExternalClass(
-                unit.external_classes, other.unit_name, other.class_path);
-            if (declaring == nullptr ||
-                field.slot.value >= declaring->fields.size()) {
-              throw InternalError(
-                  "backend::cpp: a property access names a slot no consumed "
-                  "signature describes");
-            }
-            return declaring->named_fields;
-          }},
-      field.owner);
   Write(
       out, CppClassRef(unit, field.owner),
-      "::", CppFieldName(names, field.slot));
+      "::", CppFieldName(unit.GetClass(field.owner).named_fields, field.slot));
 }
 
 void RenderFieldAccessExpr(
@@ -285,23 +266,18 @@ void RenderReferenceExpr(
                 CppStaticPropertyName(
                     owner_cls.named_static_properties, r.prop));
           },
+          // Qualified by the unit's namespace even inside that unit, because
+          // inside a class a member of the same name would be found first.
           [&](const mir::StaticVariableRef& r) {
-            // Qualified by the unit's namespace even inside that unit, because
-            // inside a class a member of the same name would be found first.
+            const mir::CompilationUnit& unit = view.Unit();
             Write(
-                out, CppUnitScope(view.Unit().name), "::",
-                CppStaticVariableName(
-                    view.Unit().named_static_variables, r.variable));
-          },
-          [&](const mir::ExternalUnitVariableRef& r) {
-            Write(
-                out, CppUnitScope(r.unit_name),
-                "::", ToCppName(r.variable_name));
-          },
-          [&](const mir::ExternalStaticPropertyRef& r) {
-            Write(
-                out, CppExternalClassPath(r.unit_name, r.class_path),
-                "::", ToCppName(r.property_name));
+                out,
+                CppUnitScope(
+                    mir::DefiningUnitOf(
+                        unit,
+                        unit.static_variables.Get(r.variable).defining_unit)),
+                "::",
+                CppStaticVariableName(unit.named_static_variables, r.variable));
           },
           [&](const mir::ClassConstantRef& r) {
             Write(

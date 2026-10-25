@@ -16,6 +16,7 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/subroutine.hpp"
+#include "lyra/hir/subroutine_prototype.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
@@ -144,56 +145,34 @@ struct NamedTarget {
 };
 
 // What a call reads off a class method it reaches: the interface it marshals
-// against, and what the call reaches the body by. Where these come from
-// differs by whether this unit declares the class; what a call then does with
-// them does not.
+// against, and what the call reaches the body by.
 struct MethodCalleeFacts {
   hir::SubroutineKind kind = hir::SubroutineKind::kFunction;
   std::vector<CalleeFormal> formals;
   NamedTarget target;
 };
 
-// Reads those facts off whichever callee the reference names. The visit is
-// exhaustive, so a callee kind added later is read here rather than falling
-// silently to one side.
+// Reads those facts off the declaration of the method the reference names,
+// whichever unit defines its class.
 auto ReadMethodCallee(
-    UnitLowerer& unit_lowerer, const hir::MethodCallee& callee)
+    UnitLowerer& unit_lowerer, const hir::ClassMethodTarget& callee)
     -> MethodCalleeFacts {
-  return std::visit(
-      Overloaded{
-          [&](const hir::LocalClassMethodTarget& local) -> MethodCalleeFacts {
-            const hir::SubroutineDecl& decl = unit_lowerer.Hir()
-                                                  .classes.Get(local.owner)
-                                                  .methods.Get(local.method);
-            return MethodCalleeFacts{
-                .kind = decl.kind,
-                .formals = CalleeFormalsOf(unit_lowerer, decl),
-                .target = NamedTarget{
-                    .direct =
-                        mir::Direct{
-                            .target =
-                                mir::CallableTarget{
-                                    .owner = unit_lowerer.TranslateClass(
-                                        local.owner),
-                                    .slot = unit_lowerer.TranslateMethod(
-                                        local.owner, local.method)}},
-                    .slot = unit_lowerer.LocalVirtualSlotOf(local)}};
-          },
-          [&](const hir::ExternalMethodCallee& ext) -> MethodCalleeFacts {
-            return MethodCalleeFacts{
-                .kind = ext.interface.kind,
-                .formals = CalleeFormalsOf(unit_lowerer, ext.interface),
-                .target = NamedTarget{
-                    .direct =
-                        mir::Direct{
-                            .target = unit_lowerer.MakeExternalMethodTarget(
-                                ext.target)},
-                    .slot = ext.behavior.transform(
-                        [&](const hir::VirtualBehavior& behavior) {
-                          return unit_lowerer.VirtualSlotOf(behavior);
-                        })}};
-          }},
-      callee);
+  const hir::ClassRegistry& classes = unit_lowerer.Hir().classes;
+  const std::optional<mir::VirtualSlot> slot =
+      classes.BehaviorOf(callee).transform(
+          [&](const hir::ClassMethodTarget& behavior) {
+            return unit_lowerer.VirtualSlotOf(behavior);
+          });
+  const hir::CalleeInterface& interface = classes.Declaration(callee.owner)
+                                              .methods.Get(callee.method)
+                                              .prototype.interface;
+  return MethodCalleeFacts{
+      .kind = interface.kind,
+      .formals = CalleeFormalsOf(unit_lowerer, interface),
+      .target = NamedTarget{
+          .direct =
+              mir::Direct{.target = unit_lowerer.TranslateMethodTarget(callee)},
+          .slot = slot}};
 }
 
 // What any call to a class method states about its boundary, whatever object
@@ -210,13 +189,19 @@ auto PlanMethodBoundary(
 }
 
 // Plans a call to an instance method (LRM 8.6), which leads with the object
-// the source named. It dispatches when the callee fills a slot and the source
-// did not demand the base's implementation, which `super` demands whatever
-// role the callee carries (LRM 8.15).
+// the source named, and nothing for a hook the library runs (LRM 18.6.2,
+// 8.26.9). It dispatches when the callee fills a slot and the source did not
+// demand the base's implementation, which `super` demands whatever role the
+// callee carries (LRM 8.15).
 auto PlanInstanceMethodCall(
     UnitLowerer& unit_lowerer, const hir::MethodCallRef& ref,
-    std::optional<mir::TypeId> result_type) -> SubroutineCallee {
-  MethodCalleeFacts facts = ReadMethodCallee(unit_lowerer, ref.callee);
+    std::optional<mir::TypeId> result_type) -> std::optional<SubroutineCallee> {
+  const std::optional<hir::ClassMethodTarget> runs =
+      unit_lowerer.MethodRunBy(ref.callee);
+  if (!runs.has_value()) {
+    return std::nullopt;
+  }
+  MethodCalleeFacts facts = ReadMethodCallee(unit_lowerer, *runs);
   const AmbientHandle object{CalledObject{.source = ref.receiver}};
   std::optional<mir::VirtualSlot> slot = facts.target.slot;
   if (slot.has_value() &&
@@ -285,7 +270,7 @@ auto PlanSubroutineCall(
                     .descent = ref.descent}}};
             return plan;
           },
-          [&](const hir::ExternalUnitSubroutineRef& ref) -> Planned {
+          [&](const hir::NamespaceSubroutineRef& ref) -> Planned {
             SubroutineCallee plan;
             plan.kind = ref.interface.kind;
             plan.result_type = result_type;
@@ -299,11 +284,11 @@ auto PlanSubroutineCall(
                 .handle = std::nullopt};
             return plan;
           },
-          [&](const hir::ExternalUnitMethodRef& ref) -> Planned {
-            const hir::PublishedCallable& published =
+          [&](const hir::PublishedScopeMethodRef& ref) -> Planned {
+            const hir::SubroutinePrototype& published =
                 unit_lowerer.Hir()
-                    .external_scope_classes.Get(ref.scope_class)
-                    .signature.callables.Get(ref.callable);
+                    .scope_classes.Get(ref.scope_class)
+                    .callables.Get(ref.callable);
             SubroutineCallee plan;
             plan.kind = published.interface.kind;
             plan.result_type = result_type;
@@ -801,7 +786,7 @@ auto LowerWritingBackCall(
 
 auto BuildMethodCall(
     UnitLowerer& unit_lowerer, const WalkFrame& frame,
-    const hir::MethodCallee& callee, std::optional<mir::ExprId> receiver,
+    const hir::ClassMethodTarget& callee, std::optional<mir::ExprId> receiver,
     std::span<const mir::ExprId> arguments, hir::TypeId result_type)
     -> mir::ExprId {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
@@ -1034,7 +1019,7 @@ auto EmitReportingCall(
 
 template <ExprLowerer Lowerer>
 auto EmitConstructionActuals(
-    Lowerer& lowerer, const WalkFrame& frame, const hir::ClassRef& cls,
+    Lowerer& lowerer, const WalkFrame& frame, hir::ClassId cls,
     std::span<const hir::ExprId> actuals)
     -> diag::Result<std::vector<mir::ExprId>> {
   const std::vector<CalleeFormal> formals =
@@ -1056,10 +1041,10 @@ auto EmitConstructionActuals(
 }
 
 template auto EmitConstructionActuals(
-    ProcessLowerer&, const WalkFrame&, const hir::ClassRef&,
+    ProcessLowerer&, const WalkFrame&, hir::ClassId,
     std::span<const hir::ExprId>) -> diag::Result<std::vector<mir::ExprId>>;
 template auto EmitConstructionActuals(
-    const StructuralScopeLowerer&, const WalkFrame&, const hir::ClassRef&,
+    const StructuralScopeLowerer&, const WalkFrame&, hir::ClassId,
     std::span<const hir::ExprId>) -> diag::Result<std::vector<mir::ExprId>>;
 
 template auto EmitReportingCall(

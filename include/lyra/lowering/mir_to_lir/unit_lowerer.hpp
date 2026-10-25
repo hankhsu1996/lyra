@@ -20,7 +20,6 @@
 #include "lyra/lir/symbol_name.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
-#include "lyra/mir/behavior_ordinal.hpp"
 #include "lyra/mir/bring_up_entry.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
@@ -30,7 +29,6 @@
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
-#include "lyra/support/def_path.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::lowering::mir_to_lir {
@@ -68,9 +66,6 @@ class UnitLowerer {
   auto TranslateType(mir::TypeId id) -> lir::TypeId;
   auto TranslateTypes(std::span<const mir::TypeId> source)
       -> std::vector<lir::TypeId>;
-  // A declaration another unit names a type by, which crosses unchanged.
-  [[nodiscard]] static auto TranslateDeclaration(
-      const mir::TypeDeclarationRef& ref) -> lir::TypeDeclarationRef;
 
   // Translates a MIR enumeration member table to its LIR-owned identity. Every
   // table the unit holds is lowered, in pool order, so the two pools run in
@@ -114,17 +109,21 @@ class UnitLowerer {
   // declaration is what does.
   auto ClosureValueType(mir::ClosureId closure) -> lir::TypeId;
 
-  // The type of the values one class declaration builds. A member step names
-  // the class that declares the member, which is not always the class the
-  // receiver has: a class carries what its bases declare as well as its own.
+  // The type of the values one class builds, whichever unit defines it. A
+  // member step names the class that declares the member, which is not always
+  // the class the receiver has: a class carries what its bases declare as well
+  // as its own.
   auto ClassValueType(mir::ClassId cls) -> lir::TypeId;
 
-  // The type naming a class another unit declares. The pair is the whole
-  // identity, which is what lets a property step and a dispatch on one name the
-  // declaration without an id of this unit standing for it.
-  [[nodiscard]] auto ExternalClassValueType(
-      const std::string& unit_name, const support::DefPath& class_path) const
-      -> lir::TypeId;
+  // What a direct call of the callable `callable` of `owner` enters: the
+  // function this unit lowers it to, or the symbol the unit defining the class
+  // emits it under.
+  [[nodiscard]] auto CallableCallTarget(
+      mir::ClassId owner, mir::CallableId callable) const -> lir::CallTarget;
+
+  // What a construction of an object of `cls` enters, the same way.
+  [[nodiscard]] auto ConstructorCallTarget(mir::ClassId cls) const
+      -> lir::CallTarget;
 
   // The LIR function a class's callable lowers to. Throws if `callable` has no
   // body in `owner` -- a DPI-C import is reached as a foreign symbol and a pure
@@ -135,24 +134,33 @@ class UnitLowerer {
   [[nodiscard]] auto ClosureFunction(mir::ClosureId closure) const
       -> lir::FunctionId;
 
+  // The symbol a variable of a unit's namespace is linked under, by the unit
+  // whose namespace owns it.
+  [[nodiscard]] auto StaticVariableSymbolOf(
+      mir::StaticVariableId variable) const -> std::string;
+
+  // The symbol a static property is linked under, by the unit defining its
+  // class.
+  [[nodiscard]] auto StaticPropertySymbolOf(
+      const mir::StaticPropertyRef& ref) const -> std::string;
+
   // The symbol a constant of a class of this unit is linked under.
   [[nodiscard]] auto ClassConstantSymbolOf(
       const mir::ClassConstantRef& constant) const -> std::string;
-
-  // The behavior a MIR dispatch slot names, as LIR names one: the declaration
-  // that introduced it, and which of that declaration's introductions it is.
-  // `owner` and `callable` are the slot's own canonical identity, so this reads
-  // that one class and nothing else -- where the behavior lands in a whole
-  // value is a layout question, answered from the lineage below this pass.
-  [[nodiscard]] auto MethodRef(mir::ClassId owner, mir::CallableId callable)
-      -> lir::StatedDispatchRef;
 
   // The function of this unit answering `answers` at `type`.
   [[nodiscard]] auto TypeOperationFunction(
       mir::TypeId type, support::ValueOperation answers) -> lir::FunctionId;
 
-  // The behavior a MIR slot names, whichever unit introduced it.
+  // The behavior a MIR dispatch slot names, as LIR names one: the declaration
+  // that introduced it, and which of that declaration's introductions it is.
+  // The slot is its own canonical identity, so this reads that one class and
+  // nothing else -- where the behavior lands in a whole value is a layout
+  // question, answered from the lineage below this pass.
   [[nodiscard]] auto SlotRef(const mir::VirtualSlot& slot)
+      -> lir::StatedDispatchRef;
+  // The behavior a virtual function of a library class is.
+  [[nodiscard]] auto LibraryVirtualRef(support::LibraryVirtual function) const
       -> lir::StatedDispatchRef;
 
   // The LIR function a class's constructor lowers to. Every class an object is
@@ -179,18 +187,7 @@ class UnitLowerer {
       mir::CallableId definition, std::vector<mir::TypeId> arguments)
       -> std::string;
 
-  // The type of the values a class some unit declares builds, however the
-  // reference names that class.
-  [[nodiscard]] auto ClassRefValueType(const mir::DeclaredClassRef& of)
-      -> lir::TypeId;
-
  private:
-  // The behavior a class of another unit introduced, named by that class and
-  // which of its introductions the behavior is.
-  [[nodiscard]] auto ExternalMethodRef(
-      const std::string& unit_name, const support::DefPath& class_path,
-      mir::BehaviorOrdinal ordinal) const -> lir::StatedDispatchRef;
-
   // The type of what a class extends: a class some unit declares, or the
   // library class either root is.
   [[nodiscard]] auto BaseType(const mir::ClassRef& base) -> lir::TypeId;
@@ -206,10 +203,10 @@ class UnitLowerer {
 
   // What is settled about one MIR class before any body of it is lowered: its
   // own LIR identity, its constructor's function where it has a constructor,
-  // one function identity per callable that has a body, and which of the
+  // one function identity per callable that has a body here, and which of the
   // class's introductions each callable is, counted in the order it introduces
-  // them. A callable with no body is no function of this unit and holds none;
-  // one that introduces no behavior holds no ordinal, and the two are
+  // them. A callable with no body here is no function of this unit and holds
+  // none; one that introduces no behavior holds no ordinal, and the two are
   // independent.
   struct ClassIdentities {
     lir::ClassId lir_class{};
@@ -258,9 +255,20 @@ class UnitLowerer {
   auto LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
       -> lir::Constant;
   // The symbol the definition of the class `of` names is linked under,
-  // whichever unit declares it.
-  [[nodiscard]] auto DefinitionSymbolOf(const mir::DeclaredClassRef& of) const
-      -> std::string;
+  // whichever unit defines it.
+  [[nodiscard]] auto DefinitionSymbolOf(mir::ClassId of) const -> std::string;
+
+  // The part of a symbol that names the class `id`.
+  [[nodiscard]] auto ClassPart(mir::ClassId id) const -> lir::SymbolPart;
+
+  // The qualifier a symbol of the class `cls` is spelled under: the unit
+  // defining it.
+  [[nodiscard]] auto ClassQualifier(const mir::Class& cls) const
+      -> std::string_view;
+
+  // What this unit declares of a class another unit defines, as the record a
+  // class extending it, or reaching into it, is laid out against.
+  auto LowerDeclaredClass(mir::ClassId id, const mir::Class& cls) -> lir::Class;
 
   const mir::CompilationUnit* mir_;
   lir::CompilationUnit out_;

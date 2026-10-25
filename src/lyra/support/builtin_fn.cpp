@@ -1626,6 +1626,16 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "object_identity",
           .declaration = RuntimeFunction("ObjectIdentity")};
+    case BuiltinFn::kBuiltinPreRandomize:
+      return {
+          .name = "builtin_pre_randomize",
+          .declaration = RuntimeFunction("BuiltinPreRandomize"),
+          .reaches_an_object = true};
+    case BuiltinFn::kBuiltinPostRandomize:
+      return {
+          .name = "builtin_post_randomize",
+          .declaration = RuntimeFunction("BuiltinPostRandomize"),
+          .reaches_an_object = true};
     case BuiltinFn::kObjectPreRandomize:
       return {
           .name = "object_pre_randomize",

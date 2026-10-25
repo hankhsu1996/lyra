@@ -447,8 +447,8 @@ auto LowerNewClassExpr(
     }
   }
   const auto& cls = nc.type->getCanonicalType().as<slang::ast::ClassType>();
-  auto class_ref = unit_lowerer.ResolveClassRef(cls, span);
-  if (!class_ref) return std::unexpected(std::move(class_ref.error()));
+  auto class_id = unit_lowerer.ResolveClass(cls, span);
+  if (!class_id) return std::unexpected(std::move(class_id.error()));
   auto type_id = unit_lowerer.InternExpressionType(nc, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   auto declaring_instance =
@@ -460,7 +460,7 @@ auto LowerNewClassExpr(
       .type = *type_id,
       .data =
           hir::ClassNewExpr{
-              .class_ref = *std::move(class_ref),
+              .class_id = *class_id,
               .arguments = std::move(arguments),
               .declaring_instance = *std::move(declaring_instance)},
       .span = span,

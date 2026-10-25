@@ -21,7 +21,6 @@
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/enum_table_id.hpp"
-#include "lyra/mir/external_class.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/local.hpp"
@@ -384,23 +383,6 @@ void WriteOne(TargetText& out, BodyScope scope);
   return MintedName{.what = what, .ordinal = ordinal, .source = name};
 }
 
-// The name of a virtual method another unit's class declared, read from what
-// this unit was told about that class. A virtual call to it and an override of
-// it must spell it the same way, so both take it from here.
-[[nodiscard]] inline auto CppExternalBehaviorName(
-    const mir::CompilationUnit& unit, std::string_view unit_name,
-    const support::DefPath& class_path, mir::BehaviorOrdinal ordinal)
-    -> SourceName {
-  const mir::ExternalClass* introducer =
-      mir::FindExternalClass(unit.external_classes, unit_name, class_path);
-  if (introducer == nullptr || ordinal.value >= introducer->behaviors.size()) {
-    throw InternalError(
-        "backend::cpp: a behavior is named that no consumed signature "
-        "describes");
-  }
-  return ToCppName(introducer->behaviors[ordinal.value].name);
-}
-
 [[nodiscard]] inline auto CppVirtualSlotName(
     const mir::CompilationUnit& unit, const mir::VirtualSlot& slot) -> CppName;
 
@@ -450,18 +432,7 @@ void WriteOne(TargetText& out, BodyScope scope);
 // and an override of it both spell.
 [[nodiscard]] inline auto CppVirtualSlotName(
     const mir::CompilationUnit& unit, const mir::VirtualSlot& slot) -> CppName {
-  return std::visit(
-      Overloaded{
-          [&](const mir::LocalVirtualSlot& local) -> CppName {
-            return CppClassCallableName(
-                unit, unit.GetClass(local.owner_class), local.slot);
-          },
-          [&](const mir::ExternalVirtualSlot& external) -> CppName {
-            return CppExternalBehaviorName(
-                unit, external.unit_name, external.class_path,
-                external.ordinal);
-          }},
-      slot);
+  return CppClassCallableName(unit, unit.GetClass(slot.owner_class), slot.slot);
 }
 
 // The name of a class field: `sv_field_<slot>`, plus the source name where
@@ -649,22 +620,26 @@ inline void WriteOne(TargetText& out, ClassPathInUnit path) {
   }
 }
 
-// The name of a class of this unit where it is declared: the name other units
-// reach it by, or `sv_scope_<n>` for a class no other unit names, which is what
-// realizes a scope of the design hierarchy.
+// The name of a class where its unit declares it: the name other units reach it
+// by, or `sv_scope_<n>` for a class no other unit names, which is what realizes
+// a scope of the design hierarchy.
 [[nodiscard]] inline auto CppClassName(
     const mir::CompilationUnit& unit, mir::ClassId id) -> CppName {
   const mir::Class& cls = unit.GetClass(id);
   if (cls.path.has_value()) {
-    return CppPublishedClassName(unit.name, *cls.path);
+    const std::string& defining_unit =
+        cls.defining_unit.has_value() ? *cls.defining_unit : unit.name;
+    return CppPublishedClassName(defining_unit, *cls.path);
   }
   return MintedCppName("scope", id.value);
 }
 
-// A class of this unit as text anywhere in the unit's namespace names it.
-class OwnClassPath {
+// A class the unit names, as text anywhere in the unit's namespace names it:
+// relative to the unit where the unit defines it, and from the root where it
+// declares another unit's.
+class ClassPath {
  public:
-  OwnClassPath(const mir::CompilationUnit& unit, mir::ClassId id)
+  ClassPath(const mir::CompilationUnit& unit, mir::ClassId id)
       : unit_(&unit), id_(id) {
   }
 
@@ -681,12 +656,19 @@ class OwnClassPath {
 };
 
 [[nodiscard]] inline auto CppClassPath(
-    const mir::CompilationUnit& unit, mir::ClassId id) -> OwnClassPath {
+    const mir::CompilationUnit& unit, mir::ClassId id) -> ClassPath {
   return {unit, id};
 }
 
-inline void WriteOne(TargetText& out, const OwnClassPath& path) {
+inline void WriteOne(TargetText& out, const ClassPath& path) {
   const mir::Class& cls = path.Unit().GetClass(path.Id());
+  if (cls.defining_unit.has_value()) {
+    Write(
+        out, CppUnitScope(*cls.defining_unit), "::",
+        ClassPathInUnit{
+            .unit_name = *cls.defining_unit, .class_path = &*cls.path});
+    return;
+  }
   if (cls.path.has_value()) {
     Write(
         out, ClassPathInUnit{
@@ -694,26 +676,6 @@ inline void WriteOne(TargetText& out, const OwnClassPath& path) {
     return;
   }
   Write(out, CppClassName(path.Unit(), path.Id()));
-}
-
-// A class of another unit from anywhere: `::Top::Top::g` for the class of a
-// generate block, `::Pkg::C` for a class the source declared.
-struct ExternalClassPath {
-  std::string_view unit_name;
-  const support::DefPath* class_path;
-};
-
-[[nodiscard]] inline auto CppExternalClassPath(
-    std::string_view unit_name, const support::DefPath& class_path)
-    -> ExternalClassPath {
-  return ExternalClassPath{.unit_name = unit_name, .class_path = &class_path};
-}
-
-inline void WriteOne(TargetText& out, ExternalClassPath path) {
-  Write(
-      out, CppUnitScope(path.unit_name), "::",
-      ClassPathInUnit{
-          .unit_name = path.unit_name, .class_path = path.class_path});
 }
 
 // The file that declares a class another unit may name, for text that only
@@ -997,10 +959,25 @@ inline void WriteOne(TargetText& out, const RecordQualifiedName& ref) {
           [](const mir::ReachedAsObjectEntry&) -> CppName {
             return CppObjectEntryName();
           },
+          [](const mir::ReachedInAnotherUnit& r) -> CppName {
+            return ToCppName(r.name);
+          },
           [](const mir::ReachedByPosition& r) -> CppName {
             return MintedCppName("body", r.slot.value);
           }},
       mir::NamespaceReachOf(unit, body));
+}
+
+// The unit whose namespace a function of the unit's namespace table is in:
+// this one's, or another unit's whose function this unit only declares.
+[[nodiscard]] inline auto CppUnitCallableOwner(
+    const mir::CompilationUnit& unit, mir::CallableId body)
+    -> std::string_view {
+  const mir::NamespaceReach reach = mir::NamespaceReachOf(unit, body);
+  if (const auto* declared = std::get_if<mir::ReachedInAnotherUnit>(&reach)) {
+    return declared->unit_name;
+  }
+  return unit.name;
 }
 
 }  // namespace lyra::backend::cpp

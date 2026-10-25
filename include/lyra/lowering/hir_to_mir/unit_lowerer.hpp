@@ -19,10 +19,10 @@
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/construction_table_layout.hpp"
 #include "lyra/hir/covergroup_ref.hpp"
-#include "lyra/hir/external_scope_class.hpp"
 #include "lyra/hir/method_id.hpp"
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/published_scope.hpp"
+#include "lyra/hir/scope_class.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
@@ -42,12 +42,31 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// The bodies a class gives the functions every object's part for
-// `randomize()` declares (LRM 18.6): declaring its random variables, stating
-// its constraints, and naming the random objects its handles reach, which a
-// class extending another of the same unit calls the one it extends by; and
-// calling the `pre_randomize` and `post_randomize` it declares, where it
-// declares one (LRM 18.6.2).
+// Which functions every object's part declares for `randomize()` (LRM 18.6) a
+// class that is no interface class gives a body: declaring its random
+// variables, stating its constraints and naming the random objects its handles
+// reach, which every such class does, and calling the `pre_randomize` and
+// `post_randomize` it declares, where it declares one (LRM 18.6.2). A class of
+// this unit and one another unit published answer it alike.
+[[nodiscard]] inline auto RandomizationOverrides(
+    bool declares_pre_randomize, bool declares_post_randomize)
+    -> std::vector<support::LibraryVirtual> {
+  std::vector<support::LibraryVirtual> out{
+      support::LibraryVirtual::kClassRandVariables,
+      support::LibraryVirtual::kClassConstrain,
+      support::LibraryVirtual::kClassRandObjects};
+  if (declares_pre_randomize) {
+    out.push_back(support::LibraryVirtual::kClassPreRandomize);
+  }
+  if (declares_post_randomize) {
+    out.push_back(support::LibraryVirtual::kClassPostRandomize);
+  }
+  return out;
+}
+
+// The bodies a class of this unit gives those functions: the three every class
+// gives, which a class extending another of the same unit calls the one it
+// extends by, and one calling each hook it declares.
 struct RandomizationHooks {
   // A hook calling a method the class declares: the hook's body, and the
   // method it calls.
@@ -65,47 +84,78 @@ struct RandomizationHooks {
   // Each body, with the function of the library it overrides.
   [[nodiscard]] auto Overrides() const
       -> std::vector<std::pair<mir::CallableId, support::LibraryVirtual>> {
-    std::vector<std::pair<mir::CallableId, support::LibraryVirtual>> out{
-        {rand_variables, support::LibraryVirtual::kClassRandVariables},
-        {constrain, support::LibraryVirtual::kClassConstrain},
-        {rand_objects, support::LibraryVirtual::kClassRandObjects}};
-    if (pre_randomize.has_value()) {
-      out.emplace_back(
-          pre_randomize->body, support::LibraryVirtual::kClassPreRandomize);
-    }
-    if (post_randomize.has_value()) {
-      out.emplace_back(
-          post_randomize->body, support::LibraryVirtual::kClassPostRandomize);
+    std::vector<std::pair<mir::CallableId, support::LibraryVirtual>> out;
+    for (const support::LibraryVirtual function : RandomizationOverrides(
+             pre_randomize.has_value(), post_randomize.has_value())) {
+      out.emplace_back(BodyOf(function), function);
     }
     return out;
   }
+
+  // The body the class gives `function`, one of those it overrides.
+  [[nodiscard]] auto BodyOf(support::LibraryVirtual function) const
+      -> mir::CallableId {
+    switch (function) {
+      case support::LibraryVirtual::kClassRandVariables:
+        return rand_variables;
+      case support::LibraryVirtual::kClassConstrain:
+        return constrain;
+      case support::LibraryVirtual::kClassRandObjects:
+        return rand_objects;
+      case support::LibraryVirtual::kClassPreRandomize:
+        if (pre_randomize.has_value()) {
+          return pre_randomize->body;
+        }
+        break;
+      case support::LibraryVirtual::kClassPostRandomize:
+        if (post_randomize.has_value()) {
+          return post_randomize->body;
+        }
+        break;
+      case support::LibraryVirtual::kScopeResolve:
+      case support::LibraryVirtual::kScopeInitialize:
+      case support::LibraryVirtual::kScopeCreateProcesses:
+      case support::LibraryVirtual::kScopeDescribe:
+        break;
+    }
+    throw InternalError(
+        "RandomizationHooks: a function the class gives no body is asked for "
+        "its body -- please report this as a bug");
+  }
 };
 
-// What one HIR class declaration became: its MIR identity, and the interned
-// object type that names it. Both are settled together before any type is
-// translated, so a class handle type resolves to its managed-reference pointee
-// while the class body is still being built.
+// What a class this unit declares takes beyond its identity before any
+// declaration settles, so a class extending it can name it.
 struct ClassTranslation {
-  mir::ClassId id{};
-  mir::TypeId object_type{};
-  // The callable identity of each method. An overriding method states its
-  // dispatch role (LRM 8.20) against the slot its base was given, so a class's
-  // declaration names another class's method identity and these are settled
-  // before any declaration is.
-  base::Translation<hir::MethodId, mir::CallableId> methods;
-  // The callable identity of the method making each covergroup the class
-  // embeds (LRM 19.4.1), after every method the source declares, in the order
-  // the class lists them.
-  std::vector<mir::CallableId> factories;
+  // The callable identity of each forward the class answers an interface
+  // class's behavior with, after every method the class declares, which is at
+  // the position its declaration gives it.
+  std::vector<mir::CallableId> interface_forwards;
   // Absent for an interface class, which has no object (LRM 8.26).
   std::optional<RandomizationHooks> randomization;
 };
 
-// One field of the class a scope publishes: the type it holds, and the name a
-// referrer reaches it by, which only a member has.
+// One field of a class as every unit lays it out: the type it holds, and the
+// name a referrer reaches it by, where the source declared one.
 struct PublishedField {
   std::optional<std::string> name;
   mir::TypeId type;
+};
+
+// The field a property of a class is, named as the class declares it.
+struct PropertyField {
+  std::string name;
+  mir::TypeId type;
+};
+
+// The fields of an object of a class, as the class this unit defines and every
+// unit declaring it lay them out: each property where the declaration places
+// it, then the instance the object belongs to (LRM 6.22) where the class takes
+// one. The instance comes after the properties, since what another unit counts
+// a property's position out of is the properties alone.
+struct ClassFields {
+  std::vector<PropertyField> properties;
+  std::optional<mir::TypeId> declaring_instance;
 };
 
 // The field of a scope's published class each thing the scope published
@@ -133,7 +183,7 @@ struct PublishedScopeLayout {
 // type each of its fields holds, and where it placed each thing the scope
 // published.
 struct ScopeClassLayout {
-  mir::DeclaredClassRef cls;
+  mir::ClassId cls;
   std::vector<mir::TypeId> field_types;
   PublishedScopeLayout published;
 };
@@ -169,6 +219,13 @@ class UnitLowerer {
       : hir_(&hir),
         source_manager_(&source_manager),
         construction_layout_(hir) {
+    // The class of each scope of the design hierarchy the unit names -- its
+    // own scopes' and those of other units it reaches -- takes its identity
+    // first: building the tree of the unit's scopes names its own, and a type
+    // may name any of them.
+    for (const hir::ScopeClassId scope_class : hir.scope_classes.Ids()) {
+      scope_class_translations_.emplace(scope_class, unit_.DeclareClass());
+    }
   }
 
   // Lowers a unit whose instances exist as objects: its body (variables,
@@ -228,39 +285,22 @@ class UnitLowerer {
     return type_translations_.Get(hir_id);
   }
 
-  [[nodiscard]] auto TranslateClass(hir::ClassId hir_id) const -> mir::ClassId {
-    return class_translations_.Get(hir_id).id;
+  // The class the covergroup `covergroup` is written as (LRM 19.3): this
+  // unit's own for one it declares, and otherwise the class the declaring unit
+  // writes, declared here.
+  [[nodiscard]] auto CovergroupClassIdentity(hir::CovergroupId covergroup) const
+      -> mir::ClassId {
+    return covergroup_identities_.Get(covergroup);
   }
 
-  // The class the scope `hir_id` records is -- an instance of some unit, or a
-  // generate block inside one -- as this unit names it.
-  [[nodiscard]] auto ScopeClassIdentity(hir::ExternalScopeClassId hir_id) const
-      -> mir::DeclaredClassRef;
+  // The class the scope class `hir_id` is -- of an instance of some unit, this
+  // one included, or a generate block inside one -- as this unit names it.
+  [[nodiscard]] auto ScopeClassIdentity(hir::ScopeClassId hir_id) const
+      -> mir::ClassId;
 
   // The type of such an object.
-  [[nodiscard]] auto UnitObjectType(hir::ExternalScopeClassId hir_id) const
+  [[nodiscard]] auto UnitObjectType(hir::ScopeClassId hir_id) const
       -> mir::TypeId;
-
-  // A class a unit published of one of its scopes, `class_path` of
-  // `unit_name`, as this unit names it: one of its own where `unit_name` is
-  // this unit, however the name reaching it was written, and otherwise the
-  // other unit's. One class has one identity here (LRM 23.6 lets a name leave
-  // an instance and reach another instance of the same unit).
-  [[nodiscard]] auto ClassIdentityOf(
-      const std::string& unit_name, const support::DefPath& class_path) const
-      -> mir::DeclaredClassRef;
-
-  // The class this unit published of the scopes it published under
-  // `class_path`. Every one is minted before any type translates, since a type
-  // a signature states may name one.
-  [[nodiscard]] auto PublishedScopeClassAt(
-      const support::DefPath& class_path) const -> mir::ClassId;
-
-  // Takes the identity of the class the unit published under `class_path`,
-  // which is one class for every scope published under it. The lowering of the
-  // scope takes it as it is built, which is before any type translates.
-  auto TakePublishedScopeClass(const support::DefPath& class_path)
-      -> mir::ClassId;
 
   // Where the class `published` places what its scopes published, laying the
   // class out from `signature` the first time it is asked. Every scope
@@ -278,11 +318,15 @@ class UnitLowerer {
 
   // What this unit knows of the scope class `hir_id` records: of one of its
   // own, where that scope's shape placed what was published; of another
-  // unit's, its record of what that unit published, laid out where the object
+  // unit's, the declaration this unit took of it, laid out where the object
   // is consumed. Either is there before any body lowers, so every reach into
   // one finds it.
-  [[nodiscard]] auto ScopeClassLayoutOf(hir::ExternalScopeClassId hir_id) const
+  [[nodiscard]] auto ScopeClassLayoutOf(hir::ScopeClassId hir_id) const
       -> const ScopeClassLayout&;
+
+  // The fields of an object of the class `declared` describes.
+  [[nodiscard]] auto ClassFieldsOf(const hir::ClassDeclaration& declared) const
+      -> ClassFields;
 
   // The fields of the class a scope publishes, in the order `signature`
   // states them: one per member, named as it was published, then one per
@@ -306,41 +350,26 @@ class UnitLowerer {
       mir::TypeId value_type, const hir::PublishedStorage& storage) const
       -> mir::TypeId;
 
-  // The callable identity a class's method was given. Answered from what the
-  // declaration pass took, so a class that overrides can state its dispatch
-  // role whether or not its base has settled -- no order among declarations.
-  [[nodiscard]] auto TranslateMethod(
-      hir::ClassId owner, hir::MethodId method) const -> mir::CallableId {
-    return class_translations_.Get(owner).methods.Get(method);
+  // The callable identity of each forward a class this unit declares answers
+  // an interface class's behavior with, in the order the class lists them.
+  [[nodiscard]] auto InterfaceForwardsOf(hir::ClassId owner) const
+      -> std::span<const mir::CallableId> {
+    return OwnTranslation(owner).interface_forwards;
   }
-
-  // The callable identity of the method a class makes the covergroup it embeds
-  // at `index` of its list with (LRM 19.4.1).
-  [[nodiscard]] auto TranslateFactory(
-      hir::ClassId owner, std::size_t index) const -> mir::CallableId {
-    return class_translations_.Get(owner).factories.at(index);
-  }
-
-  // The class a covergroup this unit declares is written as (LRM 19.3).
-  [[nodiscard]] auto CovergroupClassId(hir::CovergroupId covergroup) const
-      -> mir::ClassId {
-    return covergroup_classes_.Get(covergroup);
-  }
-
-  // The covergroup `ref` names, as this unit names it: a type or a lineage
-  // another unit's signature states may name a covergroup of this unit by its
-  // unit and path, and that is this unit's own covergroup.
-  [[nodiscard]] auto AsLocalOrExternal(const hir::CovergroupRef& ref) const
-      -> hir::CovergroupRef;
 
   [[nodiscard]] auto RandomizationHooksOf(hir::ClassId owner) const
       -> const std::optional<RandomizationHooks>& {
-    return class_translations_.Get(owner).randomization;
+    return OwnTranslation(owner).randomization;
   }
 
-  [[nodiscard]] auto ClassObjectType(hir::ClassId hir_id) const -> mir::TypeId {
-    return class_translations_.Get(hir_id).object_type;
-  }
+  // The method of the source an instance-method call runs: the one it names,
+  // or for a hook a class has without declaring it, the one the nearest class
+  // of its lineage declares, since neither hook is virtual (LRM 18.6.2).
+  // Nothing where the library runs the hook: no class of the lineage declares
+  // one, or the class is an interface class, whose hooks are virtual
+  // (LRM 8.26.9).
+  [[nodiscard]] auto MethodRunBy(const hir::InstanceMethodCallee& callee) const
+      -> std::optional<hir::ClassMethodTarget>;
 
   // The pointee object type a managed handle to an imported runtime-library
   // class names. Each imported class is a fixed library class, so its object
@@ -355,139 +384,84 @@ class UnitLowerer {
         "UnitLowerer::ImportedRuntimeObjectType: unknown imported class");
   }
 
-  // A class some unit declared, `class_path` of `unit_name`, as this unit names
-  // it: one of its own where `unit_name` is this unit -- a signature of another
-  // unit names it so -- and otherwise the other unit's. Naming one records no
-  // dependency; the builders below are what record one.
-  [[nodiscard]] auto DeclaredClassIdentityOf(
-      const std::string& unit_name, const support::DefPath& class_path) const
-      -> mir::DeclaredClassRef;
+  // The class `cls` is, in MIR's terms, whichever unit defines it.
+  [[nodiscard]] auto ClassIdentity(hir::ClassId cls) const -> mir::ClassId {
+    return class_identities_.Get(cls);
+  }
 
-  // What a signature names of a class, in MIR's terms. Reading a signature
-  // records no dependency, so neither does this; a reference that names the
-  // class records it where it takes the name.
-  [[nodiscard]] auto PublishedClass(const hir::ExternalClassRef& ref) const
-      -> mir::DeclaredClassRef;
+  // The object type of a class, and of the class a covergroup is written as
+  // (LRM 19.3).
+  auto ClassPointee(hir::ClassId cls) const -> mir::TypeId;
+  auto CovergroupObjectType(hir::CovergroupId covergroup) const -> mir::TypeId;
 
-  // Cross-unit reference builders. Each converts a HIR-level cross-unit
-  // reference into its MIR peer AND records that this unit consumed the named
-  // unit's signature, in one operation, so a caller never records the
-  // dependency for itself and cannot build a reference that leaves one
-  // unrecorded. Which reference it was is not kept, because what a unit depends
-  // on another for is that it read the signature. A class reference naming
-  // this unit's own class is to that class and depends on nothing; every other
-  // builder is handed only another unit's member, since HIR names a behavior of
-  // this unit's own by this unit's identity.
-  //
-  // The type is one of them, which is easy to read as too much: building a
-  // value of a class names that class outright, and the type is the whole of
-  // what a construction states it by, so a unit holding the type without ever
-  // naming the class is indistinguishable from one about to build one.
-  auto MakeExternalClassPointee(const hir::ExternalClassRef& ref)
-      -> mir::TypeId;
+  // The pointer a body of the class `cls` reaches its object through.
+  auto SelfPointerTo(mir::ClassId cls) const -> mir::TypeId;
 
-  auto MakeExternalClassRef(const hir::ExternalClassRef& ref)
-      -> mir::DeclaredClassRef;
+  // The declaration of a class `class_path` of `unit_name` stating nothing of
+  // what it declares, as an incomplete type is, at `id`: what a class this unit
+  // only names is, and what every other declaration of another unit's class
+  // starts from.
+  auto IncompleteClass(
+      mir::ClassId id, std::string unit_name, support::DefPath class_path)
+      -> mir::Class;
 
-  // The object type of the class a covergroup is written as (LRM 19.3): the
-  // class this unit writes for one it declares, or the class a covergroup of
-  // another unit is, recorded as a dependency the way a class of another unit
-  // is.
-  auto CovergroupObjectType(const hir::CovergroupRef& covergroup)
-      -> mir::TypeId;
-
-  // Convenience that dispatches a HIR class reference to its MIR peer: an
-  // intra-unit reference translates through the class registry, and a
-  // cross-unit one is recorded as this unit's dependency in the same call. A
-  // caller that needs to name a class in any position (base, interface
-  // contract, receiver type) reads one entry point instead of visiting the
-  // variant itself.
-  auto TranslateClassRef(const hir::ClassRef& ref) -> mir::DeclaredClassRef;
-
-  auto MakeCrossUnitClassFieldTarget(
-      const hir::ExternalClassPropertyTarget& target) -> mir::ClassFieldTarget;
-
-  // Takes one record this unit read of what another unit published about its
-  // class into MIR. Every such record the unit read is taken, before anything
-  // names one: a place reaching a member of a class an ancestor declares walks
-  // the lineage over these records, so a class the walk only passes through has
-  // to be among them, and which classes those are is not a question any one
-  // reference can answer.
-  //
-  // Which of them this unit depends on is a narrower set and is not decided
-  // here: a signature is read as soon as the elaborating design asks anything
-  // of it, so what is taken includes classes this unit names nowhere.
-  auto TakePublishedClass(const hir::ExternalClass& published) -> void;
-
-  // Takes this unit's record of the class a scope of another unit is -- one of
-  // its instances, or a generate block inside one -- into MIR, once per class
-  // reached, laying out a field for each thing the scope published. That class
-  // is a class of that unit like any other, so what a reference to one reads is
-  // the same record; it is taken where the object is consumed rather than where
-  // a member is reached, because consuming it is what makes the unit a
-  // dependency.
-  auto RecordPublishedScopeClass(
-      hir::ExternalScopeClassId hir_id, const hir::ExternalScopeClass& scope)
-      -> void;
-
-  // A property of a class of this unit as its MIR field, translated through the
-  // class registry.
-  [[nodiscard]] auto TranslateClassPropertyTarget(
-      const hir::LocalClassPropertyTarget& local) const
+  // A property of a class as its MIR field. The properties a class of another
+  // unit publishes are a prefix of its own storage, so the position counted out
+  // of its signature is the slot that class gave.
+  auto TranslateClassPropertyTarget(const hir::ClassPropertyTarget& target)
       -> mir::ClassFieldTarget;
 
-  auto MakeExternalStaticPropertyRef(
-      const hir::ExternalStaticPropertyTarget& target)
-      -> mir::ExternalStaticPropertyRef;
+  // Where a static property of a class lies: where the class this unit
+  // declares placed its cell, which follows what replicates the class (LRM
+  // 6.22, 8.9), and for a class of another unit, the cell the class keeps at
+  // the position its declaration gives the property.
+  auto TranslateStaticPropertyTarget(
+      const hir::ClassStaticPropertyTarget& target) -> StaticStorageHome;
 
-  auto MakeExternalMethodTarget(const hir::ExternalClassMethodTarget& target)
-      -> mir::ExternalUnitClassMethodTarget;
+  // A method of a class as the callable it is, whichever unit defines the
+  // class: a class of another unit declares here every method it published, in
+  // the order it published them.
+  auto TranslateMethodTarget(const hir::ClassMethodTarget& target)
+      -> mir::CallableTarget;
 
-  // The behavior a call dispatches on when the class introducing it belongs to
-  // another compilation unit, named by the coordinate that class published.
-  // Records the class dependency so the referring artifact names the unit it
-  // reaches into.
-  auto MakeExternalVirtualSlot(const hir::ExternalDispatchSlot& slot)
-      -> mir::ExternalVirtualSlot;
-
-  // The behavior a method of this unit's class answers, named by the class
-  // that introduced it, or nothing where the method is in no dispatch.
-  [[nodiscard]] auto LocalVirtualSlotOf(
-      const hir::LocalClassMethodTarget& method)
-      -> std::optional<mir::VirtualSlot>;
-
-  // The part a method of this unit's class takes in its class's dispatch
-  // table (LRM 8.20): an override names the slot of the behavior it overrides,
-  // an introducer names itself, and a method in neither takes none. It is read
-  // off the HIR declarations along the override chain rather than off any
-  // class's lowered shape, so it is answered the same whatever order the
-  // classes are lowered in -- a base declared in an enclosing scope may be
-  // lowered after the class extending it.
-  [[nodiscard]] auto DispatchRoleOf(const hir::SubroutineDecl& method)
+  // The part a method takes in its class's dispatch table (LRM 8.20), as the
+  // class declares it: an override names the slot of the behavior it
+  // overrides, an introducer names itself, and a method in neither takes none.
+  // It is read off the declaration rather than off any class's lowered shape,
+  // so it is answered the same whatever order the classes are lowered in -- a
+  // base declared in an enclosing scope may be lowered after the class
+  // extending it.
+  [[nodiscard]] auto DispatchRoleOf(const hir::ClassMethodTarget& method) const
       -> std::optional<mir::VirtualDispatchRole>;
 
   // The slot a behavior names, as a call dispatching on it and a method
   // answering an interface class's behavior name it. Every method a behavior
   // names is in dispatch.
-  auto VirtualSlotOf(const hir::VirtualBehavior& behavior) -> mir::VirtualSlot;
+  [[nodiscard]] auto VirtualSlotOf(const hir::ClassMethodTarget& behavior) const
+      -> mir::VirtualSlot;
 
   // Receiver-less callable of a unit's namespace (LRM 26.3 package function or
   // task). A body of that same unit names the position its declaration sits at,
   // because it holds the arena; a body outside it has only the identifier the
-  // namespace published, and reading that signature is what records the
-  // dependency -- the callable one, never the class one.
-  auto MakeNamespaceCallableTarget(const hir::ExternalUnitSubroutineRef& ref)
+  // namespace published, under which a body is declared here once.
+  auto MakeNamespaceCallableTarget(const hir::NamespaceSubroutineRef& ref)
       -> mir::DirectTarget;
+
+  // The cell a variable of a unit's namespace is (LRM 26.2), whose cell is of
+  // `cell_type`: this unit's own, or one declared here for the identifier
+  // another unit published, once per variable.
+  auto NamespaceVariable(
+      const hir::NamespaceValueRef& ref, mir::TypeId cell_type)
+      -> mir::StaticVariableId;
 
   // A subroutine a unit published on the object its instances are (LRM 23.6,
   // 25.7): a virtual method of that unit's published class, which the class
   // the object is answers. A slot of this unit's own class is named by its
   // position, as any of its callables is; another unit's by the position its
-  // signature gave the subroutine. Reaching the object is already the
-  // dependency, so nothing further is recorded here.
+  // signature gave the subroutine.
   [[nodiscard]] auto PublishedSubroutineSlot(
-      hir::ExternalScopeClassId scope_class,
-      hir::PublishedCallableId callable) const -> mir::VirtualSlot;
+      hir::ScopeClassId scope_class, hir::PublishedCallableId callable) const
+      -> mir::VirtualSlot;
 
   // Mints a fresh owner-site id for a synthesized binding origin -- a carrier a
   // lowering creates that has no source-level variable (an activation handle, a
@@ -509,6 +483,17 @@ class UnitLowerer {
 
   [[nodiscard]] auto GetClassShape(mir::ClassId id) const -> const ClassShape& {
     return declarations_.Get(id);
+  }
+
+  // What the class `id` extends, read while bodies lower: off the shape this
+  // unit settled for a class it defines, and off the declaration of one another
+  // unit defines.
+  [[nodiscard]] auto BaseOf(mir::ClassId id) const
+      -> std::optional<mir::ClassRef> {
+    if (const ClassShape* shape = declarations_.Find(id)) {
+      return shape->base;
+    }
+    return unit_.GetClass(id).base;
   }
 
   // The function answering the assignment-pattern text of one type (LRM
@@ -541,6 +526,45 @@ class UnitLowerer {
   [[nodiscard]] auto EmplaceInto() -> mir::UnitCallableTarget;
 
  private:
+  // What the class `hir_id` this unit declares became.
+  [[nodiscard]] auto OwnTranslation(hir::ClassId hir_id) const
+      -> const ClassTranslation& {
+    const auto it = class_translations_.find(hir_id);
+    if (it == class_translations_.end()) {
+      throw InternalError(
+          "UnitLowerer::OwnTranslation: only a class this unit declares is "
+          "translated -- please report this as a bug");
+    }
+    return it->second;
+  }
+
+  // Declares in MIR a class another unit defines, as that unit published it.
+  // Every class of another unit this unit read is declared, before anything
+  // names one: a place reaching a member of a class an ancestor declares walks
+  // the lineage over these declarations, so a class the walk only passes
+  // through has to be among them, and which classes those are is not a
+  // question any one reference can answer. Each takes its identity first, so
+  // a declaration naming another names it by that identity.
+  //
+  // Which of them this unit depends on is a narrower set and is not decided
+  // here: a signature is read as soon as the elaborating design asks anything
+  // of it, so what is declared includes classes this unit names nowhere.
+  auto DeclarePublishedClass(hir::ClassId cls) -> void;
+
+  // A class this unit only names -- the type of a handle or an object never
+  // reached into -- declared incomplete.
+  auto DeclareIncompleteClass(
+      mir::ClassId id, std::string unit_name, support::DefPath class_path)
+      -> void;
+
+  // Declares in MIR the class a scope of another unit is -- one of its
+  // instances, or a generate block inside one -- once per class reached, with a
+  // field for each thing the scope published. That class is a class of that
+  // unit like any other, so what a reference to one reads is the same
+  // declaration.
+  auto DeclarePublishedScopeClass(
+      hir::ScopeClassId hir_id, const hir::ScopeClassSignature& scope) -> void;
+
   // Lowers a scope whose root is an object type into the unit's top class,
   // which the unit then names as its root. `design_root` is present for the
   // design root alone, whose Initialize phase turns each namespace of the
@@ -549,11 +573,12 @@ class UnitLowerer {
   auto PopulateModuleRoot(std::optional<DesignRootInputs> design_root)
       -> diag::Result<void>;
 
-  // Everything one class declaration can be named by before it settles: its
-  // own identity, the object type that names it, and one identity per method a
-  // deriving class may state a dispatch role against. Reads nothing but this
-  // declaration, so classes take theirs in any order and none waits on another.
-  auto TakeClassIdentities(const hir::ClassDecl& decl) -> ClassTranslation;
+  // The callables a class this unit declares has beyond the methods it
+  // declares, each at a position after them: a forward per interface class
+  // behavior it answers by inheritance, then the bodies it gives `randomize()`.
+  // Reads nothing but this class, so classes take theirs in any order and none
+  // waits on another.
+  auto TakeClassIdentities(hir::ClassId cls) -> ClassTranslation;
 
   // Publishes everything the unit declares before any root-scope body lowers:
   // every class identity and body, every interned type and the functions each
@@ -607,20 +632,27 @@ class UnitLowerer {
   hir::ConstructionTableLayout construction_layout_;
   mir::CompilationUnit unit_;
   base::Translation<hir::TypeId, mir::TypeId> type_translations_;
-  base::Translation<hir::ClassId, ClassTranslation> class_translations_;
-  base::Translation<hir::CovergroupId, mir::ClassId> covergroup_classes_;
-  // This unit's record of each of those classes, by the HIR record of it.
-  std::map<hir::ExternalScopeClassId, ScopeClassLayout> external_scope_layouts_;
-  // Keyed by path, because a signature names a unit's scope class by path and
-  // nothing else: a class of this unit reached through another unit's
-  // signature arrives as one, and is resolved to this unit's class here.
-  std::map<support::DefPath, mir::ClassId> published_scope_classes_;
-  // The same, for the classes this unit declares: a signature of another unit
-  // names one by path -- a specialization of another unit's generic holding a
-  // value of it, say -- and it is resolved to this unit's class here.
-  std::map<support::DefPath, mir::ClassId> declared_classes_;
-  // The same, for the covergroups this unit declares.
-  std::map<support::DefPath, hir::CovergroupId> declared_covergroups_;
+  // The class each class the unit names is, of this unit or another, and what
+  // each one this unit declares takes beyond that.
+  base::Translation<hir::ClassId, mir::ClassId> class_identities_;
+  std::map<hir::ClassId, ClassTranslation> class_translations_;
+  // Where each record the unit names sits in its record registry, by the
+  // declaration any unit names it by.
+  std::map<mir::TypeDeclarationRef, mir::RecordId> record_translations_;
+  // The callable and the cell each member of a unit's namespace this unit names
+  // is, by that unit and the name the member was published under.
+  std::map<std::pair<std::string, std::string>, mir::CallableId>
+      namespace_callables_;
+  std::map<std::pair<std::string, std::string>, mir::StaticVariableId>
+      namespace_variables_;
+  // The class each covergroup the unit names is written as, of this unit or
+  // another.
+  base::Translation<hir::CovergroupId, mir::ClassId> covergroup_identities_;
+  // The class each scope class the unit names is, of this unit or another.
+  std::map<hir::ScopeClassId, mir::ClassId> scope_class_translations_;
+  // This unit's layout of each class a scope of another unit is, by the HIR
+  // record of it.
+  std::map<hir::ScopeClassId, ScopeClassLayout> scope_layouts_;
   std::map<mir::ClassId, PublishedScope> published_scopes_;
   std::uint32_t next_synthesized_site_ = 0;
   // What the declare stage settled about each class, read by every body that

@@ -11,7 +11,6 @@
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -22,8 +21,8 @@ namespace lyra::lowering::hir_to_mir {
 // `block`: the constant the unit declaring the class emits, which a scope's
 // constructor hands the part every scope shares.
 auto BuildDefinitionRead(
-    const mir::CompilationUnit& unit, mir::Block& block,
-    const mir::DeclaredClassRef& of) -> mir::ExprId;
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ClassId of)
+    -> mir::ExprId;
 
 // Each function below states the definition of `cls` -- a class of `unit`,
 // every body it declares complete -- as the constant its unit emits, adding to

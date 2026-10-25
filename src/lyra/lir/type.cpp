@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
-#include <string>
 #include <variant>
 #include <vector>
 
@@ -12,7 +11,6 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/type_id.hpp"
-#include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
 
@@ -22,14 +20,6 @@ namespace {
 
 void Combine(std::size_t& seed, std::uint64_t value) {
   base::HashField(seed, value);
-}
-
-void Combine(std::size_t& seed, const std::string& value) {
-  base::HashField(seed, value);
-}
-
-void Combine(std::size_t& seed, const support::DefPath& path) {
-  base::HashField(seed, path);
 }
 
 void Combine(std::size_t& seed, TypeId id) {
@@ -197,10 +187,6 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [](const VoidType&) {},
           [](const EmptyType&) {},
           [&](const ObjectType& t) { Combine(seed, t.class_id); },
-          [&](const CrossUnitClassType& t) {
-            Combine(seed, t.unit_name);
-            Combine(seed, t.class_path);
-          },
           [&](const RuntimeClassType& t) { Combine(seed, t.which); },
           [&](const ClosureType& t) { Combine(seed, t.closure_id.value); },
           [&](const ErasedCallableType& t) {
@@ -227,16 +213,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [&](const WeakManagedRefType& t) { Combine(seed, t.pointee); },
           [&](const VectorType& t) { Combine(seed, t.element); },
           [&](const TupleType& t) { Combine(seed, t.elements); },
-          [&](const RecordType& t) {
-            std::visit(
-                Overloaded{
-                    [&](RecordId id) { Combine(seed, id.value); },
-                    [&](const TypeDeclarationRef& ref) {
-                      Combine(seed, ref.unit_name);
-                      Combine(seed, ref.path);
-                    }},
-                t.declaration);
-          },
+          [&](const RecordType& t) { Combine(seed, t.declaration.value); },
           [&](const ResolvedType& t) { Combine(seed, t.value); },
           [&](const DriverType& t) { Combine(seed, t.value); },
           [&](const ObservableType& t) { Combine(seed, t.value); },
@@ -274,7 +251,6 @@ auto Type::KindName() const -> std::string_view {
           [](const VoidType&) { return "void"; },
           [](const EmptyType&) { return "empty"; },
           [](const ObjectType&) { return "class object"; },
-          [](const CrossUnitClassType&) { return "cross-unit class"; },
           [](const RuntimeClassType&) { return "runtime class"; },
           [](const ClosureType&) { return "closure"; },
           [](const ErasedCallableType&) { return "erased callable"; },
@@ -312,7 +288,6 @@ auto Type::Declaration() const -> std::optional<TypeDeclaration> {
           // Member-bearing storage, whose members are reached through its
           // declaration.
           [](const ObjectType& t) -> Declared { return t; },
-          [](const CrossUnitClassType& t) -> Declared { return t; },
           [](const ClosureType& t) -> Declared { return t; },
 
           // A record names a declaration too, but of a value, whose members
@@ -439,7 +414,6 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           // A nominal type names a declaration, and a declaration is not a run
           // of anything.
           [](const ObjectType&) -> Element { return std::nullopt; },
-          [](const CrossUnitClassType&) -> Element { return std::nullopt; },
           [](const RuntimeClassType&) -> Element { return std::nullopt; },
           [](const ClosureType&) -> Element { return std::nullopt; },
           [](const ErasedCallableType&) -> Element { return std::nullopt; },
@@ -524,9 +498,8 @@ auto Type::IsAddressOnly() const -> bool {
     throw InternalError("lir: unknown runtime library kind");
   }
   return Is<ObservableType>() || Is<ResolvedType>() || Is<ObjectType>() ||
-         Is<CrossUnitClassType>() || Is<RuntimeClassType>() ||
-         Is<SampledHistoryType>() || Is<EvaluationAttemptsType>() ||
-         Is<LoopBlocksType>();
+         Is<RuntimeClassType>() || Is<SampledHistoryType>() ||
+         Is<EvaluationAttemptsType>() || Is<LoopBlocksType>();
 }
 
 auto Type::HeldAs() const -> std::optional<Holding> {
@@ -687,7 +660,6 @@ auto Type::HeldAs() const -> std::optional<Holding> {
           // holds: each is reached where it lives rather than held, and what it
           // holds or answers with is a value of its own.
           [](const ObjectType&) -> Held { return std::nullopt; },
-          [](const CrossUnitClassType&) -> Held { return std::nullopt; },
           [](const RuntimeClassType&) -> Held { return std::nullopt; },
           [](const ObservableType&) -> Held { return std::nullopt; },
           [](const ResolvedType&) -> Held { return std::nullopt; },

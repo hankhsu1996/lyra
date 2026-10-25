@@ -17,8 +17,8 @@
 #include "lyra/lowering/hir_to_mir/library_entry_body.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/class.hpp"
+#include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
@@ -28,8 +28,8 @@
 namespace lyra::lowering::hir_to_mir {
 
 auto BuildDefinitionRead(
-    const mir::CompilationUnit& unit, mir::Block& block,
-    const mir::DeclaredClassRef& of) -> mir::ExprId {
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ClassId of)
+    -> mir::ExprId {
   const mir::ExprId definition = block.exprs.Add(
       mir::Expr{
           .data = mir::ReferenceExpr{.target = mir::DefinitionRef{.of = of}},
@@ -321,7 +321,7 @@ void StateDefinition(
     const std::function<mir::ExprId(mir::Block&)>& instances) {
   mir::ValueBuild build;
   mir::Block& block = build.body;
-  const std::optional<mir::DeclaredClassRef> base = mir::DeclaredBase(cls);
+  const std::optional<mir::ClassId> base = mir::DeclaredBase(cls);
   std::vector<mir::ExprId> parts{
       base.has_value()
           ? BuildDefinitionRead(unit, block, *base)
@@ -396,8 +396,6 @@ class ConstructionTables {
         parts, *unit_, table, id_, *cls_,
         LibraryType(*unit_, Kind::kInstantiation), instantiated.size(),
         [&](mir::Block& entry, std::size_t i) {
-          unit_->ConsumeObjectEntryOf(
-              instantiated[i].unit, instantiated[i].body);
           return Record(
               *unit_, entry, Kind::kInstantiation,
               {ErasedObjectEntry(

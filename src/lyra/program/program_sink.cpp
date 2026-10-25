@@ -911,9 +911,11 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_process_set_randstate", &lyra_rt_process_set_randstate);
   add("lyra_rt_object_srandom", &lyra_rt_object_srandom);
   add("lyra_rt_object_get_randstate", &lyra_rt_object_get_randstate);
+  add("lyra_rt_object_set_randstate", &lyra_rt_object_set_randstate);
+  add("lyra_rt_builtin_pre_randomize", &lyra_rt_builtin_pre_randomize);
+  add("lyra_rt_builtin_post_randomize", &lyra_rt_builtin_post_randomize);
   add("lyra_rt_object_pre_randomize", &lyra_rt_object_pre_randomize);
   add("lyra_rt_object_post_randomize", &lyra_rt_object_post_randomize);
-  add("lyra_rt_object_set_randstate", &lyra_rt_object_set_randstate);
   add("lyra_rt_weak_downgrade", &lyra_rt_weak_downgrade);
   add("lyra_rt_weak_upgrade", &lyra_rt_weak_upgrade);
   add("lyra_rt_weak_upgrade_process", &lyra_rt_weak_upgrade_process);

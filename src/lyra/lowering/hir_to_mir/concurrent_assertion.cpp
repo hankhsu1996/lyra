@@ -867,7 +867,8 @@ auto LowerDisableWatcher(
       .code = std::move(code),
       .foreign = std::nullopt,
       .virtual_dispatch = std::nullopt,
-      .type_parameters = {}};
+      .type_parameters = {},
+      .defining_unit = std::nullopt};
 }
 
 // LRM 16.14.5 gives a declarative concurrent assertion always semantics, and
@@ -941,7 +942,8 @@ auto LowerProcess(
       .code = std::move(code),
       .foreign = std::nullopt,
       .virtual_dispatch = std::nullopt,
-      .type_parameters = {}};
+      .type_parameters = {},
+      .defining_unit = std::nullopt};
 }
 
 }  // namespace
@@ -955,9 +957,7 @@ auto BuildEvaluationAttemptsExpr(
   return block.exprs.Add(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(lowerer.Owner().Unit(), block, self),
-          mir::ClassFieldTarget{
-              .owner = mir::IntraUnitClassRef{frame.current_class.id},
-              .slot = field},
+          mir::ClassFieldTarget{.owner = frame.current_class.id, .slot = field},
           frame.current_class.cls->fields.Get(field).type));
 }
 
@@ -998,19 +998,22 @@ auto LowerConcurrentAssertion(
           .code = *std::move(pass),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt,
-          .type_parameters = {}});
+          .type_parameters = {},
+          .defining_unit = std::nullopt});
   const mir::CallableId fail_id = mir_class.callables.Add(
       mir::CallableDecl{
           .code = *std::move(fail),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt,
-          .type_parameters = {}});
+          .type_parameters = {},
+          .defining_unit = std::nullopt});
   const mir::CallableId advance_id = mir_class.callables.Add(
       mir::CallableDecl{
           .code = *std::move(advance),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt,
-          .type_parameters = {}});
+          .type_parameters = {},
+          .defining_unit = std::nullopt});
 
   auto process = LowerProcess(
       action, lowerer, ctor_frame, dispositions.spec->clock, advance_id);

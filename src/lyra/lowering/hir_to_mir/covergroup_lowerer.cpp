@@ -15,10 +15,10 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/class_decl.hpp"
+#include "lyra/hir/class_declaration.hpp"
 #include "lyra/hir/covergroup.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_builders.hpp"
-#include "lyra/hir/external_class.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
@@ -48,7 +48,6 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
-#include "lyra/mir/external_class.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
@@ -74,15 +73,7 @@ constexpr std::uint32_t kMakeRecordBehavior = 1;
 auto LibraryField(
     UnitLowerer& unit_lowerer, const CoverageLibrary::Property& property)
     -> mir::ClassFieldTarget {
-  return std::visit(
-      Overloaded{
-          [&](const hir::LocalClassPropertyTarget& local) {
-            return unit_lowerer.TranslateClassPropertyTarget(local);
-          },
-          [&](const hir::ExternalClassPropertyTarget& external) {
-            return unit_lowerer.MakeCrossUnitClassFieldTarget(external);
-          }},
-      property.target);
+  return unit_lowerer.TranslateClassPropertyTarget(property.target);
 }
 
 // The member `name` of the library's options structure `path` names, whose
@@ -136,108 +127,48 @@ auto TypeRecordType(UnitLowerer& unit_lowerer, const CoverageLibrary& library)
           .prototype.result_type);
 }
 
-auto PublishedOf(const UnitLowerer& unit_lowerer, const hir::CovergroupRef& ref)
+auto PublishedOf(const UnitLowerer& unit_lowerer, hir::CovergroupId ref)
     -> const hir::PublishedCovergroup& {
-  return std::visit(
-      Overloaded{
-          [&](const hir::LocalCovergroupRef& local)
-              -> const hir::PublishedCovergroup& {
-            const auto& published =
-                unit_lowerer.Hir().covergroups.PublishedOf(local.covergroup);
-            if (!published.has_value()) {
-              throw InternalError(
-                  "a covergroup of this unit was declared without the form it "
-                  "publishes -- please report this as a bug");
-            }
-            return *published;
-          },
-          [&](const hir::ExternalCovergroupRef& external)
-              -> const hir::PublishedCovergroup& {
-            for (const hir::ExternalCovergroup& held :
-                 unit_lowerer.Hir().external_covergroups) {
-              if (held.unit_name == external.unit_name &&
-                  held.published.path == external.path) {
-                return held.published;
-              }
-            }
-            throw InternalError(
-                "a covergroup of another unit is named without the form it "
-                "published -- please report this as a bug");
-          }},
-      unit_lowerer.AsLocalOrExternal(ref));
+  return unit_lowerer.Hir().covergroups.Published(ref);
 }
 
 // The first covergroup of the lineage `ref` belongs to (LRM 19.4.1).
-auto FirstOf(const UnitLowerer& unit_lowerer, hir::CovergroupRef ref)
-    -> hir::CovergroupRef {
+auto FirstOf(const UnitLowerer& unit_lowerer, hir::CovergroupId ref)
+    -> hir::CovergroupId {
   while (const auto& base = PublishedOf(unit_lowerer, ref).base) {
     ref = *base;
   }
-  return unit_lowerer.AsLocalOrExternal(ref);
+  return ref;
 }
 
-auto HandleTo(UnitLowerer& unit_lowerer, const hir::ClassRef& cls)
-    -> mir::TypeId {
-  const mir::TypeId object = std::visit(
-      Overloaded{
-          [&](const hir::LocalClassRef& local) {
-            return unit_lowerer.ClassObjectType(local.class_id);
-          },
-          [&](const hir::ExternalClassRef& external) {
-            return unit_lowerer.MakeExternalClassPointee(external);
-          }},
-      cls);
+auto HandleTo(UnitLowerer& unit_lowerer, hir::ClassId cls) -> mir::TypeId {
+  const mir::TypeId object = unit_lowerer.ClassPointee(cls);
   return unit_lowerer.Unit().types.Intern(
       mir::Type{mir::ManagedRefType{.pointee = object}});
 }
 
-auto CovergroupHandle(
-    UnitLowerer& unit_lowerer, const hir::CovergroupRef& covergroup)
+auto CovergroupHandle(UnitLowerer& unit_lowerer, hir::CovergroupId covergroup)
     -> mir::TypeId {
   return unit_lowerer.Unit().types.Intern(
       mir::Type{mir::ManagedRefType{
           .pointee = unit_lowerer.CovergroupObjectType(covergroup)}});
 }
 
-// The behavior `behavior` the first class of `ref`'s lineage introduced, as a
-// record of another unit's covergroup names it, which is no dependency.
-auto SlotIntroducedAlong(
-    const UnitLowerer& unit_lowerer, const hir::CovergroupRef& ref,
-    std::uint32_t behavior) -> mir::VirtualSlot {
-  return std::visit(
-      Overloaded{
-          [&](const hir::LocalCovergroupRef& local) -> mir::VirtualSlot {
-            return mir::LocalVirtualSlot{
-                .owner_class = unit_lowerer.CovergroupClassId(local.covergroup),
-                .slot = mir::CallableId{behavior}};
-          },
-          [&](const hir::ExternalCovergroupRef& external) -> mir::VirtualSlot {
-            return mir::ExternalVirtualSlot{
-                .unit_name = external.unit_name,
-                .class_path = external.path,
-                .ordinal = mir::BehaviorOrdinal{behavior}};
-          }},
-      FirstOf(unit_lowerer, ref));
-}
-
-// The same as a dispatch names it, which depends on the introducing class's
-// unit where it is another's.
+// The behavior `behavior` the first class of `ref`'s lineage introduced.
 auto IntroducedSlot(
-    UnitLowerer& unit_lowerer, const hir::CovergroupRef& ref,
+    const UnitLowerer& unit_lowerer, hir::CovergroupId ref,
     std::uint32_t behavior) -> mir::VirtualSlot {
-  mir::VirtualSlot slot = SlotIntroducedAlong(unit_lowerer, ref, behavior);
-  if (const auto* external = std::get_if<mir::ExternalVirtualSlot>(&slot)) {
-    unit_lowerer.Unit().ConsumeClassOf(
-        external->unit_name, external->class_path);
-  }
-  return slot;
+  return mir::VirtualSlot{
+      .owner_class =
+          unit_lowerer.CovergroupClassIdentity(FirstOf(unit_lowerer, ref)),
+      .slot = mir::CallableId{behavior}};
 }
 
 // The dispatch role of a class of `ref`'s lineage for the behavior
 // `behavior`: introduced by the first class, overridden by every other.
 auto RoleIn(
-    UnitLowerer& unit_lowerer, const hir::CovergroupRef& ref,
-    std::uint32_t behavior) -> mir::VirtualDispatchRole {
+    UnitLowerer& unit_lowerer, hir::CovergroupId ref, std::uint32_t behavior)
+    -> mir::VirtualDispatchRole {
   if (!PublishedOf(unit_lowerer, ref).base.has_value()) {
     return mir::IntroducesVirtualSlot{};
   }
@@ -245,35 +176,22 @@ auto RoleIn(
       .overridden = IntroducedSlot(unit_lowerer, ref, behavior)};
 }
 
-// A method of the class itself, named as a call names it: by position in a
-// class of this unit, and by its name in another unit's.
+// A method of the class itself, named as a call names it: by position, which
+// is the same in the class this unit writes and in its declaration of another
+// unit's.
 auto TypeMethod(
-    UnitLowerer& unit_lowerer, const hir::CovergroupRef& ref,
-    mir::CallableId slot, std::string_view name) -> mir::DirectTarget {
-  return std::visit(
-      Overloaded{
-          [&](const hir::LocalCovergroupRef& local) -> mir::DirectTarget {
-            return mir::CallableTarget{
-                .owner = unit_lowerer.CovergroupClassId(local.covergroup),
-                .slot = slot};
-          },
-          [&](const hir::ExternalCovergroupRef& external) -> mir::DirectTarget {
-            return unit_lowerer.MakeExternalMethodTarget(
-                hir::ExternalClassMethodTarget{
-                    .unit_name = external.unit_name,
-                    .class_path = external.path,
-                    .method_name = std::string{name}});
-          }},
-      unit_lowerer.AsLocalOrExternal(ref));
+    UnitLowerer& unit_lowerer, hir::CovergroupId ref, mir::CallableId slot)
+    -> mir::DirectTarget {
+  return mir::CallableTarget{
+      .owner = unit_lowerer.CovergroupClassIdentity(ref), .slot = slot};
 }
 
 // Whether a class of `ref` belongs to the instance of the scope declaring its
 // covergroup (LRM 6.22): one a design element declares does, and so does each
 // type-associated body of it.
 auto TakesDeclaringInstance(
-    const UnitLowerer& unit_lowerer, const hir::CovergroupRef& ref) -> bool {
-  return std::holds_alternative<hir::LocalCovergroupRef>(
-             unit_lowerer.AsLocalOrExternal(ref)) &&
+    const UnitLowerer& unit_lowerer, hir::CovergroupId ref) -> bool {
+  return unit_lowerer.Hir().covergroups.IsOwn(ref) &&
          hir::RootsAnObject(unit_lowerer.Hir().role);
 }
 
@@ -282,14 +200,14 @@ auto TakesDeclaringInstance(
 struct LineageItem {
   CovergroupClass owner;
   std::uint32_t property;
-  hir::ClassRef library_class;
+  hir::ClassId library_class;
   bool is_cross = false;
 };
 
 auto ItemOf(
     const UnitLowerer& unit_lowerer, const hir::CoverageLibraryRefs& refs,
-    hir::CovergroupRef ref, std::string_view name) -> LineageItem {
-  for (std::optional<hir::CovergroupRef> at = ref; at.has_value();) {
+    hir::CovergroupId ref, std::string_view name) -> LineageItem {
+  for (std::optional<hir::CovergroupId> at = ref; at.has_value();) {
     CovergroupClass cls = CovergroupClassOf(unit_lowerer, *at);
     const hir::PublishedCovergroup& published = *cls.published;
     for (std::size_t i = 0; i < published.coverpoints.size(); ++i) {
@@ -321,7 +239,7 @@ auto ItemOf(
 
 // The property of the first class of `ref`'s lineage holding the instance's
 // record.
-auto RecordOf(const UnitLowerer& unit_lowerer, const hir::CovergroupRef& ref)
+auto RecordOf(const UnitLowerer& unit_lowerer, hir::CovergroupId ref)
     -> std::pair<CovergroupClass, std::uint32_t> {
   CovergroupClass first =
       CovergroupClassOf(unit_lowerer, FirstOf(unit_lowerer, ref));
@@ -395,7 +313,7 @@ class Writer {
   // The enumerator `name` the formal `position` of the library method
   // `method` of `cls` takes.
   [[nodiscard]] auto LibraryEnum(
-      const hir::ClassRef& cls, std::string_view method, std::size_t position,
+      hir::ClassId cls, std::string_view method, std::size_t position,
       std::string_view name) const -> mir::ExprId {
     const hir::TypeId type = library_->MethodOf(cls, method)
                                  .prototype.interface.params.at(position)
@@ -415,7 +333,7 @@ class Writer {
   // `name` of the library class `cls`, called on what the handle `receiver`
   // holds, or on nothing for a type-associated one.
   [[nodiscard]] auto Call(
-      std::optional<mir::ExprId> receiver, const hir::ClassRef& cls,
+      std::optional<mir::ExprId> receiver, hir::ClassId cls,
       std::string_view name, std::vector<mir::ExprId> arguments = {}) const
       -> mir::ExprId {
     const CoverageLibrary::Method method = library_->MethodOf(cls, name);
@@ -427,7 +345,7 @@ class Writer {
   // The property `name` of the library class `cls` of the object the handle
   // `handle` holds.
   [[nodiscard]] auto LibraryProperty(
-      mir::ExprId handle, const hir::ClassRef& cls, std::string_view name) const
+      mir::ExprId handle, hir::ClassId cls, std::string_view name) const
       -> AccessPath {
     const CoverageLibrary::Property property = library_->PropertyOf(cls, name);
     return ObjectPropertyPath(
@@ -552,8 +470,8 @@ class Writer {
 // A new object of the library class `cls`, made with `values`, each brought
 // to the type its constructor's formal takes it as.
 auto NewLibraryObject(
-    const Writer& e, const hir::ClassRef& cls,
-    const std::vector<mir::ExprId>& values) -> mir::ExprId {
+    const Writer& e, hir::ClassId cls, const std::vector<mir::ExprId>& values)
+    -> mir::ExprId {
   mir::CompilationUnit& unit = e.Unit();
   mir::Block& block = e.Block();
   const std::vector<hir::TypeId> types = e.Library().ConstructorParamTypes(cls);
@@ -600,54 +518,25 @@ void HandToRuntime(
 }  // namespace
 
 auto CovergroupClassOf(
-    const UnitLowerer& unit_lowerer, const hir::CovergroupRef& covergroup)
+    const UnitLowerer& unit_lowerer, hir::CovergroupId covergroup)
     -> CovergroupClass {
   const hir::PublishedCovergroup& published =
       PublishedOf(unit_lowerer, covergroup);
   return CovergroupClass{
-      .covergroup = unit_lowerer.AsLocalOrExternal(covergroup),
+      .covergroup = covergroup,
       .published = &published,
       .layout = CovergroupLayoutOf(published)};
-}
-
-auto CovergroupClassRef(
-    UnitLowerer& unit_lowerer, const hir::CovergroupRef& covergroup)
-    -> mir::DeclaredClassRef {
-  return std::visit(
-      Overloaded{
-          [&](const hir::LocalCovergroupRef& local) -> mir::DeclaredClassRef {
-            return mir::IntraUnitClassRef{
-                .class_id = unit_lowerer.CovergroupClassId(local.covergroup)};
-          },
-          [&](const hir::ExternalCovergroupRef& external)
-              -> mir::DeclaredClassRef {
-            return unit_lowerer.MakeExternalClassRef(
-                hir::ExternalClassRef{
-                    .unit_name = external.unit_name,
-                    .class_path = external.path});
-          }},
-      unit_lowerer.AsLocalOrExternal(covergroup));
 }
 
 auto CovergroupPropertyTarget(
     UnitLowerer& unit_lowerer, const CovergroupClass& cls, std::uint32_t index)
     -> mir::ClassFieldTarget {
-  return std::visit(
-      Overloaded{
-          [&](const hir::LocalCovergroupRef& local) {
-            return mir::ClassFieldTarget{
-                .owner = mir::IntraUnitClassRef{unit_lowerer.CovergroupClassId(
-                    local.covergroup)},
-                .slot = mir::FieldId{index}};
-          },
-          [&](const hir::ExternalCovergroupRef& external) {
-            return unit_lowerer.MakeCrossUnitClassFieldTarget(
-                hir::ExternalClassPropertyTarget{
-                    .unit_name = external.unit_name,
-                    .class_path = external.path,
-                    .property = hir::PublishedPropertyId{index}});
-          }},
-      cls.covergroup);
+  // A covergroup's class places its properties in the order its layout gives
+  // them, wherever it is written, so the position counted out of the layout
+  // is the slot.
+  return mir::ClassFieldTarget{
+      .owner = unit_lowerer.CovergroupClassIdentity(cls.covergroup),
+      .slot = mir::FieldId{index}};
 }
 
 auto CovergroupPropertyType(
@@ -691,57 +580,64 @@ auto CovergroupPropertyType(
 }
 
 auto PublishedCovergroupClass(
-    UnitLowerer& unit_lowerer, const hir::ExternalCovergroup& published)
-    -> mir::ExternalClass {
-  const hir::CovergroupRef ref = hir::ExternalCovergroupRef{
-      .unit_name = published.unit_name, .path = published.published.path};
-  const CovergroupClass cls = CovergroupClassOf(unit_lowerer, ref);
-  mir::ExternalClass record{
-      .unit_name = published.unit_name,
-      .class_path = published.published.path,
-      .base = published.published.base.has_value()
-                  ? mir::AsClassRef(CovergroupClassRef(
-                        unit_lowerer, *published.published.base))
-                  : mir::ClassRef{mir::ManagedObjectRootRef{}},
-      .is_interface_class = false,
-      .implements = {},
-      .fields = {},
-      .named_fields = {},
-      .private_field_types = {},
-      .behaviors = {},
-      .overrides = {}};
+    UnitLowerer& unit_lowerer, hir::CovergroupId published) -> mir::Class {
+  const hir::CovergroupKey& key =
+      unit_lowerer.Hir().covergroups.KeyOf(published);
+  const CovergroupClass cls = CovergroupClassOf(unit_lowerer, published);
+  const hir::PublishedCovergroup& stated = *cls.published;
+  mir::Class declared = unit_lowerer.IncompleteClass(
+      unit_lowerer.CovergroupClassIdentity(published), key.unit_name, key.path);
+  declared.base =
+      stated.base.has_value()
+          ? mir::ClassRef{unit_lowerer.CovergroupClassIdentity(*stated.base)}
+          : mir::ClassRef{mir::ManagedObjectRootRef{}};
   for (std::size_t i = 0; i < cls.layout.properties.size(); ++i) {
     const auto index = static_cast<std::uint32_t>(i);
-    record.named_fields.push_back(
+    declared.named_fields.push_back(
         mir::NamedField{
             .name = cls.layout.properties[i].name,
-            .slot = record.fields.Add(
+            .slot = declared.fields.Add(
                 mir::FieldDecl{
                     .type =
                         CovergroupPropertyType(unit_lowerer, cls, index)})});
   }
-  // The first class of a lineage introduces `sample` and the record of the
-  // object's type, in that order; every other overrides both.
-  if (!published.published.base.has_value()) {
-    record.behaviors.push_back(
-        mir::PublishedBehavior{
-            .name = std::string{kCovergroupSample}, .is_pure = false});
-    record.behaviors.push_back(
-        mir::PublishedBehavior{
-            .name = std::string{kCovergroupMakeRecord}, .is_pure = false});
-    return record;
-  }
-  // The first covergroup of the lineage may be this unit's own, where the
-  // lineage another unit published passes back through it.
+  // `sample` and the record of the object's type, in that order: introduced by
+  // the first class of a lineage and overridden by every other, whose first
+  // covergroup may be this unit's own where the lineage another unit published
+  // passes back through it.
   for (const auto& [name, behavior] :
        {std::pair{kCovergroupSample, kSampleBehavior},
         std::pair{kCovergroupMakeRecord, kMakeRecordBehavior}}) {
-    record.overrides.push_back(
-        mir::PublishedOverride{
-            .method = std::string{name},
-            .behavior = SlotIntroducedAlong(unit_lowerer, ref, behavior)});
+    const mir::CallableId callable = declared.callables.Add(
+        mir::CallableDecl{
+            .code = {},
+            .foreign = std::nullopt,
+            .virtual_dispatch =
+                stated.base.has_value()
+                    ? mir::VirtualDispatchRole{mir::OverridesVirtualSlot{
+                          .overridden = IntroducedSlot(
+                              unit_lowerer, published, behavior)}}
+                    : mir::VirtualDispatchRole{mir::IntroducesVirtualSlot{}},
+            .type_parameters = {},
+            .defining_unit = std::nullopt});
+    declared.named_callables.push_back(
+        mir::NamedCallable{.name = std::string{name}, .body = callable});
   }
-  return record;
+  // Then the two methods of the class itself, which dispatch on nothing.
+  for (const std::string_view name :
+       {kCovergroupTypeRecord, kCovergroupDeclareType}) {
+    declared.named_callables.push_back(
+        mir::NamedCallable{
+            .name = std::string{name},
+            .body = declared.callables.Add(
+                mir::CallableDecl{
+                    .code = {},
+                    .foreign = std::nullopt,
+                    .virtual_dispatch = std::nullopt,
+                    .type_parameters = {},
+                    .defining_unit = std::nullopt})});
+  }
+  return declared;
 }
 
 namespace {
@@ -764,12 +660,9 @@ class ClassWriter {
         owner_(std::move(owner)),
         type_event_(&type_event),
         library_(unit_lowerer.Hir()),
-        own_(CovergroupClassOf(
-            unit_lowerer, hir::LocalCovergroupRef{.covergroup = covergroup})),
+        own_(CovergroupClassOf(unit_lowerer, covergroup)),
         first_(CovergroupClassOf(
-            unit_lowerer, FirstOf(
-                              unit_lowerer, hir::LocalCovergroupRef{
-                                                .covergroup = covergroup}))) {
+            unit_lowerer, FirstOf(unit_lowerer, covergroup))) {
   }
 
   auto Write() -> diag::Result<void> {
@@ -798,7 +691,7 @@ class ClassWriter {
     return library_.Refs();
   }
 
-  [[nodiscard]] auto Self() const -> hir::CovergroupRef {
+  [[nodiscard]] auto Self() const -> hir::CovergroupId {
     return own_.covergroup;
   }
 
@@ -853,14 +746,13 @@ class ClassWriter {
   }
 
   // The record of the type of the covergroup `of`, as its class answers it.
-  [[nodiscard]] auto TypeRecordOf(
-      const Writer& e, const hir::CovergroupRef& of) const -> mir::ExprId {
+  [[nodiscard]] auto TypeRecordOf(const Writer& e, hir::CovergroupId of) const
+      -> mir::ExprId {
     std::vector<mir::ExprId> arguments;
     if (TakesDeclaringInstance(*u_, of)) arguments = InstanceArgument(e);
     return BuildFunctionCall(
         Unit(), e.Frame(),
-        mir::Direct{
-            .target = TypeMethod(*u_, of, kTypeRecord, kCovergroupTypeRecord)},
+        mir::Direct{.target = TypeMethod(*u_, of, kTypeRecord)},
         std::move(arguments), TypeRecordType(*u_, library_));
   }
 
@@ -939,7 +831,7 @@ class ClassWriter {
   // The `option` of the item or record `keeper` holds, of the library class
   // `cls`.
   [[nodiscard]] auto OptionsOf(
-      const Writer& e, mir::ExprId keeper, const hir::ClassRef& cls) const
+      const Writer& e, mir::ExprId keeper, hir::ClassId cls) const
       -> std::pair<AccessPath, hir::TypeId> {
     return {
         e.LibraryProperty(keeper, cls, "option"),
@@ -949,8 +841,8 @@ class ClassWriter {
   // One element of a bin's range list (LRM 19.5.1), handed to the library as
   // its value, its range or its tolerance.
   static auto WriteElement(
-      const Writer& e, mir::ExprId item, const hir::ClassRef& cls,
-      bool wildcard, const hir::BinElement& element) -> diag::Result<void> {
+      const Writer& e, mir::ExprId item, hir::ClassId cls, bool wildcard,
+      const hir::BinElement& element) -> diag::Result<void> {
     return std::visit(
         Overloaded{
             [&](const hir::BinValue& value) -> diag::Result<void> {
@@ -1002,7 +894,7 @@ class ClassWriter {
   // The bins one construct of a coverpoint makes, numbered `construct` (LRM
   // 19.5.1, 19.5.2).
   [[nodiscard]] auto WriteBins(
-      const Writer& e, std::string_view point, const hir::ClassRef& cls,
+      const Writer& e, std::string_view point, hir::ClassId cls,
       const hir::BinConstruct& bin, std::int64_t construct) const
       -> diag::Result<void> {
     const auto item = [&](const Writer& at) {
@@ -1182,7 +1074,7 @@ class ClassWriter {
   [[nodiscard]] auto WriteSelection(
       const Writer& e, const hir::Cross& cross, hir::CrossSelectId id) const
       -> diag::Result<mir::ExprId> {
-    const hir::ClassRef& cross_class = Refs().cross;
+    hir::ClassId cross_class = Refs().cross;
     const auto item = [&](const Writer& at) {
       return at.Read(Item(at, cross.name).first);
     };
@@ -1400,8 +1292,7 @@ class ClassWriter {
               BuildObjectDeref(
                   unit, block, block.exprs.Add(MakeSelfRefExpr(bound.frame))),
               mir::ClassFieldTarget{
-                  .owner = mir::IntraUnitClassRef{class_id_},
-                  .slot = instance->member},
+                  .owner = class_id_, .slot = instance->member},
               instance->type));
       block.AppendStmt(
           mir::ExprStmt{
@@ -1518,7 +1409,7 @@ class ClassWriter {
       const hir::Coverpoint& point = decl_->coverpoints[p];
       const hir::PublishedCoverpoint& counted_by =
           own_.published->coverpoints.at(p);
-      const hir::ClassRef& cls = counted_by.library_class;
+      hir::ClassId cls = counted_by.library_class;
       e.Store(
           e.Own(own_, own_.layout.coverpoints.at(p)),
           NewLibraryObject(
@@ -1557,7 +1448,7 @@ class ClassWriter {
     }
     for (std::size_t c = 0; c < decl_->crosses.size(); ++c) {
       const hir::Cross& cross = decl_->crosses[c];
-      const hir::ClassRef& cls = Refs().cross;
+      hir::ClassId cls = Refs().cross;
       e.Store(
           e.Own(own_, own_.layout.crosses.at(c)),
           NewLibraryObject(
@@ -1605,7 +1496,7 @@ class ClassWriter {
       mir::LocalId report) const -> diag::Result<void> {
     mir::CompilationUnit& unit = Unit();
     mir::Block& block = e.Block();
-    const hir::CovergroupRef& base = *decl_->base;
+    hir::CovergroupId base = *decl_->base;
     const hir::PublishedCovergroup& published = PublishedOf(*u_, base);
     std::vector<mir::ExprId> arguments;
     if (TakesDeclaringInstance(*u_, base)) {
@@ -1649,7 +1540,7 @@ class ClassWriter {
             mir::Direct{
                 .target =
                     mir::ConstructorTarget{
-                        .cls = CovergroupClassRef(*u_, base)},
+                        .cls = u_->CovergroupClassIdentity(base)},
                 .receiver = BuildObjectDeref(
                     unit, block, block.exprs.Add(MakeSelfRefExpr(e.Frame())))},
             std::move(arguments), unit.builtins.void_type));
@@ -1808,8 +1699,7 @@ class ClassWriter {
       e.Do(BuildFunctionCall(
           unit, e.Frame(),
           mir::Direct{
-              .target =
-                  TypeMethod(*u_, *decl_->base, kSample, kCovergroupSample),
+              .target = TypeMethod(*u_, *decl_->base, kSample),
               .receiver = BuildObjectDeref(
                   unit, e.Block(),
                   e.Block().exprs.Add(MakeSelfRefExpr(e.Frame())))},
@@ -1827,7 +1717,8 @@ class ClassWriter {
                      .code = function.Finish(std::nullopt),
                      .foreign = std::nullopt,
                      .virtual_dispatch = RoleIn(*u_, Self(), kSampleBehavior),
-                     .type_parameters = {}});
+                     .type_parameters = {},
+                     .defining_unit = std::nullopt});
     return {};
   }
 
@@ -1835,7 +1726,7 @@ class ClassWriter {
   [[nodiscard]] auto SampleItems(const Writer& e) const -> diag::Result<void> {
     // Each bin construct guarded by an `iff` is told whether its guard holds
     // (LRM 19.5).
-    const auto gates = [&](std::string_view name, const hir::ClassRef& cls,
+    const auto gates = [&](std::string_view name, hir::ClassId cls,
                            const auto& constructs) -> diag::Result<void> {
       for (std::size_t i = 0; i < constructs.size(); ++i) {
         if (!constructs[i].iff.has_value()) continue;
@@ -1849,8 +1740,7 @@ class ClassWriter {
     };
     for (std::size_t p = 0; p < decl_->coverpoints.size(); ++p) {
       const hir::Coverpoint& point = decl_->coverpoints[p];
-      const hir::ClassRef& cls =
-          own_.published->coverpoints.at(p).library_class;
+      hir::ClassId cls = own_.published->coverpoints.at(p).library_class;
       if (auto r = gates(point.name, cls, point.bins); !r) {
         return r;
       }
@@ -1917,7 +1807,8 @@ class ClassWriter {
                 function.Finish(ConvertToType(Unit(), e.Block(), made, record)),
             .foreign = std::nullopt,
             .virtual_dispatch = RoleIn(*u_, Self(), kMakeRecordBehavior),
-            .type_parameters = {}});
+            .type_parameters = {},
+            .defining_unit = std::nullopt});
   }
 
   // The type's record (LRM 19.11.3), found in the run's registry by the
@@ -1976,7 +1867,8 @@ class ClassWriter {
             .code = function.Finish(e.Block().ReadLocal(found, type)),
             .foreign = std::nullopt,
             .virtual_dispatch = std::nullopt,
-            .type_parameters = {}});
+            .type_parameters = {},
+            .defining_unit = std::nullopt});
   }
 
   // What the declaration states of its type: its items, and the type options
@@ -1998,9 +1890,7 @@ class ClassWriter {
       arguments.push_back(record());
       e.Do(BuildFunctionCall(
           unit, e.Frame(),
-          mir::Direct{
-              .target = TypeMethod(
-                  *u_, *decl_->base, kDeclareType, kCovergroupDeclareType)},
+          mir::Direct{.target = TypeMethod(*u_, *decl_->base, kDeclareType)},
           std::move(arguments), std::nullopt));
     }
     for (const hir::Coverpoint& point : decl_->coverpoints) {
@@ -2049,7 +1939,8 @@ class ClassWriter {
                           .code = function.Finish(std::nullopt),
                           .foreign = std::nullopt,
                           .virtual_dispatch = std::nullopt,
-                          .type_parameters = {}});
+                          .type_parameters = {},
+                          .defining_unit = std::nullopt});
     return {};
   }
 
@@ -2075,30 +1966,23 @@ CovergroupLowerer::CovergroupLowerer(
       covergroup_(covergroup),
       decl_(&unit_lowerer.Hir().covergroups.Get(covergroup)),
       declaring_scope_(declaring_scope),
-      class_id_(unit_lowerer.CovergroupClassId(covergroup)) {
+      class_id_(unit_lowerer.CovergroupClassIdentity(covergroup)) {
 }
 
 void CovergroupLowerer::DeclareShape(
     ClassShape* declaring_shape, std::optional<StaticStorageHome> type_event) {
   UnitLowerer& unit_lowerer = *unit_lowerer_;
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  const hir::CovergroupRef self =
-      hir::LocalCovergroupRef{.covergroup = covergroup_};
+  const hir::CovergroupId self = covergroup_;
   const CovergroupClass own = CovergroupClassOf(unit_lowerer, self);
-  const mir::TypeId object_type = unit.types.Intern(
-      mir::Type{mir::ObjectType{.of = mir::IntraUnitClassRef{class_id_}}});
   ClassShape shape{
       .path = unit_lowerer.Hir().covergroups.PathOf(covergroup_),
-      .base =
-          decl_->base.has_value()
-              ? mir::AsClassRef(CovergroupClassRef(unit_lowerer, *decl_->base))
-              : mir::ClassRef{mir::ManagedObjectRootRef{}},
+      .base = decl_->base.has_value()
+                  ? mir::ClassRef(
+                        unit_lowerer.CovergroupClassIdentity(*decl_->base))
+                  : mir::ClassRef{mir::ManagedObjectRootRef{}},
       .implements = {},
-      .self_pointer_type = unit.types.Intern(
-          mir::Type{mir::PointerType{
-              .pointee = object_type,
-              .ownership = mir::PointerOwnership::kBorrowed,
-              .mutability = mir::Mutability::kMutable}}),
+      .self_pointer_type = unit_lowerer.SelfPointerTo(class_id_),
       .declaring_instance = std::nullopt,
       .time_resolution = {},
       .execution = {},
@@ -2109,7 +1993,6 @@ void CovergroupLowerer::DeclareShape(
       .static_properties = {},
       .named_static_properties = {},
       .callable_signatures = {},
-      .field_translation = {},
       .static_property_translation = {},
       .contained = {},
       .is_final = false,
@@ -2213,84 +2096,20 @@ auto CovergroupLowerer::PopulateBodies(
   return {};
 }
 
-namespace {
-
-// The method the class embedding `first`, the first covergroup of a lineage,
-// makes it by (LRM 19.4.1): its callable where this unit declares the class,
-// and the behavior the class introduced where another unit does.
-using FactoryMethod =
-    std::variant<mir::CallableTarget, hir::ExternalDispatchSlot>;
-
-auto FactoryOf(UnitLowerer& unit_lowerer, const hir::CovergroupRef& first)
-    -> FactoryMethod {
-  const hir::PublishedCovergroup& published = PublishedOf(unit_lowerer, first);
-  return std::visit(
-      Overloaded{
-          [&](const hir::LocalClassRef& local) -> FactoryMethod {
-            const auto& listed = unit_lowerer.Hir()
-                                     .classes.Get(local.class_id)
-                                     .embedded_covergroups;
-            const auto at = std::ranges::find(
-                listed, std::get<hir::LocalCovergroupRef>(first).covergroup);
-            return mir::CallableTarget{
-                .owner = unit_lowerer.TranslateClass(local.class_id),
-                .slot = unit_lowerer.TranslateFactory(
-                    local.class_id,
-                    static_cast<std::size_t>(at - listed.begin()))};
-          },
-          [&](const hir::ExternalClassRef& external) -> FactoryMethod {
-            const hir::ExternalClass* record = hir::FindExternalClass(
-                unit_lowerer.Hir().external_classes, external.unit_name,
-                external.class_path);
-            const auto behavior =
-                record == nullptr
-                    ? std::nullopt
-                    : hir::FindIntroducedVirtual(
-                          record->methods,
-                          hir::CovergroupFactoryName(published.path));
-            if (!behavior.has_value()) {
-              throw InternalError(
-                  "the class embedding a covergroup of another unit published "
-                  "no method making it -- please report this as a bug");
-            }
-            return hir::ExternalDispatchSlot{
-                .unit_name = external.unit_name,
-                .class_path = external.class_path,
-                .behavior = *behavior};
-          }},
-      *published.embedding);
-}
-
-}  // namespace
-
-auto FactorySlot(UnitLowerer& unit_lowerer, const hir::CovergroupRef& first)
+auto FactorySlot(const UnitLowerer& unit_lowerer, hir::CovergroupId first)
     -> mir::VirtualSlot {
-  return std::visit(
-      Overloaded{
-          [&](const mir::CallableTarget& own) -> mir::VirtualSlot {
-            return CanonicalVirtualSlot(
-                own.owner, own.slot, mir::IntroducesVirtualSlot{});
-          },
-          [&](const hir::ExternalDispatchSlot& published) -> mir::VirtualSlot {
-            return mir::VirtualSlot{
-                unit_lowerer.MakeExternalVirtualSlot(published)};
-          }},
-      FactoryOf(unit_lowerer, first));
-}
-
-auto CovergroupFactoryDispatch(
-    UnitLowerer& unit_lowerer, hir::CovergroupId covergroup)
-    -> mir::VirtualDispatchRole {
-  const hir::CovergroupDecl& decl =
-      unit_lowerer.Hir().covergroups.Get(covergroup);
-  if (!decl.base.has_value()) return mir::IntroducesVirtualSlot{};
-  // An extension's factory overrides the one making the first covergroup of
-  // the lineage, which the class embedding that covergroup introduced.
-  return mir::OverridesVirtualSlot{
-      .overridden = FactorySlot(
-          unit_lowerer, FirstOf(
-                            unit_lowerer, hir::LocalCovergroupRef{
-                                              .covergroup = covergroup}))};
+  const hir::ClassId embedding = *PublishedOf(unit_lowerer, first).embedding;
+  const hir::ClassRegistry& classes = unit_lowerer.Hir().classes;
+  const hir::DeclaredMethods& methods = classes.Declaration(embedding).methods;
+  for (const hir::MethodId method : methods.Ids()) {
+    if (methods.Get(method).makes == first) {
+      return unit_lowerer.VirtualSlotOf(
+          hir::ClassMethodTarget{.owner = embedding, .method = method});
+    }
+  }
+  throw InternalError(
+      "the class embedding a covergroup declares no method making it -- "
+      "please report this as a bug");
 }
 
 namespace {
@@ -2331,8 +2150,7 @@ auto LowerCovergroupFactory(
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   const hir::CovergroupDecl& decl =
       unit_lowerer.Hir().covergroups.Get(covergroup);
-  const hir::CovergroupRef self =
-      hir::LocalCovergroupRef{.covergroup = covergroup};
+  const hir::CovergroupId self = covergroup;
   const CovergroupClass own = CovergroupClassOf(unit_lowerer, self);
   SynthesizedFunction function(
       unit_lowerer, owner, shape, CallableForm::kInstanceMember);
@@ -2383,28 +2201,27 @@ auto LowerCovergroupFactory(
 }
 
 void AddEmbeddedBlockEvents(
-    UnitLowerer& unit_lowerer, hir::ClassId embedding, const ClassShape& shape,
+    UnitLowerer& unit_lowerer, hir::ClassId embedding,
     BlockEventTriggers& triggers) {
-  const hir::ClassDecl& holder = unit_lowerer.Hir().classes.Get(embedding);
-  for (const hir::CovergroupId covergroup : holder.embedded_covergroups) {
+  const hir::ClassDeclaration& holder =
+      unit_lowerer.Hir().classes.Declaration(embedding);
+  for (const hir::CovergroupId covergroup :
+       hir::EmbeddedCovergroupsOf(holder.methods)) {
     const auto* at_blocks = std::get_if<hir::SampledAtBlocks>(
         &unit_lowerer.Hir().covergroups.Get(covergroup).sampling);
     if (at_blocks == nullptr) continue;
-    const hir::CovergroupRef self =
-        hir::LocalCovergroupRef{.covergroup = covergroup};
-    for (const hir::FieldId field : holder.fields.Ids()) {
-      const hir::TypeId type = holder.fields.Get(field).type;
+    for (const hir::FieldId field : holder.properties.Ids()) {
+      const hir::TypeId type = holder.properties.Get(field).type;
       const auto* handle =
           unit_lowerer.Hir().types.Get(type).As<hir::CovergroupHandleType>();
-      if (handle == nullptr || handle->covergroup != self) continue;
+      if (handle == nullptr || handle->covergroup != covergroup) continue;
       const HeldCovergroupEvent trigger{
           .holder =
               mir::ClassFieldTarget{
-                  .owner = mir::IntraUnitClassRef{unit_lowerer.TranslateClass(
-                      embedding)},
-                  .slot = shape.field_translation.Get(field)},
+                  .owner = unit_lowerer.ClassIdentity(embedding),
+                  .slot = mir::FieldId{field.value}},
           .handle_type = unit_lowerer.TranslateType(type),
-          .covergroup = self};
+          .covergroup = covergroup};
       for (const hir::BlockEvent& event : at_blocks->events) {
         ScopeBlockEvents& at = triggers[event.block];
         (event.at_begin ? at.at_begin : at.at_end).emplace_back(trigger);
@@ -2508,8 +2325,7 @@ auto BindCovergroupActuals(
 // instance its class belongs to as `reach` says.
 template <ExprLowerer Lowerer>
 auto TypeRecordCall(
-    Lowerer& lowerer, const WalkFrame& frame,
-    const hir::CovergroupRef& covergroup,
+    Lowerer& lowerer, const WalkFrame& frame, hir::CovergroupId covergroup,
     const std::optional<hir::DeclaringInstanceReach>& reach) -> mir::ExprId {
   UnitLowerer& unit_lowerer = lowerer.Owner();
   std::vector<mir::ExprId> arguments;
@@ -2519,9 +2335,7 @@ auto TypeRecordCall(
   const CoverageLibrary library(unit_lowerer.Hir());
   return BuildFunctionCall(
       unit_lowerer.Unit(), frame,
-      mir::Direct{
-          .target = TypeMethod(
-              unit_lowerer, covergroup, kTypeRecord, kCovergroupTypeRecord)},
+      mir::Direct{.target = TypeMethod(unit_lowerer, covergroup, kTypeRecord)},
       std::move(arguments), TypeRecordType(unit_lowerer, library));
 }
 
@@ -2532,7 +2346,7 @@ auto TypeRecordCall(
 // it is seen as one.
 auto InstanceAs(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId handle,
-    const hir::CovergroupRef& covergroup) -> mir::ExprId {
+    hir::CovergroupId covergroup) -> mir::ExprId {
   const mir::TypeId type = CovergroupHandle(unit_lowerer, covergroup);
   if (block.exprs.Get(handle).type == type) return handle;
   return block.exprs.Add(
@@ -2547,12 +2361,12 @@ auto InstanceAs(
 // item where one is named, and the instance's record otherwise.
 struct Keeper {
   mir::ExprId object;
-  hir::ClassRef cls;
+  hir::ClassId cls;
 };
 
 auto KeeperOf(
     UnitLowerer& unit_lowerer, const WalkFrame& frame,
-    const hir::CovergroupRef& covergroup, mir::ExprId instance,
+    hir::CovergroupId covergroup, mir::ExprId instance,
     const std::optional<std::string>& item) -> Keeper {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& block = *frame.current_block;
@@ -2587,7 +2401,7 @@ auto BindLibraryActuals(
     std::size_t leading) -> diag::Result<std::vector<mir::ExprId>> {
   std::vector<mir::ExprId> bound;
   for (std::size_t i = 0; i < actuals.size(); ++i) {
-    const hir::ExternalCalleeParam& formal =
+    const hir::CalleeParam& formal =
         method.prototype.interface.params.at(leading + i);
     auto actual = EmitBoundActual(
         lowerer, frame, lowerer.HirExprs().Get(actuals[i]), formal.direction,
@@ -2614,7 +2428,7 @@ template <ExprLowerer Lowerer>
 auto BuildReceivedInstance(
     Lowerer& lowerer, const WalkFrame& frame,
     const hir::CovergroupInstanceReceiver& through,
-    const hir::CovergroupRef& covergroup) -> diag::Result<mir::ExprId> {
+    hir::CovergroupId covergroup) -> diag::Result<mir::ExprId> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
   mir::Block& block = *frame.current_block;
   auto lowered =
@@ -2680,7 +2494,7 @@ auto LowerCovergroupNewExpr(
         block.AsValue(unit.types, block.exprs.Add(*std::move(embedding))),
         HandleTo(unit_lowerer, *published.embedding)));
   }
-  const hir::CovergroupRef lineage_first =
+  const hir::CovergroupId lineage_first =
       FirstOf(unit_lowerer, created.covergroup);
   const hir::PublishedCovergroup& first =
       PublishedOf(unit_lowerer, lineage_first);
@@ -2724,7 +2538,7 @@ auto LowerCovergroupMethodCallExpr(
     return BuildReceivedInstance(lowerer, frame, *through, call.covergroup);
   };
   const auto library_call =
-      [&](mir::ExprId receiver, const hir::ClassRef& cls, std::string_view name,
+      [&](mir::ExprId receiver, hir::ClassId cls, std::string_view name,
           std::vector<mir::ExprId> leading) -> diag::Result<mir::Expr> {
     const CoverageLibrary::Method method = library.MethodOf(cls, name);
     auto bound =
@@ -2783,7 +2597,7 @@ auto LowerCovergroupMethodCallExpr(
       }
       const mir::ExprId type = TypeRecordCall(
           lowerer, frame, call.covergroup, of_type->declaring_instance);
-      const hir::ClassRef& cls = library.Refs().group_type;
+      hir::ClassId cls = library.Refs().group_type;
       if (!call.item.has_value()) {
         return library_call(
             type, cls, counted ? "get_coverage" : "coverage", {});
@@ -2818,7 +2632,7 @@ auto CovergroupOptionPath(
   };
   // The library property `name` of `cls` of the object `object` holds, and
   // the type it holds in the library.
-  const auto property = [&](mir::ExprId object, const hir::ClassRef& cls,
+  const auto property = [&](mir::ExprId object, hir::ClassId cls,
                             std::string_view name) {
     const CoverageLibrary::Property found = library.PropertyOf(cls, name);
     return std::pair{
@@ -2838,7 +2652,7 @@ auto CovergroupOptionPath(
               -> diag::Result<AccessPath> {
             const mir::ExprId type = TypeRecordCall(
                 lowerer, frame, option.covergroup, of_type.declaring_instance);
-            const hir::ClassRef& cls = library.Refs().group_type;
+            hir::ClassId cls = library.Refs().group_type;
             if (!option.item.has_value()) {
               auto [path, held] = property(type, cls, "type_option");
               return member(std::move(path), held);

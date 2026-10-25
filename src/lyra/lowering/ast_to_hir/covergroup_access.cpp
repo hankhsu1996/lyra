@@ -201,8 +201,7 @@ auto LowerCoverageOption(
   const bool type_option = named.member->name == "type_option";
   const Reached reached = ReachOf(*named.member, named.base);
   UnitLowerer& unit_lowerer = lowerer.Owner();
-  auto covergroup =
-      unit_lowerer.ResolveCovergroupRef(CovergroupOf(reached), span);
+  auto covergroup = unit_lowerer.ResolveCovergroup(CovergroupOf(reached), span);
   if (!covergroup) return std::unexpected(std::move(covergroup.error()));
   auto type_id = unit_lowerer.InternType(type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
@@ -264,7 +263,7 @@ auto LowerNewCovergroup(
   UnitLowerer& unit_lowerer = lowerer.Owner();
   const auto& covergroup =
       expr.type->getCanonicalType().as<slang::ast::CovergroupType>();
-  auto ref = unit_lowerer.ResolveCovergroupRef(covergroup, span);
+  auto ref = unit_lowerer.ResolveCovergroup(covergroup, span);
   if (!ref) return std::unexpected(std::move(ref.error()));
   auto type = unit_lowerer.InternExpressionType(expr, span);
   if (!type) return std::unexpected(std::move(type.error()));
@@ -305,8 +304,7 @@ auto LowerCovergroupMethodCall(
       *std::get<const slang::ast::SubroutineSymbol*>(call.subroutine);
   UnitLowerer& unit_lowerer = lowerer.Owner();
   const Reached reached = ReachOf(method, call.thisClass());
-  auto covergroup =
-      unit_lowerer.ResolveCovergroupRef(CovergroupOf(reached), span);
+  auto covergroup = unit_lowerer.ResolveCovergroup(CovergroupOf(reached), span);
   if (!covergroup) return std::unexpected(std::move(covergroup.error()));
   auto type = unit_lowerer.InternExpressionType(call, span);
   if (!type) return std::unexpected(std::move(type.error()));

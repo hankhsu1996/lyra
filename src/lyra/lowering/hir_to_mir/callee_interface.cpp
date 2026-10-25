@@ -11,13 +11,13 @@
 
 #include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/overloaded.hpp"
 #include "lyra/hir/class_decl.hpp"
+#include "lyra/hir/class_declaration.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/compilation_unit.hpp"
-#include "lyra/hir/external_class.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/subroutine.hpp"
+#include "lyra/hir/subroutine_prototype.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -108,33 +108,16 @@ auto ReportParamTypeOf(
   throw InternalError("ReportParamTypeOf: unknown subroutine kind");
 }
 
-auto ConstructorFormalsOf(UnitLowerer& unit_lowerer, const hir::ClassRef& cls)
+auto ConstructorFormalsOf(UnitLowerer& unit_lowerer, hir::ClassId cls)
     -> std::vector<CalleeFormal> {
-  return std::visit(
-      Overloaded{
-          [&](const hir::LocalClassRef& local) {
-            return CalleeFormalsOf(
-                unit_lowerer,
-                unit_lowerer.Hir().classes.Get(local.class_id).constructor);
-          },
-          [&](const hir::ExternalClassRef& external) {
-            const hir::ExternalClass* published = hir::FindExternalClass(
-                unit_lowerer.Hir().external_classes, external.unit_name,
-                external.class_path);
-            if (published == nullptr) {
-              throw InternalError(
-                  "ConstructorFormalsOf: a class another unit declares is "
-                  "constructed through what that unit published, which this "
-                  "unit records");
-            }
-            if (!published->constructor.has_value()) {
-              throw InternalError(
-                  "ConstructorFormalsOf: an interface class is never "
-                  "constructed (LRM 8.26.5)");
-            }
-            return CalleeFormalsOf(unit_lowerer, *published->constructor);
-          }},
-      cls);
+  const hir::ClassDeclaration& published =
+      unit_lowerer.Hir().classes.Declaration(cls);
+  if (!published.constructor.has_value()) {
+    throw InternalError(
+        "ConstructorFormalsOf: an interface class is never constructed (LRM "
+        "8.26.5)");
+  }
+  return CalleeFormalsOf(unit_lowerer, *published.constructor);
 }
 
 auto ConstraintProblemParamTypeOf(
@@ -169,11 +152,11 @@ auto CalleeFormalsOf(UnitLowerer& unit_lowerer, const hir::SubroutineDecl& decl)
 }
 
 auto CalleeFormalsOf(
-    UnitLowerer& unit_lowerer, const hir::ExternalCalleeInterface& interface)
+    UnitLowerer& unit_lowerer, const hir::CalleeInterface& interface)
     -> std::vector<CalleeFormal> {
   std::vector<CalleeFormal> formals;
   formals.reserve(interface.params.size());
-  for (const hir::ExternalCalleeParam& param : interface.params) {
+  for (const hir::CalleeParam& param : interface.params) {
     formals.push_back(
         CalleeFormal{
             .direction = param.direction,
@@ -210,7 +193,7 @@ auto SubroutineCallTypeOf(
 }
 
 auto SubroutineCallTypeOf(
-    UnitLowerer& unit_lowerer, const hir::ExternalCalleeInterface& interface,
+    UnitLowerer& unit_lowerer, const hir::CalleeInterface& interface,
     hir::TypeId result_type) -> mir::TypeId {
   return CallTypeOf(
       unit_lowerer, interface.kind, result_type,
@@ -291,11 +274,11 @@ auto PrototypeOf(
 }
 
 auto PrototypeOf(
-    UnitLowerer& unit_lowerer, const hir::PublishedCallable& published,
+    UnitLowerer& unit_lowerer, const hir::SubroutinePrototype& published,
     mir::TypeId self) -> mir::CallableCode {
   std::vector<PrototypeFormal> formals;
   formals.reserve(published.interface.params.size());
-  for (const hir::ExternalCalleeParam& param : published.interface.params) {
+  for (const hir::CalleeParam& param : published.interface.params) {
     formals.push_back(
         PrototypeFormal{
             .type = param.type,

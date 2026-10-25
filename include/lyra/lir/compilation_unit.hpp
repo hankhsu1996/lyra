@@ -149,6 +149,13 @@ struct GlobalConstant {
 // definition links under are two different symbols over the same parts, each
 // composed by the one function that owns its category.
 struct Class {
+  // The unit that defines the class, where it is another unit's. Such a class
+  // is declared here, as that unit published it: its members at the slots that
+  // class gave them -- the ones another unit may name first, then its `local`
+  // ones, which this unit never names but a class of it extending this one is
+  // placed after -- and what it adds to dispatch, each body named by the
+  // symbol its unit emits it under. This unit emits nothing of it.
+  std::optional<std::string> defining_unit;
   // The path another unit reaches this class by, absent where nothing outside
   // this unit names it -- a class the lowering built for its own use. Every
   // symbol qualified by this class is composed from it where it is present and
@@ -174,33 +181,6 @@ struct Class {
   // What answers each behavior of every interface class a value of this class
   // is also a value of, for a class that is not an interface class.
   std::vector<ConformingBehavior> conforming;
-};
-
-// A class of another unit this one reaches into, as that unit published it:
-// which unit declares it and its path there, both resolved at link time,
-// what it extends, and its members at the slots that class gave them -- the
-// ones another unit may name first, then its `local` ones, which this unit
-// never names but a class of it extending this one is placed after -- and what
-// it adds to dispatch, which a class of this unit extending it builds its table
-// from. What it inherited is not among them: a member of an ancestor is reached
-// through the class that declares it.
-//
-// What a unit published of the object one of its scopes is -- an instance, or
-// a generate block inside one -- is such a class too. Its members are what the
-// scope published, in the order it published them, and it adds nothing to
-// dispatch, because none of its methods dispatches.
-//
-// This unit compiles none of it, which is why it sits apart from the classes
-// above.
-struct ExternalClass {
-  std::string unit_name;
-  support::DefPath class_path;
-  // What its members are placed after, as for a class of this unit.
-  std::optional<TypeId> base;
-  std::vector<Member> members;
-  ClassDispatch dispatch;
-  // The interface classes it names, as for a class of this unit.
-  std::vector<TypeId> implements;
 };
 
 // One compiled closure: the captures it holds and the one body that reads them.
@@ -230,8 +210,8 @@ enum class RecordKind : std::uint8_t {
   kTaggedUnion,
 };
 
-// A structure or a union this unit declares: which declaration of the unit it
-// is, which is what another unit reaches it by, which aggregate it is, its
+// A structure or a union a unit declares: which declaration of its unit it is,
+// which is what another unit reaches it by, which aggregate it is, its
 // members' types in position order, and the function it answers each
 // operation on a whole value with.
 //
@@ -240,6 +220,10 @@ enum class RecordKind : std::uint8_t {
 // it derives of the type itself: where the components lie, and how a value is
 // copied, moved and ended.
 struct RecordDecl {
+  // The unit that defines the record, where it is another unit's. Such a
+  // record is declared here as this unit read it, and its methods are that
+  // unit's, so it lists none and this unit emits nothing of it.
+  std::optional<std::string> defining_unit;
   support::DefPath path;
   // How everything this record links under is linked: its type and its
   // methods.
@@ -247,15 +231,6 @@ struct RecordDecl {
   RecordKind kind;
   std::vector<TypeId> elements;
   std::vector<RecordMethod> methods;
-};
-
-// A structure or a union another unit declares, as this unit reads it: the
-// declaration it is, which aggregate it is, and its members' types, which is
-// what a value of it needs here.
-struct ExternalRecord {
-  TypeDeclarationRef declaration;
-  RecordKind kind;
-  std::vector<TypeId> elements;
 };
 
 // The function of the unit answering the operation `answers` at `type`: what a
@@ -279,13 +254,13 @@ struct StaticStorage {
   TypeId type;
 };
 
-// The LIR of one compilation unit: its own type graph, its classes, its
-// closures, its records and those of other units it holds values of, the
-// classes of other units it compiled against, the storage it shares
-// program-wide, every function it compiles, and the class its object tree is
-// rooted at, when it roots one -- a unit that declares only a namespace
-// compiles functions and roots no objects. Self-contained -- it holds no
-// reference to the MIR it was lowered from.
+// The LIR of one compilation unit: its own type graph, its classes and those of
+// other units it compiled against, its closures, its records and those of
+// other units it holds values of, the storage it shares program-wide, every
+// function it compiles, and the class its object tree is rooted at, when it
+// roots one -- a unit that declares only a namespace compiles functions and
+// roots no objects. Self-contained -- it holds no reference to the MIR it was
+// lowered from.
 //
 // Every body is a function here, whatever declared it, and its position is the
 // identity a call names. A class reaches its own bodies the same way any other
@@ -303,13 +278,6 @@ struct CompilationUnit {
   base::Registry<Class, ClassId> classes;
   base::Registry<Closure, ClosureId> closures;
   base::Registry<RecordDecl, RecordId> records;
-  // Every record of another unit this one holds a value of, found by the
-  // declaration that names it.
-  std::vector<ExternalRecord> external_records;
-  // One entry per class of another unit this one names, found by the pair that
-  // names the class -- the pair every reference to one carries, so a reference
-  // and the record its slot is counted out of cannot come apart.
-  std::vector<ExternalClass> external_classes;
   base::Registry<Function, FunctionId> functions;
   // The functions answering the operations the unit states per type, one per
   // type and operation.
@@ -330,63 +298,21 @@ struct CompilationUnit {
   std::optional<ClassId> root;
 };
 
-// The record kept of the class `class_path` of unit `unit_name`, or nothing
-// where this unit holds no published record of it -- a class no signature the
-// design compiles carries.
-[[nodiscard]] inline auto FindExternalClass(
-    const CompilationUnit& unit, std::string_view unit_name,
-    const support::DefPath& class_path) -> const ExternalClass* {
-  for (const ExternalClass& record : unit.external_classes) {
-    if (record.unit_name == unit_name && record.class_path == class_path) {
-      return &record;
-    }
-  }
-  return nullptr;
-}
-
-// What this unit read of the record another unit declares as `declaration`.
-[[nodiscard]] inline auto ExternalRecordOf(
-    const CompilationUnit& unit, const TypeDeclarationRef& declaration)
-    -> const ExternalRecord& {
-  for (const ExternalRecord& external : unit.external_records) {
-    if (external.declaration == declaration) {
-      return external;
-    }
-  }
-  throw InternalError(
-      "lir: a record of another unit is named that this unit never read");
-}
-
-// The members' types of the record `record` refers to, wherever it was
-// declared, in declaration order.
+// The members' types of the record `record`, wherever it was declared, in
+// declaration order.
 [[nodiscard]] inline auto RecordElements(
-    const CompilationUnit& unit, const RecordRef& record)
-    -> std::span<const TypeId> {
-  return std::visit(
-      Overloaded{
-          [&](RecordId id) -> std::span<const TypeId> {
-            return unit.records.Get(id).elements;
-          },
-          [&](const TypeDeclarationRef& ref) -> std::span<const TypeId> {
-            return ExternalRecordOf(unit, ref).elements;
-          }},
-      record);
+    const CompilationUnit& unit, RecordId record) -> std::span<const TypeId> {
+  return unit.records.Get(record).elements;
 }
 
-// Which aggregate the record `record` refers to is, wherever it was declared.
+// Which aggregate the record `record` is, wherever it was declared.
 [[nodiscard]] inline auto RecordKindOf(
-    const CompilationUnit& unit, const RecordRef& record) -> RecordKind {
-  return std::visit(
-      Overloaded{
-          [&](RecordId id) { return unit.records.Get(id).kind; },
-          [&](const TypeDeclarationRef& ref) {
-            return ExternalRecordOf(unit, ref).kind;
-          }},
-      record);
+    const CompilationUnit& unit, RecordId record) -> RecordKind {
+  return unit.records.Get(record).kind;
 }
 
 // The record declaration `type` is, and nothing for any other type.
-[[nodiscard]] inline auto RecordOf(const Type& type) -> const RecordRef* {
+[[nodiscard]] inline auto RecordOf(const Type& type) -> const RecordId* {
   if (const auto* record = type.As<RecordType>()) {
     return &record->declaration;
   }
@@ -397,27 +323,20 @@ struct CompilationUnit {
 // type.
 [[nodiscard]] inline auto RecordKindOf(const CompilationUnit& unit, TypeId type)
     -> std::optional<RecordKind> {
-  const RecordRef* record = RecordOf(unit.types.Get(type));
+  const RecordId* record = RecordOf(unit.types.Get(type));
   if (record == nullptr) {
     return std::nullopt;
   }
   return RecordKindOf(unit, *record);
 }
 
-// The declaration any unit names the record `record` refers to by.
+// The declaration any unit names the record `record` by.
 [[nodiscard]] inline auto RecordDeclarationOf(
-    const CompilationUnit& unit, const RecordRef& record)
-    -> TypeDeclarationRef {
-  return std::visit(
-      Overloaded{
-          [&](RecordId id) -> TypeDeclarationRef {
-            return TypeDeclarationRef{
-                .unit_name = unit.name, .path = unit.records.Get(id).path};
-          },
-          [](const TypeDeclarationRef& ref) -> TypeDeclarationRef {
-            return ref;
-          }},
-      record);
+    const CompilationUnit& unit, RecordId record) -> TypeDeclarationRef {
+  const RecordDecl& declared = unit.records.Get(record);
+  return TypeDeclarationRef{
+      .unit_name = declared.defining_unit.value_or(unit.name),
+      .path = declared.path};
 }
 
 // The components of a product -- a tuple or a structure, which are reached the
@@ -429,7 +348,7 @@ struct CompilationUnit {
   if (const auto* tuple = t.As<TupleType>()) {
     return std::span<const TypeId>{tuple->elements};
   }
-  const RecordRef* record = RecordOf(t);
+  const RecordId* record = RecordOf(t);
   if (record == nullptr) {
     return std::nullopt;
   }
@@ -449,7 +368,7 @@ struct CompilationUnit {
 [[nodiscard]] inline auto OverlaidMembers(
     const CompilationUnit& unit, TypeId type)
     -> std::optional<std::span<const TypeId>> {
-  const RecordRef* record = RecordOf(unit.types.Get(type));
+  const RecordId* record = RecordOf(unit.types.Get(type));
   if (record == nullptr) {
     return std::nullopt;
   }
@@ -491,7 +410,7 @@ struct CompilationUnit {
   if (const auto* tuple = t.As<TupleType>()) {
     return std::span<const TypeId>{tuple->elements};
   }
-  if (const RecordRef* record = RecordOf(t)) {
+  if (const RecordId* record = RecordOf(t)) {
     return RecordElements(unit, *record);
   }
   return std::nullopt;

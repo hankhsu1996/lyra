@@ -232,8 +232,7 @@ auto BuildDefaultValueExpr(
                             mir::Direct{
                                 .target =
                                     mir::RecordMethodTarget{
-                                        .declaration = mir::RecordDeclarationOf(
-                                            unit, s.declaration),
+                                        .record = s.declaration,
                                         .answers = support::BuiltinFn::
                                             kDeclaredDefault}},
                         .arguments = {}},
@@ -267,7 +266,7 @@ auto BuildDefaultValueExpr(
           // object type itself is what that handle points at, which a
           // construction brings into existence.
           [&](const mir::ObjectType& o) -> mir::Expr {
-            if (std::holds_alternative<mir::CrossUnitClassRef>(o.of)) {
+            if (mir::IsDefinedElsewhere(unit, o.of)) {
               return holds_no_declared_value(
                   "an object of another unit's class");
             }

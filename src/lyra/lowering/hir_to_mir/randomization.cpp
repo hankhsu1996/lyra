@@ -256,7 +256,7 @@ auto NamesVariable(const ConstraintWriter& w, hir::ExprId id) -> bool {
                     [](const hir::RoutedObjectRef&) { return false; },
                     [](const hir::IterationBindingRef&) { return false; },
                     [](const hir::PatternVarRef&) { return false; },
-                    [](const hir::ExternalUnitValueRef&) { return true; }},
+                    [](const hir::NamespaceValueRef&) { return true; }},
                 p.data);
           },
           [](const hir::UnaryExpr&) { return false; },
@@ -1930,22 +1930,11 @@ auto ChosenMembers(
 }
 
 auto StaticConstraintModeKey(
-    const hir::CompilationUnit& unit, const hir::ClassRef& introducer,
+    const hir::CompilationUnit& unit, hir::ClassId introducer,
     std::string_view block) -> std::string {
-  auto key = [&](std::string_view unit_name,
-                 const support::DefPath& class_path) {
-    return std::format(
-        "{}::{}::{}", unit_name, support::DisplayOf(class_path), block);
-  };
-  return std::visit(
-      Overloaded{
-          [&](const hir::LocalClassRef& local) {
-            return key(unit.name, unit.classes.PathOf(local.class_id));
-          },
-          [&](const hir::ExternalClassRef& external) {
-            return key(external.unit_name, external.class_path);
-          }},
-      introducer);
+  const hir::ClassKey& key = unit.classes.KeyOf(introducer);
+  return std::format(
+      "{}::{}::{}", key.unit_name, support::DisplayOf(key.class_path), block);
 }
 
 auto LowerConstraintModeSetExpr(

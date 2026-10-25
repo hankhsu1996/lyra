@@ -8,11 +8,10 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/class.hpp"
+#include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/external_class.hpp"
 #include "lyra/mir/object_lifetime.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -130,19 +129,8 @@ auto BindImplicitParameters(
         bindings.Declare(ReceiverOrigin{}, owner.self_pointer_type);
     bound.params.push_back(receiver);
     const mir::ObjectLifetime lifetime = mir::LifetimeOfLineage(
-        mir::IntraUnitClassRef{.class_id = frame.current_class.id},
-        [&](const mir::DeclaredClassRef& declared) {
-          return std::visit(
-              Overloaded{
-                  [&](const mir::IntraUnitClassRef& own) {
-                    return unit_lowerer.GetClassShape(own.class_id).base;
-                  },
-                  [&](const mir::CrossUnitClassRef& other) {
-                    return mir::BaseOfExternalClass(
-                        unit_lowerer.Unit().external_classes, other);
-                  }},
-              declared);
-        });
+        mir::ClassRef{frame.current_class.id},
+        [&](mir::ClassId cls) { return unit_lowerer.BaseOf(cls); });
     switch (lifetime) {
       case mir::ObjectLifetime::kTheRun:
         break;
@@ -190,9 +178,7 @@ auto BuildEnclosingScopeReceiver(
                                 mir::MakeFieldAccessExpr(
                                     BuildObjectDeref(unit, block, self),
                                     mir::ClassFieldTarget{
-                                        .owner =
-                                            mir::IntraUnitClassRef{
-                                                frame.current_class.id},
+                                        .owner = frame.current_class.id,
                                         .slot = through.member},
                                     unit.builtins.scope_ptr)))},
                     .type = frame.EnclosingClassAtHops(mir::EnclosingHops{0})
@@ -223,8 +209,7 @@ auto BuildEnclosingScopeReceiver(
     nav = block.Read(block.exprs.Add(
         mir::MakeFieldAccessExpr(
             BuildObjectDeref(unit, block, nav),
-            mir::ClassFieldTarget{
-                .owner = mir::IntraUnitClassRef{at.id}, .slot = *at.enclosing},
+            mir::ClassFieldTarget{.owner = at.id, .slot = *at.enclosing},
             at.cls->fields.Get(*at.enclosing).type)));
   }
   return nav;
@@ -235,9 +220,7 @@ auto BuildStructuralFieldAccessExpr(
     mir::EnclosingHops hops, mir::FieldId var) -> mir::Expr {
   const EnclosingClass owner = frame.EnclosingClassAtHops(hops);
   return BuildStructuralFieldAccessExpr(
-      frame, unit, hops,
-      mir::ClassFieldTarget{
-          .owner = mir::IntraUnitClassRef{owner.id}, .slot = var},
+      frame, unit, hops, mir::ClassFieldTarget{.owner = owner.id, .slot = var},
       owner.cls->fields.Get(var).type);
 }
 

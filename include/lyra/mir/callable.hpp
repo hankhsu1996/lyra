@@ -7,7 +7,6 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_ref.hpp"
@@ -51,9 +50,10 @@ struct TypeParameter {
 // both directions of the DPI-C boundary are this one concept. What varies among
 // them is stated by independent structure, never by a kind:
 //
-//   - `code` always carries the signature; its body is present exactly when
-//     this declaration also defines the callable. A pure virtual method (LRM
-//     8.21) and a DPI-C import (LRM 35.4) are the two that do not.
+//   - `code` carries the signature wherever this unit states one; its body is
+//     present exactly when this declaration also defines the callable. A pure
+//     virtual method (LRM 8.21) and a DPI-C import (LRM 35.4) are the two this
+//     unit states and does not define.
 //   - `foreign`, when present, is the C linkage the callable is reached under.
 //     It is orthogonal to the body: bodyless plus foreign is an import the
 //     user's C defines, bodied plus foreign is the entry point of an export the
@@ -67,9 +67,12 @@ struct TypeParameter {
 //   - The receiver is not a kind either: an instance method carries `self` as
 //     its first parameter and a static callable omits it, which the signature
 //     already says.
-//
-// A pure virtual prototype is therefore the combination of no body and a
-// dispatch role, and needs no third fact to say so.
+//   - `defining_unit`, where present, names the unit whose namespace a
+//     subroutine of another unit is a member of; such a callable's `code`
+//     states nothing, its signature being that unit's too. Every entry another
+//     unit defines -- a class, a record, a variable -- says so the same way. A
+//     method of a class another unit defines states nothing of its own: its
+//     class says which unit defines it.
 //
 // Access is not stated here. A scope draws no access boundary at all --
 // anything lexically inside a module reaches its subroutines, and a
@@ -79,8 +82,8 @@ struct TypeParameter {
 // flag.
 //
 // A callable carries no name. Its identity is the position its declaration
-// sits at, which every callable has and which is already what an intra-unit
-// reference names; being reachable by a name is a separate relation, held by
+// sits at, which every callable has and which is already what a reference
+// names; being reachable by a name is a separate relation, held by
 // whatever answers that name (`NamedCallable` below). A body the source never
 // wrote simply does not take part in it, rather than taking part with nothing
 // in the slot -- and it needs no name of the compiler's own, which is as well,
@@ -93,20 +96,23 @@ struct CallableDecl {
   // The types the definition is generic over, numbered by position; a body
   // names one as a type parameter type, and a call names the type it is at.
   std::vector<TypeParameter> type_parameters;
+  std::optional<std::string> defining_unit;
 };
 
 // What a callable declaration is, read off the facts above rather than stated
-// beside them: a body this program defines; a behavior a class declares and
-// leaves to what extends it (LRM 8.21), which is no body and a dispatch role;
-// or a function the foreign program defines (LRM 35.4), which is no body and a
-// foreign linkage. The forms fall out of the combination, and every consumer
-// reads them here.
+// beside them: a body this unit defines; a function the foreign program
+// defines (LRM 35.4), which is no body and a foreign linkage; a behavior a
+// class declares and leaves to what extends it (LRM 8.21), which is no body
+// and a pure dispatch role; or otherwise a body another unit of the program
+// defines. The forms fall out of the combination, and every consumer reads
+// them here.
 struct DefinedHere {};
+struct DefinedByAnotherUnit {};
 struct LeftAbstract {};
 struct DefinedByForeignCode {};
 
-using CallableForm =
-    std::variant<DefinedHere, LeftAbstract, DefinedByForeignCode>;
+using CallableForm = std::variant<
+    DefinedHere, DefinedByAnotherUnit, LeftAbstract, DefinedByForeignCode>;
 
 [[nodiscard]] inline auto FormOf(const CallableDecl& callable) -> CallableForm {
   if (callable.code.body.has_value()) {
@@ -115,12 +121,11 @@ using CallableForm =
   if (callable.foreign.has_value()) {
     return DefinedByForeignCode{};
   }
-  if (callable.virtual_dispatch.has_value()) {
+  if (callable.virtual_dispatch.has_value() &&
+      IsLeftAbstract(*callable.virtual_dispatch)) {
     return LeftAbstract{};
   }
-  throw InternalError(
-      "mir: a callable with no body is neither left abstract nor defined by "
-      "foreign code, so nothing defines it -- please report this as a bug");
+  return DefinedByAnotherUnit{};
 }
 
 // One entry of the relation between a name space and the bodies it answers: the

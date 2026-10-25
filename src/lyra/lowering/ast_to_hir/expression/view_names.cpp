@@ -24,8 +24,8 @@ auto MemberOnInstance(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const ViewNameOnInstance& view_name, hir::PublishedMemberId id,
     diag::SourceSpan span) -> hir::Expr {
-  const hir::ExternalMemberLeaf leaf =
-      unit_lowerer.ExternalMemberLeafOf(view_name.scope_class, id);
+  const hir::PublishedMemberLeaf leaf =
+      unit_lowerer.PublishedMemberLeafOf(view_name.scope_class, id);
   return std::visit(
       Overloaded{
           [&](const ScopeRoute& route) {
@@ -117,14 +117,14 @@ auto ResolveRoutedViewName(
       frame, *selected.getParentScope(),
       unit_lowerer.StartOf(frame, hve.symbol, hve.ref));
   const auto* on = through.has_value()
-                       ? std::get_if<InExternalScope>(&through->place)
+                       ? std::get_if<InPublishedScope>(&through->place)
                        : nullptr;
   if (on == nullptr) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "a name a modport offers, reached this way, is not yet supported");
   }
-  const hir::ExternalScopeClassId scope_class = on->scope_class;
+  const hir::ScopeClassId scope_class = on->scope_class;
   return ViewNameOnInstance{
       .instance = *std::move(through),
       .scope_class = scope_class,
@@ -135,13 +135,10 @@ auto ResolveRoutedViewName(
 }  // namespace
 
 auto PublishedViewNameMeaning(
-    const UnitLowerer& unit_lowerer, hir::ExternalScopeClassId scope_class,
+    const UnitLowerer& unit_lowerer, hir::ScopeClassId scope_class,
     std::string_view modport, std::string_view name) -> hir::ViewDefinedName {
   const hir::PublishedModport* view = hir::FindModport(
-      unit_lowerer.Unit()
-          .external_scope_classes.Get(scope_class)
-          .signature.modports,
-      modport);
+      unit_lowerer.Unit().scope_classes.Get(scope_class).modports, modport);
   const hir::PublishedModportPort* published =
       view == nullptr ? nullptr : view->Find(name);
   if (published == nullptr) {
@@ -166,13 +163,13 @@ auto LowerViewNameOnInstance(
                 InstanceAsReceiver(unit_lowerer, frame, view_name);
             return hir::Expr{
                 .type = unit_lowerer.Unit()
-                            .external_scope_classes.Get(view_name.scope_class)
-                            .signature.callables.Get(computed.evaluate)
+                            .scope_classes.Get(view_name.scope_class)
+                            .callables.Get(computed.evaluate)
                             .result_type,
                 .data =
                     hir::CallExpr{
                         .callee =
-                            hir::ExternalUnitMethodRef{
+                            hir::PublishedScopeMethodRef{
                                 .receiver = std::move(receiver),
                                 .scope_class = view_name.scope_class,
                                 .callable = computed.evaluate},

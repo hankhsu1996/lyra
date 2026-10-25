@@ -3,6 +3,7 @@
 #include <compare>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <optional>
 #include <string>
 #include <utility>
@@ -11,6 +12,7 @@
 
 #include "lyra/base/arena.hpp"
 #include "lyra/base/id_range.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/pool_id.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/diag/source_span.hpp"
@@ -18,6 +20,7 @@
 #include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/fixed_name.hpp"
+#include "lyra/hir/keyed_identities.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
@@ -339,7 +342,7 @@ struct CovergroupDecl {
   std::vector<OptionSetting> options;
   std::vector<Coverpoint> coverpoints;
   std::vector<Cross> crosses;
-  std::optional<CovergroupRef> base;
+  std::optional<CovergroupId> base;
   ProceduralBody body;
   base::Registry<ProceduralScopeDecl, ProceduralScopeId> procedural_scopes;
   // The name of the scope declaring the covergroup, as far as its text fixes
@@ -354,45 +357,92 @@ struct CovergroupDecl {
 // over in the step to MIR (LRM 19), as that unit names them, as a language
 // names the library items its constructs stand on.
 struct CoverageLibraryRefs {
-  ClassRef registry;
-  ClassRef group_type;
-  ClassRef group_instance;
-  ClassRef cross;
-  ClassRef selection;
+  ClassId registry;
+  ClassId group_type;
+  ClassId group_instance;
+  ClassId cross;
+  ClassId selection;
 
   auto operator==(const CoverageLibraryRefs&) const -> bool = default;
 };
 
-// The covergroups one compilation unit declares, each named by its path in the
-// unit from the moment the source names it, as a class is (LRM 26.3).
+// Every covergroup type one compilation unit names: the ones it declares and
+// the ones it reaches in other units, each under one identity, as the unit's
+// class registry holds its classes. A covergroup this unit declares is
+// nameable from the moment the source names it, as a class is (LRM 26.3); one
+// of another unit enters under the pair every unit names it by, the first time
+// it is named, and a pair naming this unit lands on its own covergroup.
 class CovergroupRegistry {
  public:
-  auto Declare(support::DefPath path) -> CovergroupId {
-    paths_.push_back(std::move(path));
-    published_.emplace_back();
-    return decls_.Declare();
+  explicit CovergroupRegistry(std::string unit_name)
+      : identities_(std::move(unit_name)) {
   }
 
-  // What the unit publishes of the covergroup, computed once where it is
-  // declared: every layout of its class, in this unit and in any unit naming
-  // it, is read off this one form.
+  // A covergroup this unit declares, at `path`. A covergroup is one declaration
+  // of its unit wherever its text was elaborated, as a class is, so a path
+  // declared again is the covergroup already there.
+  auto DeclareOwn(support::DefPath path) -> CovergroupId {
+    return Enter(
+        CovergroupKey{
+            .unit_name = identities_.UnitName(), .path = std::move(path)});
+  }
+
+  // The covergroup `key` names, given an identity the first time it enters.
+  auto Import(const CovergroupKey& key) -> CovergroupId {
+    if (const std::optional<CovergroupId> known = Find(key)) {
+      return *known;
+    }
+    if (key.unit_name == identities_.UnitName()) {
+      throw InternalError(
+          std::format(
+              "hir::CovergroupRegistry::Import: unit '{}' declares no "
+              "covergroup '{}' and a name reached one -- please report this "
+              "as a bug",
+              key.unit_name, support::DisplayOf(key.path)));
+    }
+    return Enter(key);
+  }
+
+  [[nodiscard]] auto Find(const CovergroupKey& key) const
+      -> std::optional<CovergroupId> {
+    return identities_.Find(key);
+  }
+
+  // What the covergroup is to every unit naming it, computed once by the unit
+  // declaring it: every layout of its class, in that unit and in any unit
+  // naming it, is read off this one form. For one of another unit it is what
+  // that unit published, its types taken into this unit's pool.
   void Publish(CovergroupId id, PublishedCovergroup published) {
-    published_.at(id.value) = std::move(published);
+    published_.Define(id, std::move(published));
   }
 
-  [[nodiscard]] auto PublishedOf(CovergroupId id) const
-      -> const std::optional<PublishedCovergroup>& {
-    return published_.at(id.value);
+  [[nodiscard]] auto IsPublished(CovergroupId id) const -> bool {
+    return published_.IsDefined(id);
+  }
+
+  [[nodiscard]] auto Published(CovergroupId id) const
+      -> const PublishedCovergroup& {
+    return published_.Get(id);
   }
 
   void Define(CovergroupId id, CovergroupDecl decl) {
     decls_.Define(id, std::move(decl));
   }
 
-  [[nodiscard]] auto PathOf(CovergroupId id) const -> const support::DefPath& {
-    return paths_.at(id.value);
+  [[nodiscard]] auto KeyOf(CovergroupId id) const -> const CovergroupKey& {
+    return identities_.KeyOf(id);
   }
 
+  [[nodiscard]] auto PathOf(CovergroupId id) const -> const support::DefPath& {
+    return KeyOf(id).path;
+  }
+
+  // Whether this unit declares the covergroup.
+  [[nodiscard]] auto IsOwn(CovergroupId id) const -> bool {
+    return identities_.IsOwn(id);
+  }
+
+  // The declaration of a covergroup this unit declares.
   [[nodiscard]] auto Get(CovergroupId id) const -> const CovergroupDecl& {
     return decls_.Get(id);
   }
@@ -402,19 +452,37 @@ class CovergroupRegistry {
   }
 
   [[nodiscard]] auto Ids() const -> base::IdRange<CovergroupId> {
-    return decls_.Ids();
+    return identities_.Ids();
+  }
+
+  // The covergroups this unit declares, and those of other units it reaches,
+  // each in the order it named them.
+  [[nodiscard]] auto OwnIds() const -> std::vector<CovergroupId> {
+    return identities_.OwnIds();
+  }
+  [[nodiscard]] auto ImportedIds() const -> std::vector<CovergroupId> {
+    return identities_.ImportedIds();
   }
 
   [[nodiscard]] auto size() const -> std::size_t {
-    return decls_.size();
+    return identities_.size();
   }
 
   auto operator==(const CovergroupRegistry&) const -> bool = default;
 
  private:
+  auto Enter(CovergroupKey key) -> CovergroupId {
+    const auto [id, entered] = identities_.Enter(std::move(key));
+    if (entered) {
+      decls_.Declare();
+      published_.Declare();
+    }
+    return id;
+  }
+
+  KeyedIdentities<CovergroupKey, CovergroupId> identities_;
   base::Registry<CovergroupDecl, CovergroupId> decls_;
-  std::vector<support::DefPath> paths_;
-  std::vector<std::optional<PublishedCovergroup>> published_;
+  base::Registry<PublishedCovergroup, CovergroupId> published_;
 };
 
 }  // namespace lyra::hir

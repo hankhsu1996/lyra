@@ -39,12 +39,13 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
+#include "lyra/hir/callee_interface.hpp"
+#include "lyra/hir/class_declaration.hpp"
 #include "lyra/hir/class_ref.hpp"
-#include "lyra/hir/external_callee.hpp"
-#include "lyra/hir/external_class.hpp"
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/published_modport.hpp"
 #include "lyra/hir/published_target.hpp"
+#include "lyra/hir/subroutine_prototype.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/hir/type_import.hpp"
@@ -303,41 +304,23 @@ auto UnitLowerer::PublishTypeSignatures() -> diag::Result<void> {
   // of its applications built it.
   std::set<support::DefPath> published_paths;
   const auto publish_class = [&](const slang::ast::ClassType& cls) {
-    const auto it = own_classes_.find(&cls);
-    if (it == own_classes_.end() ||
-        !published_paths.insert(it->second.signature.class_path).second) {
+    const auto interned = class_cache_.find(&cls);
+    if (interned == class_cache_.end() ||
+        !unit_.classes.IsOwn(interned->second)) {
+      return;
+    }
+    const hir::ClassId id = interned->second;
+    if (!published_paths.insert(unit_.classes.PathOf(id)).second) {
       return;
     }
     hir::TypeImportMemo published;
-    hir::TypeImporter importer(
-        unit_.types,
-        hir::TypePoolOwner{
-            .unit_name = unit_.name,
-            .classes = &unit_.classes,
-            .covergroups = &unit_.covergroups},
-        signature_.types, published);
-    const hir::ClassSignature& own = it->second.signature;
+    hir::TypeImporter importer = PublishingImporter(published);
     // The order is part of what is published: a property's slot and a virtual
     // method's ordinal are counted out of these lists by the class that
     // declares them and by every unit that reaches one, and neither states a
     // position to the other.
     signature_.classes.push_back(
-        hir::ClassSignature{
-            .class_path = own.class_path,
-            .base = own.base,
-            .is_interface_class = own.is_interface_class,
-            .implements = own.implements,
-            .properties = hir::ImportProperties(importer, own.properties),
-            .local_property_types =
-                hir::ImportTypes(importer, own.local_property_types),
-            .static_properties =
-                hir::ImportStaticProperties(importer, own.static_properties),
-            .constructor = own.constructor.transform(
-                [&](const hir::ExternalCalleeInterface& stated) {
-                  return hir::ImportCalleeInterface(importer, stated);
-                }),
-            .methods = hir::ImportMethods(importer, own.methods),
-            .takes_declaring_instance = own.takes_declaring_instance});
+        hir::ImportClassDeclaration(importer, unit_.classes.Declaration(id)));
   };
   // A covergroup declared in a design element is one of each instance as a
   // class is, so it too is published once, by its path.
@@ -348,13 +331,7 @@ auto UnitLowerer::PublishTypeSignatures() -> diag::Result<void> {
     if (!published) return std::unexpected(std::move(published.error()));
     if (!published_paths.insert(published->path).second) return {};
     hir::TypeImportMemo memo;
-    hir::TypeImporter importer(
-        unit_.types,
-        hir::TypePoolOwner{
-            .unit_name = unit_.name,
-            .classes = &unit_.classes,
-            .covergroups = &unit_.covergroups},
-        signature_.types, memo);
+    hir::TypeImporter importer = PublishingImporter(memo);
     signature_.covergroups.push_back(importer.Import(*published));
     return {};
   };
@@ -375,13 +352,7 @@ auto UnitLowerer::PublishTypeSignatures() -> diag::Result<void> {
 
 auto UnitLowerer::PublishNamespaceSubroutines() -> diag::Result<void> {
   hir::TypeImportMemo published;
-  hir::TypeImporter importer(
-      unit_.types,
-      hir::TypePoolOwner{
-          .unit_name = unit_.name,
-          .classes = &unit_.classes,
-          .covergroups = &unit_.covergroups},
-      signature_.types, published);
+  hir::TypeImporter importer = PublishingImporter(published);
   auto& namespace_unit = signature_.unit.emplace<hir::PublishedNamespace>();
   for (const ScopePublicationRecord::Callable& callable :
        PublicationOf(*scope_).callables) {
@@ -395,27 +366,27 @@ auto UnitLowerer::PublishNamespaceSubroutines() -> diag::Result<void> {
 
 auto UnitLowerer::PublishedCallableOf(
     const ScopePublicationRecord::Callable& callable)
-    -> diag::Result<hir::PublishedCallable> {
+    -> diag::Result<hir::SubroutinePrototype> {
   // An expression another unit asks for the value of is evaluated in a
   // function of this unit that takes nothing.
   const auto evaluator = [&](std::string name, const slang::ast::Symbol& holder)
-      -> diag::Result<hir::PublishedCallable> {
+      -> diag::Result<hir::SubroutinePrototype> {
     auto result_type = InternDeclaredPortType(holder);
     if (!result_type) return std::unexpected(std::move(result_type.error()));
-    return hir::PublishedCallable{
+    return hir::SubroutinePrototype{
         .name = std::move(name),
         .interface =
-            hir::ExternalCalleeInterface{
+            hir::CalleeInterface{
                 .kind = hir::SubroutineKind::kFunction, .params = {}},
         .result_type = *result_type};
   };
   return std::visit(
       Overloaded{
           [&](const ScopePublicationRecord::Subroutine& declared)
-              -> diag::Result<hir::PublishedCallable> {
+              -> diag::Result<hir::SubroutinePrototype> {
             const slang::ast::SubroutineSymbol& sym = *declared.symbol;
             const auto span = frontend::PointSpanOf(sym.location);
-            auto interface = MakeExternalCalleeInterface(sym, span);
+            auto interface = MakeCalleeInterface(sym, span);
             if (!interface) {
               return std::unexpected(std::move(interface.error()));
             }
@@ -423,7 +394,7 @@ auto UnitLowerer::PublishedCallableOf(
             if (!result_type) {
               return std::unexpected(std::move(result_type.error()));
             }
-            return hir::PublishedCallable{
+            return hir::SubroutinePrototype{
                 .name = std::string{sym.name},
                 .interface = *std::move(interface),
                 .result_type = *result_type};
@@ -455,13 +426,7 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
   const ScopePublicationRecord& root = PublicationOf(*scope_);
 
   hir::TypeImportMemo published;
-  hir::TypeImporter importer(
-      unit_.types,
-      hir::TypePoolOwner{
-          .unit_name = unit_.name,
-          .classes = &unit_.classes,
-          .covergroups = &unit_.covergroups},
-      signature_.types, published);
+  hir::TypeImporter importer = PublishingImporter(published);
 
   // What an instance is handed is the parameters its instantiation may assign
   // that the unit's name does not hold, the list a parent hands them in.
@@ -724,10 +689,14 @@ auto UnitLowerer::PublishScopeClass(
         std::vector<hir::UnitObjectType> per_position;
         per_position.reserve(elements.size());
         for (const slang::ast::InstanceSymbol* element : elements) {
+          // Named, not read: the element's unit may publish its signature
+          // only once this one has.
           per_position.push_back(
               hir::UnitObjectType{
-                  .unit_name = Specialization().NameOf(*element),
-                  .class_path = {}});
+                  .scope_class = unit_.scope_classes.Import(
+                      hir::ScopeClassKey{
+                          .unit_name = Specialization().NameOf(*element),
+                          .class_path = {}})});
         }
         std::vector<hir::UnpackedRange> declared;
         declared.reserve(ranges.size());
@@ -802,13 +771,15 @@ auto UnitLowerer::PublishScopeClass(
               return cell(*local.symbol, local.within);
             },
             [&](const ScopePublicationRecord::ClassStatic& property) {
-              const auto own = own_classes_.find(property.owner);
-              if (own == own_classes_.end()) {
+              const auto interned = class_cache_.find(property.owner);
+              if (interned == class_cache_.end() ||
+                  !unit_.classes.IsOwn(interned->second)) {
                 throw InternalError(
                     "PublishSignature: every class a scope declares is "
                     "interned before the scope's signature is published");
               }
-              return cell(*property.symbol, own->second.signature.class_path);
+              return cell(
+                  *property.symbol, unit_.classes.PathOf(interned->second));
             },
             [&](const ScopePublicationRecord::CovergroupEvent& event)
                 -> diag::Result<hir::PublishedMember> {
@@ -1047,40 +1018,63 @@ auto UnitLowerer::DeclarationStorage(const slang::ast::ValueSymbol& value) const
 
 auto UnitLowerer::ImportSignatureType(
     const hir::UnitSignature& signature, hir::TypeId published) -> hir::TypeId {
-  hir::TypeImporter importer(
-      signature.types, std::nullopt, unit_.types,
-      signature_type_memos_[&signature]);
+  hir::TypeImporter importer = ReadingImporter(signature);
   return importer.Import(published);
 }
 
-auto UnitLowerer::ScopeClassOfInstance(
-    const slang::ast::InstanceSymbol& instance) -> hir::ExternalScopeClassId {
-  return ExternalScopeClassOf(Specialization().NameOf(instance));
+auto UnitLowerer::PublishingImporter(hir::TypeImportMemo& memo)
+    -> hir::TypeImporter {
+  return hir::TypeImporter(
+      unit_.types, signature_.types, memo,
+      [this](hir::ClassId id) {
+        return signature_.ClassIdOf(unit_.classes.KeyOf(id));
+      },
+      [this](hir::CovergroupId id) {
+        return signature_.CovergroupIdOf(unit_.covergroups.KeyOf(id));
+      },
+      [this](hir::ScopeClassId id) {
+        return signature_.ScopeClassIdOf(unit_.scope_classes.KeyOf(id));
+      });
 }
 
-auto UnitLowerer::ExternalScopeClassOf(const std::string& unit_name)
-    -> hir::ExternalScopeClassId {
-  return ExternalScopeClassOf(
+auto UnitLowerer::ReadingImporter(const hir::UnitSignature& signature)
+    -> hir::TypeImporter {
+  return hir::ReaderImporter(
+      signature, unit_.types, unit_.classes, unit_.covergroups,
+      unit_.scope_classes, signature_type_memos_[&signature]);
+}
+
+auto UnitLowerer::ScopeClassOfInstance(
+    const slang::ast::InstanceSymbol& instance) -> hir::ScopeClassId {
+  return ScopeClassOf(Specialization().NameOf(instance));
+}
+
+auto UnitLowerer::ScopeClassOf(const std::string& unit_name)
+    -> hir::ScopeClassId {
+  return ScopeClassOf(
       unit_name, hir::DesignElementOf(Signatures().Instantiated(unit_name))
                      .instance_class.class_path);
 }
 
-auto UnitLowerer::ScopeClassTypeOf(hir::ExternalScopeClassId scope_class) const
-    -> hir::TypeId {
-  const hir::ExternalScopeClass& record =
-      unit_.external_scope_classes.Get(scope_class);
-  return unit_.types.Intern(
-      hir::Type{hir::UnitObjectType{
-          .unit_name = record.unit_name,
-          .class_path = record.signature.class_path}});
+auto UnitLowerer::RecordedScopeClass(hir::ScopeClassId scope_class)
+    -> hir::ScopeClassId {
+  const hir::ScopeClassKey& key = unit_.scope_classes.KeyOf(scope_class);
+  return ScopeClassOf(key.unit_name, key.class_path);
 }
 
-auto UnitLowerer::ExternalScopeClassOf(
+auto UnitLowerer::ScopeClassTypeOf(hir::ScopeClassId scope_class) const
+    -> hir::TypeId {
+  return unit_.types.Intern(
+      hir::Type{hir::UnitObjectType{.scope_class = scope_class}});
+}
+
+auto UnitLowerer::ScopeClassOf(
     const std::string& unit_name, const support::DefPath& class_path)
-    -> hir::ExternalScopeClassId {
-  if (const auto it = external_scope_classes_.find({unit_name, class_path});
-      it != external_scope_classes_.end()) {
-    return it->second;
+    -> hir::ScopeClassId {
+  const hir::ScopeClassId scope_class = unit_.scope_classes.Import(
+      hir::ScopeClassKey{.unit_name = unit_name, .class_path = class_path});
+  if (unit_.scope_classes.IsRecorded(scope_class)) {
+    return scope_class;
   }
   const hir::UnitSignature& signature = Signatures().Instantiated(unit_name);
   const hir::ScopeClassSignature* published =
@@ -1088,101 +1082,62 @@ auto UnitLowerer::ExternalScopeClassOf(
   if (published == nullptr) {
     throw InternalError(
         std::format(
-            "UnitLowerer::ExternalScopeClassOf: '{}' publishes no scope class "
+            "UnitLowerer::ScopeClassOf: '{}' publishes no scope class "
             "'{}', and a name landed in one",
             unit_name, support::DisplayOf(class_path)));
   }
-  const hir::ExternalScopeClassId scope_class =
-      unit_.external_scope_classes.Add(
-          hir::ImportExternalScopeClass(signature, *published, unit_.types));
-  external_scope_classes_.emplace(
-      std::pair{unit_name, class_path}, scope_class);
+  hir::TypeImporter importer = ReadingImporter(signature);
+  unit_.scope_classes.Record(
+      scope_class, hir::ImportScopeClass(importer, *published));
   return scope_class;
 }
 
-auto UnitLowerer::ExternalClassOf(
-    const std::string& unit_name, const support::DefPath& class_path)
-    -> const hir::ExternalClass& {
-  if (unit_name == unit_.name) {
-    throw InternalError(
-        std::format(
-            "UnitLowerer::ExternalClassOf: this unit's own class '{}' is read "
-            "as another unit's -- please report this as a bug",
-            support::DisplayOf(class_path)));
+auto UnitLowerer::DeclarationOf(hir::ClassId cls)
+    -> const hir::ClassDeclaration& {
+  if (unit_.classes.HasDeclaration(cls)) {
+    return unit_.classes.Declaration(cls);
   }
-  if (const hir::ExternalClass* held = hir::FindExternalClass(
-          unit_.external_classes, unit_name, class_path)) {
-    return *held;
-  }
-  const hir::UnitSignature* signature = Signatures().Find(unit_name);
-  const hir::ClassSignature* published =
-      signature == nullptr ? nullptr : signature->FindClass(class_path);
+  const hir::ClassKey& key = unit_.classes.KeyOf(cls);
+  const hir::UnitSignature* signature = Signatures().Find(key.unit_name);
+  const hir::ClassDeclaration* published =
+      signature == nullptr ? nullptr : signature->FindClass(key.class_path);
   if (published == nullptr) {
     throw InternalError(
         std::format(
-            "UnitLowerer::ExternalClassOf: '{}' published no class '{}', and "
+            "UnitLowerer::DeclarationOf: '{}' published no class '{}', and "
             "every class a unit declares is published",
-            unit_name, support::DisplayOf(class_path)));
+            key.unit_name, support::DisplayOf(key.class_path)));
   }
   // A value of the class is laid out after the whole of what it extends, and
   // is also a value of each interface class it names and of what those extend,
   // so reading its signature reads the signature of every class it names, and
   // so on up: each states only what its own declaration says. A class of this
-  // unit up that lineage is this unit's own, with no signature to read.
-  hir::ExternalClass record =
-      hir::ImportExternalClass(*signature, *published, unit_.types);
-  for (const hir::ExternalClassRef& iface : record.implements) {
-    if (iface.unit_name != unit_.name) {
-      ExternalClassOf(iface.unit_name, iface.class_path);
-    }
+  // unit up that lineage is this unit's own, declared already.
+  hir::TypeImporter importer = ReadingImporter(*signature);
+  unit_.classes.SetDeclaration(
+      cls, hir::ImportClassDeclaration(importer, *published));
+  const hir::ClassDeclaration& declared = unit_.classes.Declaration(cls);
+  for (const hir::ClassId iface : declared.implements) {
+    DeclarationOf(iface);
   }
-  if (record.base.has_value()) {
-    if (record.base->unit_name != unit_.name) {
-      ExternalClassOf(record.base->unit_name, record.base->class_path);
-    }
-    // The method an override replaces is named the way a call names it, by the
-    // class that introduced it, found along the classes just read. Every class
-    // a published one extends is itself published, so a name that resolves to
-    // no introducer is a signature its own unit could not have made. A pure
-    // override gives the method no body, so it replaces nothing.
-    for (const hir::PublishedMethod& method : record.methods) {
-      const auto* overriding =
-          std::get_if<hir::OverridesVirtual>(&method.dispatch);
-      if (overriding == nullptr || overriding->is_pure) {
-        continue;
-      }
-      std::optional<hir::VirtualBehavior> overridden =
-          FindVirtualBehavior(*record.base, method.prototype.name);
-      if (!overridden.has_value()) {
-        throw InternalError(
-            std::format(
-                "UnitLowerer::ExternalClassOf: '{}::{}' publishes '{}' as an "
-                "override, which no class it extends introduces",
-                unit_name, support::DisplayOf(class_path),
-                method.prototype.name));
-      }
-      record.overrides.push_back(
-          hir::PublishedOverride{
-              .method = method.prototype.name,
-              .behavior = *std::move(overridden)});
-    }
+  if (declared.base.has_value()) {
+    DeclarationOf(*declared.base);
   }
-  return unit_.external_classes.Get(
-      unit_.external_classes.Add(std::move(record)));
+  return declared;
 }
 
 auto UnitLowerer::NamespaceCalleeInterface(
     const std::string& unit_name, const slang::ast::SubroutineSymbol& sym,
-    diag::SourceSpan span) -> diag::Result<hir::ExternalCalleeInterface> {
+    diag::SourceSpan span) -> diag::Result<hir::CalleeInterface> {
   if (unit_name == unit_.name) {
-    return MakeExternalCalleeInterface(sym, span);
+    return MakeCalleeInterface(sym, span);
   }
   const hir::UnitSignature* signature = Signatures().Find(unit_name);
   const auto* namespace_unit =
       signature == nullptr
           ? nullptr
           : std::get_if<hir::PublishedNamespace>(&signature->unit);
-  const hir::PublishedCallable* published =
+  const hir::SubroutinePrototype* published =
       namespace_unit == nullptr ? nullptr
                                 : namespace_unit->FindSubroutine(sym.name);
   if (published == nullptr) {
@@ -1192,9 +1147,7 @@ auto UnitLowerer::NamespaceCalleeInterface(
             "published no such subroutine",
             unit_name, sym.name));
   }
-  hir::TypeImporter importer(
-      signature->types, std::nullopt, unit_.types,
-      signature_type_memos_[signature]);
+  hir::TypeImporter importer = ReadingImporter(*signature);
   return hir::ImportCallable(importer, *published).interface;
 }
 

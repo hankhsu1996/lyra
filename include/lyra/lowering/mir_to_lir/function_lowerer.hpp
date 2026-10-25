@@ -13,7 +13,6 @@
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/closure_decl.hpp"
-#include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -144,14 +143,14 @@ class FunctionLowerer {
     lir::TypeId object_type;
     lir::CallTarget callee;
   };
-  auto ConstructorOf(const mir::DeclaredClassRef& cls) -> EnteredConstructor;
+  auto ConstructorOf(mir::ClassId cls) -> EnteredConstructor;
 
   // Enters the constructor of `cls` on the object the storage `object` holds,
   // already created whole, with `arguments` after the object -- which is how a
   // value the program builds and an instance of the design hierarchy alike are
   // constructed.
   auto EnterConstructor(
-      const mir::DeclaredClassRef& cls, const lir::Operand& object,
+      mir::ClassId cls, const lir::Operand& object,
       std::vector<lir::Operand> arguments) -> diag::Result<void>;
 
   // A block is an extent: what its declarations bind ends where it does. Its
@@ -552,8 +551,9 @@ class FunctionLowerer {
   auto LowerObjectWriteOpening(
       const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
       -> diag::Result<lir::Operand>;
-  // The address of the object `reaches` reaches -- `&*reaches` -- whether it
-  // is a class handle, a pointer, or a write in progress into the object.
+  // The address of the object `reaches` reaches, as the library takes an
+  // object -- `&*reaches` seen as the part every object starts with -- whether
+  // it is a class handle, a pointer, or a write in progress into the object.
   auto ObjectAddress(const mir::Block& block, mir::ExprId reaches)
       -> diag::Result<lir::Operand>;
   // The place naming the storage a reference binds. It is the same storage a

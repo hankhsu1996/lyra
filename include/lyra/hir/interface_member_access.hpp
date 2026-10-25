@@ -3,9 +3,9 @@
 #include <vector>
 
 #include "lyra/hir/expr_id.hpp"
-#include "lyra/hir/external_scope_class.hpp"
-#include "lyra/hir/external_scope_ref.hpp"
 #include "lyra/hir/published_member.hpp"
+#include "lyra/hir/published_scope_ref.hpp"
+#include "lyra/hir/scope_class.hpp"
 
 namespace lyra::hir {
 
@@ -21,8 +21,8 @@ namespace lyra::hir {
 // fails, as the standard requires.
 struct InterfaceInstanceAccessExpr {
   ExprId handle;
-  ExternalScopeClassId scope_class;
-  std::vector<ExternalStep> steps;
+  ScopeClassId scope_class;
+  std::vector<PublishedStep> steps;
 
   auto operator==(const InterfaceInstanceAccessExpr&) const -> bool = default;
 };
@@ -36,7 +36,7 @@ struct InterfaceInstanceAccessExpr {
 // known each time the wait evaluates the handle.
 struct InterfaceMemberAccessExpr {
   InterfaceInstanceAccessExpr instance;
-  ExternalScopeClassId scope_class;
+  ScopeClassId scope_class;
   PublishedMemberId member;
 
   auto operator==(const InterfaceMemberAccessExpr&) const -> bool = default;

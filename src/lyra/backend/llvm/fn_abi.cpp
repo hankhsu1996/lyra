@@ -956,9 +956,6 @@ auto CallArranger::ConstructionOf(
           // construction of the unique owner whose pointee it is, so the node
           // type itself never names an entry.
           [&](const lir::ObjectType&) -> Built { return no_construct(); },
-          [&](const lir::CrossUnitClassType&) -> Built {
-            return no_construct();
-          },
           [&](const lir::RuntimeClassType&) -> Built { return no_construct(); },
 
           // A reference is bound to storage that already exists, naming it

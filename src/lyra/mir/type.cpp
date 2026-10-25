@@ -145,18 +145,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [](const ShortRealType&) {},
           [](const ChandleType&) {},
           [](const VoidType&) {},
-          [&](const ObjectType& t) {
-            std::visit(
-                Overloaded{
-                    [&](const IntraUnitClassRef& intra) {
-                      HashField(seed, intra.class_id.value);
-                    },
-                    [&](const CrossUnitClassRef& cross) {
-                      HashField(seed, cross.unit_name);
-                      HashField(seed, cross.class_path);
-                    }},
-                t.of);
-          },
+          [&](const ObjectType& t) { HashField(seed, t.of.value); },
           [&](const RuntimeClassType& t) { HashEnum(seed, t.which); },
           [](const RuntimeEffectsType&) {},
           [](const FilesType&) {},
@@ -195,16 +184,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [&](const SampledHistoryType& t) { HashId(seed, t.value); },
           [](const EvaluationAttemptsType&) {},
           [](const LoopBlocksType&) {},
-          [&](const RecordType& t) {
-            std::visit(
-                Overloaded{
-                    [&](RecordId id) { HashField(seed, id.value); },
-                    [&](const TypeDeclarationRef& ref) {
-                      HashField(seed, ref.unit_name);
-                      HashField(seed, ref.path);
-                    }},
-                t.declaration);
-          },
+          [&](const RecordType& t) { HashField(seed, t.declaration.value); },
           [&](const ClosureType& t) { HashField(seed, t.closure_id.value); },
           [&](const ErasedCallableType& t) {
             HashEnum(seed, t.kind);

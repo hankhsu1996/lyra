@@ -330,9 +330,14 @@ void lyra_rt_object_srandom(
     void* object, const void* seed, std::int64_t seed_width,
     bool seed_is_signed, bool seed_is_four_state);
 auto lyra_rt_object_get_randstate(void* object, void* out) -> void*;
+void lyra_rt_object_set_randstate(void* object, const void* state);
+
+// LRM 18.6.2's hooks on a class object: the built-in ones every object starts
+// with, and the ones the object's own class runs (LRM 8.26.9).
+void lyra_rt_builtin_pre_randomize(void* object);
+void lyra_rt_builtin_post_randomize(void* object);
 void lyra_rt_object_pre_randomize(void* object);
 void lyra_rt_object_post_randomize(void* object);
-void lyra_rt_object_set_randstate(void* object, const void* state);
 
 // LRM 8.30's weak reference: a handle crosses as a value of the
 // managed-reference domain, a weak reference as the library object holding

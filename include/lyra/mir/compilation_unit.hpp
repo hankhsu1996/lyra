@@ -25,7 +25,6 @@
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/enum_table_pool.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/external_class.hpp"
 #include "lyra/mir/foreign_linkage.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/record_decl.hpp"
@@ -44,19 +43,20 @@ namespace lyra::mir {
 // static storage -- one program-global cell, shared across the whole
 // simulation, not a member of any instance (LRM 26.2 package variables, LRM
 // 6.21 static lifetime). A backend emits it as a namespace-scope observable
-// cell, the storage dual of the unit's receiver-less callables. A body of the
-// declaring unit reaches the cell by its position; another unit has only the
-// identifier this one published, and spells `unit::name`. `type` is the
-// observable-cell type; the
-// declared value type is its inner value. The initializer is not here: it runs
-// in the unit's synthesized initializer at time zero (LRM 10.5), the way a
+// cell, the storage dual of the unit's receiver-less callables. A body of a
+// unit reaches the cell by its position, the unit owning it and one declaring
+// it from what that unit published alike. `type` is the observable-cell type;
+// the declared value type is its inner value. The initializer is not here: it
+// runs in the unit's synthesized initializer at time zero (LRM 10.5), the way a
 // class member's initializer runs in its Initialize phase, never as a field on
 // the declaration.
 // It carries no name, for the reason a field carries none: the arena also takes
 // the static-lifetime cells of bodies the unit's namespace declares, and those
-// the source never wrote.
+// the source never wrote. `defining_unit`, where present, names the unit whose
+// namespace holds the cell, which this unit only declares (LRM 26.3).
 struct StaticVariableDecl {
   TypeId type;
+  std::optional<std::string> defining_unit;
 };
 
 // One entry of the relation between a unit's namespace and the storage it
@@ -318,16 +318,13 @@ struct CompilationUnit {
   IntegralConstantPool integral_constants;
   EnumTablePool enum_tables;
   BuiltinMirTypes builtins;
-  // Every class declaration of this unit, owned here exactly once and reached
-  // by its identity, with a declare-then-define lifecycle so a class can be
-  // named before its body is built.
+  // Every class this unit names, owned here exactly once and reached by its
+  // identity, with a declare-then-define lifecycle so a class can be named
+  // before its body is built: the classes it defines, and those of another
+  // unit it reaches -- including the class another unit's instances are --
+  // each declared with what that unit published (`Class::defining_unit`).
   base::Registry<Class, ClassId> classes;
   UnitContent content;
-  // One entry per class of another unit this one names -- including the class
-  // another unit's instances are, wherever this unit reaches one. Found by the
-  // pair that names the class, which is the pair every reference to one
-  // carries, so a reference and its record cannot come apart.
-  std::vector<ExternalClass> external_classes;
   // Callables the unit's namespace owns directly rather than through one of its
   // classes -- a package's functions and tasks (LRM 26.3), both directions of
   // the DPI-C boundary (LRM 35.5) (the prototype of every import the unit takes
@@ -351,9 +348,10 @@ struct CompilationUnit {
   // source declared after it, or itself, and what such a call names is the
   // position.
   base::Registry<CallableDecl, CallableId> callables;
-  // The names this unit's namespace answers and which body each reaches (LRM
-  // 26.3). A subroutine the source declared is here because another unit spells
-  // it; a body the compiler synthesized is not.
+  // The name each body a subroutine the source declared is reached by (LRM
+  // 26.3): one of this unit's namespace, or one of another unit's this unit
+  // declares, under the name that unit published it. A body the compiler
+  // synthesized is not here.
   std::vector<NamedCallable> named_callables;
   // The operations this unit states for each type it names whose operations
   // are stated per unit, and the default of each type it holds an array of.
@@ -365,9 +363,10 @@ struct CompilationUnit {
   // that class; these are the unit-level namespace's, one scope up. Their
   // initializers run in the unit's synthesized initializer at time zero.
   base::Arena<StaticVariableDecl, StaticVariableId> static_variables;
-  // The identifiers the source declared for storage this unit's namespace
-  // holds. A package variable takes part; the cell a subroutine's
-  // static-lifetime local keeps does not.
+  // The identifiers the source declared for the cells among
+  // `static_variables`: a package variable of this unit's namespace, or of
+  // another unit's this unit declares, under the name that unit published it.
+  // The cell a subroutine's static-lifetime local keeps takes no part.
   std::vector<NamedStaticVariable> named_static_variables;
   // The foreign names this unit declares on a scope (LRM 35.5.3), each named
   // once and in declaration order. A name is program-global and lives in its
@@ -383,16 +382,15 @@ struct CompilationUnit {
   // party assembling the program keeps one; a definition up there calls that
   // unit's own subroutine and no other artifact can write it.
   std::vector<ForeignScopeEntry> foreign_scope_entries;
-  // Every structure and union this unit's source declares, settled where its
-  // type is translated. A record type names one of these by where it sits.
+  // Every structure and union this unit names, settled where its type is
+  // translated: the ones its source declares, and those of another unit it
+  // holds a value of, declared with what that unit published. A record type
+  // names one of these by where it sits.
   base::Registry<RecordDecl, RecordId> records;
   // The methods of each of those, by the same identity, stated once its type
-  // is interned, since a method reaches the record's own members.
+  // is interned, since a method reaches the record's own members; none for a
+  // record another unit declares, which states its own.
   base::Registry<RecordMethods, RecordId> record_methods;
-  // Every record of another unit this one holds a value of, found by the
-  // declaration it is. A unit naming one states nothing about it beyond what
-  // it read, and calls the declaring unit's methods.
-  std::vector<ExternalRecord> external_records;
   // Every closure of this unit, one per closure site -- an anonymous concrete
   // callable value (capture fields plus one invoke). Its `ClosureId` is the
   // closure's type identity, in a separate registry from `records`: a
@@ -406,14 +404,6 @@ struct CompilationUnit {
   // capture counting as it is held, so no rewrite changes one; a unit is
   // lowered by one thread, so the answers are kept wherever the unit is read.
   mutable std::unordered_map<TypeId, support::Layout> layouts;
-  // Every other compilation unit whose signature this one consumed, once each.
-  // That set is the whole of what this unit depends on another for, so whoever
-  // asks what an edit reaches asks this and nothing else -- an instantiated
-  // child, a package symbol named by a body, a class reached into, a base
-  // extended, all arrive here rather than each in a list of its own. Each names
-  // the part it read rather than the unit whole, so a change to a class nobody
-  // read reaches nobody.
-  std::vector<ConsumedSignature> consumed_signatures;
 
   CompilationUnit()
       : builtins{
@@ -593,45 +583,6 @@ struct CompilationUnit {
   void DefineClosure(ClosureId id, ClosureDecl value) {
     closures.Define(id, std::move(value));
   }
-
-  // Records what this unit read of another's signature. Called from HIR-to-MIR
-  // wherever a signature is read; the same part reached twice is one entry.
-  //
-  // This unit's namespace is not a dependency of itself, and that is settled
-  // here because one caller cannot settle it: the design root realizes a plan
-  // of unit names it does not inspect, so it asks for every one of them and the
-  // set decides which are outside. A site that does read what it reaches names
-  // the position instead and never arrives here at all.
-  void ConsumeNamespaceOf(std::string unit_name) {
-    if (unit_name == name) {
-      return;
-    }
-    Consume(ConsumedNamespace{.unit_name = std::move(unit_name)});
-  }
-
-  // A class of this unit is named by its id, so only another unit's class is
-  // ever consumed.
-  void ConsumeClassOf(std::string unit_name, support::DefPath class_path) {
-    Consume(
-        ConsumedClass{
-            .unit_name = std::move(unit_name),
-            .class_path = std::move(class_path)});
-  }
-
-  // Only the design root names an object entry, and never its own.
-  void ConsumeObjectEntryOf(std::string unit_name, std::string body_name) {
-    Consume(
-        ConsumedObjectEntry{
-            .unit_name = std::move(unit_name),
-            .body_name = std::move(body_name)});
-  }
-
-  void Consume(ConsumedSignature consumed) {
-    if (std::ranges::find(consumed_signatures, consumed) ==
-        consumed_signatures.end()) {
-      consumed_signatures.push_back(std::move(consumed));
-    }
-  }
 };
 
 // The tree this unit's instances are, or the namespace it brings up --
@@ -660,6 +611,16 @@ struct CompilationUnit {
   return unit.GetClass(id).path.has_value();
 }
 
+// Whether another unit defines this class, which this unit only declares. A
+// declaration of another unit's class is complete from the moment it is taken,
+// before any body lowers, while a class this unit defines is filled in as its
+// bodies lower, so this can be asked of either at any point.
+[[nodiscard]] inline auto IsDefinedElsewhere(
+    const CompilationUnit& unit, ClassId id) -> bool {
+  return unit.classes.IsDefined(id) &&
+         unit.GetClass(id).defining_unit.has_value();
+}
+
 // Whether every body the unit is compiled to states this class alike, so that
 // a program holds one of them whichever of the bodies it links: what the
 // unit's declarations alone build, rather than what one body's code adds.
@@ -681,20 +642,19 @@ struct CompilationUnit {
 // program builds extends: both are there before any unit is, declare no member
 // of the source language, and hold no definition a class could step to.
 [[nodiscard]] inline auto DeclaredBase(const Class& cls)
-    -> std::optional<DeclaredClassRef> {
+    -> std::optional<ClassId> {
   if (!cls.base.has_value()) {
     return std::nullopt;
   }
   return std::visit(
       Overloaded{
-          [](const IntraUnitClassRef& intra)
-              -> std::optional<DeclaredClassRef> { return intra; },
-          [](const CrossUnitClassRef& cross)
-              -> std::optional<DeclaredClassRef> { return cross; },
-          [](const ObjectTreeRootRef&) -> std::optional<DeclaredClassRef> {
+          [](const ClassId& declared) -> std::optional<ClassId> {
+            return declared;
+          },
+          [](const ObjectTreeRootRef&) -> std::optional<ClassId> {
             return std::nullopt;
           },
-          [](const ManagedObjectRootRef&) -> std::optional<DeclaredClassRef> {
+          [](const ManagedObjectRootRef&) -> std::optional<ClassId> {
             return std::nullopt;
           }},
       *cls.base);
@@ -710,23 +670,33 @@ struct CompilationUnit {
 // name when this one is written. A consumer that has to put declarations in an
 // order reads this and needs nothing else.
 [[nodiscard]] inline auto RestsOnDeclaredClasses(const Class& cls)
-    -> std::vector<DeclaredClassRef> {
-  std::vector<DeclaredClassRef> resting;
-  if (const std::optional<DeclaredClassRef> base = DeclaredBase(cls)) {
+    -> std::vector<ClassId> {
+  std::vector<ClassId> resting;
+  if (const std::optional<ClassId> base = DeclaredBase(cls)) {
     resting.push_back(*base);
   }
   resting.insert(resting.end(), cls.implements.begin(), cls.implements.end());
   return resting;
 }
 
+// The unit an entry is defined by: the one its `defining_unit` names, or `unit`
+// itself where it names none. A reference, so a name built over it outlives
+// the call.
+[[nodiscard]] inline auto DefiningUnitOf(
+    const CompilationUnit& unit,
+    const std::optional<std::string>& defining_unit) -> const std::string& {
+  return defining_unit.has_value() ? *defining_unit : unit.name;
+}
+
 // What spells one body of a unit's namespace: the linkage name the source wrote
 // in the DPI-C name space, which is program-global and belongs to no unit (LRM
 // 35.4); the identifier the unit's own namespace answers (LRM 26.3); which of
 // the two bring-up entries it is; being the entry that makes an object of the
-// body this unit is compiled to; or, where nothing names it, the position it
-// sits at.
+// body this unit is compiled to; the unit and identifier another unit's
+// namespace publishes it under, for one this unit only declares; or, where
+// nothing names it, the position it sits at.
 //
-// The position is the general case and the four before it are the special
+// The position is the general case and the five before it are the special
 // ones. A namespace holds what the source declared and what the compiler
 // synthesized alike, in one pool for bodies and one for cells; the position is
 // what every entry of either has, and an identifier is a relation over that
@@ -744,6 +714,12 @@ struct ReachedByBringUpEntry {
 // Each body a unit is compiled to has its own, so the entry is spelled from the
 // unit and the body.
 struct ReachedAsObjectEntry {};
+// A subroutine another unit's namespace defines, spelled as that unit spells
+// it (LRM 26.3).
+struct ReachedInAnotherUnit {
+  std::string_view unit_name;
+  std::string_view name;
+};
 // A body nothing names, spelled from where it sits. A target mints the spelling
 // into a range no source name reaches; nothing outside this unit can ask for
 // it, which is why a position suffices.
@@ -753,7 +729,7 @@ struct ReachedByPosition {
 
 using NamespaceReach = std::variant<
     ReachedByLinkageName, ReachedByName, ReachedByBringUpEntry,
-    ReachedAsObjectEntry, ReachedByPosition>;
+    ReachedAsObjectEntry, ReachedInAnotherUnit, ReachedByPosition>;
 
 // How `id` is spelled. Every target names it from this one answer, so no two
 // arrive at different names for one body and none works out for itself which
@@ -761,6 +737,17 @@ using NamespaceReach = std::variant<
 [[nodiscard]] inline auto NamespaceReachOf(
     const CompilationUnit& unit, CallableId id) -> NamespaceReach {
   const CallableDecl& callable = unit.callables.Get(id);
+  if (callable.defining_unit.has_value()) {
+    const std::optional<std::string_view> name =
+        NameOf(unit.named_callables, id);
+    if (!name.has_value()) {
+      throw InternalError(
+          "mir: a subroutine of another unit's namespace is declared with no "
+          "name to reach it by -- please report this as a bug");
+    }
+    return ReachedInAnotherUnit{
+        .unit_name = *callable.defining_unit, .name = *name};
+  }
   if (callable.foreign.has_value()) {
     return ReachedByLinkageName{callable.foreign->foreign_name};
   }
@@ -784,19 +771,6 @@ using NamespaceReach = std::variant<
   return ReachedByPosition{id};
 }
 
-// What this unit read of the record another unit declares as `declaration`,
-// or null where it has read nothing of it yet.
-[[nodiscard]] inline auto FindExternalRecord(
-    const CompilationUnit& unit, const TypeDeclarationRef& declaration)
-    -> const ExternalRecord* {
-  for (const ExternalRecord& external : unit.external_records) {
-    if (external.declaration == declaration) {
-      return &external;
-    }
-  }
-  return nullptr;
-}
-
 // The body this unit states for `answers` at `type`, or null where it states
 // none.
 [[nodiscard]] inline auto FindTypeOperation(
@@ -810,49 +784,21 @@ using NamespaceReach = std::variant<
   return nullptr;
 }
 
-// What this unit read of the record another unit declares as `declaration`,
-// for a caller holding a value of it, which reading the record preceded.
-[[nodiscard]] inline auto ExternalRecordOf(
-    const CompilationUnit& unit, const TypeDeclarationRef& declaration)
-    -> const ExternalRecord& {
-  if (const ExternalRecord* external = FindExternalRecord(unit, declaration)) {
-    return *external;
-  }
-  throw InternalError(
-      "mir: a record of another unit is named that this unit never read -- "
-      "please report this as a bug");
-}
-
-// The members' types of the record `record` refers to, wherever it was
-// declared, in declaration order.
+// The members' types of the record `record`, wherever it was declared, in
+// declaration order.
 [[nodiscard]] inline auto RecordElements(
-    const CompilationUnit& unit, const RecordRef& record)
-    -> std::span<const TypeId> {
-  return std::visit(
-      Overloaded{
-          [&](RecordId id) -> std::span<const TypeId> {
-            return unit.GetRecord(id).elements;
-          },
-          [&](const TypeDeclarationRef& ref) -> std::span<const TypeId> {
-            return ExternalRecordOf(unit, ref).elements;
-          }},
-      record);
+    const CompilationUnit& unit, RecordId record) -> std::span<const TypeId> {
+  return unit.GetRecord(record).elements;
 }
 
-// Which aggregate the record `record` refers to is, wherever it was declared.
+// Which aggregate the record `record` is, wherever it was declared.
 [[nodiscard]] inline auto RecordKindOf(
-    const CompilationUnit& unit, const RecordRef& record) -> RecordKind {
-  return std::visit(
-      Overloaded{
-          [&](RecordId id) { return unit.GetRecord(id).kind; },
-          [&](const TypeDeclarationRef& ref) {
-            return ExternalRecordOf(unit, ref).kind;
-          }},
-      record);
+    const CompilationUnit& unit, RecordId record) -> RecordKind {
+  return unit.GetRecord(record).kind;
 }
 
 // The record declaration `type` is, and nothing for any other type.
-[[nodiscard]] inline auto RecordOf(const Type& type) -> const RecordRef* {
+[[nodiscard]] inline auto RecordOf(const Type& type) -> const RecordId* {
   if (const auto* record = type.As<RecordType>()) {
     return &record->declaration;
   }
@@ -863,7 +809,7 @@ using NamespaceReach = std::variant<
 // type.
 [[nodiscard]] inline auto RecordKindOf(const CompilationUnit& unit, TypeId type)
     -> std::optional<RecordKind> {
-  const RecordRef* record = RecordOf(unit.types.Get(type));
+  const RecordId* record = RecordOf(unit.types.Get(type));
   if (record == nullptr) {
     return std::nullopt;
   }
@@ -875,7 +821,7 @@ using NamespaceReach = std::variant<
 [[nodiscard]] inline auto OverlaidMembers(
     const CompilationUnit& unit, TypeId type)
     -> std::optional<std::span<const TypeId>> {
-  const RecordRef* record = RecordOf(unit.types.Get(type));
+  const RecordId* record = RecordOf(unit.types.Get(type));
   if (record == nullptr) {
     return std::nullopt;
   }
@@ -907,20 +853,13 @@ using NamespaceReach = std::variant<
   throw InternalError("mir: unknown record kind");
 }
 
-// The declaration any unit names the record `record` refers to by.
+// The declaration any unit names the record `record` by.
 [[nodiscard]] inline auto RecordDeclarationOf(
-    const CompilationUnit& unit, const RecordRef& record)
-    -> TypeDeclarationRef {
-  return std::visit(
-      Overloaded{
-          [&](RecordId id) -> TypeDeclarationRef {
-            return TypeDeclarationRef{
-                .unit_name = unit.name, .path = unit.GetRecord(id).path};
-          },
-          [](const TypeDeclarationRef& ref) -> TypeDeclarationRef {
-            return ref;
-          }},
-      record);
+    const CompilationUnit& unit, RecordId record) -> TypeDeclarationRef {
+  const RecordDecl& declared = unit.GetRecord(record);
+  return TypeDeclarationRef{
+      .unit_name = declared.defining_unit.value_or(unit.name),
+      .path = declared.path};
 }
 
 // The components of a product -- a tuple or a structure, which are reached the
@@ -932,7 +871,7 @@ using NamespaceReach = std::variant<
   if (const auto* tuple = t.As<TupleType>()) {
     return std::span<const TypeId>{tuple->elements};
   }
-  const RecordRef* record = RecordOf(t);
+  const RecordId* record = RecordOf(t);
   if (record == nullptr) {
     return std::nullopt;
   }

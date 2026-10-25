@@ -24,8 +24,6 @@ auto IsPlace(const ExprData& data) -> bool {
                     [](const LocalRef&) { return true; },
                     [](const StaticPropertyRef&) { return true; },
                     [](const StaticVariableRef&) { return true; },
-                    [](const ExternalUnitVariableRef&) { return true; },
-                    [](const ExternalStaticPropertyRef&) { return true; },
                     [](const DefinitionRef&) { return false; },
                     [](const EnumTableRef&) { return false; },
                     [](const IntegralConstantRef&) { return false; },
@@ -72,8 +70,6 @@ auto IsConstant(const ExprData& data) -> bool {
                     [](const LocalRef&) { return false; },
                     [](const StaticPropertyRef&) { return false; },
                     [](const StaticVariableRef&) { return false; },
-                    [](const ExternalUnitVariableRef&) { return false; },
-                    [](const ExternalStaticPropertyRef&) { return false; },
                     // A class's constant is held by each of its objects, which
                     // may each be built with its own value.
                     [](const ClassConstantRef&) { return false; },

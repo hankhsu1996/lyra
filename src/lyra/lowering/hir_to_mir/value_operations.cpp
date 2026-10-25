@@ -253,10 +253,8 @@ auto OwnOperationTarget(
     return std::nullopt;
   }
   const mir::Type& t = unit.types.Get(type);
-  if (const mir::RecordRef* record = mir::RecordOf(t)) {
-    return mir::RecordMethodTarget{
-        .declaration = mir::RecordDeclarationOf(unit, *record),
-        .answers = answers};
+  if (const mir::RecordId* record = mir::RecordOf(t)) {
+    return mir::RecordMethodTarget{.record = *record, .answers = answers};
   }
   if (mir::OperationsAreStatedPerUnit(t)) {
     return mir::TypeOperationTarget{.type = type, .answers = answers};
@@ -708,14 +706,12 @@ class OperationBodies {
   OwnTarget own_;
 };
 
-// How a body of the record `declaration` declares names another of its
-// methods: by the declaration being made rather than by the record's type,
-// which has no declaration to read until every method is built.
-auto MethodsOf(const mir::TypeDeclarationRef& declaration)
-    -> OperationBodies::OwnTarget {
-  return [declaration](support::ValueOperation answers) -> mir::DirectTarget {
-    return mir::RecordMethodTarget{
-        .declaration = declaration, .answers = answers};
+// How a body of the record `record` declares names another of its methods: by
+// the record being declared rather than by its type, which has no declaration
+// to read until every method is built.
+auto MethodsOf(mir::RecordId record) -> OperationBodies::OwnTarget {
+  return [record](support::ValueOperation answers) -> mir::DirectTarget {
+    return mir::RecordMethodTarget{.record = record, .answers = answers};
   };
 }
 
@@ -727,11 +723,11 @@ class StructBodies : public OperationBodies {
  public:
   StructBodies(
       UnitLowerer& lowerer, const hir::UnpackedStructType& source,
-      const mir::TypeDeclarationRef& declaration, mir::TypeId structure,
+      mir::RecordId record, mir::TypeId structure,
       std::vector<mir::TypeId> members)
       : OperationBodies(
             lowerer, structure, members,
-            OneBitAnswerType(lowerer.Unit(), members), MethodsOf(declaration)),
+            OneBitAnswerType(lowerer.Unit(), members), MethodsOf(record)),
         source_(&source) {
   }
 
@@ -1114,13 +1110,13 @@ auto StructBodies::TakePositions() -> mir::CallableCode {
 class UnionBodies : public OperationBodies {
  public:
   UnionBodies(
-      UnitLowerer& lowerer, const mir::TypeDeclarationRef& declaration,
-      mir::TypeId overlay, std::vector<mir::TypeId> members)
+      UnitLowerer& lowerer, mir::RecordId record, mir::TypeId overlay,
+      std::vector<mir::TypeId> members)
       : OperationBodies(
             lowerer, overlay, members,
             EqualityAnswerOver(
                 lowerer.Unit(), mir::RecordKind::kUnion, members),
-            MethodsOf(declaration)) {
+            MethodsOf(record)) {
   }
 
   auto Equality() -> mir::CallableCode;
@@ -1296,13 +1292,13 @@ auto UnionBodies::FilledLike() -> mir::CallableCode {
 class TaggedUnionBodies : public OperationBodies {
  public:
   TaggedUnionBodies(
-      UnitLowerer& lowerer, const mir::TypeDeclarationRef& declaration,
-      mir::TypeId tagged, std::vector<mir::TypeId> members)
+      UnitLowerer& lowerer, mir::RecordId record, mir::TypeId tagged,
+      std::vector<mir::TypeId> members)
       : OperationBodies(
             lowerer, tagged, members,
             EqualityAnswerOver(
                 lowerer.Unit(), mir::RecordKind::kTaggedUnion, members),
-            MethodsOf(declaration)) {
+            MethodsOf(record)) {
   }
 
   auto Equality() -> mir::CallableCode;
@@ -2064,12 +2060,11 @@ auto BuildBitIdentity(
 
 auto StructMethodsOf(
     UnitLowerer& lowerer, const hir::UnpackedStructType& source,
-    const mir::TypeDeclarationRef& declaration, mir::TypeId structure,
+    mir::RecordId record, mir::TypeId structure,
     std::span<const mir::TypeId> members) -> std::vector<mir::RecordMethod> {
   const mir::CompilationUnit& unit = lowerer.Unit();
   StructBodies bodies(
-      lowerer, source, declaration, structure,
-      {members.begin(), members.end()});
+      lowerer, source, record, structure, {members.begin(), members.end()});
   std::vector<mir::RecordMethod> methods;
   const auto add = [&](support::ValueOperation answers,
                        mir::CallableCode code) {
@@ -2105,9 +2100,8 @@ auto StructMethodsOf(
 }
 
 auto UnionMethodsOf(
-    UnitLowerer& lowerer, const mir::TypeDeclarationRef& declaration,
-    mir::TypeId overlay, std::span<const mir::TypeId> members)
-    -> std::vector<mir::RecordMethod> {
+    UnitLowerer& lowerer, mir::RecordId record, mir::TypeId overlay,
+    std::span<const mir::TypeId> members) -> std::vector<mir::RecordMethod> {
   std::vector<mir::RecordMethod> methods;
   const auto add = [&](support::ValueOperation answers,
                        mir::CallableCode code) {
@@ -2116,16 +2110,15 @@ auto UnionMethodsOf(
   };
   const OperationsHad had = OperationsHadByUnion(lowerer.Unit(), members);
   UnionBodies bodies(
-      lowerer, declaration, overlay, {members.begin(), members.end()});
+      lowerer, record, overlay, {members.begin(), members.end()});
   StateWholeValue(bodies, add);
   StateStreamAndFolds(bodies, had, add);
   return methods;
 }
 
 auto TaggedUnionMethodsOf(
-    UnitLowerer& lowerer, const mir::TypeDeclarationRef& declaration,
-    mir::TypeId overlay, std::span<const mir::TypeId> members)
-    -> std::vector<mir::RecordMethod> {
+    UnitLowerer& lowerer, mir::RecordId record, mir::TypeId overlay,
+    std::span<const mir::TypeId> members) -> std::vector<mir::RecordMethod> {
   std::vector<mir::RecordMethod> methods;
   const auto add = [&](support::ValueOperation answers,
                        mir::CallableCode code) {
@@ -2133,7 +2126,7 @@ auto TaggedUnionMethodsOf(
         mir::RecordMethod{.answers = answers, .code = std::move(code)});
   };
   TaggedUnionBodies bodies(
-      lowerer, declaration, overlay, {members.begin(), members.end()});
+      lowerer, record, overlay, {members.begin(), members.end()});
   StateWholeValue(bodies, add);
   return methods;
 }

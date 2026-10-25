@@ -11,7 +11,8 @@ Accepted; D3 superseded by
 a backend dispatching through an interface handle -- arrived. The execution backend gives each
 interface class a view of the object with a table of its own, so MIR states, for each behavior of
 each interface class a class reaches, which behavior of the class's lineage answers it. D1 and D2
-stand.
+stand, except that D1's forwarding method is kept beside the methods a class declares and takes no
+position among them.
 
 ## Why this decision matters
 

@@ -9,8 +9,8 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/interner.hpp"
+#include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure_id.hpp"
-#include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/record_id.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
@@ -248,11 +248,11 @@ struct VoidType {
 
 // The type of an instance of a class some compilation unit declares -- a module
 // instance, a named generate scope, an interface, or a SystemVerilog class --
-// named by the class's identity, one per class whichever unit declares it. Of
-// a class of this unit MIR knows the declaration; of another's, only what that
-// unit published, and reaching a member is a separate act from naming the type.
+// named by the class's identity in this unit's registry, one per class
+// whichever unit defines it. Reaching a member is a separate act from naming
+// the type.
 struct ObjectType {
-  DeclaredClassRef of;
+  ClassId of;
 
   auto operator==(const ObjectType&) const -> bool = default;
 };
@@ -461,11 +461,6 @@ struct CoroutineType {
   auto operator==(const CoroutineType&) const -> bool = default;
 };
 
-// Which declaration a record type is: one this unit declares, reached by where
-// it sits in the unit's record registry, or one another unit declares, named
-// the way that unit names it.
-using RecordRef = std::variant<RecordId, TypeDeclarationRef>;
-
 // A structure, a union or a tagged union the source declared (LRM 7.2, 7.3), as
 // clang's record type names its record declaration and rustc's ADT type its
 // definition: two declarations with the same members are two types (LRM
@@ -477,7 +472,9 @@ using RecordRef = std::variant<RecordId, TypeDeclarationRef>;
 // member is reached by position. A value of one is a value: reference
 // semantics come from the wrapper around it, never from the type.
 struct RecordType {
-  RecordRef declaration;
+  // Where the declaration sits in the unit's record registry, whichever unit
+  // defines it.
+  RecordId declaration;
 
   auto operator==(const RecordType&) const -> bool = default;
 };

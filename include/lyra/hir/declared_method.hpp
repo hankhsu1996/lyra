@@ -1,24 +1,15 @@
 #pragma once
 
-#include <compare>
-#include <cstdint>
+#include <optional>
+#include <string>
 #include <variant>
 
-#include "lyra/base/pool_id.hpp"
-#include "lyra/hir/published_callable.hpp"
+#include "lyra/hir/class_id.hpp"
+#include "lyra/hir/covergroup_ref.hpp"
+#include "lyra/hir/randomization_hook.hpp"
+#include "lyra/hir/subroutine_prototype.hpp"
 
 namespace lyra::hir {
-
-// Which of the virtual methods a class introduces one is, counted in the order
-// the class declares them. The class that introduces it and the unit that
-// dispatches on it both count it out of the same list, so neither states it to
-// the other.
-struct PublishedBehaviorId {
-  std::uint32_t value = base::kUnassignedId;
-
-  auto operator<=>(const PublishedBehaviorId&) const
-      -> std::strong_ordering = default;
-};
 
 // A method of the class rather than of an object of it (LRM 8.10): a call
 // hands it no object, so there is none to decide what runs.
@@ -43,12 +34,21 @@ struct IntroducesVirtual {
   auto operator==(const IntroducesVirtual&) const -> bool = default;
 };
 
-// A method overriding the virtual method of its name that a class this one
-// extends introduced, whether or not the source wrote `virtual` (LRM 8.20). A
-// pure one restates the method and gives it no body, so the position keeps
-// what the class extended put there.
+// A method overriding a virtual method of a class this one extends, whether or
+// not the source wrote `virtual` (LRM 8.20), naming the behavior it overrides
+// by the class that introduced it and the name it was introduced under: the
+// method's own for a method, and for the method making an embedded covergroup
+// the one making the first covergroup of its lineage (LRM 19.4.1). The class
+// declaring the method finds the introducer once along its own lineage, and
+// every unit reading the method reads that answer rather than walking the
+// lineage again; a position in the introducer is found where its declaration
+// is read, which the declaration of this one may not do. A pure one restates
+// the method and gives it no body, so the position keeps what the class
+// extended put there.
 struct OverridesVirtual {
   bool is_pure = false;
+  ClassId introducer;
+  std::string name;
 
   auto operator==(const OverridesVirtual&) const -> bool = default;
 };
@@ -61,16 +61,24 @@ struct OverridesVirtual {
 using MethodDispatch = std::variant<
     TypeAssociated, NotVirtual, IntroducesVirtual, OverridesVirtual>;
 
-// One method a class declares, as the unit declaring the class published it.
+// One method a class declares, as every unit naming the class reads it.
 // The prototype is what a call to the method is made through -- its name, the
 // call protocol, each formal's direction and type, and the result -- which is
 // also what a body overriding the method or forwarding to it takes and
 // completes with.
-struct PublishedMethod {
-  PublishedCallable prototype;
+struct DeclaredMethod {
+  SubroutinePrototype prototype;
   MethodDispatch dispatch;
+  // The hook this method takes the place of, in the class and in each class
+  // extending it that declares none of its own (LRM 18.6.2), as the front end
+  // resolved it.
+  std::optional<RandomizationHook> replaces;
+  // The covergroup the method makes, where it is the method a class embedding
+  // a covergroup makes it by (LRM 19.4.1), which no method of the source
+  // stands for.
+  std::optional<CovergroupId> makes;
 
-  auto operator==(const PublishedMethod&) const -> bool = default;
+  auto operator==(const DeclaredMethod&) const -> bool = default;
 };
 
 }  // namespace lyra::hir

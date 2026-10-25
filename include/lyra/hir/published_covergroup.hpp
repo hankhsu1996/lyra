@@ -29,7 +29,7 @@ struct PublishedCovergroupFormal {
 struct PublishedCoverpoint {
   std::string name;
   TypeId value_type;
-  ClassRef library_class;
+  ClassId library_class;
 
   auto operator==(const PublishedCoverpoint&) const -> bool = default;
 };
@@ -38,10 +38,10 @@ struct PublishedCovergroup {
   support::DefPath path;
   std::vector<PublishedCovergroupFormal> formals;
   std::vector<PublishedCovergroupFormal> sample_formals;
-  std::optional<ClassRef> embedding;
+  std::optional<ClassId> embedding;
   std::vector<PublishedCoverpoint> coverpoints;
   std::vector<std::string> crosses;
-  std::optional<CovergroupRef> base;
+  std::optional<CovergroupId> base;
 
   auto operator==(const PublishedCovergroup&) const -> bool = default;
 };
@@ -56,14 +56,5 @@ struct PublishedCovergroup {
   return std::string{"make "} +
          std::get<support::ClassStep>(covergroup.data.back()).name;
 }
-
-// A covergroup of another unit this one names, as that unit published it, its
-// types taken into this unit's pool.
-struct ExternalCovergroup {
-  std::string unit_name;
-  PublishedCovergroup published;
-
-  auto operator==(const ExternalCovergroup&) const -> bool = default;
-};
 
 }  // namespace lyra::hir

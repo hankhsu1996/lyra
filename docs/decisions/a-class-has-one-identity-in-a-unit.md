@@ -7,7 +7,8 @@
 ## Status
 
 Accepted. Revised 2026-10-23: D3 says where a virtual behavior of this unit's class, reached through
-another unit's lineage, is named as its own.
+another unit's lineage, is named as its own. Revised 2026-10-24: one identity and one answer for a
+class of this unit and another unit's alike (D1, D2), every member in one coordinate space (D3).
 
 ## Why this decision matters
 
@@ -38,45 +39,53 @@ happen to realize as one symbol and nothing checks.
 
 ## Decisions
 
-### D1. A class is named by its identity, and a class of this unit is always intra-unit
+### D1. A class is named by one identity, whichever unit defines it
 
-An object type and a field target name their class by one identity, intra-unit or external-unit, and
-which one is a fact about the class: a class this unit declares is named by its id however the name
-reaching it was written. Translating a name to that identity is the lowering's one job here -- a
-class of this unit published under the name resolves to this unit's class, any other to the other
-unit's -- as a struct and a namespace callable already resolve.
+A class is known across units by its stable key, the declaring unit and the class's published path,
+and inside a unit by the handle the unit's class registry gives that key the first time it enters --
+the one place a key becomes an identity, as rustc maps a crate number read from metadata to its own
+where it decodes it. A key naming this unit lands on the class it declares, so a name reaching a
+class of this unit through another instance or through a signature naming this unit is that class.
+Every reference -- an object type, a property, a method, a static property, a behavior, a
+construction -- names the class by the handle, and MIR and LIR keep it: a class another unit defines
+is an entry of the same registry, declared with what that unit published, and whether this unit
+defines the class is a fact of the entry. The same holds of a covergroup's class and of the class a
+scope of the design hierarchy is published as. A record and a member of a unit's namespace are named
+in HIR by their key, one form for this unit's and another's, and from MIR down by one entry of the
+reader's tables.
 
-### D2. What is known of a class is one question with two answers
+### D2. What is known of a class is one answer, with two providers
 
-Of a class of this unit, what is known is the declaration this unit states and the layout its own
-shape gave what was published; of another unit's, the record of what that unit published. A consumer
-asks the class's identity and is answered by one of the two, as rustc's two providers answer one
-query. Naming a class is not depending on it: a dependency is what is read of another unit's record,
-so a class of this unit is never a dependency of it.
+What a class declares -- what it extends and implements, whether it is an interface class, its
+properties, its static properties, its constructor's formals and each method's prototype and part in
+dispatch -- is one type for a class of this unit and another unit's: computed where this unit
+interns its own, and read back from the signature for another unit's, every key in it turned into
+the reader's handles once, where it is decoded. Publishing a class is projecting its declaration
+onto the signature's keys, and reading one is the inverse, so the two cannot describe different
+classes. A class of this unit also has bodies, which only this unit holds.
 
-### D3. Members are named alike; callables keep their two coordinate spaces
+Naming a class is not depending on it. A dependency is what the unit's finished MIR reads of a
+declaration another unit made: a field it accesses, a method it calls or dispatches through, a
+conversion between two classes, a class it constructs, a value whose layout it holds. A read of a
+class closes over the classes it extends and implements, since its layout and its tables read
+theirs, and a handle to a class reads nothing, as a pointer to an incomplete type does not. The set
+is derived by one walk over that MIR once lowering is done, as a C++ compiler writes out the headers
+a translation unit read (`-MD`), so the lowering records nothing and no read it adds can go
+unrecorded. A class of this unit is never a dependency of it.
 
-A field of a published class is at the same slot whichever unit names it -- the published members
-are the class's first fields, in order -- so a field target is the class's identity and the slot. A
-callable is not: this unit names its own by position, including bodies the lowering made that answer
-to no name, while another unit's is named by what that unit published. A published scope class
-therefore reserves one method per published subroutine, in the signature's order, before any body
-lowers, so a body reaching another instance of its own unit calls the method by position.
+### D3. Every member is named in one coordinate space
 
-A virtual behavior is a callable too, and a lineage another unit published -- a specialization of a
-generic this unit declares, extending one of this unit's classes -- can name one this unit's class
-introduced by that unit's coordinate, which is the class and which of its introduced behaviors it
-is. Such a lineage has no counterpart among Rust's crates, which depend on one another without
-cycles; units do not, because a specialization is compiled apart from the scope declaring its
-generic. The behavior is named by this unit's identity for it where the lineage is read, as clang's
-module reader maps an identity local to the file it reads into the reader's own as it reads it
-(`ASTReader::getGlobalDeclID`), rather than at each use. That is where the introducing class turns
-out to be this unit's: the signature it publishes keeps, beside it, what each of its methods is in
-this unit -- a method, or, for the method making a covergroup it embeds (LRM 19.4.1), which no
-method of the source stands for, the covergroup. It holds for a call dispatching on the behavior, an
-override of it, and the record kept of the other unit's class alike, and from there one translation
-gives every one of them its slot. A covergroup a type or a lineage of the other unit names is this
-unit's own as a class is, by D1.
+A member is named by its class's handle and its position in that class, whichever unit declares the
+class. A property of another unit's class is at the slot that unit gave it, its published properties
+being the class's first fields in order; a method at the position its declaration publishes it; and
+a behavior by the class that introduced it and that method. Which class introduced the behavior an
+override replaces is found once, by the unit declaring the overriding class, along its own lineage
+as the front end resolved it, and published, so a reader never re-derives it. A lineage another unit
+published may lead back to this unit -- a specialization of a generic this unit declares, extending
+one of this unit's classes -- and the introducing class is then this unit's own by D1, with no
+second step. A published scope class reserves one method per published subroutine, in the
+signature's order, before any body lowers, so a body reaching another instance of its own unit calls
+the method by position.
 
 ### D4. What holds objects of a loop generate stays the scope every block is
 
@@ -90,9 +99,10 @@ class.
 
 ## Rejected alternatives
 
-- **Keep two object type kinds and resolve this unit's names to the intra-unit one.** Removes the
-  double spelling and keeps a vocabulary in which a struct is one type and a class two, so every
-  consumer of a class type, a field and a property branches on which.
+- **Keep one form for this unit's class and another for another unit's, resolving this unit's names
+  to the first.** Removes the double spelling and keeps a vocabulary in which a struct is one type
+  and a class two, so every consumer of a class type, a field, a method and a behavior branches on
+  which, and each new kind of declaration repeats the pair and its rebasing.
 - **Name every class by unit and name, this unit's included.** A class the lowering builds for its
   own use answers to no name.
 - **Hold a loop generate's blocks as one class where they share one body.** Puts a fact of the
@@ -100,15 +110,15 @@ class.
 
 ## Consequences
 
-- The MIR verifier refuses a unit that names a class of its own as another unit's -- in a type, in a
-  record of what a unit published or in what such a record extends, implements or overrides, or in
-  what it consumed -- so the rule is checked rather than stated. Reading a class or a covergroup of
-  this unit as another unit's is refused where it is read.
-- A unit's published scope classes are minted, under every name each answers to, before any type
+- The MIR verifier refuses a declared class that names this unit, one declared twice, and one
+  holding code or data of its own, so every walk emitting definitions can skip what another unit
+  defines.
+- A class only named here -- a handle's type, never reached into -- is declared with nothing of what
+  it declares, as an incomplete type is.
+- Every class, covergroup class and scope class a unit names takes its identity before any type
   translates, since a type another unit's signature states may name one.
-- The execution layer keeps telling a class this unit defines from one it only declares, as LLVM
-  tells a defined struct from an opaque one; that is what the two forms of the identity are below
-  MIR.
+- Below MIR the declared entry stays an entry, telling a class this unit defines from one it only
+  declares as LLVM tells a defined struct from an opaque one.
 
 ## Cross-references
 

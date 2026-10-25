@@ -39,9 +39,8 @@ struct CallableSignature {
 
 // The behavior a method of `self_owner` at `self_slot` answers, read off its
 // stated dispatch role and named the way a call names one: an introducer names
-// itself, an intra-unit override the canonical intra-unit identity it was
-// given at class lowering, and a cross-unit override the coordinate the
-// introducing class published. A one-arm dispatch, never a chain walk.
+// itself, and an override the slot of the behavior it overrides, whichever
+// unit's class introduced it. A one-arm dispatch, never a chain walk.
 [[nodiscard]] auto CanonicalVirtualSlot(
     mir::ClassId self_owner, mir::CallableId self_slot,
     const mir::VirtualDispatchRole& role) -> mir::VirtualSlot;
@@ -96,7 +95,7 @@ struct ClassShape {
   // method contracts. Multiple entries are legal; the concrete-base
   // single-value rule stays on `base`, and interface conformance introduces no
   // instance storage.
-  std::vector<mir::DeclaredClassRef> implements;
+  std::vector<mir::ClassId> implements;
   mir::TypeId self_pointer_type;
   // The instance this class belongs to, present exactly where the class's
   // declaration says it takes one (LRM 6.22): what each body of the class is
@@ -117,18 +116,14 @@ struct ClassShape {
   // declaration settles; a structural scope's callables are named by no
   // declaration, so the scope settles them itself.
   base::Translation<mir::CallableId, CallableSignature> callable_signatures;
-  // Where each of the class's HIR declarations landed in the pools above. The
-  // two id spaces are separate, and neither pool holds only what the source
-  // wrote: the static pool also takes what the class's bodies keep for the
-  // whole class -- a static-lifetime variable, and what a `disable` naming a
-  // block of a method invalidates -- so a declaration's position in a pool is
-  // not its HIR position.
-  base::Translation<hir::FieldId, mir::FieldId> field_translation;
   // Where each static property's cell was placed. It is a home rather than a
   // slot because which pool holds it follows from what replicates the class
   // declaration: a class a namespace unit declares owns its cells, and one a
   // structural scope declares is replicated with that scope, so its cells are
-  // fields of the instance (LRM 6.22, 8.9).
+  // fields of the instance (LRM 6.22, 8.9). Either pool also takes what the
+  // class's bodies keep for the whole class -- a static-lifetime variable, and
+  // what a `disable` naming a block of a method invalidates -- so a property's
+  // position in it is not its position in the class.
   base::Translation<hir::StaticPropertyId, StaticStorageHome>
       static_property_translation;
   std::vector<mir::ClassId> contained;

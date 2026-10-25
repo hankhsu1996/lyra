@@ -35,12 +35,12 @@ class UnitLowerer;
 // answers the method's result, or the call where the method answers none.
 auto BuildMethodCall(
     UnitLowerer& unit_lowerer, const WalkFrame& frame,
-    const hir::MethodCallee& callee, std::optional<mir::ExprId> receiver,
+    const hir::ClassMethodTarget& callee, std::optional<mir::ExprId> receiver,
     std::span<const mir::ExprId> arguments, hir::TypeId result_type)
     -> mir::ExprId;
 
-// Lowers a call to a user subroutine -- an intra-unit structural one, a
-// cross-unit package / `$unit` one (LRM 26.3), or a class method whether it
+// Lowers a call to a user subroutine -- a structural one of this unit, a
+// package / `$unit` one (LRM 26.3), or a class method whether it
 // carries a receiver or not (LRM 8.6, 8.10) -- to the expression it yields
 // (LRM 13.4, 13.5). The four differ in how the callee is named and in nothing
 // after that. A call is an expression wherever it is written: statement
@@ -105,7 +105,7 @@ auto EmitBoundActual(
 // same for `new` and for a constructor's call of its base's.
 template <ExprLowerer Lowerer>
 auto EmitConstructionActuals(
-    Lowerer& lowerer, const WalkFrame& frame, const hir::ClassRef& cls,
+    Lowerer& lowerer, const WalkFrame& frame, hir::ClassId cls,
     std::span<const hir::ExprId> actuals)
     -> diag::Result<std::vector<mir::ExprId>>;
 

@@ -75,10 +75,11 @@ assumes whole-design lowering forecloses it.
     different units interleave freely: one unit may be emitting while another is still lowering
     bodies. A stage that needs no signature receives an empty set, which is the same shape as
     receiving many.
-11. **Consuming a signature is what records a dependency.** A unit's dependency on another is
-    exactly the set of signatures it consumed, so the query graph's cross-unit edges are enumerable
-    rather than discovered. A fact reaching a unit by any other path is a dependency the graph does
-    not have, and it is invisible until a cached result is reused, at which point it is a stale
+11. **What a unit's compiled output reads of another's signature is its dependency on it.** The set
+    is read off the unit's finished output, as a C++ compiler writes out the headers it read, so the
+    query graph's cross-unit edges are enumerable rather than discovered and no read the lowering
+    adds can be left out of them. A fact reaching a unit by any other path is a dependency the graph
+    does not have, and it is invisible until a cached result is reused, at which point it is a stale
     result rather than an error.
 
 ## Boundary to Adjacent Layers

@@ -203,7 +203,7 @@ auto LowerAsPlaceImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
                   lowerer, frame, *n.declaring_instance));
             }
             auto actuals = EmitConstructionActuals(
-                lowerer, frame, n.class_ref, n.arguments);
+                lowerer, frame, n.class_id, n.arguments);
             if (!actuals) return std::unexpected(std::move(actuals.error()));
             args.insert(args.end(), actuals->begin(), actuals->end());
             args.push_back(BuildReportHandedOn(lowerer.Owner().Unit(), frame));

@@ -96,10 +96,10 @@ whichever unit declares the base, because the default value is what is missing e
 
 ### D4. Extending another unit's class consumes that unit's promise only where it reads one
 
-`reaching-past-a-published-class` D3 makes reading a promise what records the dependency, so the
-question is which references read one. Naming a class as a base reads nothing on its own: what its
-construction carries is settled from the declaration, and where a lineage position or a property is
-reached, that reference consumes the promise where it is made.
+`reaching-past-a-published-class` D3 makes what a unit's output reads of a promise its dependency,
+so the question is which references read one. Naming a class as a base reads nothing on its own:
+what its construction carries is settled from the declaration, and where a lineage position or a
+property is reached, that reference consumes the promise where it is made.
 
 **Committing to an interface class is the same, and the difference from extending is worth stating
 because the two look alike.** A class commits to an interface rather than extending it, so nothing
@@ -148,8 +148,8 @@ states for a construction, one layer up.
 - One refusal remains and it is the same in every naming: a base constructor formal left to its
   default value. What it waits on is a default value crossing a unit boundary, not anything about
   classes.
-- A unit that constructs another unit's class, reaching nothing on it, records a dependency on that
-  unit through the symbols it names and not through a promise it consumed.
+- A unit that constructs another unit's class, reaching nothing on it, depends on that class:
+  building an object reads the class it builds.
 - The word qualifying a constructor's symbol is composed in one place. A class's own unit and every
   unit entering its construction read it from there.
 

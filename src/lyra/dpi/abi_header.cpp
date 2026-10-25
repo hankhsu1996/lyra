@@ -286,6 +286,13 @@ auto SurfaceOf(const mir::CompilationUnit& unit) -> ForeignSurface {
               throw InternalError(
                   "dpi: a callable of a unit's namespace is left abstract, "
                   "which only a class's can be -- please report this as a bug");
+            },
+            [](mir::DefinedByAnotherUnit) -> std::vector<ForeignEntry>& {
+              throw InternalError(
+                  "dpi: a foreign function is declared as another unit's, "
+                  "while "
+                  "only a unit's own callables are foreign -- please report "
+                  "this as a bug");
             }},
         mir::FormOf(callable));
     side.push_back(std::move(entry));

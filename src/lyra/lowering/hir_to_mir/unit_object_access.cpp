@@ -7,9 +7,9 @@
 
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/hir/external_scope_class.hpp"
-#include "lyra/hir/external_scope_ref.hpp"
 #include "lyra/hir/published_member.hpp"
+#include "lyra/hir/published_scope_ref.hpp"
+#include "lyra/hir/scope_class.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
@@ -27,8 +27,7 @@ namespace lyra::lowering::hir_to_mir {
 namespace {
 
 // A borrowed pointer to an object of the scope class `scope_class` records.
-auto ObjectPointerOf(
-    UnitLowerer& unit_lowerer, hir::ExternalScopeClassId scope_class)
+auto ObjectPointerOf(UnitLowerer& unit_lowerer, hir::ScopeClassId scope_class)
     -> mir::TypeId {
   return unit_lowerer.Unit().types.Intern(
       mir::Type{mir::PointerType{
@@ -45,7 +44,7 @@ auto ObjectPointerOf(
 template <typename PlaceOf>
 auto AccessPublishedSlot(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
-    hir::ExternalScopeClassId scope_class, PlaceOf place_of) -> mir::ExprId {
+    hir::ScopeClassId scope_class, PlaceOf place_of) -> mir::ExprId {
   const ScopeClassLayout& record = unit_lowerer.ScopeClassLayoutOf(scope_class);
   const mir::FieldId slot = place_of(record.published);
   const mir::ExprId of_class =
@@ -61,7 +60,7 @@ auto AccessPublishedSlot(
 template <typename PlaceOf>
 auto AddressPublishedSlot(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
-    hir::ExternalScopeClassId scope_class, PlaceOf place_of) -> mir::ExprId {
+    hir::ScopeClassId scope_class, PlaceOf place_of) -> mir::ExprId {
   const mir::ExprId access =
       AccessPublishedSlot(unit_lowerer, block, object, scope_class, place_of);
   return block.exprs.Add(
@@ -77,7 +76,7 @@ auto AddressPublishedSlot(
 
 auto ReadPublishedMember(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
-    hir::ExternalScopeClassId scope_class, hir::PublishedMemberId member)
+    hir::ScopeClassId scope_class, hir::PublishedMemberId member)
     -> mir::ExprId {
   return AddressPublishedSlot(
       unit_lowerer, block, object, scope_class,
@@ -88,7 +87,7 @@ auto ReadPublishedMember(
 
 auto ReachPublishedDisableTarget(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
-    const hir::ExternalDisableTargetLeaf& leaf) -> mir::ExprId {
+    const hir::PublishedDisableTargetLeaf& leaf) -> mir::ExprId {
   return AddressPublishedSlot(
       unit_lowerer, block, object, leaf.scope_class,
       [&](const PublishedScopeLayout& layout) {
@@ -98,7 +97,7 @@ auto ReachPublishedDisableTarget(
 
 auto StepThroughPublished(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
-    const hir::ExternalScopeRef& names, std::span<const std::uint32_t> selects)
+    const hir::PublishedScopeRef& names, std::span<const std::uint32_t> selects)
     -> mir::ExprId {
   const auto selected = [&](mir::ExprId held) {
     return ApplyInstanceSelects(
@@ -109,7 +108,7 @@ auto StepThroughPublished(
   };
   return std::visit(
       Overloaded{
-          [&](const hir::ExternalMemberRef& member) {
+          [&](const hir::PublishedMemberRef& member) {
             return selected(AccessPublishedSlot(
                 unit_lowerer, block, object, member.scope_class,
                 [&](const PublishedScopeLayout& layout) {
@@ -119,7 +118,7 @@ auto StepThroughPublished(
           // A loop's block is asked of the loop's member by the value its index
           // stood at, since which block that is was settled by the object
           // running the loop, and is viewed as the class it was published as.
-          [&](const hir::ExternalGenerateLoopRef& loop) {
+          [&](const hir::PublishedGenerateLoopRef& loop) {
             const mir::ExprId blocks = AccessPublishedSlot(
                 unit_lowerer, block, object, loop.scope_class,
                 [&](const PublishedScopeLayout& layout) {
@@ -132,7 +131,7 @@ auto StepThroughPublished(
           // What a construct building at most one block built holds the base
           // every block of it extends, so the block reached is viewed as the
           // class it was published as.
-          [&](const hir::ExternalGenerateBlockRef& chosen) {
+          [&](const hir::PublishedGenerateBlockRef& chosen) {
             const mir::ExprId held = AccessPublishedSlot(
                 unit_lowerer, block, object, chosen.scope_class,
                 [&](const PublishedScopeLayout& layout) {

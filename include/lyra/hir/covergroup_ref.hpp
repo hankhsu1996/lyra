@@ -1,10 +1,12 @@
 #pragma once
 
 #include <compare>
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
-#include <variant>
 
+#include "lyra/base/hash.hpp"
 #include "lyra/base/pool_id.hpp"
 #include "lyra/support/def_path.hpp"
 
@@ -16,23 +18,26 @@ struct CovergroupId {
   auto operator<=>(const CovergroupId&) const -> std::strong_ordering = default;
 };
 
-// A covergroup type this unit declares (LRM 19.3).
-struct LocalCovergroupRef {
-  CovergroupId covergroup;
-
-  auto operator==(const LocalCovergroupRef&) const -> bool = default;
-};
-
-// A covergroup type another unit declares, named by that unit and the path the
-// covergroup has in it, as a class of another unit is.
-struct ExternalCovergroupRef {
+// The name every unit gives one covergroup type (LRM 19.3): the unit declaring
+// it and the covergroup's path in that unit, as a class's key is. Inside one
+// unit a covergroup is named by its `CovergroupId`, which the unit's covergroup
+// registry maps to and from this pair.
+struct CovergroupKey {
   std::string unit_name;
   support::DefPath path;
 
-  auto operator==(const ExternalCovergroupRef&) const -> bool = default;
+  auto operator<=>(const CovergroupKey&) const
+      -> std::strong_ordering = default;
+  // Two equal keys display alike, which is all a pool needs of a hash; equality
+  // decides which key is which.
+  struct Hash {
+    auto operator()(const CovergroupKey& key) const -> std::size_t {
+      std::size_t seed = std::hash<std::string>{}(key.unit_name);
+      base::HashField(seed, support::DisplayOf(key.path));
+      return seed;
+    }
+  };
 };
-
-using CovergroupRef = std::variant<LocalCovergroupRef, ExternalCovergroupRef>;
 
 // A method every covergroup has (LRM 19.8), and every coverpoint and cross of
 // one where it applies: `get_coverage` and `get_inst_coverage` of each, and

@@ -1032,6 +1032,11 @@ enum class BuiltinFn : std::uint16_t {
   // The built-in `pre_randomize()` and `post_randomize()` (LRM 18.6.2), on
   // the object a call reaches where no class of its lineage writes its own:
   // the part every object starts with gives them.
+  kBuiltinPreRandomize,
+  kBuiltinPostRandomize,
+  // The two hooks the object's own class runs, which a call naming them
+  // through an interface class handle runs, since an interface class's are
+  // virtual (LRM 8.26.9).
   kObjectPreRandomize,
   kObjectPostRandomize,
   // A call of `randomize()` (LRM 18.6, 18.7, 18.11, 18.12), as the steps its

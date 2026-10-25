@@ -27,6 +27,7 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/covergroup.hpp"
 #include "lyra/hir/procedural_scope.hpp"
+#include "lyra/hir/subroutine_prototype.hpp"
 #include "lyra/lowering/ast_to_hir/coverage_library.hpp"
 #include "lyra/lowering/ast_to_hir/fixed_name.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
@@ -227,14 +228,13 @@ class DeclBuilder {
     }
     if (lineage.size() > 1) {
       auto base =
-          owner_->ResolveCovergroupRef(*lineage[lineage.size() - 2], span_);
+          owner_->ResolveCovergroup(*lineage[lineage.size() - 2], span_);
       if (!base) return std::unexpected(std::move(base.error()));
       // The step to MIR walks the lineage over what each covergroup of it
       // published, and no type need name the one extended, so another unit's
       // is read here.
-      if (const auto* external =
-              std::get_if<hir::ExternalCovergroupRef>(&*base)) {
-        owner_->ExternalCovergroupOf(external->unit_name, external->path);
+      if (!owner_->Unit().covergroups.IsOwn(*base)) {
+        owner_->CovergroupDeclarationOf(*base);
       }
       decl_.base = *base;
     }
@@ -715,36 +715,34 @@ auto LowerCovergroupDecl(
   return builder.Build();
 }
 
-auto UnitLowerer::ResolveCovergroupRef(
+auto UnitLowerer::ResolveCovergroup(
     const slang::ast::CovergroupType& covergroup, diag::SourceSpan span)
-    -> diag::Result<hir::CovergroupRef> {
+    -> diag::Result<hir::CovergroupId> {
   if (const auto it = covergroup_cache_.find(&covergroup);
       it != covergroup_cache_.end()) {
     return it->second;
   }
   if (!Owns(covergroup)) {
-    hir::ExternalCovergroupRef external{
-        .unit_name =
-            CompilationUnitName(UnitHomeOf(covergroup), Specialization()),
-        .path = DefPathOf(covergroup, Specialization())};
     if (auto named = NameCoverageLibrary(span); !named) {
       return std::unexpected(std::move(named.error()));
     }
-    const auto [it, _] = covergroup_cache_.emplace(
-        &covergroup, hir::CovergroupRef{std::move(external)});
-    return it->second;
+    const hir::CovergroupId id = unit_.covergroups.Import(
+        hir::CovergroupKey{
+            .unit_name =
+                CompilationUnitName(UnitHomeOf(covergroup), Specialization()),
+            .path = DefPathOf(covergroup, Specialization())});
+    covergroup_cache_.emplace(&covergroup, id);
+    return id;
   }
-  auto id = InternLocalCovergroup(covergroup, span);
-  if (!id) return std::unexpected(std::move(id.error()));
-  return hir::CovergroupRef{hir::LocalCovergroupRef{.covergroup = *id}};
+  return InternOwnCovergroup(covergroup, span);
 }
 
-auto UnitLowerer::InternLocalCovergroup(
+auto UnitLowerer::InternOwnCovergroup(
     const slang::ast::CovergroupType& covergroup, diag::SourceSpan span)
     -> diag::Result<hir::CovergroupId> {
   if (const auto it = covergroup_cache_.find(&covergroup);
       it != covergroup_cache_.end()) {
-    return std::get<hir::LocalCovergroupRef>(it->second).covergroup;
+    return it->second;
   }
   if (auto named = NameCoverageLibrary(span); !named) {
     return std::unexpected(std::move(named.error()));
@@ -752,17 +750,9 @@ auto UnitLowerer::InternLocalCovergroup(
   // A covergroup is one declaration of its unit wherever its text was
   // elaborated, as a class is: a copy at a path already declared is that
   // covergroup.
-  support::DefPath path = DefPathOf(covergroup, Specialization());
-  const auto declared = own_covergroups_by_path_.find(path);
-  const hir::CovergroupId id = declared == own_covergroups_by_path_.end()
-                                   ? unit_.covergroups.Declare(std::move(path))
-                                   : std::get<hir::LocalCovergroupRef>(
-                                         covergroup_cache_.at(declared->second))
-                                         .covergroup;
-  covergroup_cache_.emplace(
-      &covergroup,
-      hir::CovergroupRef{hir::LocalCovergroupRef{.covergroup = id}});
-  own_covergroups_by_path_.emplace(unit_.covergroups.PathOf(id), &covergroup);
+  const hir::CovergroupId id =
+      unit_.covergroups.DeclareOwn(DefPathOf(covergroup, Specialization()));
+  covergroup_cache_.emplace(&covergroup, id);
   // Its expressions reach what encloses it as a body of the scope replicating
   // it does, so it lowers with that scope (LRM 6.22, 19.3).
   const slang::ast::Scope& replicating = ReplicatingScope(covergroup);
@@ -787,57 +777,43 @@ auto UnitLowerer::InternLocalCovergroup(
   return id;
 }
 
-auto UnitLowerer::ExternalCovergroupOf(
-    const std::string& unit_name, const support::DefPath& path)
+auto UnitLowerer::CovergroupDeclarationOf(hir::CovergroupId covergroup)
     -> const hir::PublishedCovergroup& {
-  if (unit_name == unit_.name) {
-    throw InternalError(
-        std::format(
-            "UnitLowerer::ExternalCovergroupOf: this unit's own covergroup "
-            "'{}' is read as another unit's -- please report this as a bug",
-            support::DisplayOf(path)));
+  if (unit_.covergroups.IsPublished(covergroup)) {
+    return unit_.covergroups.Published(covergroup);
   }
-  for (const hir::ExternalCovergroup& held : unit_.external_covergroups) {
-    if (held.unit_name == unit_name && held.published.path == path) {
-      return held.published;
-    }
-  }
-  const hir::UnitSignature* signature = Signatures().Find(unit_name);
+  const hir::CovergroupKey& key = unit_.covergroups.KeyOf(covergroup);
+  const hir::UnitSignature* signature = Signatures().Find(key.unit_name);
   const hir::PublishedCovergroup* published =
-      signature == nullptr ? nullptr : signature->FindCovergroup(path);
+      signature == nullptr ? nullptr : signature->FindCovergroup(key.path);
   if (published == nullptr) {
     throw InternalError(
         std::format(
-            "UnitLowerer::ExternalCovergroupOf: '{}' published no covergroup "
+            "UnitLowerer::CovergroupDeclarationOf: '{}' published no "
+            "covergroup "
             "'{}', and every covergroup a unit declares is published",
-            unit_name, support::DisplayOf(path)));
+            key.unit_name, support::DisplayOf(key.path)));
   }
-  hir::TypeImportMemo memo;
-  hir::TypeImporter importer(signature->types, std::nullopt, unit_.types, memo);
+  hir::TypeImporter importer = ReadingImporter(*signature);
   hir::PublishedCovergroup record = importer.Import(*published);
   // The step to MIR lays the covergroup out from what it extends, the class
   // embedding it and the classes counting its coverpoints, so reading it reads
   // each of those too. One of this unit is its own, with nothing to read,
   // including one a lineage another unit published passes back through.
-  if (record.base.has_value()) {
-    const auto* base = std::get_if<hir::ExternalCovergroupRef>(&*record.base);
-    if (base != nullptr && base->unit_name != unit_.name) {
-      ExternalCovergroupOf(base->unit_name, base->path);
-    }
+  if (record.base.has_value() && !unit_.covergroups.IsOwn(*record.base)) {
+    CovergroupDeclarationOf(*record.base);
   }
-  const auto read_class = [&](const hir::ClassRef& ref) {
-    if (const auto* external = std::get_if<hir::ExternalClassRef>(&ref)) {
-      ExternalClassOf(external->unit_name, external->class_path);
+  const auto read_class = [&](hir::ClassId cls) {
+    if (!unit_.classes.IsOwn(cls)) {
+      DeclarationOf(cls);
     }
   };
   if (record.embedding.has_value()) read_class(*record.embedding);
   for (const hir::PublishedCoverpoint& point : record.coverpoints) {
     read_class(point.library_class);
   }
-  unit_.external_covergroups.push_back(
-      hir::ExternalCovergroup{
-          .unit_name = unit_name, .published = std::move(record)});
-  return unit_.external_covergroups.back().published;
+  unit_.covergroups.Publish(covergroup, std::move(record));
+  return unit_.covergroups.Published(covergroup);
 }
 
 void UnitLowerer::ReadSignaturesOfNamedCovergroups() {
@@ -853,10 +829,8 @@ void UnitLowerer::ReadSignaturesOfNamedCovergroups() {
       if (handle == nullptr) continue;
       // A type another unit's signature states may name a covergroup of this
       // unit, which is this unit's own and no signature to read.
-      const auto* external =
-          std::get_if<hir::ExternalCovergroupRef>(&handle->covergroup);
-      if (external != nullptr && external->unit_name != unit_.name) {
-        ExternalCovergroupOf(external->unit_name, external->path);
+      if (!unit_.covergroups.IsOwn(handle->covergroup)) {
+        CovergroupDeclarationOf(handle->covergroup);
       }
     }
     read = reached;
@@ -866,9 +840,11 @@ void UnitLowerer::ReadSignaturesOfNamedCovergroups() {
 auto UnitLowerer::PublishedCovergroupOf(
     const slang::ast::CovergroupType& covergroup, diag::SourceSpan span)
     -> diag::Result<hir::PublishedCovergroup> {
-  auto id = InternLocalCovergroup(covergroup, span);
+  auto id = InternOwnCovergroup(covergroup, span);
   if (!id) return std::unexpected(std::move(id.error()));
-  if (const auto& held = unit_.covergroups.PublishedOf(*id)) return *held;
+  if (unit_.covergroups.IsPublished(*id)) {
+    return unit_.covergroups.Published(*id);
+  }
   const slang::ast::CovergroupType& first = *LineageOf(covergroup).front();
   const auto formal = [&](const slang::ast::FormalArgumentSymbol& declared)
       -> diag::Result<hir::PublishedCovergroupFormal> {
@@ -899,9 +875,9 @@ auto UnitLowerer::PublishedCovergroupOf(
     published.sample_formals.push_back(*std::move(lowered));
   }
   if (const slang::ast::ClassType* embedding = EmbeddingOf(covergroup)) {
-    auto ref = ResolveClassRef(*embedding, span);
-    if (!ref) return std::unexpected(std::move(ref.error()));
-    published.embedding = *std::move(ref);
+    auto embedding_id = ResolveClass(*embedding, span);
+    if (!embedding_id) return std::unexpected(std::move(embedding_id.error()));
+    published.embedding = *embedding_id;
   }
   const slang::ast::CovergroupBodySymbol& body = covergroup.getBody();
   ItemNames names = ItemNamesOf(body);
@@ -909,7 +885,7 @@ auto UnitLowerer::PublishedCovergroupOf(
   for (const auto& point : body.membersOfType<slang::ast::CoverpointSymbol>()) {
     const slang::ast::ClassType& counted_by =
         CoverpointClassOf(Coverage(), point);
-    auto library_class = ResolveClassRef(counted_by, span);
+    auto library_class = ResolveClass(counted_by, span);
     if (!library_class)
       return std::unexpected(std::move(library_class.error()));
     auto value_type = InternType(ValueTypeOf(counted_by), span);
@@ -918,13 +894,13 @@ auto UnitLowerer::PublishedCovergroupOf(
         hir::PublishedCoverpoint{
             .name = std::move(names.coverpoints[point_index++]),
             .value_type = *value_type,
-            .library_class = *std::move(library_class)});
+            .library_class = *library_class});
   }
   published.crosses = std::move(names.crosses);
   if (const slang::ast::CovergroupType* base = BaseOf(covergroup)) {
-    auto ref = ResolveCovergroupRef(*base, span);
-    if (!ref) return std::unexpected(std::move(ref.error()));
-    published.base = *std::move(ref);
+    auto base_id = ResolveCovergroup(*base, span);
+    if (!base_id) return std::unexpected(std::move(base_id.error()));
+    published.base = *base_id;
   }
   unit_.covergroups.Publish(*id, published);
   return published;
@@ -961,29 +937,42 @@ auto UnitLowerer::PopulateCovergroupsReplicatedBy(
 
 auto UnitLowerer::PublishedFactoryOf(
     const slang::ast::CovergroupType& covergroup, diag::SourceSpan span)
-    -> diag::Result<hir::PublishedMethod> {
+    -> diag::Result<hir::DeclaredMethod> {
   const slang::ast::CovergroupType& first = *LineageOf(covergroup).front();
-  hir::ExternalCalleeInterface interface{
+  hir::CalleeInterface interface{
       .kind = hir::SubroutineKind::kFunction, .params = {}};
   for (const slang::ast::FormalArgumentSymbol* formal : FormalsOf(first)) {
     auto type = InternType(formal->getType(), span);
     if (!type) return std::unexpected(std::move(type.error()));
     interface.params.push_back(
-        hir::ExternalCalleeParam{
+        hir::CalleeParam{
             .direction = ParamDirectionOf(*formal), .type = *type});
   }
   auto made = InternType(first, span);
   if (!made) return std::unexpected(std::move(made.error()));
-  return hir::PublishedMethod{
+  auto own = InternOwnCovergroup(covergroup, span);
+  if (!own) return std::unexpected(std::move(own.error()));
+  // An extension's factory overrides the one the class embedding the first
+  // covergroup of the lineage introduced, the method making that covergroup.
+  hir::MethodDispatch dispatch = hir::IntroducesVirtual{};
+  if (BaseOf(covergroup) != nullptr) {
+    auto introducer = ResolveClass(*EmbeddingOf(first), span);
+    if (!introducer) return std::unexpected(std::move(introducer.error()));
+    dispatch = hir::OverridesVirtual{
+        .is_pure = false,
+        .introducer = *introducer,
+        .name = hir::CovergroupFactoryName(DefPathOf(first, Specialization()))};
+  }
+  return hir::DeclaredMethod{
       .prototype =
-          hir::PublishedCallable{
+          hir::SubroutinePrototype{
               .name = hir::CovergroupFactoryName(
                   DefPathOf(covergroup, Specialization())),
               .interface = std::move(interface),
               .result_type = *made},
-      .dispatch = BaseOf(covergroup) == nullptr
-                      ? hir::MethodDispatch{hir::IntroducesVirtual{}}
-                      : hir::MethodDispatch{hir::OverridesVirtual{}}};
+      .dispatch = dispatch,
+      .replaces = std::nullopt,
+      .makes = *own};
 }
 
 auto UnitLowerer::NameCoverageLibrary(diag::SourceSpan span)
@@ -991,7 +980,7 @@ auto UnitLowerer::NameCoverageLibrary(diag::SourceSpan span)
   if (unit_.coverage_library.has_value()) return {};
   const CoverageLibrary& library = Coverage();
   const auto named = [&](const slang::ast::ClassType& cls) {
-    return ResolveClassRef(cls, span);
+    return ResolveClass(cls, span);
   };
   auto registry = named(*library.registry);
   if (!registry) return std::unexpected(std::move(registry.error()));

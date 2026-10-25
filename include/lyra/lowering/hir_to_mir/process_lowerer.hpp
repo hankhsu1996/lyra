@@ -129,12 +129,14 @@ class ProcessLowerer {
   // formal where its lifetime puts it -- the parameter, a frame variable, its
   // promoted cell, or the static cell every call shares -- so references
   // resolve, then walks the body. A function with a non-void result closes with
-  // a trailing `return` of the implicit result variable. The leading `self`
-  // parameter is seeded only when the body sits in an owner class (an instance
-  // method, LRM 8.6); a body in a namespace context (a package function, LRM
-  // 26.3) carries no receiver. Deferred static initializers are drained the
-  // same way as for a process body.
-  auto Run(const hir::SubroutineDecl& src) -> diag::Result<mir::CallableCode>;
+  // a trailing `return` of the implicit result variable. What the body takes
+  // ahead of its formals is `member_form`, as the class declaring it declares
+  // it (LRM 8.6, 8.10); a subroutine of a namespace unit (LRM 26.3) is a member
+  // of no class, has no form, and takes nothing. Deferred static initializers
+  // are drained the same way as for a process body.
+  auto Run(
+      const hir::SubroutineDecl& src, std::optional<CallableForm> member_form)
+      -> diag::Result<mir::CallableCode>;
 
   // Binds each of the constructor's formals -- an input where its lifetime puts
   // it, a `ref` as the reference it arrives as (LRM 13.5.2) -- appending the
@@ -395,16 +397,17 @@ class ProcessLowerer {
   // The frame a body of `src` is lowered in, in `code` and its `bindings`,
   // with what it takes ahead of its formals bound.
   auto EnterSubroutineBody(
-      const hir::SubroutineDecl& src, mir::CallableCode& code,
-      CallableBindings& bindings) -> BoundImplicitParameters;
+      const hir::SubroutineDecl& src, std::optional<CallableForm> member_form,
+      mir::CallableCode& code, CallableBindings& bindings)
+      -> BoundImplicitParameters;
 
   // A form of the subroutine `src`: what it takes ahead of its formals, its
   // formals and its result, then whatever `after_formals` adds to the
   // parameters and to the frame the body is lowered in, then the body.
   template <typename AfterFormals>
   auto LowerSubroutine(
-      const hir::SubroutineDecl& src, AfterFormals after_formals)
-      -> diag::Result<mir::CallableCode>;
+      const hir::SubroutineDecl& src, std::optional<CallableForm> member_form,
+      AfterFormals after_formals) -> diag::Result<mir::CallableCode>;
 
   // What the form of a function a waited evaluation runs does first with the
   // report it is handed: for an implicit list being collected (LRM 9.2.2.2.1)
