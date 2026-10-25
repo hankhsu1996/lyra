@@ -432,6 +432,7 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
     return slang_scope_->asSymbol().getHierarchicalPath();
   });
   hir::StructuralScope scope;
+  owner_->BeginScope(frame_, *this, scope);
   // Filling a declaration is defining the identity a peer may already hold,
   // which is why this scope takes the pools rather than growing its own.
   ScopeDeclarations declarations = owner_->TakeScopeDeclarations(*slang_scope_);

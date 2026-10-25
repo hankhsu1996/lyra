@@ -1932,6 +1932,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kAttachScope:
     case support::BuiltinFn::kInstantiationEntry:
     case support::BuiltinFn::kInstantiationTable:
+    case support::BuiltinFn::kBlockTable:
     case support::BuiltinFn::kExtendSequence:
     // Recovering the object a handle names, or a handle naming the object a
     // body runs on. Each is one library function serving every class, so the

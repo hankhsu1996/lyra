@@ -96,24 +96,18 @@ index. That is what happens; it is not what this record decided, and an earlier 
 entry claimed it was.
 
 What it said: the width stays a specialization axis, because one storage type for every integral is
-paid for by operations that are inline and fold against a width the compiler can see as a constant
-where the object is built, so supplying the width there instead would remove what the folding folds.
-The mechanism it named no longer exists. A packed value now carries its width as one of three
-scalars, an access naming a position takes the receiver's shape as an operand, and the structure the
-value used to hold is not in the value at all --
-[packed-shape-belongs-to-the-type](packed-shape-belongs-to-the-type.md) settles that, with the
-measurement and the survey. There is no constant-width fast path to protect.
+paid for by operations that are inline and fold against a width the compiler can see as a constant.
+That reason was withdrawn once, while a packed value carried its width at run time
+([packed-shape-belongs-to-the-type](packed-shape-belongs-to-the-type.md)), and is the rule again:
+[a-value-is-its-machine-data](a-value-is-its-machine-data.md) fixes every expression's width where
+it is compiled, so within one compiled unit every expression has one type, and an operation is a few
+instructions instead of a call that reads the width back.
 
-That record also closes the direction the withdrawn argument was defending. Making the width a
-compile-time type parameter is rejected there on the top-level objectives: distinct types per width
-is compile-time work scaling with the design rather than with its distinct specializations, and it
-forecloses the parameterized unit that compiles once, which needs a width that arrives at
-construction.
-
-So what is left is mechanical rather than chosen. A declared width sits in the type; two types are
-two classes; a repeated structure declaring differing widths is compiled apart. Whether the width
-should sit there at all belongs to whoever owns the value representation, and that question is open
-in their terms rather than settled in these.
+So what is left is mechanical rather than chosen here. A declared width sits in the type; two types
+are two classes; a repeated structure declaring differing widths is compiled apart, and code whose
+expressions take a width from the index is a body per index. Whether a width should sit there at all
+belongs to whoever owns the value representation, and is settled in their terms rather than in
+these.
 
 Two further arguments this entry once gave are withdrawn for being false rather than superseded,
 since a false reason for a right answer expires without warning. **The expression is not gone**: the
@@ -157,12 +151,16 @@ queue.
   blocks name a constant worked out from their own index is now one body. This one was on the list
   as done while it was not, which is what the paragraph under D1 is about: the check could not see
   it, and the entry that said the list was complete was read as the evidence that it was.
+- A hierarchical name's select of a loop generate's block is lowered (LRM 23.6, 27.4): the front end
+  keeps the expression beside the index it resolved the select to, and the name evaluates it in each
+  object it is read in. A loop whose blocks reach their neighbour by a select worked out from their
+  own index is still a body per index, since the parameters the select reads name each block.
 
-Two positions stay where they are, for reasons that are not the same reason. A declaration's width
-is chosen to be a class fact, by D3, and the choice would hold even if moving it cost nothing. A
-reference's coordinate is a hierarchical lookup's own answer -- the front end resolves the path and
-hands back the index rather than the expression behind it -- so it is settled before this compiler
-is asked anything, and no position in this record turns on it.
+One position stays where it is: a declaration's width is chosen to be a class fact, by D3, and the
+choice would hold even if moving it cost nothing. Two coordinates of a name are still settled to
+what the front end resolved, each for a reason outside this record: an instance array's select, and
+a loop's block reached through a virtual interface, for which the front end hands back the member
+the name lands on and no path at all.
 
 ## Where D1 does not reach
 

@@ -275,8 +275,10 @@ auto InterfaceActualRoutes(
     // it carries published (LRM 25.10) -- one walk reaches all three, since
     // continuing past a published member is a step of the same descent and
     // naming part of a member settles fewer of its coordinates.
-    auto through =
+    auto reached =
         unit_lowerer.ReachThroughInterfacePort(frame, named->hierRef);
+    if (!reached) return std::unexpected(std::move(reached.error()));
+    std::optional<ScopeRoute> through = *std::move(reached);
     if (!through.has_value()) {
       return PortConnectionUnsupported(
           span,
@@ -299,7 +301,7 @@ auto InterfaceActualRoutes(
   // its search landed above this instance (LRM 23.8) -- is the name's own.
   const RouteOrigin origin =
       named == nullptr
-          ? RouteOrigin{FromReader{}}
+          ? RouteOrigin{.start = FromReader{}, .written = {}}
           : unit_lowerer.StartOf(frame, *named->symbol, named->hierRef);
   // How many objects the member stands for is what the child published; how
   // many this connection supplies is what the parent worked out from the
@@ -315,8 +317,10 @@ auto InterfaceActualRoutes(
   std::vector<hir::ObjectRoute> peers;
   peers.reserve(instances.size());
   for (std::size_t position = 0; position < instances.size(); ++position) {
-    auto route =
+    auto walked =
         unit_lowerer.RouteToScope(frame, instances[position]->body, origin);
+    if (!walked) return std::unexpected(std::move(walked.error()));
+    std::optional<ScopeRoute> route = *std::move(walked);
     if (!route.has_value()) {
       return PortConnectionUnsupported(
           span,
@@ -710,6 +714,12 @@ auto ConnectArrayElements(
 auto StructuralScopeLowerer::PopulatePortConnections(
     const slang::ast::Scope& slang_scope, WalkFrame frame)
     -> diag::Result<void> {
+  // A connection is made to an instance, or to an element of an array of
+  // them, so it starts from the member the instance was declared as.
+  const auto member_step = [&](const slang::ast::Symbol& member) {
+    return hir::OwnedChildStep{
+        .names = owner_->InstanceMemberIdOf(member), .selects = {}};
+  };
   for (const auto& member : slang_scope.members()) {
     if (member.kind == slang::ast::SymbolKind::Instance) {
       // The instance member is bound in the pre-pass; a downward port reach
@@ -724,7 +734,7 @@ auto StructuralScopeLowerer::PopulatePortConnections(
           *this, *owner_, inst,
           owner_->Signatures().Instantiated(
               owner_->Specialization().NameOf(inst)),
-          binding->step, binding->home_frame, frame);
+          member_step(member), binding->home_frame, frame);
       if (!r) return std::unexpected(std::move(r.error()));
     } else if (member.kind == slang::ast::SymbolKind::InstanceArray) {
       // A zero-element array (`Child c[0]`, LRM 23.3.2) constructs no element
@@ -735,7 +745,7 @@ auto StructuralScopeLowerer::PopulatePortConnections(
       }
       auto r = ConnectArrayElements(
           *this, *owner_, member.as<slang::ast::InstanceArraySymbol>(),
-          binding->step, binding->home_frame, frame);
+          member_step(member), binding->home_frame, frame);
       if (!r) return std::unexpected(std::move(r.error()));
     }
   }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <span>
@@ -12,6 +13,7 @@
 #include <variant>
 #include <vector>
 
+#include <slang/ast/HierarchicalReference.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
@@ -68,6 +70,8 @@ class VariableSymbol;
 
 namespace lyra::lowering::ast_to_hir {
 
+class StructuralScopeLowerer;
+
 struct StructuralDataObjectBinding {
   ScopeFrameId home_frame{};
   hir::StructuralDataObjectId var_id{};
@@ -111,15 +115,27 @@ using ForeignImportBindings = std::unordered_map<
 using ForeignImportScopes =
     std::unordered_map<const slang::ast::SubroutineSymbol*, ScopeFrameId>;
 
+// A block of a loop generate this unit declares, by its loop (LRM 27.4). A
+// path reaches it by the select the source wrote, which the step reaching it
+// carries.
+struct DeclaredLoopBlock {
+  hir::GenerateId generate;
+};
+
+// What a child of a scope this unit declares is, to a path element reaching
+// it: an instance or instance-array member (`c.x`, `c[1].x`), a block of a
+// loop generate (`g[1].x`), or the one block a generate construct building at
+// most one holds (LRM 27).
+using DeclaredOwnedChild = std::variant<
+    hir::InstanceMemberId, DeclaredLoopBlock, hir::GenerateBlockRef>;
+
 // A component of a hierarchical path names an owned child of some scope this
-// unit declares: an instance / instance-array member (`c.x`, `c[1].x`), or a
-// generate block (`g[1].x`, LRM 27). The child's slang symbol maps to the
-// declaring scope's identity for it, as a path element reaches it -- a loop's
-// block being the loop with the select that picks it -- so the reference
-// resolves regardless of whether it precedes the child in source.
+// unit declares. The child's slang symbol maps to the declaring scope's
+// identity for it, so the reference resolves regardless of whether it
+// precedes the child in source.
 struct OwnedChildBinding {
   ScopeFrameId home_frame{};
-  hir::OwnedChildStep step;
+  DeclaredOwnedChild child;
 };
 
 using OwnedChildBindings =
@@ -350,16 +366,16 @@ struct OpenDimension {
 }
 
 // Where a walk stands once its steps are taken: still in this unit's layout,
-// where what it reaches is this unit's own declaration, or on a scope of
-// another unit, where what it reaches is counted out of what that scope
-// published.
+// where what it reaches is this unit's own declaration, or on a scope reached
+// through what it published -- one of another unit, or a block of a loop of
+// this one -- where what it reaches is counted out of that publication.
 struct InOwnScope {};
 
-// The scope of another unit a walk stands on: this unit's record of what that
-// scope published, and the named blocks and subroutines of it the name went on
-// through, outermost first (LRM 23.9). Those are no objects, so they take no
-// step; a declaration the name reaches there is one the scope published as
-// held by the scope those lead to.
+// A scope a walk stands on through what it published: this unit's record of
+// what that scope published, and the named blocks and subroutines of it the
+// name went on through, outermost first (LRM 23.9). Those are no objects, so
+// they take no step; a declaration the name reaches there is one the scope
+// published as held by the scope those lead to.
 struct InPublishedScope {
   hir::ScopeClassId scope_class;
   std::vector<support::DefPathData> within;
@@ -410,21 +426,23 @@ struct InUnitReach {
 
 // A hop of a descent this unit declares nothing about, as the front end says
 // the name reached it: an instance, with the coordinates the name wrote for
-// it; a block of a loop generate, by the label of the loop and the value its
-// index stood at (LRM 27.4); a block that stands alone or that a conditional
-// chose, by where the source wrote its construct among those of its scope and
-// the block among that construct's alternatives, since a label does not tell
-// the alternatives of a conditional apart (LRM 27.5); or a named block or
-// subroutine, which is no object (LRM 23.9). It is resolved against what the
-// scope standing above it published, which is known only once the whole
-// descent is in hand.
+// it; a block of a loop generate, by the label of the loop, the value the
+// front end resolved its select to, which says what the block was published
+// as, and the select itself, evaluated in each object the name is read in
+// (LRM 27.4); a block that stands alone or that a conditional chose, by where
+// the source wrote its construct among those of its scope and the block among
+// that construct's alternatives, since a label does not tell the alternatives
+// of a conditional apart (LRM 27.5); or a named block or subroutine, which is
+// no object (LRM 23.9). It is resolved against what the scope standing above
+// it published, which is known only once the whole descent is in hand.
 struct InstanceHop {
   std::string name;
   std::vector<std::uint32_t> indices;
 };
 struct LoopBlockHop {
   std::string loop;
-  std::int64_t index;
+  std::int64_t resolved_index;
+  hir::ExprId position;
 };
 struct ChosenBlockHop {
   std::uint32_t construct;
@@ -489,10 +507,37 @@ struct RouteStart {
   std::optional<DeclaredHop> leading;
 };
 
-// Where a route to a scope starts: at the reader, for a name that stays inside
-// the reader's instance and where no name is involved at all, or where a name
-// that left it starts.
-using RouteOrigin = std::variant<FromReader, RouteStart>;
+// The select a name wrote for a loop's block its route passes, lowered beside
+// the route. Nothing where the name wrote none.
+using LoopSelectOf = std::function<std::optional<hir::ExprId>(
+    const slang::ast::GenerateBlockSymbol&)>;
+
+// A scope while it is built: the lowerer building it and what it builds.
+struct ScopeUnderConstruction {
+  StructuralScopeLowerer* lowerer = nullptr;
+  hir::StructuralScope* scope = nullptr;
+};
+
+// Where a route to a scope starts -- at the reader, for a name that stays
+// inside the reader's instance and where no name is involved at all, or where
+// a name that left it starts -- and the path the source wrote for it. Each
+// select that path writes for a loop generate picks the block the route
+// passes, in each object the route is walked from (LRM 23.6, 27.4); a route
+// no name writes, to the scope a class belongs to, passes no loop it would
+// have to pick a block of.
+struct RouteOrigin {
+  std::variant<FromReader, RouteStart> start;
+  std::span<const slang::ast::HierarchicalReference::Element> written;
+};
+
+// Whether the declaration the front end resolved a name to is what the name
+// reaches in every object of the scope being lowered: only for a name that
+// stays inside the reader's instance and passes no block of a loop. One that
+// left the instance reaches what stands where it lands in each instance (LRM
+// 23.8), and a loop's select picks a block in each object (LRM 27.4), so for
+// either the resolved declaration is the target only in the elaboration the
+// front end resolved it in.
+[[nodiscard]] auto NamesOwnDeclaration(const RouteOrigin& origin) -> bool;
 
 // The declarations of one structural scope that a peer may name before the
 // scope is built, minted here and handed to the scope when it is.
@@ -1123,7 +1168,7 @@ class UnitLowerer {
 
   void MapOwnedChildBinding(
       const slang::ast::Symbol& child, ScopeFrameId home_frame,
-      hir::OwnedChildStep step);
+      DeclaredOwnedChild declared);
   [[nodiscard]] auto LookupOwnedChildBinding(const slang::ast::Symbol& child)
       const -> std::optional<OwnedChildBinding>;
   // The identity the declaration pass gave a generate construct, or an
@@ -1166,6 +1211,27 @@ class UnitLowerer {
   // once, when the scope is finished.
   auto RoutesOf(ScopeFrameId owner_frame) -> hir::ScopeRoutes&;
   auto TakeRoutesForFrame(ScopeFrameId owner_frame) -> hir::ScopeRoutes;
+
+  // `scope`, which `lowerer` builds as `frame`, holds the routes the names
+  // read in it take, and so the selects those names write; until its routes
+  // are taken, a select is lowered into it by its own lowerer.
+  void BeginScope(
+      ScopeFrameId frame, StructuralScopeLowerer& lowerer,
+      hir::StructuralScope& scope);
+
+  // The selects `written`, a path a name read where `frame` stands wrote,
+  // gives each loop's block it passes, each lowered once and stored beside the
+  // routes it belongs to.
+  [[nodiscard]] auto SelectsWritten(
+      const WalkFrame& frame,
+      std::span<const slang::ast::HierarchicalReference::Element> written)
+      -> diag::Result<LoopSelectOf>;
+
+  // The scope holding the routes of what is read where `frame` stands: the
+  // structural scope a body -- a process, a subroutine, a class's method -- is
+  // read from, as for the scope's own expressions.
+  [[nodiscard]] auto RouteHolderOf(const WalkFrame& frame) const
+      -> const ScopeUnderConstruction&;
 
   // The compilation-unit declaration pass (LRM 23.6 / 23.9 / 27): before any
   // executable body lowers, walk the whole unit's scope tree and mint every
@@ -1446,10 +1512,11 @@ class UnitLowerer {
   // Empty when no route reaches the scope, never a compiler-bug invariant --
   // either the walk found a target form this unit cannot yet express, or the
   // scope sits in a namespace unit, which has no instance and so nothing on the
-  // object tree a route could walk to at all.
+  // object tree a route could walk to at all. An error is a select the name
+  // wrote that did not lower.
   [[nodiscard]] auto RouteToScope(
       const WalkFrame& frame, const slang::ast::Scope& target,
-      RouteOrigin origin) -> std::optional<ScopeRoute>;
+      RouteOrigin origin) -> diag::Result<std::optional<ScopeRoute>>;
 
   // Where a name written in this unit starts: through an interface port or
   // upward at the enclosing scope it landed in, where it leaves the unit's
@@ -1472,6 +1539,11 @@ class UnitLowerer {
   [[nodiscard]] auto StartReaching(const slang::ast::Scope& target)
       -> std::optional<RouteOrigin>;
 
+  // The class the unit of the instance holding `scope` published that scope
+  // as, recorded in this unit -- this unit's own included.
+  [[nodiscard]] auto PublishedClassOf(const slang::ast::Scope& scope)
+      -> hir::ScopeClassId;
+
   // A route starting where `scope` stands for this reader: `scope` is an
   // instance's body or a generate block outside the reader, and the route
   // starts at the nearest scope enclosing the reader that is an object of the
@@ -1483,7 +1555,7 @@ class UnitLowerer {
   // 6.22), where another design element declares it.
   [[nodiscard]] auto RouteToReplicatingScope(
       const WalkFrame& frame, const slang::ast::Symbol& type)
-      -> std::optional<ScopeRoute>;
+      -> diag::Result<std::optional<ScopeRoute>>;
 
   // How this reader reaches `target` when `target` is a scope this unit itself
   // lays out: the climb to the nearest scope enclosing both, then the descent
@@ -1510,7 +1582,7 @@ class UnitLowerer {
   [[nodiscard]] auto ReachThroughInterfacePort(
       const WalkFrame& frame,
       const slang::ast::HierarchicalReference& reference)
-      -> std::optional<ScopeRoute>;
+      -> diag::Result<std::optional<ScopeRoute>>;
 
   // A set of accesses as the entries naming what each reaches -- the reads a
   // wait watches, or the writes an implicit list leaves out. What each access
@@ -1539,11 +1611,12 @@ class UnitLowerer {
   // The descent from the scope class `from` records, which stands for the scope
   // `from_scope` of another unit, down to `to`, which stands in it: every hop
   // resolved against what the scope above it published. Empty where `to` does
-  // not stand in `from_scope`, or a scope on the way published nothing the
-  // descent names.
+  // not stand in `from_scope`, a scope on the way published nothing the
+  // descent names, or `select_of` gives no select for a loop's block on it.
   [[nodiscard]] auto DescendPublished(
       hir::ScopeClassId from, const slang::ast::Scope& from_scope,
-      const slang::ast::Scope& to) -> std::optional<PublishedDescent>;
+      const slang::ast::Scope& to, const LoopSelectOf& select_of)
+      -> std::optional<PublishedDescent>;
 
  private:
   // The instance this unit lowers and where each name it writes lands once it
@@ -1628,9 +1701,10 @@ class UnitLowerer {
       RouteOrigin origin) -> diag::Result<std::vector<hir::SensitivityEntry>>;
 
   // Where each of `names`, the names a read was reached by, starts: once per
-  // name leaving the reader's instance, and at the reader, once, for every
-  // name that stays inside it, as for a read put together with no names at
-  // all.
+  // name leaving the reader's instance or selecting a loop's block, which
+  // reaches a different block from each object, and at the reader, once, for
+  // every other name that stays inside it, as for a read put together with no
+  // names at all.
   [[nodiscard]] auto StartsOfNames(
       const WalkFrame& frame,
       std::span<const slang::ast::Expression* const> names)
@@ -1857,6 +1931,7 @@ class UnitLowerer {
   std::unordered_map<const slang::ast::Scope*, std::vector<hir::ClassId>>
       classes_by_scope_;
   std::map<ScopeFrameId, hir::ScopeRoutes> routes_by_frame_;
+  std::map<ScopeFrameId, ScopeUnderConstruction> scopes_under_construction_;
   std::uint32_t next_scope_frame_ = 0;
   std::uint32_t next_with_clause_ = 0;
   std::unordered_map<const slang::ast::Symbol*, MintedProceduralScope>

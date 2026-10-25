@@ -329,8 +329,7 @@ void UnitLowerer::DeclareMemberIdentities(
   // An instance is reached by a hierarchical name stepping onto it (LRM 23.6).
   const auto declare_instance = [&](InstanceArrayShape shape) {
     const hir::InstanceMemberId id = decls.instance_members.Declare();
-    MapOwnedChildBinding(
-        member, frame, hir::OwnedChildStep{.names = id, .selects = {}});
+    MapOwnedChildBinding(member, frame, id);
     published.members.emplace_back(
         ScopePublicationRecord::Instance{
             .symbol = &member, .id = id, .shape = std::move(shape)});
@@ -545,11 +544,7 @@ void UnitLowerer::DeclareConditionalGenerate(
   for (const auto* arm : AlternativesOfConstruct(block)) {
     MapOwnedChildBinding(
         *arm, frame,
-        hir::OwnedChildStep{
-            .names =
-                hir::GenerateBlockRef{
-                    .generate = generate, .alternative = position},
-            .selects = {}});
+        hir::GenerateBlockRef{.generate = generate, .alternative = position});
     ++position;
     if (arm->isUninstantiated) continue;
     choice.built.push_back(arm);
@@ -573,12 +568,7 @@ void UnitLowerer::DeclareLoopGenerate(
       ScopePublicationRecord::Loop{.id = generate, .loop = &array});
   for (const auto* entry : array.entries) {
     MapOwnedChildBinding(
-        *entry, frame,
-        hir::OwnedChildStep{
-            .names =
-                hir::GenerateLoopRef{
-                    .generate = generate, .index = LoopIndexOf(*entry)},
-            .selects = {}});
+        *entry, frame, DeclaredLoopBlock{.generate = generate});
     DeclareBlockIdentities(*entry, published);
   }
 }
@@ -1192,10 +1182,9 @@ auto UnitLowerer::LookupPatternVar(const slang::ast::PatternVarSymbol& sym)
 
 void UnitLowerer::MapOwnedChildBinding(
     const slang::ast::Symbol& child, ScopeFrameId home_frame,
-    hir::OwnedChildStep step) {
+    DeclaredOwnedChild declared) {
   const auto [_, inserted] = owned_child_bindings_.emplace(
-      &child,
-      OwnedChildBinding{.home_frame = home_frame, .step = std::move(step)});
+      &child, OwnedChildBinding{.home_frame = home_frame, .child = declared});
   if (!inserted) {
     throw InternalError(
         "UnitLowerer::MapOwnedChildBinding: owned child already mapped");
@@ -1226,9 +1215,9 @@ auto UnitLowerer::GenerateIdOf(const slang::ast::Symbol& construct) const
                 "UnitLowerer::GenerateIdOf: a generate construct was given an "
                 "instance's identity");
           },
-          [](hir::GenerateLoopRef loop) { return loop.generate; },
+          [](DeclaredLoopBlock loop) { return loop.generate; },
           [](hir::GenerateBlockRef block) { return block.generate; }},
-      it->second.step.names);
+      it->second.child);
 }
 
 auto UnitLowerer::GenerateIdOf(
@@ -1245,10 +1234,9 @@ auto UnitLowerer::GenerateIdOf(
 auto UnitLowerer::InstanceMemberIdOf(const slang::ast::Symbol& instance) const
     -> hir::InstanceMemberId {
   const auto it = owned_child_bindings_.find(&instance);
-  const auto* id =
-      it == owned_child_bindings_.end()
-          ? nullptr
-          : std::get_if<hir::InstanceMemberId>(&it->second.step.names);
+  const auto* id = it == owned_child_bindings_.end()
+                       ? nullptr
+                       : std::get_if<hir::InstanceMemberId>(&it->second.child);
   if (id == nullptr) {
     throw InternalError(
         "UnitLowerer::InstanceMemberIdOf: an instance was given no instance "

@@ -9,6 +9,7 @@
 #include <string_view>
 #include <vector>
 
+#include <slang/ast/HierarchicalReference.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/BlockSymbols.h>
@@ -104,6 +105,17 @@ template <typename Construct>
         "stood at");
   }
   return *value;
+}
+
+// The select a hierarchical path element wrote for a block of a loop generate
+// (LRM 23.6, 27.4), as the front end bound it; null for any other element.
+[[nodiscard]] inline auto LoopBlockSelectOf(
+    const slang::ast::HierarchicalReference::Element& element)
+    -> const slang::ast::Expression* {
+  const auto* block = element.symbol->as_if<slang::ast::GenerateBlockSymbol>();
+  return block != nullptr && block->getArrayIndex() != nullptr
+             ? element.leftExpr
+             : nullptr;
 }
 
 // The implicit localparam the index name denotes inside one block of a loop

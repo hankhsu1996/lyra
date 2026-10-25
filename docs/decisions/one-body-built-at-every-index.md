@@ -318,14 +318,15 @@ supplies no entry at all.
   table invites: a clause requiring a constant says the value is known, never that the artifact has
   to hold it. What remains needs something this lowering cannot do alone. A reference's coordinate
   needs the front end to hand back the expression beside the index it resolved; the fork now does,
-  and what reads it is which parameters a module is handed at construction, not a block's reference,
-  which still takes the resolved index. A width needs a type to be allowed to carry a shape it does
-  not fix -- and that is a gap of ours rather than a property of the language, because a width is
-  already a runtime descriptor here and not a type. **A parameter's value was in that sentence and
-  needed none of it**: the front end keeps the bound initializer beside the value it folded, and
-  that expression names the block's own index, which the construction already supplies. So a block's
-  parameter is a declaration of the block holding the expression, blocks writing the same expression
-  state the same thing, and what the sentence was really describing was the width alone.
+  and a block's reference states it, though blocks reaching their neighbour are still a body per
+  index, since the parameters the select reads name each block. A width needs a type to be allowed
+  to carry a shape it does not fix -- and that is a gap of ours rather than a property of the
+  language, because a width is already a runtime descriptor here and not a type. **A parameter's
+  value was in that sentence and needed none of it**: the front end keeps the bound initializer
+  beside the value it folded, and that expression names the block's own index, which the
+  construction already supplies. So a block's parameter is a declaration of the block holding the
+  expression, blocks writing the same expression state the same thing, and what the sentence was
+  really describing was the width alone.
 - **The front end is ours, which changes what counts as a reason.** Every sentence in this entry
   that says the front end does not supply something is a gap to be closed rather than a condition to
   design around, and the one such sentence that mattered has already been closed. The shape the

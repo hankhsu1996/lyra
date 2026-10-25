@@ -12,6 +12,7 @@
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/path_select.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -33,13 +34,14 @@ auto ReadPublishedMember(
 // Descends one path element (LRM 23.6) from the object `object` points at,
 // onto what its unit published under `names`: the member at the position that
 // unit's signature gave it, then one index per select, or for a loop's block
-// the loop's member asked by its index. An instance (LRM 25.3, 25.10) is
-// reached as the pointer type its member holds; a generate block (LRM 27) is
-// viewed as the class the element says it was published as.
+// the loop's member asked by the value the element's select evaluates to, which
+// `evaluate_select` evaluates. An instance (LRM 25.3, 25.10) is reached as the
+// pointer type its member holds; a generate block (LRM 27) is viewed as the
+// class the element says it was published as.
 auto StepThroughPublished(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
-    const hir::PublishedScopeRef& names, std::span<const std::uint32_t> selects)
-    -> mir::ExprId;
+    const hir::PublishedScopeRef& names, std::span<const std::uint32_t> selects,
+    const SelectEvaluator& evaluate_select) -> diag::Result<mir::ExprId>;
 
 // What a `disable` of a block or task another unit published terminates (LRM
 // 9.6.2), on the object `object` points at, as a borrowed pointer.
@@ -79,9 +81,13 @@ auto HeldInterfaceObject(
   mir::Block& block = *frame.current_block;
   mir::ExprId reached = block.exprs.Add(
       ReachHeldInterface(unit, steps, *std::move(handle_or), object_pointer));
+  const SelectEvaluator evaluate_select = EvaluateSelectsIn(lowerer, frame);
   for (const hir::PublishedStep& step : access.steps) {
-    reached = StepThroughPublished(
-        lowerer.Owner(), block, reached, step.names, step.selects);
+    auto next = StepThroughPublished(
+        lowerer.Owner(), block, reached, step.names, step.selects,
+        evaluate_select);
+    if (!next) return std::unexpected(std::move(next.error()));
+    reached = *next;
   }
   return reached;
 }

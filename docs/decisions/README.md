@@ -421,6 +421,12 @@ the detail lives in the entry itself.
   its name shortened by a digest, deciding by comparing published classes, finding a block's body by
   comparing lowered blocks, and a non-virtual method asking which realization the object is are
   rejected.
+- [a-body-states-nothing-of-another-bodys-implementation](a-body-states-nothing-of-another-bodys-implementation.md)
+  -- what a body's code states of anything outside itself is what that thing publishes and where the
+  source wrote it: a reach into a block of a loop goes through what the loop's scope published,
+  inside the unit as across it, a subroutine of such a block is called through its published slot,
+  and a scope's construction table is its own. Calling another block's subroutine directly and
+  reaching a table section by offset are rejected.
 - [the-lowering-reads-an-instance-only-through-its-identity](the-lowering-reads-an-instance-only-through-its-identity.md)
   -- every instance one identity names lowers alike because the lowering reads nothing of it the
   identity does not hold, not because a check finds the copies alike. Read it for what the lowering

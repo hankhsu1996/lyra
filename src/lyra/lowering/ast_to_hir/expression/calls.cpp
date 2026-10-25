@@ -399,8 +399,9 @@ auto BuiltinCall(
       .arguments = {operands.begin() + 1, operands.end()}};
 }
 
-// Enables a subroutine of another instance, or of a generate block inside one
-// (LRM 25.7, 23.6), reached from `origin`, where the call's name started. The
+// Enables a subroutine of another instance or of a generate block inside one,
+// or of a block of a loop of this one (LRM 25.7, 23.6, 27.4), reached from
+// `origin`, where the call's name started. The
 // route to that scope is the same walk a read of a declaration there takes,
 // and the scope published every subroutine it declares, so the call is made on
 // what the route lands on and what it passes and awaits is counted out of that
@@ -472,7 +473,7 @@ auto LowerHeldInterfaceCall(
   auto handle = lowerer.LowerExpr(held, frame);
   if (!handle) return std::unexpected(std::move(handle.error()));
   auto descent = DescendThroughHandle(
-      unit_lowerer, frame.Exprs().Add(*std::move(handle)), handle_type,
+      unit_lowerer, frame, frame.Exprs().Add(*std::move(handle)), handle_type,
       *sym.getParentScope(), span);
   if (!descent) return std::unexpected(std::move(descent.error()));
   const hir::ScopeClassSignature& published =
@@ -1119,19 +1120,19 @@ auto LowerSubroutineCall(
   }
 
   // A name leaving the caller's instance starts where it lands or at the port
-  // it went through (LRM 23.8, 25.3), whatever declaration the front end
-  // resolved it to in the instance being lowered: in another instance of this
-  // unit the same text reaches another object. Only a name that stays inside
-  // the instance may enable a subroutine this unit declares as its own.
+  // it went through (LRM 23.8, 25.3), and one passing a block of a loop
+  // reaches the block its select picks (LRM 27.4), whatever declaration the
+  // front end resolved it to in the elaboration being lowered. Only a name
+  // that does neither may enable a subroutine this unit declares as its own.
   RouteOrigin start =
       unit_lowerer.StartOf(frame, *sym, call.lookupInfo.hierRef);
-  const auto binding = std::holds_alternative<FromReader>(start)
+  const auto binding = NamesOwnDeclaration(start)
                            ? unit_lowerer.LookupSubroutineBinding(*sym)
                            : std::nullopt;
-  // What is left is a subroutine another instance declares -- one an interface
-  // offers across a port (LRM 25.7), or one a hierarchical name enables (LRM
-  // 23.6) -- and the route to the object it is enabled on starts where the name
-  // does.
+  // What is left is a subroutine of another object -- one an interface offers
+  // across a port (LRM 25.7), or one a hierarchical name enables (LRM 23.6),
+  // a block of a loop of this unit included -- and the route to the object it
+  // is enabled on starts where the name does.
   if (!binding.has_value()) {
     return LowerObjectSubroutineCall(
         unit_lowerer, frame, std::move(start), *sym, std::move(arg_ids), span);

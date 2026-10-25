@@ -23,10 +23,10 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_manager.hpp"
-#include "lyra/hir/construction_table_layout.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
+#include "lyra/hir/scope_instantiations.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
@@ -47,6 +47,7 @@
 #include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/net_declaration.hpp"
+#include "lyra/lowering/hir_to_mir/path_select.hpp"
 #include "lyra/lowering/hir_to_mir/predicate.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -393,15 +394,28 @@ auto ObjectEntryTypes(
   return types;
 }
 
-// What a block of this unit is built with: the table the object building it
-// was handed, since every scope of one object is constructed with the same
-// one, then whatever its construction supplies.
+// What a block of this unit is built with: its own table, which the table the
+// scope building it was handed holds at `table`, then whatever its
+// construction supplies.
 auto BlockConstructionArguments(
     const mir::CompilationUnit& unit, const WalkFrame& frame,
-    std::vector<mir::Expr> supplied) -> std::vector<mir::Expr> {
+    hir::BlockTableIndex table, std::vector<mir::Expr> supplied)
+    -> std::vector<mir::Expr> {
+  mir::Block& block = *frame.current_block;
+  const mir::ExprId handed =
+      block.exprs.Add(ReadConstructionTable(unit, frame));
   std::vector<mir::Expr> arguments;
   arguments.reserve(1 + supplied.size());
-  arguments.push_back(ReadConstructionTable(unit, frame));
+  arguments.push_back(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{.target = support::BuiltinFn::kBlockTable},
+                  .arguments =
+                      {handed,
+                       mir::BuildMachineIntLiteral(unit, block, table.value)}},
+          .type = mir::ConstructionTablePointer(unit.types)});
   std::ranges::move(supplied, std::back_inserter(arguments));
   return arguments;
 }
@@ -954,31 +968,20 @@ auto SelectedMember(
 }
 
 // Descends one element into a child the scope `from` stands in declares: the
-// parent's handle on that child, selected, or the block of a loop the loop's
-// member is asked for by its index. A child whose body is another compilation
-// unit is still reached by a typed pointer, but what it declares is that
-// unit's to state, so the route stops resolving names against a scope of this
-// one. One this artifact lowers keeps the route inside it, and since what the
-// step reached is the base every block of a construct extends, it is viewed as
-// the class of the scope the element names.
+// parent's handle on that child, selected. A child whose body is another
+// compilation unit is still reached by a typed pointer, but what it declares
+// is that unit's to state, so the route stops resolving names against a scope
+// of this one. One this artifact lowers keeps the route inside it, and since
+// what the step reached is the base every block of a construct extends, it is
+// viewed as the class of the scope the element names.
 auto StepToOwnedChild(
     UnitLowerer& unit_lowerer, mir::Block& block, const ReachedPlace& from,
     const hir::OwnedChildRef& names, std::span<const std::uint32_t> selects)
     -> ReachedPlace {
   const StructuralScopeLowerer& scope = OwnScopeOf(from, "StepToOwnedChild");
   const OwnedChildAnchor anchor = scope.TranslateOwnedChild(names);
-  const mir::ExprId reached = std::visit(
-      Overloaded{
-          [&](const mir::ClassFieldTarget& handle) {
-            return SelectedMember(unit_lowerer, block, from, handle, selects);
-          },
-          [&](const LoopBlockAt& loop) {
-            return ReachLoopBlock(
-                unit_lowerer, block,
-                SelectedMember(unit_lowerer, block, from, loop.blocks, {}),
-                loop.index);
-          }},
-      anchor.reach);
+  const mir::ExprId reached =
+      SelectedMember(unit_lowerer, block, from, anchor.reach, selects);
   if (anchor.target_scope == nullptr) {
     return ReachedPlace{.expr = reached, .place = InPublishedScope{}};
   }
@@ -1098,34 +1101,42 @@ auto MaterializeLeaf(
 // Walks from the base to whatever the last step lands on, which is a scope of
 // the elaborated tree. What the walk is for -- reaching something the scope
 // holds, or asking the scope a name -- is the caller's, so the walk ends here.
+//
+// The selects a route's steps were written with belong to the scope holding
+// the route, which evaluates them where the walk is written.
 auto BuildRouteWalk(
     const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     const hir::RouteBase& base, std::span<const hir::PathStep> steps)
-    -> ReachedPlace {
+    -> diag::Result<ReachedPlace> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
   mir::Block& block = *frame.current_block;
+  const SelectEvaluator evaluate_select = EvaluateSelectsIn(lowerer, frame);
   ReachedPlace reached = BuildRouteAnchor(lowerer, frame, base);
   for (const hir::PathStep& step : steps) {
-    reached = std::visit(
+    auto next = std::visit(
         Overloaded{
-            [&](const hir::OwnedChildRef& owned) {
+            [&](const hir::OwnedChildRef& owned) -> diag::Result<ReachedPlace> {
               return StepToOwnedChild(
                   unit_lowerer, block, reached, owned, step.selects);
             },
-            [&](const hir::InterfacePortId& port) {
+            [&](const hir::InterfacePortId& port)
+                -> diag::Result<ReachedPlace> {
               return StepThroughInterfacePort(
                   unit_lowerer, block, reached, port, step.selects);
             },
             // What another unit published belongs to that unit, so the route
             // has left this artifact.
-            [&](const hir::PublishedScopeRef& published) {
-              return ReachedPlace{
-                  .expr = StepThroughPublished(
-                      unit_lowerer, block, reached.expr, published,
-                      step.selects),
-                  .place = InPublishedScope{}};
+            [&](const hir::PublishedScopeRef& published)
+                -> diag::Result<ReachedPlace> {
+              auto stepped = StepThroughPublished(
+                  unit_lowerer, block, reached.expr, published, step.selects,
+                  evaluate_select);
+              if (!stepped) return std::unexpected(std::move(stepped.error()));
+              return ReachedPlace{.expr = *stepped, .place = InPublishedScope{}};
             }},
         step.names);
+    if (!next) return std::unexpected(std::move(next.error()));
+    reached = *std::move(next);
   }
   return reached;
 }
@@ -1136,11 +1147,11 @@ auto BuildRouteWalk(
 template <typename Leaf>
 auto BuildRouteValue(
     const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
-    const hir::Route<Leaf>& route) -> mir::ExprId {
-  const ReachedPlace reached =
-      BuildRouteWalk(lowerer, frame, route.base, route.steps);
+    const hir::Route<Leaf>& route) -> diag::Result<mir::ExprId> {
+  auto reached = BuildRouteWalk(lowerer, frame, route.base, route.steps);
+  if (!reached) return std::unexpected(std::move(reached.error()));
   return MaterializeLeaf(
-      lowerer.Owner(), *frame.current_block, reached, route.leaf);
+      lowerer.Owner(), *frame.current_block, *reached, route.leaf);
 }
 
 // Stores `value` into the scope's own `slot`. Every slot a scope settles is
@@ -1166,29 +1177,37 @@ void FillScopeSlot(
 // its slot holds is what the route ends at rather than anything it had to walk
 // to reach it. A climbed route has no slot to fill.
 template <typename Leaf, typename Id>
-void InstallStoredRoutes(
+auto InstallStoredRoutes(
     const StructuralScopeLowerer& lowerer, const WalkFrame& resolve_frame,
-    const base::Arena<hir::Route<Leaf>, Id>& routes) {
+    const base::Arena<hir::Route<Leaf>, Id>& routes) -> diag::Result<void> {
   for (const Id hir_id : routes.Ids()) {
-    std::visit(
+    auto installed = std::visit(
         Overloaded{
-            [](const ClimbedRoute&) {},
-            [&](const StoredRoute& stored) {
+            [](const ClimbedRoute&) -> diag::Result<void> { return {}; },
+            [&](const StoredRoute& stored) -> diag::Result<void> {
+              auto value =
+                  BuildRouteValue(lowerer, resolve_frame, routes.Get(hir_id));
+              if (!value) return std::unexpected(std::move(value.error()));
               FillScopeSlot(
-                  lowerer.Owner().Unit(), resolve_frame, stored.slot,
-                  BuildRouteValue(lowerer, resolve_frame, routes.Get(hir_id)));
+                  lowerer.Owner().Unit(), resolve_frame, stored.slot, *value);
+              return {};
             }},
         lowerer.ReachOf(hir_id));
+    if (!installed) return installed;
   }
+  return {};
 }
 
 // Fills every slot the scope's walks keep, once the object tree is whole.
-void InstallScopeRoutes(
-    const StructuralScopeLowerer& lowerer, const WalkFrame& resolve_frame) {
+auto InstallScopeRoutes(
+    const StructuralScopeLowerer& lowerer, const WalkFrame& resolve_frame)
+    -> diag::Result<void> {
   const hir::ScopeRoutes& routes = lowerer.HirScope().routes;
-  InstallStoredRoutes(lowerer, resolve_frame, routes.values);
-  InstallStoredRoutes(lowerer, resolve_frame, routes.objects);
-  InstallStoredRoutes(lowerer, resolve_frame, routes.disable_targets);
+  auto values = InstallStoredRoutes(lowerer, resolve_frame, routes.values);
+  if (!values) return values;
+  auto objects = InstallStoredRoutes(lowerer, resolve_frame, routes.objects);
+  if (!objects) return objects;
+  return InstallStoredRoutes(lowerer, resolve_frame, routes.disable_targets);
 }
 
 // The scope the execution's reports name.
@@ -1375,9 +1394,9 @@ auto ComposeBoundObjects(
 // the other. The child owns no storage on either side, so nothing else happens
 // here -- the same shape a `ref` port's alias bind takes, over objects rather
 // than a cell.
-void InstallInterfacePortConnection(
+auto InstallInterfacePortConnection(
     StructuralScopeLowerer& lowerer, const WalkFrame& resolve_frame,
-    const hir::InterfacePortConnection& conn) {
+    const hir::InterfacePortConnection& conn) -> diag::Result<void> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
   mir::Block& block = *resolve_frame.current_block;
   // What the member holds is a handle on each object it stands for, which is
@@ -1385,15 +1404,17 @@ void InstallInterfacePortConnection(
   const hir::DataCell port = hir::CellOf(conn.endpoint.leaf);
   const mir::TypeId member_type = unit_lowerer.MemberCellType(
       unit_lowerer.TranslateType(port.type), port.storage);
-  const mir::ExprId nav =
-      BuildRouteValue(lowerer, resolve_frame, conn.endpoint);
+  auto nav = BuildRouteValue(lowerer, resolve_frame, conn.endpoint);
+  if (!nav) return std::unexpected(std::move(nav.error()));
   const mir::ExprId target =
-      block.Deref(unit_lowerer.Unit().types, nav, member_type);
+      block.Deref(unit_lowerer.Unit().types, *nav, member_type);
 
   std::vector<mir::ExprId> handles;
   handles.reserve(conn.peers.size());
   for (const hir::ObjectRoute& peer : conn.peers) {
-    handles.push_back(BuildRouteValue(lowerer, resolve_frame, peer));
+    auto handle = BuildRouteValue(lowerer, resolve_frame, peer);
+    if (!handle) return std::unexpected(std::move(handle.error()));
+    handles.push_back(*handle);
   }
   const auto* objects =
       unit_lowerer.Hir().types.Get(port.type).As<hir::UnitObjectsType>();
@@ -1410,6 +1431,7 @@ void InstallInterfacePortConnection(
           .expr = block.exprs.Add(
               mir::MakeAssignExpr(
                   unit_lowerer.Unit().builtins, target, value))});
+  return {};
 }
 
 // The positions one operand of a join's side names: the part of a net the
@@ -1615,10 +1637,11 @@ auto BindInputPort(
   const mir::TypeId value_type = unit_lowerer.TranslateType(member.type);
   const mir::TypeId ref_type =
       unit_lowerer.MemberCellType(value_type, member.storage);
-  const auto bind_to = [&](const AccessPath& storage) {
-    const mir::ExprId target = resolve_block.Deref(
-        unit_lowerer.Unit().types,
-        BuildRouteValue(lowerer, resolve_frame, route), ref_type);
+  const auto bind_to = [&](const AccessPath& storage) -> diag::Result<void> {
+    auto nav = BuildRouteValue(lowerer, resolve_frame, route);
+    if (!nav) return std::unexpected(std::move(nav.error()));
+    const mir::ExprId target =
+        resolve_block.Deref(unit_lowerer.Unit().types, *nav, ref_type);
     resolve_block.AppendStmt(
         mir::ExprStmt{
             .expr = resolve_block.exprs.Add(
@@ -1627,6 +1650,7 @@ auto BindInputPort(
                     {resolve_block.AsValue(unit.types, target),
                      PathReference(unit, resolve_block, storage)},
                     unit.builtins.void_type))});
+    return {};
   };
 
   if (data.peer.has_value()) {
@@ -1634,8 +1658,7 @@ auto BindInputPort(
     if (NamesSharedStorage(hir_scope, peer, member.type)) {
       auto named = lowerer.LowerLhsExpr(peer, resolve_frame);
       if (!named) return std::unexpected(std::move(named.error()));
-      bind_to(*named);
-      return {};
+      return bind_to(*named);
     }
   }
 
@@ -1664,7 +1687,8 @@ auto BindInputPort(
               mir::MakeCapabilityInstallCallExpr(
                   OwnerPlace(*kept_cell(frame)), prototype,
                   support::BuiltinFn::kInitialize, unit.builtins.void_type))});
-  bind_to(*kept_cell(resolve_frame));
+  auto bound = bind_to(*kept_cell(resolve_frame));
+  if (!bound) return bound;
   if (!data.peer.has_value()) return {};
 
   const hir::Expr& source = hir_scope.exprs.Get(*data.peer);
@@ -1712,7 +1736,9 @@ auto InstallPortConnections(
     const hir::PortConnection& pc = hir_scope.port_connections.Get(id);
     if (const auto* iface =
             std::get_if<hir::InterfacePortConnection>(&pc.kind)) {
-      InstallInterfacePortConnection(lowerer, resolve_frame, *iface);
+      auto installed =
+          InstallInterfacePortConnection(lowerer, resolve_frame, *iface);
+      if (!installed) return installed;
       continue;
     }
     const auto& data = std::get<hir::DataPortConnection>(pc.kind);
@@ -1747,9 +1773,10 @@ auto InstallPortConnections(
         const hir::DataCell member = hir::CellOf(route.leaf);
         const mir::TypeId ref_type = unit_lowerer.MemberCellType(
             unit_lowerer.TranslateType(member.type), member.storage);
-        const mir::ExprId nav = BuildRouteValue(lowerer, resolve_frame, route);
+        auto nav = BuildRouteValue(lowerer, resolve_frame, route);
+        if (!nav) return std::unexpected(std::move(nav.error()));
         const mir::ExprId target =
-            resolve_block.Deref(unit_lowerer.Unit().types, nav, ref_type);
+            resolve_block.Deref(unit_lowerer.Unit().types, *nav, ref_type);
 
         // The peer is lent as a `ref` actual is. A part of a variable is not
         // yet: the member is bound before the variable takes its declared
@@ -1806,15 +1833,16 @@ auto InstallPortConnections(
     // The connection is created by this instantiation and evaluates the
     // code of the instance its source belongs to: this one for an input, the
     // child for an output, which reads the child's port (LRM 4.9.6, 24.3.2).
-    const mir::ExprId runs_as =
-        is_input ? CreatingInstance(unit_lowerer, activate_frame)
-                 : ObjectAs(
-                       *activate_frame.current_block,
-                       BuildRouteWalk(
-                           lowerer, activate_frame, hir::InUnitBase{.hops = {}},
-                           std::array{hir::AsPathStep(pc.instance)})
-                           .expr,
-                       unit_lowerer.Unit().builtins.scope_ptr);
+    mir::ExprId runs_as = CreatingInstance(unit_lowerer, activate_frame);
+    if (!is_input) {
+      auto child = BuildRouteWalk(
+          lowerer, activate_frame, hir::InUnitBase{.hops = {}},
+          std::array{hir::AsPathStep(pc.instance)});
+      if (!child) return std::unexpected(std::move(child.error()));
+      runs_as = ObjectAs(
+          *activate_frame.current_block, child->expr,
+          unit_lowerer.Unit().builtins.scope_ptr);
+    }
     AppendDriverRegistration(
         unit_lowerer, activate_frame, runs_as, body, pc.span);
   }
@@ -2029,10 +2057,13 @@ auto LowerRepeatedGenerate(
     auto arguments =
         LowerConstructorArguments(lowerer, in_frame, repeat.arguments);
     if (!arguments) return std::unexpected(std::move(arguments.error()));
+    const ChildStructuralScopeBinding& child =
+        gen_binding.blocks.Get(built.body);
     AppendLoopBlockConstruction(
-        unit_lowerer, in_frame, gen_binding.blocks.Get(built.body),
-        gen_binding.handle, BuildToInt64Call(unit, in, index_read(in)),
-        BlockConstructionArguments(unit, in_frame, *std::move(arguments)));
+        unit_lowerer, in_frame, child, gen_binding.handle,
+        BuildToInt64Call(unit, in, index_read(in)),
+        BlockConstructionArguments(
+            unit, in_frame, child.table, *std::move(arguments)));
     return {};
   };
 
@@ -2130,7 +2161,8 @@ auto LowerSelectionBranchInto(
             AppendOwnedChildConstruction(
                 lowerer.Owner(), frame, std::nullopt, binding.label,
                 binding.lowerer->ClassId(), gen_binding.handle,
-                BlockConstructionArguments(lowerer.Owner().Unit(), frame, {}));
+                BlockConstructionArguments(
+                    lowerer.Owner().Unit(), frame, binding.table, {}));
             return {};
           },
           [&](hir::SelectionChoiceId nested) -> diag::Result<void> {
@@ -2305,7 +2337,8 @@ auto LowerSingleBlockGenerate(
   AppendOwnedChildConstruction(
       lowerer.Owner(), body_frame, std::nullopt, binding.label,
       binding.lowerer->ClassId(), gen_binding.handle,
-      BlockConstructionArguments(lowerer.Owner().Unit(), body_frame, {}));
+      BlockConstructionArguments(
+          lowerer.Owner().Unit(), body_frame, binding.table, {}));
   return mir::Stmt{
       .label = std::nullopt,
       .data = mir::BlockStmt{.scope = block.child_scopes.Add(std::move(body))}};
@@ -2417,23 +2450,6 @@ auto ApplyInstanceSelects(
   return reached;
 }
 
-auto ReachLoopBlock(
-    const UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId blocks,
-    std::int64_t index) -> mir::ExprId {
-  const mir::CompilationUnit& unit = unit_lowerer.Unit();
-  return block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kLoopBlocksAt,
-                          .receiver = blocks},
-                  .arguments = {mir::BuildMachineIntLiteral(
-                      unit, block, index)}},
-          .type = unit.builtins.scope_ptr});
-}
-
 auto DescendOwnedChildren(
     const StructuralScopeLowerer& scope, mir::Block& block, mir::ExprId object,
     std::span<const hir::OwnedChildStep> descent) -> mir::ExprId {
@@ -2454,16 +2470,20 @@ auto EndAlong(
     const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     const hir::Route<Leaf>& route, const RouteReach& reach) -> mir::ExprId {
   return std::visit(
-      Overloaded{
-          [&](const ClimbedRoute&) {
-            return BuildRouteValue(lowerer, frame, route);
-          },
-          [&](const StoredRoute& stored) {
-            return frame.current_block->exprs.Add(
-                BuildStructuralFieldAccessExpr(
-                    frame, lowerer.Owner().Unit(), mir::EnclosingHops{0},
-                    stored.slot));
-          }},
+      Overloaded{// A climbed route has no step to walk, so it ends where it is
+                 // anchored.
+                 [&](const ClimbedRoute&) {
+                   return MaterializeLeaf(
+                       lowerer.Owner(), *frame.current_block,
+                       BuildRouteAnchor(lowerer, frame, route.base),
+                       route.leaf);
+                 },
+                 [&](const StoredRoute& stored) {
+                   return frame.current_block->exprs.Add(
+                       BuildStructuralFieldAccessExpr(
+                           frame, lowerer.Owner().Unit(), mir::EnclosingHops{0},
+                           stored.slot));
+                 }},
       reach);
 }
 
@@ -2748,7 +2768,9 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
       shape.contained.push_back(*child_r);
       blocks.push_back(
           ChildStructuralScopeBinding{
-              .label = block.scope.source_name, .lowerer = &child});
+              .label = block.scope.source_name,
+              .lowerer = &child,
+              .table = instantiations_->BlockTableOf(gen_id, block_id)});
     }
     generates.push_back(
         GenerateBinding{
@@ -3608,7 +3630,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   // consumer that reaches a target through one -- a continuous-assign driver
   // attached to a cross-unit net, a port-cell connection -- dereferences a slot
   // that is already bound.
-  InstallScopeRoutes(*this, resolve_frame);
+  auto routes = InstallScopeRoutes(*this, resolve_frame);
+  if (!routes) return std::unexpected(std::move(routes.error()));
 
   for (const hir::ContinuousAssignId id : hir_scope.continuous_assigns.Ids()) {
     const hir::ContinuousAssign& assign = hir_scope.continuous_assigns.Get(id);
@@ -3819,8 +3842,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   // them, since nothing hands it one.
   if (design_root_.has_value()) {
     construction_table_ = StateConstructionTables(
-        unit, class_id_, mir_class,
-        unit_lowerer.ConstructionLayout().Instantiated(),
+        unit, class_id_, mir_class, unit_lowerer.RootInstantiations(),
         design_root_->instantiations,
         ObjectEntryTypes(unit_lowerer, design_root_->object_entries));
   }

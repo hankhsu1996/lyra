@@ -113,9 +113,11 @@ auto ResolveRoutedViewName(
   // declared here. Which of those is a fact about the object and not about the
   // name, so it is the same question a name reaching an ordinary member of that
   // instance asks.
-  auto through = unit_lowerer.RouteToScope(
+  auto walked = unit_lowerer.RouteToScope(
       frame, *selected.getParentScope(),
       unit_lowerer.StartOf(frame, hve.symbol, hve.ref));
+  if (!walked) return std::unexpected(std::move(walked.error()));
+  std::optional<ScopeRoute> through = *std::move(walked);
   const auto* on = through.has_value()
                        ? std::get_if<InPublishedScope>(&through->place)
                        : nullptr;

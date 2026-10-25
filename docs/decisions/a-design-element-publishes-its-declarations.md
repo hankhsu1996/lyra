@@ -97,17 +97,17 @@ is the object's to answer.
 leaf, and no part of it carries a string. A step is one element of the path the source wrote (LRM
 23.6): the declaration it names, and the selects written beside that name, one per dimension of what
 the name holds. A step onto an instance is the published member for it, selected; a step into a
-loop's block names the loop and the value its index stood at, as the source does (LRM 27.4), the
-loop's entry answers which of the blocks the object built that is, and the block is viewed as its
-published class; a step into a block that stands alone or that a conditional chose names the block
-by its label, which needs no select (LRM 27.5), and views the construct's entry as that block's
-class. A leaf is a published member, a published disable target, or a call through the object to a
-published subroutine. A construction of a class another instance declares, and a call of a method of
-that class itself, are handed that instance by the same kind of route. That route starts where the
-name the class's type came through landed, or, for a type handed down by a parameter, at the
-enclosing instance it belongs to -- never at whichever landing happens to hold the instance, which
-differs between instances of one unit (fact 7). A name the scope did not publish is refused where it
-compiles.
+loop's block names the loop and the select the source wrote, evaluated in each object the name is
+read in (LRM 23.6, 27.4), the loop's entry answers which of the blocks the object built that is, and
+the block is viewed as its published class; a step into a block that stands alone or that a
+conditional chose names the block by its label, which needs no select (LRM 27.5), and views the
+construct's entry as that block's class. A leaf is a published member, a published disable target,
+or a call through the object to a published subroutine. A construction of a class another instance
+declares, and a call of a method of that class itself, are handed that instance by the same kind of
+route. That route starts where the name the class's type came through landed, or, for a type handed
+down by a parameter, at the enclosing instance it belongs to -- never at whichever landing happens
+to hold the instance, which differs between instances of one unit (fact 7). A name the scope did not
+publish is refused where it compiles.
 
 **D4. An upward name starts at the enclosing instance of the class the front end's search landed on,
 and that class tells the unit apart.** The anchor is one runtime query -- the nearest enclosing

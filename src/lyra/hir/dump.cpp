@@ -2138,10 +2138,6 @@ class HirDumper {
             [](const InstanceMemberId& id) {
               return std::format("InstanceMember[{}]", id.value);
             },
-            [](const GenerateLoopRef& loop) {
-              return std::format(
-                  "Generate[{}].index{}", loop.generate.value, loop.index);
-            },
             [](const GenerateBlockRef& block) {
               return std::format(
                   "Generate[{}].alt{}", block.generate.value,
@@ -2162,9 +2158,9 @@ class HirDumper {
             },
             [](const PublishedGenerateLoopRef& loop) {
               return std::format(
-                  "ScopeClass[{}].loop[{}].index{} as "
+                  "ScopeClass[{}].loop[{}][Expr[{}]] as "
                   "ScopeClass[{}]",
-                  loop.scope_class.value, loop.loop.value, loop.index,
+                  loop.scope_class.value, loop.loop.value, loop.position.value,
                   loop.result_class.value);
             },
             [](const PublishedGenerateBlockRef& block) {
@@ -2189,10 +2185,6 @@ class HirDumper {
               throw InternalError(
                   "HirDumper::BlockScopeAt: a descent names an instance of "
                   "another unit");
-            },
-            [&](const GenerateLoopRef& loop) -> const StructuralScope& {
-              const Generate& gen = owner.generates.Get(loop.generate);
-              return gen.blocks.Get(LoopBlockScopeOf(gen, loop.index)).scope;
             },
             [&](const GenerateBlockRef& block) -> const StructuralScope& {
               const Generate& gen = owner.generates.Get(block.generate);

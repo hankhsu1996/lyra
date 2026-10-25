@@ -143,8 +143,8 @@ void AppendRecord(
 void AppendRecord(
     std::vector<FieldLayout>& out, std::uint64_t at,
     const runtime::ConstructionTable& record) {
-  const auto& [instantiations] = record;
-  AppendFieldsOf(out, at, record, instantiations);
+  const auto& [instantiations, blocks] = record;
+  AppendFieldsOf(out, at, record, instantiations, blocks);
 }
 
 // A field that is itself a structure stands for its own fields.

@@ -17,12 +17,12 @@
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/compilation_unit.hpp"
-#include "lyra/hir/construction_table_layout.hpp"
 #include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/method_id.hpp"
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/published_scope.hpp"
 #include "lyra/hir/scope_class.hpp"
+#include "lyra/hir/scope_instantiations.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
@@ -218,7 +218,7 @@ class UnitLowerer {
       const diag::SourceManager& source_manager)
       : hir_(&hir),
         source_manager_(&source_manager),
-        construction_layout_(hir) {
+        root_instantiations_(hir, hir.root_scope) {
     // The class of each scope of the design hierarchy the unit names -- its
     // own scopes' and those of other units it reaches -- takes its identity
     // first: building the tree of the unit's scopes names its own, and a type
@@ -269,10 +269,12 @@ class UnitLowerer {
   // starts: as a program's, where the unit is one (LRM 24.3.1).
   [[nodiscard]] auto ScopeExecution() const -> support::ScopeExecution;
 
-  // The order this unit's construction table lists its instantiations in.
-  [[nodiscard]] auto ConstructionLayout() const
-      -> const hir::ConstructionTableLayout& {
-    return construction_layout_;
+  // What the root scope of this unit's objects makes at each instantiation it
+  // declares, and its blocks the same, in the order their construction tables
+  // list them.
+  [[nodiscard]] auto RootInstantiations() const
+      -> const hir::ScopeInstantiations& {
+    return root_instantiations_;
   }
 
   // Where a construct was written, which a diagnostic the lowering emits names
@@ -629,7 +631,7 @@ class UnitLowerer {
 
   const hir::CompilationUnit* hir_;
   const diag::SourceManager* source_manager_;
-  hir::ConstructionTableLayout construction_layout_;
+  hir::ScopeInstantiations root_instantiations_;
   mir::CompilationUnit unit_;
   base::Translation<hir::TypeId, mir::TypeId> type_translations_;
   // The class each class the unit names is, of this unit or another, and what

@@ -1454,6 +1454,9 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "instantiation_table",
           .declaration = RuntimeFunction("InstantiationTable")};
+    case BuiltinFn::kBlockTable:
+      return {
+          .name = "block_table", .declaration = RuntimeFunction("BlockTable")};
     case BuiltinFn::kExtendSequence:
       return {
           .name = "sequence_extend",

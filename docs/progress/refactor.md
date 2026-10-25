@@ -3063,13 +3063,15 @@ source, or not yet tried.
       static prefix where a select is out of bounds (LRM 11.5.3 has such a prefix in its own
       example) would let the block share its body instead, and was weighed and not done.
 
-- [ ] R222 -- A hierarchical name's select of a loop generate's block is lowered as the index the
-      front end resolved, so blocks that each read their neighbour are a body each, and the route is
-      rebuilt from the target's parents rather than read off the path the lookup produced. Target:
-      the route is read off that path, the select is stated as the expression the source wrote and
-      evaluated where the reference is settled, and the resolved index stays only where the loop's
-      blocks are of several classes. Needs the front end to keep a path's selector expressions, a
-      change carried twice before and taken out each time for want of a reader. Not yet tried.
+- [ ] R222 -- A hierarchical name's select of a loop generate's block is now the expression the
+      source wrote, evaluated where the reference is settled. Blocks reaching their neighbour by a
+      select worked out from their index are still a body per index, since the parameters the select
+      reads name each block. The route is still rebuilt from the target's parents, with each select
+      looked up on the written path by the block it picked, rather than read off that path. An
+      instance array's select is still the position the front end resolved, so blocks reaching
+      `u[i-1]` are a body each. And a loop's block reached through a virtual interface is selected
+      by its index, because the front end hands back the member the name lands on and keeps no path
+      for it; that needs a front-end change first.
 
 - [ ] R223 -- An assertion written at module level is recognized by the shape of the procedure the
       front end made for it, and only the concurrent form is recognized, so a deferred immediate

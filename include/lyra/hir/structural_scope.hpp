@@ -187,9 +187,10 @@ struct ScopePublication {
   auto operator==(const ScopePublication&) const -> bool = default;
 };
 
-// The route ends at a member another unit published, at the position that
-// unit's signature gave it. The name was resolved where this unit compiles, so
-// a renamed member fails there rather than while the design elaborates.
+// The route ends at a member a scope published -- one of another unit, or a
+// block of a loop of this one -- at the position its unit's signature gave it.
+// The name was resolved where this unit compiles, so a renamed member fails
+// there rather than while the design elaborates.
 struct PublishedMemberLeaf {
   ScopeClassId scope_class;
   PublishedMemberId member;
@@ -646,34 +647,11 @@ struct Generate {
   auto operator==(const Generate&) const -> bool = default;
 };
 
-// Which compiled scope a path naming one of a generate's blocks reaches. Every
-// consumer of a path asks this and nothing else about a generate, so the
-// answer is stated once here rather than re-derived at each of them.
-//
-// A path names a loop's block by `index`, the value the index of the block it
-// picked stood at (LRM 23.6, 27.4), and the loop says which of its bodies
-// stands there. A pairing the language does not have is a name that was
-// resolved against a different construct than the one it reached.
-[[nodiscard]] inline auto LoopBlockScopeOf(
-    const Generate& gen, std::int64_t index) -> StructuralScopeId {
-  const auto* repeat = std::get_if<BlocksRepeat>(&gen.counting);
-  if (repeat == nullptr) {
-    throw InternalError(
-        "hir::LoopBlockScopeOf: a construct that counts out no blocks is "
-        "named as a loop");
-  }
-  if (repeat->bodies.size() == 1) return repeat->bodies.front().body;
-  for (const LoopBody& built : repeat->bodies) {
-    if (std::ranges::binary_search(built.indices, index)) return built.body;
-  }
-  throw InternalError(
-      "hir::LoopBlockScopeOf: a name reached a block of a loop that counted "
-      "none at its index");
-}
-
-// The same for the one block a construct building at most one holds: a block
-// standing on its own is its one scope, and a conditional compiles each
-// alternative it holds to one.
+// Which compiled scope a path naming the one block a construct building at
+// most one holds reaches: a block standing on its own is its one scope, and a
+// conditional compiles each alternative it holds to one. Every consumer of a
+// path asks this and nothing else about a generate, so the answer is stated
+// once here rather than re-derived at each of them.
 [[nodiscard]] inline auto ChosenBlockScopeOf(
     const Generate& gen, std::uint32_t alternative) -> StructuralScopeId {
   const auto a_loop = [] -> StructuralScopeId {

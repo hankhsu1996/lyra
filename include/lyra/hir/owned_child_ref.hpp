@@ -29,24 +29,6 @@ struct InstanceMemberId {
       -> std::strong_ordering = default;
 };
 
-// The block of a loop generate whose index stood at `index` (LRM 27.4), which
-// is how a hierarchical name picks one of the blocks the loop counted out.
-// Where among them that block stands is the holding object's to answer, since
-// it is what ran the loop; the name carries only what the language gave it.
-//
-// A path names the construct and the block, never the scope the block compiled
-// to: a loop whose blocks are of one name compiles to one scope and one whose
-// blocks are of several to one per name, and both reach the same elaborated
-// block. Which scope
-// that is stays the construct's own answer, so no name has to be spelled
-// before it exists.
-struct GenerateLoopRef {
-  GenerateId generate;
-  std::int64_t index = 0;
-
-  auto operator==(const GenerateLoopRef&) const -> bool = default;
-};
-
 // The one block a generate construct holds when it builds at most one: a
 // block standing on its own, or the one a conditional chose (LRM 27.5),
 // identified by the position the source wrote it at among the construct's
@@ -62,9 +44,10 @@ struct GenerateBlockRef {
 };
 
 // A child object the referrer's compilation unit declares, named by the
-// declaring scope's own identity for it.
-using OwnedChildRef =
-    std::variant<InstanceMemberId, GenerateLoopRef, GenerateBlockRef>;
+// declaring scope's own identity for it. A block of a loop is none: it is
+// another body than whichever reaches it, so a path reaches it through what its
+// loop's scope published.
+using OwnedChildRef = std::variant<InstanceMemberId, GenerateBlockRef>;
 
 // One element of a hierarchical path (LRM 23.6): what it names, and the
 // instance selects written after it. Each select picks one instance out of

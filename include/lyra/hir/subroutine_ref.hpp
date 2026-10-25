@@ -224,13 +224,14 @@ using UnitObjectReceiver =
     std::variant<RoutedObjectRef, InterfaceInstanceAccessExpr>;
 
 // Calls a subroutine a unit declares in one of its scopes -- its own body or a
-// generate block in it -- enabled on one object of that scope (LRM 23.6, 25.7):
-// reached through a port bound to an instance, through a hierarchical name, or
-// through a virtual interface holding one. `receiver` is how that object is
-// reached, and it is passed as the callable's first argument. `scope_class` is
-// the class the declaring unit published the scope as, and `callable` the
-// entry the name resolved to, so what the call passes and what it awaits come
-// from what was published rather than from the declaration behind it.
+// generate block in it, a block of a loop of this unit included -- enabled on
+// one object of that scope (LRM 23.6, 25.7, 27.4): reached through a port
+// bound to an instance, through a hierarchical name, or through a virtual
+// interface holding one. `receiver` is how that object is reached, and it is
+// passed as the callable's first argument. `scope_class` is the class the
+// declaring unit published the scope as, and `callable` the entry the name
+// resolved to, so what the call passes and what it awaits come from what was
+// published rather than from the declaration behind it.
 struct PublishedScopeMethodRef {
   UnitObjectReceiver receiver;
   ScopeClassId scope_class;

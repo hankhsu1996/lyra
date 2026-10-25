@@ -15,8 +15,8 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/translation.hpp"
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/hir/construction_table_layout.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/scope_instantiations.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/structural_scope.hpp"
@@ -49,6 +49,8 @@ struct ChildStructuralScopeBinding {
   // The child's own lowerer, which carries the class it lowers to and resolves
   // the identities a route step past this child names.
   const StructuralScopeLowerer* lowerer = nullptr;
+  // Which of the parent's block tables the child is constructed with.
+  hir::BlockTableIndex table;
 };
 
 // What one generate construct settled: the member holding what it built, and
@@ -75,25 +77,17 @@ struct ConstructionValue {
   mir::TypeId type;
 };
 
-// A block of a loop generate: the member holding the loop's blocks, and the
-// value the block's index stood at, which that member answers for (LRM 27.4).
-struct LoopBlockAt {
-  mir::ClassFieldTarget blocks;
-  std::int64_t index = 0;
-};
-
 // How a hierarchical route reaches an owned child, and the child's own
 // lowerer. `reach` is the parent's borrowed handle on the child, whose type
 // carries the declaration's multiplicity so each select of the element naming
-// the child indexes it, or for a block of a loop the member the block is asked
-// of. `target_scope` is present when the artifact owns the child's body --
-// what the step reached is then the base every scope extends, the step views
-// it as that scope's class, and whatever the route names next resolves against
-// that scope -- and absent when the child is another compilation unit, whose
-// objects are reached through what that unit published, each access naming
-// the class the route states it reaches.
+// the child indexes it. `target_scope` is present when the artifact owns the
+// child's body -- what the step reached is then the base every scope extends,
+// the step views it as that scope's class, and whatever the route names next
+// resolves against that scope -- and absent when the child is another
+// compilation unit, whose objects are reached through what that unit
+// published, each access naming the class the route states it reaches.
 struct OwnedChildAnchor {
-  std::variant<mir::ClassFieldTarget, LoopBlockAt> reach;
+  mir::ClassFieldTarget reach;
   const StructuralScopeLowerer* target_scope = nullptr;
 };
 
@@ -138,8 +132,8 @@ class StructuralScopeLowerer {
         design_root_(std::move(design_root)) {
   }
 
-  // The lowering of `hir_scope`, a scope of the design hierarchy laid out in
-  // its unit's construction table as `instantiations` says, and of every scope
+  // The lowering of `hir_scope`, a scope of the design hierarchy whose own
+  // construction table `instantiations` lays out, and of every scope
   // it holds, each taking the identity of the class its unit published of it as
   // it is built -- which is before any type translates, since a type may name
   // one.
@@ -218,7 +212,8 @@ class StructuralScopeLowerer {
     return *hir_scope_;
   }
 
-  // Where the scope's instantiations stand in its unit's construction table.
+  // Where the scope's instantiations and blocks stand in its own construction
+  // table.
   [[nodiscard]] auto Instantiations() const -> const hir::ScopeInstantiations& {
     return *instantiations_;
   }
@@ -400,22 +395,6 @@ class StructuralScopeLowerer {
               return OwnedChildAnchor{
                   .reach = instance_member_fields_.Get(id),
                   .target_scope = nullptr};
-            },
-            // A loop's block is asked of the loop's member by the value its
-            // index stood at, since which block that is was settled by this
-            // scope running the loop (LRM 27.4).
-            [&](const hir::GenerateLoopRef& loop) -> OwnedChildAnchor {
-              return OwnedChildAnchor{
-                  .reach =
-                      LoopBlockAt{
-                          .blocks =
-                              generate_bindings_.Get(loop.generate).handle,
-                          .index = loop.index},
-                  .target_scope = block_of(
-                      loop.generate,
-                      hir::LoopBlockScopeOf(
-                          HirScope().generates.Get(loop.generate),
-                          loop.index))};
             },
             [&](const hir::GenerateBlockRef& block) -> OwnedChildAnchor {
               return OwnedChildAnchor{
@@ -620,15 +599,6 @@ struct ReachedObject {
 auto ApplyInstanceSelects(
     UnitLowerer& unit_lowerer, mir::Block& block, ReachedObject reached,
     std::span<const std::uint32_t> selects) -> ReachedObject;
-
-// The block of a loop generate a hierarchical name reaches, asked of
-// `blocks`, the member holding the loop's blocks, by `index`, the value its
-// index stood at (LRM 23.6, 27.4): as a scope of the design hierarchy, which
-// the caller views as the class it knows the block to be. Which block that is
-// was settled by the object running the loop.
-auto ReachLoopBlock(
-    const UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId blocks,
-    std::int64_t index) -> mir::ExprId;
 
 // From `object`, a pointer to the object of `scope`, down the owned children
 // `descent` names: each element the same descent a route makes, so the object

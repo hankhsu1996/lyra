@@ -157,7 +157,7 @@ auto PopulateNamespaceOwnStorage(
   // variable initializer's operands are literals, operators, and by-name
   // package symbols, none of which reach a class or a `self`.
   const StructuralScopeLowerer expr_lowerer(
-      unit_lowerer, nullptr, scope, unit_lowerer.ConstructionLayout().Root());
+      unit_lowerer, nullptr, scope, unit_lowerer.RootInstantiations());
 
   const auto make_cell = [&](mir::Block& block, mir::StaticVariableId variable,
                              mir::TypeId cell_type) -> mir::ExprId {
@@ -793,7 +793,7 @@ auto UnitLowerer::PopulateModuleRoot(
   // scope's lowering, and a source module has neither.
   const std::unique_ptr<StructuralScopeLowerer> root =
       StructuralScopeLowerer::ForScope(
-          *this, nullptr, hir_->root_scope, construction_layout_.Root(),
+          *this, nullptr, hir_->root_scope, root_instantiations_,
           std::move(design_root));
   if (auto prologue = PublishUnitDeclarations(); !prologue) {
     return std::unexpected(std::move(prologue.error()));

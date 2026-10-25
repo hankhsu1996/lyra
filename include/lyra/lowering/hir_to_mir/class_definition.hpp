@@ -6,7 +6,7 @@
 #include <string>
 
 #include "lyra/hir/dumped_declaration.hpp"
-#include "lyra/hir/unit_body_ref.hpp"
+#include "lyra/hir/scope_instantiations.hpp"
 #include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
@@ -53,15 +53,16 @@ auto DumpBlockAddress(
     mir::Class& cls, const hir::DumpedBlock& dumped) -> mir::ExprId;
 
 // States, as constants of class `id` of the design's root unit, the
-// construction table of every body `instantiations` names that an object is
-// made of below `own` -- the bodies the root makes at its own instantiations,
-// in its table's order -- and that of the root itself, which it answers with.
+// construction tables of every body `instantiations` names that an object is
+// made of below `own` -- the root's own layout, the bodies made at whose
+// instantiations its tables list -- and those of the root itself, which it
+// answers with.
 // Each body's table is stated once however many instantiations make it, and an
 // entry holds that body's object entry, at the type `entry_types` gives its
 // unit's entry, with its prototype erased.
 auto StateConstructionTables(
     mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
-    std::span<const hir::UnitBodyRef> own,
+    const hir::ScopeInstantiations& own,
     const DesignInstantiations& instantiations,
     const std::map<std::string, mir::TypeId, std::less<>>& entry_types)
     -> mir::ClassConstantRef;

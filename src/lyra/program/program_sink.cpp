@@ -294,6 +294,7 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_attach_scope", &lyra_rt_attach_scope);
   add("lyra_rt_instantiation_entry", &lyra_rt_instantiation_entry);
   add("lyra_rt_instantiation_table", &lyra_rt_instantiation_table);
+  add("lyra_rt_block_table", &lyra_rt_block_table);
   add("lyra_rt_sequence_make", &lyra_rt_sequence_make);
   add("lyra_rt_sequence_extend", &lyra_rt_sequence_extend);
   add("lyra_rt_sequence_element", &lyra_rt_sequence_element);

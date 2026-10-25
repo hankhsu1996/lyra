@@ -17,4 +17,9 @@ auto InstantiationTable(const ConstructionTable* table, std::int64_t at)
   return table->instantiations.Entries()[static_cast<std::size_t>(at)].table;
 }
 
+auto BlockTable(const ConstructionTable* table, std::int64_t at)
+    -> const ConstructionTable* {
+  return table->blocks.Entries()[static_cast<std::size_t>(at)];
+}
+
 }  // namespace lyra::runtime

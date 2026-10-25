@@ -69,8 +69,10 @@ resolution serves both accessing the target's value and observing its changes.
    A step's identity comes from one of two places, which changes nothing about its cost or its
    realization: an in-artifact member identity when the emitting artifact owns both classes, and the
    member's name resolved against the target's publication at the referrer's compile time when it
-   does not. A name the target scope did not publish has no declaration to compile against and is
-   refused there, as a compile error and never as a run-time failure.
+   does not. A step into a loop's block, and every step after it, takes the second even where the
+   artifact owns the block, since the select picks a different block in each object. A name the
+   target scope did not publish has no declaration to compile against and is refused there, as a
+   compile error and never as a run-time failure.
 
 3. A route that descends into a scope or crosses into another instance executes once during the
    binding-graph phase, producing a candidate endpoint; the endpoint is committed at the sealing

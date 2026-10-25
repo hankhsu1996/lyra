@@ -1069,6 +1069,8 @@ auto lyra_rt_instantiation_entry(const void* table, std::int64_t at)
     -> LyraMethodEntry;
 auto lyra_rt_instantiation_table(const void* table, std::int64_t at) -> const
     void*;
+// The table the block at `at` among a scope's blocks is constructed with.
+auto lyra_rt_block_table(const void* table, std::int64_t at) -> const void*;
 
 // A reference, built in the storage the caller gives: where a value lies, and
 // what holds that storage, if anyone is told about it. A body holding a

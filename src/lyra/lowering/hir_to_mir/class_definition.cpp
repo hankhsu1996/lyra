@@ -357,13 +357,15 @@ auto ErasedObjectEntry(
           .type = mir::ErasedFunction(unit.types)});
 }
 
-// The construction tables the design root states, one per body an object is
-// made of, each stated the first time an instantiation makes that body and
-// named by every later one.
+// The construction tables the design root states: one per scope of each body
+// an object is made of -- the body's own, and one per block of each of its
+// generates, inside it -- each body's stated the first time an instantiation
+// makes that body and named by every later one.
 //
 //   const Instantiation entries[2] = {{(Erased)&Child::sv_create, &child},
 //                                     ...};
-//   const ConstructionTable top = {entries, 2};
+//   const ConstructionTable* blocks[1] = {&top_g0};
+//   const ConstructionTable top = {entries, 2, blocks, 1};
 class ConstructionTables {
  public:
   ConstructionTables(
@@ -377,14 +379,20 @@ class ConstructionTables {
         entry_types_(&entry_types) {
   }
 
-  // The table listing, at each instantiation, how the body `instantiated`
-  // names there is made.
-  auto Of(std::span<const hir::UnitBodyRef> instantiated)
-      -> mir::ClassConstantRef {
+  // The table of a scope laid out as `layout`: at each instantiation it
+  // declares, how the body made there is made, then each of its blocks' own.
+  auto Of(const hir::ScopeInstantiations& layout) -> mir::ClassConstantRef {
+    const std::span<const hir::UnitBodyRef> instantiated =
+        layout.Instantiated();
     std::vector<mir::ClassConstantRef> tables;
     tables.reserve(instantiated.size());
     for (const hir::UnitBodyRef& made : instantiated) {
       tables.push_back(OfBody(made.body));
+    }
+    std::vector<mir::ClassConstantRef> block_tables;
+    block_tables.reserve(layout.Blocks().size());
+    for (const hir::ScopeInstantiations& block : layout.Blocks()) {
+      block_tables.push_back(Of(block));
     }
 
     using Kind = mir::RuntimeLibraryKind;
@@ -402,6 +410,12 @@ class ConstructionTables {
                    *unit_, entry, instantiated[i],
                    EntryTypeOf(instantiated[i].unit)),
                AddressOfConstant(*unit_, entry, tables[i], table_type)});
+        });
+    AppendTable(
+        parts, *unit_, table, id_, *cls_,
+        mir::ConstructionTablePointer(unit_->types), block_tables.size(),
+        [&](mir::Block& entry, std::size_t i) {
+          return AddressOfConstant(*unit_, entry, block_tables[i], table_type);
         });
     build.value =
         Record(*unit_, table, Kind::kConstructionTable, std::move(parts));
@@ -485,7 +499,7 @@ void StateScopeDefinition(
 
 auto StateConstructionTables(
     mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
-    std::span<const hir::UnitBodyRef> own,
+    const hir::ScopeInstantiations& own,
     const DesignInstantiations& instantiations,
     const std::map<std::string, mir::TypeId, std::less<>>& entry_types)
     -> mir::ClassConstantRef {

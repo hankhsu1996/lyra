@@ -1,11 +1,11 @@
 // A disable target declared by another scope of the same module is reached by
-// a hierarchical name like any other (LRM 9.6.2, 23.6), and the reach stays
-// inside the module's own layout: a generate block is a scope this module lays
-// out, so the route to one is typed and the target is that block's own. The
-// same holds between two loop-generate iterations, where the label alone does
-// not say which iteration is meant and the index does. A target the disabling
-// body's own scope declares is the empty case of that reach and needs no name
-// beyond its own.
+// a hierarchical name like any other (LRM 9.6.2, 23.6), a generate block's
+// included. The same holds of a block of a loop generate, where the label
+// alone does not say which block is meant and the select does, whether a
+// sibling block writes it, a block of the same loop computes it from its own
+// index, or every block of a loop names the first one by a constant. A
+// target the disabling body's own scope declares is the empty case of that
+// reach and needs no name beyond its own.
 module Top;
   int own_reached = 0;
   int own_finished = 0;
@@ -13,6 +13,7 @@ module Top;
   int gen_finished = 0;
   int lane_finished[2];
   int sibling_seen = 0;
+  int chain_finished[3];
 
   if (1) begin : g
     initial begin : work
@@ -31,8 +32,35 @@ module Top;
     end
   end
 
-  // One iteration ends another's block by naming it with an index, which is
-  // the reach between two scopes the same module lays out.
+  for (genvar j = 0; j < 3; j++) begin : chain
+    initial begin : work
+      #1;
+      #10;
+      chain_finished[j] = 1;
+    end
+    if (j > 0) begin : stops_below
+      initial begin
+        #2;
+        disable chain[j - 1].work;
+      end
+    end
+  end
+
+  // Every block of this loop ends its first block's work, its own included.
+  for (genvar f = 0; f < 3; f++) begin : first
+    int done = 0;
+    initial begin : work
+      #1;
+      #10;
+      done = 1;
+    end
+    initial begin
+      #2;
+      disable first[0].work;
+    end
+  end
+
+  // A sibling block ends a block of the loop by naming it with a select.
   if (1) begin : stopper
     initial begin
       #2;
@@ -68,6 +96,13 @@ module Top;
       $fatal(1, "lane_finished[0] was %0d, expected 1", lane_finished[0]);
     if (lane_finished[1] !== 0)
       $fatal(1, "lane_finished[1] was %0d, expected 0", lane_finished[1]);
+    if (chain_finished[0] !== 0 || chain_finished[1] !== 0 ||
+        chain_finished[2] !== 1)
+      $fatal(1, "chain finished %0d %0d %0d, expected 0 0 1", chain_finished[0],
+             chain_finished[1], chain_finished[2]);
+    if (first[0].done !== 0 || first[1].done !== 1 || first[2].done !== 1)
+      $fatal(1, "first finished %0d %0d %0d, expected 0 1 1", first[0].done,
+             first[1].done, first[2].done);
     $display("All checks passed");
   end
 endmodule

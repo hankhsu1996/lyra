@@ -157,6 +157,19 @@ auto BuildDesignRootHir(
   return root;
 }
 
+// Hands `take` the unit of every body made at an instantiation of the scope
+// laid out as `layout`, or of any block below it.
+template <typename Take>
+void TakeEachUnitMade(
+    const hir::ScopeInstantiations& layout, const Take& take) {
+  for (const hir::UnitBodyRef& body : layout.Instantiated()) {
+    take(body.unit);
+  }
+  for (const hir::ScopeInstantiations& block : layout.Blocks()) {
+    TakeEachUnitMade(block, take);
+  }
+}
+
 // The object entry of every unit the root's tables make, as each unit
 // published it, its types taken into the root's: the tops, which the root's
 // own table makes, and every body any table lists.
@@ -194,9 +207,7 @@ auto PublishedObjectEntries(
     take(top.unit_name);
   }
   for (const auto& [_, made] : instantiations.by_body) {
-    for (const hir::UnitBodyRef& body : made) {
-      take(body.unit);
-    }
+    TakeEachUnitMade(made, take);
   }
   return entries;
 }
