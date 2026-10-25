@@ -12,8 +12,8 @@
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
 #include "lyra/mir/callable_code.hpp"
-#include "lyra/mir/class.hpp"
 #include "lyra/mir/closure_decl.hpp"
+#include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -155,11 +155,24 @@ class FunctionLowerer {
       std::vector<lir::Operand> arguments) -> diag::Result<void>;
 
   // A block is an extent: what its declarations bind ends where it does. Its
-  // statements run in order, and a block expression's run where the value that
-  // follows them can still read what they declared, so theirs end with the
-  // full-expression the block expression stands in.
+  // statements run in order.
   auto LowerBlockInto(const mir::Block& block) -> diag::Result<void>;
   auto LowerStatementsInto(const mir::Block& block) -> diag::Result<void>;
+  // A block expression's extent ends once the value it yields is made, as
+  // rustc builds a block's tail into its destination before popping its
+  // scopes, so that value is carried out of the extent first: one only lent
+  // is copied, and the end owed for one it made is owed by the extent around
+  // it.
+  auto LowerBlockExpr(const mir::Block& scope, mir::ExprId value)
+      -> diag::Result<lir::Operand>;
+  auto LowerBlockExprInto(
+      const mir::Block& scope, mir::ExprId value,
+      const lir::Destination& destination) -> diag::Result<void>;
+  // Closes the extent above `depth` once a block expression's value `yielded`
+  // is made. Where that extent owes the value's end, the extent around it owes
+  // it from here.
+  auto CloseExtentYielding(std::size_t depth, const lir::Operand& yielded)
+      -> diag::Result<void>;
   auto LowerStmtInto(const mir::Block& block, const mir::Stmt& stmt)
       -> diag::Result<void>;
   // An expression a statement evaluates for itself, which is a full-expression:
@@ -197,6 +210,9 @@ class FunctionLowerer {
   // that end, and nothing otherwise.
   [[nodiscard]] auto OwedEndAt(const lir::Operand& value) const
       -> std::optional<std::size_t>;
+  // Whether `value` is one this body was only lent and can copy: owned by its
+  // type, with a copy, and with no end owed for it here.
+  [[nodiscard]] auto IsLentCopyable(const lir::Operand& value) const -> bool;
   // States the end of an owned value, and of the one a frame slot holds.
   void EndValue(lir::Operand value);
   void EndSlotValue(lir::ValueId slot);

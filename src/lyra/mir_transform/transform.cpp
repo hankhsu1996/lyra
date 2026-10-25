@@ -10,8 +10,8 @@
 #include "lyra/mir/phase.hpp"
 #include "lyra/mir/verify.hpp"
 #include "lyra/mir_transform/box_large_values.hpp"
-#include "lyra/mir_transform/hold_large_values_in_temporaries.hpp"
 #include "lyra/mir_transform/inst_simplify.hpp"
+#include "lyra/mir_transform/order_evaluation.hpp"
 #include "lyra/mir_transform/pass.hpp"
 #include "lyra/mir_transform/reaction.hpp"
 #include "lyra/profiling/time_trace.hpp"
@@ -31,9 +31,9 @@ constexpr std::array kPipeline{
         .run = InstSimplify,
         .phase_after = std::nullopt},
     Pass{
-        .name = "HoldLargeValuesInTemporaries",
+        .name = "OrderEvaluation",
         .policy = PassPolicy::kRequired,
-        .run = HoldLargeValuesInTemporaries,
+        .run = OrderEvaluation,
         .phase_after = std::nullopt},
     Pass{
         .name = "BoxLargeValues",

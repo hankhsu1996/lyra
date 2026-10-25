@@ -41,10 +41,10 @@ out the way clang carries it out.**
   ([a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md)). The slot is allocated
   where the body opens, so a loop reuses it.
 - **A value's end is stated below MIR, at the end of the full-expression that made it** -- an
-  expression statement, a condition, a loop step, a declaration's initializer, a return -- and on
-  every edge that leaves the extent early, a departure included. It is the cleanup stack a C++
-  compiler keeps, and it is the same stack that already carried a guarded body's cleanup, so there
-  is one mechanism for everything owed on the way out.
+  expression statement, a condition, a loop step, a declaration's initializer, a return, a block
+  expression's value -- and on every edge that leaves the extent early, a departure included. It is
+  the cleanup stack a C++ compiler keeps, and it is the same stack that already carried a guarded
+  body's cleanup, so there is one mechanism for everything owed on the way out.
 - **A frame slot of an owned type holds the object, as a C++ local of class type does.** A store
   into one ends the object it held and moves the new value in; the slot ends its object with the
   extent it was declared in. A value that is handed to a slot or returned leaves nothing to end

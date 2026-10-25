@@ -136,22 +136,24 @@ what the construct means.
   conversions, closures, the block expression -- a sequence of statements and the value it ends
   with, which is how an evaluation of several steps stands where only an expression may, sequencing
   alone: it is not a callable boundary, so its steps belong to the enclosing body and capture
-  nothing, and it has no control-flow effect, so control never leaves from among its steps -- member
-  access through an explicit receiver expression, the field step that names a component of a
-  product, a member of a union or a member of a sum on the place holding it, the dereference, the
-  read of a place, value-build primitives for the literals that spell an aggregate, and the
-  new-expression, which allocates storage a pointer or a class handle owns and evaluates its
-  initializer into that storage rather than handing it over as an argument -- for an object, its
-  construction, which first creates the object whole and then enters its constructor on it, so the
-  object is of its own class while every constructor runs -- and the borrow, which binds a reference
-  to a place, or to a value it holds to the end of the full-expression as a C++ reference bound to a
-  temporary does. An element of an array is no node. It is a call answering a reference, a read form
-  or a write form, because the language gives a read and a write of an element different outcomes,
-  and the dereference of what it answers is the place. Bits of a packed value are no node either:
-  they are read by the value's `slice` and written through the reference to them its `slice_mut`
-  answers, as a C++ library's `bitset::operator[]` answers a reference to a bit. The set is closed
-  under what a generic programming-language AST needs to express; it does not grow to model a
-  particular backend's storage realization or runtime library shape.
+  nothing, and it has no control-flow effect, so control never leaves from among its steps; its
+  scope ends when it yields, once the value is taken out, so what its steps declare and what its
+  value makes end there and what it yields refers to none of it -- member access through an explicit
+  receiver expression, the field step that names a component of a product, a member of a union or a
+  member of a sum on the place holding it, the dereference, the read of a place, value-build
+  primitives for the literals that spell an aggregate, and the new-expression, which allocates
+  storage a pointer or a class handle owns and evaluates its initializer into that storage rather
+  than handing it over as an argument -- for an object, its construction, which first creates the
+  object whole and then enters its constructor on it, so the object is of its own class while every
+  constructor runs -- and the borrow, which binds a reference to a place, or to a value it holds to
+  the end of the full-expression as a C++ reference bound to a temporary does. An element of an
+  array is no node. It is a call answering a reference, a read form or a write form, because the
+  language gives a read and a write of an element different outcomes, and the dereference of what it
+  answers is the place. Bits of a packed value are no node either: they are read by the value's
+  `slice` and written through the reference to them its `slice_mut` answers, as a C++ library's
+  `bitset::operator[]` answers a reference to a bit. The set is closed under what a generic
+  programming-language AST needs to express; it does not grow to model a particular backend's
+  storage realization or runtime library shape.
 - Which values are held through a uniquely owning pointer because a value of their type is too large
   for a frame: a local, a parameter taken by value wherever its signature is stated, a made value
   and a capture, each written as a box by a rewrite of the stage before any consumer reads the unit,

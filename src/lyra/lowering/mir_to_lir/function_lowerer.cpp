@@ -955,10 +955,14 @@ void FunctionLowerer::EmitScopeDrop(const StorageRelease& release) {
           .args = {release.storage}});
 }
 
-auto FunctionLowerer::ConsumeByCopyOrMove(lir::Operand value) -> lir::Rvalue {
+auto FunctionLowerer::IsLentCopyable(const lir::Operand& value) const -> bool {
   const lir::Type& type = unit_->Types().Get(lir::OperandType(fn_, value));
-  if (type.IsOwnedValue() && !type.IsMoveOnly() &&
-      !OwedEndAt(value).has_value()) {
+  return type.IsOwnedValue() && !type.IsMoveOnly() &&
+         !OwedEndAt(value).has_value();
+}
+
+auto FunctionLowerer::ConsumeByCopyOrMove(lir::Operand value) -> lir::Rvalue {
+  if (IsLentCopyable(value)) {
     return lir::CallInstr{.target = lir::CopyValueTarget{}, .args = {value}};
   }
   return lir::UseInstr{.operand = HandOn(std::move(value))};
@@ -1213,6 +1217,74 @@ auto FunctionLowerer::LowerBlockInto(const mir::Block& block)
     return lowered;
   }
   return CloseExtent(depth);
+}
+
+auto FunctionLowerer::LowerBlockExpr(const mir::Block& scope, mir::ExprId value)
+    -> diag::Result<lir::Operand> {
+  // With no steps, nothing ends with the block, which is its value.
+  if (scope.root_stmts.empty()) {
+    return LowerExpr(scope, value);
+  }
+  const std::size_t depth = scopes_.size();
+  auto lowered = LowerStatementsInto(scope);
+  if (!lowered) {
+    return std::unexpected(std::move(lowered.error()));
+  }
+  auto yielded = LowerExpr(scope, value);
+  if (!yielded) {
+    return yielded;
+  }
+  lir::Operand carried = *std::move(yielded);
+  // A value lent by storage it lies in is copied out before the block ends,
+  // as a C++ `return` makes its result, whichever storage lent it.
+  if (IsLentCopyable(carried)) {
+    carried = Emit(
+        lir::OperandType(fn_, carried),
+        ConsumeByCopyOrMove(std::move(carried)));
+  }
+  auto closed = CloseExtentYielding(depth, carried);
+  if (!closed) {
+    return std::unexpected(std::move(closed.error()));
+  }
+  return carried;
+}
+
+auto FunctionLowerer::LowerBlockExprInto(
+    const mir::Block& scope, mir::ExprId value,
+    const lir::Destination& destination) -> diag::Result<void> {
+  const std::size_t depth = scopes_.size();
+  auto lowered = LowerStatementsInto(scope);
+  if (!lowered) {
+    return lowered;
+  }
+  auto made = LowerExprInto(scope, value, destination);
+  if (!made) {
+    return made;
+  }
+  // Storage the destination names was there before the block, and a value
+  // made into a transient is owed from inside it.
+  const auto* defined = std::get_if<lir::Transient>(&destination);
+  if (defined == nullptr) {
+    return CloseExtent(depth);
+  }
+  return CloseExtentYielding(depth, lir::Use{.value = defined->value});
+}
+
+auto FunctionLowerer::CloseExtentYielding(
+    std::size_t depth, const lir::Operand& yielded) -> diag::Result<void> {
+  const std::optional<std::size_t> owed = OwedEndAt(yielded);
+  const bool carried_out = owed.has_value() && *owed >= depth;
+  if (carried_out) {
+    PassEndAt(*owed);
+  }
+  auto closed = CloseExtent(depth);
+  if (!closed) {
+    return closed;
+  }
+  if (carried_out) {
+    OpenScope(ValueEnd{.value = std::get<lir::Use>(yielded).value});
+  }
+  return {};
 }
 
 auto FunctionLowerer::CloseExtent(std::size_t depth) -> diag::Result<void> {
@@ -3392,16 +3464,7 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             return LowerConditional(block, cond, type);
           },
           [&](const mir::BlockExpr& be) -> Lowered {
-            // The steps run where they were written, so they lower into the
-            // block being built, and the value the last one names is what the
-            // expression yields. That value may be what a step declared, so
-            // what the steps bind ends with the enclosing full-expression.
-            const mir::Block& scope = block.child_scopes.Get(be.scope);
-            auto lowered = LowerStatementsInto(scope);
-            if (!lowered) {
-              return std::unexpected(std::move(lowered.error()));
-            }
-            return LowerExpr(scope, be.value);
+            return LowerBlockExpr(block.child_scopes.Get(be.scope), be.value);
           },
           [&](const mir::MoveExpr& m) -> Lowered {
             // A move is a last-use transfer marker placed at HIR-to-MIR; it
@@ -3712,12 +3775,8 @@ auto FunctionLowerer::LowerExprInto(
             return LowerCallInto(block, call, expr.type, destination);
           },
           [&](const mir::BlockExpr& be) -> Lowered {
-            const mir::Block& scope = block.child_scopes.Get(be.scope);
-            auto lowered = LowerStatementsInto(scope);
-            if (!lowered) {
-              return std::unexpected(std::move(lowered.error()));
-            }
-            return LowerExprInto(scope, be.value, destination);
+            return LowerBlockExprInto(
+                block.child_scopes.Get(be.scope), be.value, destination);
           },
           [&](const mir::MoveExpr&) { return assigned(); },
           [&](const mir::CopyExpr&) { return assigned(); },
