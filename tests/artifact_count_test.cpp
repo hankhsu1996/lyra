@@ -36,7 +36,6 @@
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/scope_construction.hpp"
 #include "lyra/hir/specialization.hpp"
-#include "lyra/hir/structural_scope.hpp"
 #include "lyra/support/def_path.hpp"
 
 namespace {
@@ -84,7 +83,7 @@ auto LowerDesign(std::string_view source) -> std::optional<LoweredUnits> {
       [](lyra::hir::Specialization lowered)
           -> lyra::diag::Result<std::optional<lyra::hir::Specialization>> {
         if (!lowered.IsFirstOfItsImplementation()) return std::nullopt;
-        return std::move(lowered);
+        return lowered;
       },
       [&units](std::optional<lyra::hir::Specialization> lowered) {
         if (lowered.has_value()) units.push_back(*std::move(lowered));
