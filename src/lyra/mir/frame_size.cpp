@@ -104,6 +104,7 @@ auto LayoutOfLibraryObject(RuntimeLibraryKind kind) -> support::Layout {
     case RuntimeLibraryKind::kScopeCallable:
     case RuntimeLibraryKind::kConstructionTable:
     case RuntimeLibraryKind::kInstantiation:
+    case RuntimeLibraryKind::kGeneratePlaces:
     case RuntimeLibraryKind::kTimer:
     case RuntimeLibraryKind::kDeferredEffects:
     case RuntimeLibraryKind::kViolationReportKeeper:

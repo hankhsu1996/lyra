@@ -41,6 +41,9 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/compilation_unit.hpp"
+#include "lyra/hir/dump.hpp"
+#include "lyra/hir/specialization.hpp"
+#include "lyra/hir/specialization_ref.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/hir/unit_signatures.hpp"
@@ -116,14 +119,15 @@ auto ScopesLoweredFor(std::span<const slang::ast::Symbol* const> homes)
 
 UnitLowerer::UnitLowerer(
     const LoweringFacts& facts, const slang::ast::Symbol& home,
-    hir::UnitBodyRef names, hir::UnitRole role,
+    hir::SpecializationRef names, hir::UnitRole role,
     std::span<const slang::ast::InstanceBodySymbol* const> checked_against)
     : facts_(facts),
       homes_(HomesOf(home, checked_against)),
       applications_(ScopesLoweredFor(homes_)),
       scope_(applications_.front()),
       lowering_(scope_),
-      unit_{std::move(names.unit), std::move(names.body)} {
+      unit_{std::move(names.unit), {}},
+      specialization_(std::move(names.specialization)) {
   unit_.role = role;
   unit_.source_name = SourceNameOf(home);
   unit_.library_binding = LibraryBindingOf(scope_->asSymbol());
@@ -190,47 +194,67 @@ auto UnitLowerer::TakeSignature() -> hir::UnitSignature {
   return std::move(signature_);
 }
 
-auto UnitLowerer::LowerBodies(const hir::UnitSignatures& signatures)
-    -> diag::Result<hir::CompilationUnit> {
+auto UnitLowerer::LowerBodies(
+    const hir::UnitSignatures& signatures, Implementations& implementations)
+    -> diag::Result<hir::Specialization> {
   signatures_ = &signatures;
   const auto in_unit = diag::FailureContext::InUnit(unit_.name);
   auto own = LowerScopeOf(*scope_);
   if (!own) return std::unexpected(std::move(own.error()));
-  unit_.root_scope = *std::move(own);
-  // Every application holds what the body's name holds, which includes the
-  // blocks it built, and the lowering reads a value only through that name or
-  // as one the object is built with, so every one of them lowers to the same
-  // scope.
+  unit_.root_scope = std::move(own->scope);
+  // Every application holds what the specialization's name holds, which
+  // includes every value it is handed, and the lowering reads a value only
+  // through that name or as one the object is built with, so every one of them
+  // lowers to the same scope and builds the same children.
   for (const slang::ast::Scope* application : applications_) {
     if (application == scope_) continue;
     auto built = LowerScopeOf(*application);
     if (!built) return std::unexpected(std::move(built.error()));
-    if (*built != unit_.root_scope) {
+    if (built->scope != unit_.root_scope ||
+        built->construction != own->construction) {
       throw InternalError(
           std::format(
-              "UnitLowerer::LowerBodies: '{}' is an application of body '{}' "
-              "and lowers to something else than '{}' does, so the lowering "
-              "read a value the body's name does not hold -- please report "
-              "this as a bug",
-              application->asSymbol().getHierarchicalPath(), unit_.name,
+              "UnitLowerer::LowerBodies: '{}' is an application of "
+              "specialization '{}' and lowers to something else than '{}' "
+              "does, so the lowering read a value the specialization's name "
+              "does not hold -- please report this as a bug",
+              application->asSymbol().getHierarchicalPath(), specialization_,
               scope_->asSymbol().getHierarchicalPath()));
     }
   }
   RequireEveryClassBodyLowered();
   ReadSignaturesOfNamedClasses();
   ReadSignaturesOfNamedCovergroups();
-  hir::Verify(unit_);
-  return std::move(unit_);
+  hir::Verify(unit_, own->construction);
+  unit_.body_name = implementations.Intern(specialization_, unit_);
+  return hir::Specialization{
+      .name = std::move(specialization_),
+      .construction = std::move(own->construction),
+      .implementation = std::move(unit_)};
 }
 
 auto UnitLowerer::LowerScopeOf(const slang::ast::Scope& application)
-    -> diag::Result<hir::StructuralScope> {
+    -> diag::Result<BuiltScope> {
   const profiling::TimeTraceScope span(
       "lower to HIR", [&] { return unit_.name; });
   lowering_ = &application;
   WalkFrame frame;
-  StructuralScopeLowerer root(*this, {&application});
+  StructuralScopeLowerer root(*this, application);
   return root.Run(frame);
+}
+
+auto UnitLowerer::InternBlockBody(hir::StructuralScope scope)
+    -> hir::BlockBodyId {
+  std::vector<hir::BlockBodyId>& alike =
+      block_bodies_by_text_[stable_hash::FingerprintOfText(
+          hir::DumpScope(unit_, scope))];
+  for (const hir::BlockBodyId body : alike) {
+    if (unit_.block_bodies.Get(body).scope == scope) return body;
+  }
+  const hir::BlockBodyId body =
+      unit_.block_bodies.Add(hir::BlockBody{.scope = std::move(scope)});
+  alike.push_back(body);
+  return body;
 }
 
 auto UnitLowerer::ApplicationHolding(const slang::ast::Scope& scope) const
@@ -315,8 +339,7 @@ void UnitLowerer::DeclareBlockIdentities(
     const slang::ast::GenerateBlockSymbol& block,
     const ScopePublicationRecord& holder) {
   DeclareStructuralIdentities(
-      block, support::Extended(
-                 holder.class_path, Specialization().BlockStepOf(block)));
+      block, support::Extended(holder.class_path, Naming().BlockStepOf(block)));
 }
 
 // Every slang symbol kind is listed and there is no `default`, so a kind a
@@ -540,12 +563,9 @@ void UnitLowerer::DeclareConditionalGenerate(
   const hir::GenerateId generate = decls.generates.Declare();
   ScopePublicationRecord::Choice choice{
       .id = generate, .construct = block.constructIndex, .built = {}};
-  std::uint32_t position = 0;
   for (const auto* arm : AlternativesOfConstruct(block)) {
     MapOwnedChildBinding(
-        *arm, frame,
-        hir::GenerateBlockRef{.generate = generate, .alternative = position});
-    ++position;
+        *arm, frame, DeclaredGenerateBlock{.generate = generate});
     if (arm->isUninstantiated) continue;
     choice.built.push_back(arm);
     DeclareBlockIdentities(*arm, published);
@@ -568,7 +588,7 @@ void UnitLowerer::DeclareLoopGenerate(
       ScopePublicationRecord::Loop{.id = generate, .loop = &array});
   for (const auto* entry : array.entries) {
     MapOwnedChildBinding(
-        *entry, frame, DeclaredLoopBlock{.generate = generate});
+        *entry, frame, DeclaredGenerateBlock{.generate = generate});
     DeclareBlockIdentities(*entry, published);
   }
 }
@@ -740,14 +760,14 @@ auto UnitLowerer::ValueSourceOf(const slang::ast::ParameterSymbol& param) const
   const auto* body = ApplicationDeclaring(param)
                          .asSymbol()
                          .as_if<slang::ast::InstanceBodySymbol>();
-  if (body == nullptr) return ParameterValueSource::kFixedBySpecialization;
-  return Specialization().ValueSourceOf(InstantiationOf(*body), param);
+  if (body == nullptr) return ParameterValueSource::kFixedByUnit;
+  return Naming().ValueSourceOf(InstantiationOf(*body), param);
 }
 
 auto UnitLowerer::DiffersPerObject(
     const slang::ast::ParameterSymbol& param) const -> bool {
   switch (ValueSourceOf(param)) {
-    case ParameterValueSource::kFixedBySpecialization:
+    case ParameterValueSource::kFixedByUnit:
       return false;
     case ParameterValueSource::kSuppliedAtConstruction:
     case ParameterValueSource::kComputedAtConstruction:
@@ -804,7 +824,7 @@ auto UnitLowerer::DeclaringScopeChain(const slang::ast::Scope& scope) const
 
 auto UnitLowerer::InReadingOrder(std::vector<const slang::ast::Scope*> built)
     const -> std::vector<const slang::ast::Scope*> {
-  if (Specialization().ChecksItself()) std::ranges::reverse(built);
+  if (Naming().ChecksItself()) std::ranges::reverse(built);
   return built;
 }
 
@@ -1215,8 +1235,7 @@ auto UnitLowerer::GenerateIdOf(const slang::ast::Symbol& construct) const
                 "UnitLowerer::GenerateIdOf: a generate construct was given an "
                 "instance's identity");
           },
-          [](DeclaredLoopBlock loop) { return loop.generate; },
-          [](hir::GenerateBlockRef block) { return block.generate; }},
+          [](DeclaredGenerateBlock block) { return block.generate; }},
       it->second.child);
 }
 

@@ -154,7 +154,9 @@ queue.
 - A hierarchical name's select of a loop generate's block is lowered (LRM 23.6, 27.4): the front end
   keeps the expression beside the index it resolved the select to, and the name evaluates it in each
   object it is read in. A loop whose blocks reach their neighbour by a select worked out from their
-  own index is still a body per index, since the parameters the select reads name each block.
+  own index was then a body per index, since the parameters the select read named each block; blocks
+  are now found by comparing what each came out as
+  ([a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md) D5).
 
 One position stays where it is: a declaration's width is chosen to be a class fact, by D3, and the
 choice would hold even if moving it cost nothing. Two coordinates of a name are still settled to

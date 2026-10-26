@@ -22,7 +22,6 @@
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/published_scope.hpp"
 #include "lyra/hir/scope_class.hpp"
-#include "lyra/hir/scope_instantiations.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
@@ -160,13 +159,18 @@ struct ClassFields {
 
 // The field of a scope's published class each thing the scope published
 // occupies: one per member, one per generate construct holding what it built,
-// and one per disable target holding what a `disable` of it ends.
+// one per disable target holding what a `disable` of it ends, and for a
+// generate block one holding the scope that built it.
 struct PublishedScopeLayout {
   base::Translation<hir::PublishedMemberId, mir::FieldId> members;
   base::Translation<hir::PublishedLoopId, mir::FieldId> loops;
   base::Translation<hir::PublishedChoiceId, mir::FieldId> choices;
   base::Translation<hir::PublishedDisableTargetId, mir::FieldId>
       disable_targets;
+  // A generate block's link to the scope that built it, held as the base
+  // every scope extends: whichever body either is, a block reaches its
+  // builder through this and views it as the class that scope published.
+  std::optional<mir::FieldId> enclosing;
 };
 
 // The virtual method of a scope's published class the subroutine the scope
@@ -196,8 +200,8 @@ struct PublishedSubroutine {
 };
 
 // A class this unit published of its scopes. Several scopes may be published
-// as one class -- the bodies of one generate block whose code uses its index
-// (LRM 27.3) -- so what the signature fixes is held once: where it
+// as one class -- the bodies a generate block came out as at its several
+// places (LRM 27.3) -- so what the signature fixes is held once: where it
 // placed what was published, and each subroutine it published, in the order
 // the signature gave them.
 struct PublishedScope {
@@ -216,9 +220,7 @@ class UnitLowerer {
   UnitLowerer(
       const hir::CompilationUnit& hir,
       const diag::SourceManager& source_manager)
-      : hir_(&hir),
-        source_manager_(&source_manager),
-        root_instantiations_(hir, hir.root_scope) {
+      : hir_(&hir), source_manager_(&source_manager) {
     // The class of each scope of the design hierarchy the unit names -- its
     // own scopes' and those of other units it reaches -- takes its identity
     // first: building the tree of the unit's scopes names its own, and a type
@@ -239,7 +241,7 @@ class UnitLowerer {
   // consumes and passed in; the lowering turns each into cross-unit calls, so
   // this input stays at the design-root boundary and never reaches a source
   // unit's lowering. So do the instantiations, from which the root states
-  // every body's construction table, its own among them.
+  // every specialization's construction table, its own among them.
   auto RunDesignRoot(DesignRootInputs design_root)
       -> diag::Result<mir::CompilationUnit>;
 
@@ -268,14 +270,6 @@ class UnitLowerer {
   // How the runtime runs what an instance of one of this unit's scopes
   // starts: as a program's, where the unit is one (LRM 24.3.1).
   [[nodiscard]] auto ScopeExecution() const -> support::ScopeExecution;
-
-  // What the root scope of this unit's objects makes at each instantiation it
-  // declares, and its blocks the same, in the order their construction tables
-  // list them.
-  [[nodiscard]] auto RootInstantiations() const
-      -> const hir::ScopeInstantiations& {
-    return root_instantiations_;
-  }
 
   // Where a construct was written, which a diagnostic the lowering emits names
   // its origin by (LRM 20.10).
@@ -631,7 +625,6 @@ class UnitLowerer {
 
   const hir::CompilationUnit* hir_;
   const diag::SourceManager* source_manager_;
-  hir::ScopeInstantiations root_instantiations_;
   mir::CompilationUnit unit_;
   base::Translation<hir::TypeId, mir::TypeId> type_translations_;
   // The class each class the unit names is, of this unit or another, and what

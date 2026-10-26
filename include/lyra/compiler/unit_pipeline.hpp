@@ -9,12 +9,12 @@
 
 namespace lyra::compiler {
 
-// Models one HIR unit semantically. It reads only this unit and the shared
-// frontend, never another unit's lowered artifacts, so units may be lowered in
-// any order and in parallel. Whether the unit's instances exist as objects
-// selects the lowering: a unit that roots one composes a top class, one that
-// names only declarations composes a namespace of callables. The model is
-// rewritten as `passes` asks before anything reads it.
+// Models one implementation semantically. It reads only this unit and the
+// shared frontend, never another unit's lowered artifacts, so units may be
+// lowered in any order and in parallel. Whether the unit's instances exist as
+// objects selects the lowering: a unit that roots one composes a top class,
+// one that names only declarations composes a namespace of callables. The
+// model is rewritten as `passes` asks before anything reads it.
 auto LowerUnitToSemantic(
     const hir::CompilationUnit& unit, const diag::SourceManager& source_manager,
     const mir_transform::PassOptions& passes)

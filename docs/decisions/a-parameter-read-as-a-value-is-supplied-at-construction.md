@@ -5,7 +5,10 @@ withdrawn 2026-10-12, D1 and D4 revised 2026-10-13: a parameter something compil
 the key by its value; D1 and D2 revised 2026-10-14 by
 [a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md):
 a unit holds the generate blocks its own instances built, which are part of its name, and no
-instance is lowered into another's unit
+instance is lowered into another's unit; and D1 revised 2026-10-25 by
+[a-unit-is-compiled-to-one-body-per-distinct-code](a-unit-is-compiled-to-one-body-per-distinct-code.md):
+every value an instance is handed names its specialization, and which body that is, is found from
+what its code came out as rather than from which values the code reads
 
 ## Context
 
@@ -73,9 +76,9 @@ argument. Where something compiled relies on the parameter's value -- a constant
 requires, such as a declared range, a replication count or a range select's width, or a type the
 front end reads as a fact, such as what `type(...)` declares or what `$left(...)` answers from --
 the parameter is an argument of the specialization instead, as a C++ template argument is, and its
-value enters the key: the unit's name where what the unit declares relies on it, the name of the
-body the unit is compiled to where only its code does
-([a-unit-is-compiled-to-a-body-per-value-its-code-relies-on](a-unit-is-compiled-to-a-body-per-value-its-code-relies-on.md)).
+value enters the unit's name where what the unit declares relies on it, and every value an instance
+is handed names its specialization, whose body is found from what its code came out as
+([a-unit-is-compiled-to-one-body-per-distinct-code](a-unit-is-compiled-to-one-body-per-distinct-code.md)).
 SystemVerilog writes both kinds as `parameter`, where C++ and Rust make the author say which, so
 which one a parameter is is read off what relies on it. A reference anywhere else adds nothing to
 the key, and that includes what a construction evaluates to decide what it builds: a conditional
@@ -191,8 +194,8 @@ read. An argument of the unit's signature -- including one a design element decl
 reads, one whose type is its value's, one a class reads, and every parameter of a top instance -- is
 read as the value its specialization settled, because that value is in the key and reading it costs
 no second unit. An argument only of a body is supplied like any other and read as what the object
-was built with, which is the value the body's name holds. A design with nothing supplied lowers
-exactly as before.
+was built with, which is the value the specialization's name holds. A design with nothing supplied
+lowers exactly as before.
 
 ### D5. A construction hands its values to the entry by type
 

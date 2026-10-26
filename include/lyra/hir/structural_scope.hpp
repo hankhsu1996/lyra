@@ -23,7 +23,7 @@
 #include "lyra/hir/dumped_declaration.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/foreign_export.hpp"
-#include "lyra/hir/owned_child_ref.hpp"
+#include "lyra/hir/owned_child_step.hpp"
 #include "lyra/hir/pattern.hpp"
 #include "lyra/hir/port_direction.hpp"
 #include "lyra/hir/procedural_scope.hpp"
@@ -51,12 +51,12 @@ struct InterfacePortId {
       -> std::strong_ordering = default;
 };
 
-// What one element of a route names: a child of this unit, an interface port
-// of a scope on the path (LRM 25.3) -- a borrowed reference the parent bound
-// during elaboration, past which everything belongs to the unit the port names
-// -- or something a scope of another unit published.
+// What one element of a route names: an instance a scope of this unit
+// declares, an interface port of a scope on the path (LRM 25.3) -- a borrowed
+// reference the parent bound during elaboration, past which everything belongs
+// to the unit the port names -- or something a scope published.
 using StepTarget =
-    std::variant<OwnedChildRef, InterfacePortId, PublishedScopeRef>;
+    std::variant<InstanceMemberId, InterfacePortId, PublishedScopeRef>;
 
 using PathStep = PathElement<StepTarget>;
 
@@ -71,8 +71,8 @@ template <typename Names>
 
 // Where a route starts. `InUnitBase` anchors at a structural scope of this
 // unit, `hops` typed parent edges out from the referrer (0 being the
-// referrer's own scope); every step from there begins inside this unit's
-// layout.
+// referrer's own scope); above the referrer's own scope, the route stands on
+// what that scope published.
 struct InUnitBase {
   StructuralHops hops;
 
@@ -100,8 +100,8 @@ using RouteBase = std::variant<InUnitBase, EnclosingScopeBase>;
 // two ways: by this unit's own declaration, or by the position another unit's
 // signature gave it.
 //
-// A value ends at data: a data object declared by the scope the steps land on,
-// or a static-lifetime local of one of that scope's bodies, which a named block
+// A value ends at data: a data object declared by the reader's own scope, or a
+// static-lifetime local of one of that scope's bodies, which a named block
 // or a subroutine puts on the hierarchical path (LRM 23.9) -- every such scope
 // between is part of where the storage sits, not a step of its own, so the leaf
 // identity fixes the whole procedural descent. A leaf in another unit is named
@@ -170,8 +170,7 @@ using PublishedDecl = std::variant<
 // The signature's class path is the one a referrer reaches the class by.
 // Several scopes of a unit may state one class: the block instances of one
 // application of a generate block are objects of one class (LRM 27.3), and
-// those whose code uses their index are that class realized by a scope per
-// value of it.
+// those whose HIR differs are that class realized by several block bodies.
 struct ScopePublication {
   // The class this scope is published as, which every scope published under
   // the same path is.
@@ -187,8 +186,9 @@ struct ScopePublication {
   auto operator==(const ScopePublication&) const -> bool = default;
 };
 
-// The route ends at a member a scope published -- one of another unit, or a
-// block of a loop of this one -- at the position its unit's signature gave it.
+// The route ends at a member a scope published -- one of another unit, or any
+// scope of this one other than the reader's own -- at the position its unit's
+// signature gave it.
 // The name was resolved where this unit compiles, so a renamed member fails
 // there rather than while the design elaborates.
 struct PublishedMemberLeaf {
@@ -237,11 +237,10 @@ struct ScopeLeaf {
 };
 
 // The route ends at what a `disable` naming a block or task terminates (LRM
-// 9.6.2), where this artifact lays out the scope that declares it. The scope's
-// identity indexes the registry of the structural scope the steps land on, so
-// the procedural scopes between it and that scope are where the target sits
-// rather than steps of their own -- the same reading a static declared in one
-// of them takes.
+// 9.6.2), declared in the reader's own structural scope, whose registry the
+// scope's identity indexes, so the procedural scopes between it and that scope
+// are where the target sits rather than steps of their own -- the same reading
+// a static declared in one of them takes.
 struct DisableTargetLeaf {
   ProceduralScopeId scope;
 
@@ -338,12 +337,11 @@ struct ParameterValueAssignment {
 
 // One way the objects of an instance declaration are built: the unit they are
 // instances of, standing on this unit's record of the class that unit's
-// instances are, the body of that unit they are compiled to, which is what the
-// construction makes there, and what each instantiation says of each parameter
-// the unit takes at construction, in the order the unit declares them.
+// instances are, and what each instantiation says of each parameter the unit
+// takes at construction, in the order the unit declares them. Which
+// specialization of that unit is made there is the object's construction.
 struct InstanceAlternative {
   ScopeClassId scope_class;
-  std::string body;
   std::vector<ParameterValueAssignment> assignments;
 
   auto operator==(const InstanceAlternative&) const -> bool = default;
@@ -501,23 +499,6 @@ struct SingleBlock {
   auto operator==(const SingleBlock&) const -> bool = default;
 };
 
-// One of a loop's bodies, and the values its index stood at where an
-// elaboration built a block of that body (LRM 27.4), in ascending order. A
-// block is named by the value of its index where what it compiles to uses it
-// -- what it declares, which is the class it is an object of, and its code,
-// `body_arguments`, which is which body of that class it is -- so blocks
-// standing at different values may be different bodies, and which one stands
-// at a value is what the construction looks up when it builds there. A loop of
-// one body has nothing to look up and lists no values: it builds that body at
-// every index it counts out.
-struct LoopBody {
-  StructuralScopeId body;
-  std::optional<std::uint64_t> body_arguments;
-  std::vector<std::int64_t> indices;
-
-  auto operator==(const LoopBody&) const -> bool = default;
-};
-
 // A loop the construction runs, building a block at every index it counts out
 // (LRM 27.4). How many blocks there are is what running the loop says, so
 // nothing here follows that count, and a loop that counted none states the
@@ -528,17 +509,15 @@ struct LoopBody {
 // whether a block stands at it, and how it reaches the next one. The first two
 // are values the loop reads; the step is written for its effect on the index
 // and its own value is discarded, the same way a loop written among statements
-// states its step. `arguments` are what each construction passes the body,
-// evaluated where the index then stands. `bodies` holds every body a block of
-// the loop is, each with where it stands; a loop whose index fixes nothing it
-// compiles to has one.
+// states its step. `index` is what each construction hands the block, the
+// index it stands at, evaluated where the index then stands (LRM 27.4). Which
+// body each block it counts out is, is its object's construction data.
 struct BlocksRepeat {
   StructuralDataObjectId variable;
   ExprId initial;
   ExprId condition;
   ExprId step;
-  std::vector<ExprId> arguments;
-  std::vector<LoopBody> bodies;
+  ExprId index;
 
   auto operator==(const BlocksRepeat&) const -> bool = default;
 };
@@ -624,57 +603,23 @@ using SelectionChoice = std::variant<ChoiceOnCondition, ChoiceOnLabel>;
 struct BlocksChoose {
   base::Arena<SelectionChoice, SelectionChoiceId> choices;
   SelectionChoiceId root;
-  // One entry per alternative the source wrote, in that order: the scope its
-  // block compiled to, or nothing where no elaboration of the construct
-  // selected it. Such an alternative keeps its place because the positions
-  // after it are the positions the source wrote, which is what a name
-  // resolves against.
-  std::vector<std::optional<StructuralScopeId>> alternatives;
+  // How many alternatives the source wrote. Which body the one an object
+  // selects is, is that object's construction data.
+  std::uint32_t alternatives = 0;
 
   auto operator==(const BlocksChoose&) const -> bool = default;
 };
 
-struct GenerateBlock;
-
-// The lowered form of every generate construct (LRM 27). A block's position in
-// `blocks` is its identity, so nothing restates which block a scope is, and
-// how many objects a scope stands for is what `counting` says.
+// The lowered form of every generate construct (LRM 27): how its blocks are
+// counted out or chosen, as the source wrote it. What each block is, is no
+// part of the scope holding the construct: the bodies are the unit's, and
+// which one each object builds is that object's construction data.
 struct Generate {
-  base::Arena<GenerateBlock, StructuralScopeId> blocks;
   std::variant<SingleBlock, BlocksRepeat, BlocksChoose> counting =
       SingleBlock{};
 
   auto operator==(const Generate&) const -> bool = default;
 };
-
-// Which compiled scope a path naming the one block a construct building at
-// most one holds reaches: a block standing on its own is its one scope, and a
-// conditional compiles each alternative it holds to one. Every consumer of a
-// path asks this and nothing else about a generate, so the answer is stated
-// once here rather than re-derived at each of them.
-[[nodiscard]] inline auto ChosenBlockScopeOf(
-    const Generate& gen, std::uint32_t alternative) -> StructuralScopeId {
-  const auto a_loop = [] -> StructuralScopeId {
-    throw InternalError(
-        "hir::ChosenBlockScopeOf: a loop's blocks are named by a select, not "
-        "as an alternative");
-  };
-  return std::visit(
-      Overloaded{
-          [](const SingleBlock&) { return StructuralScopeId{0}; },
-          [&](const BlocksRepeat&) { return a_loop(); },
-          [&](const BlocksChoose& chosen) -> StructuralScopeId {
-            if (alternative >= chosen.alternatives.size() ||
-                !chosen.alternatives[alternative].has_value()) {
-              throw InternalError(
-                  "hir::ChosenBlockScopeOf: a name reached an alternative no "
-                  "elaboration of the construct selected");
-            }
-            return *chosen.alternatives[alternative];
-          },
-      },
-      gen.counting);
-}
 
 struct StructuralScope {
   // The label of a generate child as a hierarchical name writes it (LRM 23.6,
@@ -757,14 +702,14 @@ struct StructuralScope {
   auto operator==(const StructuralScope&) const -> bool = default;
 };
 
-// One body of a generate. What a construction passes it is stated by whatever
-// counts the construct's blocks out: a loop's block receives its index (LRM
-// 27.4), and a block has no parameter ports (Syntax 27-1), so any other block
-// receives nothing.
-struct GenerateBlock {
+// One body a generate block of the unit compiles to. What a construction
+// passes it is stated by whatever counts the construct's blocks out: a loop's
+// block receives its index (LRM 27.4), and a block has no parameter ports
+// (Syntax 27-1), so any other block receives nothing.
+struct BlockBody {
   StructuralScope scope;
 
-  auto operator==(const GenerateBlock&) const -> bool = default;
+  auto operator==(const BlockBody&) const -> bool = default;
 };
 
 }  // namespace lyra::hir

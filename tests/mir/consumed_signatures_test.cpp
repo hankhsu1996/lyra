@@ -223,7 +223,9 @@ TEST(ConsumedSignaturesTest, WhatIsHeldOrNamedOfAnotherUnitIsRead) {
                         ReferenceExpr{
                             .target =
                                 ExternalObjectEntryRef{
-                                    .unit_name = "M", .body_name = "M"}},
+                                    .unit_name = "M",
+                                    .body_name = "M",
+                                    .block = std::nullopt}},
                     .type = u.builtins.void_type})});
   });
   EXPECT_EQ(

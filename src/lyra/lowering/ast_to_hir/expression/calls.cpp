@@ -1098,8 +1098,7 @@ auto LowerSubroutineCall(
   // are where it is stated. The call's result type is the enclosing
   // expression's own type and is not recorded again here.
   if (const auto* unit = DeclaringNamespaceUnit(*sym)) {
-    std::string unit_name =
-        CompilationUnitName(*unit, unit_lowerer.Specialization());
+    std::string unit_name = CompilationUnitName(*unit, unit_lowerer.Naming());
     auto interface =
         unit_lowerer.NamespaceCalleeInterface(unit_name, *sym, span);
     if (!interface) return std::unexpected(std::move(interface.error()));
@@ -1120,8 +1119,8 @@ auto LowerSubroutineCall(
   }
 
   // A name leaving the caller's instance starts where it lands or at the port
-  // it went through (LRM 23.8, 25.3), and one passing a block of a loop
-  // reaches the block its select picks (LRM 27.4), whatever declaration the
+  // it went through (LRM 23.8, 25.3), and one passing a generate block reaches
+  // the block its object built (LRM 27.4, 27.5), whatever declaration the
   // front end resolved it to in the elaboration being lowered. Only a name
   // that does neither may enable a subroutine this unit declares as its own.
   RouteOrigin start =
@@ -1131,18 +1130,15 @@ auto LowerSubroutineCall(
                            : std::nullopt;
   // What is left is a subroutine of another object -- one an interface offers
   // across a port (LRM 25.7), or one a hierarchical name enables (LRM 23.6),
-  // a block of a loop of this unit included -- and the route to the object it
-  // is enabled on starts where the name does.
-  if (!binding.has_value()) {
+  // a generate block of this unit included -- and the route to the object it
+  // is enabled on starts where the name does. So is one an enclosing scope
+  // declares: what the caller states of that scope is what it published, as
+  // of any other (LRM 23.9).
+  if (!binding.has_value() ||
+      !unit_lowerer.IsOwnScope(frame, *sym->getParentScope())) {
     return LowerObjectSubroutineCall(
         unit_lowerer, frame, std::move(start), *sym, std::move(arg_ids), span);
   }
-  // The scope that declares the callee, reached the way a reference to a
-  // declaration in that same scope is: a climb to the nearest scope enclosing
-  // both, then a descent. A callee of an enclosing scope is the empty descent,
-  // which is what a bare climb already was.
-  auto reach = unit_lowerer.ReachOwnScope(frame, *sym->getParentScope(), span);
-  if (!reach) return std::unexpected(std::move(reach.error()));
   auto result_type = unit_lowerer.InternExpressionType(call, span);
   if (!result_type) return std::unexpected(std::move(result_type.error()));
   return hir::Expr{
@@ -1151,8 +1147,6 @@ auto LowerSubroutineCall(
           hir::CallExpr{
               .callee =
                   hir::StructuralSubroutineRef{
-                      .hops = reach->hops,
-                      .descent = std::move(reach->descent),
                       .subroutine = binding->subroutine_id},
               .arguments = std::move(arg_ids),
           },

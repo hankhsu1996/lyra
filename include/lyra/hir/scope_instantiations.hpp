@@ -2,14 +2,16 @@
 
 #include <compare>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
 #include "lyra/base/pool_id.hpp"
 #include "lyra/hir/compilation_unit.hpp"
-#include "lyra/hir/owned_child_ref.hpp"
+#include "lyra/hir/owned_child_step.hpp"
+#include "lyra/hir/scope_construction.hpp"
+#include "lyra/hir/specialization_ref.hpp"
 #include "lyra/hir/structural_scope.hpp"
-#include "lyra/hir/unit_body_ref.hpp"
 
 namespace lyra::hir {
 
@@ -22,49 +24,63 @@ struct InstantiationIndex {
       -> std::strong_ordering = default;
 };
 
-// Which of a scope's block tables the table one of its generate blocks is
-// built with is.
-struct BlockTableIndex {
-  std::uint32_t value = base::kUnassignedId;
+// Where the first object of the instance member `member` stands among the
+// instantiations `scope` declares: every object of every member, the members
+// in the order the scope declares them and each member's objects in row-major
+// order (LRM 23.3.2). It is a fact of the scope alone, so the code of the
+// scope names it wherever the scope stands, and counts out the member's other
+// objects from there.
+[[nodiscard]] auto InstantiationIndexOf(
+    const StructuralScope& scope, InstanceMemberId member)
+    -> InstantiationIndex;
 
-  auto operator<=>(const BlockTableIndex&) const
-      -> std::strong_ordering = default;
+struct PlacedBlock;
+
+// The places of one generate, in the order its table lists them, each with
+// the block an object builds there, absent where it builds none -- an
+// alternative it did not select -- and whether each block is handed the index
+// its loop stood at (LRM 27.4), the one value a block is ever handed, since a
+// block has no parameter ports (Syntax 27-1).
+struct GeneratePlaces {
+  bool handed_an_index = false;
+  std::vector<std::optional<PlacedBlock>> places;
 };
 
-// What one scope of an object makes at each instantiation it declares (LRM
-// 23.3.2), and the same of each block of each of its generates. A scope's code
-// names an instantiation by where the scope declares it and a block's table by
-// the block, never by where either stands among the object's other scopes, so
-// a scope's code says the same thing wherever the scope stands and whichever
-// bodies its neighbours are; which body is made at an instantiation is the
-// table's, stated where the program is assembled.
+// What one object of a scope makes at each instantiation the scope declares
+// (LRM 23.3.2), which specialization of which unit, and at each place of each
+// of its generates, which block body and the same of that block in turn. Which
+// body is made where is the object's, stated where the program is assembled;
+// the scope's code names an instantiation by where the scope declares it and a
+// block by its generate and its place, so that code is the same wherever the
+// scope stands. It is read off the specialization while its implementation is
+// still held, which is why it carries the one fact of the implementation the
+// assembly needs: whether each generate hands its blocks an index.
 class ScopeInstantiations {
  public:
-  explicit ScopeInstantiations(
-      const CompilationUnit& unit, const StructuralScope& scope);
-
-  [[nodiscard]] auto Of(InstanceMemberId member, std::uint32_t alternative)
-      const -> InstantiationIndex;
-  [[nodiscard]] auto OfBlock(GenerateId generate, StructuralScopeId block) const
-      -> const ScopeInstantiations&;
-  [[nodiscard]] auto BlockTableOf(
-      GenerateId generate, StructuralScopeId block) const -> BlockTableIndex;
+  ScopeInstantiations(
+      const CompilationUnit& unit, const StructuralScope& scope,
+      const ScopeConstruction& construction);
 
   // What is made at each of this scope's instantiations, in index order.
-  [[nodiscard]] auto Instantiated() const -> std::span<const UnitBodyRef> {
+  [[nodiscard]] auto Instantiated() const
+      -> std::span<const SpecializationRef> {
     return instantiated_;
   }
-  // Each block's layout, in block table order.
-  [[nodiscard]] auto Blocks() const -> std::span<const ScopeInstantiations> {
-    return blocks_;
+  // The places of each generate, in the order the scope declares them.
+  [[nodiscard]] auto Generates() const -> std::span<const GeneratePlaces> {
+    return generates_;
   }
 
  private:
-  std::vector<std::uint32_t> first_of_member_;
-  std::vector<UnitBodyRef> instantiated_;
-  // The block table index of the first block of each generate.
-  std::vector<std::uint32_t> first_block_of_generate_;
-  std::vector<ScopeInstantiations> blocks_;
+  std::vector<SpecializationRef> instantiated_;
+  std::vector<GeneratePlaces> generates_;
+};
+
+// The block one place builds: its body among the unit's, and what that block
+// makes in turn.
+struct PlacedBlock {
+  BlockBodyId body;
+  ScopeInstantiations made;
 };
 
 }  // namespace lyra::hir

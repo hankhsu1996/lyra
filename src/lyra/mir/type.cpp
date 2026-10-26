@@ -266,6 +266,7 @@ auto IsReachedByAddress(RuntimeLibraryKind kind) -> bool {
     case RuntimeLibraryKind::kScopeCallable:
     case RuntimeLibraryKind::kConstructionTable:
     case RuntimeLibraryKind::kInstantiation:
+    case RuntimeLibraryKind::kGeneratePlaces:
     case RuntimeLibraryKind::kDumpEntry:
     case RuntimeLibraryKind::kDumpBlock:
       return false;
@@ -310,6 +311,7 @@ auto IsLibraryValue(RuntimeLibraryKind kind) -> bool {
     case RuntimeLibraryKind::kScopeCallable:
     case RuntimeLibraryKind::kConstructionTable:
     case RuntimeLibraryKind::kInstantiation:
+    case RuntimeLibraryKind::kGeneratePlaces:
     case RuntimeLibraryKind::kDumpEntry:
     case RuntimeLibraryKind::kDumpBlock:
       return false;

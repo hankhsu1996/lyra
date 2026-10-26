@@ -15,9 +15,7 @@
 #include "lyra/diag/failure_context.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/diag/source_manager.hpp"
-#include "lyra/hir/compilation_unit.hpp"
-#include "lyra/hir/scope_instantiations.hpp"
-#include "lyra/hir/unit_body_ref.hpp"
+#include "lyra/hir/specialization.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -40,19 +38,25 @@ struct ExecutableDesign {
   lir::CompilationUnit root;
 };
 
-// Lowers every declared unit's bodies to HIR and hands each unit on. A unit's
-// lowering reads no other unit's, so as many units are in flight at once as
-// `width` allows; reaching a unit's HIR reads the front end, which the units
-// take in turn, and everything after it runs beside the other units.
+// Lowers every declared unit's specializations to HIR and hands each on. A
+// unit's lowering reads no other unit's, so as many are in flight at once as
+// `width` allows; reaching one's HIR reads the front end, which they take in
+// the design's order, and everything after it runs beside the others.
 //
-// What a consumer does with a unit is split along the same line. `produce`
-// takes one unit to whatever the consumer wants of it and runs beside the
-// other units' lowering, so it reads nothing another unit's `produce` writes.
-// `consume` receives what `produce` returned one unit at a time, in the order
-// the design lists its units, so what a consumer assembles is the same
-// whichever unit happened to finish first. What is resident is the units in
-// flight, so the design's size reaches the peak only through what a consumer
-// chooses to hold.
+// Specializations whose code comes out alike share one implementation, which
+// is all the work after HIR has to run on, and which is named for the first of
+// them in the design's order; so which specialization is the first of an
+// implementation, and what the implementation is called, is the same on every
+// run.
+//
+// What a consumer does with a specialization is split along the same line.
+// `produce` takes one to whatever the consumer wants of it and runs beside the
+// other units' lowering, so it reads nothing another one's `produce` writes.
+// `consume` receives what `produce` returned one at a time, in the order the
+// design lists them, so what a consumer assembles is the same whichever
+// happened to finish first. What is resident is what is in flight and one copy
+// of each implementation of the unit being lowered, so the design's size
+// reaches the peak only through what a consumer chooses to hold.
 //
 // Every unit is attempted whatever the others reported, so one run accounts
 // for the whole design, and failures are reported in the order the units are
@@ -68,23 +72,23 @@ template <typename Produce, typename Consume>
 void LowerToHir(
     ElaboratedDesign& design, diag::DiagnosticSink& sink, std::size_t width,
     Produce produce, Consume consume) {
-  using Produced = std::invoke_result_t<Produce, hir::CompilationUnit>;
+  using Produced = std::invoke_result_t<Produce, hir::Specialization>;
   const profiling::StageScope stage("lower units");
-  status::Pieces(design.units.UnitCount());
+  status::Pieces(design.units.SpecializationCount());
   base::ProduceInOrder(
-      design.units.UnitCount(), width,
+      design.units.SpecializationCount(), width,
       [&](std::size_t i) -> Produced {
         Produced produced = diag::ContainFailure([&]() -> Produced {
-          auto unit = design.units.LowerUnit(i);
-          if (!unit) {
-            return std::unexpected(std::move(unit.error()));
+          auto lowered = design.units.LowerSpecialization(i);
+          if (!lowered) {
+            return std::unexpected(std::move(lowered.error()));
           }
-          // The unit is handed on below, so the name of the body it compiles
-          // is a copy that lasts as long as the work on it.
-          const std::string name = unit->body_name;
+          // The specialization is handed on below, so its name is a copy that
+          // lasts as long as the work on it.
+          const std::string name = lowered->name;
           const auto in_unit = diag::FailureContext::InUnit(name);
-          const status::Piece piece(unit->source_name);
-          return produce(*std::move(unit));
+          const status::Piece piece(lowered->implementation.source_name);
+          return produce(*std::move(lowered));
         });
         if (!produced) {
           status::Errors(1);
@@ -111,19 +115,26 @@ auto LowerToSemantic(
     std::size_t width, Produce produce, Consume consume)
     -> std::optional<SemanticDesign> {
   using Produced = std::invoke_result_t<Produce, mir::CompilationUnit>;
-  // What a body elaborated at its instantiations is the one fact of it the
-  // design root reads, so it travels with what the consumer made of the unit,
-  // and the two arrive together and in the design's order.
+  // What a specialization builds is the one fact of it the design root reads,
+  // so it travels with what the consumer made of its implementation, where it
+  // is the first of one, and the two arrive together and in the design's
+  // order.
   struct Lowered {
-    std::string body;
-    hir::ScopeInstantiations instantiated;
-    typename Produced::value_type produced;
+    std::string specialization;
+    lowering::hir_to_mir::SpecializationMade made;
+    std::optional<typename Produced::value_type> produced;
   };
   lowering::hir_to_mir::DesignInstantiations instantiations;
   LowerToHir(
       design, sink, width,
-      [&](const hir::CompilationUnit& hir_unit) -> diag::Result<Lowered> {
-        auto unit = LowerUnitToSemantic(hir_unit, sources, passes);
+      [&](const hir::Specialization& lowered) -> diag::Result<Lowered> {
+        Lowered out{
+            .specialization = lowered.name,
+            .made = lowering::hir_to_mir::SpecializationMade::Of(lowered),
+            .produced = std::nullopt};
+        if (!lowered.IsFirstOfItsImplementation()) return out;
+        auto unit =
+            LowerUnitToSemantic(lowered.implementation, sources, passes);
         if (!unit) {
           return std::unexpected(std::move(unit.error()));
         }
@@ -131,16 +142,15 @@ auto LowerToSemantic(
         if (!produced) {
           return std::unexpected(std::move(produced.error()));
         }
-        return Lowered{
-            .body = hir_unit.body_name,
-            .instantiated =
-                hir::ScopeInstantiations(hir_unit, hir_unit.root_scope),
-            .produced = *std::move(produced)};
+        out.produced = *std::move(produced);
+        return out;
       },
       [&](Lowered lowered) {
-        instantiations.by_body.emplace(
-            std::move(lowered.body), std::move(lowered.instantiated));
-        consume(std::move(lowered.produced));
+        instantiations.by_specialization.emplace(
+            std::move(lowered.specialization), std::move(lowered.made));
+        if (lowered.produced.has_value()) {
+          consume(*std::move(lowered.produced));
+        }
       });
   if (sink.HasErrors()) {
     return std::nullopt;

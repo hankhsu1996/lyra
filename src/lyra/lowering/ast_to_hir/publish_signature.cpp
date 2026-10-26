@@ -431,7 +431,7 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
   // What an instance is handed is the parameters its instantiation may assign
   // that the unit's name does not hold, the list a parent hands them in.
   for (const slang::ast::ParameterSymbol* handed :
-       Specialization().SuppliedParametersOf(InstantiationOf(*body))) {
+       Naming().SuppliedParametersOf(InstantiationOf(*body))) {
     auto type =
         InternType(handed->getType(), frontend::PointSpanOf(handed->location));
     if (!type) return std::unexpected(std::move(type.error()));
@@ -588,9 +588,10 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
   // every scope it holds -- its own and each generate block's (LRM 27). Within
   // one application the block instances of one class differ only in what their
   // constructions built, and the class is published once, stating what any of
-  // them built. Every other application of the body built the same blocks, so
-  // it publishes the same classes. Each scope keeps the class in this unit's
-  // own types as well, which is what its own published class is laid out from.
+  // them built. Every other application of the specialization built the same
+  // blocks, so it publishes the same classes. Each scope keeps the class in
+  // this unit's own types as well, which is what its own published class is
+  // laid out from.
   struct PublishedClasses {
     std::vector<std::vector<const slang::ast::Scope*>> scopes;
     std::vector<hir::ScopeClassSignature> classes;
@@ -625,11 +626,11 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
     if (published_by.classes != named.classes) {
       throw InternalError(
           std::format(
-              "UnitLowerer::PublishSignature: '{}' is an application of body "
-              "'{}' and publishes other classes than '{}' does, so a value the "
-              "body's name does not hold reached what it publishes -- please "
-              "report this as a bug",
-              application->asSymbol().getHierarchicalPath(), unit_.name,
+              "UnitLowerer::PublishSignature: '{}' is an application of "
+              "specialization '{}' and publishes other classes than '{}' does, "
+              "so a value the specialization's name does not hold reached what "
+              "it publishes -- please report this as a bug",
+              application->asSymbol().getHierarchicalPath(), specialization_,
               scope_->asSymbol().getHierarchicalPath()));
     }
   }
@@ -695,7 +696,7 @@ auto UnitLowerer::PublishScopeClass(
               hir::UnitObjectType{
                   .scope_class = unit_.scope_classes.Import(
                       hir::ScopeClassKey{
-                          .unit_name = Specialization().NameOf(*element),
+                          .unit_name = Naming().NameOf(*element),
                           .class_path = {}})});
         }
         std::vector<hir::UnpackedRange> declared;
@@ -787,7 +788,7 @@ auto UnitLowerer::PublishScopeClass(
               // no name of the source reaches it.
               return hir::PublishedMember{
                   .name = "block event",
-                  .holder = DefPathOf(*event.symbol, Specialization()),
+                  .holder = DefPathOf(*event.symbol, Naming()),
                   .type = unit_.types.Intern(hir::Type{hir::EventType{}}),
                   .storage = hir::VariableStorage{}};
             },
@@ -1046,7 +1047,7 @@ auto UnitLowerer::ReadingImporter(const hir::UnitSignature& signature)
 
 auto UnitLowerer::ScopeClassOfInstance(
     const slang::ast::InstanceSymbol& instance) -> hir::ScopeClassId {
-  return ScopeClassOf(Specialization().NameOf(instance));
+  return ScopeClassOf(Naming().NameOf(instance));
 }
 
 auto UnitLowerer::ScopeClassOf(const std::string& unit_name)

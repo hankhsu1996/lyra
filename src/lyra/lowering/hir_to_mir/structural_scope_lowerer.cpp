@@ -23,6 +23,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_manager.hpp"
+#include "lyra/hir/enclosing_scopes.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
@@ -86,12 +87,12 @@ namespace {
 // design hierarchy, to the scope's own part. That call hands on the
 // definition of the class the instance is of after these, since a class names
 // its own definition and what a unit published of its object is handed it by
-// the class realizing it. The parent is taken as `parent`: a block of a
-// generate construct takes the scope building it as that scope's class, which
-// is what the builder hands, and anything else the base every scope extends.
+// the class realizing it. The parent is taken as the base every scope extends:
+// a block reaches the scope that built it only through what that scope
+// published, whichever body either is.
 void AttachRuntimeScopeCtorPrefix(
-    const mir::CompilationUnit& unit, ClassShape& shape, mir::TypeId parent) {
-  shape.ctor_prefix_params.Add(mir::ParamDecl{.type = parent});
+    const mir::CompilationUnit& unit, ClassShape& shape) {
+  shape.ctor_prefix_params.Add(mir::ParamDecl{.type = unit.builtins.scope_ptr});
   shape.ctor_prefix_params.Add(
       mir::ParamDecl{.type = unit.builtins.hierarchy_segment});
 }
@@ -337,12 +338,12 @@ auto ReadConstructionTable(
   return mir::MakeCopyExpr(block.exprs.Add(std::move(place)), type);
 }
 
-// What the instantiation at `at` of the table the object under construction
-// in `frame` was handed says, by the library entry `read` that answers it.
+// What the instantiation at `at`, a machine integer, of the table the object
+// under construction in `frame` was handed says, by the library entry `read`
+// that answers it.
 auto ReadInstantiation(
     const mir::CompilationUnit& unit, const WalkFrame& frame,
-    support::BuiltinFn read, hir::InstantiationIndex at, mir::TypeId type)
-    -> mir::ExprId {
+    support::BuiltinFn read, mir::ExprId at, mir::TypeId type) -> mir::ExprId {
   mir::Block& block = *frame.current_block;
   const mir::ExprId table = block.exprs.Add(ReadConstructionTable(unit, frame));
   return block.exprs.Add(
@@ -350,10 +351,32 @@ auto ReadInstantiation(
           .data =
               mir::CallExpr{
                   .callee = mir::Direct{.target = read},
-                  .arguments =
-                      {table,
-                       mir::BuildMachineIntLiteral(unit, block, at.value)}},
+                  .arguments = {table, at}},
           .type = type});
+}
+
+// Where the object of the instance member `member` that `coords` name stands
+// among the member's objects, counted in row-major order, as an `int`.
+auto RowMajorPosition(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    const hir::InstanceMemberDecl& member, std::span<const mir::LocalId> coords)
+    -> mir::ExprId {
+  mir::ExprId at = mir::BuildIntLiteral(unit, block, 0);
+  for (std::size_t d = 0; d < coords.size(); ++d) {
+    const mir::ExprId scaled = block.exprs.Add(
+        mir::MakeBinary(
+            unit, block, mir::BinaryOp::kMul, at,
+            mir::BuildIntLiteral(
+                unit, block,
+                static_cast<std::int64_t>(member.array_dims[d].ElementCount())),
+            unit.builtins.int_type));
+    at = block.exprs.Add(
+        mir::MakeBinary(
+            unit, block, mir::BinaryOp::kAdd, scaled,
+            block.ReadLocal(coords[d], unit.builtins.int_type),
+            unit.builtins.int_type));
+  }
+  return at;
 }
 
 // The type of a unit's object entry: where the object hangs, its segment and
@@ -394,32 +417,6 @@ auto ObjectEntryTypes(
   return types;
 }
 
-// What a block of this unit is built with: its own table, which the table the
-// scope building it was handed holds at `table`, then whatever its
-// construction supplies.
-auto BlockConstructionArguments(
-    const mir::CompilationUnit& unit, const WalkFrame& frame,
-    hir::BlockTableIndex table, std::vector<mir::Expr> supplied)
-    -> std::vector<mir::Expr> {
-  mir::Block& block = *frame.current_block;
-  const mir::ExprId handed =
-      block.exprs.Add(ReadConstructionTable(unit, frame));
-  std::vector<mir::Expr> arguments;
-  arguments.reserve(1 + supplied.size());
-  arguments.push_back(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{.target = support::BuiltinFn::kBlockTable},
-                  .arguments =
-                      {handed,
-                       mir::BuildMachineIntLiteral(unit, block, table.value)}},
-          .type = mir::ConstructionTablePointer(unit.types)});
-  std::ranges::move(supplied, std::back_inserter(arguments));
-  return arguments;
-}
-
 // Builds one object an external-unit instance member declares and hands back
 // the borrowed pointer the runtime tree returns. The object is built and given
 // to the tree to own, under `runtime_label` and the index `indices` give it in
@@ -431,7 +428,7 @@ auto BlockConstructionArguments(
 // `handed` types.
 auto BuildOwnedInstance(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId parent_self,
-    const std::string& runtime_label, hir::InstantiationIndex instantiation,
+    const std::string& runtime_label, mir::ExprId instantiation,
     mir::TypeId owning_pointer_type, mir::TypeId borrowed_pointer_type,
     std::span<const mir::ExprId> indices, std::span<const hir::TypeId> handed,
     std::vector<mir::Expr> arguments) -> mir::ExprId {
@@ -451,16 +448,17 @@ auto BuildOwnedInstance(
   const mir::TypeId entry_type =
       ObjectEntryType(unit_lowerer, handed, owning_pointer_type);
   const mir::TypeId table_type = mir::ConstructionTablePointer(unit.types);
+  const mir::ExprId at = EvaluatedOnce(frame, instantiation);
   std::vector<mir::ExprId> entry_arguments{
       ObjectAs(block, parent_self, builtins.scope_ptr), segment_id,
       ReadInstantiation(
-          unit, frame, support::BuiltinFn::kInstantiationTable, instantiation,
+          unit, frame, support::BuiltinFn::kInstantiationTable, at,
           table_type)};
   for (mir::Expr& argument : arguments) {
     entry_arguments.push_back(block.exprs.Add(std::move(argument)));
   }
   const mir::ExprId erased = ReadInstantiation(
-      unit, frame, support::BuiltinFn::kInstantiationEntry, instantiation,
+      unit, frame, support::BuiltinFn::kInstantiationEntry, at,
       mir::ErasedFunction(unit.types));
   const mir::ExprId entry = block.exprs.Add(
       mir::Expr{.data = mir::CastExpr{.operand = erased}, .type = entry_type});
@@ -486,25 +484,10 @@ auto BuildOwnedInstance(
   return ObjectAs(block, add_id, borrowed_pointer_type);
 }
 
-// The arguments a construction passes the constructor of the object it builds,
-// evaluated where it is built, once per object, in the block that builds it.
-auto LowerConstructorArguments(
-    StructuralScopeLowerer& lowerer, const WalkFrame& frame,
-    std::span<const hir::ExprId> arguments)
-    -> diag::Result<std::vector<mir::Expr>> {
-  std::vector<mir::Expr> lowered;
-  lowered.reserve(arguments.size());
-  for (const hir::ExprId value : arguments) {
-    auto one = lowerer.LowerExpr(lowerer.HirScope().exprs.Get(value), frame);
-    if (!one) return std::unexpected(std::move(one.error()));
-    lowered.push_back(*std::move(one));
-  }
-  return lowered;
-}
-
 // The arguments an instance's construction passes: for each parameter, the
 // value assigned, or none, where the instantiation left it to its default,
-// which the instance evaluates itself.
+// which the instance evaluates itself. Each is evaluated where the instance is
+// built, once per object, in the block that builds it.
 auto LowerConstructorArguments(
     StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     std::span<const hir::ParameterValueAssignment> assignments)
@@ -542,7 +525,9 @@ auto LowerConstructorArguments(
 
 // Builds one object of the instance member `id` as its alternative `which`
 // says, at the positions `coords` count out, and hands back the handle the
-// member holds it by.
+// member holds it by. Which specialization the object is, is this object's
+// construction, so its entry is the member's first in the table plus where it
+// stands among the member's objects.
 auto BuildAlternative(
     StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     hir::InstanceMemberId id, std::uint32_t which,
@@ -582,9 +567,18 @@ auto BuildAlternative(
        alternative.assignments) {
     handed.push_back(assigned.type);
   }
+  const mir::ExprId entry_at = BuildToInt64Call(
+      unit, block,
+      block.exprs.Add(
+          mir::MakeBinary(
+              unit, block, mir::BinaryOp::kAdd,
+              mir::BuildIntLiteral(
+                  unit, block,
+                  hir::InstantiationIndexOf(lowerer.HirScope(), id).value),
+              RowMajorPosition(unit, block, member, coords),
+              unit.builtins.int_type)));
   const mir::ExprId built = BuildOwnedInstance(
-      unit_lowerer, frame, parent_self, member.instance_name,
-      lowerer.Instantiations().Of(id, which),
+      unit_lowerer, frame, parent_self, member.instance_name, entry_at,
       MakeExternalUnitPointer(
           unit_lowerer, alternative, mir::PointerOwnership::kUnique),
       borrowed, indices, handed, *std::move(arguments));
@@ -613,25 +607,6 @@ auto AppendElement(
   const hir::InstanceMemberDecl& member =
       lowerer.HirScope().instance_members.Get(id);
   mir::Block& block = *frame.current_block;
-  const auto position = [&] {
-    mir::ExprId at = mir::BuildIntLiteral(unit, block, 0);
-    for (std::size_t d = 0; d < coords.size(); ++d) {
-      const mir::ExprId scaled = block.exprs.Add(
-          mir::MakeBinary(
-              unit, block, mir::BinaryOp::kMul, at,
-              mir::BuildIntLiteral(
-                  unit, block,
-                  static_cast<std::int64_t>(
-                      member.array_dims[d].ElementCount())),
-              unit.builtins.int_type));
-      at = block.exprs.Add(
-          mir::MakeBinary(
-              unit, block, mir::BinaryOp::kAdd, scaled,
-              block.ReadLocal(coords[d], unit.builtins.int_type),
-              unit.builtins.int_type));
-    }
-    return at;
-  };
   const std::uint32_t otherwise = member.taken.back();
   // The positions each other alternative is taken at, in the order the
   // alternatives first appear along the array.
@@ -683,7 +658,10 @@ auto AppendElement(
     return std::unexpected(std::move(kept.error()));
   }
   auto choice = BuildValueSwitch(
-      frame, BuildToInt64Call(unit, block, position()), arms, std::move(last));
+      frame,
+      BuildToInt64Call(
+          unit, block, RowMajorPosition(unit, block, member, coords)),
+      arms, std::move(last));
   if (!choice) return std::unexpected(std::move(choice.error()));
   block.AppendStmt(*std::move(choice));
   return {};
@@ -967,30 +945,19 @@ auto SelectedMember(
       .expr;
 }
 
-// Descends one element into a child the scope `from` stands in declares: the
-// parent's handle on that child, selected. A child whose body is another
-// compilation unit is still reached by a typed pointer, but what it declares
-// is that unit's to state, so the route stops resolving names against a scope
-// of this one. One this artifact lowers keeps the route inside it, and since
-// what the step reached is the base every block of a construct extends, it is
-// viewed as the class of the scope the element names.
+// Descends one element onto an instance the scope `from` stands in declares:
+// the parent's handle on it, selected. Its body is another compilation unit,
+// still reached by a typed pointer, but what it declares is that unit's to
+// state, so the route stops resolving names against a scope of this one.
 auto StepToOwnedChild(
     UnitLowerer& unit_lowerer, mir::Block& block, const ReachedPlace& from,
-    const hir::OwnedChildRef& names, std::span<const std::uint32_t> selects)
+    hir::InstanceMemberId names, std::span<const std::uint32_t> selects)
     -> ReachedPlace {
   const StructuralScopeLowerer& scope = OwnScopeOf(from, "StepToOwnedChild");
-  const OwnedChildAnchor anchor = scope.TranslateOwnedChild(names);
-  const mir::ExprId reached =
-      SelectedMember(unit_lowerer, block, from, anchor.reach, selects);
-  if (anchor.target_scope == nullptr) {
-    return ReachedPlace{.expr = reached, .place = InPublishedScope{}};
-  }
   return ReachedPlace{
-      .expr = ObjectAs(
-          block, reached,
-          unit_lowerer.GetClassShape(anchor.target_scope->ClassId())
-              .self_pointer_type),
-      .place = InOwnScope{anchor.target_scope}};
+      .expr = SelectedMember(
+          unit_lowerer, block, from, scope.InstanceMemberField(names), selects),
+      .place = InPublishedScope{}};
 }
 
 // Descends one element through an interface port of the scope `from` stands
@@ -1115,7 +1082,7 @@ auto BuildRouteWalk(
   for (const hir::PathStep& step : steps) {
     auto next = std::visit(
         Overloaded{
-            [&](const hir::OwnedChildRef& owned) -> diag::Result<ReachedPlace> {
+            [&](hir::InstanceMemberId owned) -> diag::Result<ReachedPlace> {
               return StepToOwnedChild(
                   unit_lowerer, block, reached, owned, step.selects);
             },
@@ -1132,7 +1099,8 @@ auto BuildRouteWalk(
                   unit_lowerer, block, reached.expr, published, step.selects,
                   evaluate_select);
               if (!stepped) return std::unexpected(std::move(stepped.error()));
-              return ReachedPlace{.expr = *stepped, .place = InPublishedScope{}};
+              return ReachedPlace{
+                  .expr = *stepped, .place = InPublishedScope{}};
             }},
         step.names);
     if (!next) return std::unexpected(std::move(next.error()));
@@ -1859,18 +1827,15 @@ void ValidateOwnedChildConstruction(
   }
 }
 
-// Lowers an owned-child construction site to two calls, the construction of
-// the child over `(parent, segment{label, indices}, ctor_args...)` and the
-// parent taking ownership of what it built: the child instance is built
-// carrying its complete hierarchy identity, then handed to the parent to own.
-// What comes back is a borrowed pointer, which is what a route navigates
-// through and what the caller stores. `runtime_label` is the child's name as a
-// hierarchical name writes it (LRM 23.6), empty for a scope the source gave
-// none, and `numbers` are the coordinates it stands at on that name, each the
-// machine integer a design's value names -- a loop's block stands at its
-// index. `arm_frame` must point at the block where
-// the stmts land and carry the constructor's bindings so a `self` read
-// resolves to the receiver binding.
+// Builds a child this scope's own class contains, standing at no coordinate,
+// and stores the borrowed pointer the runtime tree returns into the member
+// `handle_field` names. The child is built carrying its complete hierarchy
+// identity -- `runtime_label`, as a hierarchical name writes it (LRM 23.6),
+// empty for a scope the source gave none -- then handed to the runtime tree to
+// own, under the parent it was built with, once its constructor has committed,
+// so a thrown subobject constructor leaves no half-attached scope.
+// `arm_frame` must point at the block where the statements land and carry the
+// constructor's bindings so a `self` read resolves to the receiver binding.
 //
 // Where the child hangs in the runtime tree and who keeps the borrowed handle
 // to it are separate: `runtime_parent_handle` names an object this one already
@@ -1878,152 +1843,161 @@ void ValidateOwnedChildConstruction(
 // regardless. So one object can build a whole nested tree and still reach
 // every node of it in one step. Absent means the child hangs directly under
 // this object.
-auto BuildOwnedChildHandle(
+void AppendOwnedChildConstruction(
     UnitLowerer& unit_lowerer, const WalkFrame& arm_frame,
     std::optional<mir::FieldId> runtime_parent_handle,
     const std::string& runtime_label, mir::ClassId child_scope_id,
-    std::vector<mir::ExprId> numbers, mir::TypeId handle_type,
-    std::vector<mir::Expr> arguments) -> mir::ExprId {
+    const mir::ClassFieldTarget& handle_field) {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& arm_block = *arm_frame.current_block;
   const mir::Class& owner_class = *arm_frame.current_class.cls;
   ValidateOwnedChildConstruction(owner_class, child_scope_id);
 
-  const auto& builtins = unit_lowerer.Unit().builtins;
   const mir::TypeId child_ptr_type =
       MakeUniqueObjectPointer(unit_lowerer, child_scope_id);
-
   const auto self_read = [&]() -> mir::ExprId {
     return arm_block.exprs.Add(MakeSelfRefExpr(arm_frame));
   };
-  const auto parent_read = [&]() -> mir::ExprId {
-    if (!runtime_parent_handle.has_value()) {
-      return self_read();
-    }
-    return arm_block.exprs.Add(
-        mir::MakeFieldAccessExpr(
-            BuildObjectDeref(unit_lowerer.Unit(), arm_block, self_read()),
-            mir::ClassFieldTarget{
-                .owner = arm_frame.current_class.id,
-                .slot = *runtime_parent_handle},
-            owner_class.fields.Get(*runtime_parent_handle).type));
-  };
-
-  // Build the child's structural identity once and pass it as the child's
-  // own ctor argument. The child holds onto it from its constructor's first
-  // statement on; %m and debug traces read from that single source.
-  const mir::ExprId segment_id = BuildHierarchySegment(
-      unit_lowerer.Unit(), arm_block, runtime_label, std::move(numbers));
-
-  // The parent is handed as the child takes it: a block keeps the scope
-  // building it as that scope's class, and anything else takes the base every
-  // scope extends.
-  const ClassShape& child_shape = unit_lowerer.GetClassShape(child_scope_id);
-  std::vector<mir::ExprId> ctor_call_args;
-  ctor_call_args.reserve(2 + arguments.size());
-  ctor_call_args.push_back(ObjectAs(
-      arm_block, parent_read(),
-      child_shape.ctor_prefix_params.Get(kParentPrefix).type));
-  ctor_call_args.push_back(segment_id);
-  for (mir::Expr& value : arguments) {
-    ctor_call_args.push_back(arm_block.exprs.Add(std::move(value)));
-  }
-  const mir::ExprId ctor_call_id = arm_block.exprs.Add(
+  const mir::ExprId parent =
+      runtime_parent_handle.has_value()
+          ? arm_block.exprs.Add(
+                mir::MakeFieldAccessExpr(
+                    BuildObjectDeref(unit, arm_block, self_read()),
+                    mir::ClassFieldTarget{
+                        .owner = arm_frame.current_class.id,
+                        .slot = *runtime_parent_handle},
+                    owner_class.fields.Get(*runtime_parent_handle).type))
+          : self_read();
+  const mir::ExprId built = arm_block.exprs.Add(
       mir::MakeNewExpr(
           arm_block.exprs.Add(
               mir::MakeObjectConstructionExpr(
-                  *mir::AllocatedType(
-                      unit_lowerer.Unit().types, child_ptr_type),
-                  std::move(ctor_call_args))),
+                  *mir::AllocatedType(unit.types, child_ptr_type),
+                  {ObjectAs(arm_block, parent, unit.builtins.scope_ptr),
+                   BuildHierarchySegment(unit, arm_block, runtime_label, {})})),
           child_ptr_type));
-
-  // The runtime tree owns the child, under the parent it was built with;
-  // ownership transfers after the child's constructor commits, so a thrown
-  // subobject ctor leaves no half-attached scope. The borrowed pointer it hands
-  // back is downcast and stored in the parent's handle member, which is what a
-  // typed intra-unit route navigates through.
-  const mir::ExprId add_call_id = arm_block.exprs.Add(
+  const mir::ExprId attached = arm_block.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee =
                       mir::Direct{.target = support::BuiltinFn::kAttachScope},
-                  .arguments = {ctor_call_id}},
-          .type = builtins.scope_ptr});
-  return ObjectAs(arm_block, add_call_id, handle_type);
-}
+                  .arguments = {built}},
+          .type = unit.builtins.scope_ptr});
 
-// The same construction for a child this scope keeps one handle to, stored into
-// the member that names it. Such a child stands at no coordinate, being the
-// only one its member holds.
-void AppendOwnedChildConstruction(
-    UnitLowerer& unit_lowerer, const WalkFrame& arm_frame,
-    std::optional<mir::FieldId> runtime_parent_handle,
-    const std::string& runtime_label, mir::ClassId child_scope_id,
-    const mir::ClassFieldTarget& handle_field,
-    std::vector<mir::Expr> arguments) {
-  mir::Block& arm_block = *arm_frame.current_block;
   const mir::TypeId handle_type = FieldTypeOf(unit_lowerer, handle_field);
-  const mir::ExprId typed_handle = BuildOwnedChildHandle(
-      unit_lowerer, arm_frame, runtime_parent_handle, runtime_label,
-      child_scope_id, {}, handle_type, std::move(arguments));
   const mir::ExprId member = arm_block.exprs.Add(
       mir::MakeFieldAccessExpr(
-          BuildObjectDeref(
-              unit_lowerer.Unit(), arm_block,
-              arm_block.exprs.Add(MakeSelfRefExpr(arm_frame))),
-          handle_field, handle_type));
+          BuildObjectDeref(unit, arm_block, self_read()), handle_field,
+          handle_type));
   arm_block.AppendStmt(
       mir::ExprStmt{
           .expr = arm_block.exprs.Add(
               mir::MakeAssignExpr(
-                  unit_lowerer.Unit().builtins, member, typed_handle))});
+                  unit.builtins, member,
+                  ObjectAs(arm_block, attached, handle_type)))});
 }
 
-// Builds one block of a loop and files it in the loop's member under
-// `number`, the machine integer the value its index stood at names, which is
-// both the coordinate the block's name carries and what a hierarchical name
-// reaching it asks the member for (LRM 23.6, 27.4).
-void AppendLoopBlockConstruction(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame,
-    const ChildStructuralScopeBinding& binding,
-    const mir::ClassFieldTarget& blocks, mir::ExprId number,
-    std::vector<mir::Expr> arguments) {
+// Builds the block at place `place` of the generate `generate`, the machine
+// integer naming where it stands among the generate's places, handing it
+// `index`, the index a loop's block stands at, and hands back the borrowed
+// pointer the runtime tree returns. Which body is built there is the object's,
+// so the entry making it and the table it is built with are read off the table
+// this object was handed, and the entry is converted back to the prototype
+// every block entry of the generate has. The block is handed this object as
+// the base every scope extends, since its code reaches this scope only through
+// what the scope published.
+auto BuildBlockAt(
+    StructuralScopeLowerer& lowerer, const WalkFrame& frame,
+    hir::GenerateId generate, mir::ExprId place, std::optional<mir::Expr> index)
+    -> mir::ExprId {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
   mir::Block& block = *frame.current_block;
-  const mir::CompilationUnit& unit = unit_lowerer.Unit();
-  const mir::ExprId index = EvaluatedOnce(frame, number);
-  const mir::ExprId built = BuildOwnedChildHandle(
-      unit_lowerer, frame, std::nullopt, binding.label,
-      binding.lowerer->ClassId(), {index}, unit.builtins.scope_ptr,
-      std::move(arguments));
+  const mir::ExprId at = EvaluatedOnce(frame, place);
+  const auto read = [&](support::BuiltinFn which, mir::TypeId type) {
+    return block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee = mir::Direct{.target = which},
+                    .arguments =
+                        {block.exprs.Add(ReadConstructionTable(unit, frame)),
+                         mir::BuildMachineIntLiteral(
+                             unit, block, generate.value),
+                         at}},
+            .type = type});
+  };
+
+  std::vector<mir::ExprId> arguments{
+      ObjectAs(
+          block, block.exprs.Add(MakeSelfRefExpr(frame)),
+          unit.builtins.scope_ptr),
+      read(
+          support::BuiltinFn::kBlockTable,
+          mir::ConstructionTablePointer(unit.types))};
+  const mir::TypeId entry_type = BlockEntryType(unit, index.has_value());
+  if (index.has_value()) {
+    arguments.push_back(block.exprs.Add(*std::move(index)));
+  }
+  const mir::ExprId entry = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CastExpr{
+                  .operand = read(
+                      support::BuiltinFn::kBlockEntry,
+                      mir::ErasedFunction(unit.types))},
+          .type = entry_type});
+  const mir::ExprId built = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee = mir::Indirect{.code = entry},
+                  .arguments = std::move(arguments)},
+          .type = unit.types.Get(entry_type)
+                      .Get<mir::MachineFunctionType>()
+                      .result});
+
+  // The runtime tree owns the block, under this object, and hands back a
+  // borrowed handle, which is what the generate's member holds.
+  return block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{.target = support::BuiltinFn::kAttachScope},
+                  .arguments = {built}},
+          .type = unit.builtins.scope_ptr});
+}
+
+// Stores the block `built` into the member the generate `generate` holds what
+// it built in, for a generate that builds at most one block per object.
+void HoldBuiltBlock(
+    StructuralScopeLowerer& lowerer, const WalkFrame& frame,
+    hir::GenerateId generate, mir::ExprId built) {
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  mir::Block& block = *frame.current_block;
+  const mir::ClassFieldTarget& handle = lowerer.GenerateHandle(generate);
   const mir::ExprId member = block.exprs.Add(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(
               unit, block, block.exprs.Add(MakeSelfRefExpr(frame))),
-          blocks, FieldTypeOf(unit_lowerer, blocks)));
+          handle, FieldTypeOf(lowerer.Owner(), handle)));
   block.AppendStmt(
       mir::ExprStmt{
           .expr = block.exprs.Add(
-              mir::Expr{
-                  .data =
-                      mir::CallExpr{
-                          .callee =
-                              mir::Direct{
-                                  .target = support::BuiltinFn::kLoopBlocksAdd,
-                                  .receiver = member},
-                          .arguments = {index, built}},
-                  .type = unit.builtins.void_type})});
+              mir::MakeAssignExpr(unit.builtins, member, built))});
 }
 
-// A loop generate builds a block at every index the loop counts out (LRM
-// 27.4). The index is a declaration of this scope, so the loop's own
-// expressions read and write it the way any name reaches a declaration, and
-// each block is built with the index it stands at, as the body that stands
-// there: each body but the last where the index is one of the values it
-// stands at, and the last wherever none before it does.
+// A loop generate builds a block at every index it counts out (LRM 27.4), the
+// block at the k-th index counted at the loop's k-th place. The index is a
+// declaration of this scope, so the loop's own expressions read and write it
+// the way any name reaches a declaration, and each block is handed the index
+// it stands at and filed in the loop's member under the machine integer that
+// index names, which is both the coordinate the block's name carries and what
+// a hierarchical name reaching it asks the member for (LRM 23.6).
 auto LowerRepeatedGenerate(
-    StructuralScopeLowerer& lowerer, WalkFrame frame,
-    const hir::BlocksRepeat& repeat, const GenerateBinding& gen_binding)
-    -> diag::Result<mir::Stmt> {
+    StructuralScopeLowerer& lowerer, WalkFrame frame, hir::GenerateId generate,
+    const hir::BlocksRepeat& repeat) -> diag::Result<mir::Stmt> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
   const mir::CompilationUnit& unit = unit_lowerer.Unit();
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
@@ -2033,6 +2007,7 @@ auto LowerRepeatedGenerate(
   const mir::ClassFieldTarget index_field =
       lowerer.TranslateStructuralDataObject(
           hir::StructuralHops{0}, repeat.variable);
+  const mir::ClassFieldTarget& blocks = lowerer.GenerateHandle(generate);
 
   BlockBuilder steps(frame);
   mir::Block& body = steps.Body();
@@ -2050,28 +2025,6 @@ auto LowerRepeatedGenerate(
         in.WrapperContents(unit.types, index_place(in), index_type)));
   };
 
-  // The block standing at the index the loop then holds, built into `in`.
-  const auto build_into =
-      [&](mir::Block& in, const hir::LoopBody& built) -> diag::Result<void> {
-    const WalkFrame in_frame = body_frame.WithBlock(&in);
-    auto arguments =
-        LowerConstructorArguments(lowerer, in_frame, repeat.arguments);
-    if (!arguments) return std::unexpected(std::move(arguments.error()));
-    const ChildStructuralScopeBinding& child =
-        gen_binding.blocks.Get(built.body);
-    AppendLoopBlockConstruction(
-        unit_lowerer, in_frame, child, gen_binding.handle,
-        BuildToInt64Call(unit, in, index_read(in)),
-        BlockConstructionArguments(
-            unit, in_frame, child.table, *std::move(arguments)));
-    return {};
-  };
-
-  // Where the loop counted no block for any object of this class, it states no
-  // body, and nothing runs it: its expressions, read against the same inputs
-  // here, would count none either.
-  if (repeat.bodies.empty()) return steps.BuildStatement();
-
   // Where the loop starts is a value it is given: LRM 27.4 spells the
   // initialization as an assignment of one and admits no other form there, so
   // the write belongs to the loop rather than to anything the source wrote.
@@ -2084,36 +2037,54 @@ auto LowerRepeatedGenerate(
               unit_lowerer.Unit(), body,
               AccessPath{.owner = index_place(body), .descent = {}},
               body.exprs.Add(*std::move(initial_or))))});
+  const mir::TypeId place_type = unit.builtins.int_type;
+  const mir::LocalId place = steps.Bindings().DeclareAnonymous(place_type);
+  body.AppendStmt(
+      mir::LocalDeclStmt{
+          .target = place, .init = mir::BuildIntLiteral(unit, body, 0)});
 
-  // Which body is built is a switch over the index: each body is taken at the
-  // values it stands at, and the last at every value the others do not.
   mir::Block loop_body;
   const WalkFrame loop_frame = body_frame.WithBlock(&loop_body);
-  const std::span<const hir::LoopBody> tested =
-      std::span{repeat.bodies}.first(repeat.bodies.size() - 1);
-  mir::Block last;
-  if (auto built = build_into(last, repeat.bodies.back()); !built) {
-    return std::unexpected(std::move(built.error()));
-  }
-  std::vector<ValueArm> bodies;
-  bodies.reserve(tested.size());
-  for (const hir::LoopBody& stood : tested) {
-    bodies.push_back(
-        ValueArm{
-            .values = stood.indices,
-            .body = [&](const WalkFrame&) -> diag::Result<mir::Block> {
-              mir::Block stands;
-              if (auto built = build_into(stands, stood); !built) {
-                return std::unexpected(std::move(built.error()));
-              }
-              return stands;
-            }});
-  }
-  auto choice_or = BuildValueSwitch(
-      loop_frame, BuildToInt64Call(unit, loop_body, index_read(loop_body)),
-      bodies, std::move(last));
-  if (!choice_or) return std::unexpected(std::move(choice_or.error()));
-  loop_body.AppendStmt(*std::move(choice_or));
+  auto index = lowerer.LowerExpr(hir_scope.exprs.Get(repeat.index), loop_frame);
+  if (!index) return std::unexpected(std::move(index.error()));
+  const mir::ExprId number = EvaluatedOnce(
+      loop_frame, BuildToInt64Call(unit, loop_body, index_read(loop_body)));
+  const mir::ExprId built = BuildBlockAt(
+      lowerer, loop_frame, generate,
+      BuildToInt64Call(unit, loop_body, loop_body.ReadLocal(place, place_type)),
+      *std::move(index));
+  const mir::ExprId member = loop_body.exprs.Add(
+      mir::MakeFieldAccessExpr(
+          BuildObjectDeref(
+              unit, loop_body,
+              loop_body.exprs.Add(MakeSelfRefExpr(loop_frame))),
+          blocks, FieldTypeOf(unit_lowerer, blocks)));
+  loop_body.AppendStmt(
+      mir::ExprStmt{
+          .expr = loop_body.exprs.Add(
+              mir::Expr{
+                  .data =
+                      mir::CallExpr{
+                          .callee =
+                              mir::Direct{
+                                  .target = support::BuiltinFn::kLoopBlocksAdd,
+                                  .receiver = member},
+                          .arguments = {number, built}},
+                  .type = unit.builtins.void_type})});
+  loop_body.AppendStmt(
+      mir::ExprStmt{
+          .expr = loop_body.exprs.Add(
+              mir::MakeAssignExpr(
+                  unit.builtins, loop_body.LocalPlace(place, place_type),
+                  loop_body.exprs.Add(
+                      mir::Expr{
+                          .data =
+                              mir::BinaryExpr{
+                                  .op = mir::BinaryOp::kAdd,
+                                  .lhs = loop_body.ReadLocal(place, place_type),
+                                  .rhs =
+                                      mir::BuildIntLiteral(unit, loop_body, 1)},
+                          .type = place_type})))});
   // The step is the expression the source wrote, and it reaches the next
   // index by writing the loop's own, so it is placed for its effect and its
   // value is dropped -- every form LRM 27.4 admits for it says where the index
@@ -2136,38 +2107,34 @@ auto LowerRepeatedGenerate(
 }
 
 auto LowerSelectionChoiceInto(
-    StructuralScopeLowerer& lowerer, WalkFrame frame,
-    const hir::BlocksChoose& chosen, hir::SelectionChoiceId at,
-    const GenerateBinding& gen_binding) -> diag::Result<void>;
+    StructuralScopeLowerer& lowerer, WalkFrame frame, hir::GenerateId generate,
+    const hir::BlocksChoose& chosen, hir::SelectionChoiceId at)
+    -> diag::Result<void>;
 
 // What stands on one side of a choice, built into the block the side owns:
-// nothing at all, the construction of one alternative's block, or a further
-// choice the source wrote inside this side (LRM 27.5).
+// nothing at all, the block at the place of the alternative the source wrote
+// there, or a further choice the source wrote inside this side (LRM 27.5).
 auto LowerSelectionBranchInto(
-    StructuralScopeLowerer& lowerer, WalkFrame frame,
-    const hir::BlocksChoose& chosen, const hir::SelectionBranch& branch,
-    const GenerateBinding& gen_binding) -> diag::Result<void> {
+    StructuralScopeLowerer& lowerer, WalkFrame frame, hir::GenerateId generate,
+    const hir::BlocksChoose& chosen, const hir::SelectionBranch& branch)
+    -> diag::Result<void> {
   return std::visit(
       Overloaded{
           [](const hir::NothingStands&) -> diag::Result<void> { return {}; },
           [&](const hir::AlternativeStands& stands) -> diag::Result<void> {
-            // An alternative no elaboration of the construct selected has no
-            // body, and the same expressions read against the same inputs
-            // cannot reach it here either.
-            const std::optional<hir::StructuralScopeId> block =
-                chosen.alternatives[stands.position];
-            if (!block.has_value()) return {};
-            const auto& binding = gen_binding.blocks.Get(*block);
-            AppendOwnedChildConstruction(
-                lowerer.Owner(), frame, std::nullopt, binding.label,
-                binding.lowerer->ClassId(), gen_binding.handle,
-                BlockConstructionArguments(
-                    lowerer.Owner().Unit(), frame, binding.table, {}));
+            HoldBuiltBlock(
+                lowerer, frame, generate,
+                BuildBlockAt(
+                    lowerer, frame, generate,
+                    mir::BuildMachineIntLiteral(
+                        lowerer.Owner().Unit(), *frame.current_block,
+                        stands.position),
+                    std::nullopt));
             return {};
           },
           [&](hir::SelectionChoiceId nested) -> diag::Result<void> {
             return LowerSelectionChoiceInto(
-                lowerer, frame, chosen, nested, gen_binding);
+                lowerer, frame, generate, chosen, nested);
           }},
       branch);
 }
@@ -2180,9 +2147,9 @@ auto LowerSelectionBranchInto(
 // selector's type known before the run, that is a switch over the selector's
 // value; otherwise the selector is read against each label in turn.
 auto LowerLabelledChoiceInto(
-    StructuralScopeLowerer& lowerer, WalkFrame frame,
-    const hir::BlocksChoose& chosen, const hir::ChoiceOnLabel& on,
-    const GenerateBinding& gen_binding) -> diag::Result<void> {
+    StructuralScopeLowerer& lowerer, WalkFrame frame, hir::GenerateId generate,
+    const hir::BlocksChoose& chosen, const hir::ChoiceOnLabel& on)
+    -> diag::Result<void> {
   mir::Block& block = *frame.current_block;
   const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
@@ -2200,7 +2167,7 @@ auto LowerLabelledChoiceInto(
       [&](const hir::SelectionBranch& branch) -> diag::Result<mir::Block> {
     mir::Block stands;
     auto built = LowerSelectionBranchInto(
-        lowerer, frame.WithBlock(&stands), chosen, branch, gen_binding);
+        lowerer, frame.WithBlock(&stands), generate, chosen, branch);
     if (!built) return std::unexpected(std::move(built.error()));
     return stands;
   };
@@ -2270,12 +2237,12 @@ auto LowerLabelledChoiceInto(
 // One conditional generate construct, built as the source nested it: the
 // condition is asked once and each side holds whatever the source wrote there.
 auto LowerSelectionChoiceInto(
-    StructuralScopeLowerer& lowerer, WalkFrame frame,
-    const hir::BlocksChoose& chosen, hir::SelectionChoiceId at,
-    const GenerateBinding& gen_binding) -> diag::Result<void> {
+    StructuralScopeLowerer& lowerer, WalkFrame frame, hir::GenerateId generate,
+    const hir::BlocksChoose& chosen, hir::SelectionChoiceId at)
+    -> diag::Result<void> {
   const hir::SelectionChoice& choice = chosen.choices.Get(at);
   if (const auto* on = std::get_if<hir::ChoiceOnLabel>(&choice)) {
-    return LowerLabelledChoiceInto(lowerer, frame, chosen, *on, gen_binding);
+    return LowerLabelledChoiceInto(lowerer, frame, generate, chosen, *on);
   }
 
   const auto& on = std::get<hir::ChoiceOnCondition>(choice);
@@ -2290,14 +2257,14 @@ auto LowerSelectionChoiceInto(
 
   mir::Block holds;
   auto taken = LowerSelectionBranchInto(
-      lowerer, frame.WithBlock(&holds), chosen, on.holds, gen_binding);
+      lowerer, frame.WithBlock(&holds), generate, chosen, on.holds);
   if (!taken) return std::unexpected(std::move(taken.error()));
 
   std::optional<mir::BlockId> otherwise;
   if (!std::holds_alternative<hir::NothingStands>(on.fails)) {
     mir::Block fails;
     auto untaken = LowerSelectionBranchInto(
-        lowerer, frame.WithBlock(&fails), chosen, on.fails, gen_binding);
+        lowerer, frame.WithBlock(&fails), generate, chosen, on.fails);
     if (!untaken) return std::unexpected(std::move(untaken.error()));
     otherwise = block.child_scopes.Add(std::move(fails));
   }
@@ -2311,14 +2278,13 @@ auto LowerSelectionChoiceInto(
 }
 
 auto LowerChosenGenerate(
-    StructuralScopeLowerer& lowerer, WalkFrame frame,
-    const hir::BlocksChoose& chosen, const GenerateBinding& gen_binding)
-    -> diag::Result<mir::Stmt> {
+    StructuralScopeLowerer& lowerer, WalkFrame frame, hir::GenerateId generate,
+    const hir::BlocksChoose& chosen) -> diag::Result<mir::Stmt> {
   mir::Block& block = *frame.current_block;
   mir::Block body;
 
   auto built = LowerSelectionChoiceInto(
-      lowerer, frame.WithBlock(&body), chosen, chosen.root, gen_binding);
+      lowerer, frame.WithBlock(&body), generate, chosen, chosen.root);
   if (!built) return std::unexpected(std::move(built.error()));
 
   return mir::Stmt{
@@ -2326,19 +2292,20 @@ auto LowerChosenGenerate(
       .data = mir::BlockStmt{.scope = block.child_scopes.Add(std::move(body))}};
 }
 
-// A block no loop and no conditional produced is built once, directly.
+// A block no loop and no conditional produced is built once, at its one
+// place.
 auto LowerSingleBlockGenerate(
-    StructuralScopeLowerer& lowerer, WalkFrame frame,
-    const GenerateBinding& gen_binding) -> diag::Result<mir::Stmt> {
+    StructuralScopeLowerer& lowerer, WalkFrame frame, hir::GenerateId generate)
+    -> diag::Result<mir::Stmt> {
   mir::Block& block = *frame.current_block;
   mir::Block body;
   const WalkFrame body_frame = frame.WithBlock(&body);
-  const auto& binding = gen_binding.blocks.Get(hir::StructuralScopeId{0});
-  AppendOwnedChildConstruction(
-      lowerer.Owner(), body_frame, std::nullopt, binding.label,
-      binding.lowerer->ClassId(), gen_binding.handle,
-      BlockConstructionArguments(
-          lowerer.Owner().Unit(), body_frame, binding.table, {}));
+  HoldBuiltBlock(
+      lowerer, body_frame, generate,
+      BuildBlockAt(
+          lowerer, body_frame, generate,
+          mir::BuildMachineIntLiteral(lowerer.Owner().Unit(), body, 0),
+          std::nullopt));
   return mir::Stmt{
       .label = std::nullopt,
       .data = mir::BlockStmt{.scope = block.child_scopes.Add(std::move(body))}};
@@ -2346,20 +2313,20 @@ auto LowerSingleBlockGenerate(
 
 // A generate construct becomes the construction its compiled form calls for.
 auto LowerGenerateAsStmt(
-    StructuralScopeLowerer& lowerer, WalkFrame frame, const hir::Generate& gen,
-    const GenerateBinding& gen_binding) -> diag::Result<mir::Stmt> {
+    StructuralScopeLowerer& lowerer, WalkFrame frame, hir::GenerateId generate)
+    -> diag::Result<mir::Stmt> {
   return std::visit(
       Overloaded{
           [&](const hir::SingleBlock&) {
-            return LowerSingleBlockGenerate(lowerer, frame, gen_binding);
+            return LowerSingleBlockGenerate(lowerer, frame, generate);
           },
           [&](const hir::BlocksRepeat& repeat) {
-            return LowerRepeatedGenerate(lowerer, frame, repeat, gen_binding);
+            return LowerRepeatedGenerate(lowerer, frame, generate, repeat);
           },
           [&](const hir::BlocksChoose& chosen) {
-            return LowerChosenGenerate(lowerer, frame, chosen, gen_binding);
+            return LowerChosenGenerate(lowerer, frame, generate, chosen);
           }},
-      gen.counting);
+      lowerer.HirScope().generates.Get(generate).counting);
 }
 
 // Describes, as statements of `frame`'s block, what a value dump records of
@@ -2450,17 +2417,6 @@ auto ApplyInstanceSelects(
   return reached;
 }
 
-auto DescendOwnedChildren(
-    const StructuralScopeLowerer& scope, mir::Block& block, mir::ExprId object,
-    std::span<const hir::OwnedChildStep> descent) -> mir::ExprId {
-  ReachedPlace reached{.expr = object, .place = InOwnScope{&scope}};
-  for (const hir::OwnedChildStep& step : descent) {
-    reached = StepToOwnedChild(
-        scope.Owner(), block, reached, step.names, step.selects);
-  }
-  return reached.expr;
-}
-
 namespace {
 
 // What a route ends at, walked where it is used or read out of the slot it was
@@ -2501,30 +2457,49 @@ auto StructuralScopeLowerer::RouteEnd(
       *this, frame, HirScope().routes.disable_targets.Get(id), ReachOf(id));
 }
 
-auto StructuralScopeLowerer::ForScope(
+auto StructuralScopeLowerer::LoweringOf(
     UnitLowerer& unit_lowerer, const StructuralScopeLowerer* parent,
     const hir::StructuralScope& hir_scope,
-    const hir::ScopeInstantiations& instantiations,
     std::optional<DesignRootInputs> design_root)
     -> std::unique_ptr<StructuralScopeLowerer> {
   auto lowerer = std::make_unique<StructuralScopeLowerer>(
-      unit_lowerer, parent, hir_scope, instantiations, std::move(design_root));
+      unit_lowerer, parent, hir_scope, std::move(design_root));
   lowerer->published_class_id_ =
       unit_lowerer.ScopeClassIdentity(hir_scope.published.scope_class);
-  lowerer->generate_children_.reserve(hir_scope.generates.size());
-  for (const hir::GenerateId generate : hir_scope.generates.Ids()) {
-    const base::Arena<hir::GenerateBlock, hir::StructuralScopeId>& held =
-        hir_scope.generates.Get(generate).blocks;
-    std::vector<std::unique_ptr<StructuralScopeLowerer>>& blocks =
-        lowerer->generate_children_.emplace_back();
-    blocks.reserve(held.size());
-    for (const hir::StructuralScopeId block : held.Ids()) {
-      blocks.push_back(ForScope(
-          unit_lowerer, lowerer.get(), held.Get(block).scope,
-          instantiations.OfBlock(generate, block)));
-    }
-  }
   return lowerer;
+}
+
+auto StructuralScopeLowerer::ForRoot(
+    UnitLowerer& unit_lowerer, const hir::StructuralScope& root_scope,
+    std::optional<DesignRootInputs> design_root) -> Tree {
+  Tree tree{
+      .root =
+          LoweringOf(unit_lowerer, nullptr, root_scope, std::move(design_root)),
+      .blocks = {}};
+  const hir::CompilationUnit& unit = unit_lowerer.Hir();
+  const std::vector<std::optional<hir::BlockBodyId>> enclosing =
+      hir::EnclosingScopesOf(unit);
+  tree.blocks.assign(unit.block_bodies.size(), nullptr);
+  // A body is read inside the scope standing around it, so that scope's
+  // lowering is made first.
+  const auto lowering_of = [&](const auto& self,
+                               hir::BlockBodyId id) -> StructuralScopeLowerer* {
+    StructuralScopeLowerer*& lowering = tree.blocks[id.value];
+    if (lowering != nullptr) return lowering;
+    StructuralScopeLowerer* around = enclosing[id.value].has_value()
+                                         ? self(self, *enclosing[id.value])
+                                         : tree.root.get();
+    lowering = around->block_children_
+                   .emplace_back(LoweringOf(
+                       unit_lowerer, around, unit.block_bodies.Get(id).scope,
+                       std::nullopt))
+                   .get();
+    return lowering;
+  };
+  for (const hir::BlockBodyId id : unit.block_bodies.Ids()) {
+    lowering_of(lowering_of, id);
+  }
+  return tree;
 }
 
 auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
@@ -2550,18 +2525,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   shape.dumped_as = parent_ == nullptr ? support::DumpScopeKind::kModule
                                        : support::DumpScopeKind::kBegin;
 
-  // A block of a generate construct is built by the scope around it, which
-  // hands itself as its own class and is kept as that. A unit's own scope is
-  // built by an instance of another unit, or by nothing, and keeps nothing.
-  if (parent_ == nullptr) {
-    AttachRuntimeScopeCtorPrefix(
-        unit_lowerer.Unit(), shape, unit_lowerer.Unit().builtins.scope_ptr);
-  } else {
-    const mir::TypeId builder =
-        BorrowedPointerTo(unit_lowerer.Unit(), parent_->ClassId());
-    AttachRuntimeScopeCtorPrefix(unit_lowerer.Unit(), shape, builder);
-    enclosing_ = shape.AddField(builder);
-  }
+  AttachRuntimeScopeCtorPrefix(unit_lowerer.Unit(), shape);
   // What construction supplies is what distinguishes one built scope from
   // another built from the same declarations.
   construction_values_ = ConstructionValuesOf(unit_lowerer, hir_scope);
@@ -2577,6 +2541,8 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   const auto on_published = [&](mir::FieldId slot) {
     return mir::ClassFieldTarget{.owner = owner, .slot = slot};
   };
+  if (layout.enclosing.has_value())
+    enclosing_ = on_published(*layout.enclosing);
 
   std::vector<std::optional<mir::ClassFieldTarget>> data_object_fields(
       hir_scope.structural_data_objects.size());
@@ -2744,40 +2710,13 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
       shape, routes.disable_targets,
       [&](const hir::DisableLeaf&) { return DisableTargetPointerType(types); });
 
-  // Recursively declare every owned generate child's class shape; each child
-  // lowerer is retained for the body sweep.
   // Every generate construct is published, so what it built is held in the
-  // field its publication was given: the block it built, or for a loop its
-  // blocks by the value each one's index stood at. What that field holds is
-  // the base every scope extends, and which class a block is, is what the step
-  // that reaches it says.
-  const std::vector<mir::ClassFieldTarget> handles = settled(generate_handles);
-  std::vector<GenerateBinding> generates;
-  generates.reserve(hir_scope.generates.size());
-  for (const hir::GenerateId gen_id : hir_scope.generates.Ids()) {
-    const auto& gen = hir_scope.generates.Get(gen_id);
-    const mir::ClassFieldTarget handle = handles[gen_id.value];
-    std::vector<ChildStructuralScopeBinding> blocks;
-    blocks.reserve(gen.blocks.size());
-    for (const hir::StructuralScopeId block_id : gen.blocks.Ids()) {
-      const hir::GenerateBlock& block = gen.blocks.Get(block_id);
-      StructuralScopeLowerer& child =
-          *generate_children_[gen_id.value][block_id.value];
-      auto child_r = child.DeclareShape();
-      if (!child_r) return std::unexpected(std::move(child_r.error()));
-      shape.contained.push_back(*child_r);
-      blocks.push_back(
-          ChildStructuralScopeBinding{
-              .label = block.scope.source_name,
-              .lowerer = &child,
-              .table = instantiations_->BlockTableOf(gen_id, block_id)});
-    }
-    generates.push_back(
-        GenerateBinding{
-            .handle = handle,
-            .blocks = {gen.blocks.size(), std::move(blocks)}});
+  // field its publication was given.
+  generate_handles_ = {hir_scope.generates.size(), settled(generate_handles)};
+  for (const std::unique_ptr<StructuralScopeLowerer>& child : block_children_) {
+    auto child_r = child->DeclareShape();
+    if (!child_r) return std::unexpected(std::move(child_r.error()));
   }
-  generate_bindings_ = {hir_scope.generates.size(), std::move(generates)};
 
   // The covergroups this scope replicates settle their shapes against this
   // one for the reason its classes do. One sampled where a block of the
@@ -2824,9 +2763,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     node_shape.execution = unit_lowerer.ScopeExecution();
     node_shape.dumped_as = support::DumpScopeKind::kBegin;
     // A node hangs under the scope or under another node.
-    AttachRuntimeScopeCtorPrefix(
-        unit_lowerer.Unit(), node_shape,
-        unit_lowerer.Unit().builtins.scope_ptr);
+    AttachRuntimeScopeCtorPrefix(unit_lowerer.Unit(), node_shape);
     unit_lowerer.DefineClassShape(node_class, std::move(node_shape));
     shape.contained.push_back(node_class);
 
@@ -2966,10 +2903,10 @@ namespace {
 
 // Appends the construction of a scope class's base on the object -- or, where
 // the class extends the root of the design hierarchy, giving the part every
-// scope shares its place -- which nothing of the scope's own runs before but
-// the store of the scope that built it. The parent is handed on as the base
-// every scope extends, whatever class this scope takes it as, each other
-// prefix is forwarded as a consuming use, then the trailing ones.
+// scope shares its place -- which nothing of the scope's own runs before. The
+// parent is handed on as the base every scope extends, whatever class this
+// scope takes it as, each other prefix is forwarded as a consuming use, then
+// the trailing ones.
 void ConstructBaseFirst(
     mir::CompilationUnit& unit, const mir::ClassRef& base,
     mir::CallableCode& ctor_code, mir::LocalId self,
@@ -3068,23 +3005,17 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   const WalkFrame scope_frame =
       parent_frame
           .WithClass(
-              {.cls = &mir_class, .id = class_id_, .enclosing = enclosing_},
+              {.cls = &mir_class,
+               .id = class_id_,
+               .enclosing = enclosing_,
+               .published =
+                   BorrowedPointerTo(unit_lowerer.Unit(), published_class_id_)},
               outer_scope_link)
           .WithStructuralBase(ScopeIsSelf{})
           .WithScopeName(unit_lowerer.Hir().fixed_name);
   mir::Block& ctor_block = ctor_code.Body();
   const WalkFrame ctor_frame =
       scope_frame.WithBlock(&ctor_block).WithBindings(&ctor_bindings);
-  // A block keeps the scope that built it before its base is constructed, as
-  // javac stores an inner class's enclosing instance ahead of its superclass
-  // constructor call, so nothing that runs on the object can find the link
-  // unset.
-  if (enclosing_.has_value()) {
-    const mir::LocalId builder = ctor_prefix_local_ids[kParentPrefix.value];
-    FillScopeSlot(
-        unit_lowerer.Unit(), ctor_frame, *enclosing_,
-        ctor_block.ReadLocal(builder, ctor_code.locals.Get(builder).type));
-  }
   ConstructBaseFirst(
       unit_lowerer.Unit(), mir_class.base.value(), ctor_code, self_id,
       ctor_prefix_local_ids, definition);
@@ -3481,8 +3412,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         unit_lowerer, ctor_frame, parent_handle, scope.source_name.value_or(""),
         name_node.class_id,
         mir::ClassFieldTarget{
-            .owner = class_id_, .slot = name_node.borrowed_handle},
-        {});
+            .owner = class_id_, .slot = name_node.borrowed_handle});
     for (const hir::ProceduralScopeId child : scope.child_scopes) {
       self_ref(self_ref, child, name_node.borrowed_handle);
     }
@@ -3706,17 +3636,13 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   // Recurse into descendants. Every class's shape is already published, so a
   // body that names a peer's member resolves through the existing identity
   // model regardless of which sibling lowers next.
-  for (const auto& blocks : generate_children_) {
-    for (const auto& child : blocks) {
-      auto child_r = child->PopulateBodies(ctor_frame);
-      if (!child_r) return std::unexpected(std::move(child_r.error()));
-    }
+  for (const std::unique_ptr<StructuralScopeLowerer>& child : block_children_) {
+    auto child_r = child->PopulateBodies(ctor_frame);
+    if (!child_r) return std::unexpected(std::move(child_r.error()));
   }
 
   for (const hir::GenerateId gen : hir_scope.generates.Ids()) {
-    auto stmt = LowerGenerateAsStmt(
-        *this, ctor_frame, hir_scope.generates.Get(gen),
-        generate_bindings_.Get(gen));
+    auto stmt = LowerGenerateAsStmt(*this, ctor_frame, gen);
     if (!stmt) return std::unexpected(std::move(stmt.error()));
     ctor_block.AppendStmt(*std::move(stmt));
   }
@@ -3838,17 +3764,70 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
 
   mir_class.constructor = mir::ConstructorDecl{.code = std::move(ctor_code)};
 
-  // The design root states every body's construction table, its own among
-  // them, since nothing hands it one.
+  // The design root states every specialization's construction table, its
+  // own among them, since nothing hands it one.
   if (design_root_.has_value()) {
     construction_table_ = StateConstructionTables(
-        unit, class_id_, mir_class, unit_lowerer.RootInstantiations(),
+        unit, class_id_, mir_class, design_root_->root,
         design_root_->instantiations,
         ObjectEntryTypes(unit_lowerer, design_root_->object_entries));
   }
   StateScopeDefinition(unit, class_id_, mir_class, exports);
   unit.DefineClass(class_id_, std::move(mir_class));
   return {};
+}
+
+auto StructuralScopeLowerer::PublishBlockEntry() const -> mir::CallableId {
+  mir::CompilationUnit& unit = owner_->Unit();
+  mir::CallableCode code = mir::CallableCode::Defined();
+  const mir::TypeId table_type = mir::ConstructionTablePointer(unit.types);
+  const mir::LocalId parent = code.AddLocal(unit.builtins.scope_ptr);
+  const mir::LocalId table = code.AddLocal(table_type);
+  code.params = {parent, table};
+  // A block is handed nothing but the index its loop stands at, if it is a
+  // loop's, which is its one construction value.
+  const mir::MachineFunctionType entry_type =
+      unit.types.Get(BlockEntryType(unit, !construction_values_.empty()))
+          .Get<mir::MachineFunctionType>();
+  for (std::size_t i = 2; i < entry_type.params.size(); ++i) {
+    code.params.push_back(code.AddLocal(entry_type.params[i]));
+  }
+  code.result_type = entry_type.result;
+
+  mir::Block& body = code.Body();
+  std::vector<mir::ExprId> values;
+  values.reserve(construction_values_.size());
+  std::vector<mir::ExprId> numbers;
+  numbers.reserve(construction_values_.size());
+  for (std::size_t i = 0; i < construction_values_.size(); ++i) {
+    const mir::LocalId param = code.params[2 + i];
+    const mir::TypeId type = entry_type.params[2 + i];
+    values.push_back(body.ReadLocal(param, type));
+    numbers.push_back(
+        BuildToInt64Call(unit, body, body.ReadLocal(param, type)));
+  }
+  std::vector<mir::ExprId> arguments{
+      body.ReadLocal(parent, unit.builtins.scope_ptr),
+      BuildHierarchySegment(
+          unit, body, hir_scope_->source_name, std::move(numbers)),
+      body.ReadLocal(table, table_type)};
+  std::ranges::move(values, std::back_inserter(arguments));
+  const mir::TypeId object =
+      unit.types.Intern(mir::Type{mir::ObjectType{.of = class_id_}});
+  const mir::ExprId built = body.exprs.Add(
+      mir::MakeNewExpr(
+          body.exprs.Add(
+              mir::MakeObjectConstructionExpr(object, std::move(arguments))),
+          mir::BoxOf(unit.types, object)));
+  body.AppendStmt(
+      mir::ReturnStmt{.value = ObjectAs(body, built, code.result_type)});
+  return unit.callables.Add(
+      mir::CallableDecl{
+          .code = std::move(code),
+          .foreign = std::nullopt,
+          .virtual_dispatch = std::nullopt,
+          .type_parameters = {},
+          .defining_unit = std::nullopt});
 }
 
 // What the unit published passes the definition it was handed on to the tree.
@@ -3862,6 +3841,27 @@ void StructuralScopeLowerer::DefinePublishedClasses(UnitLowerer& unit_lowerer) {
     ConstructBaseFirst(
         unit, published.cls.base.value(), published.ctor,
         published.ctor.params.front(), published.ctor_prefix, {});
+    // A block keeps the scope that built it, which the class it published
+    // holds, so whichever body the block is, a walk climbing out of it reads
+    // the link where every body has it.
+    if (const std::optional<mir::FieldId> enclosing =
+            scope.layout.published.enclosing) {
+      mir::Block& body = published.ctor.Body();
+      const mir::LocalId self = published.ctor.params.front();
+      const mir::ExprId target = body.exprs.Add(
+          mir::MakeFieldAccessExpr(
+              BuildObjectDeref(
+                  unit, body,
+                  body.ReadLocal(self, published.ctor.locals.Get(self).type)),
+              mir::ClassFieldTarget{.owner = id, .slot = *enclosing},
+              unit.builtins.scope_ptr));
+      const mir::ExprId parent = body.ReadLocal(
+          published.ctor_prefix.front(), unit.builtins.scope_ptr);
+      body.AppendStmt(
+          mir::ExprStmt{
+              .expr = body.exprs.Add(
+                  mir::MakeAssignExpr(unit.builtins, target, parent))});
+    }
     published.cls.constructor =
         mir::ConstructorDecl{.code = std::move(published.ctor)};
     StateNamedClassDefinition(unit, published.cls);

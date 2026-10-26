@@ -934,10 +934,13 @@ inline void WriteOne(TargetText& out, const RecordQualifiedName& ref) {
 }
 
 // `sv_create`, the entry that makes an object of a body, in that body's
-// namespace. The source names none, but the design root's tables name it, so
-// it is a fixed word both units write.
-[[nodiscard]] inline auto CppObjectEntryName() -> MintedWord {
-  return MintedWord{.word = "create"};
+// namespace, or `sv_create_block_<n>` for the block body standing at `block`
+// among the body's. The source names none, but the design root's tables name
+// it, so it is a fixed spelling both units write.
+[[nodiscard]] inline auto CppObjectEntryName(
+    std::optional<mir::BlockBodyOrdinal> block) -> CppName {
+  if (!block.has_value()) return MintedWord{.word = "create"};
+  return MintedCppName("create_block", block->value);
 }
 
 // The name of a function in a unit's namespace, chosen by how other code
@@ -956,8 +959,8 @@ inline void WriteOne(TargetText& out, const RecordQualifiedName& ref) {
           [](const mir::ReachedByBringUpEntry& r) -> CppName {
             return CppBringUpEntryName(r.entry);
           },
-          [](const mir::ReachedAsObjectEntry&) -> CppName {
-            return CppObjectEntryName();
+          [](const mir::ReachedAsObjectEntry& r) -> CppName {
+            return CppObjectEntryName(r.block);
           },
           [](const mir::ReachedInAnotherUnit& r) -> CppName {
             return ToCppName(r.name);

@@ -15,8 +15,8 @@ Both backends exist; the LLVM one is where the design is heading. The rules here
 backend. Where a backend takes a transitional shortcut, that is noted as non-conforming code, not as
 a relaxation of the contract.
 
-The artifact rules below are met. Each unit specialization is emitted as the declarations a referrer
-compiles against and the translation unit realizing them, and the program is formed by compiling
+The artifact rules below are met. Each unit is emitted as the declarations a referrer compiles
+against and a translation unit realizing each body of it, and the program is formed by compiling
 each translation unit and linking the results, so no unit's bodies are read while another is
 compiled. A build may compile several at once, and how many is stated by whoever invoked it rather
 than chosen by the build. What the boundary still does not buy is recompiling less than everything:
@@ -25,9 +25,9 @@ many of them it works on at a time.
 
 ## Owns
 
-- The rule that a backend emits, per compilation-unit specialization, a signature artifact and a
-  code artifact, and that the program is assembled by linking those artifacts -- never by a single
-  artifact that aggregates many units.
+- The rule that a backend emits, per compilation unit, a signature artifact and a code artifact per
+  body, and that the program is assembled by linking those artifacts -- never by a single artifact
+  that aggregates many units.
 - The set of inputs one unit's emission may depend on: its own MIR, the signatures of the units it
   references, and the runtime SDK.
 - The contract that a reference into another unit is a typed access against the class that unit
@@ -55,14 +55,14 @@ many of them it works on at a time.
 
 ## Core Invariants
 
-1. **A signature per unit specialization and a code artifact per body it is compiled to; the program
-   is linked, not aggregated.** A backend emits each unit specialization as a signature and a code
-   artifact for each body of it. The signature is derived from the unit's declarations alone, so it
-   completes without lowering a single body; the code carries the bodies. No emitted artifact
-   contains the bodies of more than one unit, and none enumerates "all units." The program is formed
-   by linking the per-unit artifacts. This is what keeps compilation parallel and incremental
-   (`north_star.md` inv 3, 4), and the split is what makes it pipelined: a unit's referrers compile
-   against its signature while its own code is still being emitted.
+1. **A signature per unit and a code artifact per body it is compiled to; the program is linked, not
+   aggregated.** A backend emits each unit as a signature and a code artifact for each body of it.
+   The signature is derived from the unit's declarations alone, so it completes without lowering a
+   single body; the code carries the bodies. No emitted artifact contains the bodies of more than
+   one unit, and none enumerates "all units." The program is formed by linking the per-unit
+   artifacts. This is what keeps compilation parallel and incremental (`north_star.md` inv 3, 4),
+   and the split is what makes it pipelined: a unit's referrers compile against its signature while
+   its own code is still being emitted.
 
    **A signature is one artifact and may be more than one file.** Where the target reads
    declarations in an order and reads each file once, the files have to be no coarser than what the
@@ -129,13 +129,13 @@ many of them it works on at a time.
    **A published class is named from declarations alone, and how many classes realize it is no
    referrer's concern.** A generate block is a definition nested in the scope holding it, and each
    block instance is an application of it; an application is one published class, named before any
-   body lowers. Block instances of one application whose code uses their index are that class
-   realized once per value of it, each realization extending it and named, like the class, before
-   any body lowers. A unit is the same one level out: instances handed different values its code
-   uses are one unit compiled to more than one body, each a compilation of its own that states the
-   classes the unit published alike, so the link keeps one of each. A referrer names the published
-   class and is unaffected by how many realizations stand beneath it, so a body edit that changes
-   the count changes nothing a referrer read.
+   body lowers. Block instances of one application are that class realized once per distinct code
+   they come out as, each realization extending it and found by comparing what the blocks state. A
+   unit is the same one level out: instances whose code comes out differently are one unit compiled
+   to more than one body, each a compilation of its own that states the classes the unit published
+   alike, so the link keeps one of each. A referrer names the published class and is unaffected by
+   how many realizations stand beneath it, so a body edit that changes the count changes nothing a
+   referrer read.
 
 9. **The design's own link-level unit is a unit, and invariant 2 binds it.** A design needs one
    artifact nothing in the source declares -- the one whose construct elaborates the design by

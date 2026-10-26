@@ -3,7 +3,7 @@
 #include <variant>
 
 #include "lyra/hir/expr_id.hpp"
-#include "lyra/hir/owned_child_ref.hpp"
+#include "lyra/hir/owned_child_step.hpp"
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/published_scope.hpp"
 #include "lyra/hir/scope_class.hpp"

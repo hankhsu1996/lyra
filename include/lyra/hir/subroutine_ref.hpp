@@ -13,7 +13,6 @@
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/foreign_import_id.hpp"
 #include "lyra/hir/interface_member_access.hpp"
-#include "lyra/hir/owned_child_ref.hpp"
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/randomization_hook.hpp"
 #include "lyra/hir/sampled_history.hpp"
@@ -26,20 +25,12 @@
 
 namespace lyra::hir {
 
-// Calls a subroutine this compilation unit declares, on the object of the scope
-// that declares it. `hops` climbs to the nearest scope enclosing both the
-// reader and the callee, `descent` steps back down from there into the
-// declaring scope -- each step naming a child and which of the objects that
-// child stands for -- and `subroutine` is that scope's own identity for it, a
-// registry position, so it means nothing without the scope the route lands on.
-//
-// A climb alone reaches only a subroutine of an enclosing scope. One this unit
-// declares in a generate block is reached by descending as well (LRM 27.4,
-// 23.6), which is why the reference carries both halves and not a distance:
-// out and in are separate axes and no single number is both.
+// Calls a subroutine the caller's own scope declares, on that scope's object.
+// `subroutine` is that scope's own identity for the callee, a registry
+// position. One an enclosing scope or a generate block declares is called
+// through what that scope published (LRM 23.9, 27.4, 23.6), since which body
+// each is, is its object's.
 struct StructuralSubroutineRef {
-  StructuralHops hops;
-  std::vector<OwnedChildStep> descent;
   StructuralSubroutineId subroutine;
 
   auto operator==(const StructuralSubroutineRef&) const -> bool = default;
@@ -224,7 +215,7 @@ using UnitObjectReceiver =
     std::variant<RoutedObjectRef, InterfaceInstanceAccessExpr>;
 
 // Calls a subroutine a unit declares in one of its scopes -- its own body or a
-// generate block in it, a block of a loop of this unit included -- enabled on
+// generate block in it, a generate block of this unit included -- enabled on
 // one object of that scope (LRM 23.6, 25.7, 27.4): reached through a port
 // bound to an instance, through a hierarchical name, or through a virtual
 // interface holding one. `receiver` is how that object is reached, and it is

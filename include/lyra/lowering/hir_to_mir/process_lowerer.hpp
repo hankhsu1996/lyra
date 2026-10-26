@@ -268,22 +268,13 @@ class ProcessLowerer {
   // The structural-subroutine tables live on the owning structural-scope pass;
   // this forwards to them so a templated call handler reaches a user subroutine
   // through the same surface on either pass class.
-  [[nodiscard]] auto LookupHirSubroutine(
-      hir::StructuralHops hops, std::span<const hir::OwnedChildStep> descent,
-      hir::StructuralSubroutineId id) const -> const hir::SubroutineDecl& {
-    return EnclosingScopeLowerer().LookupHirSubroutine(hops, descent, id);
+  [[nodiscard]] auto LookupHirSubroutine(hir::StructuralSubroutineId id) const
+      -> const hir::SubroutineDecl& {
+    return EnclosingScopeLowerer().LookupHirSubroutine(id);
   }
   [[nodiscard]] auto TranslateStructuralSubroutine(
-      hir::StructuralHops hops, std::span<const hir::OwnedChildStep> descent,
       hir::StructuralSubroutineId id) const -> mir::Direct {
-    return EnclosingScopeLowerer().TranslateStructuralSubroutine(
-        hops, descent, id);
-  }
-  [[nodiscard]] auto ScopeAt(
-      hir::StructuralHops hops,
-      std::span<const hir::OwnedChildStep> descent) const
-      -> const StructuralScopeLowerer& {
-    return EnclosingScopeLowerer().ScopeAt(hops, descent);
+    return EnclosingScopeLowerer().TranslateStructuralSubroutine(id);
   }
   template <typename Id>
   [[nodiscard]] auto RouteEnd(const WalkFrame& frame, Id id) const

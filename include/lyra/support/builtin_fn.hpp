@@ -911,9 +911,10 @@ enum class BuiltinFn : std::uint16_t {
   // the program is assembled, so no compiled body names it.
   kInstantiationEntry,
   kInstantiationTable,
-  // The table one of a scope's generate blocks is constructed with, read off
-  // the table the scope was handed by where the block stands among the
-  // scope's blocks.
+  // The same for the block at one place of one of a scope's generates, read
+  // by the generate's position and the place's. Which body is built there is
+  // the object's, so no compiled body names it either.
+  kBlockEntry,
   kBlockTable,
   // Extends a sequence still being composed by one element, answering with
   // what it became. A declaration standing for several objects counts them out

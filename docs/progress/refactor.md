@@ -3312,6 +3312,27 @@ source, or not yet tried.
       rustc builds drop glue and clone shims per type, and the code generator only translates them;
       the C++ backend keeps the host compiler's own rule, which is the same rule. Blocked on R256.
 
+- [ ] R260 -- A unit's name answers two questions at once: which declaration and specialization it
+      is, and what another unit may compile against. What another unit compiles against is decided
+      before any body lowers by predicting, from the front end's record of which parameters a type
+      or a required constant read, which values enter the name, while which bodies share code is
+      found afterwards by comparing what they came out as. The prediction errs toward more units and
+      every compile checks that the specializations of one unit publish one signature, so it is
+      sound where it runs, but it needs a record of our own in the front end, and naming a unit by
+      what it declares instead was tried and missed three things a signature holds (a structure
+      member's default, an explicit port expression's window, a nested module's type reading the
+      outer parameter). Beside it, a block's body is lowered inside the first body publishing the
+      class around its own, where layout and public field identity should come from the signature.
+      One name depends on another in a cycle where an instance inside a generate block writes a name
+      landing back in that block: the block is named by what it declares, the instance among it, and
+      the instance by where its names land, the block among them. Naming in one pass cuts the cycle
+      wherever it was entered, so the names it keeps can follow which was asked first; nothing kept
+      is worked out from the cut itself, and such a design runs, but the cycle wants naming as a
+      group. Target: one stage producing the public contract, sharing its representation with what
+      lowers the published class; a stable identity apart from a fingerprint of the contract;
+      references that name declaration identity, so naming need not finish a child before its
+      parent; the front end's record and the prediction removed last. Not blocked.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

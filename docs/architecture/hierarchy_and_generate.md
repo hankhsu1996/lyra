@@ -30,7 +30,9 @@ shared by all consumers: external references, child routing, and construction.
    construction logic. The constructor expands generate via `if`, loop, and sequence to build
    children. Which generate blocks an instance built is part of its unit's name, so a unit holds the
    blocks its own instances built and no other (`compiling_a_design.md`). How many blocks a loop
-   counts out is not part of it; the constructor runs the loop.
+   counts out is not part of it; the constructor runs the loop. Which body each block it builds is,
+   is stated in the object's construction table, and the constructor builds every block through the
+   entry there, as it builds an instance, so the unit's code names no block's body.
 3. A named generate scope is a first-class constructed object. An unnamed generate scope is not
    addressable and is not materialized as an object.
 4. External references, runtime child routing, and the runtime constructor all navigate the same
@@ -40,10 +42,11 @@ shared by all consumers: external references, child routing, and construction.
    parent never restates a child's identity that the child already carries. A hierarchical name
    reaches a child through the typed member or the generate entry that holds it, never by searching
    the adjacency list for its name. Upward it is the same pair: a generate block keeps the scope
-   that built it in a typed member of its own class, and a name declared there is reached through
-   that member, while the base scope's generic parent serves what the runtime answers by walking the
-   tree -- a scope's name, and where an upward name searched by class starts (LRM 23.8) -- and no
-   name within one unit.
+   that built it in a member of the class it published, viewed as the class that scope published,
+   and a name declared there is reached through that member and what that scope published, so a
+   block's code is the same whichever body built it, while the base scope's generic parent serves
+   what the runtime answers by walking the tree -- a scope's name, and where an upward name searched
+   by class starts (LRM 23.8) -- and no name within one unit.
 5. The same compilation unit compiled once serves every instance of that unit. Hierarchy does not
    fork the unit's compile-time artifacts.
 6. A parameter value read only as a value is a constructor input: it changes how many blocks a loop
@@ -137,8 +140,8 @@ shared by all consumers: external references, child routing, and construction.
 - Treating an instance array as a generate construct, or modeling generate replication as an array
   type. Multiplicity is a property of a member's type; generate is constructor-time scope
   construction. The two axes must not be conflated or made to subsume each other.
-- A parameter read only as a value used as part of compile-time identity, which forks artifacts per
-  value and fails `north_star.md` invariant 2 for no correctness gain.
+- A parameter read only as a value used as part of a unit's name or a body's, which forks artifacts
+  per value and fails `north_star.md` invariant 2 for no correctness gain.
 - Describing a set of objects by one of its elements -- the first element's unit standing for an
   array's, one class standing for the instances a port is bound to -- which fails `north_star.md`
   invariant 3 wherever an override elsewhere made an element differ (invariant 12 above).

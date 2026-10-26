@@ -536,12 +536,14 @@ auto ClassDeclLowerer::DeclareShape(
 auto ClassDeclLowerer::BodyFrame(
     const WalkFrame& declaring_frame, mir::Class& mir_class,
     ScopeChainNode& link) const -> WalkFrame {
-  const WalkFrame frame =
-      declaring_frame
-          .WithClass(
-              {.cls = &mir_class, .id = class_id_, .enclosing = std::nullopt},
-              link)
-          .WithScopeName(hir_class_->fixed_name);
+  const WalkFrame frame = declaring_frame
+                              .WithClass(
+                                  {.cls = &mir_class,
+                                   .id = class_id_,
+                                   .enclosing = std::nullopt,
+                                   .published = std::nullopt},
+                                  link)
+                              .WithScopeName(hir_class_->fixed_name);
   const std::optional<DeclaringInstance>& instance =
       owner_->GetClassShape(class_id_).declaring_instance;
   if (!instance.has_value()) return frame.WithStructuralBase(NoScope{});

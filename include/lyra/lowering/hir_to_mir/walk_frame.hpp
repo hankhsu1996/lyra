@@ -55,12 +55,16 @@ struct ArgumentsEvaluatedEarlier {
 // under. Reaching one is reaching the other: a reference to a member reads its
 // type off the declaration and qualifies its target with the owner, so a walk
 // that resolved only one of the two would immediately go looking for the
-// other. `enclosing` is the member an object of a generate block's class keeps
-// the scope that built it in, which is how a walk climbs out of it.
+// other. `enclosing` is the member the class a generate block published keeps
+// the scope that built it in, which is how a walk climbs out of it, and
+// `published` is the pointer to that published class a walk climbing to this
+// one answers with: what a body reaches of a scope enclosing it is what that
+// scope published, whichever body it is.
 struct EnclosingClass {
   mir::Class* cls = nullptr;
   mir::ClassId id{};
-  std::optional<mir::FieldId> enclosing;
+  std::optional<mir::ClassFieldTarget> enclosing;
+  std::optional<mir::TypeId> published;
 };
 
 // How a body reaches the instance of the structural scope its outward

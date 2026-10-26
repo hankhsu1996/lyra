@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "lyra/hir/scope_class_id.hpp"
+#include "lyra/hir/specialization_ref.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
 #include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
@@ -23,12 +24,14 @@ struct PublishedObjectEntry {
 };
 
 // What the design root is lowered with beside its own scope, and no source
-// unit is: every namespace the root brings up, what every body elaborated at
-// its instantiations, from which the root states every construction table, and
-// the object entry of every unit those tables make, by the unit's name.
+// unit is: every namespace the root brings up, what every specialization of
+// the design builds, from which the root states every construction table, the
+// root's own specialization among them, and the object entry of every unit
+// those tables make, by the unit's name.
 struct DesignRootInputs {
   DesignNamespaces namespaces;
   DesignInstantiations instantiations;
+  hir::SpecializationRef root;
   std::map<std::string, PublishedObjectEntry, std::less<>> object_entries;
 };
 

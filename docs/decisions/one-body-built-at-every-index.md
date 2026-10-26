@@ -1,8 +1,12 @@
 # A loop generate's blocks are one body built at every index
 
-Date: 2026-09-17 Status: accepted; D2 revised 2026-10-12, and again 2026-10-14 by
+Date: 2026-09-17 Status: accepted; D2 revised 2026-10-12, again 2026-10-14 by
 [a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md):
-blocks of one name are one body within an instance, never across instances
+blocks of one name are one body within an instance, never across instances; and again 2026-10-25 by
+[a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md) D5: which body
+a block is, is found by comparing what it came out as, among the blocks of the body holding it, and
+is stated per object in its construction table, the object building each block through the entry
+there
 
 ## Context
 
@@ -108,6 +112,11 @@ list but the observation that a procedural loop had already answered this, for a
 defines as a superset of this one's.
 
 ### D2. Whether the blocks are one body is read off the lowered blocks, and nothing predicts it
+
+**Revised 2026-10-25: which body a block is, is found by comparing what it came out as, among the
+blocks of the body holding it, and stated per object in its construction table
+([a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md) D5); the
+2026-10-12 revision below is withdrawn.**
 
 **Revised 2026-10-12: which body a block is, is named before any block lowers, and nothing is
 compared.** The front end records which parameters each constant evaluation read, so whether a

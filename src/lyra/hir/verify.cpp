@@ -27,7 +27,7 @@
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/interface_member_access.hpp"
 #include "lyra/hir/method_id.hpp"
-#include "lyra/hir/owned_child_ref.hpp"
+#include "lyra/hir/owned_child_step.hpp"
 #include "lyra/hir/pattern.hpp"
 #include "lyra/hir/pattern_id.hpp"
 #include "lyra/hir/primary.hpp"
@@ -36,6 +36,7 @@
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/range_bounds.hpp"
 #include "lyra/hir/sampled_history.hpp"
+#include "lyra/hir/scope_construction.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
@@ -1402,9 +1403,7 @@ void ReachFromGenerate(ArenaReaches& reaches, const Generate& generate) {
             from_loop(loop.initial, Slot::kOperand);
             from_loop(loop.condition, Slot::kOperand);
             from_loop(loop.step, Slot::kOperand);
-            for (const ExprId argument : loop.arguments) {
-              from_block(argument, Slot::kOperand);
-            }
+            from_block(loop.index, Slot::kOperand);
           },
           [&](const BlocksChoose& chosen) {
             for (const SelectionChoice& choice : chosen.choices) {
@@ -1497,61 +1496,148 @@ void VerifyInstanceMembers(
   }
 }
 
-// A loop of several bodies states where each one stands, every body once, and
-// no value of its index under two of them; a loop of one body builds it at
-// every index and states none, and a loop that counted no block holds none.
-void VerifyLoopGenerates(
+// How many values whoever builds `scope` hands it: one per declaration a
+// construction fills.
+auto ValuesHandedTo(const StructuralScope& scope) -> std::size_t {
+  std::size_t handed = 0;
+  for (const StructuralDataObjectId id : scope.structural_data_objects.Ids()) {
+    std::visit(
+        Overloaded{
+            [&](const StructuralConstructionValueDecl&) { ++handed; },
+            [&](const StructuralParameterDecl&) { ++handed; },
+            [](const StructuralVariableDecl&) {},
+            [](const StructuralNetDecl&) {},
+            [](const StructuralReferenceDecl&) {},
+            [](const StructuralGenvarDecl&) {},
+            [](const StructuralLocalparamDecl&) {}},
+        scope.structural_data_objects.Get(id).kind);
+  }
+  return handed;
+}
+
+// What an object builds of each child says which specialization stands at each
+// object of each instance member, and of each construct, place by place,
+// which body stands there: a block standing on its own at its one place, a
+// conditional at most one of the alternatives the source wrote, each at its
+// position (LRM 27.5), and a loop one body per block it counted out (LRM
+// 27.4).
+void VerifyConstruction(
+    const CompilationUnit& unit, const StructuralScope& scope,
+    const ScopeConstruction& built, const std::string& label,
+    std::vector<std::string>& lines) {
+  bool makes_each_object =
+      built.instances.size() == scope.instance_members.size();
+  for (const InstanceMemberId m : scope.instance_members.Ids()) {
+    makes_each_object =
+        makes_each_object && built.instances[m.value].size() ==
+                                 scope.instance_members.Get(m).taken.size();
+  }
+  if (!makes_each_object) {
+    lines.push_back(
+        std::format(
+            "hir verify: the construction of {} makes other than one child "
+            "per object of each instance member",
+            label));
+  }
+  if (built.generates.size() != scope.generates.size()) {
+    lines.push_back(
+        std::format(
+            "hir verify: the construction of {} builds {} generates of its {}",
+            label, built.generates.size(), scope.generates.size()));
+    return;
+  }
+  for (const GenerateId id : scope.generates.Ids()) {
+    const std::vector<BlockConstruction>& places = built.generates[id.value];
+    const auto says = [&](std::string_view what) {
+      lines.push_back(
+          std::format(
+              "hir verify: the construction of generate {} of {} {}", id.value,
+              label, what));
+    };
+    // A block is handed the index its loop stands at and nothing else (LRM
+    // 27.4; a block has no parameter ports, Syntax 27-1), so a loop's bodies
+    // each declare that one value and every other block's declare none.
+    std::size_t handed = 0;
+    std::visit(
+        Overloaded{
+            [&](const SingleBlock&) {
+              if (places.size() != 1 || !places.front().body.has_value()) {
+                says("builds other than its one block");
+              }
+            },
+            [&](const BlocksRepeat&) {
+              handed = 1;
+              if (std::ranges::any_of(places, [](const BlockConstruction& p) {
+                    return !p.body.has_value();
+                  })) {
+                says("counts out a block of no body");
+              }
+            },
+            [&](const BlocksChoose& chosen) {
+              if (places.size() != chosen.alternatives ||
+                  std::ranges::count_if(places, [](const BlockConstruction& p) {
+                    return p.body.has_value();
+                  }) > 1) {
+                says("builds other than one of the alternatives written");
+              }
+            }},
+        scope.generates.Get(id).counting);
+    for (std::size_t at = 0; at < places.size(); ++at) {
+      const BlockConstruction& place = places[at];
+      if (!place.body.has_value()) continue;
+      if (place.body->value >= unit.block_bodies.size()) {
+        says("builds a body the unit does not hold");
+        continue;
+      }
+      const StructuralScope& body = unit.block_bodies.Get(*place.body).scope;
+      if (ValuesHandedTo(body) != handed) {
+        says("builds a body handed other than its loop's index");
+      }
+      VerifyConstruction(
+          unit, unit.block_bodies.Get(*place.body).scope, place.built,
+          std::format("block body {}", place.body->value), lines);
+    }
+  }
+}
+
+// A route names a scope's own identity for what it reaches -- a data object, a
+// static, a disable target -- only where it reaches the reader's own scope:
+// climbing nothing and stepping nowhere. Anything another scope holds is
+// named by what that scope published, so the reader's code states nothing of
+// which body that scope is.
+void VerifyRoutesStayOrPublish(
     const StructuralScope& scope, const std::string& label,
     std::vector<std::string>& lines) {
-  for (const Generate& generate : scope.generates) {
-    const auto* loop = std::get_if<BlocksRepeat>(&generate.counting);
-    if (loop == nullptr) continue;
-    const bool several = loop->bodies.size() > 1;
-    std::vector<std::uint32_t> named;
-    std::vector<std::int64_t> indices;
-    for (const LoopBody& built : loop->bodies) {
-      named.push_back(built.body.value);
-      if (several && built.indices.empty()) {
-        lines.push_back(
-            std::format(
-                "hir verify: a loop generate of {} holds several bodies and "
-                "says nowhere that body {} stands",
-                label, built.body.value));
-      }
-      if (!several && !built.indices.empty()) {
-        lines.push_back(
-            std::format(
-                "hir verify: a loop generate of {} holds one body and lists "
-                "where it stands",
-                label));
-      }
-      if (!std::ranges::is_sorted(built.indices)) {
-        lines.push_back(
-            std::format(
-                "hir verify: a loop generate of {} lists where body {} stands "
-                "out of order",
-                label, built.body.value));
-      }
-      indices.insert(indices.end(), built.indices.begin(), built.indices.end());
-    }
-    std::ranges::sort(named);
-    std::ranges::sort(indices);
-    const bool every_body_once = std::ranges::equal(
-        named, std::views::iota(
-                   std::uint32_t{0},
-                   static_cast<std::uint32_t>(generate.blocks.size())));
-    if (!every_body_once) {
+  const auto in_own_scope = [](const auto& route) {
+    const auto* base = std::get_if<InUnitBase>(&route.base);
+    return base != nullptr && base->hops.value == 0 && route.steps.empty();
+  };
+  for (const ValueRoute& route : scope.routes.values) {
+    const bool own_identity = std::visit(
+        Overloaded{
+            [](const StructuralDataObjectLeaf&) { return true; },
+            [](const ProceduralStaticLeaf&) { return true; },
+            [](const PublishedMemberLeaf&) { return false; }},
+        route.leaf);
+    if (own_identity && !in_own_scope(route)) {
       lines.push_back(
           std::format(
-              "hir verify: a loop generate of {} holds {} bodies and says "
-              "where {} of them stand",
-              label, generate.blocks.size(), named.size()));
+              "hir verify: a route of {} names a declaration by its own "
+              "scope's identity, from outside that scope",
+              label));
     }
-    if (std::ranges::adjacent_find(indices) != indices.end()) {
+  }
+  for (const DisableTargetRoute& route : scope.routes.disable_targets) {
+    const bool own_identity = std::visit(
+        Overloaded{
+            [](const DisableTargetLeaf&) { return true; },
+            [](const PublishedDisableTargetLeaf&) { return false; }},
+        route.leaf);
+    if (own_identity && !in_own_scope(route)) {
       lines.push_back(
           std::format(
-              "hir verify: a loop generate of {} stands two bodies at one "
-              "value of its index",
+              "hir verify: a disable route of {} names a target by its own "
+              "scope's identity, from outside that scope",
               label));
     }
   }
@@ -1601,7 +1687,7 @@ void VerifyScope(
   }
   Report(reaches, [&] { return label; }, lines);
   VerifyInstanceMembers(scope, label, lines);
-  VerifyLoopGenerates(scope, label, lines);
+  VerifyRoutesStayOrPublish(scope, label, lines);
 
   for (const ProcessId id : scope.processes.Ids()) {
     const Process& process = scope.processes.Get(id);
@@ -1672,27 +1758,27 @@ void VerifyScope(
         },
         lines);
   }
-  for (const GenerateId generate : scope.generates.Ids()) {
-    const auto& blocks = scope.generates.Get(generate).blocks;
-    for (const StructuralScopeId block : blocks.Ids()) {
-      const StructuralScope& child = blocks.Get(block).scope;
-      VerifyScope(
-          child,
-          std::format(
-              "block {} '{}' of generate {} in {}", block.value,
-              child.source_name, generate.value, label),
-          lines);
-    }
-  }
 }
 
 }  // namespace
 
-void Verify(const CompilationUnit& unit) {
+void Verify(
+    const CompilationUnit& unit, const ScopeConstruction& construction) {
   std::vector<std::string> lines;
   VerifyScope(
       unit.root_scope, std::format("the root scope of unit '{}'", unit.name),
       lines);
+  for (const BlockBodyId id : unit.block_bodies.Ids()) {
+    VerifyScope(
+        unit.block_bodies.Get(id).scope,
+        std::format(
+            "block body {} '{}' of unit '{}'", id.value,
+            unit.block_bodies.Get(id).scope.source_name, unit.name),
+        lines);
+  }
+  VerifyConstruction(
+      unit, unit.root_scope, construction,
+      std::format("the root scope of unit '{}'", unit.name), lines);
   for (const ClassId id : unit.classes.OwnIds()) {
     VerifyClass(unit, id, lines);
   }

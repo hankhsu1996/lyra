@@ -70,27 +70,6 @@ namespace lyra::lowering::ast_to_hir {
   return alternatives;
 }
 
-// The construct `written` stands for in `elaboration`, another elaboration of
-// the text holding it: the generate the source wrote at the same place, which
-// the front end numbers alike in every elaboration of that text. For a
-// conditional that is the first block of the construct, as it is in the
-// elaboration being walked.
-template <typename Construct>
-[[nodiscard]] auto CounterpartIn(
-    const slang::ast::Scope& elaboration, const Construct& written)
-    -> const Construct& {
-  for (const auto& member : elaboration.members()) {
-    const auto* counterpart = member.as_if<Construct>();
-    if (counterpart != nullptr &&
-        counterpart->constructIndex == written.constructIndex) {
-      return *counterpart;
-    }
-  }
-  throw InternalError(
-      "CounterpartIn: every elaboration of one text holds every generate "
-      "construct the text wrote");
-}
-
 // The value a loop's index stood at for `block`, one of the blocks the loop
 // counted out, which is how a name selects it (LRM 27.4). A genvar holds an
 // integer (LRM 27.4), so the value always fits.

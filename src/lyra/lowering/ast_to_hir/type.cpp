@@ -288,8 +288,8 @@ auto LowerUnpackedStruct(
       .declaration =
           hir::TypeDeclarationRef{
               .unit_name = CompilationUnitName(
-                  UnitHomeOf(struct_type), unit_lowerer.Specialization()),
-              .path = DefPathOf(struct_type, unit_lowerer.Specialization())},
+                  UnitHomeOf(struct_type), unit_lowerer.Naming()),
+              .path = DefPathOf(struct_type, unit_lowerer.Naming())},
       .fields = *std::move(fields_or)};
 }
 
@@ -355,8 +355,8 @@ auto LowerUnpackedUnion(
       .declaration =
           hir::TypeDeclarationRef{
               .unit_name = CompilationUnitName(
-                  UnitHomeOf(union_type), unit_lowerer.Specialization()),
-              .path = DefPathOf(union_type, unit_lowerer.Specialization())},
+                  UnitHomeOf(union_type), unit_lowerer.Naming()),
+              .path = DefPathOf(union_type, unit_lowerer.Naming())},
       .fields = *std::move(fields_or),
       .tagged = union_type.isTagged,
   };
@@ -388,8 +388,8 @@ auto LowerEnum(
       .declaration =
           hir::TypeDeclarationRef{
               .unit_name = CompilationUnitName(
-                  UnitHomeOf(enum_type), unit_lowerer.Specialization()),
-              .path = DefPathOf(enum_type, unit_lowerer.Specialization())},
+                  UnitHomeOf(enum_type), unit_lowerer.Naming()),
+              .path = DefPathOf(enum_type, unit_lowerer.Naming())},
       .base_type = *base_id_or,
       .members = std::move(members),
   };
@@ -582,7 +582,7 @@ auto TranslateType(
     // was given, which is exactly what names the unit an instance of it is.
     case slang::ast::SymbolKind::VirtualInterfaceType:
       return hir::Type{hir::VirtualInterfaceType{
-          .unit_name = unit_lowerer.Specialization().NameOf(
+          .unit_name = unit_lowerer.Naming().NameOf(
               canonical.as<slang::ast::VirtualInterfaceType>().iface)}};
     default:
       return diag::Fail(
@@ -1235,8 +1235,8 @@ auto UnitLowerer::ResolveClass(
   if (!Owns(cls)) {
     const hir::ClassId id = unit_.classes.Import(
         hir::ClassKey{
-            .unit_name = CompilationUnitName(UnitHomeOf(cls), Specialization()),
-            .class_path = DefPathOf(cls, Specialization())});
+            .unit_name = CompilationUnitName(UnitHomeOf(cls), Naming()),
+            .class_path = DefPathOf(cls, Naming())});
     class_cache_.emplace(&cls, id);
     return id;
   }
@@ -1276,8 +1276,7 @@ auto UnitLowerer::InternOwnClass(
   // and each block of a loop builds its own copy, yet every such copy at one
   // path is the same text compiled once. So a copy at a path already declared
   // is that class, built again here so what it names is named alike.
-  const hir::ClassId id =
-      unit_.classes.DeclareOwn(DefPathOf(cls, Specialization()));
+  const hir::ClassId id = unit_.classes.DeclareOwn(DefPathOf(cls, Naming()));
   class_cache_.emplace(&cls, id);
 
   auto decl_owner = std::make_unique<hir::ClassDecl>();
@@ -1632,8 +1631,7 @@ void UnitLowerer::RequireEveryClassBodyLowered() const {
       if (unit_.classes.HasBodies(body.id)) continue;
       left += std::format(
           "{}'{}' in '{}'", left.empty() ? "" : ", ",
-          SpecializationName(*body.cls, Specialization()),
-          scope->asSymbol().name);
+          UnitName(*body.cls, Naming()), scope->asSymbol().name);
     }
   }
   if (left.empty()) return;

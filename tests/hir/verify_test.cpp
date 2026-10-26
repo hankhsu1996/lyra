@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <format>
+#include <functional>
 #include <gtest/gtest.h>
 #include <optional>
 #include <string>
@@ -21,6 +22,7 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/process.hpp"
+#include "lyra/hir/scope_construction.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/timing.hpp"
@@ -114,7 +116,7 @@ TEST(HirVerifyTest, AnExpressionReachedFromTwoPlacesIsRefused) {
   const ExprId shared = AddLeaf(unit);
   Assign(unit, target, AddSum(unit, shared, shared));
   try {
-    Verify(unit);
+    Verify(unit, {});
     FAIL() << "an expression reached as both operands was accepted";
   } catch (const InternalError& error) {
     const std::string message = error.what();
@@ -139,7 +141,7 @@ TEST(HirVerifyTest, DistinctOperandsAreAccepted) {
   const ExprId lhs = AddLeaf(unit);
   const ExprId rhs = AddLeaf(unit);
   Assign(unit, target, AddSum(unit, lhs, rhs));
-  EXPECT_NO_THROW(Verify(unit));
+  EXPECT_NO_THROW(Verify(unit, {}));
 }
 
 // An expression nothing holds is evaluated nowhere, so its operands are not
@@ -152,7 +154,7 @@ TEST(HirVerifyTest, AnExpressionNothingHoldsReachesNothing) {
   const ExprId rhs = AddLeaf(unit);
   AddSum(unit, lhs, rhs);
   Assign(unit, target, AddSum(unit, lhs, rhs));
-  EXPECT_NO_THROW(Verify(unit));
+  EXPECT_NO_THROW(Verify(unit, {}));
 }
 
 // A sensitivity describes what its holder waits on in terms of expressions the
@@ -163,7 +165,7 @@ TEST(HirVerifyTest, ADescriptionIsNoPlace) {
   const ExprId lhs = AddLeaf(unit);
   const ExprId rhs = AddLeaf(unit);
   Assign(unit, target, AddSum(unit, lhs, rhs), {lhs, lhs});
-  EXPECT_NO_THROW(Verify(unit));
+  EXPECT_NO_THROW(Verify(unit, {}));
 }
 
 // A description is still held to naming an expression its arena has, and the
@@ -174,7 +176,7 @@ TEST(HirVerifyTest, ADescriptionOutsideTheArenaIsRefused) {
   const ExprId source = AddLeaf(unit);
   Assign(unit, target, source, {ExprId{source.value + 7}});
   try {
-    Verify(unit);
+    Verify(unit, {});
     FAIL() << "a sensitivity naming an expression outside its arena was "
               "accepted";
   } catch (const InternalError& error) {
@@ -193,10 +195,11 @@ TEST(HirVerifyTest, ADescriptionOutsideTheArenaIsRefused) {
 // A body has an arena of its own, reached from the statements execution enters
 // it at, and a refusal names the body and the statements that share.
 TEST(HirVerifyTest, ABodyIsHeldToATreeThroughItsStatements) {
-  EXPECT_NO_THROW(
-      Verify(UnitWithProcess([](const CompilationUnit& u, ProceduralBody& b) {
+  EXPECT_NO_THROW(Verify(
+      UnitWithProcess([](const CompilationUnit& u, ProceduralBody& b) {
         return std::vector<ExprId>{AddLeaf(u, b), AddLeaf(u, b)};
-      })));
+      }),
+      {}));
 
   const CompilationUnit sharing =
       UnitWithProcess([](const CompilationUnit& u, ProceduralBody& b) {
@@ -204,7 +207,7 @@ TEST(HirVerifyTest, ABodyIsHeldToATreeThroughItsStatements) {
         return std::vector<ExprId>{shared, shared};
       });
   try {
-    Verify(sharing);
+    Verify(sharing, {});
     FAIL() << "an expression two statements hold was accepted";
   } catch (const InternalError& error) {
     const std::string message = error.what();
@@ -236,9 +239,9 @@ TEST(HirVerifyTest, ADeclarationAssignmentIsHeldByItsVariable) {
           shared_with_a_statement ? assigned : AddLeaf(u, b)};
     });
   };
-  EXPECT_NO_THROW(Verify(declaring(false)));
+  EXPECT_NO_THROW(Verify(declaring(false), {}));
   try {
-    Verify(declaring(true));
+    Verify(declaring(true), {});
     FAIL() << "a declaration assignment a statement also holds was accepted";
   } catch (const InternalError& error) {
     const std::string message = error.what();
@@ -274,9 +277,9 @@ TEST(HirVerifyTest, AConstantIsHeldByItsPattern) {
               .span = {}})};
     });
   };
-  EXPECT_NO_THROW(Verify(matching(false)));
+  EXPECT_NO_THROW(Verify(matching(false), {}));
   try {
-    Verify(matching(true));
+    Verify(matching(true), {});
     FAIL() << "a pattern's constant standing as an arm as well was accepted";
   } catch (const InternalError& error) {
     const std::string message = error.what();
@@ -284,65 +287,145 @@ TEST(HirVerifyTest, AConstantIsHeldByItsPattern) {
   }
 }
 
-// A unit whose root holds one loop generate of `blocks` bodies, each standing
-// where `bodies` says.
-auto UnitWithLoop(std::uint32_t blocks, std::vector<LoopBody> bodies)
-    -> CompilationUnit {
-  CompilationUnit unit("U", "U");
-  Generate generate;
-  for (std::uint32_t i = 0; i < blocks; ++i) {
-    generate.blocks.Add(GenerateBlock{});
+// A unit holding one block body, whose root holds one generate counted as
+// `counting` makes it, and a construction building at each place the body
+// `places` names there, or none. The body is handed an index where
+// `handed_an_index` says, and by default where a loop builds it (LRM 27.4).
+struct Built {
+  CompilationUnit unit;
+  ScopeConstruction construction;
+};
+
+auto UnitBuilding(
+    const std::function<Generate(CompilationUnit&)>& counting,
+    std::vector<std::optional<std::uint32_t>> places,
+    std::optional<bool> handed_an_index = std::nullopt) -> Built {
+  Built built{.unit = CompilationUnit("U", "U"), .construction = {}};
+  Generate generate = counting(built.unit);
+  BlockBody body;
+  if (handed_an_index.value_or(
+          std::holds_alternative<BlocksRepeat>(generate.counting))) {
+    body.scope.structural_data_objects.Add(
+        StructuralDataObjectDecl{
+            .name = "i",
+            .type = built.unit.builtins.integer,
+            .kind = StructuralConstructionValueDecl{}});
   }
-  generate.counting = BlocksRepeat{
-      .variable = {},
-      .initial = AddLeaf(unit),
-      .condition = AddLeaf(unit),
-      .step = AddLeaf(unit),
-      .arguments = {},
-      .bodies = std::move(bodies)};
-  unit.root_scope.generates.Add(std::move(generate));
-  return unit;
+  built.unit.block_bodies.Add(std::move(body));
+  built.unit.root_scope.generates.Add(std::move(generate));
+  std::vector<BlockConstruction>& at =
+      built.construction.generates.emplace_back();
+  for (const std::optional<std::uint32_t> place : places) {
+    at.push_back(
+        BlockConstruction{
+            .body = place.has_value()
+                        ? std::optional<BlockBodyId>{BlockBodyId{*place}}
+                        : std::nullopt,
+            .built = {}});
+  }
+  return built;
 }
 
-auto BodyAt(std::uint32_t body, std::vector<std::int64_t> indices) -> LoopBody {
-  return LoopBody{
-      .body = StructuralScopeId{body},
-      .body_arguments = std::nullopt,
-      .indices = std::move(indices)};
+auto Single(CompilationUnit&) -> Generate {
+  return Generate{.counting = SingleBlock{}};
 }
 
-// A loop of several bodies says where each one stands, every body once and no
-// value under two of them, while a loop of one body builds it at every index
-// and says nothing of where (LRM 27.4); each departure is refused by name.
-TEST(HirVerifyTest, ALoopSaysWhereEachOfSeveralBodiesStands) {
-  EXPECT_NO_THROW(Verify(UnitWithLoop(1, {BodyAt(0, {})})));
-  EXPECT_NO_THROW(Verify(UnitWithLoop(0, {})));
-  EXPECT_NO_THROW(Verify(UnitWithLoop(2, {BodyAt(0, {0, 2}), BodyAt(1, {1})})));
+auto Loop(CompilationUnit& unit) -> Generate {
+  return Generate{
+      .counting = BlocksRepeat{
+          .variable = {},
+          .initial = AddLeaf(unit),
+          .condition = AddLeaf(unit),
+          .step = AddLeaf(unit),
+          .index = AddLeaf(unit)}};
+}
 
-  const auto refused = [](const CompilationUnit& unit, std::string_view says) {
+// An `if` with an `else`: two alternatives.
+auto Choice(CompilationUnit& unit) -> Generate {
+  BlocksChoose chosen;
+  chosen.root = chosen.choices.Add(
+      ChoiceOnCondition{
+          .condition = AddLeaf(unit),
+          .holds = AlternativeStands{.position = 0},
+          .fails = AlternativeStands{.position = 1}});
+  chosen.alternatives = 2;
+  return Generate{.counting = std::move(chosen)};
+}
+
+// What an object builds at a generate is what the generate counts out: a block
+// standing alone at its one place, a loop a block at every place it counted
+// (LRM 27.4), a conditional at most one of the alternatives the source wrote,
+// at that alternative's place (LRM 27.5), and only bodies the unit holds, each
+// handed its loop's index and nothing else. Each departure is refused by name.
+TEST(HirVerifyTest, AConstructionBuildsWhatEachGenerateCountsOut) {
+  const auto verify = [](const Built& built) {
+    Verify(built.unit, built.construction);
+  };
+  EXPECT_NO_THROW(verify(UnitBuilding(Single, {0})));
+  EXPECT_NO_THROW(verify(UnitBuilding(Loop, {0, 0, 0})));
+  EXPECT_NO_THROW(verify(UnitBuilding(Loop, {})));
+  EXPECT_NO_THROW(verify(UnitBuilding(Choice, {std::nullopt, 0})));
+  EXPECT_NO_THROW(verify(UnitBuilding(Choice, {std::nullopt, std::nullopt})));
+
+  const auto refused = [&](const Built& built, std::string_view says) {
     try {
-      Verify(unit);
-      ADD_FAILURE() << "a loop that " << says << " was accepted";
+      verify(built);
+      ADD_FAILURE() << "a construction that " << says << " was accepted";
     } catch (const InternalError& error) {
       const std::string message = error.what();
       EXPECT_NE(message.find(says), std::string::npos) << message;
     }
   };
+  refused(UnitBuilding(Single, {}), "builds other than its one block");
   refused(
-      UnitWithLoop(2, {BodyAt(0, {2, 0}), BodyAt(1, {1})}),
-      "lists where body 0 stands out of order");
+      UnitBuilding(Single, {std::nullopt}), "builds other than its one block");
   refused(
-      UnitWithLoop(2, {BodyAt(0, {0}), BodyAt(0, {1})}),
-      "holds 2 bodies and says where 2 of them stand");
+      UnitBuilding(Loop, {0, std::nullopt}), "counts out a block of no body");
   refused(
-      UnitWithLoop(2, {BodyAt(0, {0, 1}), BodyAt(1, {1})}),
-      "stands two bodies at one value of its index");
+      UnitBuilding(Choice, {0}),
+      "builds other than one of the alternatives written");
   refused(
-      UnitWithLoop(2, {BodyAt(0, {0}), BodyAt(1, {})}),
-      "holds several bodies and says nowhere that body 1 stands");
+      UnitBuilding(Choice, {0, 0}),
+      "builds other than one of the alternatives written");
+  refused(UnitBuilding(Single, {1}), "builds a body the unit does not hold");
+
   refused(
-      UnitWithLoop(1, {BodyAt(0, {0, 1})}),
-      "holds one body and lists where it stands");
+      UnitBuilding(Single, {0}, true),
+      "builds a body handed other than its loop's index");
+  refused(
+      UnitBuilding(Loop, {0}, false),
+      "builds a body handed other than its loop's index");
+}
+
+// A route names a scope's own identity for a declaration only where it climbs
+// nothing and steps nowhere; one that climbs to an enclosing scope names what
+// that scope published instead, so a route naming the declaration by its own
+// identity from there is refused.
+TEST(HirVerifyTest, ARouteNamesAnotherScopesDeclarationByItsPublication) {
+  const auto with_route = [](std::uint32_t hops) {
+    CompilationUnit unit("U", "U");
+    unit.root_scope.routes.values.Add(
+        ValueRoute{
+            .base = InUnitBase{.hops = StructuralHops{hops}},
+            .steps = {},
+            .leaf = StructuralDataObjectLeaf{
+                .object = StructuralDataObjectId{0},
+                .storage = {},
+                .type = unit.builtins.int_type}});
+    return unit;
+  };
+  EXPECT_NO_THROW(Verify(with_route(0), {}));
+  try {
+    Verify(with_route(1), {});
+    FAIL() << "a route naming an enclosing scope's declaration by its own "
+              "identity was accepted";
+  } catch (const InternalError& error) {
+    const std::string message = error.what();
+    EXPECT_NE(
+        message.find("names a declaration by its own scope's identity"),
+        std::string::npos)
+        << message;
+  }
 }
 
 // An id is a position in the arena of the scope that minted it, so a holder
@@ -352,7 +435,7 @@ TEST(HirVerifyTest, AnExpressionOutsideTheArenaIsRefused) {
   const ExprId target = AddLeaf(unit);
   Assign(unit, target, ExprId{target.value + 7});
   try {
-    Verify(unit);
+    Verify(unit, {});
     FAIL() << "a holder naming an expression outside its arena was accepted";
   } catch (const InternalError& error) {
     const std::string message = error.what();

@@ -4,6 +4,7 @@
 #include <expected>
 #include <functional>
 #include <map>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -14,10 +15,12 @@
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/published_scope.hpp"
 #include "lyra/hir/scope_class.hpp"
+#include "lyra/hir/scope_instantiations.hpp"
+#include "lyra/hir/specialization.hpp"
+#include "lyra/hir/specialization_ref.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_import.hpp"
-#include "lyra/hir/unit_body_ref.hpp"
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
@@ -57,8 +60,7 @@ void LeaveInputsUnconnected(
           reference->binding != hir::ReferenceBinding::kInput) {
         continue;
       }
-      const hir::OwnedChildStep step{
-          .names = hir::OwnedChildRef{instance}, .selects = {}};
+      const hir::OwnedChildStep step{.names = instance, .selects = {}};
       root.root_scope.port_connections.Add(
           hir::PortConnection{
               .span = {},
@@ -86,12 +88,17 @@ void LeaveInputsUnconnected(
 // design through the same owned-child construction any parent uses for a
 // submodule, so no code path is special-cased for the top level. Its HIR
 // carries only this source-faithful structure; reaching the packages' bring-up
-// entries is settled at lowering, not HIR content.
+// entries is settled at lowering, not HIR content. It is its unit's one
+// specialization, building each top's one specialization.
 auto BuildDesignRootHir(
     std::span<const lowering::ast_to_hir::TopLevelUnit> tops,
-    const hir::UnitSignatures& signatures) -> hir::CompilationUnit {
-  hir::CompilationUnit root{
-      std::string{kDesignRootUnitName}, std::string{kDesignRootUnitName}};
+    const hir::UnitSignatures& signatures) -> hir::Specialization {
+  hir::Specialization lowered{
+      .name = std::string{kDesignRootUnitName},
+      .construction = {},
+      .implementation = hir::CompilationUnit{
+          std::string{kDesignRootUnitName}, std::string{kDesignRootUnitName}}};
+  hir::CompilationUnit& root = lowered.implementation;
   // Like any module, its object is published as the class an instance of the
   // unit is, and what it publishes is every instance it builds (LRM 23.6).
   hir::ScopeClassSignature published{
@@ -130,10 +137,10 @@ auto BuildDesignRootHir(
                       .instance_name = top.name_in_a_path,
                       .array_dims = {},
                       .alternatives = {hir::InstanceAlternative{
-                          .scope_class = scope_class,
-                          .body = top.unit_name,
-                          .assignments = {}}},
+                          .scope_class = scope_class, .assignments = {}}},
                       .taken = {0}});
+    lowered.construction.instances.push_back(
+        {hir::SpecializationRef::Sole(top.unit_name)});
     LeaveInputsUnconnected(root, signature, scope_class, instance);
     const std::array kind{hir::UnitObjectType{.scope_class = scope_class}};
     published.members.Add(
@@ -154,27 +161,27 @@ auto BuildDesignRootHir(
       .choices = {},
       .disable_targets = {},
       .callables = {}};
-  return root;
+  return lowered;
 }
 
-// Hands `take` the unit of every body made at an instantiation of the scope
-// laid out as `layout`, or of any block below it.
+// Hands `take` the unit of every specialization made at an instantiation of the
+// scope laid out as `layout`, or of any block below it.
 template <typename Take>
 void TakeEachUnitMade(
     const hir::ScopeInstantiations& layout, const Take& take) {
-  for (const hir::UnitBodyRef& body : layout.Instantiated()) {
-    take(body.unit);
+  for (const hir::SpecializationRef& made : layout.Instantiated()) {
+    take(made.unit);
   }
-  for (const hir::ScopeInstantiations& block : layout.Blocks()) {
-    TakeEachUnitMade(block, take);
+  for (const hir::GeneratePlaces& generate : layout.Generates()) {
+    for (const std::optional<hir::PlacedBlock>& block : generate.places) {
+      if (block.has_value()) TakeEachUnitMade(block->made, take);
+    }
   }
 }
 
 // The object entry of every unit the root's tables make, as each unit
-// published it, its types taken into the root's: the tops, which the root's
-// own table makes, and every body any table lists.
+// published it, its types taken into the root's.
 auto PublishedObjectEntries(
-    std::span<const lowering::ast_to_hir::TopLevelUnit> tops,
     const hir::UnitSignatures& signatures,
     const lowering::hir_to_mir::DesignInstantiations& instantiations,
     hir::TypePool& into, hir::ClassRegistry& classes,
@@ -203,11 +210,8 @@ auto PublishedObjectEntries(
                   .published_class = published_class,
                   .handed = hir::ImportTypes(importer, element.handed)});
   };
-  for (const lowering::ast_to_hir::TopLevelUnit& top : tops) {
-    take(top.unit_name);
-  }
-  for (const auto& [_, made] : instantiations.by_body) {
-    TakeEachUnitMade(made, take);
+  for (const auto& [_, specialization] : instantiations.by_specialization) {
+    TakeEachUnitMade(specialization.made, take);
   }
   return entries;
 }
@@ -221,17 +225,23 @@ auto SynthesizeDesignRoot(
     const diag::SourceManager& source_manager,
     const mir_transform::PassOptions& passes)
     -> diag::Result<mir::CompilationUnit> {
-  hir::CompilationUnit root_hir = BuildDesignRootHir(tops, signatures);
+  hir::Specialization root_hir = BuildDesignRootHir(tops, signatures);
+  instantiations.by_specialization.emplace(
+      root_hir.name, lowering::hir_to_mir::SpecializationMade::Of(root_hir));
+  hir::SpecializationRef root{
+      .unit = root_hir.implementation.name, .specialization = root_hir.name};
+  hir::CompilationUnit& root_unit = root_hir.implementation;
   auto object_entries = PublishedObjectEntries(
-      tops, signatures, instantiations, root_hir.types, root_hir.classes,
-      root_hir.covergroups, root_hir.scope_classes);
-  lowering::hir_to_mir::UnitLowerer root_lowerer(root_hir, source_manager);
+      signatures, instantiations, root_unit.types, root_unit.classes,
+      root_unit.covergroups, root_unit.scope_classes);
+  lowering::hir_to_mir::UnitLowerer root_lowerer(root_unit, source_manager);
   auto root_mir = root_lowerer.RunDesignRoot(
       lowering::hir_to_mir::DesignRootInputs{
           .namespaces =
               lowering::hir_to_mir::DesignNamespaces{
                   .units = signatures.NamespaceUnitNames()},
           .instantiations = std::move(instantiations),
+          .root = std::move(root),
           .object_entries = std::move(object_entries)});
   if (!root_mir) {
     return std::unexpected(std::move(root_mir.error()));

@@ -21,12 +21,15 @@
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/owned_child_ref.hpp"
+#include "lyra/hir/owned_child_step.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/published_scope_ref.hpp"
+#include "lyra/hir/scope_construction.hpp"
+#include "lyra/hir/specialization.hpp"
+#include "lyra/hir/specialization_ref.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
@@ -157,15 +160,6 @@ auto ReferenceBindingLabel(ReferenceBinding binding) -> std::string_view {
       return " input";
   }
   throw InternalError("ReferenceBindingLabel: unknown hir::ReferenceBinding");
-}
-
-auto FormatArguments(std::span<const ExprId> arguments) -> std::string {
-  std::string out;
-  for (std::size_t i = 0; i < arguments.size(); ++i) {
-    if (i != 0) out += ", ";
-    out += std::format("Expr[{}]", arguments[i].value);
-  }
-  return std::format("arguments({})", out);
 }
 
 auto FormatAssignments(std::span<const ParameterValueAssignment> assignments)
@@ -354,8 +348,30 @@ auto FormatInstanceMethodCallee(const InstanceMethodCallee& callee)
 
 class HirDumper {
  public:
+  auto Dump(const Specialization& lowered) -> std::string {
+    Line(
+        std::format(
+            "Specialization \"{}\" of implementation \"{}\"", lowered.name,
+            lowered.implementation.body_name));
+    Indent();
+    DumpUnit(lowered.implementation);
+    Line("Construction:");
+    Indent();
+    DumpConstruction(lowered.construction);
+    Dedent();
+    Dedent();
+    return std::move(out_);
+  }
+
   auto Dump(const CompilationUnit& unit) -> std::string {
     DumpUnit(unit);
+    return std::move(out_);
+  }
+
+  auto Dump(const CompilationUnit& unit, const StructuralScope& scope)
+      -> std::string {
+    unit_ = &unit;
+    DumpScope(scope);
     return std::move(out_);
   }
 
@@ -1048,19 +1064,11 @@ class HirDumper {
     return std::visit(
         Overloaded{
             [this](const StructuralSubroutineRef& u) -> std::string {
-              const StructuralScope* owner = &ResolveScope(u.hops);
-              std::string descent;
-              for (const OwnedChildStep& step : u.descent) {
-                descent += std::format(
-                    " . {}{}", FormatOwnedChild(step.names),
-                    FormatIndices(step.selects));
-                owner = &BlockScopeAt(*owner, step);
-              }
               const auto& decl =
-                  owner->structural_subroutines.Get(u.subroutine);
+                  OwnScope().structural_subroutines.Get(u.subroutine);
               return std::format(
-                  "StructuralSubroutine[{}](self^{}{}) \"{}\"",
-                  u.subroutine.value, u.hops.value, descent, decl.name);
+                  "StructuralSubroutine[{}] \"{}\"", u.subroutine.value,
+                  decl.name);
             },
             [](const MethodCallRef& m) -> std::string {
               const std::string recv = std::visit(
@@ -1159,41 +1167,62 @@ class HirDumper {
         callee);
   }
 
-  [[nodiscard]] auto ResolveScope(StructuralHops hops) const
-      -> const StructuralScope& {
-    if (hops.value >= scope_stack_.size()) {
+  // The scope whose own subroutines a call names: the one being printed, or
+  // the one declaring the class or covergroup being printed.
+  [[nodiscard]] auto OwnScope() const -> const StructuralScope& {
+    if (own_scope_ == nullptr) {
       throw InternalError(
-          "HirDumper::ResolveScope: StructuralHops out of range");
+          "HirDumper::OwnScope: a scope's own subroutine is called from "
+          "outside any scope");
     }
-    return *scope_stack_[scope_stack_.size() - 1 - hops.value];
+    return *own_scope_;
   }
 
-  // Records, for every class the unit declares, the structural nesting its
-  // bodies resolve outward names against -- the chain ending at the scope that
-  // declares it (LRM 23.9). Classes are printed before the scope tree, so the
-  // walk that would have supplied the chain has not run when one is dumped.
-  //
-  // A class identity is the declaring unit's, so the record is that unit's
-  // too: one dumper prints several units and their identities share a range.
-  void RecordClassScopeChains(const StructuralScope& root) {
-    class_scope_chains_.clear();
-    RecordClassScopeChainsIn(root);
-  }
-
-  void RecordClassScopeChainsIn(const StructuralScope& scope) {
-    scope_stack_.push_back(&scope);
-    for (const ClassId id : scope.replicated_classes) {
-      class_scope_chains_.emplace(id, scope_stack_);
-    }
-    for (const CovergroupId id : scope.replicated_covergroups) {
-      covergroup_scope_chains_.emplace(id, scope_stack_);
-    }
-    for (const auto& g : scope.generates) {
-      for (const auto& block : g.blocks) {
-        RecordClassScopeChainsIn(block.scope);
+  // Records, for every class and covergroup the unit declares, the scope that
+  // declares it (LRM 23.9), whose own subroutines its bodies call. Classes are
+  // printed before the scopes, so the walk that would have supplied it has not
+  // run when one is dumped.
+  void RecordDeclaringScopes(const CompilationUnit& unit) {
+    const auto record = [&](const StructuralScope& scope) {
+      for (const ClassId id : scope.replicated_classes) {
+        class_declaring_scopes_.emplace(id, &scope);
       }
+      for (const CovergroupId id : scope.replicated_covergroups) {
+        covergroup_declaring_scopes_.emplace(id, &scope);
+      }
+    };
+    record(unit.root_scope);
+    for (const BlockBodyId id : unit.block_bodies.Ids()) {
+      record(unit.block_bodies.Get(id).scope);
     }
-    scope_stack_.pop_back();
+  }
+
+  // How each object of a scope builds its children: the specialization each
+  // object of each instance member is, then the blocks, construct by
+  // construct.
+  void DumpConstruction(const ScopeConstruction& built) {
+    for (std::size_t member = 0; member < built.instances.size(); ++member) {
+      std::string made;
+      for (const SpecializationRef& child : built.instances[member]) {
+        made += std::format(" {}", child.specialization);
+      }
+      Line(std::format("InstanceMember[{}] makes{}", member, made));
+    }
+    for (std::size_t generate = 0; generate < built.generates.size();
+         ++generate) {
+      std::string places;
+      for (const BlockConstruction& place : built.generates[generate]) {
+        places += place.body.has_value()
+                      ? std::format(" body{}", place.body->value)
+                      : std::string{" -"};
+      }
+      Line(std::format("Generate[{}] builds{}", generate, places));
+      Indent();
+      for (const BlockConstruction& place : built.generates[generate]) {
+        DumpConstruction(place.built);
+      }
+      Dedent();
+    }
   }
 
   static auto FormatInsideExprNode(const InsideExpr& in) -> std::string {
@@ -1642,7 +1671,7 @@ class HirDumper {
       DumpForeignImport(id.value, u.foreign_imports.Get(id));
     }
 
-    RecordClassScopeChains(u.root_scope);
+    RecordDeclaringScopes(u);
     if (u.classes.size() > 0) {
       Line("Classes:");
       Indent();
@@ -1721,6 +1750,13 @@ class HirDumper {
     Indent();
     DumpScope(u.root_scope);
     Dedent();
+
+    for (const BlockBodyId id : u.block_bodies.Ids()) {
+      Line(std::format("BlockBody[{}]:", id.value));
+      Indent();
+      DumpScope(u.block_bodies.Get(id).scope);
+      Dedent();
+    }
 
     Dedent();
   }
@@ -1870,14 +1906,13 @@ class HirDumper {
 
   void DumpCovergroup(
       CovergroupId id, std::string_view name, const CovergroupDecl& c) {
-    const auto chain = covergroup_scope_chains_.find(id);
-    if (chain == covergroup_scope_chains_.end()) {
+    const auto declaring = covergroup_declaring_scopes_.find(id);
+    if (declaring == covergroup_declaring_scopes_.end()) {
       throw InternalError(
           "HirDumper::DumpCovergroup: every covergroup a unit declares is "
           "named by one of its scopes");
     }
-    const std::vector<const StructuralScope*> outer =
-        std::exchange(scope_stack_, chain->second);
+    const StructuralScope* outer = std::exchange(own_scope_, declaring->second);
     Line(std::format("[{}] covergroup \"{}\"", id.value, name));
     Indent();
     const auto vars = [](const std::vector<SubroutineParam>& listed) {
@@ -1952,23 +1987,21 @@ class HirDumper {
     }
     DumpProceduralBodyContents(c.body, c.procedural_scopes);
     Dedent();
-    scope_stack_ = outer;
+    own_scope_ = outer;
   }
 
   void DumpClass(
       ClassId id, std::string_view name, const ClassDeclaration& declared,
       const ClassDecl& c) {
-    // A class body's outward references count hops from the scope that
-    // declares the class, so the chain that scope sits on is what resolves
-    // them -- the same reading a process of that scope gets from the walk.
-    const auto chain = class_scope_chains_.find(id);
-    if (chain == class_scope_chains_.end()) {
+    // A class body calls the subroutines of the scope that declares the class
+    // as that scope's own -- the same reading a process of that scope gets.
+    const auto declaring = class_declaring_scopes_.find(id);
+    if (declaring == class_declaring_scopes_.end()) {
       throw InternalError(
           "HirDumper::DumpClass: every class a unit declares is named by one "
           "of its scopes");
     }
-    const std::vector<const StructuralScope*> outer =
-        std::exchange(scope_stack_, chain->second);
+    const StructuralScope* outer = std::exchange(own_scope_, declaring->second);
     const std::string kind =
         declared.is_interface_class ? "interface class" : "class";
     Line(std::format("[{}] {} \"{}\"", id.value, kind, name));
@@ -2027,7 +2060,7 @@ class HirDumper {
               FormatDeclaringInstance(c.base_call.declaring_instance), args));
     }
     Dedent();
-    scope_stack_ = outer;
+    own_scope_ = outer;
   }
 
   static auto FormatDeclaringInstance(
@@ -2132,21 +2165,6 @@ class HirDumper {
     return positions;
   }
 
-  static auto FormatOwnedChild(const OwnedChildRef& names) -> std::string {
-    return std::visit(
-        Overloaded{
-            [](const InstanceMemberId& id) {
-              return std::format("InstanceMember[{}]", id.value);
-            },
-            [](const GenerateBlockRef& block) {
-              return std::format(
-                  "Generate[{}].alt{}", block.generate.value,
-                  block.alternative);
-            },
-        },
-        names);
-  }
-
   static auto FormatPublishedScopeRef(const PublishedScopeRef& names)
       -> std::string {
     return std::visit(
@@ -2172,27 +2190,6 @@ class HirDumper {
             },
         },
         names);
-  }
-
-  // The scope a descent element names a block of `owner` lands in. A
-  // subroutine's descent stays inside its own unit, so it names no instance.
-  static auto BlockScopeAt(
-      const StructuralScope& owner, const OwnedChildStep& step)
-      -> const StructuralScope& {
-    return std::visit(
-        Overloaded{
-            [](const InstanceMemberId&) -> const StructuralScope& {
-              throw InternalError(
-                  "HirDumper::BlockScopeAt: a descent names an instance of "
-                  "another unit");
-            },
-            [&](const GenerateBlockRef& block) -> const StructuralScope& {
-              const Generate& gen = owner.generates.Get(block.generate);
-              return gen.blocks.Get(ChosenBlockScopeOf(gen, block.alternative))
-                  .scope;
-            },
-        },
-        step.names);
   }
 
   static auto FormatSelectionChoice(
@@ -2230,8 +2227,8 @@ class HirDumper {
     for (const PathStep& step : steps) {
       const std::string names = std::visit(
           Overloaded{
-              [](const OwnedChildRef& owned) {
-                return FormatOwnedChild(owned);
+              [](InstanceMemberId id) {
+                return std::format("InstanceMember[{}]", id.value);
               },
               [](const InterfacePortId& port) {
                 return std::format("InterfacePort[{}]", port.value);
@@ -2310,7 +2307,7 @@ class HirDumper {
   }
 
   void DumpScope(const StructuralScope& s) {
-    scope_stack_.push_back(&s);
+    const StructuralScope* outer = std::exchange(own_scope_, &s);
     Line("Scope:");
     Indent();
     for (const StructuralDataObjectId id : s.structural_data_objects.Ids()) {
@@ -2481,7 +2478,7 @@ class HirDumper {
       Line(std::format("NetJoin {}", sides));
     }
     Dedent();
-    scope_stack_.pop_back();
+    own_scope_ = outer;
   }
 
   void DumpSubroutine(
@@ -3492,24 +3489,6 @@ class HirDumper {
         c.data);
   }
 
-  static auto FormatLoopBodies(std::span<const LoopBody> bodies)
-      -> std::string {
-    std::string out;
-    for (const LoopBody& built : bodies) {
-      std::string indices;
-      for (const std::int64_t index : built.indices) {
-        indices += std::format("{}{}", indices.empty() ? "" : ",", index);
-      }
-      out += std::format(
-          " body{}{}@[{}]", built.body.value,
-          built.body_arguments.has_value()
-              ? std::format("#{:016x}", *built.body_arguments)
-              : std::string{},
-          indices);
-    }
-    return out;
-  }
-
   void DumpGenerate(const Generate& g) {
     const std::string form = std::visit(
         Overloaded{
@@ -3517,41 +3496,25 @@ class HirDumper {
             [](const BlocksRepeat& r) {
               return std::format(
                   "repeated var=StructuralDataObject[{}] initial=Expr[{}] "
-                  "condition=Expr[{}] step=Expr[{}] {}{}",
+                  "condition=Expr[{}] step=Expr[{}] index=Expr[{}]",
                   r.variable.value, r.initial.value, r.condition.value,
-                  r.step.value, FormatArguments(r.arguments),
-                  FormatLoopBodies(r.bodies));
+                  r.step.value, r.index.value);
             },
             [](const BlocksChoose& c) {
-              std::string chosen =
-                  std::format("chosen {}", FormatSelectionChoice(c, c.root));
-              for (std::size_t at = 0; at < c.alternatives.size(); ++at) {
-                chosen += c.alternatives[at].has_value()
-                              ? std::format(
-                                    " alt{}:{}", at, c.alternatives[at]->value)
-                              : std::format(" alt{}:-", at);
-              }
-              return chosen;
+              return std::format(
+                  "chosen {} alternatives={}", FormatSelectionChoice(c, c.root),
+                  c.alternatives);
             },
         },
         g.counting);
-    Line(std::format("Generate blocks={} {}", g.blocks.size(), form));
-    Indent();
-    for (const StructuralScopeId id : g.blocks.Ids()) {
-      Line(std::format("body{}:", id.value));
-      Indent();
-      DumpScope(g.blocks.Get(id).scope);
-      Dedent();
-    }
-    Dedent();
+    Line(std::format("Generate {}", form));
   }
 
   std::string out_;
   int indent_ = 0;
-  std::vector<const StructuralScope*> scope_stack_;
-  std::map<ClassId, std::vector<const StructuralScope*>> class_scope_chains_;
-  std::map<CovergroupId, std::vector<const StructuralScope*>>
-      covergroup_scope_chains_;
+  const StructuralScope* own_scope_ = nullptr;
+  std::map<ClassId, const StructuralScope*> class_declaring_scopes_;
+  std::map<CovergroupId, const StructuralScope*> covergroup_declaring_scopes_;
   const CompilationUnit* unit_ = nullptr;
 };
 
@@ -3590,9 +3553,20 @@ auto HirDumper::FormatSelectionChoice(
 
 }  // namespace
 
-auto DumpHir(const CompilationUnit& unit) -> std::string {
+auto DumpHir(const Specialization& lowered) -> std::string {
+  HirDumper dumper;
+  return dumper.Dump(lowered);
+}
+
+auto DumpImplementation(const CompilationUnit& unit) -> std::string {
   HirDumper dumper;
   return dumper.Dump(unit);
+}
+
+auto DumpScope(const CompilationUnit& unit, const StructuralScope& scope)
+    -> std::string {
+  HirDumper dumper;
+  return dumper.Dump(unit, scope);
 }
 
 }  // namespace lyra::hir

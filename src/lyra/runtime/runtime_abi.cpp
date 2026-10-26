@@ -1962,6 +1962,7 @@ using lyra::runtime::Bit64;
 using lyra::runtime::Bit8;
 using lyra::runtime::BitsAt;
 using lyra::runtime::BitWide;
+using lyra::runtime::BlockEntry;
 using lyra::runtime::BlockTable;
 using lyra::runtime::BuildAt;
 using lyra::runtime::BuildReference;
@@ -4052,8 +4053,18 @@ auto lyra_rt_instantiation_table(const void* table, std::int64_t at) -> const
   return InstantiationTable(static_cast<const ConstructionTable*>(table), at);
 }
 
-auto lyra_rt_block_table(const void* table, std::int64_t at) -> const void* {
-  return BlockTable(static_cast<const ConstructionTable*>(table), at);
+auto lyra_rt_block_entry(
+    const void* table, std::int64_t generate, std::int64_t place)
+    -> LyraMethodEntry {
+  return BlockEntry(
+      static_cast<const ConstructionTable*>(table), generate, place);
+}
+
+auto lyra_rt_block_table(
+    const void* table, std::int64_t generate, std::int64_t place) -> const
+    void* {
+  return BlockTable(
+      static_cast<const ConstructionTable*>(table), generate, place);
 }
 
 auto lyra_rt_refer_storage(void* storage, void* out) -> void* {

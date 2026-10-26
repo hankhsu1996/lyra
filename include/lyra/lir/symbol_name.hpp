@@ -136,8 +136,11 @@ auto NamespaceCallableSymbol(std::string_view unit_name, SymbolPart callable)
 auto NamespaceStorageInstallSymbol(std::string_view unit_name) -> std::string;
 auto NamespaceStorageInitializeSymbol(std::string_view unit_name)
     -> std::string;
-auto ObjectEntrySymbol(std::string_view unit_name, std::string_view body_name)
-    -> std::string;
+// The entry making an object of a body, or a block of the block body standing
+// at `block` among the body's.
+auto ObjectEntrySymbol(
+    std::string_view unit_name, std::string_view body_name,
+    std::optional<std::uint32_t> block) -> std::string;
 // A unit's own storage. A package variable answers to the identifier the source
 // declared, which is what another unit reaches it by; the cell a subroutine's
 // static-lifetime local keeps answers to none, and takes its position instead.

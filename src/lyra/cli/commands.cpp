@@ -226,8 +226,8 @@ auto RunDumpHir(const CommandContext& ctx) -> int {
   }
   compiler::LowerToHir(
       *design, *ctx.sink, ctx.args->compile_width,
-      [](const hir::CompilationUnit& unit) -> diag::Result<std::string> {
-        return hir::DumpHir(unit);
+      [](const hir::Specialization& lowered) -> diag::Result<std::string> {
+        return hir::DumpHir(lowered);
       },
       [](const std::string& text) { fmt::print("{}", text); });
   return ctx.sink->HasErrors() ? 1 : 0;

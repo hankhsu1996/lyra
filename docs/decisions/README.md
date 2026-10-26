@@ -411,22 +411,27 @@ the detail lives in the entry itself.
   generate block is a definition nested in the scope holding it, and a block instance is an
   application of it, named from the front end by the function that names a unit: one published class
   per application, a loop an array of them, a child naming the block that holds it one unit. Read it
-  for what an index decides -- its value where what the block declares relies on it, and nothing
-  where it is only read, selects an alternative, or sits in what a body's statements run -- for why
-  blocks of one application whose code relies on their index are one class realized more than once,
-  each realization named from the front end before any body lowers and nothing compared, with a
-  published subroutine a virtual method each realization overrides, for why a class of a unit is
-  identified by a path of steps and never by a composed name, and for why a unit's scope classes are
-  nested in one another and written in the file that carries the unit's name. A file per class with
-  its name shortened by a digest, deciding by comparing published classes, finding a block's body by
-  comparing lowered blocks, and a non-virtual method asking which realization the object is are
-  rejected.
+  for what names a block -- what it declares as resolved, a nested construct only as written, or its
+  index where it declares a class, which is a type of each block alone -- and why an index decides
+  nothing where it is only read, selects an alternative, or sits in what a body's statements run,
+  for why a block's body is found by comparing what it came out as, among the blocks of the body
+  holding it, its nested blocks bodies of their own, and which body each place builds is its
+  object's construction, built through the entry its table holds there, with a published subroutine
+  a virtual method each body overrides, for why a class of a unit is identified by a path of steps
+  and never by a composed name, and for why a unit's scope classes are nested in one another and
+  written in the file that carries the unit's name. A file per class with its name shortened by a
+  digest, deciding by comparing published classes, naming a block's body before it lowers, holding
+  nested blocks inside a block's HIR, lowering a group of alike blocks together, and a non-virtual
+  method asking which realization the object is are rejected.
 - [a-body-states-nothing-of-another-bodys-implementation](a-body-states-nothing-of-another-bodys-implementation.md)
   -- what a body's code states of anything outside itself is what that thing publishes and where the
-  source wrote it: a reach into a block of a loop goes through what the loop's scope published,
-  inside the unit as across it, a subroutine of such a block is called through its published slot,
-  and a scope's construction table is its own. Calling another block's subroutine directly and
-  reaching a table section by offset are rejected.
+  source wrote it: every reach leaving the reader's own scope, into a block or up to an enclosing
+  scope, goes through what that scope published, a subroutine of another scope is called through its
+  published slot, a block keeps the scope that built it as what that scope published, a scope's
+  construction table is its own and says which body each child is, and a block body is lowered
+  inside the first scope publishing the class around its own. Calling another block's subroutine
+  directly, reaching a table section by offset, and lowering a block inside whichever scope first
+  built it are rejected.
 - [the-lowering-reads-an-instance-only-through-its-identity](the-lowering-reads-an-instance-only-through-its-identity.md)
   -- every instance one identity names lowers alike because the lowering reads nothing of it the
   identity does not hold, not because a check finds the copies alike. Read it for what the lowering
@@ -1279,14 +1284,17 @@ the detail lives in the entry itself.
   parameter, and keeping a definition whole where its instances lower apart. **Its D1 and D2 are
   revised by
   [a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md).**
-- [a-unit-is-compiled-to-a-body-per-value-its-code-relies-on](a-unit-is-compiled-to-a-body-per-value-its-code-relies-on.md)
-  -- a unit is named by the values of the parameters what it declares relies on and compiled to one
-  body per value of those only its code relies on, as a block is. Read it for why a parameter read
-  as a value reads the object's own, why each body is a compilation of its own that states the
-  published classes alike and the link keeps one, why a scope declaring a class has one body, and
-  why a parameter handed to a child's argument is an argument of the scope building it. A name
-  holding the constants settled at each place, a unit of its own for what is published, and every
-  body in one compilation are rejected.
+- [a-unit-is-compiled-to-one-body-per-distinct-code](a-unit-is-compiled-to-one-body-per-distinct-code.md)
+  -- a unit is named by the values of the parameters what it declares relies on, a specialization by
+  every value its instances are handed, and specializations whose code comes out alike are one body,
+  found by comparing their HIR whole after a digest narrows it, named for the first of them in the
+  design's order. Read it for why a parameter read as a value reads the object's own, why the design
+  root states a table per specialization, why each body is a compilation of its own that states the
+  published classes alike and the link keeps one, why a scope declaring a class has one body per
+  value its code relies on, and why a value handed to a child's construction is no part of the
+  building scope's code. Naming a body before it lowers, a name holding the constants settled at
+  each place, naming a body by a digest, trusting a digest alone, a unit of its own for what is
+  published, and every body in one compilation are rejected.
 - [a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md)
   -- which generate blocks an instance built is part of its unit's name, as the branch an
   `if constexpr` keeps is part of a C++ instantiation: an alternative not selected is not
@@ -1312,12 +1320,13 @@ the detail lives in the entry itself.
   with its default inverted: a loop generate's blocks are one compiled class the constructor builds
   once per index, because the index reaches the block as a value construction supplies rather than
   as a constant folded into it. Read it for the comparison of lowered blocks it first decided by,
-  and why that was revised: which body a block is, is named from the front end's record of where its
-  index is used, before any block lowers, and nothing is compared. The measurement that removed
-  speed from the argument is there too, as is what a scope's construction receives: one entry for
-  every class, because the constructing site may hold only the definition -- except a unit's own
-  entry, which takes its values typed, since a parent works out that prototype from the child's
-  instantiation. **Its D2, blocks of one name taken into one body, is narrowed to one instance by
+  and why that was revised twice, the second time back to comparing: which body a block is, is found
+  by comparing what each block came out as, among the blocks of the body holding it, a digest
+  narrowing the comparison. The measurement that removed speed from the argument is there too, as is
+  what a scope's construction receives: one entry for every class, because the constructing site may
+  hold only the definition -- except a unit's own entry, which takes its values typed, since a
+  parent works out that prototype from the child's instantiation. **Its D2, blocks of one name taken
+  into one body, is narrowed to one instance by
   [a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md).**
 - [a-conditional-generate-chooses-at-construction](a-conditional-generate-chooses-at-construction.md)
   -- the entry above completed for the commonest reason a loop's blocks differ, which is a

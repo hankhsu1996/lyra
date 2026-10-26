@@ -86,12 +86,11 @@ auto SelectionTree::Place(
   return {};
 }
 
-auto SelectionTree::Compose(
-    std::vector<std::optional<hir::StructuralScopeId>> alternatives) const
+auto SelectionTree::Compose(std::uint32_t alternatives) const
     -> hir::BlocksChoose {
   hir::BlocksChoose chosen;
   chosen.root = ComposeChoice(std::get<std::size_t>(root_.to), chosen.choices);
-  chosen.alternatives = std::move(alternatives);
+  chosen.alternatives = alternatives;
   return chosen;
 }
 

@@ -47,14 +47,15 @@ class Type;
 namespace lyra::lowering::ast_to_hir {
 
 // Where a value parameter's value comes from, for the objects built from one
-// compiled scope. Fixed by the specialization: it is part of what is compiled,
-// so every object of the scope holds the one value. Supplied at construction:
-// whoever builds the object passes it -- an instance's overridden parameter
-// (LRM 23.10.2), or the index a loop's block was built at (LRM 27.4). Computed
-// at construction: its own declaration writes it from a supplied value,
-// directly or through another such, so each object computes it when built.
+// compiled scope. Fixed by the unit: it is part of what is compiled, and the
+// unit's name holds it, so every object of the scope holds the one value.
+// Supplied at construction: whoever builds the object passes it -- an
+// instance's overridden parameter (LRM 23.10.2), or the index a loop's block
+// was built at (LRM 27.4). Computed at construction: its own declaration writes
+// it from a supplied value, directly or through another such, so each object
+// computes it when built.
 enum class ParameterValueSource {
-  kFixedBySpecialization,
+  kFixedByUnit,
   kSuppliedAtConstruction,
   kComputedAtConstruction,
 };
@@ -71,6 +72,11 @@ enum class ParameterValueSource {
 [[nodiscard]] auto InstanceHolding(const slang::ast::Scope& scope)
     -> const slang::ast::InstanceSymbol&;
 
+// Whether `scope`, or a generate block it builds, declares a class or a
+// covergroup (LRM 8.3, 19.2, 27.3), each a type of the scope declaring it
+// alone. A child instance's body is the child's, so it is not reached.
+[[nodiscard]] auto DeclaresAClass(const slang::ast::Scope& scope) -> bool;
+
 // A value as an identity: every bit of it, unknowns included, so two values
 // that differ anywhere never answer alike. The front end's own rendering is
 // for reading -- it shortens a value wider than it cares to print and folds
@@ -78,13 +84,13 @@ enum class ParameterValueSource {
 [[nodiscard]] auto ValueIdentity(const slang::ConstantValue& value)
     -> std::string;
 
-// What one input to a specialization was fixed to. A value and a type are the
-// two a parameter takes (LRM 6.20.2, 6.20.3); an interface is what an interface
-// port carries (LRM 25.3), which no parameter declares and the language gives
-// no way to write, so the connection is where it is fixed. Each holds the
-// identity of what it was fixed to -- a constant's value, a data type's
-// identity, a unit's name -- because that is what decides whether two
-// instantiations compile alike.
+// What one input to a unit's key was fixed to. A value and a type are the two a
+// parameter takes (LRM 6.20.2, 6.20.3); an interface is what an interface port
+// carries (LRM 25.3), which no parameter declares and the language gives no way
+// to write, so the connection is where it is fixed. Each holds the identity of
+// what it was fixed to -- a constant's value, a data type's identity, a unit's
+// name -- because that is what decides whether two instantiations compile
+// alike.
 struct FixedValue {
   std::string value;
 
@@ -95,6 +101,14 @@ struct FixedType {
   std::string type;
 
   auto operator==(const FixedType&) const -> bool = default;
+};
+
+// What a generate block declares under one name, as the front end resolved
+// it: what every name reaching the block compiles against (LRM 23.6, 27.4).
+struct DeclaredAs {
+  std::string declaration;
+
+  auto operator==(const DeclaredAs&) const -> bool = default;
 };
 
 // The interface instances an interface port is bound to, as the units they
@@ -182,20 +196,20 @@ struct BlocksBuilt {
   auto operator==(const BlocksBuilt&) const -> bool = default;
 };
 
-using SpecializationInputKind = std::variant<
-    FixedValue, FixedType, FixedInterface, SuppliedAtConstruction, LandsIn,
-    LandsBack, BindInstantiation, BoundToCell, BlocksBuilt>;
+using UnitKeyInputKind = std::variant<
+    FixedValue, FixedType, DeclaredAs, FixedInterface, SuppliedAtConstruction,
+    LandsIn, LandsBack, BindInstantiation, BoundToCell, BlocksBuilt>;
 
 // One thing the design fixed for an instance: what it named, and what it fixed
 // that to. Every input is named -- a parameter by its own name, an interface
 // port by the port's, what reaches an instance below by that instance's path
 // from this one -- so the name sits here and the arms carry only what differs
 // between them.
-struct SpecializationInput {
+struct UnitKeyInput {
   std::string name;
-  SpecializationInputKind kind;
+  UnitKeyInputKind kind;
 
-  auto operator==(const SpecializationInput&) const -> bool = default;
+  auto operator==(const UnitKeyInput&) const -> bool = default;
 };
 
 // Which compiled artifact an instance belongs to: the definition it is built
@@ -203,40 +217,38 @@ struct SpecializationInput {
 // instances with equal keys compile alike and share one artifact; instance
 // count never affects how many keys exist. Equality is structural, so two keys
 // agree or differ on their parts and never on a rendering of them.
-struct SpecializationKey {
+struct UnitKey {
   std::string definition;
-  std::vector<SpecializationInput> inputs;
+  std::vector<UnitKeyInput> inputs;
 
-  auto operator==(const SpecializationKey&) const -> bool = default;
+  auto operator==(const UnitKey&) const -> bool = default;
 };
 
-// The value parameters a body's compiled form uses, in three sets. Those its
-// signature uses -- what the body declares -- enter the unit's name by their
-// values, as template arguments do in C++. Those only its code uses -- the
-// statements of its processes, continuous assignments and subroutines --
-// enter the name of the body the unit is compiled to instead. rustc's
-// polymorphization called both a definition's used generic parameters. Those
-// that decide which generate blocks the body builds (LRM 27.4, 27.5) enter no
-// name by value, since which blocks were built is part of the name itself; but
-// a scope building an instance of this body names which unit it is, so a value
-// it hands one of these is one its own signature uses.
+// The value parameters that what a body declares or builds relies on, in two
+// sets. Those its signature uses -- what the body declares -- enter the unit's
+// name by their values, as template arguments do in C++. Those that decide
+// which generate blocks the body builds (LRM 27.4, 27.5) enter no unit's name
+// by value, since which classes the blocks built are part of the name itself;
+// but a scope building an instance of this body names which unit it is, so a
+// value it hands one of these is one its own signature uses. Every other value
+// an instance is handed names its specialization, whose objects are built
+// alike.
 struct UsedParameters {
   std::unordered_set<const slang::ast::ParameterSymbol*> in_signature;
-  std::unordered_set<const slang::ast::ParameterSymbol*> in_body;
   std::unordered_set<const slang::ast::ParameterSymbol*> deciding_what_is_built;
 };
 
 // Which value parameters of each instance reach its unit when the instance is
-// built rather than as part of what is compiled, and which what is compiled
-// uses. A parameter's value is fixed before the run (LRM 23.10), and nothing
-// requires the compiled unit to hold it: one read as the source wrote it makes
-// every value one unit, and the instance is handed it when it is built. Where a
-// construction reads it to decide which blocks it builds (LRM 27.4, 27.5), the
-// blocks built name the unit and the value still does not. One whose
-// value something compiled relies on -- a constant the language requires, a
-// type -- is used instead, and its value names the unit where what the unit
-// declares uses it, and the body the unit is compiled to where only its code
-// does.
+// built rather than as part of what is compiled, and which what the unit
+// declares uses. A parameter's value is fixed before the run (LRM 23.10), and
+// nothing requires the compiled unit to hold it: one read as the source wrote
+// it makes every value one unit, and the instance is handed it when it is
+// built. Where a construction reads it to decide which blocks it builds (LRM
+// 27.4, 27.5), the blocks built name the unit and the value still does not.
+// One whose value what the unit declares relies on -- a constant the language
+// requires, a type -- is used instead, and its value names the unit. Every
+// value an instance is handed names its specialization, which is what says how
+// its objects are built; which body its code is, is found once it is lowered.
 //
 // Every party naming a unit reads the same policy, so a parent and the child
 // it names agree.
@@ -246,9 +258,9 @@ struct UsedParameters {
 // per instance. Working out one instance's answer asks for its children's,
 // since whether what a child is handed is only read as a value is the child's
 // answer.
-class SpecializationPolicy {
+class UnitNamingPolicy {
  public:
-  explicit SpecializationPolicy(
+  explicit UnitNamingPolicy(
       support::BodiesRead bodies_read = support::BodiesRead::kOnePerName)
       : bodies_read_(bodies_read) {
   }
@@ -288,44 +300,29 @@ class SpecializationPolicy {
 
   // The step the block instance `block` is in the scope holding it: its label,
   // which one it is among the blocks of that scope sharing the label (LRM
-  // 27.5), and which application of its definition it is. A generate block is
-  // a definition nested in the scope holding it, and each block
-  // instance built from it applies it to arguments, the way an instance applies
-  // a design element (LRM 27.3): the index a loop built it at (LRM 27.4), and
-  // what is written elsewhere about an instance it holds
-  // (LRM 23.10.1, 23.11, 33.4). An index enters only where the block's
-  // signature uses it; one only read as a value is handed over when the block
-  // is built, so the blocks of a loop that differ in nothing else are one
-  // application.
+  // 27.5), and which application of its definition it is. A generate block is a
+  // definition nested in the scope holding it, and each block instance built
+  // from it applies it to arguments, the way an instance applies a design
+  // element (LRM 27.3): what it declares as the front end resolved it, or,
+  // where it declares a class or a covergroup, where it stands -- its label
+  // and, in a loop, its index (LRM 27.4) -- and what is written elsewhere about
+  // an instance it holds (LRM 23.10.1, 23.11, 33.4). An index only read as a
+  // value is handed over when the block is built, so blocks that declare alike
+  // are one application.
   //
   // The definition is named by the label the source gave it, and what was
   // fixed is stated beside the label as a digest, absent where nothing was.
   [[nodiscard]] auto BlockStepOf(const slang::ast::GenerateBlockSymbol& block)
       const -> support::GenerateBlockStep;
 
-  // Which body of its class the block instance `block` is compiled to: the
-  // digest of its index where the block's body uses the index, absent
-  // otherwise. Blocks of one class are objects of it whatever their code, so
-  // this tells apart only the bodies the class is realized by (LRM 27.4).
-  [[nodiscard]] auto BodyArgumentsOf(
-      const slang::ast::GenerateBlockSymbol& block) const
-      -> std::optional<std::uint64_t>;
-
-  // The name of the body `inst` is compiled to: the name of its unit, with the
-  // digest of the values its body uses where it uses any. It reads every block
-  // the instance built, so it is worked out once and kept, as the unit's name
-  // is.
-  [[nodiscard]] auto BodyNameOf(const slang::ast::InstanceSymbol& inst) const
-      -> std::string;
-
-  // Whether `param`, a value parameter `inst`'s body declares, is used only in
-  // the body: by what the statements of the processes, continuous assignments
-  // and subroutines of the scope declaring it run. That is how the scope is
-  // compiled and no part of its signature, so such a value tells apart the
-  // bodies one class is compiled to, never the class.
-  [[nodiscard]] auto IsUsedInBody(
-      const slang::ast::InstanceSymbol& inst,
-      const slang::ast::ParameterSymbol& param) const -> bool;
+  // The name of the specialization `inst` is an application of: the name of
+  // its unit, with the digest of every value it is handed at construction,
+  // where it is handed any. Instances of one specialization are built alike --
+  // the same blocks, the same children -- so it is what the design's
+  // construction tables are stated by. It reads every block the instance
+  // built, so it is worked out once and kept, as the unit's name is.
+  [[nodiscard]] auto SpecializationNameOf(
+      const slang::ast::InstanceSymbol& inst) const -> std::string;
 
   // Whether `param`, a value parameter `inst`'s body declares, decides which
   // generate blocks the body builds (LRM 27.4, 27.5). The blocks built are part
@@ -335,19 +332,18 @@ class SpecializationPolicy {
       const slang::ast::InstanceSymbol& inst,
       const slang::ast::ParameterSymbol& param) const -> bool;
 
-  // The name of the specialization `inst` is an application of, folded from
-  // what the design fixed for it: its parameters (LRM 6.20, 23.10), the
-  // interface each of its interface ports is connected to (LRM 25.3), the scope
-  // each name written in it or below it lands in once it leaves the instance
-  // (LRM 23.8), and everything written elsewhere that reaches an instance below
-  // it -- a parameter a defparam or a configuration sets (LRM 23.10.1, 33.4.3),
-  // an instantiation a bind inserts (LRM 23.11), a cell a configuration binds
-  // (LRM 33.4.1.6) -- each under its path from `inst`. A parameter fixed by the
-  // specialization -- one its signature uses -- enters with its value; one
-  // supplied at construction enters as being supplied, and one computed at
-  // construction not at all, so instances supplied different values are one
-  // unit wherever they built the same generate blocks, which enter as well
-  // (LRM 27.5).
+  // The name of the unit `inst` is an object of, folded from what the design
+  // fixed for it: its parameters (LRM 6.20, 23.10), the interface each of its
+  // interface ports is connected to (LRM 25.3), the scope each name written in
+  // it or below it lands in once it leaves the instance (LRM 23.8), and
+  // everything written elsewhere that reaches an instance below it -- a
+  // parameter a defparam or a configuration sets (LRM 23.10.1, 33.4.3), an
+  // instantiation a bind inserts (LRM 23.11), a cell a configuration binds (LRM
+  // 33.4.1.6) -- each under its path from `inst`. A parameter fixed by the unit
+  // -- one its signature uses -- enters with its value; one supplied at
+  // construction enters as being supplied, and one computed at construction not
+  // at all, so instances supplied different values are one unit wherever they
+  // built the same generate blocks, which enter as well (LRM 27.5).
   //
   // Every part is read off `inst` and what elaborated below it, which is where
   // the parent naming a child already stands. An instance the front end left
@@ -417,17 +413,9 @@ class SpecializationPolicy {
 
   auto Of(const slang::ast::InstanceSymbol& inst) const -> const PerInstance&;
 
-  // Whether `param`, a value parameter `inst`'s body declares, is used in the
-  // body's signature -- what it declares and what every referrer compiles
-  // against -- so its value is part of the unit's name. A loop's index is such
-  // a parameter of the block it is declared in (LRM 27.4).
-  [[nodiscard]] auto IsUsedInSignature(
-      const slang::ast::InstanceSymbol& inst,
-      const slang::ast::ParameterSymbol& param) const -> bool;
-
-  // The digest of the values `inst` is handed that its body uses, absent where
-  // none is: which body of its unit it is compiled to.
-  [[nodiscard]] auto BodyArgumentsOf(const slang::ast::InstanceSymbol& inst)
+  // The digest of the values `inst` is handed at construction, absent where it
+  // is handed none: which specialization of its unit it is.
+  [[nodiscard]] auto SuppliedValuesOf(const slang::ast::InstanceSymbol& inst)
       const -> std::optional<std::uint64_t>;
   auto Classify(const slang::ast::InstanceSymbol& inst) const -> PerInstance;
   auto OfBody(const slang::ast::InstanceBodySymbol& body) const
@@ -447,15 +435,16 @@ class SpecializationPolicy {
       names_;
   mutable std::vector<NameInProgress> names_in_progress_;
   mutable std::unordered_map<const slang::ast::InstanceSymbol*, std::string>
-      body_names_;
+      specialization_names_;
   // Two keys reaching one name would silently make two units into one, so a
   // name kept is held against the key it was folded from.
-  mutable std::unordered_map<std::string, SpecializationKey> folded_;
+  mutable std::unordered_map<std::string, UnitKey> folded_;
   mutable std::unordered_map<
       const slang::ast::GenerateBlockSymbol*, support::GenerateBlockStep>
       block_steps_;
-  mutable std::map<support::GenerateBlockStep, SpecializationKey>
-      folded_blocks_;
+  mutable std::map<support::GenerateBlockStep, UnitKey> folded_blocks_;
+  mutable std::unordered_set<const slang::ast::GenerateBlockSymbol*>
+      blocks_in_progress_;
 };
 
 // The key of a SystemVerilog class specialization (LRM 8.25). Two
@@ -464,26 +453,23 @@ class SpecializationPolicy {
 // uniqueness rule); slang deduplicates on that rule, so distinct bindings
 // arrive as distinct ClassType instances and key apart. Bare `C` and
 // empty-override `C #()` resolve to the same slang ClassType and key alike.
-auto SpecializationKeyOf(
-    const slang::ast::ClassType& cls, const SpecializationPolicy& policy)
-    -> SpecializationKey;
+auto UnitKeyOf(const slang::ast::ClassType& cls, const UnitNamingPolicy& policy)
+    -> UnitKey;
 
 // The digest of everything a key says was fixed, or nothing for a key under
 // which nothing was. It is computed by folding only bytes, so the producer (the
 // unit naming itself) and every consumer (a parent naming a child) reach the
 // same answer across separate compilations with no shared table.
-auto ArgumentsDigest(const SpecializationKey& key)
-    -> std::optional<std::uint64_t>;
+auto ArgumentsDigest(const UnitKey& key) -> std::optional<std::uint64_t>;
 
 // The name a key is known by. The definition's name when nothing was fixed, and
 // otherwise that name plus the digest of what was -- bounded, so it serves as
 // an identifier.
-auto SpecializationName(const SpecializationKey& key) -> std::string;
+auto UnitName(const UnitKey& key) -> std::string;
 
 // The name the class specialization `cls` is, for a caller that wants the name
 // and not the key it comes from.
-auto SpecializationName(
-    const slang::ast::ClassType& cls, const SpecializationPolicy& policy)
+auto UnitName(const slang::ast::ClassType& cls, const UnitNamingPolicy& policy)
     -> std::string;
 
 // The step a subroutine or a block of statements is in the scope holding it:
@@ -492,23 +478,23 @@ auto SpecializationName(
 // reaching into it by a hierarchical name (LRM 23.9) both ask here.
 auto ProceduralStepOf(const slang::ast::Symbol& scope) -> support::DefPathData;
 
-// Which declaration of its compilation unit `declaration` is: one step for
-// each scope the source nests it in, from the unit's own scope down, and one
-// for the declaration itself, which is a scope too -- a generate block as the
+// Which declaration of its compilation unit `declaration` is: one step for each
+// scope the source nests it in, from the unit's own scope down, and one for the
+// declaration itself, which is a scope too -- a generate block as the
 // application of its definition it is (LRM 27.3), a class under its name and
 // what its parameters were bound to (LRM 8.3, 8.25), a subroutine or a labelled
 // block under its name (LRM 13, 9.3.4), an enumeration, a structure or a union
 // under the name it answers to (LRM 6.22.1), and a block or type with no name
-// by where it sits.
-// The unit's own scope is the path of no steps, so the block instances of one
-// application are one declaration, as the instances of one specialization are.
+// by where it sits. The unit's own scope is the path of no steps, so the block
+// instances of one application are one declaration, as the instances of one
+// unit are.
 //
 // The source alone decides the answer, so the unit declaring something and
 // every unit naming it compute the same path here, and a type SystemVerilog
 // identifies by its declaration (LRM 8.3, 6.22.1) is identified from anywhere
 // by the name of the unit holding it and this path.
 auto DefPathOf(
-    const slang::ast::Symbol& declaration, const SpecializationPolicy& policy)
+    const slang::ast::Symbol& declaration, const UnitNamingPolicy& policy)
     -> support::DefPath;
 
 // The name a covergroup goes by (LRM 19.3): the one it was declared with, or
@@ -582,18 +568,17 @@ auto DeclaringCompilationUnit(const slang::ast::Symbol& decl)
 // The name a compilation unit publishes for itself, so a consumer reaching one
 // of its declarations and the unit emitting that declaration agree with no
 // shared table (LRM 26.3). A package publishes its declared name; a module body
-// its specialization name. An anonymous compilation-unit scope (the LRM 3.12.1
-// `$unit` file-set scope, modeled as a namespace unit with no source name)
-// publishes a name derived from its own source-input identity: the only
-// property distinguishing two such scopes is which compilation-unit input they
-// belong to, which the LRM uses to define the scope boundary itself. A
-// specialization that is a unit of its own publishes the name of the unit
-// declaring its generic joined to its own the way a specialization's name joins
-// its definition to the rest, so the name is an identifier as a module's is.
-// Both the producer and every consumer compute this from the same slang unit
-// symbol.
+// its unit name. An anonymous compilation-unit scope (the LRM 3.12.1 `$unit`
+// file-set scope, modeled as a namespace unit with no source name) publishes a
+// name derived from its own source-input identity: the only property
+// distinguishing two such scopes is which compilation-unit input they belong
+// to, which the LRM uses to define the scope boundary itself. A specialization
+// that is a unit of its own publishes the name of the unit declaring its
+// generic joined to its own the way a unit's name joins its definition to the
+// rest, so the name is an identifier as a module's is. Both the producer and
+// every consumer compute this from the same slang unit symbol.
 auto CompilationUnitName(
-    const slang::ast::Symbol& unit, const SpecializationPolicy& policy)
+    const slang::ast::Symbol& unit, const UnitNamingPolicy& policy)
     -> std::string;
 
 }  // namespace lyra::lowering::ast_to_hir

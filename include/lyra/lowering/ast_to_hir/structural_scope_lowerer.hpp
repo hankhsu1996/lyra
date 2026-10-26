@@ -22,6 +22,7 @@
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/dumped_declaration.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/scope_construction.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
@@ -30,22 +31,37 @@
 
 namespace lyra::lowering::ast_to_hir {
 
+// A scope as it is lowered, and how the object it is lowered from builds its
+// children.
+struct BuiltScope {
+  hir::StructuralScope scope;
+  hir::ScopeConstruction construction;
+};
+
+// A generate construct as its scope holds it, and the block the object being
+// lowered builds at each of its places.
+struct BuiltGenerate {
+  hir::Generate generate;
+  std::vector<hir::BlockConstruction> blocks;
+};
+
+// An instance member as its scope holds it, and the specialization the object
+// being lowered makes at each object it stands for, in row-major order.
+struct BuiltInstanceMember {
+  hir::InstanceMemberDecl member;
+  std::vector<hir::SpecializationRef> made;
+};
+
 // The ports a scope declares, by the net or variable each connects inside it.
 using DumpedPorts =
     std::unordered_map<const slang::ast::Symbol*, hir::DumpedDeclaration::Port>;
 
 // Per-structural-scope lowerer: produces one hir::StructuralScope populated
 // with the members of a slang scope (variables, subroutines, processes,
-// continuous assigns, generates). Constructed once per structural scope (the
-// unit root plus one per body of a nested generate); runs once via Run(frame).
-//
-// A generate body may be built by several block instances of one instance
-// (LRM 27.4), each its own elaboration of the same text, and a construct inside
-// it may have selected a different alternative or counted a different number
-// of blocks in each (LRM 27.5). The body holds what any of them built, so the
-// lowerer is handed every elaboration, in the order the lowering reads them;
-// it walks the first, and takes each nested part from the first of them that
-// built it.
+// continuous assigns, generates), and how the object it is lowered from builds
+// each block those generates hold. Constructed once per elaborated structural
+// scope -- the unit root, and each block instance of a generate, which is
+// lowered from its own elaboration (LRM 27.4, 27.5); runs once via Run(frame).
 //
 // Run stack-allocates the output scope, threads `&scope` through the WalkFrame
 // so per-member handlers write to it via `frame.current_structural_scope`, and
@@ -53,19 +69,18 @@ using DumpedPorts =
 class StructuralScopeLowerer {
  public:
   StructuralScopeLowerer(
-      UnitLowerer& unit_lowerer,
-      std::vector<const slang::ast::Scope*> elaborations)
+      UnitLowerer& unit_lowerer, const slang::ast::Scope& scope)
       : owner_(&unit_lowerer),
-        elaborations_(std::move(elaborations)),
-        slang_scope_(elaborations_.front()),
-        frame_(unit_lowerer.LookupScopeFrame(*slang_scope_)) {
+        slang_scope_(&scope),
+        frame_(unit_lowerer.LookupScopeFrame(scope)) {
   }
 
   // Stack-allocates the output `hir::StructuralScope`, walks every member of
-  // the elaboration it is lowered from into it, and returns it. `parent_frame`
-  // is the caller's walk frame; this scope's own ScopeFrameId and `&scope` are
-  // pushed by Run before dispatching to per-member helpers.
-  auto Run(WalkFrame parent_frame) -> diag::Result<hir::StructuralScope>;
+  // the elaboration it is lowered from into it, and returns it beside how that
+  // object builds its children. `parent_frame` is the caller's walk frame; this
+  // scope's own ScopeFrameId and `&scope` are pushed by Run before dispatching
+  // to per-member helpers.
+  auto Run(WalkFrame parent_frame) -> diag::Result<BuiltScope>;
 
   [[nodiscard]] auto LoweredFrom() const -> const slang::ast::Scope& {
     return *slang_scope_;
@@ -102,7 +117,7 @@ class StructuralScopeLowerer {
       const slang::ast::Symbol& declared,
       std::span<const slang::ast::InstanceSymbol* const> elements,
       std::vector<hir::UnpackedRange> dims, WalkFrame frame)
-      -> diag::Result<hir::InstanceMemberDecl>;
+      -> diag::Result<BuiltInstanceMember>;
   auto PopulateMember(const slang::ast::Symbol& member, WalkFrame frame)
       -> diag::Result<void>;
   auto PopulateInterfacePortMember(
@@ -169,15 +184,15 @@ class StructuralScopeLowerer {
       -> diag::Result<hir::ContinuousAssign>;
   auto BuildGenerateFromArray(
       const slang::ast::GenerateBlockArraySymbol& array, WalkFrame frame)
-      -> diag::Result<hir::Generate>;
+      -> diag::Result<BuiltGenerate>;
   auto BuildGenerateFromBlock(
       const slang::ast::GenerateBlockSymbol& block, WalkFrame frame)
-      -> diag::Result<hir::Generate>;
+      -> diag::Result<BuiltGenerate>;
 
   UnitLowerer* owner_;
-  std::vector<const slang::ast::Scope*> elaborations_;
   const slang::ast::Scope* slang_scope_;
   ScopeFrameId frame_;
+  hir::ScopeConstruction construction_;
 };
 
 }  // namespace lyra::lowering::ast_to_hir

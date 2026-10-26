@@ -25,7 +25,7 @@
 
 namespace {
 
-using lyra::lowering::ast_to_hir::SpecializationPolicy;
+using lyra::lowering::ast_to_hir::UnitNamingPolicy;
 
 // A design elaborated from source text. The front end's driver owns what the
 // elaboration points into, so the two are held together.
@@ -90,11 +90,11 @@ TEST(InstanceName, IsTheSameWhicheverInstanceIsAskedFirst) {
   const slang::ast::InstanceSymbol& a = design.TopNamed("A");
   const slang::ast::InstanceSymbol& b = design.TopNamed("B");
 
-  const SpecializationPolicy a_first;
+  const UnitNamingPolicy a_first;
   const std::string a_asked_first = a_first.NameOf(a);
   const std::string b_asked_second = a_first.NameOf(b);
 
-  const SpecializationPolicy b_first;
+  const UnitNamingPolicy b_first;
   const std::string b_asked_first = b_first.NameOf(b);
   const std::string a_asked_second = b_first.NameOf(a);
 
@@ -140,13 +140,13 @@ TEST(InstanceName, FollowsWhereANameWrittenBelowLandsAndNotWhoWasAskedFirst) {
   const std::vector<const InstanceSymbol*> outermost_first{
       &board, &sensor, &main_logger, &backup, &spare, &spare_logger};
 
-  const SpecializationPolicy from_the_top;
+  const UnitNamingPolicy from_the_top;
   std::vector<std::string> asked_from_the_top;
   for (const InstanceSymbol* inst : outermost_first) {
     asked_from_the_top.push_back(from_the_top.NameOf(*inst));
   }
 
-  const SpecializationPolicy from_the_leaves;
+  const UnitNamingPolicy from_the_leaves;
   std::vector<std::string> asked_from_the_leaves(outermost_first.size());
   for (std::size_t at = outermost_first.size(); at-- > 0;) {
     asked_from_the_leaves[at] = from_the_leaves.NameOf(*outermost_first[at]);

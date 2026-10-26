@@ -458,6 +458,8 @@ class MirDumper {
                   return "RuntimeLibrary(ConstructionTable)";
                 case RuntimeLibraryKind::kInstantiation:
                   return "RuntimeLibrary(Instantiation)";
+                case RuntimeLibraryKind::kGeneratePlaces:
+                  return "RuntimeLibrary(GeneratePlaces)";
                 case RuntimeLibraryKind::kBitVec:
                   return "RuntimeLibrary(BitVec)";
                 case RuntimeLibraryKind::kDpiBitBuffer:
@@ -803,8 +805,10 @@ class MirDumper {
             },
             [](const ExternalObjectEntryRef& r) -> std::string {
               return std::format(
-                  "ExternalObjectEntryRef external={} body={}", r.unit_name,
-                  r.body_name);
+                  "ExternalObjectEntryRef external={} body={}{}", r.unit_name,
+                  r.body_name,
+                  r.block.has_value() ? std::format(" block={}", r.block->value)
+                                      : std::string{});
             }},
         target);
   }

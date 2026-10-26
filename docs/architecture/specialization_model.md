@@ -21,10 +21,10 @@ artifacts are retained, which is a correct outcome (an optimization miss, not a 
 Everything here is one of these, and they are not the same question.
 
 **What makes two instances the same specialization?** The definition, and the arguments. Two
-instances agreeing on both compile to the same code, so they are one specialization and share one
-artifact; disagreeing anywhere, they are two. The number of instances that agree never enters into
-it -- ten thousand `Reg #(8)` are one specialization, and the compiler's work does not grow with
-them.
+instances agreeing on both are one specialization and are built alike; disagreeing anywhere, they
+are two, and specializations whose code comes out alike share one artifact whatever else they
+disagree on. The number of instances that agree never enters into it -- ten thousand `Reg #(8)` are
+one specialization, and the compiler's work does not grow with them.
 
 **How do two separately compiled units agree on which one they mean?** They cannot look each other
 up: a unit compiles from its own contents and the signatures it consumes, with no table between
@@ -71,9 +71,10 @@ section.
 
 ## What counts as an argument
 
-An argument is anything the parent fixes at the instantiation site that changes the compiled code.
-That is the whole test. It is **not** "what was written as a parameter", and the difference is not a
-corner case:
+An argument of the unit is anything the parent fixes at the instantiation site that changes the
+compiled code. That is the whole test; every other value the parent hands is an argument of the
+specialization alone, which says how the object is built. It is **not** "what was written as a
+parameter", and the difference is not a corner case:
 
 ```systemverilog
 interface Bus #(parameter int W = 8);
@@ -96,7 +97,7 @@ endmodule
 names the interface _definition_, and `Bus #(8) b` there is rejected. So `Leaf` is generic over its
 interface, and the connection is where the argument is deduced rather than written. Two `Leaf`
 instances bound to different interfaces reach different types at different member positions, so they
-are two specializations -- exactly as two parameter bindings would be.
+are two units -- exactly as two bindings of a parameter the declarations use would be.
 
 Read as templates, with the argument deduced rather than written:
 
@@ -168,21 +169,22 @@ what the frontend happened to do.
 
 ## Owns
 
-- The definition of a specialization: a compilation unit together with the set of inputs that change
-  compiled code shape.
+- The definition of a specialization: a compilation unit together with every value its instances are
+  handed; the inputs that change compiled code shape name the unit, and the rest only the
+  specialization within it.
 - The correspondence between this model and the frontend's symbol graph, including which of its
   records are inputs here and which are not.
 - The classification of parameters into code-shape-affecting inputs and constructor/config inputs.
-- The rule that one specialization produces one compile-time artifact, shared by every instance that
-  matches.
-- The rule for what may vary within one specialization vs what forces a new specialization.
+- The rule that specializations whose code comes out alike share one compile-time artifact, shared
+  by every instance of them.
+- The rule for what may vary within one unit vs what forces a new unit.
 
 ## Does Not Own
 
 - The internal shape of a compilation unit (see `compilation_unit_model.md`).
 - Identity kinds inside a specialization (see `identity_and_ownership.md`).
-- Cache keys for incremental reuse (see `incremental_build.md`). Specialization keys feed into that
-  cache, but this doc does not define the cache's contract.
+- Cache keys for incremental reuse (see `incremental_build.md`). Unit and specialization names feed
+  into that cache, but this doc does not define the cache's contract.
 
 ## Core Invariants
 
@@ -191,13 +193,12 @@ what the frontend happened to do.
    artifact. A specialization that shares one artifact across distinct bindings is admitted only
    when proven behavior-preserving; absent that proof, the concrete artifacts are retained.
    Correctness never depends on classification or on proving sharing.
-2. **Specialization is driven by code-shape differences, not by instance count.** A new
-   specialization is created only when compiled code shape actually differs between two potential
-   instances. The number of instances that match a specialization does not affect how many
-   specializations exist.
+2. **Specialization is driven by code-shape differences, not by instance count.** A new unit is
+   created only when compiled code shape actually differs between two potential instances. The
+   number of instances that match a specialization does not affect how many specializations exist.
 3. **Parameters are classified as a sharing-eligibility filter.** Every parameter is either a
-   **code-shape-affecting input** (enters the specialization key) or a **constructor/config input**
-   (flows in at runtime construction, does not enter the key). The classification is explicit and
+   **code-shape-affecting input** (enters the unit's name) or a **constructor/config input** (flows
+   in at runtime construction and names only the specialization). The classification is explicit and
    stable, and it widens what may share one artifact; it is never a precondition for lowering a
    program correctly.
 4. **Code-shape-affecting inputs are exactly those that change generated code.** Packed bit widths
@@ -206,18 +207,22 @@ what the frontend happened to do.
    resolves one per instance, so two instances may reach classes of different types) are
    code-shape-affecting. Nothing else -- in particular not where the instance sits, which is the
    path or length of the climb rather than the class it lands on.
-5. **Constructor/config inputs do not fork the specialization.** Initial values, counts that only
+5. **Constructor/config inputs do not fork what is compiled.** Initial values, counts that only
    steer runtime state, enable/disable flags that do not change generated code, and values consumed
-   only by the runtime constructor flow through as inputs. They do not produce additional
-   compile-time artifacts.
-6. **One specialization compiles once per body.** A specialization is the class its instances'
-   declarations settle, and each way the values its instances are handed settle its code is a body
-   of it, compiled once and shared by every instance it serves. Two instances with identical
-   specialization keys and one body are indistinguishable at compile time; two with identical keys
-   and different bodies are objects of one class that a referrer cannot tell apart.
-7. **Specialization keys are stable and deterministic.** Given a compilation unit and its
-   code-shape-affecting inputs, the specialization key is fully determined. Keys do not depend on
-   traversal order, instance enumeration, or the order in which instances are encountered.
+   only by the runtime constructor flow through as inputs. Each set of them names a specialization
+   of the unit, whose objects are built alike -- the same blocks, the same children -- and whose
+   construction table says so, but they produce no additional compiled code: the code they come out
+   as is shared.
+6. **One unit compiles once per distinct body.** A unit is the class its instances' declarations
+   settle, and each distinct code its specializations come out as is a body of it, found by
+   comparing what they state and compiled once, shared by every specialization and instance it
+   serves. Two instances of one specialization are indistinguishable at compile time; two of one
+   unit and different bodies are objects of one class that a referrer cannot tell apart.
+7. **Names are stable and deterministic.** Given a compilation unit and an instance's inputs, the
+   unit's name and the specialization's are fully determined. Neither depends on traversal order,
+   instance enumeration, or the order in which instances are encountered. A shared body is named for
+   the first specialization, in the design's order, that came out as it, so the body's name alone
+   follows that order, and no referrer reads it.
 8. **A specialization is computed from occurrences, and the artifact compiles bodies elaborated for
    them.** Every argument is read off the occurrence -- what its parent wrote, what was written
    elsewhere that reaches it or an occurrence below it (LRM 23.10.1, 23.11, 33.4), and where each
@@ -245,20 +250,21 @@ what the frontend happened to do.
 
 - `compilation_unit_model.md` defines the compilation unit. This doc defines how parameter values
   refine a compilation unit into specializations.
-- `incremental_build.md` uses specialization keys as cache keys. The rules in this doc are upstream
-  of incremental reuse.
-- Each IR layer's shape is per-specialization, not per-instance. See the individual IR docs for how
-  a specialization manifests in HIR, MIR, and LIR.
+- `incremental_build.md` uses unit and specialization names as cache keys. The rules in this doc are
+  upstream of incremental reuse.
+- HIR is per specialization and every layer after it per body, never per instance. See the
+  individual IR docs for how each manifests in HIR, MIR, and LIR.
 
 ## Forbidden Shapes
 
-- A specialization keyed on a parameter that does not change compiled code shape.
+- A unit keyed on a parameter that does not change compiled code shape.
 - In the optimized steady state, leaving every distinct parameter binding as its own specialization
   without checking whether the values change code shape. The concrete baseline of invariant 1 does
   exactly this and is correct; the sharing optimization must not stop there.
 - Using runtime-only state (counter initial values, enable flags, sizes that the runtime constructor
-  handles) as part of the specialization key.
-- Specialization keys derived from instance path, instance ordinal, or instance enumeration.
+  handles) as part of the unit's name.
+- Unit or specialization names derived from instance path, instance ordinal, or instance
+  enumeration.
 - Deriving a specialization, or which artifact an occurrence belongs to, from the frontend's record
   that two bodies duplicate each other and nothing else. Its subject is whether elaboration must be
   repeated, and a relation of the same shape computed for another purpose is not by itself evidence
@@ -281,11 +287,11 @@ what the frontend happened to do.
 ## Notes / Examples
 
 `parameter int W = 8` used as `logic [W-1:0] data`: W changes the packed width of generated code. W
-is code-shape-affecting. Instances with different W values belong to different specializations.
+is code-shape-affecting. Instances with different W values belong to different units.
 
 `parameter int INIT = 0` used only as the initial value of a register: INIT does not change
-generated code. INIT is a constructor input. Instances with different INIT values share one
-specialization and differ only in constructor inputs.
+generated code. INIT is a constructor input. Instances with different INIT values are one unit and
+one body, two specializations of it differing only in constructor inputs.
 
 `parameter int N` controlling a `generate for` that instantiates N children: the compiled
 constructor loops N times, producing N child objects. The compilation unit's compiled code does not

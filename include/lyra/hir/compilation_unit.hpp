@@ -78,9 +78,9 @@ struct BuiltinHirTypes {
 struct CompilationUnit {
   // The unit, which is what it publishes and what every referrer names.
   std::string name;
-  // The body of the unit this compiles: the unit's name with the digest of the
-  // values its instances are handed that its code uses, or the unit's name
-  // alone where that code uses none.
+  // The implementation this is, named for the first specialization of the
+  // unit, in the design's order, whose code came out as it: specializations
+  // whose code comes out alike are one body.
   std::string body_name;
   // The identifier the source declares this unit's design element, package or
   // class under, which is what its author knows it by. Units of one definition
@@ -98,6 +98,9 @@ struct CompilationUnit {
   TypePool types;
   BuiltinHirTypes builtins;
   StructuralScope root_scope;
+  // Every body a generate block of the unit compiles to (LRM 27), each once:
+  // blocks stating the same thing are one body, whichever objects build them.
+  base::Arena<BlockBody, BlockBodyId> block_bodies;
   ClassRegistry classes;
   CovergroupRegistry covergroups;
   // What every covergroup this unit declares or names is written over, present

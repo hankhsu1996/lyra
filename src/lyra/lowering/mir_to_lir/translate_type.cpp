@@ -401,6 +401,8 @@ auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
       return mirror(lir::RuntimeLibraryKind::kConstructionTable);
     case mir::RuntimeLibraryKind::kInstantiation:
       return mirror(lir::RuntimeLibraryKind::kInstantiation);
+    case mir::RuntimeLibraryKind::kGeneratePlaces:
+      return mirror(lir::RuntimeLibraryKind::kGeneratePlaces);
     case mir::RuntimeLibraryKind::kDumpEntry:
       return mirror(lir::RuntimeLibraryKind::kDumpEntry);
     case mir::RuntimeLibraryKind::kDumpBlock:

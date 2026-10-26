@@ -702,7 +702,7 @@ auto ConnectArrayElements(
     auto r = ConnectElementPorts(
         scope, unit_lowerer, inst,
         unit_lowerer.Signatures().Instantiated(
-            unit_lowerer.Specialization().NameOf(inst)),
+            unit_lowerer.Naming().NameOf(inst)),
         std::move(element_step), home_frame, frame);
     if (!r) return std::unexpected(std::move(r.error()));
   }
@@ -732,8 +732,7 @@ auto StructuralScopeLowerer::PopulatePortConnections(
       const auto& inst = member.as<slang::ast::InstanceSymbol>();
       auto r = ConnectElementPorts(
           *this, *owner_, inst,
-          owner_->Signatures().Instantiated(
-              owner_->Specialization().NameOf(inst)),
+          owner_->Signatures().Instantiated(owner_->Naming().NameOf(inst)),
           member_step(member), binding->home_frame, frame);
       if (!r) return std::unexpected(std::move(r.error()));
     } else if (member.kind == slang::ast::SymbolKind::InstanceArray) {

@@ -143,8 +143,15 @@ void AppendRecord(
 void AppendRecord(
     std::vector<FieldLayout>& out, std::uint64_t at,
     const runtime::ConstructionTable& record) {
-  const auto& [instantiations, blocks] = record;
-  AppendFieldsOf(out, at, record, instantiations, blocks);
+  const auto& [instantiations, generates] = record;
+  AppendFieldsOf(out, at, record, instantiations, generates);
+}
+
+void AppendRecord(
+    std::vector<FieldLayout>& out, std::uint64_t at,
+    const runtime::GeneratePlaces& record) {
+  const auto& [places] = record;
+  AppendFieldsOf(out, at, record, places);
 }
 
 // A field that is itself a structure stands for its own fields.
@@ -187,6 +194,8 @@ auto LayoutOfLibraryRecord(lir::RuntimeLibraryKind kind)
       return LayoutOf<runtime::ConstructionTable>();
     case lir::RuntimeLibraryKind::kInstantiation:
       return LayoutOf<runtime::Instantiation>();
+    case lir::RuntimeLibraryKind::kGeneratePlaces:
+      return LayoutOf<runtime::GeneratePlaces>();
     case lir::RuntimeLibraryKind::kDumpEntry:
       return LayoutOf<runtime::DumpEntry>();
     case lir::RuntimeLibraryKind::kDumpBlock:
