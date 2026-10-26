@@ -58,8 +58,10 @@ auto DeclaredMembers(const CompilationUnit& unit, TypeId type)
             // kind, as for a closure.
             return MemberList{
                 .members = cls.members,
-                .owner = cls.path.has_value() ? support::DisplayOf(*cls.path)
-                                              : "a class the lowering built"};
+                .owner =
+                    support::PathOf(cls.identity) != nullptr
+                        ? support::DisplayOf(*support::PathOf(cls.identity))
+                        : "a class the lowering built"};
           },
           [&](const ClosureType& closure) -> std::optional<MemberList> {
             const Closure& decl = unit.closures.Get(closure.closure_id);
@@ -154,8 +156,6 @@ auto MakesValue(const Rvalue& value) -> bool {
           // What the bits there stand for is made apart from them.
           [](const OverlaidLoadInstr&) { return true; },
           [](const CastInstr&) { return false; },
-          [](const HandleCastInstr&) { return true; },
-          [](const DynamicCastInstr&) { return true; },
           [](const ProductInstr&) { return true; },
           [](const ClosureInstr&) { return true; },
           [](const UnionInstr&) { return true; },

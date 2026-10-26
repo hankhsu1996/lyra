@@ -2,10 +2,10 @@
 
 Date: 2026-07-01 Status: superseded by
 [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md). Its boundary is
-superseded too (2026-10-02): the library drives a scope through the C++ virtual functions of its
-class, one per phase, and ends it through its virtual destructor, which is the program this record
-describes under its C++ names; the execution backend fills those tables by the Itanium rules. What
-stands is the per-specialization identity, metadata as data, the call scope and runtime-owned
+superseded too (2026-10-02): the library drove a scope through the C++ virtual functions of its
+class, one per phase, and ended it through its virtual destructor; since 2026-10-25 it does both
+through entries the class's definition names, which is close to the program this record described.
+What stands is the per-specialization identity, metadata as data, the call scope and runtime-owned
 sequencing. Before that, the rest was superseded too. The definition is one constant per class that
 the unit declaring it emits, rather than a unit definition a backend fills or the runtime builds.
 SV-virtual dispatch goes through tables laid out at compile time, so no definition carries a

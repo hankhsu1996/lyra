@@ -25,7 +25,6 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/class_definition.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/entry_walk.hpp"
@@ -1976,7 +1975,7 @@ void CovergroupLowerer::DeclareShape(
   const hir::CovergroupId self = covergroup_;
   const CovergroupClass own = CovergroupClassOf(unit_lowerer, self);
   ClassShape shape{
-      .path = unit_lowerer.Hir().covergroups.PathOf(covergroup_),
+      .identity = unit_lowerer.Hir().covergroups.PathOf(covergroup_),
       .base = decl_->base.has_value()
                   ? mir::ClassRef(
                         unit_lowerer.CovergroupClassIdentity(*decl_->base))
@@ -1993,6 +1992,7 @@ void CovergroupLowerer::DeclareShape(
       .static_properties = {},
       .named_static_properties = {},
       .callable_signatures = {},
+      .library_callbacks = {},
       .static_property_translation = {},
       .contained = {},
       .is_final = false,
@@ -2095,7 +2095,6 @@ auto CovergroupLowerer::PopulateBodies(
       unit_lowerer, covergroup_, *decl_, declaring_scope_, scopes_, cls,
       class_id_, owner, type_event_);
   if (auto r = writer.Write(); !r) return r;
-  StateNamedClassDefinition(unit, cls);
   unit.DefineClass(class_id_, std::move(cls));
   return {};
 }
@@ -2354,11 +2353,7 @@ auto InstanceAs(
   const mir::TypeId type = CovergroupHandle(unit_lowerer, covergroup);
   if (block.exprs.Get(handle).type == type) return handle;
   return block.exprs.Add(
-      mir::MakeCallExpr(
-          mir::Direct{
-              .target = support::BuiltinFn::kDynamicCast,
-              .type_arguments = {type}},
-          {handle}, type));
+      mir::Expr{.data = mir::CastExpr{.operand = handle}, .type = type});
 }
 
 // The library object a method or an option of an instance asks about: the

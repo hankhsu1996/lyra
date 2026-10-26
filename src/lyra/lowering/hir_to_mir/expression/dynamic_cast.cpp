@@ -10,6 +10,7 @@
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/class_definition.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/expression/enum_method.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
@@ -17,6 +18,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
+#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -138,10 +140,14 @@ auto LowerHirDynamicCastExpr(
       case hir::RunTimeCheck::kObjectIsOfTheDestinationClass:
         bind_value(body.exprs.Add(
             mir::MakeCallExpr(
-                mir::Direct{
-                    .target = support::BuiltinFn::kDynamicCast,
-                    .type_arguments = {destination_type}},
-                {source}, destination_type)));
+                mir::Direct{.target = support::BuiltinFn::kDynamicCast},
+                {source, BuildDefinitionRead(
+                             unit, body,
+                             mir::ClassOfObject(
+                                 unit.types, unit.types.Get(destination_type)
+                                                 .Get<mir::ManagedRefType>()
+                                                 .pointee))},
+                destination_type)));
         return read_value(body);
     }
     throw InternalError("LowerHirDynamicCastExpr: unknown run-time check");

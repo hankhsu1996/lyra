@@ -491,11 +491,11 @@ auto lyra_rt_static_constraint_mode_get(const void* key, void* out) -> void*;
 void lyra_rt_closure_box_end(void* closure);
 
 // The handle the program's `new` answers (LRM 8.3), owning `object`: a whole
-// value of a class extending the part every object starts with, allocated and
-// created whole by the caller, before its constructor runs, and held by
-// nothing yet. The handle ends the value
-// through its virtual destructor when the last reference to it goes, and is
-// built in storage the caller gives like every value the boundary hands back.
+// value of a class extending the part every object starts with, created whole
+// by its class's allocating creation, before its constructor runs, and held by
+// nothing yet. The handle ends the value through the end its class's
+// definition names when the last reference to it goes, and is built in storage
+// the caller gives like every value the boundary hands back.
 auto lyra_rt_object_adopt(void* object, void* out) -> void*;
 
 // A counted hold on a new, empty cell of the named domain -- what a block's
@@ -518,28 +518,33 @@ auto lyra_rt_assocarray_shared_cell_make(void* out) -> void*;
 // behind one is an operation.
 auto lyra_rt_shared_pointer_deref(void* handle) -> void*;
 
-// The part of the object a class handle refers to that the class it was formed
-// as reaches, or null for a handle referring to no object. Forming the handle
-// of another class is generated code's own, since where each part of an object
-// sits is fixed where the object's class is compiled.
-auto lyra_rt_handle_view(const void* handle) -> void*;
-
-// A handle referring to the object `handle` refers to, through the part at
-// `view`; one referring to no object where `view` is null, which is how a
-// conversion that found no such part answers.
-auto lyra_rt_handle_with_view(const void* handle, void* view, void* out)
-    -> void*;
-
-// The part of the object a class handle reaches it through (LRM 8.3), which is
-// what a member access is applied to. Which object that is, is a fact the
-// handle holds rather than is, so reaching it is an operation; a handle
-// referring to no object fails the run here rather than further in.
-auto lyra_rt_view_of(const void* handle) -> void*;
+// The object a class handle names (LRM 8.3), which is what a member access is
+// applied to. Which object that is, is a fact the handle holds rather than is,
+// so reaching it is an operation; a handle referring to no object fails the run
+// here rather than further in.
+auto lyra_rt_object_of(const void* handle) -> void*;
 
 // The handle referring to the object a body runs on (LRM 8.11), given the
-// object's start, which is also the part a handle of any class of its lineage
-// reaches it through.
+// object's start.
 auto lyra_rt_self_handle(void* self, void* out) -> void*;
+
+// The handle `handle` is where the object it refers to is an object of the
+// class whose definition is at `definition`, and one referring to no object
+// otherwise (LRM 8.16).
+auto lyra_rt_dynamic_cast(const void* handle, const void* definition, void* out)
+    -> void*;
+
+// The table of the bodies the class of the object at `object` answers what the
+// interface class whose definition is at `iface` declares itself with (LRM
+// 8.26.5).
+auto lyra_rt_interface_table(const void* object, const void* iface) -> const
+    void*;
+
+// Builds, at `at`, the part of an object the runtime library's class `which`
+// is, before any member of the object's own; and ends it there, after every
+// one of them.
+void lyra_rt_begin_library_part(std::uint8_t which, void* at);
+void lyra_rt_end_library_part(std::uint8_t which, void* at);
 
 // What reports a change to an object's properties (LRM 9.4.2), each taking the
 // object as the root every object shares: the source a wait on the object
@@ -1008,11 +1013,9 @@ auto lyra_rt_make_segment(void* label, LyraSpan indices, void* out) -> void*;
 auto lyra_rt_hierarchical_path_of(void* self, const void* below, void* out)
     -> void*;
 
-// Gives a scope its place -- its parent, its segment, and the definition of
-// the class it is an object of -- before its constructor runs anything of the
-// scope's own.
-void lyra_rt_set_scope_place(
-    void* self, void* parent, const void* segment, const void* definition);
+// Gives a scope its place -- its parent and its segment -- before its
+// constructor runs anything of the scope's own.
+void lyra_rt_set_scope_place(void* self, void* parent, const void* segment);
 
 // Takes a freshly built child into the runtime tree, owned by the parent its
 // constructor placed it under; returns the child as a borrowed scope handle.

@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <functional>
-#include <memory>
 #include <string>
 #include <vector>
 
@@ -35,19 +34,16 @@ class Scope : public GcObject {
   // Built when the object is created, before any constructor of its class
   // runs; the constructor then gives it its place with `SetPlace`.
   Scope();
-  ~Scope() override;
+  ~Scope();
   Scope(const Scope&) = delete;
   auto operator=(const Scope&) -> Scope& = delete;
   Scope(Scope&&) = delete;
   auto operator=(Scope&&) -> Scope& = delete;
 
-  // Where this scope stands: its parent, its segment, and the class it is an
-  // object of, which has to be a scope class. Its constructor gives it before
-  // running anything of the scope's own, so nothing of it runs placeless. The
-  // parent given here is the one the scope is attached under.
-  void SetPlace(
-      Scope* parent, HierarchySegment segment,
-      const ObjectDefinition* definition);
+  // Where this scope stands: its parent and its segment. Its constructor gives
+  // it before running anything of the scope's own, so nothing of it runs
+  // placeless. The parent given here is the one the scope is attached under.
+  void SetPlace(Scope* parent, HierarchySegment segment);
 
   // The scope's structural identity at this level: the parent-side label
   // plus per-dimension indices (empty for a scalar, `{i}` for a generate-for
@@ -72,22 +68,17 @@ class Scope : public GcObject {
   [[nodiscard]] auto HierarchicalPathOf(const lyra::value::String& below) const
       -> lyra::value::String;
 
-  // What this scope's class states of its instances beyond its type
-  // information: its timescale, and the DPI-C exports an instance answers.
+  // What this scope's class states of its instances: its timescale, the
+  // DPI-C exports an instance answers, and what it does in each phase.
   [[nodiscard]] auto Info() const -> const ScopeInfo& {
-    return *definition_->scope;
-  }
-
-  // The class this scope is a value of.
-  [[nodiscard]] auto Definition() const -> const ObjectDefinition* {
-    return definition_;
+    return *RequireScopeClass(definition)->scope;
   }
 
   // Takes `child` into the tree, owned by the parent its constructor placed it
   // under, among the children the elaboration phases, a dump and a traversal
   // descend; returns it as a borrowed handle. Called once the child is built,
   // so a thrown constructor leaves nothing half-attached.
-  static auto Attach(std::unique_ptr<Scope> child) -> Scope*;
+  static auto Attach(OwnedObject<Scope> child) -> Scope*;
 
   // Whether this scope carries a source-visible SV name. An unnamed
   // begin/end (synthetic anonymous scope) is emitted with an empty
@@ -104,9 +95,6 @@ class Scope : public GcObject {
   // the name to a declaration of that class, so one stands there in every
   // instance that resolution covered.
   [[nodiscard]] auto EnclosingScope(const ObjectDefinition* cls) -> Scope*;
-
-  // Whether this scope is an object of the class `cls` or of one extending it.
-  [[nodiscard]] auto IsOfClass(const ObjectDefinition* cls) const -> bool;
 
   // This instance's own source of seeds for the static processes and static
   // initializers declared within it (LRM 18.14.1). Meaningful on a module,
@@ -166,24 +154,15 @@ class Scope : public GcObject {
   void ForEachChild(const ChildVisitor& fn);
 
  private:
-  // What a class extending this one does in each phase, and what it describes
-  // to a dump, which the entries above call. The class a generated scope is of
-  // overrides all four; here each does nothing. The phases are declared in the
-  // order they run, and the order is the one they take in this class's table.
-  virtual void sv_resolve();
-  virtual void sv_initialize();
-  virtual void sv_create_processes();
-  virtual void sv_describe();
+  // The body the scope's class gives one phase, entered on this scope.
+  void Enter(ScopePhase ScopeInfo::* phase);
 
   Scope* parent_ = nullptr;
   HierarchySegment segment_;
-  // Borrowed. The class this scope is a value of, which states its timescale
-  // and its DPI-C exports, and which class a hierarchical name's start is of.
-  const ObjectDefinition* definition_ = nullptr;
   // Physical containment: every runtime child scope this object owns
   // appears here once, in attach order. Includes anonymous scopes
   // (unnamed begin/ends).
-  std::vector<std::unique_ptr<Scope>> attached_children_;
+  std::vector<OwnedObject<Scope>> attached_children_;
   // LRM 18.14.1 puts one on each module, interface, and program instance. A
   // generate scope is none of those and nothing draws from the one it carries.
   InitializationRng initialization_seeds_;

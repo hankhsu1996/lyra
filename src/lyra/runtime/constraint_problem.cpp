@@ -150,10 +150,16 @@ void WriteBits(
 
 }  // namespace
 
+const ObjectDefinition ConstraintProblem::kDefinition =
+    LibraryObjectDefinition<ConstraintProblem>();
+
 ConstraintProblem::ConstraintProblem(
     RuntimeEffects& runtime, DrawRng& generator, value::ObjectRef object,
     bool listed)
-    : runtime_(&runtime), generator_(&generator), object_(std::move(object)) {
+    : GcObject(kDefinition),
+      runtime_(&runtime),
+      generator_(&generator),
+      object_(std::move(object)) {
   if (listed) {
     listed_.emplace();
   }

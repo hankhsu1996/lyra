@@ -159,9 +159,12 @@ class UnitLowerer {
   // question, answered from the lineage below this pass.
   [[nodiscard]] auto SlotRef(const mir::VirtualSlot& slot)
       -> lir::StatedDispatchRef;
-  // The behavior a virtual function of a library class is.
-  [[nodiscard]] auto LibraryVirtualRef(support::LibraryVirtual function) const
-      -> lir::StatedDispatchRef;
+
+  // The address of the entry of `method`, a method of a class this unit
+  // declares, whichever unit defines it, at `prototype`.
+  [[nodiscard]] auto EntryConstant(
+      const mir::CallableTarget& method, lir::TypeId prototype)
+      -> lir::TableBody;
 
   // The LIR function a class's constructor lowers to. Every class an object is
   // built of defines its own construction, so every one of them has this
@@ -245,10 +248,6 @@ class UnitLowerer {
       -> lir::Type;
   auto LowerClass(mir::ClassId owner, const mir::Class& cls)
       -> diag::Result<lir::Class>;
-  // What `cls` adds to the dispatch its lineage carries, each body named by the
-  // symbol it is emitted under.
-  auto LowerDispatch(mir::ClassId owner, const mir::Class& cls)
-      -> lir::ClassDispatch;
   // The value `id` of `build` states, as the data it is. A constant is built
   // from literals, addresses and structures and arrays of them, so anything
   // else here is a producer that stated one out of something that runs.
@@ -268,7 +267,18 @@ class UnitLowerer {
 
   // What this unit declares of a class another unit defines, as the record a
   // class extending it, or reaching into it, is laid out against.
-  auto LowerDeclaredClass(mir::ClassId id, const mir::Class& cls) -> lir::Class;
+  auto LowerDeclaredClass(const mir::Class& cls) -> lir::Class;
+
+  // What an object of `cls` dispatches on and what answers each behavior of
+  // every interface class it is an object of, as its unit stated them.
+  auto LowerDispatch(const mir::Class& cls)
+      -> std::vector<lir::DispatchedBehavior>;
+  auto LowerInterfaceTables(const mir::Class& cls)
+      -> std::vector<lir::InterfaceTable>;
+
+  // What a body a table holds is declared at where another unit defines it: a
+  // table holds its address as data, and nothing here calls through it.
+  auto TableBodyPrototype() -> lir::TypeId;
 
   const mir::CompilationUnit* mir_;
   lir::CompilationUnit out_;

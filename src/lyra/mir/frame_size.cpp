@@ -102,6 +102,8 @@ auto LayoutOfLibraryObject(RuntimeLibraryKind kind) -> support::Layout {
     case RuntimeLibraryKind::kObjectDefinition:
     case RuntimeLibraryKind::kScopeInfo:
     case RuntimeLibraryKind::kScopeCallable:
+    case RuntimeLibraryKind::kClassObjectInfo:
+    case RuntimeLibraryKind::kInterfaceRow:
     case RuntimeLibraryKind::kConstructionTable:
     case RuntimeLibraryKind::kInstantiation:
     case RuntimeLibraryKind::kGeneratePlaces:

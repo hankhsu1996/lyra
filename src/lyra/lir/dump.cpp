@@ -109,9 +109,15 @@ class LirDumper {
     Line(
         std::format(
             "Class{} (#{}){}",
-            cls.path.has_value()
-                ? std::format(" \"{}\"", support::DisplayOf(*cls.path))
-                : std::string{},
+            std::visit(
+                Overloaded{
+                    [](const support::DefPath& path) {
+                      return std::format(" \"{}\"", support::DisplayOf(path));
+                    },
+                    [](const support::UnnamedClass& unnamed) {
+                      return std::format(" unnamed {}", unnamed.disambiguator);
+                    }},
+                cls.identity),
             id.value,
             cls.defining_unit.has_value()
                 ? std::format(" of {}", *cls.defining_unit)
@@ -123,18 +129,19 @@ class LirDumper {
     for (std::size_t i = 0; i < cls.members.size(); ++i) {
       Line(std::format("member[{}] : {}", i, FormatType(cls.members[i].type)));
     }
-    DumpDispatch(cls.dispatch);
-    for (const TypeId iface : cls.implements) {
-      Line(std::format("implements: {}", FormatType(iface)));
-    }
-    for (const ConformingBehavior& answered : cls.conforming) {
+    for (const DispatchedBehavior& dispatched : cls.dispatch) {
       Line(
           std::format(
-              "conforms: {} <- {}",
-              FormatStatedDispatchRef(answered.interface_behavior),
-              answered.answered_by.has_value()
-                  ? FormatStatedDispatchRef(*answered.answered_by)
-                  : std::string{"nothing"}));
+              "dispatch {}: {}", FormatStatedDispatchRef(dispatched.behavior),
+              FormatTableBody(dispatched.answered_by)));
+    }
+    for (const InterfaceTable& table : cls.interface_tables) {
+      for (std::size_t i = 0; i < table.answered_by.size(); ++i) {
+        Line(
+            std::format(
+                "implements {}#{}: {}", FormatType(table.of), i,
+                FormatTableBody(table.answered_by[i])));
+      }
     }
     Dedent();
   }
@@ -151,19 +158,20 @@ class LirDumper {
     throw InternalError("lir dump: unknown linkage");
   }
 
-  void DumpDispatch(const ClassDispatch& dispatch) {
-    for (std::size_t i = 0; i < dispatch.introduces.size(); ++i) {
-      Line(
-          std::format(
-              "introduces[{}]: {}", i,
-              dispatch.introduces[i].value_or("nothing")));
+  [[nodiscard]] auto FormatTableBody(const std::optional<TableBody>& body) const
+      -> std::string {
+    if (!body.has_value()) {
+      return "none";
     }
-    for (const Override& overriding : dispatch.overrides) {
-      Line(
-          std::format(
-              "overrides {}: {}", FormatStatedDispatchRef(overriding.behavior),
-              overriding.body));
-    }
+    return std::visit(
+        Overloaded{
+            [&](const ConstantFunction& c) {
+              return std::format("&{}", unit_->functions.Get(c.function).name);
+            },
+            [](const ConstantExternalFunction& c) {
+              return std::format("&{}", c.symbol);
+            }},
+        *body);
   }
 
   [[nodiscard]] auto FormatConstant(const Constant& constant) const
@@ -182,6 +190,16 @@ class LirDumper {
         Overloaded{
             [](const ConstantInt& c) { return std::format("{}", c.value); },
             [](const ConstantNull&) { return std::string{"null"}; },
+            [](const ConstantDestructor& c) {
+              return std::format("&end {}", FormatType(c.cls));
+            },
+            [](const ConstantDispatchTable& c) {
+              return std::format("&table {}", FormatType(c.cls));
+            },
+            [](const ConstantInterfaceTable& c) {
+              return std::format(
+                  "&table {} as {}", FormatType(c.cls), FormatType(c.iface));
+            },
             [](const ConstantString& c) {
               return std::format("\"{}\"", c.text);
             },
@@ -345,13 +363,6 @@ class LirDumper {
             [&](const CastInstr& cast) -> std::string {
               return std::format("cast {}", FormatOperand(cast.operand));
             },
-            [&](const HandleCastInstr& cast) -> std::string {
-              return std::format("handle_cast {}", FormatOperand(cast.operand));
-            },
-            [&](const DynamicCastInstr& cast) -> std::string {
-              return std::format(
-                  "dynamic_cast {}", FormatOperand(cast.operand));
-            },
             [&](const UnionInstr& built) -> std::string {
               return std::format(
                   "union({}: {})", built.member.value,
@@ -454,6 +465,11 @@ class LirDumper {
             [](const DispatchTarget& d) -> std::string {
               return std::format(
                   "dispatch {}", FormatStatedDispatchRef(d.method));
+            },
+            [](const InterfaceDispatchTarget& d) -> std::string {
+              return std::format(
+                  "interface dispatch {}",
+                  FormatStatedDispatchRef(d.requirement));
             },
             [&](const IndirectTarget& i) -> std::string {
               return std::format("through {}", FormatOperand(i.callee));

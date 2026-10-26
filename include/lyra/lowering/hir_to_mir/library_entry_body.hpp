@@ -9,12 +9,12 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// The runtime library holds an object as a type it knows -- a scope -- while a
-// body of a class takes the object as that class. So what the library enters is
-// a body of the class that takes no receiver: it is handed the object as the
-// library holds it, views it as the class, and does one thing on it.
+// The runtime library and a dispatching call hold an object as the root every
+// object is, while a body of a class takes the object as that class. So what
+// they enter is a body of the class that takes no receiver: it is handed the
+// object as the root, views it as the class, and does one thing on it.
 //
-//   static R entry(Library* object, Args... args) {
+//   static R entry(Root* object, Args... args) {
 //     return static_cast<Class*>(object)->method(args...);
 //   }
 //

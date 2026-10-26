@@ -1,7 +1,6 @@
 #include "lyra/runtime/class_object.hpp"
 
 #include <cstdint>
-#include <memory>
 #include <optional>
 
 #include "lyra/base/internal_error.hpp"
@@ -30,8 +29,7 @@ ClassObject::ClassObject() : generator_(SplitFromRunning()) {
 
 ClassObject::~ClassObject() = default;
 
-// The modes and cycles a copy starts with are its own, all on, as a new
-// object's are.
+// A copy's generator is its own, as a new object's is.
 ClassObject::ClassObject(const ClassObject& other)
     : GcObject(other), generator_(SplitFromRunning()) {
 }
@@ -46,73 +44,85 @@ auto ClassObject::operator=(const ClassObject& other) -> ClassObject& {
   return *this;
 }
 
-auto ClassObject::Modes() -> RandomizationModes& {
-  if (modes_ == nullptr) {
-    modes_ = std::make_unique<RandomizationModes>();
+namespace {
+
+// The body `entry` of the object's class's randomization, entered on the
+// object with `args` after it, or nothing where the class states none.
+template <typename... Args>
+void EnterRandomization(
+    GcObject& object,
+    void (*ClassObjectInfo::*entry)(GcObject*, const Args&...),
+    const Args&... args) {
+  const ClassObjectInfo* info = object.definition->class_object;
+  if (info == nullptr) {
+    throw InternalError(
+        "ClassObject: an object of a source class has a definition that "
+        "states nothing of its randomization -- please report this as a bug");
   }
-  return *modes_;
+  if (const auto body = info->*entry; body != nullptr) {
+    body(&object, args...);
+  }
 }
 
-void ClassObject::sv_rand_variables(const value::ObjectRef&) {
+}  // namespace
+
+void ObjectRandVariables(GcObject& object, const value::ObjectRef& problem) {
+  EnterRandomization(object, &ClassObjectInfo::rand_variables, problem);
 }
 
-void ClassObject::sv_constrain(const value::ObjectRef&) {
+void ObjectConstrain(GcObject& object, const value::ObjectRef& problem) {
+  EnterRandomization(object, &ClassObjectInfo::constrain, problem);
 }
 
-void ClassObject::sv_rand_objects(const value::ObjectRef&) {
+void ObjectRandObjects(GcObject& object, const value::ObjectRef& problem) {
+  EnterRandomization(object, &ClassObjectInfo::rand_objects, problem);
 }
 
-void ClassObject::sv_pre_randomize() {
-}
-
-void ClassObject::sv_post_randomize() {
-}
-
+// The built-in hooks do nothing to the object (LRM 18.6.2), though a call of
+// one through a handle naming no object is still the design's failure (LRM
+// 8.4).
 void BuiltinPreRandomize(GcObject* object) {
-  AsClassObject(object).ClassObject::sv_pre_randomize();
-}
-
-void BuiltinPostRandomize(GcObject* object) {
-  AsClassObject(object).ClassObject::sv_post_randomize();
-}
-
-void ObjectPreRandomize(GcObject* object) {
-  AsClassObject(object).sv_pre_randomize();
-}
-
-void ObjectPostRandomize(GcObject* object) {
-  AsClassObject(object).sv_post_randomize();
-}
-
-auto AsClassObject(GcObject* object) -> ClassObject& {
   if (object == nullptr) {
     value::RaiseNullObjectHandleAccess();
   }
-  auto* class_object = dynamic_cast<ClassObject*>(object);
-  if (class_object == nullptr) {
-    throw InternalError(
-        "AsClassObject: an object of no source class reached a class "
-        "object's method -- please report this as a bug");
-  }
-  return *class_object;
 }
 
-void ObjectSrandom(GcObject* object, const value::ConstIntegralView& seed) {
-  AsClassObject(object).Generator().Reseed(
+void BuiltinPostRandomize(GcObject* object) {
+  if (object == nullptr) {
+    value::RaiseNullObjectHandleAccess();
+  }
+}
+
+void ObjectPreRandomize(GcObject* object) {
+  if (object == nullptr) {
+    value::RaiseNullObjectHandleAccess();
+  }
+  EnterRandomization(*object, &ClassObjectInfo::pre_randomize);
+}
+
+void ObjectPostRandomize(GcObject* object) {
+  if (object == nullptr) {
+    value::RaiseNullObjectHandleAccess();
+  }
+  EnterRandomization(*object, &ClassObjectInfo::post_randomize);
+}
+
+void ObjectSrandom(ClassObject* object, const value::ConstIntegralView& seed) {
+  object->Generator().Reseed(
       RandomSeed{static_cast<std::uint32_t>(value::ToInt64(seed))});
 }
 
-auto ObjectGetRandstate(GcObject* object) -> value::String {
-  return value::String{AsClassObject(object).Generator().StateText()};
+auto ObjectGetRandstate(ClassObject* object) -> value::String {
+  return value::String{object->Generator().StateText()};
 }
 
-void ObjectSetRandstate(GcObject* object, const value::String& state) {
+void ObjectSetRandstate(ClassObject* object, const value::String& state) {
   const std::optional<DrawRng> restored = DrawRng::FromStateText(state.View());
   if (!restored.has_value()) {
     throw SimulationError(
         "'set_randstate' was given a state that no 'get_randstate' returned");
   }
-  AsClassObject(object).Generator() = *restored;
+  object->Generator() = *restored;
 }
 
 }  // namespace lyra::runtime

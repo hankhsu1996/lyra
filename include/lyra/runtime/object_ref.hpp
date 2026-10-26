@@ -4,18 +4,21 @@
 #include <memory>
 #include <utility>
 
+#include "lyra/runtime/class_definition.hpp"
 #include "lyra/value/object_ref.hpp"
 
 namespace lyra::runtime {
 
+class RandomizationModes;
 class Observable;
 struct WaitMembership;
 template <class Node>
 class IntrusiveList;
 
 // The root every object the runtime holds is derived from. Whoever holds an
-// object holds it as this class, without knowing which class it is of, so the
-// destructor is virtual. A body running on an object reaches its members
+// object holds it as this class, without knowing which class it is of, and
+// reaches what its class does -- ending it included -- through the definition
+// the object starts with. A body running on an object reaches its members
 // through a borrowed pointer; a reference to it -- LRM 8.11 `this`, and the
 // share a method of a managed class holds while it runs (LRM 8.4) -- this part
 // recovers from the weak reference it keeps to the object.
@@ -26,12 +29,16 @@ class IntrusiveList;
 //
 // Every member is defined in this class's own source file, because a unit
 // building an object of a source-language class reaches each of them, and a
-// definition written here would be compiled again by every such unit. The
-// destructor defined there is also what emits this class's table once.
-class GcObject : public std::enable_shared_from_this<GcObject> {
+// definition written here would be compiled again by every such unit.
+class GcObject : public ObjectHeader,
+                 public std::enable_shared_from_this<GcObject> {
  public:
+  // An object whose class is written by whoever creates it whole, before
+  // anything of the design runs on it.
   GcObject();
-  virtual ~GcObject();
+  // An object of a class of this library, which states its own definition.
+  explicit GcObject(const ObjectDefinition& definition);
+  ~GcObject();
   GcObject(const GcObject&);
   auto operator=(const GcObject&) -> GcObject&;
   GcObject(GcObject&&) = delete;
@@ -54,6 +61,11 @@ class GcObject : public std::enable_shared_from_this<GcObject> {
   // Whether a write to one of this object's properties has anyone to tell.
   [[nodiscard]] auto Watched() const -> bool;
 
+  // Which of this object's random variables and constraint blocks are on (LRM
+  // 18.8, 18.9), made the first time it is asked for, since most objects are
+  // never asked. A copy starts with every one on, as a new object does.
+  [[nodiscard]] auto Modes() -> RandomizationModes&;
+
   // A write to one of this object's properties is over.
   void PublishChange();
 
@@ -74,53 +86,38 @@ class GcObject : public std::enable_shared_from_this<GcObject> {
   [[nodiscard]] auto WatchersOf() -> Watchers&;
 
   std::unique_ptr<Watchers> watchers_;
+  std::unique_ptr<RandomizationModes> modes_;
   std::shared_ptr<GcObject> creators_share_;
 };
 
-// A reference to an object whose typed owner is already in hand. The share
-// names the complete object, so the address it stores is the object's identity
-// -- which is what separates this from building a reference out of a pointer to
-// some base, where the address is a subobject's and answers a different
-// question.
+// A reference to an object whose owner is already in hand. The share names the
+// object itself, so the address it stores is the object's identity.
 template <typename T>
 auto RefToObject(std::shared_ptr<T> owned) -> value::ObjectRef {
-  T* view = owned.get();
-  // What the share points at is the object itself, which for an object of a
-  // source-language class is the one thing every such object is -- so an entry
-  // reaching the object reads the share and needs no name for the class. The
-  // conversion is the target language's own and happens here, where the
-  // concrete type is in hand; deriving it from the share afterwards is what
-  // nothing can do. The handle a process is named by (LRM 9.7) answers for no
-  // class and keeps the object as it stands.
-  if constexpr (std::derived_from<T, GcObject>) {
-    std::shared_ptr<GcObject> object = std::move(owned);
-    return value::ObjectRef(
-        value::ManagedRef(std::shared_ptr<void>(std::move(object))), view);
-  } else {
-    return value::ObjectRef(
-        value::ManagedRef(std::shared_ptr<void>(std::move(owned))), view);
-  }
+  return value::ObjectRef(
+      value::ManagedRef(std::shared_ptr<void>(std::move(owned))));
 }
 
-// The reference to an object a `new` created as `T`, handed over from the
-// code that created it.
-template <std::derived_from<GcObject> T>
-auto AdoptObject(T* object) -> value::ObjectRef {
-  return RefToObject(std::shared_ptr<T>(object->TakeCreatorsShare(), object));
-}
+// A handle owning `object`, created whole and not yet constructed. It is the
+// reference its creator holds while the constructor runs, which the program's
+// `new` answers (LRM 8.3), and it ends the object through its definition when
+// the last reference to it goes.
+[[nodiscard]] auto AdoptObject(GcObject* object) -> value::ObjectRef;
 
 // A SystemVerilog `new` of an object of class `T` (LRM 8.7): the object is
 // created whole -- `T`'s C++ constructor builds every member of every class it
-// extends and gives it its class, and runs none of the design's code -- then
-// held, then constructed by `construct`, the class's constructor, with `args`.
-// The holder is made before the constructor runs, so a construction left
-// partway lets go of the object and leaves it to whatever else refers to it
-// (LRM 8.29), and a virtual call the constructor makes answers for `T` (LRM
-// 8.17).
+// extends, and runs none of the design's code, and the object is given its
+// class, `definition` -- then held, then constructed by `construct`, the
+// class's constructor, with `args`. The holder is made before the constructor
+// runs, so a construction left partway lets go of the object and leaves it to
+// whatever else refers to it (LRM 8.29), and a virtual call the constructor
+// makes answers for `T` (LRM 8.17).
 template <std::derived_from<GcObject> T, typename... Params, typename... Args>
-auto CreateObject(void (T::*construct)(Params...), Args&&... args)
-    -> value::ObjectRef {
+auto CreateObject(
+    const ObjectDefinition* definition, void (T::*construct)(Params...),
+    Args&&... args) -> value::ObjectRef {
   auto created = std::make_unique<T>();
+  created->definition = definition;
   value::ObjectRef held = AdoptObject(created.get());
   // The object ends through the reference from here, which every holder of it
   // shares.
@@ -129,42 +126,77 @@ auto CreateObject(void (T::*construct)(Params...), Args&&... args)
   return held;
 }
 
-// The same for an object one owner holds alone: an instance of the design
-// hierarchy, which its parent owns.
-template <std::derived_from<GcObject> T, typename... Params, typename... Args>
-auto CreateOwned(void (T::*construct)(Params...), Args&&... args)
-    -> std::unique_ptr<T> {
-  auto held = std::make_unique<T>();
-  (held.get()->*construct)(std::forward<Args>(args)...);
-  return held;
+// A call dispatching on a behavior a class introduced (LRM 8.20): the body the
+// class of `self` gives it, read off that class's table as `Table`, the table
+// type of the class introducing the behavior, at its member `Slot`, entered on
+// `self` with `args`. A table of a class extending the introducer begins with
+// the introducer's, so the member lies where it does in the introducer's.
+template <typename Table, auto Slot, typename... Args>
+auto Dispatch(GcObject& self, Args&&... args) -> decltype(auto) {
+  const auto* table = static_cast<const Table*>(self.definition->methods);
+  return (table->*Slot)(&self, std::forward<Args>(args)...);
 }
 
-// The same object seen as `To`, where the program point holding it saw it as
-// `From` (LRM 8.14, 8.26.5). The identity passes through untouched; only the
-// view is formed, and it is formed by the target language's conversion rules
-// because forming a pointer is what those rules are for.
-//
-// The conversion is the checked one because a `$cast` forms the view to ask
-// whether the object is one (LRM 8.16): toward a subclass or an interface class
-// the object may not be, and then the answer refers to no object, which is
-// what the cast reads. Toward a class `From` extends the conversion is known to
-// hold and costs nothing to check.
-template <typename From, typename To>
-auto ViewAs(const value::ObjectRef& ref) -> value::ObjectRef {
-  To* view = dynamic_cast<To*>(ref.View<From>());
-  return view == nullptr ? value::ObjectRef{}
-                         : value::ObjectRef(ref.Handle(), view);
+// A call through a handle of the interface class whose definition is
+// `Interface` (LRM 8.26.5): the same, read off the table the class of `self`
+// gives that interface class.
+template <
+    typename Table, auto Slot, const ObjectDefinition* Interface,
+    typename... Args>
+auto InterfaceDispatch(GcObject& self, Args&&... args) -> decltype(auto) {
+  const auto* table =
+      static_cast<const Table*>(InterfaceTableOf(self.definition, Interface));
+  return (table->*Slot)(&self, std::forward<Args>(args)...);
+}
+
+// Ends the object of exactly the class `T` whose storage starts at `object`:
+// how the definition of `T` states its objects end, where `T` is a class C++
+// knows whole.
+template <std::derived_from<GcObject> T>
+void EndObjectOf(void* object) noexcept {
+  std::default_delete<T>{}(static_cast<T*>(object));
+}
+
+// The definition of a class of this library whose objects the library itself
+// creates: one extending nothing a design names, whose objects end as `T`'s.
+template <std::derived_from<GcObject> T>
+auto LibraryObjectDefinition() -> ObjectDefinition {
+  return ObjectDefinition{
+      .base = nullptr,
+      .scope = nullptr,
+      .class_object = nullptr,
+      .end = &EndObjectOf<T>,
+      .interfaces = {},
+      .methods = nullptr};
+}
+
+// Ends an object one owner holds alone, through its class's definition, so the
+// owner may hold it as any class it is an object of.
+struct EndOwnedObject {
+  void operator()(GcObject* object) const noexcept;
+};
+
+// An object one owner holds alone: an instance of the design hierarchy, which
+// its parent owns.
+template <typename T>
+using OwnedObject = std::unique_ptr<T, EndOwnedObject>;
+
+// The same as `CreateObject` for an object one owner holds alone.
+template <std::derived_from<GcObject> T, typename... Params, typename... Args>
+auto CreateOwned(
+    const ObjectDefinition* definition, void (T::*construct)(Params...),
+    Args&&... args) -> OwnedObject<T> {
+  auto created = std::make_unique<T>();
+  created->definition = definition;
+  OwnedObject<T> held(created.release());
+  (held.get()->*construct)(std::forward<Args>(args)...);
+  return held;
 }
 
 // The reference referring to the object the running subroutine was invoked on
 // (LRM 8.11). The share comes from the object and names the object itself, so
 // this reference owns what every other reference to the object owns and names
-// what they name. The view is the receiver itself, which is the class whose
-// body is running -- what a derived class's `this` must be.
-template <typename T>
-auto SelfHandle(T* self) -> value::ObjectRef {
-  return value::ObjectRef(
-      value::ManagedRef(std::shared_ptr<void>(self->shared_from_this())), self);
-}
+// what they name.
+[[nodiscard]] auto SelfHandle(GcObject* self) -> value::ObjectRef;
 
 }  // namespace lyra::runtime

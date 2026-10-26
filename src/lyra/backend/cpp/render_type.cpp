@@ -110,6 +110,10 @@ auto RuntimeLibraryCppType(mir::RuntimeLibraryKind kind) -> std::string_view {
       return "lyra::runtime::ScopeInfo";
     case mir::RuntimeLibraryKind::kScopeCallable:
       return "lyra::runtime::ScopeCallable";
+    case mir::RuntimeLibraryKind::kClassObjectInfo:
+      return "lyra::runtime::ClassObjectInfo";
+    case mir::RuntimeLibraryKind::kInterfaceRow:
+      return "lyra::runtime::InterfaceRow";
     case mir::RuntimeLibraryKind::kConstructionTable:
       return "lyra::runtime::ConstructionTable";
     case mir::RuntimeLibraryKind::kInstantiation:
@@ -289,7 +293,13 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           [&](const mir::WildcardIndexType&) {
             out += "lyra::value::WildcardKey";
           },
+          // No C++ class is every object implementing an interface class,
+          // so an object seen as one is the root every object is.
           [&](const mir::ObjectType& o) {
+            if (unit.GetClass(o.of).is_interface_class) {
+              out += RuntimeClassCppType(support::RuntimeClass::kObject);
+              return;
+            }
             Write(out, CppClassRef(unit, o.of));
           },
           [&](const mir::RecordType& r) { record(r.declaration); },
@@ -342,6 +352,15 @@ void WriteOne(TargetText& out, const CppType& spelling) {
                   Write(
                       out, "lyra::runtime::OwnedClosure<",
                       CppCallSignature(unit, p.pointee), ">");
+                  return;
+                }
+                // An object one owner holds alone is ended through its
+                // class's definition, which knows the class it was created
+                // as.
+                if (unit.types.Get(p.pointee).Is<mir::ObjectType>()) {
+                  Write(
+                      out, "lyra::runtime::OwnedObject<", type(p.pointee),
+                      pointee_qualifier, ">");
                   return;
                 }
                 Write(
@@ -551,7 +570,7 @@ auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
             return DerefByOperator{};
           },
           [&](const mir::ManagedRefType& m) -> DerefSpelling {
-            return DerefThroughView{.pointee = m.pointee};
+            return DerefAsClass{.pointee = m.pointee};
           },
           [&](const mir::WeakManagedRefType&) { return reaches_nothing(); },
           // Every other type is a value that reaches nothing, so there is
@@ -847,14 +866,20 @@ void WriteOne(TargetText& out, const CppNewOwner& owner) {
 
 void WriteOne(TargetText& out, const CppObjectCreation& creation) {
   const mir::Type& type = creation.of.Unit().types.Get(creation.of.Type());
+  const auto head = [&](std::string_view function) {
+    Write(
+        out, function, "<", creation.built, ">(&", creation.built,
+        "::", CppDefinitionName(), ", &", creation.built,
+        "::", CppConstructorMemberName());
+  };
   if (type.Is<mir::ManagedRefType>()) {
-    out += "lyra::runtime::CreateObject";
+    head("lyra::runtime::CreateObject");
     return;
   }
   if (const auto* pointer = type.As<mir::PointerType>()) {
     switch (pointer->ownership) {
       case mir::PointerOwnership::kUnique:
-        out += "lyra::runtime::CreateOwned";
+        head("lyra::runtime::CreateOwned");
         return;
       case mir::PointerOwnership::kShared:
       case mir::PointerOwnership::kBorrowed:
@@ -864,6 +889,52 @@ void WriteOne(TargetText& out, const CppObjectCreation& creation) {
   throw InternalError(
       "backend::cpp: an object a new-expression creates is owned by a unique "
       "pointer or a class handle -- please report this as a bug");
+}
+
+void WriteOne(TargetText& out, const CppObjectEnd& end) {
+  Write(out, "lyra::runtime::EndObjectOf<", end.of, ">");
+}
+
+void WriteOne(TargetText& out, const CppEntryPointerType& type) {
+  Write(
+      out, "std::add_pointer_t<", CppType(*type.unit, type.code->result_type),
+      "(", RuntimeClassCppType(support::RuntimeClass::kObject), "*");
+  for (const mir::LocalId param : type.code->ParamsAfterReceiver()) {
+    Write(out, ", ", CppType(*type.unit, type.code->locals.Get(param).type));
+  }
+  out += ")>";
+}
+
+namespace {
+
+// The table type the introducer of `behavior` declares, and the member of it
+// for the behavior, `B::sv_table, &B::sv_table::f`.
+void WriteTableAndMember(
+    TargetText& out, const mir::CompilationUnit& unit,
+    const mir::VirtualSlot& behavior) {
+  const CppDispatchTableOf table{
+      .of = CppClassRef(unit, mir::ClassRef{behavior.owner_class})};
+  Write(
+      out, table, ", &", table, "::",
+      CppTableMemberName(
+          unit, unit.GetClass(behavior.owner_class), behavior.slot));
+}
+
+}  // namespace
+
+void WriteOne(TargetText& out, const CppDispatchCallee& callee) {
+  out += "lyra::runtime::Dispatch<";
+  WriteTableAndMember(out, *callee.unit, callee.behavior);
+  out += ">";
+}
+
+void WriteOne(TargetText& out, const CppInterfaceDispatchCallee& callee) {
+  out += "lyra::runtime::InterfaceDispatch<";
+  WriteTableAndMember(out, *callee.unit, callee.requirement);
+  Write(
+      out, ", &",
+      CppClassRef(*callee.unit, mir::ClassRef{callee.requirement.owner_class}),
+      "::", CppDefinitionName(), ">");
 }
 
 void WriteOne(TargetText& out, const CppTupleComponents& components) {
@@ -919,9 +990,9 @@ void WriteOne(TargetText& out, const CppClassRef& ref) {
           // declared in the unit's code file, the one file that names it.
           [&](const mir::ClassId& id) {
             const mir::Class& cls = unit.GetClass(id);
-            if (cls.path.has_value()) {
+            if (const support::DefPath* path = support::PathOf(cls.identity)) {
               out.Require(ClassDeclarationFileOf(
-                  cls.defining_unit.value_or(unit.name), *cls.path));
+                  cls.defining_unit.value_or(unit.name), *path));
             }
             Write(out, CppClassPath(unit, id));
           },
@@ -946,15 +1017,19 @@ void WriteOne(TargetText& out, const CppBaseClass& base) {
           // deriving from it.
           [&](const mir::ClassId& id) {
             const mir::Class& cls = unit.GetClass(id);
-            if (cls.path.has_value()) {
+            if (const support::DefPath* path = support::PathOf(cls.identity)) {
               out.Require(ClassDefinitionFileOf(
-                  cls.defining_unit.value_or(unit.name), *cls.path));
+                  cls.defining_unit.value_or(unit.name), *path));
             }
           },
           [](const mir::ObjectTreeRootRef&) {},
           [](const mir::ManagedObjectRootRef&) {}},
       base.of.Ref());
   Write(out, base.of);
+}
+
+void WriteOne(TargetText& out, const CppDispatchTableOf& table) {
+  Write(out, CppBaseClass{.of = table.of}, "::", CppDispatchTableTypeName());
 }
 
 }  // namespace lyra::backend::cpp

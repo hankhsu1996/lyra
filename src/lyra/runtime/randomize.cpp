@@ -37,8 +37,9 @@ namespace lyra::runtime {
 namespace {
 
 auto ProblemOf(const value::ObjectRef& handle) -> ConstraintProblem& {
-  auto* problem = dynamic_cast<ConstraintProblem*>(ObjectRootOf(handle));
-  if (problem == nullptr) {
+  ConstraintProblem* problem = handle.Get<ConstraintProblem>();
+  if (problem == nullptr ||
+      problem->definition != &ConstraintProblem::kDefinition) {
     throw InternalError(
         "randomize: a call's problem names no problem -- please report this "
         "as a bug");
@@ -53,7 +54,7 @@ auto ModesOf(const ErasedReference& variable) -> RandomizationModes& {
   return std::visit(
       Overloaded{
           [](GcObject* object) -> RandomizationModes& {
-            return AsClassObject(object).Modes();
+            return object->Modes();
           },
           [](std::monostate) -> RandomizationModes& {
             return StaticRandomizationModes();
@@ -67,11 +68,10 @@ auto ModesOf(const ErasedReference& variable) -> RandomizationModes& {
       variable.holder);
 }
 
-auto Begin(GcObject* object, bool listed, RuntimeEffects& runtime)
+auto Begin(ClassObject* object, bool listed, RuntimeEffects& runtime)
     -> value::ObjectRef {
-  ClassObject& randomized = AsClassObject(object);
   auto made = std::make_unique<ConstraintProblem>(
-      runtime, randomized.Generator(), SelfHandle(object), listed);
+      runtime, object->Generator(), SelfHandle(object), listed);
   ConstraintProblem* problem = made.get();
   value::ObjectRef handle = AdoptObject(made.release());
   // `pre_randomize()` runs on the object and then on every random object it
@@ -80,28 +80,27 @@ auto Begin(GcObject* object, bool listed, RuntimeEffects& runtime)
   // it is walked by position. A call listing what it chooses makes every
   // handle it does not list a state variable (LRM 18.11), so the object
   // reaches none.
-  randomized.sv_pre_randomize();
+  ObjectPreRandomize(object);
   if (!listed) {
-    randomized.sv_rand_objects(handle);
+    ObjectRandObjects(*object, handle);
   }
   for (std::size_t position = 0; position < problem->Nested().size();
        ++position) {
-    ClassObject& nested =
-        AsClassObject(ObjectRootOf(problem->Nested()[position]));
-    nested.sv_pre_randomize();
-    nested.sv_rand_objects(handle);
+    GcObject& nested = problem->Nested()[position].Deref<GcObject>();
+    ObjectPreRandomize(&nested);
+    ObjectRandObjects(nested, handle);
   }
   return handle;
 }
 
 }  // namespace
 
-auto RandomizeObject(GcObject* object, RuntimeEffects& runtime)
+auto RandomizeObject(ClassObject* object, RuntimeEffects& runtime)
     -> value::ObjectRef {
   return Begin(object, false, runtime);
 }
 
-auto RandomizeObjectListed(GcObject* object, RuntimeEffects& runtime)
+auto RandomizeObjectListed(ClassObject* object, RuntimeEffects& runtime)
     -> value::ObjectRef {
   return Begin(object, true, runtime);
 }
@@ -121,13 +120,13 @@ void RandomizeConstrain(const value::ObjectRef& problem) {
   // Every object declares its random variables before any states a
   // constraint, so a constraint naming one, of its own object or of another
   // the call reaches (LRM 18.5.8), names the variable that was declared.
-  AsClassObject(object).sv_rand_variables(problem);
+  ObjectRandVariables(*object, problem);
   for (const value::ObjectRef& nested : p.Nested()) {
-    AsClassObject(ObjectRootOf(nested)).sv_rand_variables(problem);
+    ObjectRandVariables(nested.Deref<GcObject>(), problem);
   }
-  AsClassObject(object).sv_constrain(problem);
+  ObjectConstrain(*object, problem);
   for (const value::ObjectRef& nested : p.Nested()) {
-    AsClassObject(ObjectRootOf(nested)).sv_constrain(problem);
+    ObjectConstrain(nested.Deref<GcObject>(), problem);
   }
 }
 
@@ -139,9 +138,9 @@ auto RandomizeFinish(const value::ObjectRef& problem) -> value::Int {
   }
   p.Commit();
   if (GcObject* object = ObjectRootOf(p.Object()); object != nullptr) {
-    AsClassObject(object).sv_post_randomize();
+    ObjectPostRandomize(object);
     for (const value::ObjectRef& nested : p.Nested()) {
-      AsClassObject(ObjectRootOf(nested)).sv_post_randomize();
+      ObjectPostRandomize(ObjectRootOf(nested));
     }
   }
   return value::Int::FromInt(1);
@@ -390,8 +389,7 @@ void RandomizeNestedErased(
 }
 
 auto ConstraintBlockEnabled(GcObject* self, const value::String& name) -> bool {
-  return AsClassObject(self).Modes().ConstraintEnabled(
-      std::string{name.View()});
+  return self->Modes().ConstraintEnabled(std::string{name.View()});
 }
 
 auto StaticConstraintBlockEnabled(const value::String& key) -> bool {
@@ -634,23 +632,21 @@ auto RandModeGetErased(
 }
 
 void ObjectRandModeSet(GcObject* object, bool on) {
-  AsClassObject(object).Modes().SetAllRand(on);
+  object->Modes().SetAllRand(on);
 }
 
 void ConstraintModeSet(GcObject* object, const value::String& name, bool on) {
-  AsClassObject(object).Modes().SetConstraint(std::string{name.View()}, on);
+  object->Modes().SetConstraint(std::string{name.View()}, on);
 }
 
 auto ConstraintModeGet(GcObject* object, const value::String& name)
     -> value::Int {
   return value::Int::FromInt(
-      AsClassObject(object).Modes().ConstraintEnabled(std::string{name.View()})
-          ? 1
-          : 0);
+      object->Modes().ConstraintEnabled(std::string{name.View()}) ? 1 : 0);
 }
 
 void ObjectConstraintModeSet(GcObject* object, bool on) {
-  AsClassObject(object).Modes().SetAllConstraints(on);
+  object->Modes().SetAllConstraints(on);
 }
 
 void StaticConstraintModeSet(const value::String& key, bool on) {

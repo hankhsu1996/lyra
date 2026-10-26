@@ -11,29 +11,21 @@ namespace lyra::runtime {
 class ReadReport;
 
 // A reference to an object that does not keep it (LRM 8.29, 8.30): the
-// object's ownership held weakly, and the view of the class the program point
-// that made it saw the object as, so what it answers is seen the same way. It
-// answers no object once the object has expired -- once nothing refers to it
-// -- and none where it was made from null.
+// object's ownership held weakly. It answers no object once the object has
+// expired -- once nothing refers to it -- and none where it was made from null.
 class WeakObjectRef {
  public:
   WeakObjectRef() = default;
 
-  WeakObjectRef(std::weak_ptr<void> share, void* view)
-      : share_(std::move(share)), view_(view) {
+  explicit WeakObjectRef(std::weak_ptr<void> share) : share_(std::move(share)) {
   }
 
   [[nodiscard]] auto Share() const -> const std::weak_ptr<void>& {
     return share_;
   }
 
-  [[nodiscard]] auto View() const -> void* {
-    return view_;
-  }
-
  private:
   std::weak_ptr<void> share_;
-  void* view_ = nullptr;
 };
 
 // The weak reference to the object `strong` refers to, or to none.

@@ -258,7 +258,8 @@ auto RenderUnitFiles(
   for (const PublishedClass& published : classes.published) {
     AppendToHeader(
         class_files,
-        ClassDefinitionFileOf(unit.name, *unit.GetClass(published.id).path),
+        ClassDefinitionFileOf(
+            unit.name, *support::PathOf(unit.GetClass(published.id).identity)),
         published.text);
   }
   for (HeaderFile& class_file : class_files) {

@@ -1,8 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <optional>
-#include <span>
 #include <string_view>
 
 namespace lyra::support {
@@ -32,17 +30,16 @@ enum class RuntimeClass : std::uint8_t {
 // What a dump calls it.
 auto RuntimeClassName(RuntimeClass klass) -> std::string_view;
 
-// A virtual function one of those classes declares for a class extending it to
-// override: the three phases the runtime drives every scope through, in the
-// order it enters them -- every route and alias is bound, then every cell takes
-// the value its declaration gives it (LRM 10.5), then every process is created
-// (LRM 9.2) -- and what an instance describes to a value dump starting (LRM
-// 21.7.1.2); and what `randomize()` asks of every source class (LRM 18.6):
-// the random variables it declares, the constraints it states, the random
-// objects its handles reach, and the hooks before and after (LRM 18.6.2).
-// Listed in the order each class declares them, which is the order they take in
-// its table.
-enum class LibraryVirtual : std::uint8_t {
+// A body the library calls on an object of a class extending one of those
+// classes, which it finds through the object's definition: the three phases
+// the runtime drives every scope through, in the order it enters them -- every
+// route and alias is bound, then every cell takes the value its declaration
+// gives it (LRM 10.5), then every process is created (LRM 9.2) -- and what an
+// instance describes to a value dump starting (LRM 21.7.1.2); and what
+// `randomize()` asks of every source class (LRM 18.6): the random variables it
+// declares, the constraints it states, the random objects its handles reach,
+// and the hooks before and after (LRM 18.6.2).
+enum class LibraryCallback : std::uint8_t {
   kScopeResolve,
   kScopeInitialize,
   kScopeCreateProcesses,
@@ -54,21 +51,9 @@ enum class LibraryVirtual : std::uint8_t {
   kClassPostRandomize,
 };
 
-// The class declaring it.
-auto DeclaringClassOf(LibraryVirtual function) -> RuntimeClass;
-
-// The virtual functions `klass` declares itself, in the order it declares
-// them, and the class it extends where it extends one: the scope and a source
-// class's part each extend the part every object starts with.
-auto VirtualsDeclaredBy(RuntimeClass klass) -> std::span<const LibraryVirtual>;
-auto LibraryBaseOf(RuntimeClass klass) -> std::optional<RuntimeClass>;
-
-// Its position among the virtual functions its class introduces.
-auto OrdinalOf(LibraryVirtual function) -> std::uint32_t;
-
-// Its name in the library's C++, which an override spells too. Every one starts
-// with `sv_`, which a name the source writes never does once it reaches C++,
-// so no subroutine of a design can override one by having its name.
-auto LibraryVirtualName(LibraryVirtual function) -> std::string_view;
+// The name a body answering it is spelled with. Every one starts with `sv_`,
+// which a name the source writes never does once it reaches C++, so no
+// subroutine of a design can answer one by having its name.
+auto LibraryCallbackName(LibraryCallback callback) -> std::string_view;
 
 }  // namespace lyra::support

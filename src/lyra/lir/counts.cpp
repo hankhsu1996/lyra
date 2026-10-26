@@ -20,7 +20,7 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
   std::uint64_t declared = 0;
   std::uint64_t members = 0;
   for (const Class& cls : classes) {
-    const auto& [defining_unit, path, linkage, base, own, dispatch, implements, conforming] =
+    const auto& [defining_unit, identity, linkage, base, own, dispatch, interface_tables] =
         cls;
     // What another unit defines is declared here, and held there.
     if (defining_unit.has_value()) {

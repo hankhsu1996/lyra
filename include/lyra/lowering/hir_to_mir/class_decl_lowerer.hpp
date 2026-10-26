@@ -109,10 +109,9 @@ class ClassDeclLowerer {
   const hir::ClassDecl* hir_class_;
   const StructuralScopeLowerer* declaring_scope_;
 
-  // The cells each method's and each interface forward's static-lifetime
-  // variables took, in the order the class lists them.
+  // The cells each method's static-lifetime variables took, in the order the
+  // class lists them.
   base::Translation<hir::MethodId, StaticVarBindings> method_statics_;
-  std::vector<StaticVarBindings> forward_statics_;
   StaticVarBindings ctor_static_bindings_;
   DeclaredScopes scopes_;
 };

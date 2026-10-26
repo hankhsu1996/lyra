@@ -61,7 +61,10 @@ class ConstraintProblem final : public GcObject {
   auto operator=(const ConstraintProblem&) -> ConstraintProblem& = delete;
   ConstraintProblem(ConstraintProblem&&) = delete;
   auto operator=(ConstraintProblem&&) -> ConstraintProblem& = delete;
-  ~ConstraintProblem() override;
+  ~ConstraintProblem();
+
+  // The definition every object of this class is created with.
+  static const ObjectDefinition kDefinition;
 
   // The variable `lent` names is of an enumerated type, or is an array of
   // one, declaring `members`: what it takes where the call chooses it, and

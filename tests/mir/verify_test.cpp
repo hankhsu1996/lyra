@@ -1697,7 +1697,7 @@ TEST(MirVerifyTest, ADeclaredClassHoldsNothingAndAnOwnBodyIsHere) {
       const auto declare = [&] {
         Class cls;
         cls.defining_unit = declared.own_unit ? u.name : "Pkg";
-        cls.path = support::DefPath{
+        cls.identity = support::DefPath{
             .data = {
                 support::ClassStep{.name = "C", .arguments = std::nullopt}}};
         cls.base = ClassRef{ManagedObjectRootRef{}};

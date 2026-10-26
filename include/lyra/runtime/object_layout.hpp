@@ -2,8 +2,6 @@
 
 #include <cstdint>
 #include <optional>
-#include <string>
-#include <string_view>
 #include <variant>
 
 #include "lyra/support/layout.hpp"
@@ -64,24 +62,19 @@ auto LayoutOf(support::RuntimeClass klass) -> support::ObjectLayout;
 // library's classes lays its own storage out after that class's part.
 auto ClosurePart() -> support::Layout;
 
-// The symbol of that class's type information (C++ ABI 2.9.4), which the
-// description of a class extending it names as its base. Read off the class
-// itself, so it follows the class wherever its declaration moves.
-auto TypeInfoSymbolOf(support::RuntimeClass klass) -> std::string;
+// Where, in the definition of a class, what generated code reads of it lies:
+// how an object of the class ends, and the table of the body each behavior of
+// it runs. Every object holds its class's definition at its start.
+struct DefinitionLayout {
+  std::uint64_t end;
+  std::uint64_t methods;
+};
+auto DefinitionLayoutOf() -> DefinitionLayout;
 
-// The symbols of that class's base object constructor and base object
-// destructor (C++ ABI 5.1.4.3, C2 and D2), which the creation and the
-// destructor of a class extending it call as a C++ class's call its base's.
-// The constructor takes nothing but the value it builds.
-auto BaseObjectConstructorSymbolOf(support::RuntimeClass klass)
-    -> std::string_view;
-auto BaseObjectDestructorSymbolOf(support::RuntimeClass klass)
-    -> std::string_view;
-
-// The symbol of the library's own body of one of its virtual functions, which
-// the table of a class extending its class holds where the class does not
-// override it.
-auto VirtualFunctionSymbolOf(support::LibraryVirtual function)
-    -> std::string_view;
+// Builds that part at `at`, where a value of a class extending it is created,
+// before any member of the class's own; and ends it there, after every one of
+// them, as a C++ class's construction and destruction call its base's.
+void BeginLibraryPart(support::RuntimeClass klass, void* at);
+void EndLibraryPart(support::RuntimeClass klass, void* at);
 
 }  // namespace lyra::runtime

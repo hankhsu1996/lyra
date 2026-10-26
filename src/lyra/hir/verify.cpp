@@ -1188,15 +1188,6 @@ void VerifyClass(
         [&] { return std::format("method '{}' of {}", decl.name, owner()); },
         lines);
   }
-  for (const InterfaceForward& forward : cls.interface_forwards) {
-    VerifySubroutine(
-        forward.method, [](ArenaReaches&) {},
-        [&] {
-          return std::format(
-              "the forward of '{}' of {}", forward.method.name, owner());
-        },
-        lines);
-  }
   VerifySubroutine(
       cls.constructor,
       [&](ArenaReaches& reaches) {

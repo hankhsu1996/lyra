@@ -229,6 +229,13 @@ struct DispatchTarget {
   StatedDispatchRef method;
 };
 
+// The same for a method an interface class declares itself (LRM 8.26.5),
+// answered by the table the value's class gives that interface class, found
+// among those its class implements.
+struct InterfaceDispatchTarget {
+  StatedDispatchRef requirement;
+};
+
 // A call through a code address the program computed -- the dual of naming a
 // function outright. Which body runs is not known where the call is written, so
 // the callee arrives as an operand, and the signature the call is made against
@@ -244,12 +251,13 @@ struct IndirectTarget {
 // storage, which already holds its value.
 struct ConstructTarget {};
 
-// Creates a value of the class `cls` whole in the storage the call is handed:
-// the part the runtime library defines, every member of every class of its
-// lineage at the value its type starts with, and `cls`'s tables, once -- as the
-// JVM's `new` gives an object all its fields and its class before any
-// constructor runs. No code of the design runs, so nothing departs from it.
-// `cls` is a class of this unit or one another unit declares.
+// Creates a value of the class `cls` whole in storage of its own, which the
+// call answers: the part the runtime library defines, every member of every
+// class of its lineage at the value its type starts with, and its class, once
+// -- as the JVM's `new` gives an object all its fields and its class before
+// any constructor runs. No code of the design runs, so nothing departs from
+// it. `cls` is a class of this unit or one another unit declares, and the
+// unit defining it is where its size is known.
 struct CreationTarget {
   TypeId cls;
 };
@@ -428,10 +436,10 @@ auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view;
 // duration allocated or given back, a control-effect operation, or an
 // operation of the coroutine protocol.
 using CallTarget = std::variant<
-    BuiltinTarget, FunctionTarget, DispatchTarget, IndirectTarget,
-    ConstructTarget, CreationTarget, SymbolTarget, ForeignTarget,
-    ValueCellTarget, OpenWriteTarget, DesignatedBitsTarget, EndValueTarget,
-    CopyValueTarget, DynamicStorageTarget, ControlEffectTarget,
+    BuiltinTarget, FunctionTarget, DispatchTarget, InterfaceDispatchTarget,
+    IndirectTarget, ConstructTarget, CreationTarget, SymbolTarget,
+    ForeignTarget, ValueCellTarget, OpenWriteTarget, DesignatedBitsTarget,
+    EndValueTarget, CopyValueTarget, DynamicStorageTarget, ControlEffectTarget,
     CoroutineTarget>;
 
 // How a call to `target` ends, which is a property of the callee and never of
@@ -681,22 +689,6 @@ struct CastInstr {
   Operand operand;
 };
 
-// A handle read as a handle of a class the declared types say the object is
-// one of: the class it extends, or an interface class it implements (LRM 8.14,
-// 8.26.5). The result refers to the same object through that class's part of
-// it, so it is a value of its own rather than the operand read again. Both
-// classes are the types already carried.
-struct HandleCastInstr {
-  Operand operand;
-};
-
-// A handle read as a handle of another class, answering one referring to no
-// object where the object the operand refers to is not one of that class: the
-// question the object answers (LRM 8.16), asked by forming the handle.
-struct DynamicCastInstr {
-  Operand operand;
-};
-
 // Takes what is unwinding out of the call whose landing this is, answering it
 // as the machine pointer the unwinder carries; nothing is handled yet. A block
 // beginning with this is a landing, which is the whole of what makes it one: it
@@ -769,9 +761,8 @@ struct EndHandlingInstr {};
 using Rvalue = std::variant<
     CallInstr, ProductInstr, UnionInstr, ClosureInstr, ArrayInstr,
     VectorGetInstr, DiscriminantInstr, LoadInstr, OverlaidLoadInstr,
-    AddrOfInstr, BinaryInstr, UnaryInstr, CastInstr, HandleCastInstr,
-    DynamicCastInstr, LandingInstr, VariableStorageInstr, BeginVariableInstr,
-    UseInstr>;
+    AddrOfInstr, BinaryInstr, UnaryInstr, CastInstr, LandingInstr,
+    VariableStorageInstr, BeginVariableInstr, UseInstr>;
 
 // A value computed once and consumed where it is used, with a pure dataflow
 // origin and no storage of its own to name.

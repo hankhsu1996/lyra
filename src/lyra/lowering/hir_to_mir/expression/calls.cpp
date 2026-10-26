@@ -443,9 +443,10 @@ auto LowerBuiltinMethodCall(
 // A call of a hook a class has without declaring it, where no class of its
 // lineage declares one either or the class is an interface class -- the calls
 // the library runs, where a method of the source runs no other (the plan of a
-// method call answers those). An interface class's hook is virtual (LRM
-// 8.26.9), so it runs what the object's own class runs; a class's is not (LRM
-// 18.6.2), so it runs the built-in one, which does nothing.
+// method call answers those). An interface class's hook runs what the object's
+// own class runs, the reading Lyra takes where LRM 8.26.9 calls it virtual and
+// 18.6.2 calls a class's not; a class's runs the built-in one, which does
+// nothing (LRM 18.6.2).
 template <ExprLowerer Lowerer>
 auto LowerLibraryHookCall(
     Lowerer& lowerer, WalkFrame frame, const hir::MethodCallRef& ref,

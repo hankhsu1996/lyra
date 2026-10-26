@@ -47,6 +47,7 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
+#include "lyra/lowering/hir_to_mir/library_entry_body.hpp"
 #include "lyra/lowering/hir_to_mir/net_declaration.hpp"
 #include "lyra/lowering/hir_to_mir/path_select.hpp"
 #include "lyra/lowering/hir_to_mir/predicate.hpp"
@@ -84,12 +85,9 @@ namespace {
 // Adds what places every scope -- its parent and its hierarchy segment -- as
 // ordinary ctor params, in the order its constructor's base call hands them
 // on: to its base's constructor, or, for a class extending the root of the
-// design hierarchy, to the scope's own part. That call hands on the
-// definition of the class the instance is of after these, since a class names
-// its own definition and what a unit published of its object is handed it by
-// the class realizing it. The parent is taken as the base every scope extends:
-// a block reaches the scope that built it only through what that scope
-// published, whichever body either is.
+// design hierarchy, to the scope's own part. The parent is taken as the base
+// every scope extends: a block reaches the scope that built it only through
+// what that scope published, whichever body either is.
 void AttachRuntimeScopeCtorPrefix(
     const mir::CompilationUnit& unit, ClassShape& shape) {
   shape.ctor_prefix_params.Add(mir::ParamDecl{.type = unit.builtins.scope_ptr});
@@ -177,10 +175,7 @@ struct BuiltPublishedClass {
 // through the object, whose class says which body runs.
 //
 // It is this class rather than a realization that stands directly in the
-// tree, so what the tree's class is entered with is entered here, and that
-// includes the definition the object carries. The object is of a realizing
-// class, which is the only one that knows it, so its constructor hands the
-// definition in and this one passes it on.
+// tree, so what the tree's class is entered with is entered here.
 auto BuildPublishedClass(
     const mir::CompilationUnit& unit, const ClassShape& shape,
     const PublishedScope& published) -> BuiltPublishedClass {
@@ -188,8 +183,7 @@ auto BuildPublishedClass(
   const mir::LocalId ctor_self = ctor.AddLocal(shape.self_pointer_type);
   std::vector<mir::LocalId> prefix;
   for (const mir::TypeId type :
-       {unit.builtins.scope_ptr, unit.builtins.hierarchy_segment,
-        mir::ClassDefinitionPointer(unit.types)}) {
+       {unit.builtins.scope_ptr, unit.builtins.hierarchy_segment}) {
     prefix.push_back(ctor.AddLocal(type));
   }
   ctor.params = {ctor_self};
@@ -2516,6 +2510,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
       BorrowedPointerTo(unit_lowerer.Unit(), class_id_);
 
   ClassShape shape;
+  shape.identity = unit_lowerer.NameUnnamedClass();
   // The scope stands in the tree through what its unit published of it.
   shape.base = mir::ClassRef{published_class_id_};
   shape.is_final = true;
@@ -2755,6 +2750,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
 
     const mir::ClassId node_class = unit_lowerer.Unit().DeclareClass();
     ClassShape node_shape;
+    node_shape.identity = unit_lowerer.NameUnnamedClass();
     node_shape.base = mir::ClassRef{mir::ObjectTreeRootRef{}};
     node_shape.is_final = true;
     node_shape.self_pointer_type =
@@ -2910,11 +2906,10 @@ namespace {
 void ConstructBaseFirst(
     mir::CompilationUnit& unit, const mir::ClassRef& base,
     mir::CallableCode& ctor_code, mir::LocalId self,
-    std::span<const mir::LocalId> prefix_local_ids,
-    std::span<const mir::ExprId> base_trailing_args) {
+    std::span<const mir::LocalId> prefix_local_ids) {
   mir::Block& body = ctor_code.Body();
   std::vector<mir::ExprId> base_args;
-  base_args.reserve(prefix_local_ids.size() + base_trailing_args.size());
+  base_args.reserve(prefix_local_ids.size());
   const mir::LocalId parent = prefix_local_ids[kParentPrefix.value];
   base_args.push_back(ObjectAs(
       body, body.ReadLocal(parent, ctor_code.locals.Get(parent).type),
@@ -2930,8 +2925,6 @@ void ConstructBaseFirst(
           mir::Expr{.data = mir::MoveExpr{.operand = local_ref}, .type = ty}));
     }
   }
-  base_args.insert(
-      base_args.end(), base_trailing_args.begin(), base_trailing_args.end());
   const mir::ExprId object = BuildObjectDeref(
       unit, body, body.ReadLocal(self, ctor_code.locals.Get(self).type));
   const mir::DirectTarget target = std::visit(
@@ -2997,10 +2990,6 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     const auto& p = shape.ctor_prefix_params.Get(param);
     ctor_prefix_local_ids.push_back(ctor_bindings.DeclareAnonymous(p.type));
   }
-  // The object is of this class, which is the only one that knows it, so its
-  // constructor hands the published class the definition the tree is told.
-  const std::array<mir::ExprId, 1> definition{
-      BuildDefinitionRead(unit_lowerer.Unit(), ctor_code.Body(), class_id_)};
   // Every body of the scope is the instance its outward references count from.
   const WalkFrame scope_frame =
       parent_frame
@@ -3018,7 +3007,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       scope_frame.WithBlock(&ctor_block).WithBindings(&ctor_bindings);
   ConstructBaseFirst(
       unit_lowerer.Unit(), mir_class.base.value(), ctor_code, self_id,
-      ctor_prefix_local_ids, definition);
+      ctor_prefix_local_ids);
   // The construction table follows the prefix, and what construction supplies
   // follows that. Both stay out of the base call: the base contract demands
   // the prefix and nothing this scope alone is handed. The table is what the
@@ -3363,37 +3352,33 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       node_ctor_code.params.push_back(node_ctor_prefix_local_ids.back());
     }
     node_ctor_code.result_type = void_type;
-    const std::array<mir::ExprId, 1> node_definition{BuildDefinitionRead(
-        unit_lowerer.Unit(), node_ctor_code.Body(), name_node.class_id)};
     ConstructBaseFirst(
         unit_lowerer.Unit(), node_class.base.value(), node_ctor_code,
-        node_ctor_code.params.front(), node_ctor_prefix_local_ids,
-        node_definition);
+        node_ctor_code.params.front(), node_ctor_prefix_local_ids);
     // A name node has no work in any phase and describes nothing, which is
     // four bodies with no statements rather than four it does not have -- the
     // same shape a scope with work carries, so nothing downstream tells the
     // two apart. What its named block holds the scope around it describes.
-    const auto empty_phase = [&](support::LibraryVirtual phase) {
+    const auto empty_phase = [&](support::LibraryCallback phase) {
       mir::CallableCode code = mir::CallableCode::Defined();
       CallableBindings bindings(unit_lowerer.Unit(), code);
       code.params = {
           bindings.Declare(ReceiverOrigin{}, node_shape.self_pointer_type)};
       code.result_type = void_type;
-      node_class.callables.Add(
+      const mir::CallableId body = node_class.callables.Add(
           mir::CallableDecl{
               .code = std::move(code),
               .foreign = std::nullopt,
-              .virtual_dispatch =
-                  mir::OverridesLibraryVirtual{.function = phase},
+              .virtual_dispatch = std::nullopt,
               .type_parameters = {},
               .defining_unit = std::nullopt});
+      node_class.library_callbacks.push_back(
+          mir::LibraryCallbackBody{.callback = phase, .body = body});
     };
-    empty_phase(support::LibraryVirtual::kScopeResolve);
-    empty_phase(support::LibraryVirtual::kScopeInitialize);
-    empty_phase(support::LibraryVirtual::kScopeCreateProcesses);
-    empty_phase(support::LibraryVirtual::kScopeDescribe);
-    StateScopeDefinition(
-        unit_lowerer.Unit(), name_node.class_id, node_class, {});
+    empty_phase(support::LibraryCallback::kScopeResolve);
+    empty_phase(support::LibraryCallback::kScopeInitialize);
+    empty_phase(support::LibraryCallback::kScopeCreateProcesses);
+    empty_phase(support::LibraryCallback::kScopeDescribe);
     node_class.constructor =
         mir::ConstructorDecl{.code = std::move(node_ctor_code)};
     unit_lowerer.Unit().DefineClass(name_node.class_id, std::move(node_class));
@@ -3496,9 +3481,13 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             .virtual_dispatch = std::nullopt,
             .type_parameters = {},
             .defining_unit = std::nullopt});
+    // A foreign caller hands the entry the scope every instance is.
     exports.push_back(
         mir::NamedCallable{
-            .name = std::move(entry.linkage.foreign_name), .body = entry_id});
+            .name = std::move(entry.linkage.foreign_name),
+            .body = EntryOf(
+                unit_lowerer.Unit(), class_id_, mir_class, entry_id,
+                unit_lowerer.Unit().builtins.scope_ptr)});
   }
 
   for (const hir::ProcessId id : hir_scope.processes.Ids()) {
@@ -3725,42 +3714,46 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
 
   // The three bodies the runtime drives this scope through after construction
   // (LRM 23.3.3.2 / 6.8 / 9.2), and the one a value dump starting has it
-  // describe itself with (LRM 21.7.1.2), each overriding the virtual function
-  // of the library's scope for its phase. `self` is the body's own receiver,
-  // typed as this class. None of them answers to a name of the source, because
+  // describe itself with (LRM 21.7.1.2), each answering the library's callback
+  // for its phase. `self` is the body's own receiver, typed as this class.
+  // None of them answers to a name of the source, because
   // such a name would sit in the same name space as the scope's own subroutines
   // and a method spelled the same way would then share it. A phase with no work
   // is a body with no statements, not an absent body: whether emitting one is
   // worth avoiding is a question for the layer that removes dead work, and
   // answering it here would cost every consumer a case.
   const auto add_body = [&](mir::CallableCode& code, mir::LocalId self,
-                            support::LibraryVirtual phase) {
+                            support::LibraryCallback phase) {
     code.params = {self};
     code.result_type = void_type;
-    mir_class.callables.Add(
+    const mir::CallableId body = mir_class.callables.Add(
         mir::CallableDecl{
             .code = std::move(code),
             .foreign = std::nullopt,
-            .virtual_dispatch = mir::OverridesLibraryVirtual{.function = phase},
+            .virtual_dispatch = std::nullopt,
             .type_parameters = {},
             .defining_unit = std::nullopt});
+    mir_class.library_callbacks.push_back(
+        mir::LibraryCallbackBody{.callback = phase, .body = body});
   };
   add_body(
-      resolve_code, resolve_self_id, support::LibraryVirtual::kScopeResolve);
+      resolve_code, resolve_self_id, support::LibraryCallback::kScopeResolve);
   install_block.AppendStmt(
       mir::BlockStmt{
           .scope =
               install_block.child_scopes.Add(std::move(initialize_block))});
   WrapInScopeStaticInitExtent(unit_lowerer, install_frame, initialize_code);
   add_body(
-      initialize_code, init_self_id, support::LibraryVirtual::kScopeInitialize);
+      initialize_code, init_self_id,
+      support::LibraryCallback::kScopeInitialize);
   add_body(
       activate_code, activate_self_id,
-      support::LibraryVirtual::kScopeCreateProcesses);
+      support::LibraryCallback::kScopeCreateProcesses);
   auto described = DescribeDumped(*this, describe_frame, hir_scope.dumped);
   if (!described) return std::unexpected(std::move(described.error()));
   add_body(
-      describe_code, describe_self_id, support::LibraryVirtual::kScopeDescribe);
+      describe_code, describe_self_id,
+      support::LibraryCallback::kScopeDescribe);
 
   mir_class.constructor = mir::ConstructorDecl{.code = std::move(ctor_code)};
 
@@ -3772,7 +3765,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         design_root_->instantiations,
         ObjectEntryTypes(unit_lowerer, design_root_->object_entries));
   }
-  StateScopeDefinition(unit, class_id_, mir_class, exports);
+  mir_class.exports = std::move(exports);
   unit.DefineClass(class_id_, std::move(mir_class));
   return {};
 }
@@ -3830,9 +3823,9 @@ auto StructuralScopeLowerer::PublishBlockEntry() const -> mir::CallableId {
           .defining_unit = std::nullopt});
 }
 
-// What the unit published passes the definition it was handed on to the tree.
-// Every referrer names that class through the unit's signature, and no instance
-// is built of it alone, so it tells the library nothing of its own.
+// What the unit published of its object, the class every referrer names it
+// by through the unit's signature. No instance is built of it alone, so it
+// gives no body to any phase.
 void StructuralScopeLowerer::DefinePublishedClasses(UnitLowerer& unit_lowerer) {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   for (const auto& [id, scope] : unit_lowerer.PublishedScopes()) {
@@ -3840,7 +3833,7 @@ void StructuralScopeLowerer::DefinePublishedClasses(UnitLowerer& unit_lowerer) {
         BuildPublishedClass(unit, unit_lowerer.GetClassShape(id), scope);
     ConstructBaseFirst(
         unit, published.cls.base.value(), published.ctor,
-        published.ctor.params.front(), published.ctor_prefix, {});
+        published.ctor.params.front(), published.ctor_prefix);
     // A block keeps the scope that built it, which the class it published
     // holds, so whichever body the block is, a walk climbing out of it reads
     // the link where every body has it.
@@ -3864,7 +3857,6 @@ void StructuralScopeLowerer::DefinePublishedClasses(UnitLowerer& unit_lowerer) {
     }
     published.cls.constructor =
         mir::ConstructorDecl{.code = std::move(published.ctor)};
-    StateNamedClassDefinition(unit, published.cls);
     unit.DefineClass(id, std::move(published.cls));
   }
 }

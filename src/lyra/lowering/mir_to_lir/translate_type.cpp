@@ -397,6 +397,10 @@ auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
       return mirror(lir::RuntimeLibraryKind::kScopeInfo);
     case mir::RuntimeLibraryKind::kScopeCallable:
       return mirror(lir::RuntimeLibraryKind::kScopeCallable);
+    case mir::RuntimeLibraryKind::kClassObjectInfo:
+      return mirror(lir::RuntimeLibraryKind::kClassObjectInfo);
+    case mir::RuntimeLibraryKind::kInterfaceRow:
+      return mirror(lir::RuntimeLibraryKind::kInterfaceRow);
     case mir::RuntimeLibraryKind::kConstructionTable:
       return mirror(lir::RuntimeLibraryKind::kConstructionTable);
     case mir::RuntimeLibraryKind::kInstantiation:

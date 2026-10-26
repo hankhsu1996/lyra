@@ -235,13 +235,11 @@ class CodeGenFunction {
   // What a landing pad yields and `resume` takes: the unwinder's pointer and a
   // selector no clause here reads.
   auto LandingPadType() -> llvm::StructType*;
-  // What a call arranged as `abi` enters. A dispatch through an interface
-  // class's part enters a body with the value's start instead of the part, as
-  // C++ adjusts `this` for a virtual base, so the receiver in `args` is
-  // rewritten there.
+  // What a call arranged as `abi` enters; a dispatch finds the body through
+  // the definition of the object `args` leads with.
   auto ResolveCallee(
       const lir::CallInstr& call, lir::TypeId result_type, const FnAbi& abi,
-      std::span<llvm::Value*> args) -> diag::Result<llvm::FunctionCallee>;
+      std::span<llvm::Value* const> args) -> diag::Result<llvm::FunctionCallee>;
   // A {pointer, length} view over `storage` of `element`, which this fills
   // with `values`, for an entry that takes a sequence of them.
   auto SpanOver(
@@ -310,42 +308,8 @@ class CodeGenFunction {
       -> diag::Result<llvm::Value*>;
   auto LowerCast(const lir::CastInstr& cast, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
-  // A handle read as a handle of another class, through that class's part of
-  // the object: the part the declared types say is there, or the part a cast
-  // finds, or none.
-  auto LowerHandleCast(
-      const lir::HandleCastInstr& cast, lir::TypeId result_type,
-      llvm::Value* out) -> diag::Result<llvm::Value*>;
-  auto LowerDynamicCast(
-      const lir::DynamicCastInstr& cast, lir::TypeId result_type,
-      llvm::Value* out) -> diag::Result<llvm::Value*>;
-  // The part of class `to` of the object whose part of class `from` is at the
-  // non-null `view`, where the declared types say it has one.
-  auto ConvertView(llvm::Value* view, lir::TypeId from, lir::TypeId to)
-      -> diag::Result<llvm::Value*>;
-  // Whether `address` is a pointer to the part every object starts with, which
-  // is how the library takes an object.
-  [[nodiscard]] auto IsLibraryObjectAddress(lir::TypeId address) const -> bool;
-  // Where the object starts whose interface class part is at the non-null
-  // `part`, whose table is at `table`: the table holds how far back that is
-  // (C++ ABI 2.5.2 offset to top).
-  auto ObjectStartOf(llvm::Value* part, llvm::Value* table) -> llvm::Value*;
-  // The class a handle or a pointer to an object is of, where it is of one of
-  // the source's classes.
-  [[nodiscard]] auto ClassBehind(lir::TypeId reference) const
-      -> std::optional<lir::TypeId>;
-  // `reach` applied to `view` where it is not null, and null where it is: a
-  // handle referring to no object has no part to reach anything from.
-  auto IfNotNull(
-      llvm::Value* view,
-      llvm::function_ref<diag::Result<llvm::Value*>(llvm::Value*)> reach)
-      -> diag::Result<llvm::Value*>;
-  // The part a handle reaches its object through, null where it refers to
-  // none; and a handle referring to the same object through `view`, built in
-  // `out`.
-  auto HandleView(llvm::Value* handle) -> llvm::Value*;
-  auto HandleWithView(llvm::Value* handle, llvm::Value* view, llvm::Value* out)
-      -> llvm::Value*;
+  // The body a table of bodies holds at `slot`.
+  auto BodyAt(llvm::Value* table, std::uint64_t slot) -> llvm::Value*;
 
   // The body's variables, laid out as one record in its own frame the way a C++
   // compiler lays out locals: each variable's storage at its own offset, sized

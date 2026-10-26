@@ -80,6 +80,9 @@ auto CallEndingOf(const CallTarget& target) -> support::CallEnding {
       Overloaded{
           [](const FunctionTarget&) { return CallEnding::kReturnsOrUnwinds; },
           [](const DispatchTarget&) { return CallEnding::kReturnsOrUnwinds; },
+          [](const InterfaceDispatchTarget&) {
+            return CallEnding::kReturnsOrUnwinds;
+          },
           [](const IndirectTarget&) { return CallEnding::kReturnsOrUnwinds; },
           [](const SymbolTarget&) { return CallEnding::kReturnsOrUnwinds; },
           [](const ForeignTarget&) { return CallEnding::kReturnsOrUnwinds; },

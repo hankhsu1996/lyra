@@ -326,11 +326,17 @@ auto FunctionLowerer::LowerCallTarget(
           // the layer above names becomes a coordinate here -- the declaration
           // that introduced it, and which of that declaration's introductions
           // it is (LRM 8.20) -- and where that lands in a value is settled with
-          // the whole lineage in hand, which is nowhere near this pass. The
-          // receiver is already the call's first argument, as it is for a
-          // method named outright, and is the introducing class's part of the
-          // object.
+          // the whole lineage in hand, which is nowhere near this pass. A
+          // behavior an interface class introduced is found instead among the
+          // tables of the interface classes the object's class implements (LRM
+          // 8.26.5), as Swift's `witness_method` stands beside its
+          // `class_method`. The receiver is already the call's first argument,
+          // as it is for a method named outright.
           [&](const mir::Virtual& v) -> diag::Result<lir::CallTarget> {
+            if (unit_->Mir().GetClass(v.slot.owner_class).is_interface_class) {
+              return lir::CallTarget{lir::InterfaceDispatchTarget{
+                  .requirement = unit_->SlotRef(v.slot)}};
+            }
             return lir::CallTarget{
                 lir::DispatchTarget{.method = unit_->SlotRef(v.slot)}};
           }},
@@ -2194,6 +2200,28 @@ auto FunctionLowerer::ReferenceValue(
                     unit_->MethodFunction(ref.body.owner, ref.body.slot),
                 .type = unit_->TranslateType(type)}};
           },
+          // Only a class's definition holds one, and a definition is data
+          // rather than a body.
+          [&](const mir::DispatchEntryRef&) -> diag::Result<lir::Operand> {
+            throw InternalError(
+                "mir_to_lir: a body reads the entry of a method -- please "
+                "report this as a bug");
+          },
+          [&](const mir::DestructorRef&) -> diag::Result<lir::Operand> {
+            throw InternalError(
+                "mir_to_lir: a body reads what ends a class's objects -- "
+                "please report this as a bug");
+          },
+          [&](const mir::DispatchTableRef&) -> diag::Result<lir::Operand> {
+            throw InternalError(
+                "mir_to_lir: a body reads a class's table -- please report "
+                "this as a bug");
+          },
+          [&](const mir::InterfaceTableRef&) -> diag::Result<lir::Operand> {
+            throw InternalError(
+                "mir_to_lir: a body reads a class's table -- please report "
+                "this as a bug");
+          },
           [&](const mir::ExternalObjectEntryRef&)
               -> diag::Result<lir::Operand> {
             throw InternalError(
@@ -2312,6 +2340,18 @@ auto FunctionLowerer::ReferencePlace(
           },
           [](const mir::FunctionRef&) -> diag::Result<lir::Place> {
             return Unsupported("a function names no place");
+          },
+          [](const mir::DispatchEntryRef&) -> diag::Result<lir::Place> {
+            return Unsupported("a function names no place");
+          },
+          [](const mir::DestructorRef&) -> diag::Result<lir::Place> {
+            return Unsupported("a function names no place");
+          },
+          [](const mir::DispatchTableRef&) -> diag::Result<lir::Place> {
+            return Unsupported("a table names no place");
+          },
+          [](const mir::InterfaceTableRef&) -> diag::Result<lir::Place> {
+            return Unsupported("a table names no place");
           },
           [](const mir::ExternalObjectEntryRef&) -> diag::Result<lir::Place> {
             return Unsupported("a function names no place");
@@ -2546,8 +2586,8 @@ auto FunctionLowerer::ObjectAddress(
       unit_->TranslateType(
           mir::ObjectReachedThrough(
               unit_->Mir().types, block.exprs.Get(reaches).type)));
-  // The library takes an object as the part every object starts with, which an
-  // interface class's part is not.
+  // The library takes an object as the part every object starts with, which
+  // lies where the object does whatever class it is reached as.
   return Emit(
       AddressType(unit_->Types().Intern(
           lir::Type{
@@ -2661,7 +2701,7 @@ auto FunctionLowerer::LowerObjectNew(
     arguments.push_back(*std::move(lowered));
   }
   // The object is then created whole -- every member of every class it is
-  // built of, and its own class's tables -- which runs none of the design's
+  // built of, and its class -- which runs none of the design's
   // code, and its creator holds it from there. A construction left partway
   // ends that hold as any value this body owns is ended, and the object goes
   // on existing while anything else refers to it (LRM 8.29).
@@ -2669,15 +2709,7 @@ auto FunctionLowerer::LowerObjectNew(
   const lir::Operand storage = Emit(
       AddressType(object_type),
       lir::CallInstr{
-          .target =
-              lir::DynamicStorageTarget{
-                  .op = lir::DynamicStorageTarget::Op::kAllocate},
-          .args = {}});
-  Emit(
-      unit_->TranslateType(unit_->Mir().builtins.void_type),
-      lir::CallInstr{
-          .target = lir::CreationTarget{.cls = object_type},
-          .args = {storage}});
+          .target = lir::CreationTarget{.cls = object_type}, .args = {}});
   auto held = EmitCallTo(
       lir::ConstructTarget{}, {storage}, unit_->TranslateType(owner));
   if (!held) {
@@ -2897,24 +2929,7 @@ auto FunctionLowerer::LowerCallInto(
     return settled(EnterCoroutine(block, call, type, std::nullopt));
   }
 
-  // A handle seen as another class's is a new handle to the same object,
-  // formed by this target's own conversion between the two classes, as clang
-  // realizes one between two pointers to classes.
-  const auto seen_as = [&](auto instruction) -> diag::Result<lir::Operand> {
-    auto handle = LowerExpr(block, call.arguments.front());
-    if (!handle) {
-      return std::unexpected(std::move(handle.error()));
-    }
-    instruction.operand = *std::move(handle);
-    return Emit(unit_->TranslateType(type), std::move(instruction));
-  };
   if (const auto fn = mir::DirectBuiltinFn(call); fn.has_value()) {
-    if (*fn == support::BuiltinFn::kDerivedToBase) {
-      return settled(seen_as(lir::HandleCastInstr{}));
-    }
-    if (*fn == support::BuiltinFn::kDynamicCast) {
-      return settled(seen_as(lir::DynamicCastInstr{}));
-    }
     // A closure made one of no known type is the one value read as another
     // type: this target's closure opens with its definition, so the address
     // it lies at is the erased closure's too, as a C++ object's is its first

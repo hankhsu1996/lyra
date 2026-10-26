@@ -83,18 +83,6 @@ struct ConformingBehavior {
   auto operator==(const ConformingBehavior&) const -> bool = default;
 };
 
-// A method a class answers an interface class's behavior with where it inherits
-// the implementation rather than declaring one (LRM 8.26.2): its body enters
-// that implementation, and it overrides the implementation's behavior. No
-// declaration of the source stands for it, so it is no member of the class and
-// takes no position among them.
-struct InterfaceForward {
-  SubroutineDecl method;
-  ClassMethodTarget overrides;
-
-  auto operator==(const InterfaceForward&) const -> bool = default;
-};
-
 // The bodies of a class this unit declares (LRM 8): what lowering the class
 // compiles, beside what the class declares, which every unit reading it asks
 // about and which the class's declaration states -- what it extends and
@@ -166,7 +154,6 @@ struct InterfaceForward {
 struct ClassDecl {
   std::vector<ConformingBehavior> conforming;
   base::Registry<SubroutineDecl, MethodId> methods;
-  std::vector<InterfaceForward> interface_forwards;
   SubroutineDecl constructor;
   BaseCall base_call;
   std::vector<FieldInit> field_inits;

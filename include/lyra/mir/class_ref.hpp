@@ -7,7 +7,6 @@
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
-#include "lyra/support/runtime_class.hpp"
 
 namespace lyra::mir {
 
@@ -89,24 +88,14 @@ struct OverridesVirtualSlot {
   auto operator==(const OverridesVirtualSlot&) const -> bool = default;
 };
 
-// A method that overrides a virtual function a class of the runtime library
-// declares for the classes extending it: what a scope does in one of the
-// phases the library drives it through, or what an object does for its
-// `randomize()` (LRM 18.6).
-struct OverridesLibraryVirtual {
-  support::LibraryVirtual function;
-
-  auto operator==(const OverridesLibraryVirtual&) const -> bool = default;
-};
-
 // A method's participation in the class-object dispatch table (LRM 8.20). A
 // non-participating method (a regular direct-only callable) carries no value
 // of this optional; a participating method carries the arm whose payload
-// names the slot's canonical identity: an introducer names itself, an override
-// names the slot it overrides, and an override of the library's names the
-// library's function. A consumer reads the slot's identity in one step.
-using VirtualDispatchRole = std::variant<
-    IntroducesVirtualSlot, OverridesVirtualSlot, OverridesLibraryVirtual>;
+// names the slot's canonical identity: an introducer names itself, and an
+// override names the slot it overrides. A consumer reads the slot's identity in
+// one step.
+using VirtualDispatchRole =
+    std::variant<IntroducesVirtualSlot, OverridesVirtualSlot>;
 
 // Whether this participation is the appearance that introduces the slot (LRM
 // 8.20), as against overriding one an ancestor already declared. A callable in

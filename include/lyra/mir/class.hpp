@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <string>
@@ -23,7 +25,7 @@
 #include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/mir/value_build.hpp"
-#include "lyra/support/def_path.hpp"
+#include "lyra/support/class_name.hpp"
 #include "lyra/support/dump_kind.hpp"
 #include "lyra/support/runtime_class.hpp"
 #include "lyra/support/scope_execution.hpp"
@@ -98,6 +100,42 @@ struct ConformingBehavior {
   std::optional<VirtualSlot> answered_by;
 };
 
+// One entry of the relation between a class and the bodies the runtime library
+// calls on its objects (LRM 18.6, and the phases a scope is driven through):
+// which callback, and the callable of the class answering it. A body answering
+// one is no method of the source and takes no part in dispatch; the library
+// finds it through the class's definition.
+struct LibraryCallbackBody {
+  support::LibraryCallback callback;
+  CallableId body;
+};
+
+// A method the class defines that something reaches without knowing the
+// object's class, and the body of the class through which it is entered on an
+// object handed over as the root every object is.
+struct MethodEntry {
+  CallableId method;
+  CallableId entry;
+};
+
+// One behavior an object of a class dispatches on (LRM 8.20) and the method
+// whose entry answers it on such an object: the one the nearest class of its
+// lineage gives, or none where the class leaves the behavior abstract (LRM
+// 8.21).
+struct DispatchedBehavior {
+  VirtualSlot behavior;
+  std::optional<CallableTarget> answered_by;
+};
+
+// What an object of a class answers the methods one interface class declares
+// itself with (LRM 8.26.5), in the order it declares them: for each, the method
+// of the class's lineage whose entry answers it, or none where an abstract
+// class leaves it.
+struct InterfaceTable {
+  ClassId of;
+  std::vector<std::optional<CallableTarget>> answered_by;
+};
+
 struct Class {
   // The unit that defines the class, where it is another unit's. Such a class
   // is declared here and defined there, as an imported declaration is: its
@@ -106,14 +144,14 @@ struct Class {
   // dispatch and nothing of its code; and it has no constructor, constant or
   // record value here, which are that unit's to emit.
   std::optional<std::string> defining_unit;
-  // The path another unit reaches this class by, absent where nothing outside
-  // this unit ever names it -- a class the lowering builds for its own use.
-  // Present for a class the source declared (LRM 8.3) and for what a scope of
-  // the design hierarchy published, which a hierarchical name reaches (LRM
-  // 23.6). It is the class's cross-unit identity, which is why it sits here
-  // rather than in a relation: what a referrer resolves and what a symbol is
-  // made from are the same steps.
-  std::optional<support::DefPath> path;
+  // The path another unit reaches this class by, for a class the source
+  // declared (LRM 8.3) and for what a scope of the design hierarchy published,
+  // which a hierarchical name reaches (LRM 23.6); for a class the lowering
+  // builds for its own use, which nothing outside this unit names, its place
+  // among those. It is the class's identity, which is why it sits here rather
+  // than in a relation: what a referrer resolves and what a symbol is made from
+  // are the same steps.
+  support::ClassName identity;
   std::optional<ClassRef> base;
   // The interfaces the class's declaration names, in the order written. A
   // value of the class is also a value of each, of every interface those
@@ -122,6 +160,21 @@ struct Class {
   // For each behavior of each interface a value of this class is also a value
   // of, what answers it. Empty for an interface class, which answers nothing.
   std::vector<ConformingBehavior> conforming;
+  // The entry of each method of this class that takes part in dispatch or
+  // answers what the runtime library asks of an object. Empty for a class
+  // another unit defines, whose entries are named by their methods.
+  std::vector<MethodEntry> entries;
+  // What an object of the class runs for each behavior it dispatches on: those
+  // of the class it extends first, in that class's order, then those it
+  // introduces, in the order it declares them -- so a class extending another
+  // lists each of the other's behaviors in the same order. A class another unit
+  // defines lists its behaviors and answers none.
+  std::vector<DispatchedBehavior> dispatch;
+  // What an object of the class answers each interface class it is also an
+  // object of with (LRM 8.26), each interface class once however many ways it
+  // is reached (LRM 8.26.6.3). Empty for an interface class and for a class
+  // another unit defines.
+  std::vector<InterfaceTable> interface_tables;
   bool is_final = false;
   bool is_interface_class = false;
   TypeId self_pointer_type;
@@ -187,55 +240,77 @@ struct Class {
   // this unit spells where this is the class it names; a body the compiler
   // synthesized is not, because nothing spells one.
   std::vector<NamedCallable> named_callables;
+  // The bodies of this class the runtime library calls on its objects, each
+  // under the callback it answers.
+  std::vector<LibraryCallbackBody> library_callbacks;
+  // The DPI-C exports an instance of the class answers (LRM 35.5.3): the C
+  // identifier the foreign side calls each by, and the body it reaches. Only a
+  // class an instance of the design hierarchy is built of has any.
+  std::vector<NamedCallable> exports;
   // The read-only tables the class's record below points at. Nothing outside
   // the class names one.
   base::Arena<ClassConstantDecl, ClassConstantId> constants;
   // The value of the class's record: the one constant every object of the class
   // points at, which the runtime library reads to answer what cannot be asked
-  // where the asker is compiled -- what the class extends, and, for a class an
-  // instance of the design hierarchy is built of, its timescale and the DPI-C
-  // exports its instances answer (LRM 35.4), whose names the foreign side
-  // spells. Other units name it by the class, which is why it is not among
-  // `constants`, and its type is the same for every class, which is why only
-  // its value is here.
+  // where the asker is compiled -- what the class extends, how an object of it
+  // ends, what an instance of the design hierarchy does in each phase and the
+  // DPI-C exports it answers, what `randomize()` asks of an object of a source
+  // class, the interface classes it implements, and the body each behavior it
+  // dispatches on runs. Other units name it by the class, which is why it is
+  // not among `constants`, and its type is the same for every class, which is
+  // why only its value is here. It is stated once every class of the unit is,
+  // since it reads what the class's whole lineage gives.
   ValueBuild object_definition_initializer;
 
-  // The callable giving the library's `function` a body for this class, or
-  // nothing where the class gives it none.
-  [[nodiscard]] auto LibraryOverride(support::LibraryVirtual function) const
+  // The callable this class answers the library's `callback` with, or nothing
+  // where the class gives it none of its own.
+  [[nodiscard]] auto CallbackBody(support::LibraryCallback callback) const
       -> std::optional<CallableId> {
-    for (const CallableId callable : callables.Ids()) {
-      const std::optional<VirtualDispatchRole>& role =
-          callables.Get(callable).virtual_dispatch;
-      const auto* library = role.has_value()
-                                ? std::get_if<OverridesLibraryVirtual>(&*role)
-                                : nullptr;
-      if (library != nullptr && library->function == function) {
-        return callable;
+    for (const LibraryCallbackBody& answered : library_callbacks) {
+      if (answered.callback == callback) {
+        return answered.body;
       }
     }
     return std::nullopt;
   }
 
-  // Which of the dispatch positions this class introduces (LRM 8.20)
-  // `callable` is, or nothing where it introduces none. The positions are
-  // counted in the order the class declares its callables, which is the one
-  // numbering a dispatch, an override and a class's table all have to agree on.
+  // The library callback `callable` answers, or nothing where it answers none.
+  [[nodiscard]] auto CallbackAnsweredBy(CallableId callable) const
+      -> std::optional<support::LibraryCallback> {
+    for (const LibraryCallbackBody& answered : library_callbacks) {
+      if (answered.body == callable) {
+        return answered.callback;
+      }
+    }
+    return std::nullopt;
+  }
+
+  // The callables introducing the behaviors this class adds to dispatch (LRM
+  // 8.20), or the methods an interface class declares itself (LRM 8.26), in the
+  // order the class declares them. It is the one order a class's table, an
+  // interface class's table and every position a dispatch names are read in,
+  // whichever layer lays the table out.
+  [[nodiscard]] auto IntroducedBehaviors() const -> std::vector<CallableId> {
+    std::vector<CallableId> introduced;
+    for (const CallableId callable : callables.Ids()) {
+      if (IntroducesSlot(callables.Get(callable).virtual_dispatch)) {
+        introduced.push_back(callable);
+      }
+    }
+    return introduced;
+  }
+
+  // Where `callable` stands among the behaviors this class introduces, or
+  // nothing where it introduces none.
   [[nodiscard]] auto IntroductionOrdinal(CallableId callable) const
       -> std::optional<BehaviorOrdinal> {
-    if (!IntroducesSlot(callables.Get(callable).virtual_dispatch)) {
+    const std::vector<CallableId> introduced = IntroducedBehaviors();
+    const auto at = std::ranges::find(introduced, callable);
+    if (at == introduced.end()) {
       return std::nullopt;
     }
-    BehaviorOrdinal ordinal{.value = 0};
-    for (const CallableId here : callables.Ids()) {
-      if (here == callable) {
-        break;
-      }
-      if (IntroducesSlot(callables.Get(here).virtual_dispatch)) {
-        ++ordinal.value;
-      }
-    }
-    return ordinal;
+    return BehaviorOrdinal{
+        .value = static_cast<std::uint32_t>(at - introduced.begin())};
   }
 };
 

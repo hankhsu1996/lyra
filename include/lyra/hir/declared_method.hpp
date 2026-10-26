@@ -64,8 +64,7 @@ using MethodDispatch = std::variant<
 // One method a class declares, as every unit naming the class reads it.
 // The prototype is what a call to the method is made through -- its name, the
 // call protocol, each formal's direction and type, and the result -- which is
-// also what a body overriding the method or forwarding to it takes and
-// completes with.
+// also what a body overriding the method takes and completes with.
 struct DeclaredMethod {
   SubroutinePrototype prototype;
   MethodDispatch dispatch;

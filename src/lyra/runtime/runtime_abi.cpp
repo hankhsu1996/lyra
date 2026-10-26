@@ -45,6 +45,7 @@
 #include "lyra/runtime/nba_region.hpp"
 #include "lyra/runtime/net.hpp"
 #include "lyra/runtime/object_change.hpp"
+#include "lyra/runtime/object_layout.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/open_write.hpp"
 #include "lyra/runtime/plusargs.hpp"
@@ -73,6 +74,7 @@
 #include "lyra/runtime/var.hpp"
 #include "lyra/runtime/weak_reference.hpp"
 #include "lyra/support/callable_bounds.hpp"
+#include "lyra/support/runtime_class.hpp"
 #include "lyra/value/any.hpp"
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/assert.hpp"
@@ -937,17 +939,6 @@ auto NetReportsTo(void* net) -> void* {
 template <NetValue T>
 auto ShowSource(void* driver) -> bool {
   return DriverOf<T>(driver).ShowSource();
-}
-
-// The process a `process` handle names (LRM 9.7), recovered from the erased
-// share the managed-reference domain carries. Taking a typed owner is what
-// keeps the node alive for the length of the call: the entry is the one place
-// that knows which object the share is of, which is what erasing it costs and
-// all it costs.
-auto ProcessOf(const void* handle) -> value::ObjectRef {
-  return RefToObject(
-      std::static_pointer_cast<RuntimeProcess>(
-          Read<value::ObjectRef>(handle).Handle().Share()));
 }
 
 // The type an erased value crosses beside, which is what states its
@@ -1971,6 +1962,7 @@ using lyra::runtime::CellBeginTakeover;
 using lyra::runtime::CellDriveTakeover;
 using lyra::runtime::CellEndTakeover;
 using lyra::runtime::ChannelCancellation;
+using lyra::runtime::ClassObject;
 using lyra::runtime::ClosureValue;
 using lyra::runtime::Compared;
 using lyra::runtime::ConstructionTable;
@@ -2075,7 +2067,6 @@ using lyra::runtime::PositionNamedAt;
 using lyra::runtime::ProcessAwait;
 using lyra::runtime::ProcessGetRandstate;
 using lyra::runtime::ProcessKill;
-using lyra::runtime::ProcessOf;
 using lyra::runtime::ProcessResume;
 using lyra::runtime::ProcessSelf;
 using lyra::runtime::ProcessSetRandstate;
@@ -2129,7 +2120,6 @@ using lyra::runtime::Var;
 using lyra::runtime::VariableAt;
 using lyra::runtime::VariableOf;
 using lyra::runtime::VectorPropagationDelay;
-using lyra::runtime::ViewOf;
 using lyra::runtime::ViolationReportKeeper;
 using lyra::runtime::Wait;
 using lyra::runtime::WaitFork;
@@ -2464,60 +2454,61 @@ auto lyra_rt_process_self(void* runtime, void* out) -> void* {
 }
 
 auto lyra_rt_process_status(const void* self, void* out) -> void* {
-  return Emplace(out, ProcessStatus(ProcessOf(self)));
+  return Emplace(out, ProcessStatus(Read<ObjectRef>(self)));
 }
 
 void lyra_rt_process_kill(const void* self, void* runtime) {
-  ProcessKill(ProcessOf(self), *static_cast<RuntimeEffects*>(runtime));
+  ProcessKill(Read<ObjectRef>(self), *static_cast<RuntimeEffects*>(runtime));
 }
 
 auto lyra_rt_process_await(const void* self, void* runtime, void* out)
     -> void* {
   return Emplace(
-      out,
-      ProcessAwait(ProcessOf(self), *static_cast<RuntimeEffects*>(runtime)));
+      out, ProcessAwait(
+               Read<ObjectRef>(self), *static_cast<RuntimeEffects*>(runtime)));
 }
 
 void lyra_rt_process_suspend(const void* self, void* runtime) {
-  ProcessSuspend(ProcessOf(self), *static_cast<RuntimeEffects*>(runtime));
+  ProcessSuspend(Read<ObjectRef>(self), *static_cast<RuntimeEffects*>(runtime));
 }
 
 void lyra_rt_process_resume(const void* self, void* runtime) {
-  ProcessResume(ProcessOf(self), *static_cast<RuntimeEffects*>(runtime));
+  ProcessResume(Read<ObjectRef>(self), *static_cast<RuntimeEffects*>(runtime));
 }
 
 void lyra_rt_process_srandom(
     const void* self, const void* seed, std::int64_t seed_width,
     bool seed_is_signed, bool seed_is_four_state) {
   ProcessSrandom(
-      ProcessOf(self),
+      Read<ObjectRef>(self),
       NumberAt(seed, seed_width, seed_is_signed, seed_is_four_state).View());
 }
 
 auto lyra_rt_process_get_randstate(const void* self, void* out) -> void* {
-  return Emplace(out, ProcessGetRandstate(ProcessOf(self)));
+  return Emplace(out, ProcessGetRandstate(Read<ObjectRef>(self)));
 }
 
 void lyra_rt_process_set_randstate(const void* self, const void* state) {
-  ProcessSetRandstate(ProcessOf(self), Read<String>(state));
+  ProcessSetRandstate(Read<ObjectRef>(self), Read<String>(state));
 }
 
 void lyra_rt_object_srandom(
     void* object, const void* seed, std::int64_t seed_width,
     bool seed_is_signed, bool seed_is_four_state) {
   lyra::runtime::ObjectSrandom(
-      static_cast<GcObject*>(object),
+      static_cast<ClassObject*>(object),
       NumberAt(seed, seed_width, seed_is_signed, seed_is_four_state).View());
 }
 
 auto lyra_rt_object_get_randstate(void* object, void* out) -> void* {
   return Emplace(
-      out, lyra::runtime::ObjectGetRandstate(static_cast<GcObject*>(object)));
+      out,
+      lyra::runtime::ObjectGetRandstate(static_cast<ClassObject*>(object)));
 }
 
 void lyra_rt_object_set_randstate(void* object, const void* state) {
   lyra::runtime::ObjectSetRandstate(
-      static_cast<GcObject*>(object), Read<String>(state));
+      static_cast<ClassObject*>(object), Read<String>(state));
 }
 
 void lyra_rt_builtin_pre_randomize(void* object) {
@@ -2568,7 +2559,7 @@ auto lyra_rt_object_identity(const void* object, void* out) -> void* {
 auto lyra_rt_randomize_object(void* object, void* runtime, void* out) -> void* {
   return Emplace(
       out, lyra::runtime::RandomizeObject(
-               static_cast<GcObject*>(object),
+               static_cast<ClassObject*>(object),
                *static_cast<RuntimeEffects*>(runtime)));
 }
 
@@ -2576,7 +2567,7 @@ auto lyra_rt_randomize_object_listed(void* object, void* runtime, void* out)
     -> void* {
   return Emplace(
       out, lyra::runtime::RandomizeObjectListed(
-               static_cast<GcObject*>(object),
+               static_cast<ClassObject*>(object),
                *static_cast<RuntimeEffects*>(runtime)));
 }
 
@@ -2932,7 +2923,7 @@ void lyra_rt_closure_box_end(void* closure) {
 }
 
 auto lyra_rt_object_adopt(void* object, void* out) -> void* {
-  return Emplace(out, AdoptObject(object));
+  return Emplace(out, AdoptObject(static_cast<GcObject*>(object)));
 }
 
 auto lyra_rt_string_shared_cell_make(void* out) -> void* {
@@ -3906,15 +3897,14 @@ auto lyra_rt_hierarchical_path_of(void* self, const void* below, void* out)
       out, static_cast<Scope*>(self)->HierarchicalPathOf(Read<String>(below)));
 }
 
-void lyra_rt_set_scope_place(
-    void* self, void* parent, const void* segment, const void* definition) {
+void lyra_rt_set_scope_place(void* self, void* parent, const void* segment) {
   static_cast<Scope*>(self)->SetPlace(
-      static_cast<Scope*>(parent), Read<HierarchySegment>(segment),
-      static_cast<const ObjectDefinition*>(definition));
+      static_cast<Scope*>(parent), Read<HierarchySegment>(segment));
 }
 
 auto lyra_rt_attach_scope(void* child) -> void* {
-  return Scope::Attach(std::unique_ptr<Scope>(static_cast<Scope*>(child)));
+  return Scope::Attach(
+      lyra::runtime::OwnedObject<Scope>(static_cast<Scope*>(child)));
 }
 
 void lyra_rt_insert_bits(
@@ -3962,23 +3952,37 @@ auto lyra_rt_sequence_element(const void* sequence, std::int64_t index)
   return handles[position];
 }
 
-auto lyra_rt_handle_view(const void* handle) -> void* {
-  return Read<ObjectRef>(handle).View<void>();
-}
-
-auto lyra_rt_handle_with_view(const void* handle, void* view, void* out)
-    -> void* {
-  return Emplace(
-      out, view == nullptr ? ObjectRef{}
-                           : ObjectRef(Read<ObjectRef>(handle).Handle(), view));
-}
-
-auto lyra_rt_view_of(const void* handle) -> void* {
-  return ViewOf(Read<ObjectRef>(handle));
+auto lyra_rt_object_of(const void* handle) -> void* {
+  return lyra::runtime::ObjectOf(Read<ObjectRef>(handle));
 }
 
 auto lyra_rt_self_handle(void* self, void* out) -> void* {
   return Emplace(out, lyra::runtime::SelfHandle(static_cast<GcObject*>(self)));
+}
+
+auto lyra_rt_dynamic_cast(const void* handle, const void* definition, void* out)
+    -> void* {
+  return Emplace(
+      out, lyra::runtime::DynamicCast(
+               Read<ObjectRef>(handle),
+               static_cast<const ObjectDefinition*>(definition)));
+}
+
+auto lyra_rt_interface_table(const void* object, const void* iface) -> const
+    void* {
+  return lyra::runtime::InterfaceTableOf(
+      static_cast<const GcObject*>(object)->definition,
+      static_cast<const ObjectDefinition*>(iface));
+}
+
+void lyra_rt_begin_library_part(std::uint8_t which, void* at) {
+  lyra::runtime::BeginLibraryPart(
+      static_cast<lyra::support::RuntimeClass>(which), at);
+}
+
+void lyra_rt_end_library_part(std::uint8_t which, void* at) {
+  lyra::runtime::EndLibraryPart(
+      static_cast<lyra::support::RuntimeClass>(which), at);
 }
 
 auto lyra_rt_object_event_source(void* object) -> void* {
@@ -4038,7 +4042,7 @@ auto lyra_rt_run_program(
   return RunDesignRoot(
       argc, argv, std::string_view{static_cast<const char*>(name)},
       [make](Scope* parent, HierarchySegment segment) {
-        return std::unique_ptr<Scope>(
+        return lyra::runtime::OwnedObject<Scope>(
             static_cast<Scope*>(make(parent, &segment)));
       });
 }

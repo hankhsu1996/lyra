@@ -1,13 +1,12 @@
 # A dynamic cast asks the type or the object
 
-Date: 2026-09-17 Status: the object half is superseded by
-[an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md) D3. The cast forms
-the view to the destination class, as clang's dynamic cast does, through the type descriptor every
-class carries, and the answer is whether that view refers to an object. So the object question is
-that view, a call MIR states beside the ordinary conversion
-([a-rewrite-of-mir-says-whether-a-program-needs-it](a-rewrite-of-mir-says-whether-a-program-needs-it.md)
-D7), rather than a runtime entry asked about a class's record, and no body names a record to ask it.
-The type half, and the sequence of steps the construct lowers to, stand.
+Date: 2026-09-17 Status: accepted. From 2026-09-29 to 2026-10-25 the object half was superseded by
+[an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md) D3, which had the
+cast form the view to the destination class through the host's `__dynamic_cast`, as clang's dynamic
+cast does. That record's revision of 2026-10-25 laid objects out so that every class an object is of
+starts where it does, so there is no view to form, and returned the object half to what this record
+decided: a runtime entry, handed the handle and the destination class's definition, walks the
+object's own definition and answers the handle or one naming no object.
 
 ## Why this decision matters
 

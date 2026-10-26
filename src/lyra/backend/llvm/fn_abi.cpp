@@ -822,6 +822,8 @@ auto CallArranger::ConstructionOf(
               case lir::RuntimeLibraryKind::kObjectDefinition:
               case lir::RuntimeLibraryKind::kScopeInfo:
               case lir::RuntimeLibraryKind::kScopeCallable:
+              case lir::RuntimeLibraryKind::kClassObjectInfo:
+              case lir::RuntimeLibraryKind::kInterfaceRow:
               case lir::RuntimeLibraryKind::kConstructionTable:
               case lir::RuntimeLibraryKind::kInstantiation:
               case lir::RuntimeLibraryKind::kGeneratePlaces:
@@ -1074,6 +1076,7 @@ auto CallArranger::FnAbiOf(const lir::CallInstr& call, lir::TypeId result_type)
           },
           [&](const lir::FunctionTarget&) { return as_stated(); },
           [&](const lir::DispatchTarget&) { return as_stated(); },
+          [&](const lir::InterfaceDispatchTarget&) { return as_stated(); },
           [&](const lir::IndirectTarget&) { return as_stated(); },
           [&](const lir::CreationTarget&) { return as_stated(); },
           [&](const lir::SymbolTarget&) { return as_stated(); },

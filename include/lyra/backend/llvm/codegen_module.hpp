@@ -46,10 +46,10 @@ class Value;
 }  // namespace llvm
 
 namespace lyra::lir {
-struct ClassDispatch;
+struct Class;
 struct CompilationUnit;
-struct ConformingBehavior;
 struct ConstantRecord;
+struct DispatchedBehavior;
 struct GlobalConstant;
 struct Member;
 struct StatedDispatchRef;
@@ -65,9 +65,8 @@ auto LinkageOf(lir::Linkage linkage) -> llvm::GlobalValue::LinkageTypes;
 // laid out after whatever the declaration extends: what each member holds and
 // its offset from the value's start, where the last of them ends -- which is
 // where a declaration extending this one places its first -- and what the
-// whole value occupies. A value of a class holds its table's address at its
-// start, where the library's root class, which every class extends and which
-// has a virtual destructor, places it (C++ ABI 2.4, the primary base).
+// whole value occupies. A value of a class holds its class's definition at its
+// start, where the library's root class, which every class extends, places it.
 //
 // A member holding a product, a fixed-size unpacked array, an integral value
 // or a machine integer inline holds its bytes, laid out by this backend as a
@@ -81,41 +80,6 @@ struct PlacedMembers {
   std::uint64_t end = 0;
   support::Layout layout{.size = 0, .align = 1};
 };
-
-// What a complete object of a class occupies, and where each of its interface
-// class parts sits, in the order those parts are placed. A class's own members
-// are laid out without them, since a class extending it places them again after
-// its own members.
-struct CompleteObjectLayout {
-  support::Layout layout{.size = 0, .align = 1};
-  std::vector<std::uint64_t> interface_parts;
-};
-
-// A dispatch on a behavior of a class's lineage: which of the bodies of the
-// table the value's start holds answers it.
-struct LineageSlot {
-  std::uint64_t slot = 0;
-};
-
-// A dispatch on a behavior an interface class introduced, made on that class's
-// part: the part holds its table's address, `slot` is which of that table's
-// bodies answers it, and a body is entered with the value's start, which is
-// the part moved by the offset its table holds back to it (C++ ABI 2.5.2
-// offset to top).
-struct InterfaceSlot {
-  std::uint64_t slot = 0;
-};
-
-using DispatchSlot = std::variant<LineageSlot, InterfaceSlot>;
-
-// How many entries back from the address a part holds its table at the table
-// holds the offset from that part to the value's table address (C++ ABI 2.5.2
-// offset to top), the first of the two entries every table opens with.
-inline constexpr std::uint64_t kOffsetToTopEntry = 2;
-
-// What a class's table holds where no class gives a virtual function a body:
-// the host's C++ runtime ends the program if it is ever entered.
-inline constexpr std::string_view kNoBody = "__cxa_pure_virtual";
 
 // The allocation function storage the program asks for comes from (C++ ABI
 // mangling of `operator new(std::size_t)`).
@@ -208,10 +172,6 @@ class CodeGenModule {
   // clear is once a compiler inlines it.
   void EmitClearAboveWidths(
       llvm::IRBuilderBase& builder, lir::TypeId type, llvm::Value* at);
-  // The host's dynamic cast (C++ ABI 2.9.7): handed a part of an object, the
-  // descriptions of that part's class and of the wanted one, and a hint of
-  // where the wanted part sits, it answers the wanted part or null.
-  auto DynamicCast() -> llvm::FunctionCallee;
   // The host's allocation function, handed a size and answering with storage
   // of it, and its sized deallocation function, handed the storage and its
   // size (C++ ABI mangling of `operator delete(void*, std::size_t)`).
@@ -271,23 +231,10 @@ class CodeGenModule {
       const PlacedMembers& after, std::string_view what)
       -> diag::Result<PlacedMembers>;
 
-  // Where a dispatch on `behavior` finds the body a value answers it with.
-  auto DispatchSlotOf(const lir::StatedDispatchRef& behavior)
-      -> diag::Result<DispatchSlot>;
-
-  // Whether `type` names an interface class (LRM 8.26), whose part of a value
-  // is reached by an offset the value's table holds rather than by one the
-  // lineage fixes.
-  [[nodiscard]] auto IsInterfaceClass(lir::TypeId type) const -> bool;
-
-  // How far back from the address a part of class `view_class` holds its table
-  // at lies the offset to the part of `interface`, in table entries.
-  auto InterfacePartOffset(lir::TypeId view_class, lir::TypeId interface)
-      -> std::uint64_t;
-
-  // The description of the class `type` names that a cast reads, emitted here
-  // for a class of this unit the first time one is asked for.
-  auto TypeInfoOf(lir::TypeId type) -> llvm::Constant*;
+  // Which of the bodies the table of a value's class holds answers `behavior`
+  // (LRM 8.20): those of the introducer's lineage come first, so it lies where
+  // it does in the introducer's own table, in every class extending that one.
+  auto DispatchSlotOf(const lir::StatedDispatchRef& behavior) -> std::uint64_t;
 
   // Building each member `placed` lays out, in the storage at `value`, and
   // ending each of them, last placed first as a C++ class ends its members.
@@ -306,23 +253,21 @@ class CodeGenModule {
       llvm::IRBuilderBase& builder, llvm::Value* value,
       const PlacedMembers& placed, std::size_t i) -> diag::Result<void>;
 
-  // The symbol of `cls`'s creation `which`: a class some unit declares names
-  // its creations over its definition, and the base object creation of a
-  // class of the library is that class's own constructor, which builds its
-  // part from nothing.
-  [[nodiscard]] auto CreationSymbol(lir::TypeId cls, lir::Creation which) const
-      -> std::string;
+  // The symbol of the allocating creation of `cls`, a class some unit
+  // declares.
+  [[nodiscard]] auto CreationSymbol(lir::TypeId cls) const -> std::string;
 
  private:
-  // Ends the object at `object` as C++ ends one through a pointer to a class
-  // whose destructor is virtual: by the deleting destructor its own table
-  // holds, which ends it as the class it was created as and gives its storage
-  // back.
+  // Ends the object at `object` through its class's definition, which ends it
+  // as the class it was created as and gives its storage back.
   void EndObject(llvm::IRBuilderBase& builder, llvm::Value* object);
-  // The symbol of the base object destructor of `cls`, named the same two
-  // ways.
-  [[nodiscard]] auto BaseObjectDestructorSymbol(lir::TypeId cls) const
-      -> std::string;
+  // Builds, and ends, the part of the value at `value` that the class
+  // `base` it extends places: by that class's own base object creation and
+  // destructor, or by the library where it is one of the library's classes.
+  void BeginBase(
+      llvm::IRBuilderBase& builder, lir::TypeId base, llvm::Value* value);
+  void EndBase(
+      llvm::IRBuilderBase& builder, lir::TypeId base, llvm::Value* value);
   // Whether a member of `type` held as `storage` is the bytes this backend lays
   // a value of the type out in -- a product's, a fixed-size unpacked array's,
   // an integral value's, a machine integer's -- rather than an object of the
@@ -394,72 +339,23 @@ class CodeGenModule {
   // or another: the symbol its definition is linked under; what it extends,
   // which is nothing for an interface class, of which no value is built, and
   // the part the library builds where it extends no declared class; its own
-  // members; what it adds to dispatch; and the interface classes it names.
+  // members; and the behaviors an object of it dispatches on.
   struct Declared {
     std::string definition;
     std::optional<lir::TypeId> base;
     std::span<const lir::Member> members;
-    const lir::ClassDispatch* dispatch = nullptr;
-    std::span<const lir::TypeId> implements;
+    std::span<const lir::DispatchedBehavior> dispatch;
   };
   [[nodiscard]] auto DeclarationOf(lir::TypeId type) const -> Declared;
   // How what this unit defines of the declaration `type` names is linked: as
   // the class or struct states, and as this unit's own where it is neither.
   [[nodiscard]] auto DeclaredLinkage(lir::TypeId type) const -> lir::Linkage;
-  // The interface classes a value of `declared` holds a part for, in the order
-  // the parts are placed. Those of the class it extends come first, so a part
-  // keeps its place in every class extending this one; then each interface
-  // class it names, followed by what that one extends. Each appears once
-  // however many ways it is arrived at.
-  [[nodiscard]] auto InterfacePartsOf(const Declared& declared) const
-      -> std::vector<lir::TypeId>;
-  // Appends `iface` and what it extends to `parts`, in that order, skipping
-  // what is already there.
-  void AppendInterfacePart(
-      lir::TypeId iface, std::vector<lir::TypeId>& parts) const;
-  // The same, for a class that is a step of a lineage: one that extends
-  // something.
-  [[nodiscard]] auto LineageStepOf(lir::TypeId type) const -> Declared;
-  // The class `declared` extends, where some unit declares it rather than the
-  // library.
-  [[nodiscard]] auto ExtendedClassOf(const Declared& declared) const
-      -> std::optional<lir::TypeId>;
-  // Which of a lineage's bodies answers `behavior`, counted from the first.
-  auto LineageIndexOf(const lir::StatedDispatchRef& behavior) -> std::uint64_t;
-  // How a complete object of `declared` is laid out.
-  auto CompleteObjectLayoutOf(const Declared& declared)
-      -> diag::Result<CompleteObjectLayout>;
-  // Where, in a class's table group, each table a value holds starts: the one
-  // for its lineage and one per interface class part, in the order the parts
-  // are placed.
-  struct TablePoints {
-    std::uint64_t lineage = 0;
-    std::vector<std::uint64_t> interfaces;
-  };
-  // The body answering each behavior a value of `type` carries, where the
-  // table holds it, named by its symbol; none where no class of the lineage
-  // gives the behavior a body (LRM 8.21). A class of the library carries its
-  // destructor, which every class extending it gives a body of its own.
-  auto TableOf(lir::TypeId type)
-      -> const std::vector<std::optional<std::string>>&;
-  // The same, for the declaration `step` describes, and for a class of the
-  // library, whose own bodies are its virtual functions' as the library
-  // defines them.
-  auto TableOfStep(const Declared& step)
-      -> std::vector<std::optional<std::string>>;
-  auto LibraryTableOf(support::RuntimeClass which)
-      -> std::vector<std::optional<std::string>>;
-  // Emits the table group a value of the declaration `type` names dispatches
-  // through: the table for its lineage and one for each interface class part,
-  // whose behaviors `conforming` states the answers to.
-  auto EmitTable(
-      lir::TypeId type, const Declared& declared,
-      std::span<const lir::ConformingBehavior> conforming)
-      -> diag::Result<void>;
-  // The address, `point` entries into the table group of the class whose
-  // definition is linked under `definition`, that a value holds as where one
-  // of its tables is.
-  auto TableAddressPoint(std::string_view definition, std::uint64_t point)
+  // Emits the tables an object of the class `cls` of this unit dispatches
+  // through: its own, the body of each behavior in the order the class states
+  // them, and one for each interface class it implements.
+  void EmitTables(const lir::Class& cls, const Declared& declared);
+  // The address of what `body`, a code address a class states, names.
+  auto EntryAddress(const std::optional<lir::TableBody>& body)
       -> llvm::Constant*;
   // How a value of `declared` is laid out.
   auto LayOut(const Declared& declared) -> diag::Result<PlacedMembers>;
@@ -468,22 +364,17 @@ class CodeGenModule {
   // Emits the two creations of `declared`, as the JVM's `new` gives an object
   // all its fields and its class before any constructor runs: the base object
   // creation builds what it extends and then its own members, and the
-  // complete object creation does that and then stores the table address of
-  // the lineage and of each interface class part, once.
-  auto EmitCreations(const Declared& declared, lir::Linkage linkage)
+  // allocating creation takes the storage, does that, and then gives the value
+  // its class, once.
+  auto EmitCreations(
+      lir::TypeId type, const Declared& declared, lir::Linkage linkage)
       -> diag::Result<void>;
-  // Emits the three destructors of `declared`, as clang emits them for a class
-  // whose destructor is implicit: the base object destructor ends its own
-  // members, last placed first, then what it extends; the complete object
-  // destructor is the base object one, since an interface class part holds
-  // nothing to end; the deleting destructor ends the value and gives its
-  // storage back.
+  // Emits the two ends of `declared`: the base object destructor ends its own
+  // members, last placed first, then what it extends; the deleting destructor
+  // ends the value and gives its storage back, which is what its class's
+  // definition holds as how its objects end.
   auto EmitDestructors(const Declared& declared, lir::Linkage linkage)
       -> diag::Result<void>;
-  // The address a value holds as where the table of the library class whose
-  // table is linked under `table` is: its first virtual function (C++ ABI
-  // 2.5.2).
-  auto LibraryTableAddressPoint(std::string_view table) -> llvm::Constant*;
   // The definition linked under `symbol`, or a declaration of it where nothing
   // has defined it yet.
   auto DefinitionGlobal(const std::string& symbol) -> llvm::GlobalVariable*;
@@ -509,11 +400,6 @@ class CodeGenModule {
   std::unordered_map<lir::IntegralConstantId, llvm::GlobalVariable*>
       integral_constants_;
   std::unordered_map<lir::TypeId, PlacedMembers> placed_members_;
-  std::unordered_map<lir::TypeId, std::vector<std::optional<std::string>>>
-      tables_;
-  // Where each table group this unit emitted starts each table, by the
-  // symbol its class's definition is linked under.
-  std::unordered_map<std::string, TablePoints> table_points_;
 };
 
 }  // namespace lyra::backend::llvm_backend

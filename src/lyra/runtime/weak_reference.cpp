@@ -25,13 +25,13 @@ auto UpgradeOf(const WeakObjectRef& weak, ReadReport* report)
   if (report != nullptr) {
     report->AddExpiry(static_cast<Referent*>(share.get())->Expiry(), share);
   }
-  return {value::ManagedRef(std::move(share)), weak.View()};
+  return value::ObjectRef(value::ManagedRef(std::move(share)));
 }
 
 }  // namespace
 
 auto Downgrade(const value::ObjectRef& strong) -> WeakObjectRef {
-  return {strong.Handle().Share(), strong.View<void>()};
+  return WeakObjectRef(strong.Handle().Share());
 }
 
 auto Upgrade(const WeakObjectRef& weak, ReadReport* report)

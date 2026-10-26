@@ -24,6 +24,7 @@
 #include "lyra/lir/record_id.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/support/class_name.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/value_operation.hpp"
 
@@ -38,41 +39,6 @@ struct Member {
   TypeId type;
 };
 
-// One virtual method a class overrides (LRM 8.20): which virtual method it is,
-// named by the class that first declared it and its position among that
-// class's virtual methods, and the symbol of the function this class supplies
-// for it.
-struct Override {
-  StatedDispatchRef behavior;
-  std::string body;
-};
-
-// What one class contributes to its virtual table (LRM 8.20). `introduces` is
-// the virtual methods this class is the first to declare, in declaration order,
-// each with the symbol of its function -- or nothing for a pure virtual method
-// (LRM 8.21), which has none. `overrides` is the virtual methods of a base
-// class this one replaces.
-//
-// A class states only its own contribution. A target builds the class's whole
-// table by taking the base class's table, putting each override in the slot it
-// replaces, and appending what this class introduces.
-struct ClassDispatch {
-  std::vector<std::optional<std::string>> introduces;
-  std::vector<Override> overrides;
-};
-
-// How a class satisfies one method of an interface class it implements (LRM
-// 8.26.2). `interface_behavior` is the interface class's method; `answered_by`
-// is the virtual method in the class's own virtual table that implements it.
-// A call through an interface class handle runs whatever function the object's
-// class has in that slot, so a class overriding the method further down
-// answers the interface with its own function too. Absent where an abstract
-// class leaves the method for a class extending it to implement.
-struct ConformingBehavior {
-  StatedDispatchRef interface_behavior;
-  std::optional<StatedDispatchRef> answered_by;
-};
-
 struct Constant;
 
 // A machine integer, at the width of whatever it is placed in.
@@ -82,6 +48,25 @@ struct ConstantInt {
 
 // An address naming nothing.
 struct ConstantNull {};
+
+// The address of what ends an object of the class `cls`, of this unit or
+// another: each member, then the storage the object was created in.
+struct ConstantDestructor {
+  TypeId cls;
+};
+
+// The address of the table an object of the class `cls`, of this unit, lays
+// the bodies of its behaviors out in, laid out by the target from what the
+// class states of its dispatch.
+struct ConstantDispatchTable {
+  TypeId cls;
+};
+
+// The same for the table it gives the interface class `iface`.
+struct ConstantInterfaceTable {
+  TypeId cls;
+  TypeId iface;
+};
 
 // The address of a NUL-terminated string.
 struct ConstantString {
@@ -124,7 +109,8 @@ struct ConstantArray {
 // it as data.
 struct Constant {
   std::variant<
-      ConstantInt, ConstantNull, ConstantString, ConstantFunction,
+      ConstantInt, ConstantNull, ConstantDestructor, ConstantDispatchTable,
+      ConstantInterfaceTable, ConstantString, ConstantFunction,
       ConstantExternalFunction, ConstantAddress, ConstantRecord, ConstantArray>
       value;
 };
@@ -139,9 +125,29 @@ struct GlobalConstant {
   Constant initializer;
 };
 
-// One compiled class: its path, the members it declares, what it adds to
-// dispatch, and the interface classes it names -- what a target needs to hold a
-// value of it and lay one out.
+// The body a slot of a table holds: a function of this unit, or one another
+// unit defines, reached by its symbol.
+using TableBody = std::variant<ConstantFunction, ConstantExternalFunction>;
+
+// One behavior an object of a class dispatches on (LRM 8.20) and the body
+// answering it, none where the class leaves it abstract (LRM 8.21) and for a
+// class another unit defines, whose table this unit lays out nothing of.
+struct DispatchedBehavior {
+  StatedDispatchRef behavior;
+  std::optional<TableBody> answered_by;
+};
+
+// What an object of a class answers the methods one interface class declares
+// itself with (LRM 8.26.5), in the order it declares them.
+struct InterfaceTable {
+  TypeId of;
+  std::vector<std::optional<TableBody>> answered_by;
+};
+
+// One compiled class: its identity, the members it declares and what an object
+// of it dispatches on -- what a target needs to hold a value of it, lay one out
+// and lay out its tables. Which body each behavior runs is resolved above, and
+// only where each lies in a table is the target's.
 //
 // A class states its own members and not its base's. What a value of it holds
 // is read from the lineage, which is what keeps one declaration's meaning
@@ -153,17 +159,15 @@ struct Class {
   // is declared here, as that unit published it: its members at the slots that
   // class gave them -- the ones another unit may name first, then its `local`
   // ones, which this unit never names but a class of it extending this one is
-  // placed after -- and what it adds to dispatch, each body named by the
-  // symbol its unit emits it under. This unit emits nothing of it.
+  // placed after. This unit emits nothing of it.
   std::optional<std::string> defining_unit;
-  // The path another unit reaches this class by, absent where nothing outside
-  // this unit names it -- a class the lowering built for its own use. Every
-  // symbol qualified by this class is composed from it where it is present and
-  // from the class's own position where it is not, so the two ranges never
-  // meet.
-  std::optional<support::DefPath> path;
-  // How everything this class links under is linked: its definition, its
-  // description and dispatch table, and its bodies.
+  // The path another unit reaches this class by, or its place among the
+  // classes the lowering built for its own use, which nothing outside this unit
+  // names. Every symbol qualified by this class is composed from it, and the
+  // two ranges never meet.
+  support::ClassName identity;
+  // How everything this class links under is linked: its definition, how its
+  // objects are created and ended, and its bodies.
   Linkage linkage = Linkage::kExternal;
   // The type of what this class's members are placed after -- the class it
   // extends, of this unit or another, or a class of the runtime library -- and
@@ -171,16 +175,14 @@ struct Class {
   // is built.
   std::optional<TypeId> base;
   std::vector<Member> members;
-  ClassDispatch dispatch;
-  // The interface classes this one names: what it implements, or for an
-  // interface class what it extends (LRM 8.26.2) -- the bases its description
-  // lists beside the class it extends. A value of the class is also a value of
-  // what those extend and of what its base is, and holds a part for each; which
-  // parts and in what order is the target's to place.
-  std::vector<TypeId> implements;
-  // What answers each behavior of every interface class a value of this class
-  // is also a value of, for a class that is not an interface class.
-  std::vector<ConformingBehavior> conforming;
+  // Every behavior an object of the class dispatches on: those of the class it
+  // extends first, in that class's order, then those it introduces, in the
+  // order it declares them.
+  std::vector<DispatchedBehavior> dispatch;
+  // Each interface class an object of the class is also an object of, once
+  // however many ways it is reached (LRM 8.26.6.3). Empty for a class another
+  // unit defines.
+  std::vector<InterfaceTable> interface_tables;
 };
 
 // One compiled closure: the captures it holds and the one body that reads them.
@@ -284,9 +286,10 @@ struct CompilationUnit {
   std::vector<TypeOperation> type_operations;
   std::vector<StaticStorage> static_storage;
   // The read-only data the unit defines. What the runtime library reads of each
-  // class -- its record of the class, under external linkage and the class's
-  // definition symbol, and the tables that record points at, under internal
-  // linkage -- is here, a class holding none of it.
+  // class -- its record of the class, under the class's linkage and definition
+  // symbol, and the constants that record points at, under internal linkage --
+  // is here, except the tables of the bodies its objects dispatch through,
+  // which the class states and a target lays out.
   std::vector<GlobalConstant> constants;
   // Each enumeration member table the unit holds, which an operand names.
   base::Translation<EnumTableId, EnumTableDecl> enum_tables;

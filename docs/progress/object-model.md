@@ -229,10 +229,9 @@ each stage establishes, not how.
       every position the LRM allows, through a direct call and through a virtual override alike. A
       class property is legal as a ref actual and as an output one, whether a handle reaches its
       object or it is a property of the object a method runs on, so one object may be handed its own
-      property or another's to read or to write. One satisfier is still rejected: an interface class
-      contract that a class meets by inheriting a base implementation rather than defining one,
-      where the forwarding this needs would have to hand its own completion whatever the forwarded
-      call's carried back (LRM 8.26.2).
+      property or another's to read or to write. A call through an interface class handle carries
+      them the same way, including where the class meets the interface class's method by inheriting
+      a base implementation rather than defining one (LRM 8.26.2).
 
 - [x] Class task methods (LRM 8.6, 13.3): a `task` declared in a class body, in its instance,
       static, virtual and pure-virtual prototype forms. Enabling one suspends the enabler until it
@@ -272,15 +271,15 @@ The managed-object lifetime sub-step above states the terminal semantic target (
 cyclic reclamation). Current backend coverage:
 
 Both backends reclaim by shared ownership, and both leak an unreachable cycle. A handle has one
-shape on both, the object's identity, which shares its ownership, plus the view a static type
-reaches it through -- a class view is the object's start and an interface view is that interface's
-part. Acyclic garbage is reclaimed as the last handle drops, and a handle a call has read -- the one
-reaching the object it is entered on, or one handed to it -- holds its object until the call takes
-it, so an argument evaluated after it that drops every other handle does not reclaim the object
-first. One feature makes a cycle of every object using it: a class embedding a covergroup and that
-covergroup refer to each other (LRM 19.4), and a program may keep the covergroup past its last
-handle to the object, so neither reference can be weakened, and every such object stays until the
-run ends.
+shape on both, the object's address, which is its identity, and a share of its ownership; every
+class and interface class an object is of starts where the object does, so the address serves
+whatever class a static type reaches it as. Acyclic garbage is reclaimed as the last handle drops,
+and a handle a call has read -- the one reaching the object it is entered on, or one handed to it --
+holds its object until the call takes it, so an argument evaluated after it that drops every other
+handle does not reclaim the object first. One feature makes a cycle of every object using it: a
+class embedding a covergroup and that covergroup refer to each other (LRM 19.4), and a program may
+keep the covergroup past its last handle to the object, so neither reference can be weakened, and
+every such object stays until the run ends.
 
 Nothing above is visible to any IR: no rule in HIR, MIR, LIR, or lowering states a reference count,
 a shared owner, or a control block. The one exception is the operation recovering a handle from the

@@ -11,5 +11,7 @@
 class_a_referrer_never_named: [made UsesLogger]
 comment_inside_a_module: [made Commented]
 declaration_a_nested_module_reads: [made Top]
+interface_named_by_a_class_another_unit_holds: [made Top]
 local_variable_renamed: [made Renames]
+property_added_to_a_class_another_unit_creates: [made Top]
 text_moved_down: [made Connects, made Drives, made Reports, made Runs]

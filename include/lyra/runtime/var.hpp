@@ -1205,7 +1205,7 @@ template <auto Property>
 auto ReferProperty(const value::ObjectRef& handle)
     -> VariableRef<typename MemberOf<decltype(Property)>::Value> {
   return ReferProperty<Property>(
-      handle.View<typename MemberOf<decltype(Property)>::Class>());
+      handle.Get<typename MemberOf<decltype(Property)>::Class>());
 }
 
 // `reference`, which names storage an object holds, bound by a call with a

@@ -24,7 +24,6 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/class_definition.hpp"
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
 #include "lyra/lowering/hir_to_mir/covergroup_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
@@ -170,15 +169,14 @@ class HookBody {
             Unit().types, block.ReadLocal(reference, reference_type), type)))};
   }
 
-  // The finished body, overriding `function`.
-  [[nodiscard]] auto Finish(support::LibraryVirtual function)
-      -> mir::CallableDecl {
+  // The finished body, which the library calls on an object of the class.
+  [[nodiscard]] auto Finish() -> mir::CallableDecl {
     code_.params = std::move(bound_.params);
     code_.result_type = Unit().builtins.void_type;
     return mir::CallableDecl{
         .code = std::move(code_),
         .foreign = std::nullopt,
-        .virtual_dispatch = mir::OverridesLibraryVirtual{.function = function},
+        .virtual_dispatch = std::nullopt,
         .type_parameters = {},
         .defining_unit = std::nullopt};
   }
@@ -197,24 +195,24 @@ class HookBody {
   std::optional<Handed> problem_;
 };
 
-// The body the class `base` gives `function`, one of the functions every class
-// overrides for `randomize()`, which a class extending it calls directly to do
-// what its base does first.
+// The body the class `base` answers `callback` with, one of the callbacks
+// every class answers for `randomize()`, which a class extending it calls
+// directly to do what its base does first.
 auto BaseHookTarget(
     UnitLowerer& unit_lowerer, hir::ClassId base,
-    support::LibraryVirtual function) -> mir::DirectTarget {
+    support::LibraryCallback callback) -> mir::DirectTarget {
   if (unit_lowerer.Hir().classes.IsOwn(base)) {
     return mir::CallableTarget{
         .owner = unit_lowerer.ClassIdentity(base),
-        .slot = unit_lowerer.RandomizationHooksOf(base)->BodyOf(function)};
+        .slot = unit_lowerer.RandomizationHooksOf(base)->BodyOf(callback)};
   }
   const mir::ClassId declared = unit_lowerer.ClassIdentity(base);
   const std::optional<mir::CallableId> body =
-      unit_lowerer.Unit().GetClass(declared).LibraryOverride(function);
+      unit_lowerer.Unit().GetClass(declared).CallbackBody(callback);
   if (!body.has_value()) {
     throw InternalError(
-        "BaseHookTarget: a class of another unit gives no body to a function "
-        "every class overrides for randomize() -- please report this as a bug");
+        "BaseHookTarget: a class of another unit gives no body to a callback "
+        "every class answers for randomize() -- please report this as a bug");
   }
   return mir::CallableTarget{.owner = declared, .slot = *body};
 }
@@ -364,7 +362,7 @@ auto ClassDeclLowerer::DeclareShape(
   }
 
   ClassShape shape{
-      .path = unit_lowerer.Hir().classes.PathOf(hir_class_id_),
+      .identity = unit_lowerer.Hir().classes.PathOf(hir_class_id_),
       .base = base_ref,
       .implements = std::move(implements),
       .self_pointer_type = self_pointer_type,
@@ -378,6 +376,7 @@ auto ClassDeclLowerer::DeclareShape(
       .static_properties = {},
       .named_static_properties = {},
       .callable_signatures = {},
+      .library_callbacks = {},
       .static_property_translation = {},
       .contained = {},
       .is_final = false,
@@ -484,26 +483,17 @@ auto ClassDeclLowerer::DeclareShape(
   for (const hir::MethodId id : hir_class.methods.Ids()) {
     method_statics.push_back(bind_statics(hir_class.methods.Get(id)));
   }
-  // A forward overrides the behavior of the implementation it enters.
-  for (const hir::InterfaceForward& forward : hir_class.interface_forwards) {
-    signatures.push_back(
-        CallableSignature{
-            .virtual_dispatch = mir::OverridesVirtualSlot{
-                .overridden = unit_lowerer.VirtualSlotOf(forward.overrides)}});
-    forward_statics_.push_back(bind_statics(forward.method));
-  }
-  // What `randomize()` asks of the class (LRM 18.6) overrides what the part of
-  // every object declares, each at the identity the class took for it.
+  // What `randomize()` asks of the class (LRM 18.6) is answered by bodies the
+  // library calls, each at the identity the class took for it.
   std::size_t callable_count = signatures.size();
   if (const std::optional<RandomizationHooks>& hooks =
           unit_lowerer.RandomizationHooksOf(hir_class_id_)) {
-    const auto overrides = hooks->Overrides();
-    callable_count += overrides.size();
+    const auto callbacks = hooks->Callbacks();
+    callable_count += callbacks.size();
     signatures.resize(callable_count);
-    for (const auto& [id, function] : overrides) {
-      signatures[id.value] = CallableSignature{
-          .virtual_dispatch =
-              mir::OverridesLibraryVirtual{.function = function}};
+    for (const auto& [id, callback] : callbacks) {
+      shape.library_callbacks.push_back(
+          mir::LibraryCallbackBody{.callback = callback, .body = id});
     }
   }
   shape.callable_signatures = {callable_count, std::move(signatures)};
@@ -568,16 +558,16 @@ void ClassDeclLowerer::DefineRandomizationHooks(
   // A hook is handed the problem as each constraint block it calls is.
   const std::optional<mir::TypeId> handed = ConstraintProblemParamTypeOf(
       unit_lowerer.Unit(), hir::SubroutineKind::kConstraintBlock);
-  const auto finish = [&](HookBody& body, support::LibraryVirtual function) {
-    mir_class.callables.Define(hooks.BodyOf(function), body.Finish(function));
+  const auto finish = [&](HookBody& body, support::LibraryCallback callback) {
+    mir_class.callables.Define(hooks.BodyOf(callback), body.Finish());
   };
-  const auto begin = [&](HookBody& body, support::LibraryVirtual function) {
+  const auto begin = [&](HookBody& body, support::LibraryCallback callback) {
     if (!declared.base.has_value()) {
       return;
     }
     body.Run(
         mir::Direct{
-            .target = BaseHookTarget(unit_lowerer, *declared.base, function),
+            .target = BaseHookTarget(unit_lowerer, *declared.base, callback),
             .receiver =
                 BuildObjectDeref(body.Unit(), body.Block(), body.Self())},
         {body.ProblemReference()});
@@ -656,7 +646,7 @@ void ClassDeclLowerer::DefineRandomizationHooks(
 
   {
     HookBody body(unit_lowerer, shape, make_frame, handed);
-    begin(body, support::LibraryVirtual::kClassRandVariables);
+    begin(body, support::LibraryCallback::kClassRandVariables);
     each_random_variable(
         body, [&](const AccessPath& path, hir::TypeId hir_type,
                   mir::TypeId type, hir::RandomQualifier random) {
@@ -677,12 +667,12 @@ void ClassDeclLowerer::DefineRandomizationHooks(
                                 : support::BuiltinFn::kConstraintRand},
               {body.Problem(), named.reference, named.value});
         });
-    finish(body, support::LibraryVirtual::kClassRandVariables);
+    finish(body, support::LibraryCallback::kClassRandVariables);
   }
 
   {
     HookBody body(unit_lowerer, shape, make_frame, handed);
-    begin(body, support::LibraryVirtual::kClassConstrain);
+    begin(body, support::LibraryCallback::kClassConstrain);
     for (const hir::MethodId id : hir_class.methods.Ids()) {
       const hir::SubroutineDecl& method = hir_class.methods.Get(id);
       const mir::CallableId callable{id.value};
@@ -749,12 +739,12 @@ void ClassDeclLowerer::DefineRandomizationHooks(
               .then_scope = block.child_scopes.Add(std::move(then_block)),
               .else_scope = std::nullopt});
     }
-    finish(body, support::LibraryVirtual::kClassConstrain);
+    finish(body, support::LibraryCallback::kClassConstrain);
   }
 
   {
     HookBody body(unit_lowerer, shape, make_frame, handed);
-    begin(body, support::LibraryVirtual::kClassRandObjects);
+    begin(body, support::LibraryCallback::kClassRandObjects);
     each_random_variable(
         body, [&](const AccessPath& path, hir::TypeId hir_type,
                   mir::TypeId type, hir::RandomQualifier) {
@@ -766,15 +756,14 @@ void ClassDeclLowerer::DefineRandomizationHooks(
               mir::Direct{.target = support::BuiltinFn::kRandomizeNested},
               {body.Problem(), named.reference, named.value});
         });
-    finish(body, support::LibraryVirtual::kClassRandObjects);
+    finish(body, support::LibraryCallback::kClassRandObjects);
   }
 
   // The `pre_randomize` or `post_randomize` the class declares, called on the
   // object as a call written in the class names it: directly, since neither is
   // virtual, and handing on no report, since no evaluation makes the call.
   const auto calls_own =
-      [&](const std::optional<RandomizationHooks::CallsDeclared>& hook,
-          support::LibraryVirtual function) {
+      [&](const std::optional<RandomizationHooks::CallsDeclared>& hook) {
         if (!hook.has_value()) {
           return;
         }
@@ -796,10 +785,10 @@ void ClassDeclLowerer::DefineRandomizationHooks(
             std::move(arguments),
             SubroutineCallTypeOf(unit_lowerer, hir_class.methods.Get(method)));
         body.Block().AppendStmt(mir::ExprStmt{.expr = called});
-        mir_class.callables.Define(hook->body, body.Finish(function));
+        mir_class.callables.Define(hook->body, body.Finish());
       };
-  calls_own(hooks.pre_randomize, support::LibraryVirtual::kClassPreRandomize);
-  calls_own(hooks.post_randomize, support::LibraryVirtual::kClassPostRandomize);
+  calls_own(hooks.pre_randomize);
+  calls_own(hooks.post_randomize);
 }
 
 auto ClassDeclLowerer::PopulateBodies(
@@ -958,10 +947,9 @@ auto ClassDeclLowerer::PopulateBodies(
 
   // Each method (LRM 8.6) is lowered as a callable this class owns, at its
   // position, where a call site that resolved before this body lowered already
-  // reaches it; its body resolves `self` to the managed handle. A method the
-  // source declared is what a name reaches, here and from another unit, so the
-  // class records the name against the body. A forward is named as the
-  // behavior it answers is, which is what overriding it takes.
+  // reaches it; its body resolves `self` to the managed handle. A method is
+  // what a name reaches, here and from another unit, so the class records the
+  // name against the body.
   //
   // A pure virtual prototype (LRM 8.21) has no source-defined body to walk;
   // its MIR record still carries the signature -- receiver, named parameters,
@@ -1012,16 +1000,6 @@ auto ClassDeclLowerer::PopulateBodies(
             hir_class.methods.Get(method_id),
             CallableFormOf(declared.methods.Get(method_id).dispatch),
             mir::CallableId{method_id.value}, method_statics_.Get(method_id));
-        !lowered) {
-      return std::unexpected(std::move(lowered.error()));
-    }
-  }
-  const std::span<const mir::CallableId> forwards =
-      unit_lowerer.InterfaceForwardsOf(hir_class_id_);
-  for (std::size_t i = 0; i < forwards.size(); ++i) {
-    if (auto lowered = lower_method(
-            hir_class.interface_forwards[i].method,
-            CallableForm::kInstanceMember, forwards[i], forward_statics_[i]);
         !lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
@@ -1077,8 +1055,7 @@ auto ClassDeclLowerer::PopulateBodies(
   }
 
   std::vector<BodyStatics> body_statics;
-  body_statics.reserve(
-      hir_class.methods.size() + hir_class.interface_forwards.size() + 1);
+  body_statics.reserve(hir_class.methods.size() + 1);
   for (const hir::MethodId method_id : hir_class.methods.Ids()) {
     const auto& method = hir_class.methods.Get(method_id);
     body_statics.push_back(
@@ -1086,14 +1063,6 @@ auto ClassDeclLowerer::PopulateBodies(
             .body = &method.body,
             .name = method.name,
             .statics = method_statics_.Get(method_id)});
-  }
-  for (std::size_t i = 0; i < hir_class.interface_forwards.size(); ++i) {
-    const hir::SubroutineDecl& method = hir_class.interface_forwards[i].method;
-    body_statics.push_back(
-        BodyStatics{
-            .body = &method.body,
-            .name = method.name,
-            .statics = forward_statics_[i]});
   }
   body_statics.push_back(
       BodyStatics{
@@ -1115,7 +1084,6 @@ auto ClassDeclLowerer::PopulateBodies(
     return std::unexpected(std::move(r.error()));
   }
 
-  StateNamedClassDefinition(unit_lowerer.Unit(), mir_class);
   unit_lowerer.Unit().DefineClass(class_id_, std::move(mir_class));
   return {};
 }

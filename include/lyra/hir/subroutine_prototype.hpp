@@ -11,8 +11,7 @@ namespace lyra::hir {
 // name, the interface a call passes arguments and awaits completion through,
 // and the result its completion yields. A method of a class (LRM 8.6), a
 // subroutine an instance offers (LRM 25.7) and one a namespace declares (LRM
-// 26.3) each have one, and a body overriding a method or forwarding to it takes
-// the same.
+// 26.3) each have one, and a body overriding a method takes the same.
 struct SubroutinePrototype {
   std::string name;
   CalleeInterface interface;

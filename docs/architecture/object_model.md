@@ -46,7 +46,8 @@ reference -- destroys a distinction a consumer has to read.
 - The construction model: creating an object whole, then entering its constructor on it, with the
   base's construction a step of the constructor, as concepts distinct from an ordinary callable.
 - The dispatch model: the override relation between a method and the base method it overrides, the
-  logical dispatch slot, and the virtual and interface call forms.
+  logical dispatch slot, and the dispatched call, whether the slot a class or an interface class
+  introduced.
 - The receiver rule: an instance method carries a receiver; a type-associated (static) function does
   not.
 - Type-associated storage and type-associated functions (static properties and static methods).

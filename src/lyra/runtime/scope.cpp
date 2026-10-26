@@ -16,15 +16,12 @@ Scope::Scope() = default;
 
 Scope::~Scope() = default;
 
-void Scope::SetPlace(
-    Scope* parent, HierarchySegment segment,
-    const ObjectDefinition* definition) {
+void Scope::SetPlace(Scope* parent, HierarchySegment segment) {
   parent_ = parent;
   segment_ = std::move(segment);
-  definition_ = RequireScopeClass(definition);
 }
 
-auto Scope::Attach(std::unique_ptr<Scope> child) -> Scope* {
+auto Scope::Attach(OwnedObject<Scope> child) -> Scope* {
   Scope* parent = child->parent_;
   if (parent == nullptr) {
     throw InternalError(
@@ -85,48 +82,32 @@ auto Scope::HierarchicalPathOf(const lyra::value::String& below) const
   return lyra::value::String(std::move(out));
 }
 
+void Scope::Enter(ScopePhase ScopeInfo::* phase) {
+  (Info().*phase)(this);
+}
+
 void Scope::Resolve() {
-  sv_resolve();
+  Enter(&ScopeInfo::resolve);
 }
 
 void Scope::Initialize() {
-  sv_initialize();
+  Enter(&ScopeInfo::initialize);
 }
 
 void Scope::CreateProcesses() {
-  sv_create_processes();
+  Enter(&ScopeInfo::create_processes);
 }
 
 void Scope::Describe() {
-  sv_describe();
-}
-
-void Scope::sv_resolve() {
-}
-
-void Scope::sv_initialize() {
-}
-
-void Scope::sv_create_processes() {
-}
-
-void Scope::sv_describe() {
-}
-
-auto Scope::IsOfClass(const ObjectDefinition* cls) const -> bool {
-  for (const ObjectDefinition* at = Definition(); at != nullptr;
-       at = at->base) {
-    if (at == cls) return true;
-  }
-  return false;
+  Enter(&ScopeInfo::describe);
 }
 
 auto Scope::EnclosingScope(const ObjectDefinition* cls) -> Scope* {
   for (Scope* level = parent_; level != nullptr; level = level->parent_) {
-    if (level->IsOfClass(cls)) return level;
+    if (IsOfClass(level->definition, cls)) return level;
     if (level->parent_ != nullptr) continue;
     for (const auto& top : level->attached_children_) {
-      if (top->IsOfClass(cls)) return top.get();
+      if (IsOfClass(top->definition, cls)) return top.get();
     }
   }
   throw InternalError(

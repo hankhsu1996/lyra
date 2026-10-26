@@ -53,7 +53,7 @@ void CompleteWith(
 // The entry calling `callable` of class `id` on the object, and no other body
 // in its place: handed the object as `object`, it views it as the class and
 // passes on what it takes after the object.
-auto ForwardingBody(
+auto EntryBody(
     const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& cls,
     mir::CallableId callable, mir::TypeId object) -> mir::CallableCode {
   const mir::CallableCode& target = cls.callables.Get(callable).code;
@@ -101,7 +101,7 @@ auto EntryOf(
   if (!cls.callables.Get(callable).code.TakesReceiver()) {
     return callable;
   }
-  return AddBody(cls, ForwardingBody(unit, id, cls, callable, object));
+  return AddBody(cls, EntryBody(unit, id, cls, callable, object));
 }
 
 }  // namespace lyra::lowering::hir_to_mir

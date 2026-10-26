@@ -33,6 +33,8 @@ auto CategoryTag(SymbolCategory category) -> char {
       return 'n';
     case SymbolCategory::kClassCallable:
       return 'm';
+    case SymbolCategory::kMethodEntry:
+      return 'q';
     case SymbolCategory::kRecordMethod:
       return 'r';
     case SymbolCategory::kNamespaceCallable:
@@ -55,7 +57,7 @@ auto CategoryTag(SymbolCategory category) -> char {
       return 'u';
     case SymbolCategory::kBaseObjectCreation:
       return 'g';
-    case SymbolCategory::kCompleteObjectCreation:
+    case SymbolCategory::kAllocatingCreation:
       return 'h';
     case SymbolCategory::kBaseObjectDestructor:
       return 'x';
@@ -67,8 +69,6 @@ auto CategoryTag(SymbolCategory category) -> char {
       return 'c';
     case SymbolCategory::kDispatchTable:
       return 'w';
-    case SymbolCategory::kTypeInfo:
-      return 'y';
   }
   throw InternalError("SymbolName: unknown symbol category");
 }
@@ -83,9 +83,9 @@ auto SymbolPart::Ordinal(std::uint32_t value) -> SymbolPart {
   return SymbolPart{std::format("$i{};", value)};
 }
 
-auto SymbolPart::LibraryVirtual(support::LibraryVirtual function)
+auto SymbolPart::LibraryCallback(support::LibraryCallback function)
     -> SymbolPart {
-  const std::string_view name = support::LibraryVirtualName(function);
+  const std::string_view name = support::LibraryCallbackName(function);
   return SymbolPart{std::format("$l{}:{}", name.size(), name)};
 }
 
@@ -144,10 +144,14 @@ auto SymbolPartOf(const support::DefPath& path) -> SymbolPart {
   return steps;
 }
 
-auto SymbolPartOf(
-    const std::optional<support::DefPath>& path, std::uint32_t ordinal)
-    -> SymbolPart {
-  return path.has_value() ? SymbolPartOf(*path) : SymbolPart::Ordinal(ordinal);
+auto SymbolPartOf(const support::ClassName& name) -> SymbolPart {
+  return std::visit(
+      Overloaded{
+          [](const support::DefPath& path) { return SymbolPartOf(path); },
+          [](const support::UnnamedClass& unnamed) {
+            return SymbolPart::Ordinal(unnamed.disambiguator);
+          }},
+      name);
 }
 
 auto SymbolName(
@@ -173,6 +177,14 @@ auto ClassCallableSymbol(
   return SymbolName(
       SymbolCategory::kClassCallable,
       {SymbolPart::Name(unit_name), std::move(cls), std::move(callable)});
+}
+
+auto MethodEntrySymbol(
+    std::string_view unit_name, SymbolPart cls, SymbolPart method)
+    -> std::string {
+  return SymbolName(
+      SymbolCategory::kMethodEntry,
+      {SymbolPart::Name(unit_name), std::move(cls), std::move(method)});
 }
 
 auto RecordMethodSymbol(
@@ -281,18 +293,25 @@ auto DefinitionSymbol(const CompilationUnit& unit, TypeId type)
       *declaration);
 }
 
-auto QualifierOf(
-    const CompilationUnit& unit, const std::optional<support::DefPath>& path)
+auto QualifierOf(const CompilationUnit& unit, const support::ClassName& name)
     -> std::string_view {
-  return path.has_value() ? unit.name : unit.body_name;
+  return std::visit(
+      Overloaded{
+          [&](const support::DefPath&) -> std::string_view {
+            return unit.name;
+          },
+          [&](const support::UnnamedClass&) -> std::string_view {
+            return unit.body_name;
+          }},
+      name);
 }
 
 auto DefinitionSymbol(const CompilationUnit& unit, ClassId id) -> std::string {
   const Class& cls = unit.classes.Get(id);
   return ClassDefinitionSymbol(
       cls.defining_unit.has_value() ? std::string_view{*cls.defining_unit}
-                                    : QualifierOf(unit, cls.path),
-      SymbolPartOf(cls.path, id.value));
+                                    : QualifierOf(unit, cls.identity),
+      SymbolPartOf(cls.identity));
 }
 
 // A closure has no declaration of the source to take a name from, so what
@@ -301,8 +320,7 @@ auto DefinitionSymbol(const CompilationUnit& unit, ClosureId id)
     -> std::string {
   return SymbolName(
       SymbolCategory::kClosureDefinition,
-      {SymbolPart::Name(QualifierOf(unit, std::nullopt)),
-       SymbolPart::Ordinal(id.value)});
+      {SymbolPart::Name(unit.body_name), SymbolPart::Ordinal(id.value)});
 }
 
 auto CreationSymbol(std::string_view definition, Creation which)
@@ -311,8 +329,8 @@ auto CreationSymbol(std::string_view definition, Creation which)
     switch (which) {
       case Creation::kBaseObject:
         return SymbolCategory::kBaseObjectCreation;
-      case Creation::kCompleteObject:
-        return SymbolCategory::kCompleteObjectCreation;
+      case Creation::kAllocating:
+        return SymbolCategory::kAllocatingCreation;
     }
     throw InternalError("CreationSymbol: unknown creation");
   }();
@@ -347,8 +365,12 @@ auto DispatchTableSymbol(std::string_view definition) -> std::string {
       SymbolCategory::kDispatchTable, {SymbolPart::Name(definition)});
 }
 
-auto TypeInfoSymbol(std::string_view definition) -> std::string {
-  return SymbolName(SymbolCategory::kTypeInfo, {SymbolPart::Name(definition)});
+auto InterfaceTableSymbol(
+    std::string_view definition, std::string_view iface_definition)
+    -> std::string {
+  return SymbolName(
+      SymbolCategory::kDispatchTable,
+      {SymbolPart::Name(definition), SymbolPart::Name(iface_definition)});
 }
 
 }  // namespace lyra::lir

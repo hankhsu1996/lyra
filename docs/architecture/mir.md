@@ -478,12 +478,13 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
   this layer's to state, and the verification holds every cast to them. They are the pairs every
   target writes in its own conversion syntax, so a backend translates each and refuses none. A cast
   does nothing but read the value as the other type. A conversion that reshapes a _value_ (integral
-  resize, real <-> integral, packed <-> string) is a library call, and so is one only a layout
-  answers -- a handle seen as another class's, the checked one `$cast` asks for included, and a
-  closure made one of no known type. One that allocates or hands owned storage over is a node of its
-  own, as a box handed on is a move. A backend whose spelling of a cast does any of those has
-  performed an operation MIR did not state. (A node states a fact once, and a backend has nothing to
-  decide about it.)
+  resize, real <-> integral, packed <-> string) is a library call, and so is one only the value
+  answers -- whether a handle's object is of a class, which `$cast` asks, and a closure made one of
+  no known type. A class handle read as one of another class is a cast: it is the same object
+  whatever class it is seen as. One that allocates or hands owned storage over is a node of its own,
+  as a box handed on is a move. A backend whose spelling of a cast does any of those has performed
+  an operation MIR did not state. (A node states a fact once, and a backend has nothing to decide
+  about it.)
 - A backend that recovers a semantic fact MIR does not state by inferring it from a node's body
   contents or any side signal, instead of reading it from an explicit node or reference. A node's
   own structural context is not a side signal: the type of an operand it was handed, and the node

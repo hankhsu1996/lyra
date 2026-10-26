@@ -234,17 +234,15 @@ auto ToQueue(
 }
 
 // LRM 8.14: an object of a subclass is also an object of its base class, so a
-// handle to one is a value of a variable declared with the base class. The
-// object is unchanged and only the handle's declared class differs.
+// handle to one is a value of a variable declared with the base class, and of
+// one declared with an interface class it implements (LRM 8.26.5). The object
+// is unchanged and only the handle's declared class differs.
 auto ToClassHandle(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand,
     mir::TypeId destination) -> mir::Expr {
   if (unit.types.Get(block.exprs.Get(operand).type).Is<mir::ManagedRefType>()) {
-    return mir::MakeCallExpr(
-        mir::Direct{
-            .target = support::BuiltinFn::kDerivedToBase,
-            .type_arguments = {destination}},
-        {operand}, destination);
+    return mir::Expr{
+        .data = mir::CastExpr{.operand = operand}, .type = destination};
   }
   RefuseConversion("a class handle");
 }

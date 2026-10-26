@@ -1,7 +1,6 @@
 #pragma once
 
 #include <functional>
-#include <memory>
 #include <string_view>
 #include <utility>
 
@@ -18,8 +17,7 @@ namespace lyra::runtime {
 // child it builds) through the thread-local `current_runtime()` the owning
 // Runtime has already published on this thread, so nothing about the runtime
 // crosses here.
-using RootFactory =
-    std::function<std::unique_ptr<Scope>(Scope*, HierarchySegment)>;
+using RootFactory = std::function<OwnedObject<Scope>(Scope*, HierarchySegment)>;
 
 // The host program's design-simulation entry. Collects the LRM 21.6
 // command-line plusarg tokens off `argv`, constructs the Runtime seeded with
@@ -49,11 +47,11 @@ auto RunDesignRoot(
 template <typename T>
 auto RunDesignRoot(
     int argc, char** argv, std::string_view root_name,
-    std::unique_ptr<T> (*make)(Scope*, HierarchySegment)) -> int {
+    OwnedObject<T> (*make)(Scope*, HierarchySegment)) -> int {
   return RunDesignRoot(
       argc, argv, root_name,
       RootFactory([make](Scope* parent, HierarchySegment segment) {
-        return std::unique_ptr<Scope>(make(parent, std::move(segment)));
+        return OwnedObject<Scope>(make(parent, std::move(segment)));
       }));
 }
 

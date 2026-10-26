@@ -21,6 +21,7 @@
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/dispatch_table.hpp"
 #include "lyra/mir/enum_table_id.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
@@ -222,10 +223,18 @@ struct MintedAppliedName {
   std::string_view source;
 };
 
+// The name of the entry of a method, made from the method's own name:
+// `sv_entry_f` for the entry of a method `f`. A method is named alike in every
+// unit that names it, so a unit naming another unit's entry spells it as the
+// defining unit does.
+struct EntryName {
+  std::variant<SourceName, VerbatimName> method;
+};
+
 // Any of the above, for a declaration whose kind decides which.
 using CppName = std::variant<
     SourceName, MintedName, MintedWord, VerbatimName, MintedPathName,
-    MintedAppliedName>;
+    MintedAppliedName, EntryName>;
 
 void WriteOne(TargetText& out, SourceName name);
 void WriteOne(TargetText& out, const MintedName& name);
@@ -233,6 +242,7 @@ void WriteOne(TargetText& out, MintedWord name);
 void WriteOne(TargetText& out, VerbatimName name);
 void WriteOne(TargetText& out, MintedPathName name);
 void WriteOne(TargetText& out, const MintedAppliedName& name);
+void WriteOne(TargetText& out, const EntryName& name);
 void WriteOne(TargetText& out, const CppName& name);
 
 [[nodiscard]] inline auto ToCppName(std::string_view name) -> SourceName {
@@ -384,16 +394,49 @@ void WriteOne(TargetText& out, BodyScope scope);
   return MintedName{.what = what, .ordinal = ordinal, .source = name};
 }
 
-[[nodiscard]] inline auto CppVirtualSlotName(
-    const mir::CompilationUnit& unit, const mir::VirtualSlot& slot) -> CppName;
+// The name a method that takes part in dispatch, or answers what the runtime
+// library asks of an object, is spelled by in every unit naming it: as the
+// source wrote it or as the library names the function it answers.
+[[nodiscard]] inline auto CppDispatchNameOf(
+    const mir::CompilationUnit& unit, const mir::Class& cls,
+    mir::CallableId method) -> std::variant<SourceName, VerbatimName> {
+  return std::visit(
+      Overloaded{
+          [](std::string_view name) -> std::variant<SourceName, VerbatimName> {
+            return ToCppName(name);
+          },
+          [](support::LibraryCallback callback)
+              -> std::variant<SourceName, VerbatimName> {
+            return VerbatimName{.text = support::LibraryCallbackName(callback)};
+          }},
+      mir::DispatchNameOf(unit, cls, method));
+}
 
-// The name of a function a class owns -- a method, a process, or a lifecycle
-// body. A named one keeps its name; an unnamed one is `sv_body_<n>`. The
-// declaration, the definition and every call take it from here.
-//
-// An override takes the name of the method it overrides, from the class that
-// declared it: C++ matches an override to its virtual by name, so under any
-// other name it would declare a second virtual instead.
+// The member of the table of the class `cls`, the introducer of the behavior
+// `method` introduces, that holds the behavior's body: named as the behavior.
+[[nodiscard]] inline auto CppTableMemberName(
+    const mir::CompilationUnit& unit, const mir::Class& cls,
+    mir::CallableId method) -> CppName {
+  return std::visit(
+      [](const auto& name) -> CppName { return name; },
+      CppDispatchNameOf(unit, cls, method));
+}
+
+// The entry of `method` of `cls`: the body entering the method on an object
+// handed over as the root every object is. The class defining the method and
+// every unit naming the entry spell it from here.
+[[nodiscard]] inline auto CppDispatchEntryName(
+    const mir::CompilationUnit& unit, const mir::Class& cls,
+    mir::CallableId method) -> EntryName {
+  return EntryName{.method = CppDispatchNameOf(unit, cls, method)};
+}
+
+// The name of a function a class owns -- a method, a process, a lifecycle
+// body, or the entry of a method. An entry is named as the method it enters, a
+// body answering a library callback as the callback, a named body keeps its
+// name, and an unnamed one is `sv_body_<n>`, as the execution backend names
+// each. The declaration,
+// the definition and every call take it from here.
 //
 // It takes a class rather than a unit's namespace, because a function of a
 // namespace can also be reached by a foreign linkage name or as a fixed entry,
@@ -401,39 +444,42 @@ void WriteOne(TargetText& out, BodyScope scope);
 [[nodiscard]] inline auto CppClassCallableName(
     const mir::CompilationUnit& unit, const mir::Class& cls,
     mir::CallableId body) -> CppName {
-  const auto declared_here = [&]() -> CppName {
-    const std::optional<std::string_view> name =
-        mir::NameOf(cls.named_callables, body);
-    if (name.has_value()) {
-      return ToCppName(*name);
+  for (const mir::MethodEntry& entry : cls.entries) {
+    if (entry.entry == body) {
+      return CppDispatchEntryName(unit, cls, entry.method);
     }
-    return MintedCppName("body", body.value);
-  };
-  const std::optional<mir::VirtualDispatchRole>& role =
-      cls.callables.Get(body).virtual_dispatch;
-  if (!role.has_value()) {
-    return declared_here();
   }
-  return std::visit(
-      Overloaded{
-          [&](const mir::IntroducesVirtualSlot&) -> CppName {
-            return declared_here();
-          },
-          [&](const mir::OverridesVirtualSlot& taken) -> CppName {
-            return CppVirtualSlotName(unit, taken.overridden);
-          },
-          [](const mir::OverridesLibraryVirtual& taken) -> CppName {
-            return VerbatimName{
-                .text = support::LibraryVirtualName(taken.function)};
-          }},
-      *role);
+  if (const std::optional<support::LibraryCallback> callback =
+          cls.CallbackAnsweredBy(body)) {
+    return VerbatimName{.text = support::LibraryCallbackName(*callback)};
+  }
+  const std::optional<std::string_view> name =
+      mir::NameOf(cls.named_callables, body);
+  if (name.has_value()) {
+    return ToCppName(*name);
+  }
+  return MintedCppName("body", body.value);
 }
 
-// The name of the virtual method a slot names, which a virtual call through it
-// and an override of it both spell.
-[[nodiscard]] inline auto CppVirtualSlotName(
-    const mir::CompilationUnit& unit, const mir::VirtualSlot& slot) -> CppName {
-  return CppClassCallableName(unit, unit.GetClass(slot.owner_class), slot.slot);
+// The table a class lays the bodies of its behaviors out in, `sv_table`, a
+// structure each class declares over the one of the class it extends, with one
+// member per behavior it introduces; an interface class's holds one per method
+// it declares itself. Its member for a behavior is named as the behavior's
+// method.
+[[nodiscard]] inline auto CppDispatchTableTypeName() -> MintedWord {
+  return MintedWord{.word = "table"};
+}
+
+// The constant holding a class's table, `sv_methods`, and the one holding its
+// table for the interface class at `row` among those it implements,
+// `sv_methods_<row>`.
+[[nodiscard]] inline auto CppDispatchTableName() -> MintedWord {
+  return MintedWord{.word = "methods"};
+}
+
+[[nodiscard]] inline auto CppInterfaceTableName(std::uint32_t row)
+    -> MintedName {
+  return MintedCppName("methods", row);
 }
 
 // The name of a class field: `sv_field_<slot>`, plus the source name where
@@ -636,12 +682,17 @@ inline void WriteOne(TargetText& out, ClassPathInUnit path) {
 [[nodiscard]] inline auto CppClassName(
     const mir::CompilationUnit& unit, mir::ClassId id) -> CppName {
   const mir::Class& cls = unit.GetClass(id);
-  if (cls.path.has_value()) {
-    const std::string& defining_unit =
-        cls.defining_unit.has_value() ? *cls.defining_unit : unit.name;
-    return CppPublishedClassName(defining_unit, *cls.path);
-  }
-  return MintedCppName("scope", id.value);
+  const std::string& defining_unit =
+      cls.defining_unit.has_value() ? *cls.defining_unit : unit.name;
+  return std::visit(
+      Overloaded{
+          [&](const support::DefPath& path) -> CppName {
+            return CppPublishedClassName(defining_unit, path);
+          },
+          [](const support::UnnamedClass& unnamed) -> CppName {
+            return MintedCppName("scope", unnamed.disambiguator);
+          }},
+      cls.identity);
 }
 
 // A class the unit names, as text anywhere in the unit's namespace names it:
@@ -672,17 +723,18 @@ class ClassPath {
 
 inline void WriteOne(TargetText& out, const ClassPath& path) {
   const mir::Class& cls = path.Unit().GetClass(path.Id());
+  const support::DefPath* class_path = support::PathOf(cls.identity);
   if (cls.defining_unit.has_value()) {
     Write(
         out, CppUnitScope(*cls.defining_unit), "::",
         ClassPathInUnit{
-            .unit_name = *cls.defining_unit, .class_path = &*cls.path});
+            .unit_name = *cls.defining_unit, .class_path = class_path});
     return;
   }
-  if (cls.path.has_value()) {
+  if (class_path != nullptr) {
     Write(
         out, ClassPathInUnit{
-                 .unit_name = path.Unit().name, .class_path = &*cls.path});
+                 .unit_name = path.Unit().name, .class_path = class_path});
     return;
   }
   Write(out, CppClassName(path.Unit(), path.Id()));

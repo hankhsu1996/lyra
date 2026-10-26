@@ -29,6 +29,10 @@ auto IsPlace(const ExprData& data) -> bool {
                     [](const IntegralConstantRef&) { return false; },
                     [](const ClassConstantRef&) { return false; },
                     [](const FunctionRef&) { return false; },
+                    [](const DispatchEntryRef&) { return false; },
+                    [](const DestructorRef&) { return false; },
+                    [](const DispatchTableRef&) { return false; },
+                    [](const InterfaceTableRef&) { return false; },
                     [](const ExternalObjectEntryRef&) { return false; }},
                 e.target);
           },
@@ -77,6 +81,10 @@ auto IsConstant(const ExprData& data) -> bool {
                     [](const EnumTableRef&) { return true; },
                     [](const IntegralConstantRef&) { return true; },
                     [](const FunctionRef&) { return true; },
+                    [](const DispatchEntryRef&) { return true; },
+                    [](const DestructorRef&) { return true; },
+                    [](const DispatchTableRef&) { return true; },
+                    [](const InterfaceTableRef&) { return true; },
                     [](const ExternalObjectEntryRef&) { return true; }},
                 e.target);
           },

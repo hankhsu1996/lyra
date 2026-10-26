@@ -135,10 +135,12 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_assocarray_shared_cell_make",
       &lyra_rt_assocarray_shared_cell_make);
   add("lyra_rt_shared_pointer_deref", &lyra_rt_shared_pointer_deref);
-  add("lyra_rt_handle_view", &lyra_rt_handle_view);
-  add("lyra_rt_handle_with_view", &lyra_rt_handle_with_view);
-  add("lyra_rt_view_of", &lyra_rt_view_of);
+  add("lyra_rt_object_of", &lyra_rt_object_of);
   add("lyra_rt_self_handle", &lyra_rt_self_handle);
+  add("lyra_rt_dynamic_cast", &lyra_rt_dynamic_cast);
+  add("lyra_rt_interface_table", &lyra_rt_interface_table);
+  add("lyra_rt_begin_library_part", &lyra_rt_begin_library_part);
+  add("lyra_rt_end_library_part", &lyra_rt_end_library_part);
   add("lyra_rt_object_event_source", &lyra_rt_object_event_source);
   add("lyra_rt_open_object_write", &lyra_rt_open_object_write);
   add("lyra_rt_written_object", &lyra_rt_written_object);

@@ -57,7 +57,7 @@ template <class C>
 class ObjectWrite : public ErasedObjectWrite {
  public:
   explicit ObjectWrite(const value::ObjectRef& handle)
-      : ErasedObjectWrite(ObjectRootOf(handle)), object_(handle.View<C>()) {
+      : ErasedObjectWrite(ObjectRootOf(handle)), object_(handle.Get<C>()) {
   }
 
   explicit ObjectWrite(C* object) : ErasedObjectWrite(object), object_(object) {
