@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/class_definition.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -321,6 +322,8 @@ namespace {
 struct BodyRef {
   std::string unit;
   std::string body;
+
+  auto operator==(const BodyRef&) const -> bool = default;
 };
 
 // States the definition of `cls`: the class it extends, and what it states of
@@ -413,72 +416,98 @@ class ConstructionTables {
   }
 
  private:
+  // What one entry of a table makes: an object of the body `made`, or a block
+  // of its block body `block`, built with the table `table`.
+  struct Entry {
+    BodyRef made;
+    std::optional<mir::BlockBodyOrdinal> block;
+    mir::ClassConstantRef table;
+
+    auto operator==(const Entry&) const -> bool = default;
+  };
+
+  // The places of one generate in a table: whether the blocks are handed the
+  // index their loop stands at, and the entry at each place, absent where no
+  // block stands.
+  struct Places {
+    bool handed_an_index = false;
+    std::vector<std::optional<Entry>> places;
+
+    auto operator==(const Places&) const -> bool = default;
+  };
+
+  // What a table holds: an entry per object of each instantiation, then the
+  // places of each generate.
+  struct Content {
+    std::vector<Entry> instances;
+    std::vector<Places> generates;
+
+    auto operator==(const Content&) const -> bool = default;
+  };
+
   // The table of a scope of the body `owner` laid out as `layout`: at each
   // instantiation it declares, how the specialization made there is made,
   // then at each place of each of its generates, how the block built there is
-  // made. Two scopes of one body laid out alike -- the blocks of a loop that
-  // build alike, above all -- are made with one table, so the tables follow
-  // what objects differ in rather than how many there are.
+  // made. Scopes whose tables hold the same entries are made with one table
+  // -- the blocks of a loop handed different values that build alike, above
+  // all -- so the tables follow what objects differ in rather than how many
+  // there are. A table named by another is stated before it.
   auto Of(const BodyRef& owner, const hir::ScopeInstantiations& layout)
       -> mir::ClassConstantRef {
-    for (const StatedTable& stated : of_layout_) {
-      if (stated.owner.unit == owner.unit && stated.owner.body == owner.body &&
-          stated.layout == layout) {
-        return stated.table;
+    Content content;
+    for (const hir::SpecializationRef& made : layout.Instantiated()) {
+      content.instances.push_back(
+          Entry{
+              .made = BodyRef{.unit = made.unit, .body = Made(made).body},
+              .block = std::nullopt,
+              .table = Of(made)});
+    }
+    for (const hir::GeneratePlaces& generate : layout.Generates()) {
+      Places& placed = content.generates.emplace_back(
+          Places{.handed_an_index = generate.handed_an_index, .places = {}});
+      for (const hir::PlacedBlock& block : generate.places) {
+        placed.places.push_back(
+            block.body.has_value()
+                ? std::optional{Entry{
+                      .made = owner,
+                      .block = BlockBodyOrdinalOf(*block.body),
+                      .table = Of(owner, block.made)}}
+                : std::nullopt);
+      }
+      // Places that all hold one entry list it once, and the runtime reads it
+      // at every place.
+      if (std::ranges::all_of(placed.places, [&](const auto& at) {
+            return at == placed.places.front();
+          })) {
+        placed.places.resize(std::min<std::size_t>(placed.places.size(), 1));
       }
     }
-    const mir::ClassConstantRef table = State(owner, layout);
-    of_layout_.push_back(
-        StatedTable{.owner = owner, .layout = layout, .table = table});
+    for (const auto& [held, table] : stated_) {
+      if (held == content) return table;
+    }
+    const mir::ClassConstantRef table = State(content);
+    stated_.emplace_back(std::move(content), table);
     return table;
   }
 
-  // The table `Of` states for `owner` laid out as `layout`, once.
-  auto State(const BodyRef& owner, const hir::ScopeInstantiations& layout)
-      -> mir::ClassConstantRef {
-    const std::span<const hir::SpecializationRef> instantiated =
-        layout.Instantiated();
-    std::vector<mir::ClassConstantRef> tables;
-    std::vector<BodyRef> bodies;
-    tables.reserve(instantiated.size());
-    bodies.reserve(instantiated.size());
-    for (const hir::SpecializationRef& made : instantiated) {
-      tables.push_back(Of(made));
-      bodies.push_back(BodyRef{.unit = made.unit, .body = Made(made).body});
-    }
-    // A block's table is stated before the table of the scope building it,
-    // which names it.
-    const std::span<const hir::GeneratePlaces> generates = layout.Generates();
-    std::vector<std::vector<std::optional<mir::ClassConstantRef>>> block_tables;
-    block_tables.reserve(generates.size());
-    for (const hir::GeneratePlaces& generate : generates) {
-      std::vector<std::optional<mir::ClassConstantRef>>& of_generate =
-          block_tables.emplace_back();
-      of_generate.reserve(generate.places.size());
-      for (const hir::PlacedBlock& block : generate.places) {
-        of_generate.push_back(
-            block.body.has_value() ? std::optional{Of(owner, block.made)}
-                                   : std::nullopt);
-      }
-    }
-
+  // States a table holding `content`.
+  auto State(const Content& content) -> mir::ClassConstantRef {
     using Kind = mir::RuntimeLibraryKind;
     mir::ValueBuild build;
     mir::Block& table = build.body;
     std::vector<mir::ExprId> parts;
     AppendTable(
         parts, *unit_, table, id_, *cls_,
-        LibraryType(*unit_, Kind::kInstantiation), instantiated.size(),
+        LibraryType(*unit_, Kind::kInstantiation), content.instances.size(),
         [&](mir::Block& entry, std::size_t i) {
-          return EntryRecord(
-              entry, bodies[i], std::nullopt, EntryTypeOf(bodies[i].unit),
-              tables[i]);
+          const Entry& made = content.instances[i];
+          return EntryRecord(entry, made, EntryTypeOf(made.made.unit));
         });
     AppendTable(
         parts, *unit_, table, id_, *cls_,
-        LibraryType(*unit_, Kind::kGeneratePlaces), generates.size(),
+        LibraryType(*unit_, Kind::kGeneratePlaces), content.generates.size(),
         [&](mir::Block& at_generate, std::size_t g) {
-          const hir::GeneratePlaces& generate = generates[g];
+          const Places& generate = content.generates[g];
           const mir::TypeId entry_type =
               BlockEntryType(*unit_, generate.handed_an_index);
           std::vector<mir::ExprId> places;
@@ -486,11 +515,9 @@ class ConstructionTables {
               places, *unit_, at_generate, id_, *cls_,
               LibraryType(*unit_, Kind::kInstantiation), generate.places.size(),
               [&](mir::Block& entry, std::size_t k) {
-                const hir::PlacedBlock& block = generate.places[k];
-                return block.body.has_value()
-                           ? EntryRecord(
-                                 entry, owner, BlockBodyOrdinalOf(*block.body),
-                                 entry_type, *block_tables[g][k])
+                const std::optional<Entry>& block = generate.places[k];
+                return block.has_value()
+                           ? EntryRecord(entry, *block, entry_type)
                            : NoEntryRecord(entry);
               });
           return Record(
@@ -506,18 +533,16 @@ class ConstructionTables {
                 .initializer = std::move(build)})};
   }
 
-  // How one object is made at an entry of a table: the object entry of the
-  // body `made`, or the entry it publishes for its block body `built`, at the
-  // type `entry_type` that entry has, and the table the object is built with.
-  auto EntryRecord(
-      mir::Block& entry, const BodyRef& made,
-      std::optional<mir::BlockBodyOrdinal> built, mir::TypeId entry_type,
-      mir::ClassConstantRef table) -> mir::ExprId {
+  // The record of the entry `made`, its entry read at the type `entry_type`
+  // that entry has.
+  auto EntryRecord(mir::Block& entry, const Entry& made, mir::TypeId entry_type)
+      -> mir::ExprId {
     return Record(
         *unit_, entry, mir::RuntimeLibraryKind::kInstantiation,
-        {ErasedObjectEntry(*unit_, entry, made, built, entry_type),
+        {ErasedObjectEntry(*unit_, entry, made.made, made.block, entry_type),
          AddressOfConstant(
-             *unit_, entry, table, mir::ConstructionTableType(unit_->types))});
+             *unit_, entry, made.table,
+             mir::ConstructionTableType(unit_->types))});
   }
 
   // A place no object of the body builds a block at -- an alternative it did
@@ -570,14 +595,8 @@ class ConstructionTables {
   const DesignInstantiations* instantiations_;
   const std::map<std::string, mir::TypeId, std::less<>>* entry_types_;
   std::map<std::string, mir::ClassConstantRef, std::less<>> of_specialization_;
-  // Each table stated for a scope, by the body it is a scope of and its
-  // layout.
-  struct StatedTable {
-    BodyRef owner;
-    hir::ScopeInstantiations layout;
-    mir::ClassConstantRef table;
-  };
-  std::vector<StatedTable> of_layout_;
+  // Each table stated, with what it holds.
+  std::vector<std::pair<Content, mir::ClassConstantRef>> stated_;
 };
 
 }  // namespace

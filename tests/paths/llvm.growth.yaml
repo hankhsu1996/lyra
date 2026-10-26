@@ -33,30 +33,16 @@ loop_of_clocked_procedures_sized_by_index:
   - mir.constructors
   - mir.fields
   - mir.types
-loop_reaching_its_neighbour:
-  - bytes
-  - lir.classes
-  - lir.constants
-  - lir.functions
-  - lir.members
-  - lir.types
-  - mir.callables
-  - mir.class constants
-  - mir.classes
-  - mir.constructors
-  - mir.fields
-  - mir.types
+loop_reaching_its_neighbour: [bytes]
 loop_sizing_by_index:
   - lir.classes
   - lir.constants
   - lir.functions
-  - lir.members
   - lir.types
   - mir.callables
   - mir.class constants
   - mir.classes
   - mir.constructors
-  - mir.fields
   - mir.types
 scan_outputs:
   - lir.types

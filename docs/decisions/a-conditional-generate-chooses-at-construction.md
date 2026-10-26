@@ -11,7 +11,8 @@ one body lowered once rather than compared and merged (its D5). Revised 2026-10-
 construction still asks the question (D1), and which body each alternative it may answer with is, is
 the object's construction table's, one entry per alternative the source wrote -- not the answer,
 which stays the question's -- so a loop whose blocks select different alternatives is one body. That
-table does hold one entry per block a loop counts out, saying which body stands there and never
+table holds one entry per block a loop counts out where its blocks are built of different bodies or
+tables, and one for the whole loop where they are not, saying which body stands there and never
 which alternative: the tension's objection to a per-index table (below) is answered by placing it in
 construction data, which north star invariant 2 lets follow what elaboration counted, while the code
 stays the size of the source. D2's one block holding every body the alternatives produced, and the

@@ -348,8 +348,9 @@ distinct unit specializations, not with instance count.
       A loop's blocks now compile to one class the constructor builds once per index it counts out,
       and the index reaches the block as a value that construction supplies rather than as a constant
       folded into its body -- which is what lets the body of a loop that uses its index be one body
-      at all, and a loop's unit emits the same however many blocks it counts, the design root
-      holding one table entry per block. Where the index instead fixes
+      at all, and a loop's unit emits the same however many blocks it counts; the design root
+      holds one table entry for a loop whose blocks are built alike, and one per block where they
+      are not. Where the index instead fixes
       something a class settles once -- a width, a specialization, which members exist -- separate
       compilation is the correct answer and stays, which is `specialization_model.md` invariant 1. It
       is one class per distinct set of declarations the blocks resolve to: blocks whose widths

@@ -669,6 +669,8 @@ struct StaticVariableRef {
 struct ClassConstantRef {
   ClassId owner;
   ClassConstantId constant;
+
+  auto operator==(const ClassConstantRef&) const -> bool = default;
 };
 
 // A body of a class this unit defines, named as the code it is rather than

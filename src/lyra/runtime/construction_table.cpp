@@ -12,8 +12,10 @@ namespace {
 auto BlockAt(
     const ConstructionTable* table, std::int64_t generate, std::int64_t place)
     -> const Instantiation& {
-  return table->generates.Entries()[static_cast<std::size_t>(generate)]
-      .places.Entries()[static_cast<std::size_t>(place)];
+  const auto places =
+      table->generates.Entries()[static_cast<std::size_t>(generate)]
+          .places.Entries();
+  return places[places.size() == 1 ? 0 : static_cast<std::size_t>(place)];
 }
 
 }  // namespace

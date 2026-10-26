@@ -26,7 +26,9 @@ struct Instantiation {
 // How the block at each place of one generate is made (LRM 27): a loop's
 // places in the order the loop counts its blocks out, as many as it counted
 // for the object being built, a conditional's one per alternative the source
-// wrote, and a block standing alone at its one place.
+// wrote, and a block standing alone at its one place. A generate whose places
+// all hold one entry lists it once, so a loop of blocks built alike states as
+// much however many it counts out.
 struct GeneratePlaces {
   ConstantSpan<Instantiation> places;
 };
