@@ -34,28 +34,29 @@ auto EndpointAt(const mir::CompilationUnit& unit, MemberPlace place)
 }
 
 // The endpoint a route of parent edges gives: the member it ends at, reached
-// on the object it climbed to. Such a route never leaves this unit, so it
-// never ends at data another unit declares.
+// on the object it climbed to -- the reader's own declaration where it climbs
+// nothing, and otherwise the member the scope it climbed to published.
 auto ClimbedEndpoint(
     const StructuralScopeLowerer& lowerer, const ClimbedRoute& climbed,
     const hir::DataLeaf& leaf) -> BoundEndpoint {
-  const StructuralScopeLowerer& declaring =
-      lowerer.EnclosingScopeAtHops(climbed.hops);
-  const auto not_this_unit = []() -> mir::ClassFieldTarget {
-    throw InternalError(
-        "ClimbedEndpoint: a route of parent edges stays in this unit, so it "
-        "cannot end at data another unit declares");
-  };
   const mir::ClassFieldTarget field = std::visit(
       Overloaded{
           [&](const hir::StructuralDataObjectLeaf& l) {
-            return declaring.TranslateStructuralDataObject(
-                hir::StructuralHops{0}, l.object);
+            return lowerer.EnclosingScopeAtHops(climbed.hops)
+                .TranslateStructuralDataObject(
+                    hir::StructuralHops{0}, l.object);
           },
           [&](const hir::ProceduralStaticLeaf& l) {
-            return declaring.ProceduralStaticField(l.body, l.var);
+            return lowerer.EnclosingScopeAtHops(climbed.hops)
+                .ProceduralStaticField(l.body, l.var);
           },
-          [&](const hir::PublishedMemberLeaf&) { return not_this_unit(); }},
+          [&](const hir::PublishedMemberLeaf& l) {
+            const ScopeClassLayout& record =
+                lowerer.Owner().ScopeClassLayoutOf(l.scope_class);
+            return mir::ClassFieldTarget{
+                .owner = record.cls,
+                .slot = record.published.members.Get(l.member)};
+          }},
       leaf);
   return EndpointAt(
       lowerer.Owner().Unit(),

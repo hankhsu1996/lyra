@@ -9,7 +9,7 @@
 Accepted. Revises
 [a-parameter-read-as-a-value-is-supplied-at-construction](a-parameter-read-as-a-value-is-supplied-at-construction.md)
 D1 and D2,
-[a-unit-is-compiled-to-a-body-per-value-its-code-relies-on](a-unit-is-compiled-to-a-body-per-value-its-code-relies-on.md)
+[a-unit-is-compiled-to-one-body-per-distinct-code](a-unit-is-compiled-to-one-body-per-distinct-code.md)
 D3,
 [a-conditional-generate-chooses-at-construction](a-conditional-generate-chooses-at-construction.md)
 D1 and D2, [one-body-built-at-every-index](one-body-built-at-every-index.md) D2, and
@@ -17,6 +17,16 @@ D1 and D2, [one-body-built-at-every-index](one-body-built-at-every-index.md) D2,
 compiled body holds the blocks its own instances built and no other instance's. Answers
 [parameter-code-shape-over-approximation](parameter-code-shape-over-approximation.md) Decision 2 for
 what an instance built (below).
+
+D2 and D5 reversed 2026-10-25 by
+[a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md) D5 and
+[a-body-states-nothing-of-another-bodys-implementation](a-body-states-nothing-of-another-bodys-implementation.md)
+D1 and D4: every block is lowered on its own and found by comparing what it came out as, which body
+stands at each place is its object's construction, and a block reaches the scopes around it through
+what they published. The objection "Why the direction changed" raised against a block as an artifact
+of its own -- every name a block reads in its module crossing units -- is answered by the published
+class, as a Java inner class reaches its outer object through a reference it is handed (JLS 15.9.2).
+D1, D3 and D4 stand: the blocks an instance built are still part of its unit's name.
 
 ## Requirement
 
@@ -188,7 +198,7 @@ without building anything.
   D1 said a unit holds every alternative and every loop body any of its instances built, and D2 had
   every instance handed new values lowered into its unit. A unit now holds what the instances of its
   name built, and those are one set (D1, D3 here).
-- [a-unit-is-compiled-to-a-body-per-value-its-code-relies-on](a-unit-is-compiled-to-a-body-per-value-its-code-relies-on.md)
+- [a-unit-is-compiled-to-one-body-per-distinct-code](a-unit-is-compiled-to-one-body-per-distinct-code.md)
   D3 had the first body of a unit declared from every instance of it and the others import the
   classes they built no scope of. Every body declares from its own instance (D3 here).
 - [a-conditional-generate-chooses-at-construction](a-conditional-generate-chooses-at-construction.md)

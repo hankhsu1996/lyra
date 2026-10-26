@@ -351,7 +351,7 @@ auto RenderHostMain(const mir::CompilationUnit& root) -> CppArtifact {
   Write(
       out.text, "  return lyra::runtime::RunDesignRoot(argc, argv, ",
       CppNameLiteral(root.name), ", ", CppBodyScope(root.name, root.body_name),
-      "::", CppObjectEntryName(), ");\n");
+      "::", CppObjectEntryName(std::nullopt), ");\n");
   out.text += "}\n";
   return std::move(out).Into("main.cpp");
 }

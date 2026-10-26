@@ -12,6 +12,7 @@
 
 #include "lyra/base/component_index.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/block_body_ordinal.hpp"
 #include "lyra/mir/block_id.hpp"
 #include "lyra/mir/bring_up_entry.hpp"
 #include "lyra/mir/callable_id.hpp"
@@ -668,6 +669,8 @@ struct StaticVariableRef {
 struct ClassConstantRef {
   ClassId owner;
   ClassConstantId constant;
+
+  auto operator==(const ClassConstantRef&) const -> bool = default;
 };
 
 // A body of a class this unit defines, named as the code it is rather than
@@ -678,15 +681,17 @@ struct FunctionRef {
   CallableTarget body;
 };
 
-// The entry that makes an object of one body of another unit, named as the
-// code it is, as `FunctionRef` names a body of this unit. The source declares
-// no such entry, so it is named by the body it makes and the unit that body
-// realizes, and every target spells it from both. `Expr::type` is the machine
-// function type the unit published the entry with, not the prototype-erased
-// type a construction table holds it at, which is a conversion of this.
+// The entry that makes an object of one body of another unit, or a block of
+// one block body of it, named as the code it is, as `FunctionRef` names a body
+// of this unit. The source declares no such entry, so it is named by the body
+// it makes and the unit that body realizes, and every target spells it from
+// those. `Expr::type` is the machine function type the unit published the
+// entry with, not the prototype-erased type a construction table holds it at,
+// which is a conversion of this.
 struct ExternalObjectEntryRef {
   std::string unit_name;
   std::string body_name;
+  std::optional<BlockBodyOrdinal> block;
 };
 
 // Which declared thing a reference names. The alternatives differ in the table

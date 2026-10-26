@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -15,6 +16,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/registry.hpp"
+#include "lyra/mir/block_body_ordinal.hpp"
 #include "lyra/mir/bring_up_entry.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
@@ -170,18 +172,23 @@ struct TypeOperation {
 }
 
 // A unit whose instances are a tree of objects the runtime drives (LRM 23.3):
-// the class at the root of the tree, and the one body that brings one into
-// existence.
+// the class at the root of the tree, the one body that brings one into
+// existence, and, for each of its block bodies, the one that brings a block of
+// it into existence (LRM 27), with where that block body stands among the
+// unit's.
 //
 // That body exists because what a unit publishes of its object states what may
 // be reached and never how much storage the object takes -- so an instantiator
 // cannot make one and asks for one instead. The party that builds the design's
-// tops asks the same way, having no more than any other referrer. It answers to
-// no name, which is why the unit holds it as the body it is rather than among
-// the bodies an identifier reaches.
+// tops asks the same way, having no more than any other referrer. A block's
+// entry exists because which body stands at a place is the object's, so the
+// scope building the block names none of them and calls the entry its table
+// holds. None answers to a name, which is why the unit holds each as the body
+// it is rather than among the bodies an identifier reaches.
 struct RootedTree {
   ClassId root;
   CallableId object_entry;
+  std::map<CallableId, BlockBodyOrdinal> block_entries;
 };
 
 // A unit that is a namespace rather than a hierarchy -- a package (LRM 26.2) or
@@ -692,9 +699,10 @@ struct CompilationUnit {
 // in the DPI-C name space, which is program-global and belongs to no unit (LRM
 // 35.4); the identifier the unit's own namespace answers (LRM 26.3); which of
 // the two bring-up entries it is; being the entry that makes an object of the
-// body this unit is compiled to; the unit and identifier another unit's
-// namespace publishes it under, for one this unit only declares; or, where
-// nothing names it, the position it sits at.
+// body this unit is compiled to, or a block of one of its block bodies; the
+// unit and identifier another unit's namespace publishes it under, for one
+// this unit only declares; or, where nothing names it, the position it sits
+// at.
 //
 // The position is the general case and the five before it are the special
 // ones. A namespace holds what the source declared and what the compiler
@@ -711,9 +719,12 @@ struct ReachedByName {
 struct ReachedByBringUpEntry {
   BringUpEntry entry;
 };
-// Each body a unit is compiled to has its own, so the entry is spelled from the
-// unit and the body.
-struct ReachedAsObjectEntry {};
+// Each body a unit is compiled to has its own, and one for each of its block
+// bodies, so the entry is spelled from the unit, the body and, for a block
+// body, where it stands among the body's.
+struct ReachedAsObjectEntry {
+  std::optional<BlockBodyOrdinal> block;
+};
 // A subroutine another unit's namespace defines, spelled as that unit spells
 // it (LRM 26.3).
 struct ReachedInAnotherUnit {
@@ -761,7 +772,11 @@ using NamespaceReach = std::variant<
   }
   if (const RootedTree* tree = RootedTreeOf(unit)) {
     if (id == tree->object_entry) {
-      return ReachedAsObjectEntry{};
+      return ReachedAsObjectEntry{.block = std::nullopt};
+    }
+    if (const auto block = tree->block_entries.find(id);
+        block != tree->block_entries.end()) {
+      return ReachedAsObjectEntry{.block = block->second};
     }
   }
   if (const std::optional<std::string_view> name =

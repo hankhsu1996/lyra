@@ -21,7 +21,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/kind.hpp"
 #include "lyra/diag/sink.hpp"
-#include "lyra/hir/compilation_unit.hpp"
+#include "lyra/hir/specialization.hpp"
 
 namespace {
 
@@ -71,7 +71,7 @@ auto ReportedWhenEveryUnitBreaks(std::string_view source, std::size_t width)
   std::size_t consumed = 0;
   lyra::compiler::LowerToHir(
       *design, sink, width,
-      [](const lyra::hir::CompilationUnit&) -> lyra::diag::Result<int> {
+      [](const lyra::hir::Specialization&) -> lyra::diag::Result<int> {
         throw lyra::InternalError("an invariant broke");
       },
       [&consumed](int) { ++consumed; });

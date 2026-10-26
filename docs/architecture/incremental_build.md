@@ -89,8 +89,8 @@ assumes whole-design lowering forecloses it.
 - `compilation_unit_model.md` defines the compilation-unit ownership boundary and what a unit's
   signature contains. This doc uses that boundary as the coarsest granularity of incremental reuse,
   and the signature as the unit of cross-unit dependency; it does not define what is on one.
-- `specialization_model.md` defines specialization keys. Specialization keys feed the cache this doc
-  describes; this doc does not redefine them.
+- `specialization_model.md` defines unit and specialization names. Those names feed the cache this
+  doc describes; this doc does not redefine them.
 - `lowering_boundaries.md` owns what a single lowering may do. This doc owns the order the units'
   lowerings run in relative to each other, which is a separate axis.
 - Each IR layer defines its own identity kinds. This doc uses those identities as key sources; it

@@ -306,8 +306,8 @@ operation is a call into a separately compiled runtime, and the optimizer cannot
 ## Construction / compile-time performance
 
 The cost of producing compiled artifacts and of building the object graph at time zero. The primary
-constraint is `north_star.md`: compile-time work scales with the number of distinct unit
-specializations, not with instance count.
+constraint is `north_star.md`: the count of compile-time artifacts scales with the number of
+distinct unit specializations, not with instance count.
 
 - [x] Specialization dedup for a value parameter read only as a value. Instances of a module handed
       different values of such a parameter are one unit, and the value reaches each instance when it
@@ -329,13 +329,14 @@ specializations, not with instance count.
       parameter a class or one of its methods declares, with what it is written from, since the
       class's code holds it as a constant. Each still compiles once per value.
 
-- [x] Which parameters decide is read off the front end's record of what each constant evaluation
-      read, so no position is listed and none can be missed. A unit is lowered from the one instance
-      it is named for; a check that lowers every other instance too reports one that lowers apart as
-      a compiler bug, and nothing compiles the definition once per value instead. A module holding a
-      class is a unit like any other, its class one class of the unit. An instantiation a `bind`
-      directive inserts states its connections in the directive and is told apart by the directive
-      that inserted it, which a case exercises.
+- [x] Which parameters decide what a unit declares is read off the front end's record of what each
+      constant evaluation read, so no position is listed and none can be missed. Every value an
+      instance is handed names its specialization, which is lowered from the one instance it is
+      named for, and specializations whose code comes out alike are one body, found by comparing
+      what they state; a check that lowers every other instance too reports one that lowers apart as
+      a compiler bug. A module holding a class is a unit like any other, its class one class of the
+      unit. An instantiation a `bind` directive inserts states its connections in the directive and
+      is told apart by the directive that inserted it, which a case exercises.
 
 - [x] The generate axis of that same sharing. A `generate for` used to lower concretely: N
       iterations became N scope classes and N construction statements, so the artifact grew
@@ -347,12 +348,15 @@ specializations, not with instance count.
       A loop's blocks now compile to one class the constructor builds once per index it counts out,
       and the index reaches the block as a value that construction supplies rather than as a constant
       folded into its body -- which is what lets the body of a loop that uses its index be one body
-      at all, and a loop emits the same however many blocks it counts. Where the index instead fixes
+      at all, and a loop's unit emits the same however many blocks it counts; the design root
+      holds one table entry for a loop whose blocks are built alike, and one per block where they
+      are not. Where the index instead fixes
       something a class settles once -- a width, a specialization, which members exist -- separate
       compilation is the correct answer and stays, which is `specialization_model.md` invariant 1. It
-      is one class per value of the index such a declaration relies on, as a template argument is:
-      blocks whose widths alternate between two compile to a class per index, and the loop builds at
-      each index the class that index names.
+      is one class per distinct set of declarations the blocks resolve to: blocks whose widths
+      alternate between two compile to two classes, and the loop builds at each index the body its
+      table holds there. A block declaring a class is a class per index, since each block's class is a type
+      of its own.
       [../decisions/one-body-built-at-every-index.md](../decisions/one-body-built-at-every-index.md)
       holds how a body qualifies, why the question deciding that is checked rather than trusted, and
       what a scope's construction receives.
@@ -422,8 +426,11 @@ specializations, not with instance count.
       file per block and a module's forward header changed when one body did. A block instance is
       now an application of its block, named from the source: one published class per application,
       and blocks of one application whose code differs are that class realized more than once, each
-      realization named from the index's value where the block's code uses it before any block
-      lowers, so no block is compared with another to find which body it is. A child naming the
+      realization found by comparing what the blocks came out as, across the unit, with a block's
+      nested blocks bodies of their own and which body stands at each place stated in the object's
+      construction table. So a loop whose blocks select different alternatives of a conditional is
+      one body, and so is a module instantiated with values that settle every constant alike, or
+      that only decide which body a child of it is. A child naming the
       block that holds it is one unit where it was one per block, and a struct a block declares is
       one type where it was one per block. On the C++ backend the classes of a module's scopes are
       nested classes in the one header that carries the module's name, so file count and emitted

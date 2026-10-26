@@ -728,9 +728,8 @@ auto UnitLowerer::ResolveCovergroup(
     }
     const hir::CovergroupId id = unit_.covergroups.Import(
         hir::CovergroupKey{
-            .unit_name =
-                CompilationUnitName(UnitHomeOf(covergroup), Specialization()),
-            .path = DefPathOf(covergroup, Specialization())});
+            .unit_name = CompilationUnitName(UnitHomeOf(covergroup), Naming()),
+            .path = DefPathOf(covergroup, Naming())});
     covergroup_cache_.emplace(&covergroup, id);
     return id;
   }
@@ -751,7 +750,7 @@ auto UnitLowerer::InternOwnCovergroup(
   // elaborated, as a class is: a copy at a path already declared is that
   // covergroup.
   const hir::CovergroupId id =
-      unit_.covergroups.DeclareOwn(DefPathOf(covergroup, Specialization()));
+      unit_.covergroups.DeclareOwn(DefPathOf(covergroup, Naming()));
   covergroup_cache_.emplace(&covergroup, id);
   // Its expressions reach what encloses it as a body of the scope replicating
   // it does, so it lowers with that scope (LRM 6.22, 19.3).
@@ -856,7 +855,7 @@ auto UnitLowerer::PublishedCovergroupOf(
         .direction = ParamDirectionOf(declared)};
   };
   hir::PublishedCovergroup published{
-      .path = DefPathOf(covergroup, Specialization()),
+      .path = DefPathOf(covergroup, Naming()),
       .formals = {},
       .sample_formals = {},
       .embedding = std::nullopt,
@@ -961,13 +960,13 @@ auto UnitLowerer::PublishedFactoryOf(
     dispatch = hir::OverridesVirtual{
         .is_pure = false,
         .introducer = *introducer,
-        .name = hir::CovergroupFactoryName(DefPathOf(first, Specialization()))};
+        .name = hir::CovergroupFactoryName(DefPathOf(first, Naming()))};
   }
   return hir::DeclaredMethod{
       .prototype =
           hir::SubroutinePrototype{
-              .name = hir::CovergroupFactoryName(
-                  DefPathOf(covergroup, Specialization())),
+              .name =
+                  hir::CovergroupFactoryName(DefPathOf(covergroup, Naming())),
               .interface = std::move(interface),
               .result_type = *made},
       .dispatch = dispatch,

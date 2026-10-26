@@ -46,20 +46,15 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// A scope of this unit, reached through that unit's own layout: `hops`
-// enclosing edges out, then one owned child per descent step. A scope that
-// encloses the caller is the empty descent.
-struct EnclosingScopeReceiver {
-  mir::EnclosingHops hops;
-  std::span<const hir::OwnedChildStep> descent;
-};
+// The object of the caller's own scope, reached through this unit's own layout.
+struct OwnScopeReceiver {};
 
-// The same scope, handed to a callee that dispatches on nothing: a
+// A scope of this unit, handed to a callee that dispatches on nothing: a
 // receiver-less callable of a class that scope declares reaches what the class
 // keeps for itself, which is that instance's, and has no object to reach it
-// through (LRM 6.22, 8.10). It is the same value as the receiver above and a
-// different fact about the call, which is why it is a separate origin rather
-// than the same one read two ways.
+// through (LRM 6.22, 8.10). It is a scope's object, as the receiver above is,
+// and a different fact about the call, which is why it is a separate origin
+// rather than the same one read two ways.
 struct DeclaringScopeArgument {
   hir::DeclaringInstanceReach reach;
 };
@@ -90,7 +85,7 @@ struct HeldInterface {
 // which is settled after the callee is planned. A callee taking no such
 // parameter has none of these.
 using AmbientHandle = std::variant<
-    EnclosingScopeReceiver, DeclaringScopeArgument, CalledObject, SealedObject,
+    OwnScopeReceiver, DeclaringScopeArgument, CalledObject, SealedObject,
     HeldInterface>;
 
 // Whether the value an origin names is the object the callee dispatches on. A
@@ -99,7 +94,7 @@ using AmbientHandle = std::variant<
 auto BindsAsReceiver(const AmbientHandle& handle) -> bool {
   return std::visit(
       Overloaded{
-          [](const EnclosingScopeReceiver&) { return true; },
+          [](const OwnScopeReceiver&) { return true; },
           [](const CalledObject&) { return true; },
           [](const SealedObject&) { return true; },
           [](const HeldInterface&) { return true; },
@@ -255,19 +250,16 @@ auto PlanSubroutineCall(
   return std::visit(
       Overloaded{
           [&](const hir::StructuralSubroutineRef& ref) -> Planned {
-            const hir::SubroutineDecl& decl = lowerer.LookupHirSubroutine(
-                ref.hops, ref.descent, ref.subroutine);
+            const hir::SubroutineDecl& decl =
+                lowerer.LookupHirSubroutine(ref.subroutine);
             SubroutineCallee plan;
             plan.kind = decl.kind;
             plan.result_type = result_type;
             plan.completion = BuildCompletionLayout(
                 CalleeFormalsOf(unit_lowerer, decl), result_type);
             plan.form = NamedCallee{
-                .callee = lowerer.TranslateStructuralSubroutine(
-                    ref.hops, ref.descent, ref.subroutine),
-                .handle = AmbientHandle{EnclosingScopeReceiver{
-                    .hops = mir::EnclosingHops{.value = ref.hops.value},
-                    .descent = ref.descent}}};
+                .callee = lowerer.TranslateStructuralSubroutine(ref.subroutine),
+                .handle = AmbientHandle{OwnScopeReceiver{}}};
             return plan;
           },
           [&](const hir::NamespaceSubroutineRef& ref) -> Planned {
@@ -385,18 +377,9 @@ auto BuildAmbientHandle(
     -> diag::Result<mir::ExprId> {
   return std::visit(
       Overloaded{
-          [&](const EnclosingScopeReceiver& r) -> diag::Result<mir::ExprId> {
-            // The descent runs from the receiver the climb produced, the same
-            // way a route's own descent does.
-            return DescendOwnedChildren(
-                lowerer.ScopeAt(
-                    hir::StructuralHops{
-                        .value = static_cast<std::uint32_t>(r.hops.value)},
-                    {}),
-                *frame.current_block,
-                BuildEnclosingScopeReceiver(
-                    frame, lowerer.Owner().Unit(), r.hops),
-                r.descent);
+          [&](const OwnScopeReceiver&) -> diag::Result<mir::ExprId> {
+            return BuildEnclosingScopeReceiver(
+                frame, lowerer.Owner().Unit(), mir::EnclosingHops{.value = 0});
           },
           [&](const DeclaringScopeArgument& a) -> diag::Result<mir::ExprId> {
             return BuildImplicitInstanceArgument(lowerer, frame, a.reach);

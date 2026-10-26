@@ -80,7 +80,7 @@ If you are looking for a concept, this table points to the canonical doc.
 | Logical binding identity; per-body materialization; capture forwarding; carrier/view                  | `binding_and_capture.md`        |
 | Per-unit artifact emission; a scope's published part and realization; no wiring                       | `emission_model.md`             |
 | Per-node within-artifact render; type mapping vs value emission                                       | `backend_contract.md`           |
-| Parameter values, specialization keys, per-specialization artifacts                                   | `specialization_model.md`       |
+| Parameter values, unit and specialization names, per-body artifacts                                   | `specialization_model.md`       |
 | Identity rules; ownership; forbidden identity shapes                                                  | `identity_and_ownership.md`     |
 | Lowering permissions (what each lowering may and may not do)                                          | `lowering_boundaries.md`        |
 | Lowering pass organization (facts / registry / builder / walk frame)                                  | `lowering_organization.md`      |

@@ -55,6 +55,7 @@ auto KeeperEntriesOf(const TypePool& types, TypeId keeper)
     case RuntimeLibraryKind::kScopeCallable:
     case RuntimeLibraryKind::kConstructionTable:
     case RuntimeLibraryKind::kInstantiation:
+    case RuntimeLibraryKind::kGeneratePlaces:
     case RuntimeLibraryKind::kDumpEntry:
     case RuntimeLibraryKind::kDumpBlock:
       return std::nullopt;

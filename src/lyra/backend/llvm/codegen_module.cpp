@@ -743,8 +743,9 @@ void CodeGenModule::DefineData(const lir::GlobalConstant& constant) {
                       [&](const lir::ConstantExternalFunction&) {
                         not_whole("another unit's function");
                       },
-                      [&](const lir::ConstantAddress&) {
-                        not_whole("an address");
+                      [&](const lir::ConstantAddress& address) {
+                        elements.push_back(DefinitionGlobal(address.symbol));
+                        align = alignof(void*);
                       },
                       [&](const lir::ConstantArray&) {
                         not_whole("an array of arrays");

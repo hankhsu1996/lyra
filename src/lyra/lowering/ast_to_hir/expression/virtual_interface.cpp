@@ -15,8 +15,10 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/published_modport.hpp"
 #include "lyra/lowering/ast_to_hir/expression/view_names.hpp"
+#include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/support/def_path.hpp"
 
@@ -48,7 +50,7 @@ using ReachedThroughHandle =
     std::variant<HeldViewName, HeldInstance, HeldMember>;
 
 auto ReachThroughHandle(
-    UnitLowerer& unit_lowerer, hir::ExprId handle,
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, hir::ExprId handle,
     const slang::ast::VirtualInterfaceType& handle_type,
     const slang::ast::Symbol& member, diag::SourceSpan span)
     -> diag::Result<ReachedThroughHandle> {
@@ -61,7 +63,8 @@ auto ReachThroughHandle(
   if (const auto* port = member.as_if<slang::ast::ModportPortSymbol>()) {
     if (port->internalSymbol == nullptr) {
       auto held = DescendThroughHandle(
-          unit_lowerer, handle, handle_type, handle_type.iface.body, span);
+          unit_lowerer, frame, handle, handle_type, handle_type.iface.body,
+          span);
       if (!held) return std::unexpected(std::move(held.error()));
       return HeldViewName{
           .instance = std::move(held->instance),
@@ -76,13 +79,13 @@ auto ReachThroughHandle(
   // that instance, and the descent to it ends by stepping onto it.
   const auto* instance = item->as_if<slang::ast::InstanceSymbol>();
   auto descent = DescendThroughHandle(
-      unit_lowerer, handle, handle_type,
+      unit_lowerer, frame, handle, handle_type,
       instance != nullptr ? instance->body : *item->getParentScope(), span);
   if (!descent) return std::unexpected(std::move(descent.error()));
   if (instance != nullptr) {
     return HeldInstance{
         .access = std::move(descent->instance),
-        .unit_name = unit_lowerer.Specialization().NameOf(*instance)};
+        .unit_name = unit_lowerer.Naming().NameOf(*instance)};
   }
 
   const hir::ScopeClassId scope_class = descent->place.scope_class;
@@ -109,7 +112,7 @@ auto ReachThroughHandle(
 }  // namespace
 
 auto DescendThroughHandle(
-    UnitLowerer& unit_lowerer, hir::ExprId handle,
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, hir::ExprId handle,
     const slang::ast::VirtualInterfaceType& handle_type,
     const slang::ast::Scope& scope, diag::SourceSpan span)
     -> diag::Result<HeldDescent> {
@@ -119,8 +122,18 @@ auto DescendThroughHandle(
   // way a hierarchical name steps through the scope classes it reaches.
   const hir::ScopeClassId held =
       unit_lowerer.ScopeClassOfInstance(handle_type.iface);
-  std::optional<PublishedDescent> descended =
-      unit_lowerer.DescendPublished(held, handle_type.iface.body, scope);
+  // The front end resolves a name reached through a virtual interface to the
+  // member it lands on and keeps no select it was written with, so a loop's
+  // block on the way is selected by the value its index stood at.
+  const LoopSelectOf select_of =
+      [&](const slang::ast::GenerateBlockSymbol& block)
+      -> std::optional<hir::ExprId> {
+    return frame.Exprs().Add(
+        hir::MakeIntLiteral(
+            LoopIndexOf(block), unit_lowerer.Unit().builtins.int_type, span));
+  };
+  std::optional<PublishedDescent> descended = unit_lowerer.DescendPublished(
+      held, handle_type.iface.body, scope, select_of);
   if (!descended.has_value()) {
     // LRM 25.9.
     return diag::Fail(
@@ -148,8 +161,8 @@ auto LowerVirtualInterfaceMember(
     const slang::ast::VirtualInterfaceType& handle_type,
     const slang::ast::Symbol& member, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  auto reached =
-      ReachThroughHandle(unit_lowerer, handle, handle_type, member, span);
+  auto reached = ReachThroughHandle(
+      unit_lowerer, frame, handle, handle_type, member, span);
   if (!reached) return std::unexpected(std::move(reached.error()));
   return std::visit(
       Overloaded{

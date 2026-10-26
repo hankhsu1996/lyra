@@ -199,9 +199,11 @@ Rules:
         about each unit is a record the unit publishes, and the record is
         what crosses.
         An admitted entry carries its reason. A linker holds every artifact
-        by right, and an in-process execution session is a linker; nothing
-        else has one. An entry whose file no longer matches fails until it
-        goes, so the record only shrinks.
+        by right, and an in-process execution session is a linker; so does
+        a step folding equal units by comparing them whole, as a linker
+        folds identical sections, while it holds one unit's at a time.
+        Nothing else has one. An entry whose file no longer matches fails
+        until it goes, so the record only shrinks.
         Scope: every .cpp/.hpp under src/lyra and include/lyra.
 
   A023  In the AST-to-HIR lowering, an expression a body states is lowered,
@@ -216,9 +218,10 @@ Rules:
         not a reason to read one: it says the value is known, not that the
         artifact has to hold it. What a unit publishes about its ports and
         what a type is are exempt: both are part of the unit's identity, so a
-        value deciding either is already one artifact per value. A port's
-        default is not among them -- it is evaluated for each instance that
-        leaves the port unconnected (LRM 23.2.2.4).
+        value deciding either is already one artifact per value; so is the
+        key spelling a type by what it holds, a member's default among it. A
+        port's default is not among them -- it is evaluated for each instance
+        that leaves the port unconnected (LRM 23.2.2.4).
         Scope: every .cpp/.hpp under src/lyra/lowering/ast_to_hir and
         include/lyra/lowering/ast_to_hir.
 
@@ -1054,7 +1057,14 @@ A022_PATTERN = re.compile(
     r"\b(?:std::)?(?:span\s*<\s*const\s+|vector\s*<\s*)"
     r"(?:hir|mir|lir)::CompilationUnit\s*>")
 
-A022_ADMITTED: dict[str, str] = {}
+A022_ADMITTED: dict[str, str] = {
+    "include/lyra/lowering/ast_to_hir/implementations.hpp": (
+        "two specializations are one implementation only where everything "
+        "they state is equal, which is found by comparing them whole, as a "
+        "linker folds identical sections; only specializations of one unit "
+        "can be equal and they are lowered one after another, so what is held "
+        "is one copy of each implementation of one unit at a time"),
+}
 
 # Rule A023
 # The two ways to reach the answer the front end already has for an expression:
@@ -1064,13 +1074,16 @@ A023_PATTERN = re.compile(r"(?:->|\.)\s*(?:getConstant|eval)\s*\(")
 # Where reading one is not the lowering of a body. What a unit publishes about
 # its ports and what a type is are part of the unit's identity: a value that
 # decides either is one a parameter keeps in the key, so the artifact is already
-# one per value and reading the value costs no second one. Everything else is
-# the case the rule is for, a port's default included -- it is written in the
-# header, but it is evaluated for each instance that leaves the port unconnected
-# (LRM 23.2.2.4), and so is a body's expression like any other.
+# one per value and reading the value costs no second one. The same holds where
+# the key itself spells a type by what it holds, a member's default among it.
+# Everything else is the case the rule is for, a port's default included -- it
+# is written in the header, but it is evaluated for each instance that leaves
+# the port unconnected (LRM 23.2.2.4), and so is a body's expression like any
+# other.
 A023_EXEMPT = (
     "src/lyra/lowering/ast_to_hir/publish_signature.cpp",
     "src/lyra/lowering/ast_to_hir/type.cpp",
+    "src/lyra/lowering/ast_to_hir/unit_identity.cpp",
 )
 
 

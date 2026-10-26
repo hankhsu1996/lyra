@@ -4,15 +4,15 @@
 //
 // A parameter read where the source wrote an expression is lowered as that
 // expression, and the object reads the value it was built with: it is a
-// constructor argument. One whose value something compiled relies on -- a
+// constructor argument. One whose value what the scope declares relies on -- a
 // range, a width, a count, a type, a value a class specialization is handed --
-// is an argument of the specialization instead, as a template argument is in
-// C++, and enters the name by its value: the unit's where the signature, what
-// the scope declares, relies on it, and the body's where only the statements
-// of that body do. Which parameters something compiled relies on is the front
-// end's own record, kept as it evaluates a constant the language requires and
-// as it reads a type as a fact, so no position of the language is listed here
-// and none can be missed. Two kinds of reads are passed over: what a
+// is an argument of the unit instead, as a template argument is in C++, and
+// enters its name by its value. One only the statements of its code rely on is
+// handed at construction like any other, and which body that code is, is found
+// once it is lowered. Which parameters something compiled relies on is the
+// front end's own record, kept as it evaluates a constant the language requires
+// and as it reads a type as a fact, so no position of the language is listed
+// here and none can be missed. Two kinds of reads are passed over: what a
 // construction evaluates to decide what it builds -- a generate's selection, a
 // loop's count (LRM 27.4, 27.5) -- which the front end marks; and the few
 // positions this compiler lowers as the source wrote them, which it lists
@@ -286,21 +286,6 @@ auto CanBeSupplied(const slang::ast::ParameterSymbol& param) -> bool {
          !DeclaredInAClass(param);
 }
 
-// Whether `scope` declares a class, itself or in a scope inside it. A child
-// instance's body is the child's, so it is not reached.
-auto DeclaresAClass(const slang::ast::Scope& scope) -> bool {
-  return std::ranges::any_of(
-      scope.members(), [](const slang::ast::Symbol& member) {
-        if (member.kind == slang::ast::SymbolKind::ClassType ||
-            member.kind == slang::ast::SymbolKind::GenericClassDef) {
-          return true;
-        }
-        if (member.kind == slang::ast::SymbolKind::Instance) return false;
-        const auto* inner = member.as_if<slang::ast::Scope>();
-        return inner != nullptr && DeclaresAClass(*inner);
-      });
-}
-
 // The parameters an object could be handed that `param` was computed from,
 // `param` among them where it is one.
 auto SuppliedParametersItDependsOn(
@@ -322,20 +307,19 @@ void MarkUsedInSignature(
   used.in_signature.merge(SuppliedParametersItDependsOn(param, written_from));
 }
 
-// Marks what `param` was computed from as used in the body -- each in the body
-// of the scope it is supplied to, unless that scope declares a class. A class
-// reaches the object of the scope declaring it as that scope's body compiled
-// it, and is one class however many bodies there were, so such a scope has one
-// body and the parameter is used in its signature instead.
-void MarkUsedInBody(
+// Marks what `param` was computed from as used in the code of the scope it is
+// supplied to, where that scope declares a class. A class reaches the object of
+// the scope declaring it as that scope's code was compiled, and is one class
+// however that code came out, so the parameter is used in such a scope's
+// signature. Elsewhere a value read in code is handed at construction, and
+// what the code then is, is found once it is lowered.
+void MarkUsedInCode(
     UsedParameters& used, const slang::ast::ParameterSymbol& param,
     const ParameterEdges& written_from) {
   for (const slang::ast::ParameterSymbol* source :
        SuppliedParametersItDependsOn(param, written_from)) {
     if (DeclaresAClass(*source->getParentScope())) {
       used.in_signature.insert(source);
-    } else {
-      used.in_body.insert(source);
     }
   }
 }
@@ -373,7 +357,7 @@ void MarkUsedInConstantsAndTypes(
       }
       if (as_written.held.contains(read.root)) continue;
       if (code.held.contains(read.root)) {
-        MarkUsedInBody(used, *read.parameter, written_from);
+        MarkUsedInCode(used, *read.parameter, written_from);
       } else {
         MarkUsedInSignature(used, *read.parameter, written_from);
       }
@@ -384,13 +368,12 @@ void MarkUsedInConstantsAndTypes(
 // Marks the parameters of this body read into the value of a parameter that is
 // not this body's own, as rustc's `visit_child_body` marks the arguments a
 // nested body uses. A parameter of a child this body builds is handed when the
-// child is built, so where the child does not use it, this body does not
-// either; where the child does not take it at construction, which is where the
-// child's signature uses it, or where it decides which blocks the child
-// builds, which is part of the child's unit's name, this body uses it in its
-// signature, which names the child's unit as a member's type; and where the
-// child uses it in its body only, this body uses it in its body, since which
-// body is built there is how this body is built. Any other parameter it is read
+// child is built, which makes it part of how this body's objects are built and
+// nothing this body's code reads; where the child does not take it at
+// construction, which is where the child's signature uses it, or where it
+// decides which blocks the child builds, which is part of the child's unit's
+// name, this body uses it in its signature, which names the child's unit as a
+// member's type. Any other parameter it is read
 // into -- a class specialization's, which picks a type, a virtual interface's
 // -- is a use in the signature. Asking for a child's value is what has the
 // front end evaluate it, which is what records what it was evaluated from.
@@ -398,7 +381,7 @@ void MarkUsedByChildArgs(
     UsedParameters& used, const ParameterSet& own,
     const ParameterEdges& written_from,
     std::span<const slang::ast::InstanceSymbol* const> children,
-    const SpecializationPolicy& policy) {
+    const UnitNamingPolicy& policy) {
   std::unordered_map<
       const slang::ast::ParameterSymbol*, const slang::ast::InstanceSymbol*>
       child_of;
@@ -426,8 +409,6 @@ void MarkUsedByChildArgs(
       if (!std::ranges::contains(policy.SuppliedParametersOf(built), reader) ||
           policy.DecidesWhatIsBuilt(built, *reader)) {
         MarkUsedInSignature(used, *source, written_from);
-      } else if (policy.IsUsedInBody(built, *reader)) {
-        MarkUsedInBody(used, *source, written_from);
       }
     }
   }
@@ -460,7 +441,7 @@ void MarkUsedByDefaultParameters(
 // no part of what its object is an object of.
 auto UsedParametersOf(
     const slang::ast::InstanceBodySymbol& body, const ParameterSet& own,
-    const ParameterEdges& written_from, const SpecializationPolicy& policy)
+    const ParameterEdges& written_from, const UnitNamingPolicy& policy)
     -> UsedParameters {
   EveryReference every(own);
   body.visit(every);
@@ -476,13 +457,13 @@ auto UsedParametersOf(
 
 }  // namespace
 
-auto SpecializationPolicy::SuppliedParametersOf(
+auto UnitNamingPolicy::SuppliedParametersOf(
     const slang::ast::InstanceSymbol& inst) const
     -> std::span<const slang::ast::ParameterSymbol* const> {
   return Of(inst).supplied;
 }
 
-auto SpecializationPolicy::Of(const slang::ast::InstanceSymbol& inst) const
+auto UnitNamingPolicy::Of(const slang::ast::InstanceSymbol& inst) const
     -> const PerInstance& {
   auto cached = per_instance_.find(&inst);
   if (cached == per_instance_.end()) {
@@ -491,8 +472,8 @@ auto SpecializationPolicy::Of(const slang::ast::InstanceSymbol& inst) const
   return cached->second;
 }
 
-auto SpecializationPolicy::OfBody(
-    const slang::ast::InstanceBodySymbol& body) const -> const PerBody& {
+auto UnitNamingPolicy::OfBody(const slang::ast::InstanceBodySymbol& body) const
+    -> const PerBody& {
   if (const auto kept = per_body_.find(&body); kept != per_body_.end()) {
     return kept->second;
   }
@@ -517,8 +498,8 @@ auto SpecializationPolicy::OfBody(
 // the instance is read through, and the rest of the instance itself, a
 // parameter of the one standing for the parameter of the other declared at the
 // same place.
-auto SpecializationPolicy::Classify(
-    const slang::ast::InstanceSymbol& inst) const -> PerInstance {
+auto UnitNamingPolicy::Classify(const slang::ast::InstanceSymbol& inst) const
+    -> PerInstance {
   const slang::ast::InstanceBodySymbol& read_through =
       HasBodyOfItsOwn(inst) ? inst.body : *inst.getCanonicalBody();
   const PerBody& text = OfBody(read_through);
@@ -560,7 +541,6 @@ auto SpecializationPolicy::Classify(
       .varying = {},
       .used = UsedParameters{
           .in_signature = all_as_handed(text.used.in_signature),
-          .in_body = all_as_handed(text.used.in_body),
           .deciding_what_is_built =
               all_as_handed(text.used.deciding_what_is_built)}};
   // A top-level instance is built by the design root, which hands nothing, and
@@ -602,12 +582,12 @@ auto SpecializationPolicy::Classify(
   return out;
 }
 
-auto SpecializationPolicy::ValueSourceOf(
+auto UnitNamingPolicy::ValueSourceOf(
     const slang::ast::InstanceSymbol& inst,
     const slang::ast::ParameterSymbol& param) const -> ParameterValueSource {
   const PerInstance& known = Of(inst);
   if (!known.varying.contains(&param)) {
-    return ParameterValueSource::kFixedBySpecialization;
+    return ParameterValueSource::kFixedByUnit;
   }
   if (param.isFromGenvar() || std::ranges::contains(known.supplied, &param)) {
     return ParameterValueSource::kSuppliedAtConstruction;
@@ -615,22 +595,10 @@ auto SpecializationPolicy::ValueSourceOf(
   return ParameterValueSource::kComputedAtConstruction;
 }
 
-auto SpecializationPolicy::IsUsedInSignature(
-    const slang::ast::InstanceSymbol& inst,
-    const slang::ast::ParameterSymbol& param) const -> bool {
-  return Of(inst).used.in_signature.contains(&param);
-}
-
-auto SpecializationPolicy::DecidesWhatIsBuilt(
+auto UnitNamingPolicy::DecidesWhatIsBuilt(
     const slang::ast::InstanceSymbol& inst,
     const slang::ast::ParameterSymbol& param) const -> bool {
   return Of(inst).used.deciding_what_is_built.contains(&param);
-}
-
-auto SpecializationPolicy::IsUsedInBody(
-    const slang::ast::InstanceSymbol& inst,
-    const slang::ast::ParameterSymbol& param) const -> bool {
-  return Of(inst).used.in_body.contains(&param);
 }
 
 }  // namespace lyra::lowering::ast_to_hir

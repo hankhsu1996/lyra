@@ -3063,13 +3063,15 @@ source, or not yet tried.
       static prefix where a select is out of bounds (LRM 11.5.3 has such a prefix in its own
       example) would let the block share its body instead, and was weighed and not done.
 
-- [ ] R222 -- A hierarchical name's select of a loop generate's block is lowered as the index the
-      front end resolved, so blocks that each read their neighbour are a body each, and the route is
-      rebuilt from the target's parents rather than read off the path the lookup produced. Target:
-      the route is read off that path, the select is stated as the expression the source wrote and
-      evaluated where the reference is settled, and the resolved index stays only where the loop's
-      blocks are of several classes. Needs the front end to keep a path's selector expressions, a
-      change carried twice before and taken out each time for want of a reader. Not yet tried.
+- [ ] R222 -- A hierarchical name's select of a loop generate's block is now the expression the
+      source wrote, evaluated where the reference is settled. Blocks reaching their neighbour by a
+      select worked out from their index are still a body per index, since the parameters the select
+      reads name each block. The route is still rebuilt from the target's parents, with each select
+      looked up on the written path by the block it picked, rather than read off that path. An
+      instance array's select is still the position the front end resolved, so blocks reaching
+      `u[i-1]` are a body each. And a loop's block reached through a virtual interface is selected
+      by its index, because the front end hands back the member the name lands on and keeps no path
+      for it; that needs a front-end change first.
 
 - [ ] R223 -- An assertion written at module level is recognized by the shape of the procedure the
       front end made for it, and only the concurrent form is recognized, so a deferred immediate
@@ -3309,6 +3311,27 @@ source, or not yet tried.
       Target: they are built per type by one rule where the execution IR is lowered from MIR, as
       rustc builds drop glue and clone shims per type, and the code generator only translates them;
       the C++ backend keeps the host compiler's own rule, which is the same rule. Blocked on R256.
+
+- [ ] R260 -- A unit's name answers two questions at once: which declaration and specialization it
+      is, and what another unit may compile against. What another unit compiles against is decided
+      before any body lowers by predicting, from the front end's record of which parameters a type
+      or a required constant read, which values enter the name, while which bodies share code is
+      found afterwards by comparing what they came out as. The prediction errs toward more units and
+      every compile checks that the specializations of one unit publish one signature, so it is
+      sound where it runs, but it needs a record of our own in the front end, and naming a unit by
+      what it declares instead was tried and missed three things a signature holds (a structure
+      member's default, an explicit port expression's window, a nested module's type reading the
+      outer parameter). Beside it, a block's body is lowered inside the first body publishing the
+      class around its own, where layout and public field identity should come from the signature.
+      One name depends on another in a cycle where an instance inside a generate block writes a name
+      landing back in that block: the block is named by what it declares, the instance among it, and
+      the instance by where its names land, the block among them. Naming in one pass cuts the cycle
+      wherever it was entered, so the names it keeps can follow which was asked first; such a design
+      runs, but the cycle wants naming as a group. Target: one stage producing the public contract,
+      sharing its representation with what lowers the published class; a stable identity apart from
+      a fingerprint of the contract; references that name declaration identity, so naming need not
+      finish a child before its parent; the front end's record and the prediction removed last. Not
+      blocked.
 
 ## Out of Scope
 

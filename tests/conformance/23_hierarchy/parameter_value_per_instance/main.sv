@@ -9,8 +9,9 @@
 // Some positions take a constant the front end settles while binding, so the
 // value decides what that position means: a size cast's width (LRM 6.24.1),
 // the index of a hierarchical name (LRM 23.6), a streaming concatenation's
-// slice size (LRM 11.4.14.2), a sequence's delay (LRM 16.7), and a bounded
-// queue's bound (LRM 7.10).
+// slice size (LRM 11.4.14.2), a sequence's delay (LRM 16.7), a bounded
+// queue's bound (LRM 7.10), and a structure member's default, which is part of
+// the type that declares it (LRM 7.2.2).
 module Inner #(parameter int V = 0) (output int o);
   initial o = V;
 endmodule
@@ -84,7 +85,7 @@ module Wide #(parameter logic [199:0] P = '0) (output int picked);
   end
 endmodule
 
-module Folded #(parameter int W = 4) (
+module Folded #(parameter int W = 4, parameter int M = 0) (
     input logic clk,
     input logic start,
     input logic stop,
@@ -92,8 +93,11 @@ module Folded #(parameter int W = 4) (
     output int picked,
     output logic [15:0] streamed,
     output int queued,
-    output int missed
+    output int missed,
+    output int defaulted
 );
+  typedef struct {int a = M * 3;} defaulted_t;
+  defaulted_t made;
   int x = 1000;
   logic [15:0] bits = 16'h1234;
   int q[$:W];
@@ -113,6 +117,7 @@ module Folded #(parameter int W = 4) (
     streamed = {<< W {bits}};
     for (int k = 0; k < W + 2; k++) q.push_back(k);
     queued = q.size();
+    defaulted = made.a;
   end
 endmodule
 
@@ -173,12 +178,20 @@ module Top;
   end
 
   int cast4, cast8, picked4, picked8, queued4, queued8, missed4, missed8;
+  int defaulted4, defaulted8, defaulted4_again;
+  int cast4_again, picked4_again, queued4_again, missed4_again;
+  logic [15:0] streamed4_again;
   logic [15:0] streamed4, streamed8;
-  Folded #(.W(4)) f4 (
-      clk, start, stop, cast4, picked4, streamed4, queued4, missed4
+  Folded #(.W(4), .M(4)) f4 (
+      clk, start, stop, cast4, picked4, streamed4, queued4, missed4, defaulted4
   );
-  Folded #(.W(8)) f8 (
-      clk, start, stop, cast8, picked8, streamed8, queued8, missed8
+  Folded #(.W(8), .M(8)) f8 (
+      clk, start, stop, cast8, picked8, streamed8, queued8, missed8, defaulted8
+  );
+  // Alike in W, so the same shape everywhere but the member's default.
+  Folded #(.W(4), .M(5)) f4_again (
+      clk, start, stop, cast4_again, picked4_again, streamed4_again,
+      queued4_again, missed4_again, defaulted4_again
   );
 
   final begin
@@ -221,6 +234,9 @@ module Top;
       $fatal(1, "bounded queues held %0d and %0d", queued4, queued8);
     if (missed4 !== 0 || missed8 !== 1)
       $fatal(1, "delays of 4 and 8 missed %0d and %0d times", missed4, missed8);
+    if (defaulted4 !== 12 || defaulted8 !== 24 || defaulted4_again !== 15)
+      $fatal(1, "member defaults were %0d, %0d and %0d", defaulted4,
+             defaulted8, defaulted4_again);
     $display("All checks passed");
   end
 endmodule

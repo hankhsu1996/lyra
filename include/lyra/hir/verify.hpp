@@ -3,6 +3,7 @@
 namespace lyra::hir {
 
 struct CompilationUnit;
+struct ScopeConstruction;
 
 // Checks what this layer states about a finished unit, and throws InternalError
 // naming every place that breaks it.
@@ -20,8 +21,12 @@ struct CompilationUnit;
 // so neither is a place; a description is still held to naming an expression
 // its arena has.
 //
+// What `construction` says a specialization of the unit builds is held to what
+// the unit's scopes state: a child for each object of each instance member,
+// and at each generate what its construct counts out.
+//
 // A unit is reported whole rather than at its first violation, one line per
 // expression, so one run over a design says everything that shares.
-void Verify(const CompilationUnit& unit);
+void Verify(const CompilationUnit& unit, const ScopeConstruction& construction);
 
 }  // namespace lyra::hir

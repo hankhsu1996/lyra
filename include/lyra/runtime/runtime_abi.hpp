@@ -1069,6 +1069,15 @@ auto lyra_rt_instantiation_entry(const void* table, std::int64_t at)
     -> LyraMethodEntry;
 auto lyra_rt_instantiation_table(const void* table, std::int64_t at) -> const
     void*;
+// How the block at place `place` of the generate at `generate` of a
+// construction table is made: the entry making it, and the table it is
+// constructed with.
+auto lyra_rt_block_entry(
+    const void* table, std::int64_t generate, std::int64_t place)
+    -> LyraMethodEntry;
+auto lyra_rt_block_table(
+    const void* table, std::int64_t generate, std::int64_t place) -> const
+    void*;
 
 // A reference, built in the storage the caller gives: where a value lies, and
 // what holds that storage, if anyone is told about it. A body holding a

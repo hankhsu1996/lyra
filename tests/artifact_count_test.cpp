@@ -14,7 +14,9 @@
 // nothing of Lyra's own it did not ask for is a property of the same kind, and
 // is asserted here too.
 
+#include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
@@ -22,6 +24,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <slang/driver/Driver.h>
@@ -31,14 +34,15 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/hir/compilation_unit.hpp"
-#include "lyra/hir/structural_scope.hpp"
+#include "lyra/hir/scope_construction.hpp"
+#include "lyra/hir/specialization.hpp"
 #include "lyra/support/def_path.hpp"
 
 namespace {
 
 // Every unit of a design, lowered to HIR. The command line holds one unit at a
 // time; a probe holds them all, so it can ask anything any unit says.
-using LoweredUnits = std::vector<lyra::hir::CompilationUnit>;
+using LoweredUnits = std::vector<lyra::hir::Specialization>;
 
 // The design `source` states, lowered to HIR through the same entries the
 // command line uses.
@@ -72,13 +76,17 @@ auto LowerDesign(std::string_view source) -> std::optional<LoweredUnits> {
   EXPECT_TRUE(design.has_value()) << "the probe design did not declare";
   if (!design.has_value()) return std::nullopt;
 
+  // What is compiled is each implementation, once.
   LoweredUnits units;
   lyra::compiler::LowerToHir(
       *design, sink, 1,
-      [](lyra::hir::CompilationUnit unit)
-          -> lyra::diag::Result<lyra::hir::CompilationUnit> { return unit; },
-      [&units](lyra::hir::CompilationUnit unit) {
-        units.push_back(std::move(unit));
+      [](lyra::hir::Specialization lowered)
+          -> lyra::diag::Result<std::optional<lyra::hir::Specialization>> {
+        if (!lowered.IsFirstOfItsImplementation()) return std::nullopt;
+        return lowered;
+      },
+      [&units](std::optional<lyra::hir::Specialization> lowered) {
+        if (lowered.has_value()) units.push_back(*std::move(lowered));
       });
   EXPECT_FALSE(sink.HasErrors()) << "the probe design did not lower";
   if (sink.HasErrors()) return std::nullopt;
@@ -99,7 +107,8 @@ auto IsOf(const lyra::hir::CompilationUnit& unit, std::string_view definition)
 auto UnitsOf(const LoweredUnits& design, std::string_view definition)
     -> std::size_t {
   std::set<std::string_view> units;
-  for (const lyra::hir::CompilationUnit& unit : design) {
+  for (const lyra::hir::Specialization& lowered : design) {
+    const lyra::hir::CompilationUnit& unit = lowered.implementation;
     if (IsOf(unit, definition)) units.insert(unit.name);
   }
   return units.size();
@@ -110,43 +119,56 @@ auto UnitsOf(const LoweredUnits& design, std::string_view definition)
 auto BodiesOf(const LoweredUnits& design, std::string_view definition)
     -> std::size_t {
   std::size_t count = 0;
-  for (const lyra::hir::CompilationUnit& unit : design) {
-    if (IsOf(unit, definition)) ++count;
+  for (const lyra::hir::Specialization& lowered : design) {
+    if (IsOf(lowered.implementation, definition)) ++count;
   }
   return count;
 }
 
-// The blocks one generate of `design` was compiled into, for the generate the
-// design's top declares. A shared loop holds one scope however many indices it
-// counts out; an unshared one holds a scope per index. `depth` walks into the
-// first block of that generate and asks the same of the generate inside it,
-// which is how a conditional written inside a loop is reached.
-auto BlocksOfGenerate(const LoweredUnits& design, std::size_t depth)
+// The block bodies one generate of `design` builds, for the generate the
+// design's top declares: blocks that compile alike share one body however many
+// indices the loop counts out, and blocks that do not have a body each.
+// `depth` asks the same of the generate inside the blocks that one builds,
+// gathered over every one of them, which is how a conditional written inside a
+// loop is reached.
+auto BodiesOfGenerate(const LoweredUnits& design, std::size_t depth)
     -> std::size_t {
-  for (const lyra::hir::CompilationUnit& unit : design) {
-    const lyra::hir::StructuralScope* scope = &unit.root_scope;
-    for (std::size_t level = 0;; ++level) {
-      const lyra::hir::Generate* found = nullptr;
-      for (const lyra::hir::Generate& generate : scope->generates) {
-        if (generate.blocks.size() != 0) {
-          found = &generate;
+  for (const lyra::hir::Specialization& unit : design) {
+    std::vector<const lyra::hir::ScopeConstruction*> level{&unit.construction};
+    for (std::size_t at = 0;; ++at) {
+      std::set<std::uint32_t> bodies;
+      std::vector<const lyra::hir::ScopeConstruction*> inside;
+      for (const lyra::hir::ScopeConstruction* built : level) {
+        for (const std::vector<lyra::hir::BlockConstruction>& places :
+             built->generates) {
+          if (std::ranges::none_of(
+                  places, [](const lyra::hir::BlockConstruction& place) {
+                    return place.body.has_value();
+                  })) {
+            continue;
+          }
+          for (const lyra::hir::BlockConstruction& place : places) {
+            if (!place.body.has_value()) continue;
+            bodies.insert(place.body->value);
+            inside.push_back(&place.built);
+          }
           break;
         }
       }
-      if (found == nullptr) break;
-      if (level == depth) return found->blocks.size();
-      scope = &found->blocks.begin()->scope;
+      if (bodies.empty()) break;
+      if (at == depth) return bodies.size();
+      level = std::move(inside);
     }
   }
   return 0;
 }
 
 // The same, for the design `source` states.
-auto CompiledBlocksOfGenerate(std::string_view source, std::size_t depth)
+auto CompiledBodiesOfGenerate(std::string_view source, std::size_t depth)
     -> std::size_t {
   const auto design = LowerDesign(source);
   if (!design.has_value()) return 0;
-  return BlocksOfGenerate(*design, depth);
+  return BodiesOfGenerate(*design, depth);
 }
 
 // How many units `definition` was compiled into across the design `source`.
@@ -161,7 +183,7 @@ TEST(ArtifactCount, RepeatedBlocksAreCompiledOnce) {
   // Eight blocks, one body: every block declares the same thing and reads the
   // index, which is a value each construction is handed (LRM 27.4).
   EXPECT_EQ(
-      CompiledBlocksOfGenerate(
+      CompiledBodiesOfGenerate(
           R"(
 module Top;
   int sink [8];
@@ -183,7 +205,7 @@ TEST(ArtifactCount, BlocksThatDifferAreCompiledApart) {
   // index fixes. A width settles a type, and two types are two bodies, so the
   // count has to follow the indices here.
   EXPECT_EQ(
-      CompiledBlocksOfGenerate(
+      CompiledBodiesOfGenerate(
           R"(
 module Top;
   for (genvar i = 1; i < 5; i += 1) begin : g
@@ -196,13 +218,12 @@ endmodule
       4U);
 }
 
-TEST(ArtifactCount, BlocksWhoseWidthTheIndexSetsAreCompiledOncePerIndex) {
-  // Sixteen blocks whose widths alternate between two. The index decides what
-  // each block declares, so it is an argument of the block's class and each of
-  // its values names one, as a template argument does, even where two values
-  // settle one width.
+TEST(ArtifactCount, BlocksDeclaringAlikeAreCompiledOnceWhateverTheirIndex) {
+  // Sixteen blocks whose widths alternate between two. A block is named by
+  // what it declares as resolved, so two indices that settle one width are one
+  // class, and the blocks compile once per width.
   EXPECT_EQ(
-      CompiledBlocksOfGenerate(
+      CompiledBodiesOfGenerate(
           R"(
 module Top;
   for (genvar i = 0; i < 16; i += 1) begin : g
@@ -212,7 +233,7 @@ module Top;
 endmodule
 )",
           0),
-      16U);
+      2U);
 }
 
 TEST(ArtifactCount, BlocksDerivingAConstantFromTheIndexAreCompiledOnce) {
@@ -223,7 +244,7 @@ TEST(ArtifactCount, BlocksDerivingAConstantFromTheIndexAreCompiledOnce) {
   // holds and nothing about the block is decided by it -- which is what
   // separates this from the width below, where the value reaches a type.
   EXPECT_EQ(
-      CompiledBlocksOfGenerate(
+      CompiledBodiesOfGenerate(
           R"(
 module Top;
   int sink [4];
@@ -256,7 +277,7 @@ TEST(ArtifactCount, BlocksReachingThePartTheirIndexSelectsAreCompiledOnce) {
   // `always_comb`, `wait`, an element of a multidimensional packed array, an
   // indexed part-select, and a bidirectional port alike.
   EXPECT_EQ(
-      CompiledBlocksOfGenerate(
+      CompiledBodiesOfGenerate(
           R"(
 module Pad(inout wire p);
 endmodule
@@ -290,7 +311,7 @@ TEST(ArtifactCount, BlocksWhoseIndexSettlesAConditionAreCompiledOnce) {
   // operator's second operand, a loop the index bounds, `@*` and `wait`, in a
   // procedure and in a continuous assignment alike.
   EXPECT_EQ(
-      CompiledBlocksOfGenerate(
+      CompiledBodiesOfGenerate(
           R"(
 module Top;
   logic [7:0] a;
@@ -335,7 +356,7 @@ TEST(
   // settles a type whatever it was written through, so naming it first changes
   // nothing: these blocks declare different things and are compiled apart.
   EXPECT_EQ(
-      CompiledBlocksOfGenerate(
+      CompiledBodiesOfGenerate(
           R"(
 module Top;
   for (genvar i = 1; i < 5; i += 1) begin : g
@@ -356,7 +377,7 @@ TEST(ArtifactCount, BlocksBoundingAQueueByTheirIndexAreCompiledApart) {
   // lowers to. Asked of the front end's own matching instead, these blocks
   // answer that they are alike and then lower into different scopes.
   EXPECT_EQ(
-      CompiledBlocksOfGenerate(
+      CompiledBodiesOfGenerate(
           R"(
 module Top;
   for (genvar i = 1; i < 5; i += 1) begin : g
@@ -373,8 +394,9 @@ endmodule
 // not agree, and what they disagree about is which alternative of a construct
 // that selects at most one of them stood (LRM 27.5) -- which is decided by an
 // expression reading the index, and so by a value each construction is handed.
-// So the loop is one body, and the conditional inside it holds both
-// alternatives rather than the one its own index took.
+// So the loop is one body, and each alternative of the conditional inside it
+// is a body of its own, which a block builds at that alternative's place where
+// its index selected it.
 constexpr std::string_view kOneSpecialIndex = R"(
 module Top;
   int sink [8];
@@ -389,11 +411,11 @@ endmodule
 )";
 
 TEST(ArtifactCount, ALoopWhoseBlocksChooseIsCompiledOnce) {
-  EXPECT_EQ(CompiledBlocksOfGenerate(kOneSpecialIndex, 0), 1U);
+  EXPECT_EQ(CompiledBodiesOfGenerate(kOneSpecialIndex, 0), 1U);
 }
 
-TEST(ArtifactCount, AChosenBlockHoldsEveryAlternative) {
-  EXPECT_EQ(CompiledBlocksOfGenerate(kOneSpecialIndex, 1), 2U);
+TEST(ArtifactCount, EachAlternativeOfTheChoiceIsABodyOfItsOwn) {
+  EXPECT_EQ(CompiledBodiesOfGenerate(kOneSpecialIndex, 1), 2U);
 }
 
 // An `if ... else if ... else` chain, which the standard treats as one
@@ -416,11 +438,11 @@ endmodule
 )";
 
 TEST(ArtifactCount, ALoopWhoseBlocksChooseAlongAChainIsCompiledOnce) {
-  EXPECT_EQ(CompiledBlocksOfGenerate(kChain, 0), 1U);
+  EXPECT_EQ(CompiledBodiesOfGenerate(kChain, 0), 1U);
 }
 
-TEST(ArtifactCount, AChainHoldsEveryAlternative) {
-  EXPECT_EQ(CompiledBlocksOfGenerate(kChain, 1), 3U);
+TEST(ArtifactCount, EachAlternativeOfTheChainIsABodyOfItsOwn) {
+  EXPECT_EQ(CompiledBodiesOfGenerate(kChain, 1), 3U);
 }
 
 // A `case` selects on its own expression read against each item's labels, in
@@ -446,11 +468,11 @@ endmodule
 )";
 
 TEST(ArtifactCount, ALoopWhoseBlocksChooseByCaseIsCompiledOnce) {
-  EXPECT_EQ(CompiledBlocksOfGenerate(kCase, 0), 1U);
+  EXPECT_EQ(CompiledBodiesOfGenerate(kCase, 0), 1U);
 }
 
-TEST(ArtifactCount, ACaseHoldsEveryAlternative) {
-  EXPECT_EQ(CompiledBlocksOfGenerate(kCase, 1), 3U);
+TEST(ArtifactCount, EachAlternativeOfTheCaseIsABodyOfItsOwn) {
+  EXPECT_EQ(CompiledBodiesOfGenerate(kCase, 1), 3U);
 }
 
 // A conditional whose condition fails contributes nothing at that index, and
@@ -468,7 +490,7 @@ endmodule
 )";
 
 TEST(ArtifactCount, ALoopWhoseConditionalContributesNothingIsCompiledOnce) {
-  EXPECT_EQ(CompiledBlocksOfGenerate(kNoElse, 0), 1U);
+  EXPECT_EQ(CompiledBodiesOfGenerate(kNoElse, 0), 1U);
 }
 
 // A conditional the source wrote inside another's selected side belongs to the
@@ -496,19 +518,17 @@ endmodule
 )";
 
 TEST(ArtifactCount, ALoopWhoseConditionalsNestIsCompiledOnce) {
-  EXPECT_EQ(CompiledBlocksOfGenerate(kNestedInSelectedSide, 0), 1U);
+  EXPECT_EQ(CompiledBodiesOfGenerate(kNestedInSelectedSide, 0), 1U);
 }
 
-TEST(ArtifactCount, ANestedConditionalHoldsEveryAlternative) {
-  EXPECT_EQ(CompiledBlocksOfGenerate(kNestedInSelectedSide, 1), 3U);
+TEST(ArtifactCount, EachAlternativeOfANestedConditionalIsABodyOfItsOwn) {
+  EXPECT_EQ(CompiledBodiesOfGenerate(kNestedInSelectedSide, 1), 3U);
 }
 
 // A conditional on the outer index, written inside an inner loop. Every inner
-// block of one outer block selects the same alternative, so the inner loop of
-// that outer block is one body holding that alternative alone, and two outer
-// blocks then differ in what their inner loops hold. That is still only which
-// alternative stood, so both loops are one body each and the conditional holds
-// both alternatives.
+// block of one outer block selects the same alternative, and which one is that
+// block's construction rather than its code, so both loops are one body each
+// and each alternative is a body of its own.
 constexpr std::string_view kChoiceUnderAnInnerLoop = R"(
 module Top;
   int sink [8][4];
@@ -525,22 +545,22 @@ endmodule
 )";
 
 TEST(ArtifactCount, ALoopWhoseInnerLoopChoosesByTheOuterIndexIsCompiledOnce) {
-  EXPECT_EQ(CompiledBlocksOfGenerate(kChoiceUnderAnInnerLoop, 0), 1U);
+  EXPECT_EQ(CompiledBodiesOfGenerate(kChoiceUnderAnInnerLoop, 0), 1U);
 }
 
 TEST(ArtifactCount, TheInnerLoopOfSuchALoopIsCompiledOnce) {
-  EXPECT_EQ(CompiledBlocksOfGenerate(kChoiceUnderAnInnerLoop, 1), 1U);
+  EXPECT_EQ(CompiledBodiesOfGenerate(kChoiceUnderAnInnerLoop, 1), 1U);
 }
 
-TEST(ArtifactCount, AChoiceUnderAnInnerLoopHoldsEveryAlternative) {
-  EXPECT_EQ(CompiledBlocksOfGenerate(kChoiceUnderAnInnerLoop, 2), 2U);
+TEST(ArtifactCount, EachAlternativeUnderAnInnerLoopIsABodyOfItsOwn) {
+  EXPECT_EQ(CompiledBodiesOfGenerate(kChoiceUnderAnInnerLoop, 2), 2U);
 }
 
 // The same conditional, inside an inner loop whose own blocks are compiled
-// apart because each declares a width its index fixes. The outer blocks agree
-// on those inner blocks one for one, and differ only in which alternative
-// stood inside each, so the outer loop is one body around an inner loop that
-// is not.
+// apart because each declares a width its index fixes. Which inner blocks an
+// outer block builds, and which alternative stands in each, is that block's
+// construction, so the outer loop is one body around an inner loop that is
+// not.
 constexpr std::string_view kChoiceUnderAnInnerLoopCompiledApart = R"(
 module Top;
   for (genvar g = 0; g < 4; g += 1) begin : gg
@@ -558,21 +578,20 @@ endmodule
 
 TEST(ArtifactCount, ALoopAroundBlocksCompiledApartThatChooseIsCompiledOnce) {
   EXPECT_EQ(
-      CompiledBlocksOfGenerate(kChoiceUnderAnInnerLoopCompiledApart, 0), 1U);
+      CompiledBodiesOfGenerate(kChoiceUnderAnInnerLoopCompiledApart, 0), 1U);
 }
 
 TEST(ArtifactCount, TheBlocksCompiledApartStayApart) {
   EXPECT_EQ(
-      CompiledBlocksOfGenerate(kChoiceUnderAnInnerLoopCompiledApart, 1), 3U);
+      CompiledBodiesOfGenerate(kChoiceUnderAnInnerLoopCompiledApart, 1), 3U);
 }
 
-TEST(ArtifactCount, ALoopWhoseInnerLoopsDeclareDifferentlyIsCompiledApart) {
-  // Each outer block's inner loop is one body, and that body declares a width
-  // the outer index fixes. The inner loops then differ in a type, which no
-  // construction supplies, so the outer count has to follow the indices.
-  EXPECT_EQ(
-      CompiledBlocksOfGenerate(
-          R"(
+// Each outer block's inner loop builds blocks declaring a width the outer
+// index fixes, so the inner blocks differ in a type, which no construction
+// supplies, and are compiled apart. Which of them an outer block builds is
+// that block's construction, so the outer blocks are one body whatever their
+// inner ones are.
+constexpr std::string_view kInnerLoopsDeclareDifferently = R"(
 module Top;
   for (genvar g = 1; g < 5; g += 1) begin : gg
     for (genvar i = 0; i < 4; i += 1) begin : gi
@@ -581,9 +600,11 @@ module Top;
     end
   end
 endmodule
-)",
-          0),
-      4U);
+)";
+
+TEST(ArtifactCount, ALoopAroundInnerLoopsThatDeclareDifferentlyIsCompiledOnce) {
+  EXPECT_EQ(CompiledBodiesOfGenerate(kInnerLoopsDeclareDifferently, 0), 1U);
+  EXPECT_EQ(CompiledBodiesOfGenerate(kInnerLoopsDeclareDifferently, 1), 4U);
 }
 
 // A child handed a different value at every index, which it only ever reads as
@@ -611,7 +632,7 @@ TEST(ArtifactCount, AChildGivenAValuePerIndexIsCompiledOnceAndSoIsTheLoop) {
   const auto design = LowerDesign(kValuePerIndex);
   ASSERT_TRUE(design.has_value());
   EXPECT_EQ(UnitsOf(*design, "Leaf"), 1U);
-  EXPECT_EQ(BlocksOfGenerate(*design, 0), 1U);
+  EXPECT_EQ(BodiesOfGenerate(*design, 0), 1U);
 }
 
 TEST(ArtifactCount, BlocksReadingSeveralOfTheirOwnVariablesAreCompiledOnce) {
@@ -621,7 +642,7 @@ TEST(ArtifactCount, BlocksReadingSeveralOfTheirOwnVariablesAreCompiledOnce) {
   // state the same thing -- through `always_comb`, `@*`, a continuous
   // assignment, and a `wait`.
   EXPECT_EQ(
-      CompiledBlocksOfGenerate(
+      CompiledBodiesOfGenerate(
           R"(
 module Top;
   logic by_comb [8];
@@ -1152,7 +1173,8 @@ TEST(ArtifactCount, AValueSayingWhatIsBuiltIsCompiledPerWhatItBuilt) {
   // of its unit's name. So a module handed four values is one unit per set of
   // blocks they built, not per value: three values selecting one alternative
   // are one unit, and so are loops counting one, two and three blocks of one
-  // kind.
+  // kind. The values of one unit build alike and come out as one body, how
+  // many blocks each counts being its construction.
   const auto design = LowerDesign(R"(
 module ByCondition #(parameter int P = 0) (output int o);
   if (P != 0) begin : on
@@ -1203,6 +1225,7 @@ endmodule
   for (const std::string_view definition :
        {"ByCondition", "ByCase", "ByBound", "ThroughADeclaredParameter"}) {
     EXPECT_EQ(UnitsOf(*design, definition), 2U) << definition;
+    EXPECT_EQ(BodiesOf(*design, definition), 2U) << definition;
   }
 }
 
@@ -1232,9 +1255,12 @@ TEST(ArtifactCount, AClassAModuleHoldsIsOneClassOfItsUnit) {
   // declares, or a specialization of a generic placed in it because it is
   // specialized on a type of the module -- is a type of each instance's own
   // (LRM 8.25), and the same text in every one. So it does not tell instances
-  // apart: those handed different values that build the same blocks, or that
-  // count out different numbers of blocks of one kind, are one unit holding one
-  // class, as they are when they hold none.
+  // apart: those handed different values that build the same blocks are one
+  // unit holding one class, as they are when they hold none. A class each
+  // block of a loop declares is a type of that block alone (LRM 27.4), and
+  // this compiler names a unit by the classes of the blocks its instances
+  // built, so instances counting out different numbers of such blocks are
+  // different units.
   const auto design = LowerDesign(R"(
 package p;
   class Box #(type T = int);
@@ -1290,7 +1316,7 @@ endmodule
   ASSERT_TRUE(design.has_value());
   EXPECT_EQ(UnitsOf(*design, "Declares"), 1U);
   EXPECT_EQ(UnitsOf(*design, "Placed"), 1U);
-  EXPECT_EQ(UnitsOf(*design, "Counted"), 1U);
+  EXPECT_EQ(UnitsOf(*design, "Counted"), 2U);
 }
 
 TEST(ArtifactCount, AParameterLeftToItsDefaultIsHandedLikeOneAssigned) {
@@ -1367,11 +1393,12 @@ endmodule
 }
 
 TEST(ArtifactCount, AValueFixingOnlyCodeIsOneUnitCompiledPerBody) {
-  // A value only a process's code relies on names a body and leaves the unit
-  // one class, and a value a declaration relies on names the unit; either way
-  // by the value, as a template argument does, so two values that settle one
-  // constant are still two: `Code` and `Folded` are each one unit compiled to
-  // a body per value, and `Declared` is a unit per value.
+  // A value only a process's code relies on leaves the unit one class, and a
+  // value a declaration relies on names the unit by the value, as a template
+  // argument does. Which body a unit is compiled to is found from what its code
+  // came out as: `Code` is one unit compiled to a body per value, `Folded`,
+  // whose two values settle one constant, one unit compiled to one body, and
+  // `Declared` a unit per value.
   const auto design = LowerDesign(R"(
 module Code #(parameter int P = 1) (input logic [7:0] in, output logic [7:0] out);
   always_comb out = 8'(in[P:0]);
@@ -1399,7 +1426,7 @@ endmodule
   EXPECT_EQ(UnitsOf(*design, "Code"), 1U);
   EXPECT_EQ(BodiesOf(*design, "Code"), 2U);
   EXPECT_EQ(UnitsOf(*design, "Folded"), 1U);
-  EXPECT_EQ(BodiesOf(*design, "Folded"), 2U);
+  EXPECT_EQ(BodiesOf(*design, "Folded"), 1U);
   EXPECT_EQ(UnitsOf(*design, "Declared"), 2U);
   EXPECT_EQ(BodiesOf(*design, "Declared"), 2U);
 }
@@ -1427,11 +1454,11 @@ endmodule
   EXPECT_EQ(BodiesOf(*design, "Holds"), 2U);
 }
 
-TEST(ArtifactCount, AValueFixingAGrandchildsCodeFixesTheBodyHandingItOn) {
+TEST(ArtifactCount, AValueFixingAGrandchildsCodeLeavesTheBodyHandingItOnOne) {
   // A value handed on to a grandchild whose code alone it fixes: the
   // grandchild is one unit compiled to a body per value, and which of those is
-  // built is how the child is built, so the child is one unit compiled to a
-  // body per value too.
+  // built is how each object of the child is built, which is no part of the
+  // child's code, so the child is one unit compiled to one body.
   const auto design = LowerDesign(R"(
 module Leaf #(parameter int P = 1) (input logic [7:0] in, output logic [7:0] out);
   always_comb out = 8'(in[P:0]);
@@ -1453,13 +1480,14 @@ endmodule
   EXPECT_EQ(UnitsOf(*design, "Leaf"), 1U);
   EXPECT_EQ(BodiesOf(*design, "Leaf"), 2U);
   EXPECT_EQ(UnitsOf(*design, "Mid"), 1U);
-  EXPECT_EQ(BodiesOf(*design, "Mid"), 2U);
+  EXPECT_EQ(BodiesOf(*design, "Mid"), 1U);
 }
 
 // Whether a unit of `design` declares a class named `name`.
 auto DeclaresAClassNamed(const LoweredUnits& design, std::string_view name)
     -> bool {
-  for (const lyra::hir::CompilationUnit& unit : design) {
+  for (const lyra::hir::Specialization& lowered : design) {
+    const lyra::hir::CompilationUnit& unit = lowered.implementation;
     for (const lyra::hir::ClassId id : unit.classes.OwnIds()) {
       if (lyra::support::DisplayOf(unit.classes.PathOf(id)) == name) {
         return true;

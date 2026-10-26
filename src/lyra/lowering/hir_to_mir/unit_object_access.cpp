@@ -35,6 +35,27 @@ auto ObjectPointerOf(UnitLowerer& unit_lowerer, hir::ScopeClassId scope_class)
           .ownership = mir::PointerOwnership::kBorrowed}});
 }
 
+// The block of a loop generate a hierarchical name reaches, asked of
+// `blocks`, the member holding the loop's blocks, by `position`, the machine
+// integer the name's select evaluates to (LRM 23.6, 27.4): as a scope of the
+// design hierarchy, which the caller views as the class it knows the block to
+// be. Which block that is was settled by the object running the loop.
+auto ReachLoopBlock(
+    const UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId blocks,
+    mir::ExprId position) -> mir::ExprId {
+  const mir::CompilationUnit& unit = unit_lowerer.Unit();
+  return block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{
+                          .target = support::BuiltinFn::kLoopBlocksAt,
+                          .receiver = blocks},
+                  .arguments = {position}},
+          .type = unit.builtins.scope_ptr});
+}
+
 // The field of the scope class `scope_class` records, on the object `object`
 // points at, at the place `place_of` reads out of where this unit's record of
 // the class laid out what its scope published. The access names the class, so
@@ -97,8 +118,8 @@ auto ReachPublishedDisableTarget(
 
 auto StepThroughPublished(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
-    const hir::PublishedScopeRef& names, std::span<const std::uint32_t> selects)
-    -> mir::ExprId {
+    const hir::PublishedScopeRef& names, std::span<const std::uint32_t> selects,
+    const SelectEvaluator& evaluate_select) -> diag::Result<mir::ExprId> {
   const auto selected = [&](mir::ExprId held) {
     return ApplyInstanceSelects(
                unit_lowerer, block,
@@ -108,30 +129,36 @@ auto StepThroughPublished(
   };
   return std::visit(
       Overloaded{
-          [&](const hir::PublishedMemberRef& member) {
+          [&](const hir::PublishedMemberRef& member)
+              -> diag::Result<mir::ExprId> {
             return selected(AccessPublishedSlot(
                 unit_lowerer, block, object, member.scope_class,
                 [&](const PublishedScopeLayout& layout) {
                   return layout.members.Get(member.member);
                 }));
           },
-          // A loop's block is asked of the loop's member by the value its index
-          // stood at, since which block that is was settled by the object
-          // running the loop, and is viewed as the class it was published as.
-          [&](const hir::PublishedGenerateLoopRef& loop) {
+          // A loop's block is asked of the loop's member by the value the
+          // select evaluates to, since which block that is was settled by the
+          // object running the loop, and is viewed as the class it was
+          // published as.
+          [&](const hir::PublishedGenerateLoopRef& loop)
+              -> diag::Result<mir::ExprId> {
             const mir::ExprId blocks = AccessPublishedSlot(
                 unit_lowerer, block, object, loop.scope_class,
                 [&](const PublishedScopeLayout& layout) {
                   return layout.loops.Get(loop.loop);
                 });
+            auto position = evaluate_select(loop.position);
+            if (!position) return std::unexpected(std::move(position.error()));
             return ObjectAs(
-                block, ReachLoopBlock(unit_lowerer, block, blocks, loop.index),
+                block, ReachLoopBlock(unit_lowerer, block, blocks, *position),
                 ObjectPointerOf(unit_lowerer, loop.result_class));
           },
           // What a construct building at most one block built holds the base
           // every block of it extends, so the block reached is viewed as the
           // class it was published as.
-          [&](const hir::PublishedGenerateBlockRef& chosen) {
+          [&](const hir::PublishedGenerateBlockRef& chosen)
+              -> diag::Result<mir::ExprId> {
             const mir::ExprId held = AccessPublishedSlot(
                 unit_lowerer, block, object, chosen.scope_class,
                 [&](const PublishedScopeLayout& layout) {

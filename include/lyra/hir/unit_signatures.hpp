@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <format>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -56,8 +57,10 @@ class UnitSignatures {
     const UnitSignature* signature = Find(unit_name);
     if (signature == nullptr) {
       throw InternalError(
-          "UnitSignatures::Instantiated: no signature for an instantiated "
-          "unit; the design compiles every unit it instantiates");
+          std::format(
+              "UnitSignatures::Instantiated: no signature for the instantiated "
+              "unit '{}'; the design compiles every unit it instantiates",
+              unit_name));
     }
     return *signature;
   }

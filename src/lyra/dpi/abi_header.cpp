@@ -110,6 +110,7 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
               case mir::RuntimeLibraryKind::kScopeCallable:
               case mir::RuntimeLibraryKind::kConstructionTable:
               case mir::RuntimeLibraryKind::kInstantiation:
+              case mir::RuntimeLibraryKind::kGeneratePlaces:
               case mir::RuntimeLibraryKind::kDumpEntry:
               case mir::RuntimeLibraryKind::kDumpBlock:
                 return crosses_no_boundary();

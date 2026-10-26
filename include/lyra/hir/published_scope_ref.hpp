@@ -1,9 +1,9 @@
 #pragma once
 
-#include <cstdint>
 #include <variant>
 
-#include "lyra/hir/owned_child_ref.hpp"
+#include "lyra/hir/expr_id.hpp"
+#include "lyra/hir/owned_child_step.hpp"
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/published_scope.hpp"
 #include "lyra/hir/scope_class.hpp"
@@ -24,15 +24,16 @@ struct PublishedMemberRef {
   auto operator==(const PublishedMemberRef&) const -> bool = default;
 };
 
-// The block of a loop generate of a published scope whose index stood at
-// `index` (LRM 27.4): the loop by its position among the scope's loops, and
-// `result_class`, the class that block was published as.
-// Where among the loop's blocks it stands is the holding object's to answer,
-// since it is what ran the loop.
+// The block of a loop generate of a published scope -- another unit's, or one
+// of this unit's own -- that a name selects (LRM 23.6, 27.4): the loop by its
+// position among the scope's loops, the select the source wrote, evaluated in
+// each object the name is read in, and `result_class`, the class the selected
+// block was published as. Where among the loop's blocks it stands is the
+// holding object's to answer, since it is what ran the loop.
 struct PublishedGenerateLoopRef {
   ScopeClassId scope_class;
   PublishedLoopId loop;
-  std::int64_t index = 0;
+  ExprId position;
   ScopeClassId result_class;
 
   auto operator==(const PublishedGenerateLoopRef&) const -> bool = default;

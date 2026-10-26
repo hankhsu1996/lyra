@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <variant>
+#include <vector>
 
 #include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/base/internal_error.hpp"
@@ -482,29 +483,30 @@ void WriteOne(TargetText& out, BodyScope scope);
 }
 
 // The name the class of the generate block `block` has inside the class of the
-// scope holding it, which `enclosing` names, as the step `depth` steps down
+// scope holding it, which is named `enclosing`, as the step `depth` steps down
 // its path. A block its label alone does not tell from the others of that
 // scope -- one that is not the first under the label, or an application the
 // design fixed something for -- takes a name carrying what does. C++ gives a
 // class's own name to the class inside itself, so a nested class cannot take
-// it, while a generate block may carry the label of the scope holding it; such
-// a one is `sv_block_<depth>_<name>`. The depth is what keeps a run of blocks
-// under one label from each taking the name of the one before it.
+// it, while a generate block may be named as the scope holding it is -- the
+// same label, and the same declarations under it; such a one is
+// `sv_block_<depth>_<name>`. The depth is what keeps a run of blocks named
+// alike from each taking the name of the one before it.
 [[nodiscard]] inline auto CppNestedClassName(
-    std::string_view enclosing, const support::GenerateBlockStep& block,
+    const CppName& enclosing, const support::GenerateBlockStep& block,
     std::size_t depth) -> CppName {
-  if (block.disambiguator != 0 || block.arguments.has_value()) {
-    return MintedAppliedName{
-        .what = "gen",
-        .disambiguator = block.disambiguator,
-        .arguments = block.arguments,
-        .source = block.label};
-  }
-  if (block.label == enclosing) {
+  CppName named = block.disambiguator != 0 || block.arguments.has_value()
+                      ? CppName{MintedAppliedName{
+                            .what = "gen",
+                            .disambiguator = block.disambiguator,
+                            .arguments = block.arguments,
+                            .source = block.label}}
+                      : ToCppName(block.label);
+  if (TextOf(named) == TextOf(enclosing)) {
     return MintedCppNameWith(
         "block", static_cast<std::uint32_t>(depth), block.label);
   }
-  return ToCppName(block.label);
+  return named;
 }
 
 // A path naming a class ends in a generate block, whose class realizes a scope
@@ -530,6 +532,22 @@ void WriteOne(TargetText& out, BodyScope scope);
   return *block;
 }
 
+// The name of the class of each generate block down `steps`, a path of
+// generate blocks from the instance of the unit `unit_name`, each inside the
+// class of the one before it.
+[[nodiscard]] inline auto CppNestedClassNames(
+    std::string_view unit_name, std::span<const support::DefPathData> steps)
+    -> std::vector<CppName> {
+  std::vector<CppName> names;
+  names.reserve(steps.size());
+  for (std::size_t depth = 0; depth < steps.size(); ++depth) {
+    names.push_back(CppNestedClassName(
+        depth == 0 ? ToCppName(unit_name) : names.back(),
+        BlockStepAt(steps[depth]), depth));
+  }
+  return names;
+}
+
 // The name the class another unit reaches as `class_path` of `unit_name` is
 // declared under. The declaring unit and every unit naming the class ask here
 // with the same two facts, so they spell it alike with no record between them.
@@ -551,13 +569,8 @@ void WriteOne(TargetText& out, BodyScope scope);
   }
   return std::visit(
       Overloaded{
-          [&](const support::GenerateBlockStep& block) -> CppName {
-            const std::string_view enclosing =
-                steps.size() == 1
-                    ? unit_name
-                    : std::string_view{
-                          BlockStepAt(steps[steps.size() - 2]).label};
-            return CppNestedClassName(enclosing, block, steps.size() - 1);
+          [&](const support::GenerateBlockStep&) -> CppName {
+            return CppNestedClassNames(unit_name, steps).back();
           },
           [&](const support::ClassStep& cls) -> CppName {
             if (steps.size() != 1 || cls.name == unit_name) {
@@ -611,12 +624,9 @@ inline void WriteOne(TargetText& out, ClassPathInUnit path) {
     return;
   }
   Write(out, ToCppName(path.unit_name));
-  std::string_view enclosing = path.unit_name;
-  for (std::size_t depth = 0; depth < class_path.data.size(); ++depth) {
-    const support::GenerateBlockStep& block =
-        BlockStepAt(class_path.data[depth]);
-    Write(out, "::", CppNestedClassName(enclosing, block, depth));
-    enclosing = block.label;
+  for (const CppName& name :
+       CppNestedClassNames(path.unit_name, class_path.data)) {
+    Write(out, "::", name);
   }
 }
 
@@ -934,10 +944,13 @@ inline void WriteOne(TargetText& out, const RecordQualifiedName& ref) {
 }
 
 // `sv_create`, the entry that makes an object of a body, in that body's
-// namespace. The source names none, but the design root's tables name it, so
-// it is a fixed word both units write.
-[[nodiscard]] inline auto CppObjectEntryName() -> MintedWord {
-  return MintedWord{.word = "create"};
+// namespace, or `sv_create_block_<n>` for the block body standing at `block`
+// among the body's. The source names none, but the design root's tables name
+// it, so it is a fixed spelling both units write.
+[[nodiscard]] inline auto CppObjectEntryName(
+    std::optional<mir::BlockBodyOrdinal> block) -> CppName {
+  if (!block.has_value()) return MintedWord{.word = "create"};
+  return MintedCppName("create_block", block->value);
 }
 
 // The name of a function in a unit's namespace, chosen by how other code
@@ -956,8 +969,8 @@ inline void WriteOne(TargetText& out, const RecordQualifiedName& ref) {
           [](const mir::ReachedByBringUpEntry& r) -> CppName {
             return CppBringUpEntryName(r.entry);
           },
-          [](const mir::ReachedAsObjectEntry&) -> CppName {
-            return CppObjectEntryName();
+          [](const mir::ReachedAsObjectEntry& r) -> CppName {
+            return CppObjectEntryName(r.block);
           },
           [](const mir::ReachedInAnotherUnit& r) -> CppName {
             return ToCppName(r.name);

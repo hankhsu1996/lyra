@@ -1,6 +1,10 @@
 // One module instantiated once per block of a generate loop, each instance
 // handed a different value it only reads (LRM 23.10). N is how many instances
 // there are.
+//
+// Each instance is handed a value of its own, so each is a specialization of
+// its own, lowered to HIR on its own and found to come out as the one body.
+// @each-adds: bodies lowered 1
 module Leaf #(parameter int K = 0) (input bit c, output int o);
   always @(posedge c) o <= K;
 endmodule

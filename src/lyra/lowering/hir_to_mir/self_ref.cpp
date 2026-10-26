@@ -198,19 +198,24 @@ auto BuildEnclosingScopeReceiver(
                                 .cls->self_pointer_type});
           }},
       frame.structural_base);
+  // Each step reads the link the class the scope it stands on published keeps,
+  // and views what it reached as the class that scope published.
   for (std::uint32_t step = 0; step < hops.value; ++step) {
     const EnclosingClass at =
         frame.EnclosingClassAtHops(mir::EnclosingHops{step});
-    if (!at.enclosing.has_value()) {
+    const EnclosingClass above =
+        frame.EnclosingClassAtHops(mir::EnclosingHops{step + 1});
+    if (!at.enclosing.has_value() || !at.published.has_value() ||
+        !above.published.has_value()) {
       throw InternalError(
           "BuildEnclosingScopeReceiver: a reference climbs out of a scope no "
           "scope of its unit encloses -- please report this as a bug");
     }
-    nav = block.Read(block.exprs.Add(
+    const mir::ExprId link = block.Read(block.exprs.Add(
         mir::MakeFieldAccessExpr(
-            BuildObjectDeref(unit, block, nav),
-            mir::ClassFieldTarget{.owner = at.id, .slot = *at.enclosing},
-            at.cls->fields.Get(*at.enclosing).type)));
+            BuildObjectDeref(unit, block, ObjectAs(block, nav, *at.published)),
+            *at.enclosing, unit.builtins.scope_ptr)));
+    nav = ObjectAs(block, link, *above.published);
   }
   return nav;
 }

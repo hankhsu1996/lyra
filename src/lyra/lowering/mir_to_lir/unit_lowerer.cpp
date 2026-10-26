@@ -22,6 +22,7 @@
 #include "lyra/lir/type.hpp"
 #include "lyra/lowering/mir_to_lir/function_lowerer.hpp"
 #include "lyra/mir/behavior_ordinal.hpp"
+#include "lyra/mir/block_body_ordinal.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_constant_id.hpp"
@@ -42,6 +43,14 @@
 namespace lyra::lowering::mir_to_lir {
 
 namespace {
+
+// Where the block body an entry makes a block of stands among its body's, or
+// none for the entry making an object of the body itself.
+auto BlockOrdinalOf(std::optional<mir::BlockBodyOrdinal> block)
+    -> std::optional<std::uint32_t> {
+  if (!block.has_value()) return std::nullopt;
+  return block->value;
+}
 
 // A class every body of the unit states is one the link keeps one of; one
 // another unit names is this body's own, defined once; and one nothing outside
@@ -415,8 +424,9 @@ auto UnitLowerer::UnitCallableSymbol(mir::CallableId id) const -> std::string {
           },
           // Making an object of one body is making an object of that body's
           // classes, so the entry is the body's.
-          [&](const mir::ReachedAsObjectEntry&) {
-            return lir::ObjectEntrySymbol(mir_->name, mir_->body_name);
+          [&](const mir::ReachedAsObjectEntry& r) {
+            return lir::ObjectEntrySymbol(
+                mir_->name, mir_->body_name, BlockOrdinalOf(r.block));
           },
           // Another unit spells a body of its namespace the same way.
           [](const mir::ReachedInAnotherUnit& r) {
@@ -689,8 +699,9 @@ auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
                     },
                     [&](const mir::ExternalObjectEntryRef& e) -> lir::Constant {
                       return {lir::ConstantExternalFunction{
-                          .symbol =
-                              lir::ObjectEntrySymbol(e.unit_name, e.body_name),
+                          .symbol = lir::ObjectEntrySymbol(
+                              e.unit_name, e.body_name,
+                              BlockOrdinalOf(e.block)),
                           .prototype = TranslateType(expr.type)}};
                     },
                     [&](const mir::ClassConstantRef&) {

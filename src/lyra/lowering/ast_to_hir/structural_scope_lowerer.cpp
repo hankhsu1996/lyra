@@ -275,20 +275,22 @@ struct ArgumentSource {
   std::variant<WrittenAtInstantiation, GivenElsewhere, LeftToDefault> from;
 };
 
-// How one instance is built: the unit it is an instance of, and where each
-// parameter it takes at construction gets its value, in the unit's own order.
+// How one instance is built: the specialization it is an application of, and
+// where each parameter it takes at construction gets its value, in the unit's
+// own order.
 struct InstanceConstruction {
-  std::string unit;
-  std::string body;
+  hir::SpecializationRef made;
   std::vector<ArgumentSource> arguments;
 };
 
 auto ConstructionOf(
-    const slang::ast::InstanceSymbol& instance,
-    const SpecializationPolicy& policy) -> InstanceConstruction {
+    const slang::ast::InstanceSymbol& instance, const UnitNamingPolicy& policy)
+    -> InstanceConstruction {
   InstanceConstruction built{
-      .unit = policy.NameOf(instance),
-      .body = policy.BodyNameOf(instance),
+      .made =
+          hir::SpecializationRef{
+              .unit = policy.NameOf(instance),
+              .specialization = policy.SpecializationNameOf(instance)},
       .arguments = {}};
   for (const slang::ast::ParameterSymbol* param :
        policy.SuppliedParametersOf(instance)) {
@@ -303,12 +305,14 @@ auto ConstructionOf(
   return built;
 }
 
-// Whether two elements of one instantiation are built alike. Each element
-// has parameters of its own, so the arguments are compared by where each gets
-// its value.
+// Whether the code building two elements of one instantiation is the same: an
+// object of one unit, handed its values from the same places. Which
+// specialization each makes is the object's construction and no part of that
+// code. Each element has parameters of its own, so the arguments are compared
+// by where each gets its value.
 auto BuiltAlike(const InstanceConstruction& a, const InstanceConstruction& b)
     -> bool {
-  return a.unit == b.unit && a.body == b.body &&
+  return a.made.unit == b.made.unit &&
          std::ranges::equal(
              a.arguments, b.arguments, {}, &ArgumentSource::from,
              &ArgumentSource::from);
@@ -330,7 +334,7 @@ auto LowerParameterAssignments(
   // Each value is handed at the type the child's unit published for it, which
   // is what its object entry is declared with.
   const hir::UnitSignature& signature =
-      owner.Signatures().Instantiated(built.unit);
+      owner.Signatures().Instantiated(built.made.unit);
   const std::vector<hir::TypeId>& handed =
       hir::DesignElementOf(signature).handed;
   if (handed.size() != built.arguments.size()) {
@@ -387,22 +391,27 @@ auto LowerParameterAssignments(
 //
 // Every element is described by how it is built, and elements built alike are
 // one alternative. Each alternative's assignments are lowered once and stored
-// among this scope's expressions, which is where the construction reads them.
+// among this scope's expressions, which is where the construction reads them;
+// which specialization each element makes is this object's construction.
 auto StructuralScopeLowerer::BuildInstanceMember(
     const slang::ast::Symbol& declared,
     std::span<const slang::ast::InstanceSymbol* const> elements,
     std::vector<hir::UnpackedRange> dims, WalkFrame frame)
-    -> diag::Result<hir::InstanceMemberDecl> {
-  hir::InstanceMemberDecl member{
-      .instance_name = NameInAPath(declared),
-      .array_dims = std::move(dims),
-      .alternatives = {},
-      .taken = {}};
+    -> diag::Result<BuiltInstanceMember> {
+  BuiltInstanceMember built_member{
+      .member =
+          hir::InstanceMemberDecl{
+              .instance_name = NameInAPath(declared),
+              .array_dims = std::move(dims),
+              .alternatives = {},
+              .taken = {}},
+      .made = {}};
+  hir::InstanceMemberDecl& member = built_member.member;
   member.taken.reserve(elements.size());
   std::vector<InstanceConstruction> distinct;
   for (const slang::ast::InstanceSymbol* element : elements) {
-    InstanceConstruction built =
-        ConstructionOf(*element, owner_->Specialization());
+    InstanceConstruction built = ConstructionOf(*element, owner_->Naming());
+    built_member.made.push_back(built.made);
     const auto known =
         std::ranges::find_if(distinct, [&](const InstanceConstruction& other) {
           return BuiltAlike(other, built);
@@ -418,20 +427,20 @@ auto StructuralScopeLowerer::BuildInstanceMember(
         static_cast<std::uint32_t>(member.alternatives.size()));
     member.alternatives.push_back(
         hir::InstanceAlternative{
-            .scope_class = owner_->ScopeClassOf(built.unit),
-            .body = built.body,
+            .scope_class = owner_->ScopeClassOf(built.made.unit),
             .assignments = *std::move(assignments)});
     distinct.push_back(std::move(built));
   }
-  return member;
+  return built_member;
 }
 
 auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
-    -> diag::Result<hir::StructuralScope> {
+    -> diag::Result<BuiltScope> {
   const profiling::TimeTraceScope span("lower scope", [this] {
     return slang_scope_->asSymbol().getHierarchicalPath();
   });
   hir::StructuralScope scope;
+  owner_->BeginScope(frame_, *this, scope);
   // Filling a declaration is defining the identity a peer may already hold,
   // which is why this scope takes the pools rather than growing its own.
   ScopeDeclarations declarations = owner_->TakeScopeDeclarations(*slang_scope_);
@@ -440,7 +449,9 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   scope.structural_subroutines = std::move(declarations.structural_subroutines);
   scope.processes = std::move(declarations.processes);
   scope.generates = std::move(declarations.generates);
+  construction_.generates.resize(scope.generates.size());
   scope.instance_members = std::move(declarations.instance_members);
+  construction_.instances.resize(scope.instance_members.size());
   scope.procedural_scopes = std::move(declarations.procedural_scopes);
   scope.replicated_classes = owner_->TakeReplicatedClasses(*slang_scope_);
   scope.replicated_covergroups =
@@ -506,7 +517,8 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
 
   scope.routes = owner_->TakeRoutesForFrame(frame_);
   scope.published = owner_->TakePublication(*slang_scope_);
-  return scope;
+  return BuiltScope{
+      .scope = std::move(scope), .construction = std::move(construction_)};
 }
 
 // The parameters of this scope whose values differ between the objects built
@@ -515,7 +527,7 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
 // value the construction fills, and the scope declares them in the order a
 // construction supplies them. One computed from those holds the expression the
 // source wrote for it. Every other parameter's value is fixed by the scope's
-// specialization, so reading that value costs no second artifact.
+// unit, so reading that value costs no second artifact.
 //
 // An expression naming the index resolves to the declaration the construction
 // fills, so every block a loop counts out states the same thing whatever index
@@ -526,7 +538,7 @@ auto StructuralScopeLowerer::DeclareDifferingParameters(
     const auto* parameter = member.as_if<slang::ast::ParameterSymbol>();
     if (parameter == nullptr) continue;
     switch (owner_->ValueSourceOf(*parameter)) {
-      case ParameterValueSource::kFixedBySpecialization:
+      case ParameterValueSource::kFixedByUnit:
         break;
       case ParameterValueSource::kSuppliedAtConstruction: {
         auto kind = SuppliedDeclarationOf(*parameter, frame);
@@ -1215,8 +1227,9 @@ auto StructuralScopeLowerer::PopulateGenerateArrayMember(
     -> diag::Result<void> {
   auto g = BuildGenerateFromArray(array, frame);
   if (!g) return std::unexpected(std::move(g.error()));
-  frame.current_structural_scope->generates.Define(
-      owner_->GenerateIdOf(array), *std::move(g));
+  const hir::GenerateId id = owner_->GenerateIdOf(array);
+  frame.current_structural_scope->generates.Define(id, std::move(g->generate));
+  construction_.generates[id.value] = std::move(g->blocks);
   return {};
 }
 
@@ -1229,8 +1242,9 @@ auto StructuralScopeLowerer::PopulateGenerateBlockMember(
   if (!OpensItsConstruct(block)) return {};
   auto g = BuildGenerateFromBlock(block, frame);
   if (!g) return std::unexpected(std::move(g.error()));
-  frame.current_structural_scope->generates.Define(
-      owner_->GenerateIdOf(block), *std::move(g));
+  const hir::GenerateId id = owner_->GenerateIdOf(block);
+  frame.current_structural_scope->generates.Define(id, std::move(g->generate));
+  construction_.generates[id.value] = std::move(g->blocks);
   return {};
 }
 
@@ -1238,10 +1252,12 @@ auto StructuralScopeLowerer::PopulateInstanceMember(
     const slang::ast::InstanceSymbol& inst, WalkFrame frame)
     -> diag::Result<void> {
   const std::array<const slang::ast::InstanceSymbol*, 1> one{&inst};
-  auto member = BuildInstanceMember(inst, one, {}, frame);
-  if (!member) return std::unexpected(std::move(member.error()));
+  auto built = BuildInstanceMember(inst, one, {}, frame);
+  if (!built) return std::unexpected(std::move(built.error()));
+  const hir::InstanceMemberId id = owner_->InstanceMemberIdOf(inst);
   frame.current_structural_scope->instance_members.Define(
-      owner_->InstanceMemberIdOf(inst), *std::move(member));
+      id, std::move(built->member));
+  construction_.instances[id.value] = std::move(built->made);
   return {};
 }
 
@@ -1257,11 +1273,13 @@ auto StructuralScopeLowerer::PopulateInstanceArrayMember(
   for (const slang::ConstantRange& dim : shape->ranges) {
     dims.push_back(hir::UnpackedRange{.left = dim.left, .right = dim.right});
   }
-  auto member =
+  auto built =
       BuildInstanceMember(array, shape->elements, std::move(dims), frame);
-  if (!member) return std::unexpected(std::move(member.error()));
+  if (!built) return std::unexpected(std::move(built.error()));
+  const hir::InstanceMemberId id = owner_->InstanceMemberIdOf(array);
   frame.current_structural_scope->instance_members.Define(
-      owner_->InstanceMemberIdOf(array), *std::move(member));
+      id, std::move(built->member));
+  construction_.instances[id.value] = std::move(built->made);
   return {};
 }
 

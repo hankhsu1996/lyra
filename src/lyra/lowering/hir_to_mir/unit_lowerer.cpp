@@ -6,6 +6,7 @@
 #include <deque>
 #include <expected>
 #include <format>
+#include <map>
 #include <memory>
 #include <optional>
 #include <span>
@@ -36,6 +37,7 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/class_definition.hpp"
 #include "lyra/lowering/hir_to_mir/covergroup_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
@@ -51,6 +53,7 @@
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/block_body_ordinal.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class_ref.hpp"
@@ -67,6 +70,14 @@
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
+
+// Whether `signature` is what a generate block published: a block keeps the
+// scope that built it (LRM 27.3), which a unit's own scope does not.
+auto IsPublishedBlock(const hir::ScopeClassSignature& signature) -> bool {
+  return !signature.class_path.data.empty() &&
+         std::holds_alternative<support::GenerateBlockStep>(
+             signature.class_path.data.back());
+}
 
 // The handle a member holds on each object it stands for. A handle reaches one
 // object, so where the member stands for several the multiplicity stays outside
@@ -156,8 +167,7 @@ auto PopulateNamespaceOwnStorage(
   // The package root scope is an ExprLowerer over its own expressions: a
   // variable initializer's operands are literals, operators, and by-name
   // package symbols, none of which reach a class or a `self`.
-  const StructuralScopeLowerer expr_lowerer(
-      unit_lowerer, nullptr, scope, unit_lowerer.ConstructionLayout().Root());
+  const StructuralScopeLowerer expr_lowerer(unit_lowerer, nullptr, scope);
 
   const auto make_cell = [&](mir::Block& block, mir::StaticVariableId variable,
                              mir::TypeId cell_type) -> mir::ExprId {
@@ -791,10 +801,9 @@ auto UnitLowerer::PopulateModuleRoot(
   // The tree of scope lowerers is built first, each naming the class it is
   // published as. What the design root brings up and states ride on the root
   // scope's lowering, and a source module has neither.
-  const std::unique_ptr<StructuralScopeLowerer> root =
-      StructuralScopeLowerer::ForScope(
-          *this, nullptr, hir_->root_scope, construction_layout_.Root(),
-          std::move(design_root));
+  const StructuralScopeLowerer::Tree tree = StructuralScopeLowerer::ForRoot(
+      *this, hir_->root_scope, std::move(design_root));
+  StructuralScopeLowerer& root = *tree.root;
   if (auto prologue = PublishUnitDeclarations(); !prologue) {
     return std::unexpected(std::move(prologue.error()));
   }
@@ -802,17 +811,23 @@ auto UnitLowerer::PopulateModuleRoot(
   // Two-sweep structural lowering: the first sweep settles every class's
   // declaration; the second lowers every body and commits the composed class
   // to the unit.
-  auto top_r = root->DeclareShape();
+  auto top_r = root.DeclareShape();
   if (!top_r) return std::unexpected(std::move(top_r.error()));
-  auto body_r = root->PopulateBodies(root_frame);
+  auto body_r = root.PopulateBodies(root_frame);
   if (!body_r) return std::unexpected(std::move(body_r.error()));
   StructuralScopeLowerer::DefinePublishedClasses(*this);
 
+  std::map<mir::CallableId, mir::BlockBodyOrdinal> block_entries;
+  for (const hir::BlockBodyId id : hir_->block_bodies.Ids()) {
+    block_entries.emplace(
+        tree.blocks[id.value]->PublishBlockEntry(), BlockBodyOrdinalOf(id));
+  }
   unit_.content = mir::RootedTree{
       .root = *top_r,
       .object_entry = PublishObjectEntry(
-          unit_, *top_r, root->PublishedClassId(), root->ConstructionValues(),
-          root->ConstructionTable())};
+          unit_, *top_r, root.PublishedClassId(), root.ConstructionValues(),
+          root.ConstructionTable()),
+      .block_entries = std::move(block_entries)};
   PublishTypeOperations();
   return {};
 }
@@ -1265,6 +1280,10 @@ auto UnitLowerer::PublishedFieldsOf(const hir::ScopeClassSignature& signature)
     fields.push_back(
         PublishedField{.name = std::nullopt, .type = cancellation_target});
   }
+  if (IsPublishedBlock(signature)) {
+    fields.push_back(
+        PublishedField{.name = std::nullopt, .type = unit_.builtins.scope_ptr});
+  }
   return fields;
 }
 
@@ -1275,7 +1294,8 @@ auto UnitLowerer::PublishedLayoutAt(
   const std::size_t loops = signature.loops.size();
   const std::size_t choices = signature.choices.size();
   const std::size_t disable_targets = signature.disable_targets.size();
-  if (slots.size() != members + loops + choices + disable_targets) {
+  const std::size_t enclosing = IsPublishedBlock(signature) ? 1 : 0;
+  if (slots.size() != members + loops + choices + disable_targets + enclosing) {
     throw InternalError(
         "UnitLowerer::PublishedLayoutAt: a published class holds one field "
         "per thing its scope published");
@@ -1289,8 +1309,9 @@ auto UnitLowerer::PublishedLayoutAt(
       .members = {members, part(0, members)},
       .loops = {loops, part(members, loops)},
       .choices = {choices, part(members + loops, choices)},
-      .disable_targets = {
-          disable_targets, part(members + loops + choices, disable_targets)}};
+      .disable_targets =
+          {disable_targets, part(members + loops + choices, disable_targets)},
+      .enclosing = enclosing == 0 ? std::nullopt : std::optional{slots.back()}};
 }
 
 // A member is at the position its class's declaration gives it, in this unit

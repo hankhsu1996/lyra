@@ -34,7 +34,7 @@ struct HeldDescent {
 };
 
 auto DescendThroughHandle(
-    UnitLowerer& unit_lowerer, hir::ExprId handle,
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, hir::ExprId handle,
     const slang::ast::VirtualInterfaceType& handle_type,
     const slang::ast::Scope& scope, diag::SourceSpan span)
     -> diag::Result<HeldDescent>;

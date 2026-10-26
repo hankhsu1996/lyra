@@ -6,13 +6,11 @@
 //
 // Which blocks an instance built is part of its unit's name, so the child is
 // one unit per set of blocks its values build -- at most eight here, whatever
-// N is. The loop's block holds the child as a member of the child's unit, so
-// the index handed to the child names the block's class, one per index, as
-// `Leaf<i>` would in C++; that class is what each step adds.
-// @each-adds: bytes, mir.classes 2, mir.constructors 2, mir.class constants 2,
-// @each-adds: mir.callables, mir.fields, mir.types,
-// @each-adds: lir.classes 2, lir.constants, lir.functions, lir.members,
-// @each-adds: lir.types
+// N is -- and the loop's block, named by what it declares, is one class per
+// unit of the child it holds. Each instance is handed a value of its own, so
+// each is a specialization of its own, lowered to HIR on its own and built
+// from a table entry of its own; that is what each step adds.
+// @each-adds: bytes, bodies lowered 1
 module Leaf #(parameter int K = 0) (input bit c, output int o);
   localparam bit ODD = K % 2 != 0;
   int stages [4];

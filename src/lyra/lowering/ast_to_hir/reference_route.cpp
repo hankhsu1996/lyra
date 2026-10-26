@@ -54,6 +54,16 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
+// Whether a path the source wrote passes a block of a generate construct.
+auto PassesAGenerateBlock(
+    std::span<const slang::ast::HierarchicalReference::Element> written)
+    -> bool {
+  return std::ranges::any_of(
+      written, [](const slang::ast::HierarchicalReference::Element& element) {
+        return element.symbol->kind == slang::ast::SymbolKind::GenerateBlock;
+      });
+}
+
 // The dimensions a name left open, with the outermost narrowed to the part the
 // name kept. A name that selected no part narrows nothing, which is the case
 // where what it kept is already the whole of the dimension. Nothing where a
@@ -73,34 +83,29 @@ auto NarrowOutermost(
   return open;
 }
 
-// Whether a scope is one procedural code opens rather than one the design
-// hierarchy is built from: a `begin ... end` or a `fork ... join` (LRM 9.3.4 /
-// 9.3.2), or a task or function, which LRM 23.9 puts on the path beside them.
-// A declaration inside one has its cell on the structural scope that replicates
-// it, so this unit's own identity for that declaration already accounts for
-// every scope of this kind standing above it.
-auto IsProceduralScope(const slang::ast::Symbol& symbol) -> bool {
-  return symbol.kind == slang::ast::SymbolKind::StatementBlock ||
-         symbol.kind == slang::ast::SymbolKind::Subroutine;
-}
-
 // The hop a name takes into `symbol` where this unit declares nothing about
 // it, as the front end resolved the name: an instance or a set of them, a
 // generate block, or a procedural scope. Nothing for anything else a path can
-// pass, which no route yet walks.
-auto NamedHopInto(const slang::ast::Symbol& symbol) -> std::optional<NamedHop> {
+// pass, which no route yet walks, and for a loop's block no select is given
+// for.
+auto NamedHopInto(
+    const slang::ast::Symbol& symbol, const LoopSelectOf& select_of)
+    -> std::optional<NamedHop> {
   const std::string name{symbol.name};
   if (symbol.kind == slang::ast::SymbolKind::Instance ||
       symbol.kind == slang::ast::SymbolKind::InstanceArray) {
     return InstanceHop{.name = name, .indices = {}};
   }
   if (const auto* block = symbol.as_if<slang::ast::GenerateBlockSymbol>()) {
-    // A loop's block is named by its construct, and the value its index stood
-    // at picks it out (LRM 27.4).
+    // A loop's block is named by its construct, and the select the name wrote
+    // picks it out (LRM 27.4).
     if (block->getArrayIndex() != nullptr) {
+      const std::optional<hir::ExprId> position = select_of(*block);
+      if (!position.has_value()) return std::nullopt;
       return LoopBlockHop{
           .loop = std::string{block->getParentScope()->asSymbol().name},
-          .index = LoopIndexOf(*block)};
+          .resolved_index = LoopIndexOf(*block),
+          .position = *position};
     }
     return ChosenBlockHop{
         .construct = block->constructIndex,
@@ -123,7 +128,9 @@ struct NamedHopUp {
   const slang::ast::Scope* scope = nullptr;
 };
 
-auto NamedHopAbove(const slang::ast::Scope& scope) -> NamedHopUp {
+auto NamedHopAbove(
+    const slang::ast::Scope& scope, const LoopSelectOf& select_of)
+    -> NamedHopUp {
   const slang::ast::Symbol& symbol = scope.asSymbol();
   if (const auto* body = symbol.as_if<slang::ast::InstanceBodySymbol>()) {
     const slang::ast::InstanceSymbol* inst = body->parentInstance;
@@ -141,7 +148,7 @@ auto NamedHopAbove(const slang::ast::Scope& scope) -> NamedHopUp {
       block != nullptr && block->getArrayIndex() != nullptr) {
     above = above->asSymbol().getHierarchicalParent();
   }
-  return NamedHopUp{.hop = NamedHopInto(symbol), .scope = above};
+  return NamedHopUp{.hop = NamedHopInto(symbol, select_of), .scope = above};
 }
 
 // What a step standing over `dims` leaves open once the name picked `picked`
@@ -155,13 +162,15 @@ auto SettledDimensions(
 
 // The hops a name takes from `from` down to `to`, which stands in it, each
 // resolved against what the scope above it published. Nothing where `to` does
-// not stand in `from`, or the way down passes a scope no route walks.
-auto NamedHopsDown(const slang::ast::Scope& from, const slang::ast::Scope& to)
-    -> std::optional<std::vector<NamedHop>> {
+// not stand in `from`, or the way down passes a scope no route walks or a
+// loop's block `select_of` gives no select for.
+auto NamedHopsDown(
+    const slang::ast::Scope& from, const slang::ast::Scope& to,
+    const LoopSelectOf& select_of) -> std::optional<std::vector<NamedHop>> {
   std::vector<NamedHop> hops;
   for (const slang::ast::Scope* scope = &to; scope != &from;) {
     if (scope == nullptr) return std::nullopt;
-    auto above = NamedHopAbove(*scope);
+    auto above = NamedHopAbove(*scope, select_of);
     if (!above.hop.has_value()) return std::nullopt;
     hops.emplace_back(*std::move(above.hop));
     scope = above.scope;
@@ -201,10 +210,10 @@ struct PublishedLoopBlockAt {
   support::DefPath class_path;
 };
 
-// A loop's block is the one standing at the value its index stood at, and its
-// class is the loop's one class or, where the loop has several, the one
-// standing at that value (LRM 27.4). Nothing where the scope published no such
-// block.
+// Where the scope published the block of a loop the name was resolved to: its
+// class is the loop's one class or, where the loop has several, the one the
+// block standing at the index the front end resolved the select to was
+// published as (LRM 27.4). Nothing where the scope published no such block.
 auto FindPublishedLoopBlock(
     const base::Arena<hir::PublishedLoop, hir::PublishedLoopId>& loops,
     const LoopBlockHop& hop) -> std::optional<PublishedLoopBlockAt> {
@@ -220,7 +229,7 @@ auto FindPublishedLoopBlock(
                 -> std::optional<support::DefPath> {
               if (counted.name != hop.loop) return std::nullopt;
               for (const hir::PublishedLoopBlock& block : counted.blocks) {
-                if (block.index == hop.index) {
+                if (block.index == hop.resolved_index) {
                   return counted.classes.at(block.class_at);
                 }
               }
@@ -268,6 +277,7 @@ auto UnitLowerer::RoutesOf(ScopeFrameId owner_frame) -> hir::ScopeRoutes& {
 
 auto UnitLowerer::TakeRoutesForFrame(ScopeFrameId owner_frame)
     -> hir::ScopeRoutes {
+  scopes_under_construction_.erase(owner_frame);
   const auto it = routes_by_frame_.find(owner_frame);
   if (it == routes_by_frame_.end()) {
     return {};
@@ -275,6 +285,55 @@ auto UnitLowerer::TakeRoutesForFrame(ScopeFrameId owner_frame)
   auto out = std::move(it->second);
   routes_by_frame_.erase(it);
   return out;
+}
+
+void UnitLowerer::BeginScope(
+    ScopeFrameId frame, StructuralScopeLowerer& lowerer,
+    hir::StructuralScope& scope) {
+  scopes_under_construction_.insert_or_assign(
+      frame, ScopeUnderConstruction{.lowerer = &lowerer, .scope = &scope});
+}
+
+auto UnitLowerer::RouteHolderOf(const WalkFrame& frame) const
+    -> const ScopeUnderConstruction& {
+  const auto it = scopes_under_construction_.find(frame.Current());
+  if (it == scopes_under_construction_.end()) {
+    throw InternalError(
+        "UnitLowerer::RouteHolderOf: a name is read where no scope holding "
+        "its routes is being built");
+  }
+  return it->second;
+}
+
+auto UnitLowerer::SelectsWritten(
+    const WalkFrame& frame,
+    std::span<const slang::ast::HierarchicalReference::Element> written)
+    -> diag::Result<LoopSelectOf> {
+  // Each loop's block a route passes is the one its select picks in the
+  // object the route is walked from, so the select goes where the route is
+  // held, beside it, lowered by the scope holding it as it is read from
+  // `frame`.
+  std::vector<std::pair<const slang::ast::Symbol*, hir::ExprId>> lowered;
+  for (const slang::ast::HierarchicalReference::Element& element : written) {
+    const slang::ast::Expression* select = LoopBlockSelectOf(element);
+    if (select == nullptr) continue;
+    const ScopeUnderConstruction& holder = RouteHolderOf(frame);
+    WalkFrame in_holder = frame;
+    in_holder.current_exprs = &holder.scope->exprs;
+    auto expr = holder.lowerer->LowerExpr(*select, in_holder);
+    if (!expr) return std::unexpected(std::move(expr.error()));
+    lowered.emplace_back(
+        element.symbol, holder.scope->exprs.Add(*std::move(expr)));
+  }
+  return LoopSelectOf{
+      [lowered =
+           std::move(lowered)](const slang::ast::GenerateBlockSymbol& block)
+          -> std::optional<hir::ExprId> {
+        for (const auto& [picked, position] : lowered) {
+          if (picked == &block) return position;
+        }
+        return std::nullopt;
+      }};
 }
 
 namespace {
@@ -412,12 +471,11 @@ auto UnitLowerer::DisableTargetOf(
         span, diag::DiagCode::kUnsupportedStatementForm,
         "a disable of a block or task reached this way is not yet supported");
   };
-  // A name leaving the instance reaches the target of another instance, which
+  // A name leaving the instance or passing a generate block reaches a target
   // only its publication says anything about, whatever this unit minted for
-  // the scope it resolved to here; only a name staying inside the instance
-  // reaches a scope this unit minted.
+  // the scope it resolved to here.
   RouteOrigin origin = StartOf(frame, target, reference);
-  const auto minted = std::holds_alternative<FromReader>(origin)
+  const auto minted = NamesOwnDeclaration(origin)
                           ? LookupMintedProceduralScope(target)
                           : std::nullopt;
   // A scope's identity indexes its declaring scope's registry, so one the
@@ -425,33 +483,46 @@ auto UnitLowerer::DisableTargetOf(
   if (minted.has_value() && minted->owner == &frame.ProceduralScopeOwner()) {
     return hir::DisableTarget{hir::DirectDisableTarget{.scope = minted->scope}};
   }
-  // Any other is reached by a route. One carrying an identity runs to the
-  // scope that minted it, and the procedural scopes between are where the
-  // target sits rather than steps of their own -- the same reading a static
-  // declared in one of them takes. A target of another unit is reached the
-  // same way: the route runs through the procedural scopes down to the target
-  // itself, and that path is what the declaring scope published it by.
-  const slang::ast::Scope* walk_to =
-      minted.has_value() ? minted->owner : target.as_if<slang::ast::Scope>();
-  if (walk_to == nullptr) {
-    throw InternalError(
-        "UnitLowerer::DisableTargetOf: a disable names a block or a task, each "
-        "of which defines a scope");
-  }
-  auto route = RouteToScope(frame, *walk_to, std::move(origin));
-  if (!route.has_value()) return refuse();
+  // Any other is reached by a route. One the reader's own structural scope
+  // minted is named by that identity over the route that climbs nothing, the
+  // procedural scopes around it being where it sits rather than steps of their
+  // own. One a scope enclosing the reader minted, or one of another unit, is
+  // reached through what the scope declaring it published, so the route runs
+  // down to the target itself, and that path is what it was published by.
+  const auto minted_frame = minted.has_value()
+                                ? scope_frames_.find(minted->owner)
+                                : scope_frames_.end();
+  const bool minted_in_own_scope = [&] {
+    if (minted_frame == scope_frames_.end()) return false;
+    const auto hops = frame.HopsTo(minted_frame->second);
+    return hops.has_value() && hops->value == 0;
+  }();
+  std::optional<ScopeRoute> route;
   std::optional<hir::DisableLeaf> leaf;
-  if (minted.has_value()) {
+  if (minted_in_own_scope) {
+    route = ScopeRoute::Enclosing(hir::StructuralHops{0});
     leaf = hir::DisableTargetLeaf{.scope = minted->scope};
-  } else if (const auto* on = std::get_if<InPublishedScope>(&route->place)) {
-    const hir::ScopeClassSignature& signature =
-        unit_.scope_classes.Get(on->scope_class);
-    const std::optional<hir::PublishedDisableTargetId> published =
-        signature.FindDisableTarget(
-            support::Extended(signature.class_path, on->within));
-    if (published.has_value()) {
-      leaf = hir::PublishedDisableTargetLeaf{
-          .scope_class = on->scope_class, .target = *published};
+  } else {
+    const auto* scope = target.as_if<slang::ast::Scope>();
+    if (scope == nullptr) {
+      throw InternalError(
+          "UnitLowerer::DisableTargetOf: a disable names a block or a task, "
+          "each of which defines a scope");
+    }
+    auto walked = RouteToScope(frame, *scope, origin);
+    if (!walked) return std::unexpected(std::move(walked.error()));
+    route = *std::move(walked);
+    if (!route.has_value()) return refuse();
+    if (const auto* on = std::get_if<InPublishedScope>(&route->place)) {
+      const hir::ScopeClassSignature& signature =
+          unit_.scope_classes.Get(on->scope_class);
+      const std::optional<hir::PublishedDisableTargetId> published =
+          signature.FindDisableTarget(
+              support::Extended(signature.class_path, on->within));
+      if (published.has_value()) {
+        leaf = hir::PublishedDisableTargetLeaf{
+            .scope_class = on->scope_class, .target = *published};
+      }
     }
   }
   if (!leaf.has_value()) return refuse();
@@ -471,14 +542,21 @@ auto UnitLowerer::ReaderInstance() const -> std::optional<ReaderClimbs> {
   if (body == nullptr) return std::nullopt;
   return ReaderClimbs{
       .body = body,
-      .climbs = Specialization().ContextOf(InstantiationOf(*body)).climbs};
+      .climbs = Naming().ContextOf(InstantiationOf(*body)).climbs};
+}
+
+auto NamesOwnDeclaration(const RouteOrigin& origin) -> bool {
+  return std::holds_alternative<FromReader>(origin.start) &&
+         !PassesAGenerateBlock(origin.written);
 }
 
 auto UnitLowerer::StartOf(
     const WalkFrame& frame, const slang::ast::Symbol& found,
     const slang::ast::HierarchicalReference& written) -> RouteOrigin {
   const std::optional<ReaderClimbs> reader = ReaderInstance();
-  if (!reader.has_value()) return RouteOrigin{FromReader{}};
+  if (!reader.has_value()) {
+    return RouteOrigin{.start = FromReader{}, .written = written.path};
+  }
 
   // Through a port the name stands in whatever instance the port was bound to,
   // and a coordinate written after the port picks one where it stands for
@@ -522,10 +600,13 @@ auto UnitLowerer::StartOf(
           "the instances it stands for -- please report this as a bug");
     }
     reach.hop.place = PlaceThroughPort(port, reach.hop.step.selects);
-    return RouteOrigin{RouteStart{
-        .below = &bound->body,
-        .base = std::move(reach.base),
-        .leading = std::move(reach.hop)}};
+    return RouteOrigin{
+        .start =
+            RouteStart{
+                .below = &bound->body,
+                .base = std::move(reach.base),
+                .leading = std::move(reach.hop)},
+        .written = written.path};
   }
 
   // Upward the name stands in the scope it landed in, an instance or a
@@ -535,8 +616,11 @@ auto UnitLowerer::StartOf(
   // writes. A name that never leaves the instance starts at the reader.
   const std::optional<ClimbAnchor> climb =
       ClimbOutOf(found, written, *reader->body);
-  if (!climb.has_value()) return RouteOrigin{FromReader{}};
-  return RouteOrigin{StartInEnclosing(*climb->scope)};
+  if (!climb.has_value()) {
+    return RouteOrigin{.start = FromReader{}, .written = written.path};
+  }
+  return RouteOrigin{
+      .start = StartInEnclosing(*climb->scope), .written = written.path};
 }
 
 auto UnitLowerer::StartsOfNames(
@@ -546,7 +630,7 @@ auto UnitLowerer::StartsOfNames(
   std::vector<RouteOrigin> origins;
   bool from_reader = names.empty();
   for (const slang::ast::Expression* name : names) {
-    RouteOrigin origin{FromReader{}};
+    RouteOrigin origin{.start = FromReader{}, .written = {}};
     if (const auto* hierarchical =
             name->as_if<slang::ast::HierarchicalValueExpression>()) {
       origin = StartOf(frame, hierarchical->symbol, hierarchical->ref);
@@ -554,27 +638,29 @@ auto UnitLowerer::StartsOfNames(
         const auto* plain = name->as_if<slang::ast::NamedValueExpression>()) {
       origin = StartOf(frame, plain->symbol, {});
     }
-    if (std::holds_alternative<FromReader>(origin)) {
+    if (NamesOwnDeclaration(origin)) {
       from_reader = true;
     } else {
       origins.push_back(std::move(origin));
     }
   }
-  if (from_reader) origins.emplace_back(FromReader{});
+  if (from_reader) {
+    origins.push_back(RouteOrigin{.start = FromReader{}, .written = {}});
+  }
   return origins;
 }
 
 auto UnitLowerer::TranslateReferenceRoute(
     const WalkFrame& frame, const slang::ast::ValueSymbol& value,
     RouteOrigin origin) -> diag::Result<std::optional<hir::RoutedValueRef>> {
-  // A name that left the reader's instance reaches whatever stands where it
-  // starts, which is this unit's own declaration only in the instance being
-  // lowered, so it is never read as one.
-  if (std::holds_alternative<RouteStart>(origin)) {
+  // A name that left the reader's instance, or that passes a generate block,
+  // is walked to whatever it reaches in each object.
+  if (!NamesOwnDeclaration(origin)) {
     auto route =
         RouteToScope(frame, *value.getHierarchicalParent(), std::move(origin));
-    if (!route.has_value()) return std::nullopt;
-    auto reference = MakeRoutedValueRef(value, frame.Current(), *route);
+    if (!route) return std::unexpected(std::move(route.error()));
+    if (!route->has_value()) return std::nullopt;
+    auto reference = MakeRoutedValueRef(value, frame.Current(), **route);
     if (!reference) return std::unexpected(std::move(reference.error()));
     return *reference;
   }
@@ -592,42 +678,31 @@ auto UnitLowerer::TranslateReferenceRoute(
     return *reference;
   };
 
-  // The target's storage is the reader's own scope's or hangs under a scope
-  // enclosing it in the same unit (LRM 23.9), so the whole route is a count of
-  // parent edges, and zero of them for the reader's own scope.
-  const auto in_unit_route = [&](hir::StructuralHops hops) {
-    return routed_ref(frame.Current(), ScopeRoute::Enclosing(hops));
+  // The target's storage is the reader's own scope's (LRM 23.9), so the route
+  // climbs nothing and the leaf names the declaration. One a scope enclosing
+  // the reader declares is reached through what that scope published, below.
+  const auto own_scope = [](const std::optional<hir::StructuralHops>& hops) {
+    return hops.has_value() && hops->value == 0;
   };
-  if (data_object_hops.has_value()) {
-    return in_unit_route(*data_object_hops);
-  }
-  if (procedural_static) {
-    if (const auto hops = frame.HopsTo(procedural_static->home_frame)) {
-      return in_unit_route(*hops);
-    }
+  if (own_scope(data_object_hops) ||
+      (procedural_static &&
+       own_scope(frame.HopsTo(procedural_static->home_frame)))) {
+    return routed_ref(
+        frame.Current(), ScopeRoute::Enclosing(hir::StructuralHops{0}));
   }
 
-  // A target this unit declares reaches its storage through the scope that
-  // owns it, and a leaf naming that declaration already fixes the whole
-  // procedural descent, so the blocks and subroutines around it are part of
-  // where the storage sits rather than steps of their own. They nest
-  // contiguously under that scope, so dropping them here drops all of them.
   const slang::ast::Scope* owner = value.getHierarchicalParent();
-  if (data_object || procedural_static) {
-    while (owner != nullptr && IsProceduralScope(owner->asSymbol())) {
-      owner = owner->asSymbol().getHierarchicalParent();
-    }
-  }
   if (owner == nullptr) return std::nullopt;
 
-  auto route = RouteToScope(frame, *owner, FromReader{});
-  if (!route.has_value()) return std::nullopt;
-  return routed_ref(frame.Current(), *std::move(route));
+  auto route = RouteToScope(frame, *owner, std::move(origin));
+  if (!route) return std::unexpected(std::move(route.error()));
+  if (!route->has_value()) return std::nullopt;
+  return routed_ref(frame.Current(), **std::move(route));
 }
 
 auto UnitLowerer::ReachThroughInterfacePort(
     const WalkFrame& frame, const slang::ast::HierarchicalReference& reference)
-    -> std::optional<ScopeRoute> {
+    -> diag::Result<std::optional<ScopeRoute>> {
   const auto path = reference.path;
   const auto* port =
       path.front().symbol->as_if<slang::ast::InterfacePortSymbol>();
@@ -664,6 +739,9 @@ auto UnitLowerer::ReachThroughInterfacePort(
   // ended on.
   std::optional<KeptPositions> part;
 
+  auto selects = SelectsWritten(frame, path);
+  if (!selects) return std::unexpected(std::move(selects.error()));
+  const LoopSelectOf& select_of = *selects;
   for (std::size_t hop = 1; hop < path.size(); ++hop) {
     if (path[hop].symbol == reference.target && !target_is_object) {
       break;
@@ -698,7 +776,7 @@ auto UnitLowerer::ReachThroughInterfacePort(
           .count = static_cast<std::uint32_t>(span->second - span->first + 1)};
       break;
     }
-    auto named = NamedHopInto(*path[hop].symbol);
+    auto named = NamedHopInto(*path[hop].symbol, select_of);
     if (!named.has_value()) return std::nullopt;
     hops.emplace_back(*std::move(named));
     if (path[hop].symbol == reference.target) {
@@ -752,73 +830,46 @@ auto UnitLowerer::PlaceThroughPort(
       .scope_class = RecordedScopeClass(kind.scope_class), .within = {}};
 }
 
-auto UnitLowerer::ReachOwnScope(
-    const WalkFrame& frame, const slang::ast::Scope& target,
-    diag::SourceSpan span) -> diag::Result<InUnitReach> {
-  const auto refuse = [&](base::DiagFormat<> message) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm,
-        base::DiagMessage(message));
-  };
-  // An ancestor of the reader is the whole reach, and the descent is empty.
-  if (const auto hops = frame.HopsTo(LookupScopeFrame(target))) {
-    return InUnitReach{.hops = *hops, .descent = {}};
+auto UnitLowerer::IsOwnScope(
+    const WalkFrame& frame, const slang::ast::Scope& target) const -> bool {
+  // A name enabling a subroutine as this unit's own passes no generate block,
+  // and the front end resolves such a name only to one a scope enclosing the
+  // reader declares (LRM 23.9).
+  const auto hops = frame.HopsTo(LookupScopeFrame(target));
+  if (!hops.has_value()) {
+    throw InternalError(
+        "UnitLowerer::IsOwnScope: a subroutine called as this unit's own is "
+        "declared by no scope enclosing the call");
   }
-
-  auto route = RouteToScope(frame, target, FromReader{});
-  if (!route.has_value()) {
-    return refuse("a subroutine reached this way is not yet supported");
-  }
-  // Every part of the reach has to stay inside this unit's layout, because a
-  // scope this artifact owns is what makes the callee's identity mean
-  // anything: it indexes that scope's own registry. A callee whose identity
-  // this unit holds is in this unit's own subtree, so the walk to it never
-  // leaves the layout; a reach that does is one this unit could not have
-  // resolved an identity for, and it is refused rather than silently taking
-  // an identity from a scope that is not the one the route landed on.
-  const auto* in_unit = std::get_if<hir::InUnitBase>(&route->base);
-  if (in_unit == nullptr) {
-    return refuse(
-        "a subroutine reached by a name anchored outside this module is not "
-        "yet supported");
-  }
-  InUnitReach reach{.hops = in_unit->hops, .descent = {}};
-  reach.descent.reserve(route->steps.size());
-  for (const hir::PathStep& step : route->steps) {
-    const auto* owned = std::get_if<hir::OwnedChildRef>(&step.names);
-    if (owned == nullptr ||
-        std::holds_alternative<hir::InstanceMemberId>(*owned)) {
-      return refuse(
-          "a subroutine reached through a scope outside this module is not "
-          "yet supported");
-    }
-    reach.descent.push_back(
-        hir::OwnedChildStep{.names = *owned, .selects = step.selects});
-  }
-  return reach;
+  return hops->value == 0;
 }
 
 auto UnitLowerer::RouteToScopeOrRefuse(
     const WalkFrame& frame, const slang::ast::Scope& target, RouteOrigin origin,
     diag::SourceSpan span) -> diag::Result<ScopeRoute> {
   auto walked = RouteToScope(frame, target, std::move(origin));
-  if (!walked.has_value()) {
+  if (!walked) return std::unexpected(std::move(walked.error()));
+  if (!walked->has_value()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "a scope reached this way is not yet supported");
   }
-  return *std::move(walked);
+  return **std::move(walked);
 }
 
 auto UnitLowerer::RouteToScope(
     const WalkFrame& frame, const slang::ast::Scope& target, RouteOrigin origin)
-    -> std::optional<ScopeRoute> {
+    -> diag::Result<std::optional<ScopeRoute>> {
+  auto selects = SelectsWritten(frame, origin.written);
+  if (!selects) return std::unexpected(std::move(selects.error()));
+  const LoopSelectOf& select_of = *selects;
+
   // A name that left the reader's instance starts where it landed, which is a
   // scope of whatever instance stands there rather than of this unit's own
   // object -- even where that instance is of this unit -- so every hop below it
   // is resolved against what the scope above it published.
-  if (auto* start = std::get_if<RouteStart>(&origin)) {
-    auto below = NamedHopsDown(*start->below, target);
+  if (auto* start = std::get_if<RouteStart>(&origin.start)) {
+    auto below = NamedHopsDown(*start->below, target, select_of);
     if (!below.has_value()) return std::nullopt;
     std::vector<DescentHop> hops;
     hops.reserve(below->size() + 1);
@@ -851,15 +902,56 @@ auto UnitLowerer::RouteToScope(
 
   // Walk the target's owner chain, building the descent bottom-up. Each hop's
   // addressable owned child is resolved: the instance member (not its body)
-  // across a unit boundary, the array member for a generate-loop iteration or
-  // instance-array element with the elaborated index attached.
+  // across a unit boundary, with the element of an instance array attached.
   //
   // A hop this unit does not declare is a step through what the scope above
   // it published (LRM 23.6, 25.10). Which scope stands above a hop is what
   // every hop before it decided, and this walk runs from the target upward, so
   // it records how the name reached each hop and leaves resolving it to a
   // forward pass over the whole descent.
-  std::vector<DescentHop> descent;
+  //
+  // Which body a generate block is, is its object's construction data -- a
+  // loop's select picks a block in each object (LRM 27.4), a conditional
+  // chooses one as each object is built (LRM 27.5) -- so the hop onto one is
+  // resolved against what the scope holding its construct published, as a hop
+  // of another unit is, and so is every hop below it: what the reader's code
+  // states of a block is what it publishes, never which body it compiled to.
+  struct Level {
+    std::optional<DeclaredHop> declared;
+    std::optional<NamedHop> named;
+    const slang::ast::Scope* above = nullptr;
+    bool onto_a_block = false;
+  };
+  std::vector<Level> levels;
+  // A block a loop's select picks is the reader's ancestor only in the
+  // elaboration being lowered, so the route meets the reader no lower than
+  // above every such block the name passes.
+  std::unordered_set<const slang::ast::Symbol*> selected_blocks;
+  for (const slang::ast::HierarchicalReference::Element& element :
+       origin.written) {
+    if (LoopBlockSelectOf(element) != nullptr) {
+      selected_blocks.insert(element.symbol);
+    }
+  }
+  // A scope enclosing the reader is reached by climbing to it. Where it is not
+  // the reader's own, what the reader states of it is what it published, as
+  // of every scope a route meets the reader at above its own (below).
+  if (selected_blocks.empty() && reader_ancestors.contains(&target)) {
+    if (const auto it = scope_frames_.find(&target);
+        it != scope_frames_.end()) {
+      if (const auto hops = frame.HopsTo(it->second)) {
+        return ScopeRoute{
+            .base = hir::InUnitBase{.hops = *hops},
+            .steps = {},
+            .place = hops->value == 0
+                         ? RoutePlace{InOwnScope{}}
+                         : RoutePlace{InPublishedScope{
+                               .scope_class = PublishedClassOf(target),
+                               .within = {}}},
+            .open = {}};
+      }
+    }
+  }
   const slang::ast::Scope* scope = &target;
   while (scope != nullptr) {
     const slang::ast::Symbol* owned = &scope->asSymbol();
@@ -874,7 +966,7 @@ auto UnitLowerer::RouteToScope(
     }
     // How the name reaches the hop where this unit declares nothing about it,
     // and the scope above it.
-    auto [named, next] = NamedHopAbove(*scope);
+    auto [named, next] = NamedHopAbove(*scope, select_of);
     std::vector<std::uint32_t> indices;
     // The class of the unit an instance this one declares is built from, read
     // off the declaration -- this unit naming its own child. A hop it does not
@@ -892,47 +984,98 @@ auto UnitLowerer::RouteToScope(
       owned = &OwnerOfInstance(*inst);
     }
 
-    // The hop onto a child this unit declares: the element its binding names,
-    // with the element of an instance array this is selected after it.
-    const auto owned_hop = [&](hir::OwnedChildStep step) {
-      step.selects.insert(step.selects.end(), indices.begin(), indices.end());
-      return DeclaredHop{
-          .step = hir::AsPathStep(std::move(step)), .place = place, .dims = {}};
-    };
+    // The hop onto a child this unit declares, with the element of an
+    // instance array this is selected after it. Which body a generate block
+    // is, is its object's, so the hop onto one is the one the name writes.
+    const auto obinding = LookupOwnedChildBinding(*owned);
+    Level level{
+        .declared = std::nullopt,
+        .named = std::move(named),
+        .above = next,
+        .onto_a_block = false};
+    if (obinding.has_value()) {
+      std::visit(
+          Overloaded{
+              [&](hir::InstanceMemberId id) {
+                level.declared = DeclaredHop{
+                    .step = hir::AsPathStep(
+                        hir::OwnedChildStep{.names = id, .selects = indices}),
+                    .place = place,
+                    .dims = {}};
+              },
+              [&](const DeclaredGenerateBlock&) { level.onto_a_block = true; }},
+          obinding->child);
+    }
+    if (!level.declared.has_value() && !level.named.has_value()) {
+      return std::nullopt;
+    }
+    levels.push_back(std::move(level));
+    selected_blocks.erase(owned);
 
     // The route's first step is onto the child of the deepest scope shared
     // with the reader: the first hop whose parent scope is a reader ancestor.
-    // Everything already accumulated is the descent below it.
-    if (next != nullptr && reader_ancestors.contains(next)) {
-      // A child whose owning scope this unit emits stays inside this unit's
-      // layout: the climb to that scope is typed, and the step onto the child
-      // is the route's first typed step. A scope this unit does not lay out is
-      // reached from where the route starts outside the reader's instance,
-      // which the caller states.
-      const auto obinding = LookupOwnedChildBinding(*owned);
-      const auto hops = obinding.has_value()
-                            ? frame.HopsTo(obinding->home_frame)
-                            : std::nullopt;
+    // A child whose owning scope this unit emits stays inside this unit's
+    // layout: the climb to that scope is typed, and the step onto the child is
+    // the route's first typed step. A scope this unit does not lay out is
+    // reached from where the route starts outside the reader's instance,
+    // which the caller states.
+    if (next != nullptr && reader_ancestors.contains(next) &&
+        selected_blocks.empty()) {
+      const auto met = scope_frames_.find(next);
+      const auto hops =
+          met != scope_frames_.end() ? frame.HopsTo(met->second) : std::nullopt;
       if (!hops.has_value()) return std::nullopt;
-      descent.emplace_back(owned_hop(obinding->step));
-      std::ranges::reverse(descent);
-      ScopeRoute route{
+      // From the topmost hop onto a generate block down, every hop is the one
+      // the scope above it published, and the walk stands on what the scope
+      // holding that block's construct published to take the first of them.
+      // A route meeting the reader above the reader's own scope reaches into
+      // another body, whichever implementation the reader sits in, so it
+      // takes every hop from what the scope it meets at published.
+      std::optional<std::size_t> published_from;
+      for (std::size_t at = 0; at < levels.size(); ++at) {
+        if (levels[at].onto_a_block) published_from = at;
+      }
+      if (hops->value > 0) published_from = levels.size() - 1;
+      std::vector<DescentHop> descent;
+      descent.reserve(levels.size());
+      for (std::size_t at = levels.size(); at-- > 0;) {
+        Level& reached = levels[at];
+        const bool published =
+            published_from.has_value() && at <= *published_from;
+        if (published || !reached.declared.has_value()) {
+          if (!reached.named.has_value()) return std::nullopt;
+          descent.emplace_back(*std::move(reached.named));
+        } else {
+          descent.emplace_back(*std::move(reached.declared));
+        }
+      }
+      RoutePlace standing = InOwnScope{};
+      if (published_from.has_value()) {
+        const InPublishedScope holding = InPublishedScope{
+            .scope_class = PublishedClassOf(*levels[*published_from].above),
+            .within = {}};
+        if (*published_from + 1 == levels.size()) {
+          standing = holding;
+        } else {
+          auto* onto_holding = std::get_if<DeclaredHop>(
+              &descent[levels.size() - 2 - *published_from]);
+          if (onto_holding == nullptr) {
+            throw InternalError(
+                "UnitLowerer::RouteToScope: the scope holding a generate "
+                "construct this unit declares is a scope this unit declares "
+                "too");
+          }
+          onto_holding->place = holding;
+        }
+      }
+      std::optional<Descent> descended =
+          DescendFrom(std::move(standing), descent);
+      if (!descended.has_value()) return std::nullopt;
+      return ScopeRoute{
           .base = hir::InUnitBase{.hops = *hops},
-          .steps = {},
-          .place = InOwnScope{},
-          .open = {}};
-      if (!ClassifyDescent(route, descent)) return std::nullopt;
-      return route;
-    }
-
-    // A step this unit declares stays inside its layout and carries the
-    // declaring scope's identity; one it does not is past the artifact
-    // boundary, and is resolved against what the scope above it published.
-    if (const auto obinding = LookupOwnedChildBinding(*owned)) {
-      descent.emplace_back(owned_hop(obinding->step));
-    } else {
-      if (!named.has_value()) return std::nullopt;
-      descent.emplace_back(*std::move(named));
+          .steps = std::move(descended->steps),
+          .place = std::move(descended->place),
+          .open = std::move(descended->open)};
     }
     scope = next;
   }
@@ -961,8 +1104,9 @@ auto UnitLowerer::ClassifyDescent(ScopeRoute& route, std::span<DescentHop> hops)
 
 auto UnitLowerer::DescendPublished(
     hir::ScopeClassId from, const slang::ast::Scope& from_scope,
-    const slang::ast::Scope& to) -> std::optional<PublishedDescent> {
-  auto hops = NamedHopsDown(from_scope, to);
+    const slang::ast::Scope& to, const LoopSelectOf& select_of)
+    -> std::optional<PublishedDescent> {
+  auto hops = NamedHopsDown(from_scope, to, select_of);
   if (!hops.has_value()) return std::nullopt;
   return DescendPublishedFrom(from, *hops);
 }
@@ -1079,8 +1223,8 @@ auto UnitLowerer::DescendPublishedFrom(
               return !past_procedural && onto_instance(*on, instance);
             },
             // A loop's block is named as the source names it, by the loop and
-            // the value its index stood at, and the loop's member answers
-            // which of the blocks the object built that is (LRM 27.4).
+            // the select written for it, and the loop's member answers which
+            // of the blocks the object built that is (LRM 27.4).
             [&](const LoopBlockHop& block) {
               if (past_procedural) return false;
               const auto found = FindPublishedLoopBlock(
@@ -1092,7 +1236,7 @@ auto UnitLowerer::DescendPublishedFrom(
                   hir::PublishedGenerateLoopRef{
                       .scope_class = on->scope_class,
                       .loop = found->loop,
-                      .index = block.index,
+                      .position = block.position,
                       .result_class = result_class},
                   result_class);
             },
@@ -1143,8 +1287,8 @@ auto UnitLowerer::ReadsParameterFromCell(
   }
   const slang::ast::Scope* holder = param.getParentScope();
   return holder != nullptr && holder->getContainingInstance() != nullptr &&
-         Specialization().ValueSourceOf(InstanceHolding(*holder), param) !=
-             ParameterValueSource::kFixedBySpecialization;
+         Naming().ValueSourceOf(InstanceHolding(*holder), param) !=
+             ParameterValueSource::kFixedByUnit;
 }
 
 auto UnitLowerer::ResolveValueTarget(
@@ -1159,7 +1303,7 @@ auto UnitLowerer::ResolveValueTarget(
     auto value_type = InternType(value.getType(), span);
     if (!value_type) return std::unexpected(std::move(value_type.error()));
     return hir::ValueTarget{hir::NamespaceValueRef{
-        .unit_name = CompilationUnitName(*unit, Specialization()),
+        .unit_name = CompilationUnitName(*unit, Naming()),
         .variable_name = std::string{value.name},
         .value_type = *value_type}};
   }
@@ -1175,16 +1319,20 @@ auto UnitLowerer::ResolveValueTarget(
   return hir::ValueTarget{*std::move(*route)};
 }
 
+auto UnitLowerer::PublishedClassOf(const slang::ast::Scope& scope)
+    -> hir::ScopeClassId {
+  // The one the unit of the instance holding `scope` published the scope as,
+  // which this unit names the way that unit does -- this unit itself included.
+  return ScopeClassOf(
+      Naming().NameOf(InstanceHolding(scope)),
+      DefPathOf(scope.asSymbol(), Naming()));
+}
+
 auto UnitLowerer::StartInEnclosing(const slang::ast::Scope& scope)
     -> RouteStart {
-  // The class is the one the unit of the instance holding `scope` published
-  // the scope as, which this unit names the way that unit does.
-  const hir::ScopeClassId scope_class = ScopeClassOf(
-      Specialization().NameOf(InstanceHolding(scope)),
-      DefPathOf(scope.asSymbol(), Specialization()));
   return RouteStart{
       .below = &scope,
-      .base = hir::EnclosingScopeBase{.scope_class = scope_class},
+      .base = hir::EnclosingScopeBase{.scope_class = PublishedClassOf(scope)},
       .leading = std::nullopt};
 }
 
@@ -1196,16 +1344,19 @@ auto UnitLowerer::StartReaching(const slang::ast::Scope& target)
   if (!start.has_value()) return std::nullopt;
   return std::visit(
       Overloaded{
-          [](const FromReader&) { return RouteOrigin{FromReader{}}; },
+          [](const FromReader&) {
+            return RouteOrigin{.start = FromReader{}, .written = {}};
+          },
           [&](const FromScope& from) {
-            return RouteOrigin{StartInEnclosing(*from.scope)};
+            return RouteOrigin{
+                .start = StartInEnclosing(*from.scope), .written = {}};
           }},
       *start);
 }
 
 auto UnitLowerer::RouteToReplicatingScope(
     const WalkFrame& frame, const slang::ast::Symbol& type)
-    -> std::optional<ScopeRoute> {
+    -> diag::Result<std::optional<ScopeRoute>> {
   const slang::ast::Scope& scope = ReplicatingScope(type);
   auto origin = StartReaching(scope);
   if (!origin.has_value()) return std::nullopt;
@@ -1226,7 +1377,9 @@ auto UnitLowerer::ReachDeclaringInstance(
     const slang::ast::Symbol& type, const WalkFrame& frame,
     diag::SourceSpan span) -> diag::Result<hir::DeclaringInstanceReach> {
   if (HeldByAnotherDesignElement(type)) {
-    auto route = RouteToReplicatingScope(frame, type);
+    auto walked = RouteToReplicatingScope(frame, type);
+    if (!walked) return std::unexpected(std::move(walked.error()));
+    std::optional<ScopeRoute> route = *std::move(walked);
     const auto* on = route.has_value()
                          ? std::get_if<InPublishedScope>(&route->place)
                          : nullptr;
@@ -1282,7 +1435,9 @@ auto UnitLowerer::ResolveStaticPropertyTarget(
           "declares is not yet supported from here",
           prop.name);
     };
-    auto route = RouteToReplicatingScope(frame, owner_class);
+    auto walked = RouteToReplicatingScope(frame, owner_class);
+    if (!walked) return std::unexpected(std::move(walked.error()));
+    std::optional<ScopeRoute> route = *std::move(walked);
     const auto* on = route.has_value()
                          ? std::get_if<InPublishedScope>(&route->place)
                          : nullptr;
@@ -1322,8 +1477,10 @@ auto UnitLowerer::ObservedThroughModport(
 
   // The interface instance is reached from where the name started (LRM 23.8,
   // 25.3), as any name on it is.
-  auto reached = RouteToScope(
+  auto walked = RouteToScope(
       frame, *view->asSymbol().getParentScope(), std::move(origin));
+  if (!walked) return std::unexpected(std::move(walked.error()));
+  std::optional<ScopeRoute> reached = *std::move(walked);
   const auto* on = reached.has_value()
                        ? std::get_if<InPublishedScope>(&reached->place)
                        : nullptr;

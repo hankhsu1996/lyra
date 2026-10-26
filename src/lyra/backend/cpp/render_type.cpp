@@ -114,6 +114,8 @@ auto RuntimeLibraryCppType(mir::RuntimeLibraryKind kind) -> std::string_view {
       return "lyra::runtime::ConstructionTable";
     case mir::RuntimeLibraryKind::kInstantiation:
       return "lyra::runtime::Instantiation";
+    case mir::RuntimeLibraryKind::kGeneratePlaces:
+      return "lyra::runtime::GeneratePlaces";
     case mir::RuntimeLibraryKind::kDumpEntry:
       return "lyra::runtime::DumpEntry";
     case mir::RuntimeLibraryKind::kDumpBlock:

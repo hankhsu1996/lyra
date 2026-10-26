@@ -14,7 +14,16 @@ and narrows its D2 and D4. Revises fact 5 of that record and what
 [a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md):
 what selects an alternative names no block, and is part of the name of the instance holding it
 through what it selected; blocks of one name are one body within an instance, never across
-instances, lowered once from the blocks that built each part.
+instances, lowered once from the blocks that built each part. D1, D4 and D7 revised 2026-10-24: a
+loop's block is named by what it declares as resolved, and one declaring a class by its index. Fact
+6, D4 and D5 revised 2026-10-25, with
+[a-body-states-nothing-of-another-bodys-implementation](a-body-states-nothing-of-another-bodys-implementation.md):
+every block is named by what it declares, a nested construct only as written; which body a block is,
+is found by comparing what it came out as, across the unit, and is its object's construction data.
+The 2026-10-14 D5 named a body before lowering from which values its code read, and held a block's
+nested blocks inside it; measured, the second split a loop whose blocks select different
+alternatives into a body per alternative, and the first was a prediction that every value its code
+reads changes the code.
 
 ## Requirement
 
@@ -38,11 +47,15 @@ the source and uses the source's names.
 3. An upward name is searched for in the scope holding the instantiation and on up through the
    enclosing scopes, generate blocks included (LRM 23.8).
 4. A type declared inside an instance is a type of that instance (LRM 6.22), and the clause says the
-   same of a generate block and of a module.
+   same of a generate block and of a module. The front end holds each block of a loop to it: an
+   object of a class one block declares is refused where another block's class of the same text is
+   wanted ("value of type 'C' cannot be assigned to type 'C'"), and no name outside a block can name
+   a type it declares ("cannot refer to type names via hierarchical reference").
 5. A unit is named before any body lowers, by every party that names it, from the front end alone.
-6. Whether what its block declares, or its block's code, relies on an index is read off the front
-   end's own record of which parameters each constant evaluation, and each type it read as a fact,
-   read, before any body lowers.
+6. What a block declares needs no record of which values were read: the front end resolved each
+   declaration of every block, and the resolved types are the answer. What a block's code is, is its
+   HIR, which is cheap to lower beside everything after it (HIR of 64 blocks in 17 ms, everything
+   after it 5.7 s, 2026-10-25).
 
 ## What was wrong
 
@@ -79,7 +92,7 @@ is what a flattened hierarchy needs, and no part of it applies once nothing is n
 
 **D1. A generate block is a definition nested in the scope holding it, and each block instance is an
 application of it.** An application is the block as the source wrote it together with the arguments
-that change what is compiled: what the index decides, and what is written elsewhere about an
+that change what is compiled: what the block declares, and what is written elsewhere about an
 instance the block holds (LRM 23.10.1, 23.11, 33.4). An index only ever read as a value is handed
 over when the block is built, as a parameter read as a value is.
 
@@ -95,52 +108,60 @@ names a unit.** The declaring unit, a referrer stepping into the block, and a ch
 on it each compute it, with no table between them and before any body lowers (fact 5). Nothing a
 comparison of lowered bodies finds is told to another unit.
 
-**D4. An index enters an application by its value, where what the block declares relies on it.**
-Where the front end records that something the block declares relied on the index -- a constant the
-language requires, a type it read as a fact -- the index is an argument of the block's class, and
-its value names the application, as a template argument does; two indices that settle every such
-constant alike are still two applications
-([a-unit-is-compiled-to-a-body-per-value-its-code-relies-on](a-unit-is-compiled-to-a-body-per-value-its-code-relies-on.md)
-rejects naming by the constants settled from a parameter). Four places decide nothing for an index.
-What a run evaluates. What selects an alternative of a conditional, since the construction chooses
-it and the class holds every alternative its blocks in one instance selected; what it selected is
-part of the name of the instance holding the block
+**D4. A block is named by what it declares, as the front end resolved it.** Each declaration a name
+can reach (LRM 23.6) enters under its path from the block: a variable, a net or a parameter by its
+type, a typedef by what it names, a subroutine by its result and its arguments, a static variable of
+a block of statements or a subroutine by its type, and an instance by its unit. A generate block or
+a loop inside it enters only as written there, every alternative of a conditional whether or not it
+was built: what it declares is its own name's, and which of them an object builds, and how many, is
+that object's construction. A structure, a union or an enumeration the block declares is spelled by
+what it holds, since its own name runs through the block's. That is all a referrer compiles against,
+so two blocks that declare alike are one application whatever their index or the alternative that
+built them, as rustc names a closure type it synthesizes by the types of what it captures and not by
+the values (`ClosureArgs::tupled_upvars_ty`, `rustc_type_ir/src/ty_kind/closure.rs`). This replaced
+naming a block by its index wherever the front end recorded that a declaration read it, "as a
+template argument does": the index is no template argument -- D1 hands it over at construction --
+and naming by it made one class per index where the declarations of many indices resolve alike.
+Three places decide nothing for an index. What a run evaluates. What selects an alternative of a
+conditional, since the construction chooses it and the class names every alternative the source
+wrote; the classes of the blocks it selected are part of the name of the instance holding the block
 ([a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md)).
-What counts a loop's blocks out -- where its index starts, whether a block stands at it, how it
+And what counts a loop's blocks out -- where its index starts, whether a block stands at it, how it
 reaches the next -- since the construction runs the loop (LRM 27.4) and how many blocks an object
-holds is no part of its class. And what the statements of a process, a continuous assignment or a
-subroutine run, since that is no part of what the class declares; an index that code relies on names
-the body the class is realized by (D5). A subroutine's arguments and result, and a variable a
-process keeps for the whole run, are what the class declares: a caller passes the one and a name
-reaches the other (LRM 13.4, 6.21, 23.6); were they counted as code, a static variable of a named
-block and an argument sized by the index would each publish a different class under one name. A
-place this reading misses is this compiler's defect, and is found where the compile checks itself,
-which publishes each class from another of its block instances.
+holds is no part of its class. What the statements of a process, a continuous assignment or a
+subroutine run is no part of what the class declares; it is the body the class is realized by, found
+from what it came out as (D5).
 
-**D5. Block instances of one application whose code relies on their index are that class realized
-once per index value.** Which body a block is, is named before any body lowers, from the value of
-its index where the front end records that the block's code relied on it (fact 6), as its
-application is named from the index's value where what the block declares relied on it. Blocks of
-one name are one body, lowered once: each of its parts from one block that built it, which is how
-the body comes to hold every alternative and every loop body their constructions built. Blocks of
-one name that would lower to anything else are this compiler's defect, found where the compile
-checks itself. Nothing a lowered block holds is compared with another to find which body it is. Each
-body is a realizing class extending the one published class. A published subroutine is a virtual
-method the published class introduces and each realizing class overrides with its body, so a call
-reaches the body of the class the object is however many realize it, as a virtual call does in C++
-and a call through a trait object does in Rust. No referrer sees how many realizations there are, so
-a body edit that changes the count changes no header.
+**D5. A block's body is what its code came out as, found by comparing it, and which body each block
+is, is its object's construction.** Each block is lowered from its own elaboration, its nested
+blocks lowered on their own beside it, and its HIR is looked up among the bodies the unit holds: a
+digest of its text narrows which are compared, and it is one of them only where everything they
+state is equal (fact 6). So blocks of a loop that come out alike are one body whatever their index,
+and a body states nothing of its nested blocks' bodies, so blocks selecting different alternatives
+of a conditional are one body too. Which body stands at each place -- each alternative a conditional
+wrote, each block a loop counts out -- is how the object holding them is built: it is stated in that
+object's construction table, and the object builds each block through the entry the table holds
+there, as it builds an instance. Each body is a realizing class extending the one published class,
+lowered inside the scope publishing the class its own class sits in, which is the same for every
+scope building it. A published subroutine is a virtual method the published class introduces and
+each realizing class overrides with its body, so a call reaches the body of the class the object is
+however many realize it, as a virtual call does in C++ and a call through a trait object does in
+Rust. No referrer sees how many realizations there are, so a body edit that changes the count
+changes no header.
 
 **D6. An upward name starts at the scope it landed on, which may be a generate block.** The anchor
 is the nearest enclosing scope of the class of that scope, an instance or a block, and that class
 tells the unit apart. A child naming the block that holds it therefore carries no index: every block
 instance of the application is of one class, so the child is one unit.
 
-**D7. A type a block declares is a type of the block's application.** A struct is named by the
-applications between it and its unit. A class reaches the object of the block declaring it as that
-block's body compiled it -- a name its method writes is a route slot the body adds -- and is one
-class of the application however many bodies realize it, so a block declaring a class has one body:
-an index its code uses names its application instead.
+**D7. A type a block declares is a type of the block's application, and a block declaring a class is
+an application of its own at every index.** A struct is named by the applications between it and its
+unit. A class or a covergroup each block of a loop declares is a type of that block alone (fact 4),
+and an object's class is what a cast asks of it, so the blocks' classes are compiled apart: a block
+declaring one, or holding a scope that does, is named by its index, and has a body per index. This
+replaced "one class of the application however many bodies realize it", which had a loop whose
+declarations read no index declare one class for every block, so a cast in one block took another
+block's object as its own.
 
 **D8. A declaration of a unit is identified by a path of steps, each a kind and what tells it from
 its siblings, and a target spells it.** Every identifier has a unique hierarchical path name (LRM
@@ -172,10 +193,10 @@ every scope extends, so no header needs another unit's scope class and none is n
 
 ## Limits, each with its cause
 
-- An index a declaration relies on makes an application per value, also where two values compile
-  alike, as a template argument does.
-- A loop whose blocks declare a class is an application per value of its index wherever the blocks'
-  code or what they declare relies on it (D7).
+- A loop whose blocks declare a class is an application per index, its methods included: each
+  block's class is a type of its own (D7), and nothing shares the code of two classes yet.
+- Every block is built through its object's table, an entry read and called indirectly, once per
+  block at construction (D5).
 - An application or a specialization with arguments is told apart by a digest of them, as a unit is,
   so the emitted name carries sixteen hex digits. How arguments are spelled is one question for
   both.
@@ -192,13 +213,20 @@ every scope extends, so no header needs another unit's scope class and none is n
 - **Each block published under its own path, sharing beneath.** That is the reversed D5. A body edit
   changes how many names are aliases, which is a header.
 - **Deciding the application by comparing published classes.** It needs every type interned, which
-  is after units are named (fact 5).
+  is after units are named (fact 5). D4 compares what the front end resolved instead, which is there
+  before anything is named.
 - **A file per class with the name shortened to a prefix and a digest when it does not fit.** It
   keeps the flattened name and patches its length. The name was the defect.
-- **Finding which body a block is by lowering every block and comparing it with the bodies found
-  before it.** The same answer as naming it from the front end's record (D5), at the square of the
-  number of distinct bodies, which is most of the work of lowering a loop whose blocks each read a
-  neighbour.
+- **Naming which body a block is before it lowers, from the front end's record of which values its
+  code read (this record's 2026-10-14 D5).** A prediction that every value a block's code reads
+  changes the code; and its earlier rejection of comparing -- the square of the number of distinct
+  bodies -- is answered by comparing only bodies whose text has one digest (D5).
+- **A block's nested blocks held inside its HIR.** Two blocks then differ wherever their nested
+  blocks do, so a loop whose blocks select different alternatives was a body per alternative, and
+  which body a nested block is would be part of the code holding it rather than of the object.
+- **Each group of alike blocks lowered once from every block in it, the group's body holding every
+  nested body its members built.** A body's content would follow which objects happened to share it,
+  and a member's nested body would be chosen by code no other member wrote.
 - **A non-virtual method per published subroutine that asks which realization the object is**, on
   the ground that only the declaring unit can ask which of its classes realizes the object. The
   object carries its class, and its class's table answers that in one step; asking inside a
@@ -213,7 +241,5 @@ every scope extends, so no header needs another unit's scope class and none is n
   knows the published class and not which class realizes the object, so D5 here makes each published
   subroutine virtual. Its D4 named the anchor an enclosing instance; D6 widens it to an enclosing
   scope.
-- [one-body-built-at-every-index](one-body-built-at-every-index.md) D2: blocks of one name are one
-  body, lowered once with each part from one block that built it, and are not compared to find which
-  body they are (D5). A hole in what the front end's record shows is this compiler's defect, found
-  where the compile checks itself.
+- [one-body-built-at-every-index](one-body-built-at-every-index.md) D2: which body a block is, is
+  found by comparing what it came out as, and is stated per object in its construction table (D5).
