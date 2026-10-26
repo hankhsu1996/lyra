@@ -94,8 +94,9 @@ using MethodReceiver =
 // 18.6.2), as the front end gives every class one of each it does not declare:
 // `cls` is the class the call names, the one a handle is of, the class of the
 // method writing the call, or that class's base through `super`. Which body
-// runs follows from that class, since an interface class's hooks are virtual
-// (LRM 8.26.9) and a class's are not (LRM 18.6.2).
+// runs follows from that class: a class's hooks are not virtual (LRM 18.6.2),
+// and an interface class's run the object's own class's, the reading Lyra
+// takes where LRM 8.26.9 calls them virtual.
 struct BuiltinHookCallee {
   ClassId cls;
   RandomizationHook hook{};

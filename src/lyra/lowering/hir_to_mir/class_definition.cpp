@@ -1,6 +1,7 @@
 #include "lyra/lowering/hir_to_mir/class_definition.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -11,23 +12,28 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/scope_instantiations.hpp"
 #include "lyra/hir/specialization_ref.hpp"
+#include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
 #include "lyra/lowering/hir_to_mir/library_entry_body.hpp"
 #include "lyra/mir/block_body_ordinal.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
+#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/dispatch_table.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/value_build.hpp"
 #include "lyra/support/dump_kind.hpp"
+#include "lyra/support/runtime_class.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -52,7 +58,8 @@ namespace {
 //
 //   const ScopeCallable Mid::table[1] = {{"bump", &Mid::bump_entry}};
 //   const ScopeInfo Mid::info = {unit, precision, table, 1};
-//   const ObjectDefinition Mid::definition = {&Scope::definition, &info};
+//   const ObjectDefinition Mid::definition =
+//       {nullptr, &info, nullptr, &Mid::end, nullptr, 0, &Mid::methods};
 //
 // A table is an array the class holds, and whatever points at one states two
 // members for it: where the array is, and how many it holds.
@@ -217,16 +224,119 @@ void AppendNamedBodyTable(
       });
 }
 
+// A pointer to the root every object is: how an entry is handed the object,
+// whatever class it is of.
+auto ObjectRootPointer(const mir::CompilationUnit& unit) -> mir::TypeId {
+  return unit.types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = unit.types.Intern(
+              mir::Type{mir::RuntimeClassType{
+                  .which = support::RuntimeClass::kObject}}),
+          .ownership = mir::PointerOwnership::kBorrowed}});
+}
+
+// `code`, a body the library enters at the type `entry` its record states, as
+// a value of `block`; none of that type where `code` is none.
+auto EntryOrNone(
+    mir::Block& block, std::optional<mir::ExprId> code, mir::TypeId entry)
+    -> mir::ExprId {
+  if (code.has_value()) {
+    return *code;
+  }
+  return block.exprs.Add(mir::Expr{.data = mir::NullLiteral{}, .type = entry});
+}
+
+// The entry of `body`, the body the library enters for one of the callbacks
+// it makes on an object, as a value of `block`. `entry` is the entry's
+// machine function type, which is the library's for that callback.
+auto EntryReference(
+    mir::Block& block, const mir::CallableTarget& body, mir::TypeId entry)
+    -> mir::ExprId {
+  return block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::ReferenceExpr{.target = mir::DispatchEntryRef{.body = body}},
+          .type = entry});
+}
+
+// The bodies an instance of a class of the design hierarchy is entered with in
+// each phase, in the order the runtime library's scope record lists them.
+constexpr std::array kScopePhases{
+    support::LibraryCallback::kScopeResolve,
+    support::LibraryCallback::kScopeInitialize,
+    support::LibraryCallback::kScopeCreateProcesses,
+    support::LibraryCallback::kScopeDescribe};
+
+// What `randomize()` asks of an object of a source class, in the order the
+// runtime library's record lists them.
+constexpr std::array kRandomization{
+    support::LibraryCallback::kClassRandVariables,
+    support::LibraryCallback::kClassConstrain,
+    support::LibraryCallback::kClassRandObjects,
+    support::LibraryCallback::kClassPreRandomize,
+    support::LibraryCallback::kClassPostRandomize};
+
+using LibraryBodies = std::vector<std::optional<mir::CallableTarget>>;
+
+// The machine function types of the entries the library enters an object's
+// class through, each the type the library's record states: handed the
+// object, and for what `randomize()` asks the variables, the constraints and
+// the random objects of, the call's problem too (LRM 18.6); and the one ending
+// an object, handed its storage.
+struct LibraryEntryTypes {
+  mir::TypeId on_object;
+  mir::TypeId on_object_and_problem;
+  mir::TypeId on_storage;
+};
+
+[[nodiscard]] auto EntryTypeOf(
+    const LibraryEntryTypes& types, support::LibraryCallback callback)
+    -> mir::TypeId {
+  switch (callback) {
+    case support::LibraryCallback::kClassRandVariables:
+    case support::LibraryCallback::kClassConstrain:
+    case support::LibraryCallback::kClassRandObjects:
+      return types.on_object_and_problem;
+    case support::LibraryCallback::kScopeResolve:
+    case support::LibraryCallback::kScopeInitialize:
+    case support::LibraryCallback::kScopeCreateProcesses:
+    case support::LibraryCallback::kScopeDescribe:
+    case support::LibraryCallback::kClassPreRandomize:
+    case support::LibraryCallback::kClassPostRandomize:
+      return types.on_object;
+  }
+  throw InternalError("hir_to_mir: unknown library callback");
+}
+
+// The entries of `bodies`, the bodies the library enters for `callbacks`
+// in order, as values of `block`.
+auto LibraryEntries(
+    mir::Block& block, const LibraryEntryTypes& types,
+    std::span<const support::LibraryCallback> callbacks,
+    const LibraryBodies& bodies) -> std::vector<mir::ExprId> {
+  std::vector<mir::ExprId> entries;
+  entries.reserve(callbacks.size());
+  for (std::size_t i = 0; i < callbacks.size(); ++i) {
+    const mir::TypeId entry = EntryTypeOf(types, callbacks[i]);
+    entries.push_back(EntryOrNone(
+        block, bodies[i].transform([&](const mir::CallableTarget& body) {
+          return EntryReference(block, body, entry);
+        }),
+        entry));
+  }
+  return entries;
+}
+
 // What a class of the design hierarchy states of its instances, as a constant
 // of class `id`, and its address as a value of `block`: its timescale, how what
-// an instance starts is run, what a dump records it as, then the bodies its
-// export names reach.
+// an instance starts is run, what a dump records it as, the bodies its exports
+// name, then the body of each of its phases.
 //
-//   {unit, precision, execution, dumped_as, exports, n}
+//   {unit, precision, execution, dumped_as, exports, n, &resolve, ...}
 auto ScopeInfoAddress(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ClassId id,
-    mir::Class& cls, std::span<const mir::NamedCallable> exports)
-    -> mir::ExprId {
+    mir::Class& cls, const LibraryEntryTypes& types,
+    const LibraryBodies& phases) -> mir::ExprId {
   using Kind = mir::RuntimeLibraryKind;
   const mir::TypeId type = LibraryType(unit, Kind::kScopeInfo);
   mir::ValueBuild build;
@@ -245,7 +355,11 @@ auto ScopeInfoAddress(
           unit, info, static_cast<std::uint8_t>(cls.dumped_as),
           mir::MachineIntWidth::k8, mir::Signedness::kUnsigned)};
   AppendNamedBodyTable(
-      parts, unit, info, id, cls, Kind::kScopeCallable, exports);
+      parts, unit, info, id, cls, Kind::kScopeCallable, cls.exports);
+  for (const mir::ExprId phase :
+       LibraryEntries(info, types, kScopePhases, phases)) {
+    parts.push_back(phase);
+  }
   build.value = Record(unit, info, Kind::kScopeInfo, std::move(parts));
   return ConstantAddress(unit, block, id, cls, type, std::move(build));
 }
@@ -325,30 +439,6 @@ struct BodyRef {
 
   auto operator==(const BodyRef&) const -> bool = default;
 };
-
-// States the definition of `cls`: the class it extends, and what it states of
-// its instances, which `instances` writes into the block it is handed.
-//
-//   {&Base::definition, &info}
-void StateDefinition(
-    const mir::CompilationUnit& unit, mir::Class& cls,
-    const std::function<mir::ExprId(mir::Block&)>& instances) {
-  mir::ValueBuild build;
-  mir::Block& block = build.body;
-  const std::optional<mir::ClassId> base = mir::DeclaredBase(cls);
-  std::vector<mir::ExprId> parts{
-      base.has_value()
-          ? BuildDefinitionRead(unit, block, *base)
-          : block.exprs.Add(
-                mir::Expr{
-                    .data = mir::NullLiteral{},
-                    .type = mir::ClassDefinitionPointer(unit.types)})};
-  parts.push_back(instances(block));
-  build.value = Record(
-      unit, block, mir::RuntimeLibraryKind::kObjectDefinition,
-      std::move(parts));
-  cls.object_definition_initializer = std::move(build);
-}
 
 // The object entry of the body `made` names, or the entry it publishes for its
 // block body `built`, at the type `entry` its unit declared it with, read with
@@ -576,7 +666,7 @@ class ConstructionTables {
     return found->second;
   }
 
-  auto EntryTypeOf(const std::string& unit) const -> mir::TypeId {
+  [[nodiscard]] auto EntryTypeOf(const std::string& unit) const -> mir::TypeId {
     const auto found = entry_types_->find(unit);
     if (found == entry_types_->end()) {
       throw InternalError(
@@ -599,35 +689,274 @@ class ConstructionTables {
   std::vector<std::pair<Content, mir::ClassConstantRef>> stated_;
 };
 
-}  // namespace
+// What the definition of one class states that its lineage decides, read
+// before any class of the unit is changed, since stating the definition adds
+// to the class it states.
+struct LineageFacts {
+  bool is_interface_class = false;
+  bool is_class_object = false;
+  // The body of each phase, where instances of the class stand in the design
+  // hierarchy and are built of it.
+  std::optional<LibraryBodies> phases;
+  LibraryBodies randomization;
+  std::vector<mir::DispatchedBehavior> dispatch;
+  std::vector<mir::InterfaceTable> interface_tables;
+};
 
-void StateNamedClassDefinition(
-    const mir::CompilationUnit& unit, mir::Class& cls) {
-  StateDefinition(unit, cls, [&](mir::Block& block) {
-    return block.exprs.Add(
-        mir::Expr{
-            .data = mir::NullLiteral{},
-            .type = ReadOnlyPointerTo(
-                unit, LibraryType(unit, mir::RuntimeLibraryKind::kScopeInfo))});
-  });
+// The root a class's lineage ends at, where it ends at one: an interface class
+// extends none (LRM 8.26).
+auto RootOf(const mir::CompilationUnit& unit, mir::ClassId id)
+    -> std::optional<mir::ClassRef> {
+  mir::ClassId at = id;
+  while (const std::optional<mir::ClassId> base =
+             mir::DeclaredBase(unit.GetClass(at))) {
+    at = *base;
+  }
+  return unit.GetClass(at).base;
 }
 
-void StateScopeDefinition(
-    const mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
-    std::span<const mir::NamedCallable> exports) {
-  // A body of a scope is handed the scope every instance is.
-  const mir::TypeId scope = unit.builtins.scope_ptr;
-  std::vector<mir::NamedCallable> entered;
-  entered.reserve(exports.size());
-  for (const mir::NamedCallable& exported : exports) {
-    entered.push_back(
-        mir::NamedCallable{
-            .name = exported.name,
-            .body = EntryOf(unit, id, cls, exported.body, scope)});
+auto LibraryBodiesOf(
+    const mir::CompilationUnit& unit, mir::ClassId id,
+    std::span<const support::LibraryCallback> callbacks) -> LibraryBodies {
+  LibraryBodies bodies;
+  bodies.reserve(callbacks.size());
+  for (const support::LibraryCallback callback : callbacks) {
+    bodies.push_back(mir::CallbackBodyOf(unit, id, callback));
   }
-  StateDefinition(unit, cls, [&](mir::Block& block) {
-    return ScopeInfoAddress(unit, block, id, cls, entered);
-  });
+  return bodies;
+}
+
+// What an object of `id`, a class another unit defines, dispatches on: its
+// behaviors, answered by that unit.
+auto DeclaredDispatchOf(const mir::CompilationUnit& unit, mir::ClassId id)
+    -> std::vector<mir::DispatchedBehavior> {
+  std::vector<mir::DispatchedBehavior> dispatch;
+  for (const mir::VirtualSlot& behavior : mir::DispatchTableOf(unit, id)) {
+    dispatch.push_back(
+        mir::DispatchedBehavior{
+            .behavior = behavior, .answered_by = std::nullopt});
+  }
+  return dispatch;
+}
+
+auto FactsOf(const mir::CompilationUnit& unit, mir::ClassId id)
+    -> LineageFacts {
+  const mir::Class& cls = unit.GetClass(id);
+  LineageFacts facts{
+      .is_interface_class = cls.is_interface_class,
+      .is_class_object = false,
+      .phases = std::nullopt,
+      .randomization = {},
+      .dispatch = {},
+      .interface_tables = {}};
+  if (cls.is_interface_class) {
+    return facts;
+  }
+  const std::optional<mir::ClassRef> root = RootOf(unit, id);
+  facts.is_class_object =
+      root.has_value() &&
+      std::holds_alternative<mir::ManagedObjectRootRef>(*root);
+  // Only a class an instance is built of gives its phases a body; what a unit
+  // published of its object is built of no instance alone.
+  if (mir::CallbackBodyOf(unit, id, kScopePhases.front()).has_value()) {
+    facts.phases = LibraryBodiesOf(unit, id, kScopePhases);
+  }
+  if (facts.is_class_object) {
+    facts.randomization = LibraryBodiesOf(unit, id, kRandomization);
+  }
+  for (const mir::VirtualSlot& behavior : mir::DispatchTableOf(unit, id)) {
+    facts.dispatch.push_back(
+        mir::DispatchedBehavior{
+            .behavior = behavior,
+            .answered_by = mir::DispatchedBody(unit, id, behavior)});
+  }
+  for (const mir::ClassId iface : mir::InterfacesOf(unit, id)) {
+    mir::InterfaceTable table{.of = iface, .answered_by = {}};
+    for (const mir::VirtualSlot& requirement :
+         mir::RequirementsOf(unit, iface)) {
+      const auto answer = std::ranges::find_if(
+          cls.conforming, [&](const mir::ConformingBehavior& conforming) {
+            return conforming.interface_behavior == requirement;
+          });
+      if (answer == cls.conforming.end()) {
+        throw InternalError(
+            "hir_to_mir: a class states nothing about a method of an interface "
+            "class it implements -- please report this as a bug");
+      }
+      table.answered_by.push_back(
+          answer->answered_by.and_then([&](const mir::VirtualSlot& answering) {
+            return mir::DispatchedBody(unit, id, answering);
+          }));
+    }
+    facts.interface_tables.push_back(std::move(table));
+  }
+  return facts;
+}
+
+// A null pointer to a record of the library of kind `kind`, as a value of
+// `block`.
+auto NoRecord(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    mir::RuntimeLibraryKind kind) -> mir::ExprId {
+  return block.exprs.Add(
+      mir::Expr{
+          .data = mir::NullLiteral{},
+          .type = ReadOnlyPointerTo(unit, LibraryType(unit, kind))});
+}
+
+// The address of a table `id`'s dispatch is laid out in, as a value of
+// `block`: what `target` names.
+auto TableAddress(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    mir::ReferenceTarget target) -> mir::ExprId {
+  return block.exprs.Add(
+      mir::Expr{
+          .data = mir::ReferenceExpr{.target = std::move(target)},
+          .type = mir::ErasedPointer(unit.types)});
+}
+
+// Gives each body of `cls`, class `id`, that something reaches without knowing
+// the object's class its entry: every one taking part in dispatch or answering
+// a callback the library makes on an object, that the class defines.
+void AddEntries(
+    const mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls) {
+  const mir::TypeId root = ObjectRootPointer(unit);
+  std::vector<mir::CallableId> entered;
+  for (const mir::CallableId callable : cls.callables.Ids()) {
+    const mir::CallableDecl& decl = cls.callables.Get(callable);
+    const bool reached_by_definition =
+        decl.virtual_dispatch.has_value() || cls.CallbackAnsweredBy(callable);
+    if (reached_by_definition &&
+        std::holds_alternative<mir::DefinedHere>(mir::FormOf(decl))) {
+      entered.push_back(callable);
+    }
+  }
+  for (const mir::CallableId method : entered) {
+    cls.entries.push_back(
+        mir::MethodEntry{
+            .method = method, .entry = EntryOf(unit, id, cls, method, root)});
+  }
+}
+
+// The definition of class `id`, `cls`, from what its lineage decides, adding
+// to `cls` the constants it takes.
+//
+//   {&Base::definition, &info, &randomization, &end, rows, n, &methods}
+auto DefinitionOf(
+    const mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
+    const LibraryEntryTypes& types, const LineageFacts& facts)
+    -> mir::ValueBuild {
+  using Kind = mir::RuntimeLibraryKind;
+  mir::ValueBuild build;
+  mir::Block& block = build.body;
+  const std::optional<mir::ClassId> base = mir::DeclaredBase(cls);
+  std::vector<mir::ExprId> parts{
+      base.has_value()
+          ? BuildDefinitionRead(unit, block, *base)
+          : block.exprs.Add(
+                mir::Expr{
+                    .data = mir::NullLiteral{},
+                    .type = mir::ClassDefinitionPointer(unit.types)})};
+  parts.push_back(
+      facts.phases.has_value()
+          ? ScopeInfoAddress(unit, block, id, cls, types, *facts.phases)
+          : NoRecord(unit, block, Kind::kScopeInfo));
+  if (facts.is_class_object) {
+    mir::ValueBuild info;
+    info.value = Record(
+        unit, info.body, Kind::kClassObjectInfo,
+        LibraryEntries(info.body, types, kRandomization, facts.randomization));
+    parts.push_back(ConstantAddress(
+        unit, block, id, cls, LibraryType(unit, Kind::kClassObjectInfo),
+        std::move(info)));
+  } else {
+    parts.push_back(NoRecord(unit, block, Kind::kClassObjectInfo));
+  }
+  parts.push_back(EntryOrNone(
+      block,
+      facts.is_interface_class
+          ? std::nullopt
+          : std::optional{block.exprs.Add(
+                mir::Expr{
+                    .data =
+                        mir::ReferenceExpr{
+                            .target = mir::DestructorRef{.of = id}},
+                    .type = types.on_storage})},
+      types.on_storage));
+  AppendTable(
+      parts, unit, block, id, cls, LibraryType(unit, Kind::kInterfaceRow),
+      facts.interface_tables.size(), [&](mir::Block& entry, std::size_t i) {
+        const mir::ClassId iface = facts.interface_tables[i].of;
+        return Record(
+            unit, entry, Kind::kInterfaceRow,
+            {BuildDefinitionRead(unit, entry, iface),
+             TableAddress(
+                 unit, entry,
+                 mir::InterfaceTableRef{.of = id, .iface = iface})});
+      });
+  parts.push_back(
+      facts.is_interface_class
+          ? block.exprs.Add(
+                mir::Expr{
+                    .data = mir::NullLiteral{},
+                    .type = mir::ErasedPointer(unit.types)})
+          : TableAddress(unit, block, mir::DispatchTableRef{.of = id}));
+  build.value = Record(unit, block, Kind::kObjectDefinition, std::move(parts));
+  return build;
+}
+
+}  // namespace
+
+void StateObjectDefinitions(mir::CompilationUnit& unit) {
+  const mir::TypeId root = ObjectRootPointer(unit);
+  const mir::TypeId void_type = unit.builtins.void_type;
+  const std::optional<mir::TypeId> problem =
+      ConstraintProblemParamTypeOf(unit, hir::SubroutineKind::kConstraintBlock);
+  if (!problem.has_value()) {
+    throw InternalError(
+        "hir_to_mir: a constraint block takes no problem -- please report this "
+        "as a bug");
+  }
+  const LibraryEntryTypes types{
+      .on_object = unit.types.Intern(
+          mir::Type{
+              mir::MachineFunctionType{.params = {root}, .result = void_type}}),
+      .on_object_and_problem = unit.types.Intern(
+          mir::Type{mir::MachineFunctionType{
+              .params = {root, *problem}, .result = void_type}}),
+      .on_storage = unit.types.Intern(
+          mir::Type{mir::MachineFunctionType{
+              .params = {mir::ErasedPointer(unit.types)},
+              .result = void_type}})};
+  std::vector<std::optional<LineageFacts>> facts;
+  std::vector<std::vector<mir::DispatchedBehavior>> declared;
+  facts.reserve(unit.classes.size());
+  declared.reserve(unit.classes.size());
+  for (const mir::ClassId id : unit.classes.Ids()) {
+    const bool elsewhere = mir::IsDefinedElsewhere(unit, id);
+    facts.push_back(
+        elsewhere ? std::nullopt
+                  : std::optional<LineageFacts>{FactsOf(unit, id)});
+    declared.push_back(
+        elsewhere && !unit.GetClass(id).is_interface_class
+            ? DeclaredDispatchOf(unit, id)
+            : std::vector<mir::DispatchedBehavior>{});
+  }
+  unit.classes = std::move(unit.classes)
+                     .TransformValues([&](mir::ClassId id, mir::Class cls) {
+                       const std::optional<LineageFacts>& stated =
+                           facts[id.value];
+                       if (!stated.has_value()) {
+                         cls.dispatch = std::move(declared[id.value]);
+                         return cls;
+                       }
+                       AddEntries(unit, id, cls);
+                       cls.dispatch = stated->dispatch;
+                       cls.interface_tables = stated->interface_tables;
+                       cls.object_definition_initializer =
+                           DefinitionOf(unit, id, cls, types, *stated);
+                       return cls;
+                     });
 }
 
 auto BlockEntryType(mir::CompilationUnit& unit, bool handed_its_index)

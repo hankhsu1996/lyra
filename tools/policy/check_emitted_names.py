@@ -67,7 +67,6 @@ MAPPERS = [
     "CppRecordName",
     "CppRecordQualifiedName",
     "CppClassCallableName",
-    "CppVirtualSlotName",
     "CppFieldName",
     "CppBringUpEntryName",
     "CppObjectEntryName",

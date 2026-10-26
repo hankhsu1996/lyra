@@ -1235,11 +1235,13 @@ void VerifyWritesLandInWritableStorage(
 // boolean a condition tests (LRM 12.4). An integral value is read at a type
 // laying it out alike, an enumeration's and its base's; a machine integer at
 // another width; a pointer at another pointee, as a code address is at another
-// signature; a reference at the same referent made read-only, as clang states
-// a qualification conversion (LRM 13.5.2); and a reference held as a member
-// read as the reference it holds, at the same referent and never more
-// writable. A value moved between representations, and a handle seen as
-// another class's, is a call.
+// signature, and a class handle as one of another class, the same object
+// whatever class it is seen as (LRM 8.15, 8.26.5); a reference at the same
+// referent made read-only, as clang states a qualification conversion (LRM
+// 13.5.2); and a reference held as a member read as the reference it holds, at
+// the same referent and never more writable. A value moved between
+// representations, and a handle asked whether its object is of a class, is a
+// call.
 auto CastReadsAsAnother(const TypePool& types, TypeId from, TypeId to) -> bool {
   const Type& source = types.Get(from);
   const Type& destination = types.Get(to);
@@ -1258,6 +1260,7 @@ auto CastReadsAsAnother(const TypePool& types, TypeId from, TypeId to) -> bool {
     return true;
   }
   if ((source.Is<PointerType>() && destination.Is<PointerType>()) ||
+      (source.Is<ManagedRefType>() && destination.Is<ManagedRefType>()) ||
       (source.Is<MachineFunctionType>() &&
        destination.Is<MachineFunctionType>())) {
     return true;
@@ -2572,6 +2575,18 @@ class HandedClosures {
               return LivesForTheWholeRun{};
             },
             [](const FunctionRef&) -> Reached { return LivesForTheWholeRun{}; },
+            [](const DispatchEntryRef&) -> Reached {
+              return LivesForTheWholeRun{};
+            },
+            [](const DestructorRef&) -> Reached {
+              return LivesForTheWholeRun{};
+            },
+            [](const DispatchTableRef&) -> Reached {
+              return LivesForTheWholeRun{};
+            },
+            [](const InterfaceTableRef&) -> Reached {
+              return LivesForTheWholeRun{};
+            },
             [](const ExternalObjectEntryRef&) -> Reached {
               return LivesForTheWholeRun{};
             }},
@@ -2683,7 +2698,8 @@ void VerifyDeclaredEntries(const CompilationUnit& unit, std::string_view when) {
   for (const ClassId id : unit.classes.Ids()) {
     const Class& cls = unit.GetClass(id);
     if (!cls.defining_unit.has_value()) continue;
-    if (!cls.path.has_value()) {
+    const support::DefPath* class_path = support::PathOf(cls.identity);
+    if (class_path == nullptr) {
       throw InternalError(
           std::format(
               "mir verify: unit '{}', {}, declares a class of unit '{}' that "
@@ -2691,14 +2707,14 @@ void VerifyDeclaredEntries(const CompilationUnit& unit, std::string_view when) {
               unit.name, when, *cls.defining_unit));
     }
     if (*cls.defining_unit == unit.name) {
-      refuse(*cls.path, "declares as another unit's its own class");
+      refuse(*class_path, "declares as another unit's its own class");
     }
     for (const auto& [unit_name, path] : declared) {
-      if (unit_name == *cls.defining_unit && *path == *cls.path) {
-        refuse(*cls.path, "declares twice the class");
+      if (unit_name == *cls.defining_unit && *path == *class_path) {
+        refuse(*class_path, "declares twice the class");
       }
     }
-    declared.emplace_back(*cls.defining_unit, &*cls.path);
+    declared.emplace_back(*cls.defining_unit, class_path);
     const bool holds_code =
         std::ranges::any_of(cls.callables.Ids(), [&](CallableId callable) {
           return cls.callables.Get(callable).code.body.has_value();
@@ -2706,7 +2722,7 @@ void VerifyDeclaredEntries(const CompilationUnit& unit, std::string_view when) {
     if (holds_code || cls.constructor.has_value() || !cls.contained.empty() ||
         !cls.constants.empty() ||
         !cls.object_definition_initializer.body.exprs.empty()) {
-      refuse(*cls.path, "holds code or data of its own for the class");
+      refuse(*class_path, "holds code or data of its own for the class");
     }
   }
   for (const RecordId id : unit.records.Ids()) {

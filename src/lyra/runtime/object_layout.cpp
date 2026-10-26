@@ -1,20 +1,19 @@
 #include "lyra/runtime/object_layout.hpp"
 
 #include <bit>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
-#include <string>
-#include <string_view>
 #include <type_traits>
-#include <typeinfo>
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/runtime/any.hpp"
 #include "lyra/runtime/cancellation.hpp"
+#include "lyra/runtime/class_definition.hpp"
 #include "lyra/runtime/class_object.hpp"
 #include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/constraint_problem.hpp"
@@ -89,6 +88,14 @@ static_assert(Of<HierarchySegment>() == support::kHierarchySegmentStorage);
 static_assert(
     Of<ChannelCancellation>() == support::kChannelCancellationStorage);
 static_assert(Of<WeakObjectRef>() == support::kWeakReferenceStorage);
+
+// Every backend reads an object's class from the object's first word, which a
+// table pointer the host compiler gave a class of the library would take.
+static_assert(!std::is_polymorphic_v<GcObject>);
+static_assert(!std::is_polymorphic_v<ClassObject>);
+static_assert(!std::is_polymorphic_v<Scope>);
+static_assert(!std::is_polymorphic_v<SynchronizationObject>);
+static_assert(!std::is_polymorphic_v<ConstraintProblem>);
 
 template <typename Answer>
 [[noreturn]] auto NotRealized() -> Answer {
@@ -469,105 +476,51 @@ auto LayoutOf(support::RuntimeClass klass) -> ObjectLayout {
   throw InternalError("object layout: unknown runtime class");
 }
 
+auto DefinitionLayoutOf() -> DefinitionLayout {
+  return DefinitionLayout{
+      .end = offsetof(ObjectDefinition, end),
+      .methods = offsetof(ObjectDefinition, methods)};
+}
+
 auto ClosurePart() -> support::Layout {
   return {.size = sizeof(ClosureValue), .align = alignof(ClosureValue)};
 }
 
-// The Itanium ABI names a class's type information `_ZTI` followed by the
-// class's mangled name, which is what its `type_info` reports as its name.
-auto TypeInfoSymbolOf(support::RuntimeClass klass) -> std::string {
+namespace {
+
+// Calls `f` with a pointer, at `at`, to the class of the library `klass` is, as
+// its template argument: one a value of a source class extends.
+template <typename F>
+void WithExtendedClass(support::RuntimeClass klass, void* at, F f) {
   switch (klass) {
     case support::RuntimeClass::kScope:
-      return std::string("_ZTI") + typeid(Scope).name();
+      f(static_cast<Scope*>(at));
+      return;
     case support::RuntimeClass::kObject:
-      return std::string("_ZTI") + typeid(GcObject).name();
+      f(static_cast<GcObject*>(at));
+      return;
     case support::RuntimeClass::kClassObject:
-      return std::string("_ZTI") + typeid(ClassObject).name();
+      f(static_cast<ClassObject*>(at));
+      return;
     case support::RuntimeClass::kProcess:
     case support::RuntimeClass::kSynchronizationObject:
     case support::RuntimeClass::kConstraintProblem:
       throw InternalError(
           "object layout: a process, an event's object or a randomization's "
-          "problem is read as a class a value extends -- please report this as "
-          "a bug");
+          "problem is read as a class a value extends -- please report this "
+          "as a bug");
   }
   throw InternalError("object layout: unknown runtime class");
 }
 
-// The Itanium mangling of the constructors and destructors below is written
-// out, since neither has an address the language lets a program take. A wrong
-// one fails every program's link, since every class a design declares extends
-// one of these and calls both.
-auto BaseObjectConstructorSymbolOf(support::RuntimeClass klass)
-    -> std::string_view {
-  switch (klass) {
-    case support::RuntimeClass::kScope:
-      return "_ZN4lyra7runtime5ScopeC2Ev";
-    case support::RuntimeClass::kObject:
-      return "_ZN4lyra7runtime8GcObjectC2Ev";
-    case support::RuntimeClass::kClassObject:
-      return "_ZN4lyra7runtime11ClassObjectC2Ev";
-    case support::RuntimeClass::kProcess:
-    case support::RuntimeClass::kSynchronizationObject:
-    case support::RuntimeClass::kConstraintProblem:
-      break;
-  }
-  throw InternalError(
-      "object layout: a process, an event's object or a randomization's "
-      "problem is read as a class a value extends -- please report this as a "
-      "bug");
+}  // namespace
+
+void BeginLibraryPart(support::RuntimeClass klass, void* at) {
+  WithExtendedClass(klass, at, [](auto* part) { std::construct_at(part); });
 }
 
-auto BaseObjectDestructorSymbolOf(support::RuntimeClass klass)
-    -> std::string_view {
-  switch (klass) {
-    case support::RuntimeClass::kScope:
-      return "_ZN4lyra7runtime5ScopeD2Ev";
-    case support::RuntimeClass::kObject:
-      return "_ZN4lyra7runtime8GcObjectD2Ev";
-    case support::RuntimeClass::kClassObject:
-      return "_ZN4lyra7runtime11ClassObjectD2Ev";
-    case support::RuntimeClass::kProcess:
-    case support::RuntimeClass::kSynchronizationObject:
-    case support::RuntimeClass::kConstraintProblem:
-      break;
-  }
-  throw InternalError(
-      "object layout: a process, an event's object or a randomization's "
-      "problem is read as a class a value extends -- please report this as a "
-      "bug");
-}
-
-// The Itanium mangling of each virtual member function the library's classes
-// declare. A pointer to a member function names no symbol, so these are
-// written out; a wrong one fails every program's link, since every class
-// extending the scope or the class object that does not override one names it.
-auto VirtualFunctionSymbolOf(support::LibraryVirtual function)
-    -> std::string_view {
-  switch (function) {
-    case support::LibraryVirtual::kScopeResolve:
-      return "_ZN4lyra7runtime5Scope10sv_resolveEv";
-    case support::LibraryVirtual::kScopeInitialize:
-      return "_ZN4lyra7runtime5Scope13sv_initializeEv";
-    case support::LibraryVirtual::kScopeCreateProcesses:
-      return "_ZN4lyra7runtime5Scope19sv_create_processesEv";
-    case support::LibraryVirtual::kScopeDescribe:
-      return "_ZN4lyra7runtime5Scope11sv_describeEv";
-    case support::LibraryVirtual::kClassRandVariables:
-      return "_ZN4lyra7runtime11ClassObject17sv_rand_variablesERKNS_"
-             "5value9ObjectRefE";
-    case support::LibraryVirtual::kClassConstrain:
-      return "_ZN4lyra7runtime11ClassObject12sv_constrainERKNS_"
-             "5value9ObjectRefE";
-    case support::LibraryVirtual::kClassRandObjects:
-      return "_ZN4lyra7runtime11ClassObject15sv_rand_objectsERKNS_"
-             "5value9ObjectRefE";
-    case support::LibraryVirtual::kClassPreRandomize:
-      return "_ZN4lyra7runtime11ClassObject16sv_pre_randomizeEv";
-    case support::LibraryVirtual::kClassPostRandomize:
-      return "_ZN4lyra7runtime11ClassObject17sv_post_randomizeEv";
-  }
-  throw InternalError("object layout: unknown library virtual");
+void EndLibraryPart(support::RuntimeClass klass, void* at) {
+  WithExtendedClass(klass, at, [](auto* part) { std::destroy_at(part); });
 }
 
 }  // namespace lyra::runtime

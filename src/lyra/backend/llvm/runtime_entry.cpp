@@ -58,10 +58,12 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "shared_cell_make";
     case RuntimeOp::kSharedPointerDeref:
       return "shared_pointer_deref";
-    case RuntimeOp::kHandleView:
-      return "handle_view";
-    case RuntimeOp::kHandleWithView:
-      return "handle_with_view";
+    case RuntimeOp::kInterfaceTable:
+      return "interface_table";
+    case RuntimeOp::kBeginLibraryPart:
+      return "begin_library_part";
+    case RuntimeOp::kEndLibraryPart:
+      return "end_library_part";
     case RuntimeOp::kConst:
       return "const";
     case RuntimeOp::kToBool:
@@ -1021,6 +1023,8 @@ auto MemberStorageKindOf(
               // What a constant is made of, which no member holds.
               case lir::RuntimeLibraryKind::kScopeInfo:
               case lir::RuntimeLibraryKind::kScopeCallable:
+              case lir::RuntimeLibraryKind::kClassObjectInfo:
+              case lir::RuntimeLibraryKind::kInterfaceRow:
               case lir::RuntimeLibraryKind::kConstructionTable:
               case lir::RuntimeLibraryKind::kInstantiation:
               case lir::RuntimeLibraryKind::kGeneratePlaces:
@@ -1242,8 +1246,9 @@ auto OperandReadingsOf(RuntimeOp op) -> support::OperandReadings {
     case RuntimeOp::kObjectAdopt:
     case RuntimeOp::kSharedCellMake:
     case RuntimeOp::kSharedPointerDeref:
-    case RuntimeOp::kHandleView:
-    case RuntimeOp::kHandleWithView:
+    case RuntimeOp::kInterfaceTable:
+    case RuntimeOp::kBeginLibraryPart:
+    case RuntimeOp::kEndLibraryPart:
     case RuntimeOp::kConst:
     case RuntimeOp::kToBool:
     case RuntimeOp::kMake:
@@ -1302,8 +1307,9 @@ auto AnswerToldOf(RuntimeOp op) -> support::AnswerTold {
     case RuntimeOp::kObjectAdopt:
     case RuntimeOp::kSharedCellMake:
     case RuntimeOp::kSharedPointerDeref:
-    case RuntimeOp::kHandleView:
-    case RuntimeOp::kHandleWithView:
+    case RuntimeOp::kInterfaceTable:
+    case RuntimeOp::kBeginLibraryPart:
+    case RuntimeOp::kEndLibraryPart:
     case RuntimeOp::kConst:
     case RuntimeOp::kToBool:
     case RuntimeOp::kMake:
@@ -1411,8 +1417,9 @@ auto RealizationsOf(RuntimeOp op) -> std::span<const RealizedFor> {
     case RuntimeOp::kClosureBoxEnd:
     case RuntimeOp::kObjectAdopt:
     case RuntimeOp::kSharedPointerDeref:
-    case RuntimeOp::kHandleView:
-    case RuntimeOp::kHandleWithView:
+    case RuntimeOp::kInterfaceTable:
+    case RuntimeOp::kBeginLibraryPart:
+    case RuntimeOp::kEndLibraryPart:
     case RuntimeOp::kMakeWildcardIndex:
     case RuntimeOp::kMakeSegment:
     case RuntimeOp::kMakeTrigger:
@@ -1467,9 +1474,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
   constexpr std::string_view kLeavesByUnwinding =
       "leaves a body by unwinding it, where this target's bodies leave by "
       "branching";
-  constexpr std::string_view kSeenThroughItsOwnLayout =
-      "sees an object as another class, which this target does from the "
-      "layout of the object's classes it states itself";
   constexpr std::string_view kErasedWhereItLies =
       "makes a closure one of no known type, which this target's closure is "
       "where it lies, its definition opening it";
@@ -1773,12 +1777,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kSliceMut:
       return NotRealized{.shape = kWrittenWhereTheBitsLie};
 
-    // The lowering reaches an object's part of another class in place of this
-    // call, as a conversion between two pointers to classes is reached.
-    case support::BuiltinFn::kDerivedToBase:
-    case support::BuiltinFn::kDynamicCast:
-      return NotRealized{.shape = kSeenThroughItsOwnLayout};
-
     // The lowering reads the closure as the erased one in place of this call.
     case support::BuiltinFn::kUnsize:
       return NotRealized{.shape = kErasedWhereItLies};
@@ -1939,8 +1937,9 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // Recovering the object a handle names, or a handle naming the object a
     // body runs on. Each is one library function serving every class, so the
     // operation's own name is the whole of what a symbol needs.
-    case support::BuiltinFn::kViewOf:
+    case support::BuiltinFn::kObjectOf:
     case support::BuiltinFn::kSelfHandle:
+    case support::BuiltinFn::kDynamicCast:
     // What reports a change to an object's properties, one library function
     // each for every class.
     case support::BuiltinFn::kObjectEventSource:

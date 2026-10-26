@@ -52,22 +52,24 @@ construction had given it (LRM 8.29). Creation does not raise; only running out 
 it.
 
 **D4. An instance of the design hierarchy is created and constructed the same way.** Its owner is
-unique rather than counted, and ending it ends the object through its own class's destructor. The
-library's part of a scope is built without arguments, and the scope's constructor gives it its
-parent, its segment and its class's definition first, as D2's record of what Lyra keeps.
+unique rather than counted, and ending it ends the object through the end its class's definition
+names. The library's part of a scope is built without arguments, its class's definition is written
+when it is created, and the scope's constructor gives it its parent and its segment first, as D2's
+record of what Lyra keeps.
 
 **D5. Each backend realizes the two operations itself.** The execution backend gives each class a
-body creating it -- the library's part through the library's own constructor, every member of each
-class from the root down, then the class's tables -- emitted by the declaring unit and called by
-symbol from any other. The C++ backend renders a class's C++ constructor as creation only, with no
+body creating it -- taking its storage, the library's part through the library's own entry, every
+member of each class from the root down, then the class's definition -- emitted by the declaring
+unit and called by symbol from any other, so a unit creating an object of another unit's class reads
+nothing of its size. The C++ backend renders a class's C++ constructor as creation only, with no
 code of the design in it, and the SV constructor as a member function; a base's construction is a
 qualified call of the base's, and a `new` is a library helper that creates, takes the reference and
 constructs. Clang compiles that rendering to what the execution backend does.
 
 What stays as the earlier record had it is that where every part of an object sits and which body
-each view dispatches to are fixed when the program is compiled and follow the Itanium C++ ABI; a
-method that is not virtual is chosen by the class of the handle (LRM 8.14); a parameterized class
-has its own static properties per specialization (LRM 8.25).
+answers each behavior are fixed when the program is compiled; a method that is not virtual is chosen
+by the class of the handle (LRM 8.14); a parameterized class has its own static properties per
+specialization (LRM 8.25).
 
 ## Why
 

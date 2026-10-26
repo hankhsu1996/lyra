@@ -23,7 +23,7 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
-#include "lyra/support/def_path.hpp"
+#include "lyra/support/class_name.hpp"
 #include "lyra/support/dump_kind.hpp"
 #include "lyra/support/scope_execution.hpp"
 
@@ -46,11 +46,10 @@ struct CallableSignature {
     const mir::VirtualDispatchRole& role) -> mir::VirtualSlot;
 
 // The object a dispatch on `slot` is made on, as the class that introduced the
-// behavior: a behavior an interface class states is reached through that
-// class's part of the object, which is not where a class extending it or
-// implementing it starts, so a receiver of any other class is converted to it
-// first -- the conversion C++ writes on the object of a member call naming a
-// member of a base. A receiver already of that class is left as it is.
+// behavior, which is the class whose table, or whose row among the interface
+// classes the object's class implements, numbers the behavior. The object is
+// the same whichever class it is seen as (LRM 8.15, 8.26.5), so only its type
+// changes. A receiver already of that class is left as it is.
 [[nodiscard]] auto AsIntroducer(
     const mir::TypePool& types, mir::Block& block, mir::ExprId receiver,
     const mir::VirtualSlot& slot) -> mir::ExprId;
@@ -85,8 +84,7 @@ struct DeclaringInstance {
 // None of this outlives the lowering. A finished unit holds one fully composed
 // class per identity, so nothing downstream pairs two views of one class.
 struct ClassShape {
-  // Absent for a class nothing outside this unit names.
-  std::optional<support::DefPath> path;
+  support::ClassName identity;
   std::optional<mir::ClassRef> base;
   // Interface class contracts (LRM 8.26) this class commits to satisfying.
   // Populated from the source `implements` clause of a regular class or the
@@ -116,6 +114,9 @@ struct ClassShape {
   // declaration settles; a structural scope's callables are named by no
   // declaration, so the scope settles them itself.
   base::Translation<mir::CallableId, CallableSignature> callable_signatures;
+  // The bodies the runtime library calls on an object of the class, each under
+  // the callback it answers.
+  std::vector<mir::LibraryCallbackBody> library_callbacks;
   // Where each static property's cell was placed. It is a home rather than a
   // slot because which pool holds it follows from what replicates the class
   // declaration: a class a namespace unit declares owns its cells, and one a
@@ -133,9 +134,8 @@ struct ClassShape {
   bool is_final = false;
   // Whether this class is an `interface class` declaration (LRM 8.26): its body
   // carries only pure virtual method contracts, no instance storage and no
-  // constructor. Consumers read the bit to render the class as an abstract
-  // target-language type and to route inheritance through the multi-base
-  // mechanism `implements` names.
+  // constructor. A class implementing it places nothing of it in its objects
+  // (LRM 8.26); what answers its methods is a table of the implementing class.
   bool is_interface_class = false;
 
   // Storage the source declared, which the class answers by the identifier the

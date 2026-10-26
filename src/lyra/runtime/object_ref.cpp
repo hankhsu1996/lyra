@@ -4,9 +4,11 @@
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/runtime/class_definition.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/part_path.hpp"
+#include "lyra/runtime/randomization.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/wait.hpp"
 
@@ -17,12 +19,12 @@ namespace {
 // Ends an object once its last reference goes, where it was handed over to
 // the code that created it. An instance of the design hierarchy never is: its
 // parent owns it alone and ends it, so its own end does nothing.
-struct EndObject {
+struct EndHandedOver {
   bool handed_over = false;
 
   void operator()(GcObject* object) const noexcept {
     if (handed_over) {
-      delete object;
+      EndObject(object);
     }
   }
 };
@@ -34,7 +36,12 @@ struct GcObject::Watchers {
   IntrusiveList<WaitMembership> expiry;
 };
 
-GcObject::GcObject() : creators_share_(this, EndObject{}) {
+GcObject::GcObject() : creators_share_(this, EndHandedOver{}) {
+}
+
+GcObject::GcObject(const ObjectDefinition& definition)
+    : ObjectHeader{.definition = &definition},
+      creators_share_(this, EndHandedOver{}) {
 }
 
 // What reached this object through a weak reference is handed over to be told
@@ -50,8 +57,9 @@ GcObject::~GcObject() {
 // -- what waits on the one it was copied from waits on that one -- and with
 // its own creator's reference.
 GcObject::GcObject(const GcObject& other)
-    : std::enable_shared_from_this<GcObject>(other),
-      creators_share_(this, EndObject{}) {
+    : ObjectHeader(other),
+      std::enable_shared_from_this<GcObject>(other),
+      creators_share_(this, EndHandedOver{}) {
 }
 
 auto GcObject::TakeCreatorsShare() -> std::shared_ptr<GcObject> {
@@ -60,7 +68,7 @@ auto GcObject::TakeCreatorsShare() -> std::shared_ptr<GcObject> {
         "GcObject: an object is handed to the code that built it twice -- "
         "please report this as a bug");
   }
-  std::get_deleter<EndObject>(creators_share_)->handed_over = true;
+  std::get_deleter<EndHandedOver>(creators_share_)->handed_over = true;
   return std::move(creators_share_);
 }
 
@@ -88,6 +96,13 @@ auto GcObject::Expiry() -> IntrusiveList<WaitMembership>& {
   return WatchersOf().expiry;
 }
 
+auto GcObject::Modes() -> RandomizationModes& {
+  if (modes_ == nullptr) {
+    modes_ = std::make_unique<RandomizationModes>();
+  }
+  return *modes_;
+}
+
 auto GcObject::Watched() const -> bool {
   return watchers_ != nullptr && watchers_->properties.HasMembers();
 }
@@ -97,6 +112,18 @@ void GcObject::PublishChange() {
     current_runtime().WakeParkedOn(
         watchers_->properties, PartPath{}, Change::Whole());
   }
+}
+
+void EndOwnedObject::operator()(GcObject* object) const noexcept {
+  EndObject(object);
+}
+
+auto AdoptObject(GcObject* object) -> value::ObjectRef {
+  return RefToObject(object->TakeCreatorsShare());
+}
+
+auto SelfHandle(GcObject* self) -> value::ObjectRef {
+  return RefToObject(self->shared_from_this());
 }
 
 }  // namespace lyra::runtime

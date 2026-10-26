@@ -854,43 +854,44 @@ the detail lives in the entry itself.
   value is answered by whoever fixes the values the destination accepts: the type where its
   declaration fixes them, and the object where the classes extending one are open across compilation
   units. The construct is a sequence of steps ending in the answer, and the reporting spelling is
-  those steps plus a report. Its object half is superseded by
-  [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), where the cast
-  forms the view through the class's type descriptor and its presence is the answer. One
-  checked-cast node dispatched on the type pair, a per-class table of the subclasses a destination
-  accepts, binding the destination as an output argument, and refusing a statically impossible pair
-  are rejected.
+  those steps plus a report. Its object half was superseded from 2026-09-29 to 2026-10-25 by
+  [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), whose revision
+  returned it to the library's walk of the object's definition. One checked-cast node dispatched on
+  the type pair, a per-class table of the subclasses a destination accepts, binding the destination
+  as an output argument, and refusing a statically impossible pair are rejected.
 - [unit-scope-naming](unit-scope-naming.md) -- the anonymous `$unit` scope (LRM 3.12.1) is a
   namespace unit named by its compilation-unit input identity, recomputed table-free by producer and
   consumer; a design-wide unit id, a fixed name, a collection ordinal, and a content digest are all
   rejected.
 - [interface-conformance-realization](interface-conformance-realization.md) -- inherited interface
-  satisfaction (LRM 8.26.2) is resolved at AST-to-HIR and realized as a synthesized forwarding
-  method (backend renders, never fabricates). Its deferral of the full method-to-slots dispatch
-  representation is superseded by
+  satisfaction (LRM 8.26.2) is resolved at AST-to-HIR. Its synthesized forwarding method is gone
+  (2026-10-25) and its deferral of the full method-to-slots dispatch representation is superseded by
   [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), which states in
-  MIR which behavior answers each behavior of every interface class a class reaches.
+  MIR which body answers each behavior of every interface class a class reaches, an inherited one
+  named directly.
 - [generated-behavior-boundary](generated-behavior-boundary.md) -- the library drives a scope
   through an explicit, backend-neutral per-specialization program (native lifecycle entries and
   constant metadata), not a backend-language object ABI; the C++ subclass / vtable of the library
   and a per-backend adapter are rejected as the boundary. Lifecycle and SV-virtual dispatch are
   separate concepts; the definition holds the schema, never instance values. Superseded by
   [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), whose scope is
-  driven and ended through the C++ virtual functions of its class.
+  driven and ended through entries its class's definition names.
 - [a-unit-states-what-it-declares](a-unit-states-what-it-declares.md) -- a compiled unit is a whole
   program rather than one whose other half lives in the process that compiled it, and what a unit
   says about its classes is stated once in MIR and translated by every backend. Its body run before
   `main`, its cells and its layout step at startup are superseded by
   [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md).
 - [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md) -- where each
-  part of an object sits and which body each view dispatches to are fixed when the program is
-  compiled, on both backends, following the Itanium C++ ABI; an interface class is a virtual base,
-  `$cast` asks the object's type descriptor, and a class's signature states its declaration whole,
-  every method's prototype included, which is where a call in another unit reads it. Every object is
-  of a class derived from the library's root and is ended through its virtual destructor; a scope's
-  phases are virtual functions its class overrides; what the library reads by name is one C-layout
-  constant per class, emitted by the declaring unit; and an instance of the design hierarchy is
-  created and then constructed, as
+  part of an object sits and which body answers each behavior are fixed when the program is
+  compiled, on both backends. Every object starts with its class's definition, which names a table
+  of bodies for the class and one for each interface class it is a value of; an interface class is
+  no part of an object, so a handle is the object's address and its share; `$cast` asks the library,
+  which walks the object's definition; and a class's signature states its declaration whole, every
+  method's prototype included, which is where a call in another unit reads it. The library ends and
+  drives an object through entries its class's definition names, and no object has a virtual
+  function; a `new` of another unit's class calls that unit's allocating creation; what the library
+  reads by name is one C-layout constant per class, emitted by the declaring unit; and an instance
+  of the design hierarchy is created and then constructed, as
   [an-object-is-created-whole-then-constructed](an-object-is-created-whole-then-constructed.md)
   states, which replaced how this record built an object. A name reaching a method of a class the
   referrer cannot name is settled to a body while the design elaborates, a virtual one included.
@@ -1134,8 +1135,8 @@ the detail lives in the entry itself.
   one produces its own class and a call. Measured: a unit adding one scope class to the shipped
   surface produced a 1,600,704 byte object with 1,503 bytes of code, and 24,016 after. Building
   optimized by default, including less of the surface, suppressing the instantiations rather than
-  moving them, and reshaping what a published class holds are rejected. The garbage-collected base
-  and the scope leave its list under
+  moving them, and reshaping what a published class holds are rejected. The garbage-collected base,
+  a value of a class and the scope leave its list under
   [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), which makes
   them non-virtual.
 - [a-published-operation-is-compiled-once](a-published-operation-is-compiled-once.md) -- a function

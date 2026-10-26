@@ -19,8 +19,7 @@ auto IntroducesSlot(const std::optional<VirtualDispatchRole>& role) -> bool {
   return std::visit(
       Overloaded{
           [](const IntroducesVirtualSlot&) { return true; },
-          [](const OverridesVirtualSlot&) { return false; },
-          [](const OverridesLibraryVirtual&) { return false; }},
+          [](const OverridesVirtualSlot&) { return false; }},
       *role);
 }
 
@@ -118,8 +117,7 @@ auto IsLeftAbstract(const VirtualDispatchRole& role) -> bool {
           },
           [](const OverridesVirtualSlot& overrides) {
             return overrides.is_pure;
-          },
-          [](const OverridesLibraryVirtual&) { return false; }},
+          }},
       role);
 }
 

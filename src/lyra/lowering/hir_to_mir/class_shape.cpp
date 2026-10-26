@@ -26,13 +26,6 @@ auto CanonicalVirtualSlot(
           },
           [](const mir::OverridesVirtualSlot& o) -> mir::VirtualSlot {
             return o.overridden;
-          },
-          // Only the library calls one of its own virtual functions, so no
-          // call of the source names the behavior such a method answers.
-          [](const mir::OverridesLibraryVirtual&) -> mir::VirtualSlot {
-            throw InternalError(
-                "CanonicalVirtualSlot: a call names a function of the library, "
-                "which only the library calls -- please report this as a bug");
           }},
       role);
 }
@@ -68,10 +61,13 @@ auto ClassShape::AddField(mir::TypeId type) -> mir::FieldId {
 auto ClassShape::OpenClass() const -> mir::Class {
   mir::Class cls{
       .defining_unit = std::nullopt,
-      .path = path,
+      .identity = identity,
       .base = base,
       .implements = implements,
       .conforming = {},
+      .entries = {},
+      .dispatch = {},
+      .interface_tables = {},
       .is_final = is_final,
       .is_interface_class = is_interface_class,
       .self_pointer_type = self_pointer_type,
@@ -86,6 +82,8 @@ auto ClassShape::OpenClass() const -> mir::Class {
       .static_properties = static_properties,
       .named_static_properties = named_static_properties,
       .named_callables = {},
+      .library_callbacks = library_callbacks,
+      .exports = {},
       .constants = {},
       .object_definition_initializer = {}};
   for (std::size_t i = 0; i < callable_signatures.size(); ++i) {

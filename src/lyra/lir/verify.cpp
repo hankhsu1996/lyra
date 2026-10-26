@@ -345,7 +345,6 @@ void VerifyRvalue(
                   "union");
             }
           },
-          [](const HandleCastInstr&) {}, [](const DynamicCastInstr&) {},
           [&](const CallInstr& call) {
             RequireCallWellFormed(unit, fn, call.target, call.args);
           },

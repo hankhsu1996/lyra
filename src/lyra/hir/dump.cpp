@@ -2041,12 +2041,6 @@ class HirDumper {
           "Method", id.value, c.methods.Get(id), c.procedural_scopes,
           FormatMethodDispatch(declared.methods.Get(id).dispatch));
     }
-    for (std::size_t i = 0; i < c.interface_forwards.size(); ++i) {
-      const InterfaceForward& forward = c.interface_forwards[i];
-      DumpSubroutine(
-          "InterfaceForward", i, forward.method, c.procedural_scopes,
-          std::format(" overrides={}", FormatClassMethod(forward.overrides)));
-    }
     DumpSubroutine("Constructor", 0, c.constructor, c.procedural_scopes, "");
     if (declared.base.has_value()) {
       std::string args;

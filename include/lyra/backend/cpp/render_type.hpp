@@ -139,12 +139,15 @@ struct CppNewOwner {
 
 void WriteOne(TargetText& out, const CppNewOwner& owner);
 
-// The library function a `new` of an object is, which creates it whole, makes
-// `of` the owner holding it, and then enters its constructor:
-// `lyra::runtime::CreateObject<C>(&C::sv_construct, args)` for a class handle,
-// `lyra::runtime::CreateOwned<C>(...)` for a uniquely owning pointer.
+// The library function a `new` of an object of the class `built` is, which
+// creates it whole and of its class, makes `of` the owner holding it, and then
+// enters its constructor with the arguments that follow:
+// `lyra::runtime::CreateObject<C>(&C::sv_definition, &C::sv_construct` for a
+// class handle, `lyra::runtime::CreateOwned<C>(...` for a uniquely owning
+// pointer.
 struct CppObjectCreation {
   CppType of;
+  CppType built;
 };
 
 void WriteOne(TargetText& out, const CppObjectCreation& creation);
@@ -230,7 +233,7 @@ class CppClassRef {
 
 void WriteOne(TargetText& out, const CppClassRef& ref);
 
-// A class named as the base of another (LRM 8.13, 8.26). C++ lays the derived
+// A class named as the base of another (LRM 8.13). C++ lays the derived
 // class out over its base, so the name needs the base defined.
 struct CppBaseClass {
   CppClassRef of;
@@ -238,30 +241,80 @@ struct CppBaseClass {
 
 void WriteOne(TargetText& out, const CppBaseClass& base);
 
+// The table type the class `of` declares, `C::sv_table`, which a class
+// extending it declares its own over and a class implementing it, where it is
+// an interface class, holds a table of; the text naming it needs the class
+// defined, as it needs a base.
+struct CppDispatchTableOf {
+  CppClassRef of;
+};
+
+void WriteOne(TargetText& out, const CppDispatchTableOf& table);
+
+// What ends an object of the class `of`, a class C++ knows whole: every member,
+// then the storage the object was created in,
+// `lyra::runtime::EndObjectOf<C>`.
+struct CppObjectEnd {
+  CppClassRef of;
+};
+
+void WriteOne(TargetText& out, const CppObjectEnd& end);
+
+// The type of a member of a class's table: a pointer to the entry of a method
+// taking what `code` takes after its receiver, handed the object as the root
+// every object is, `std::add_pointer_t<R(lyra::runtime::GcObject*, A)>`.
+struct CppEntryPointerType {
+  const mir::CompilationUnit* unit;
+  const mir::CallableCode* code;
+};
+
+void WriteOne(TargetText& out, const CppEntryPointerType& type);
+
+// What a call dispatching on `behavior` names, entered on the object and handed
+// the call's arguments: where a class introduced the behavior (LRM 8.20), the
+// library's `Dispatch` told the introducer's table and the behavior's member in
+// it, `lyra::runtime::Dispatch<B::sv_table, &B::sv_table::f>`; where an
+// interface class did (LRM 8.26.5), its `InterfaceDispatch`, told also the
+// interface class's definition, by which the object's class's table for it is
+// found, `lyra::runtime::InterfaceDispatch<I::sv_table, &I::sv_table::f,
+// &I::sv_definition>`.
+struct CppDispatchCallee {
+  const mir::CompilationUnit* unit;
+  mir::VirtualSlot behavior;
+};
+
+struct CppInterfaceDispatchCallee {
+  const mir::CompilationUnit* unit;
+  mir::VirtualSlot requirement;
+};
+
+void WriteOne(TargetText& out, const CppDispatchCallee& callee);
+void WriteOne(TargetText& out, const CppInterfaceDispatchCallee& callee);
+
 // How C++ dereferences a value of this type. A pointer takes the indirection
 // operator built in; a `ref` to a cell (LRM 23.3.3.2) and a write in progress
 // take it through the `operator*` and `operator->` their library types declare.
 // An object reference declares neither, being one type whatever class it
-// refers to, so it is opened through its view as the class the code assumes,
-// which is also where a null reference is caught (LRM 8.4). Any other type
+// refers to, so it is opened as the class the code assumes, which is also
+// where a null reference is caught (LRM 8.4). Any other type
 // reaches nothing to dereference and is refused. A reference is already its
 // referent wherever C++ names it ([expr.type]), so opening one writes nothing.
 struct DerefByOperator {};
 
-struct DerefThroughView {
+struct DerefAsClass {
   mir::TypeId pointee;
 };
 
 struct DerefImplicit {};
 
 using DerefSpelling =
-    std::variant<DerefByOperator, DerefThroughView, DerefImplicit>;
+    std::variant<DerefByOperator, DerefAsClass, DerefImplicit>;
 
 [[nodiscard]] auto DerefSpellingAsCpp(
     const mir::CompilationUnit& unit, mir::TypeId type_id) -> DerefSpelling;
 
 // C++'s indirection over a value of `pointer_type`, `(*p)` ([expr.unary.op]),
-// `r.Deref<T>()` where the dereference goes through a view, or `r` itself for a
+// `r.Deref<T>()` for an object reference, or `r` itself for a
 // reference. `write_pointer`
 // writes the pointer and is told the precedence its position needs.
 template <typename WritePointer>
@@ -275,9 +328,9 @@ void WriteDeref(
             write_pointer(Precedence::kPrefix);
             out += ")";
           },
-          [&](const DerefThroughView& view) {
+          [&](const DerefAsClass& as) {
             write_pointer(Precedence::kPostfix);
-            Write(out, ".Deref<", CppType(unit, view.pointee), ">()");
+            Write(out, ".Deref<", CppType(unit, as.pointee), ">()");
           },
           [&](DerefImplicit) { write_pointer(Precedence::kPostfix); }},
       DerefSpellingAsCpp(unit, pointer_type));
@@ -285,7 +338,7 @@ void WriteDeref(
 
 // A member access through what `pointer_type` designates, up to the member's
 // name: `p->`, which C++ defines as `(*p).` ([expr.ref]), `r.Deref<T>().`
-// where the dereference goes through a view, or `r.` for a reference.
+// for an object reference, or `r.` for a reference.
 // `write_pointer` writes the pointer and is told the precedence its position
 // needs.
 template <typename WritePointer>
@@ -296,8 +349,8 @@ void WriteArrowAccess(
   std::visit(
       Overloaded{
           [&](DerefByOperator) { out += "->"; },
-          [&](const DerefThroughView& view) {
-            Write(out, ".Deref<", CppType(unit, view.pointee), ">().");
+          [&](const DerefAsClass& as) {
+            Write(out, ".Deref<", CppType(unit, as.pointee), ">().");
           },
           [&](DerefImplicit) { out += "."; }},
       DerefSpellingAsCpp(unit, pointer_type));

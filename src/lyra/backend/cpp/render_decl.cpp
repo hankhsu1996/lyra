@@ -179,55 +179,179 @@ void RenderClassStaticProperties(
   }
 }
 
-// `virtual ` for a method that declares a new virtual. An override is marked
-// with `override` after the signature instead.
-auto VirtualPrefix(const mir::CallableDecl& m) -> std::string_view {
-  return mir::IntroducesSlot(m.virtual_dispatch) ? "virtual " : "";
+// Whether the class this unit renders gives `m` a body, which a method left to
+// what extends the class does not (LRM 8.21).
+auto HasBody(const mir::CallableDecl& m) -> bool {
+  return std::visit(
+      Overloaded{
+          [](mir::DefinedHere) { return true; },
+          [](mir::LeftAbstract) { return false; },
+          [](mir::DefinedByAnotherUnit) -> bool {
+            throw InternalError(
+                "backend::cpp: a class this unit renders defines every body "
+                "it has -- please report this as a bug");
+          },
+          [](mir::DefinedByForeignCode) -> bool {
+            throw InternalError(
+                "backend::cpp: a foreign function belongs to no class (LRM "
+                "35.4) -- please report this as a bug");
+          }},
+      mir::FormOf(m));
 }
 
-// ` override` for a method that overrides a virtual, so the C++ compiler
-// rejects it if no base virtual has that name and signature.
-auto OverrideSuffix(const mir::CallableDecl& m) -> std::string_view {
-  if (!m.virtual_dispatch.has_value()) return "";
-  return mir::IntroducesSlot(m.virtual_dispatch) ? "" : " override";
-}
-
+// A method left to what extends the class (LRM 8.21) is declared by nothing:
+// only a dispatching call reaches its behavior, through the table of the
+// object's class.
 void RenderClassCallableDecl(
     const mir::CompilationUnit& unit, const mir::Class& s, mir::CallableId id,
     const mir::CallableDecl& m, TargetText& out) {
+  if (!HasBody(m)) return;
   const mir::CallableCode& code = m.code;
   const std::optional<ReceiverSpelling> receiver = MemberReceiverOf(unit, code);
   out.OpenLine();
   out += StaticPrefix(receiver);
-  out += VirtualPrefix(m);
   Write(out, "auto ", CppClassCallableName(unit, s, id));
   WriteMemberSignatureTail(
       unit, code, receiver, code.ParamsAfterReceiver(), out);
-  out += OverrideSuffix(m);
-  // `= 0` also makes C++ treat the class as abstract.
-  std::visit(
-      Overloaded{
-          [](mir::DefinedHere) {}, [&](mir::LeftAbstract) { out += " = 0"; },
-          [](mir::DefinedByAnotherUnit) {
-            throw InternalError(
-                "RenderClassCallableDecl: a class this unit renders defines "
-                "every body it has -- please report this as a bug");
-          },
-          [](mir::DefinedByForeignCode) {
-            throw InternalError(
-                "RenderClassCallableDecl: a foreign function belongs to no "
-                "class (LRM 35.4) -- please report this as a bug");
-          }},
-      mir::FormOf(m));
   out += ";\n";
 }
 
-// A class function's definition. A pure virtual has none.
+// The table type a class declares inside it: the one of the class it extends
+// first, as its base, then a member for each behavior the class introduces, in
+// the order it introduces them, each a pointer to an entry -- so a table of a
+// class extending another holds the other's members first, where they lie in
+// the other's (LRM 8.20). An interface class's table holds a member for each
+// method it declares itself (LRM 8.26).
+//
+//   struct sv_table : B::sv_table {
+//     std::add_pointer_t<R(lyra::runtime::GcObject*, int)> f;
+//   };
+void RenderDispatchTableType(
+    const mir::CompilationUnit& unit, const mir::Class& s, TargetText& out) {
+  out.OpenLine();
+  Write(out, "struct ", CppDispatchTableTypeName());
+  if (const std::optional<mir::ClassId> base = mir::DeclaredBase(s)) {
+    Write(
+        out, " : ",
+        CppDispatchTableOf{.of = CppClassRef(unit, mir::ClassRef{*base})});
+  }
+  out += " {\n";
+  out.Indent();
+  for (const mir::CallableId callable : s.IntroducedBehaviors()) {
+    out.OpenLine();
+    Write(
+        out,
+        CppEntryPointerType{
+            .unit = &unit, .code = &s.callables.Get(callable).code},
+        " ", CppTableMemberName(unit, s, callable), ";\n");
+  }
+  out.Outdent();
+  out.OpenLine();
+  out += "};\n";
+}
+
+// The entry `answered_by` names, as a member of a table holds it, or none.
+void WriteTableEntry(
+    const mir::CompilationUnit& unit,
+    const std::optional<mir::CallableTarget>& answered_by, TargetText& out) {
+  if (!answered_by.has_value()) {
+    out += "nullptr";
+    return;
+  }
+  const mir::Class& owner = unit.GetClass(answered_by->owner);
+  Write(
+      out, "&", CppClassRef(unit, mir::ClassRef{answered_by->owner}),
+      "::", CppDispatchEntryName(unit, owner, answered_by->slot));
+}
+
+// The value of the table of `s`, class `id`: the entry of each behavior its
+// objects dispatch on, braced as its table type nests the tables of the classes
+// it extends, so each class's members are given inside the braces of its own
+// table.
+//
+//   {{&A::sv_entry_f}, &C::sv_entry_g}
+void WriteOwnTable(
+    const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& s,
+    TargetText& out) {
+  std::vector<mir::ClassId> lineage{id};
+  for (std::optional<mir::ClassId> at = mir::DeclaredBase(s); at.has_value();
+       at = mir::DeclaredBase(unit.GetClass(*at))) {
+    lineage.push_back(*at);
+  }
+  std::span<const mir::DispatchedBehavior> remaining = s.dispatch;
+  const auto write = [&](const auto& self, std::size_t level) -> void {
+    out += "{";
+    bool first = true;
+    if (level + 1 < lineage.size()) {
+      self(self, level + 1);
+      first = false;
+    }
+    while (!remaining.empty() &&
+           remaining.front().behavior.owner_class == lineage[level]) {
+      if (!first) out += ", ";
+      first = false;
+      WriteTableEntry(unit, remaining.front().answered_by, out);
+      remaining = remaining.subspan(1);
+    }
+    out += "}";
+  };
+  write(write, 0);
+  if (!remaining.empty()) {
+    throw InternalError(
+        "backend::cpp: a class dispatches on a behavior no class of its "
+        "lineage introduces, or lists one out of the lineage's order -- please "
+        "report this as a bug");
+  }
+}
+
+// The tables an object of the class lays the bodies of its behaviors out in:
+// its own, then one for each interface class it implements, each declared in
+// the class and defined beside its bodies with the entries the class states.
+//
+//   static const sv_table sv_methods;
+//   const C::sv_table C::sv_methods{{&B::sv_entry_f}, &C::sv_entry_g};
+void RenderDispatchTables(
+    const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& s,
+    std::string_view specifiers, TargetText& out, TargetText& code) {
+  if (!s.is_interface_class) {
+    out.OpenLine();
+    Write(
+        out, "static const ", CppDispatchTableTypeName(), " ",
+        CppDispatchTableName(), ";\n");
+    code.OpenLine();
+    Write(
+        code, specifiers, "const ", CppClassPath(unit, id),
+        "::", CppDispatchTableTypeName(), " ", CppClassPath(unit, id),
+        "::", CppDispatchTableName());
+    WriteOwnTable(unit, id, s, code);
+    code += ";\n";
+  }
+  for (std::uint32_t row = 0; row < s.interface_tables.size(); ++row) {
+    const mir::InterfaceTable& implemented = s.interface_tables[row];
+    const CppDispatchTableOf type{
+        .of = CppClassRef(unit, mir::ClassRef{implemented.of})};
+    out.OpenLine();
+    Write(out, "static const ", type, " ", CppInterfaceTableName(row), ";\n");
+    code.OpenLine();
+    Write(
+        code, specifiers, "const ", type, " ", CppClassPath(unit, id),
+        "::", CppInterfaceTableName(row), "{");
+    WriteSeparated(
+        code, implemented.answered_by, ", ",
+        [&](const std::optional<mir::CallableTarget>& entry) {
+          WriteTableEntry(unit, entry, code);
+        });
+    code += "};\n";
+  }
+}
+
+// A class function's definition. A method left to what extends the class has
+// none.
 void RenderClassCallableDef(
     const mir::CompilationUnit& unit, UnitRenderReport& report,
     std::string_view specifiers, mir::ClassId cls_id, const mir::Class& s,
     mir::CallableId id, const mir::CallableDecl& m, TargetText& out) {
-  if (!std::holds_alternative<mir::DefinedHere>(mir::FormOf(m))) return;
+  if (!HasBody(m)) return;
   RenderMemberFunctionDef(
       unit, report, specifiers, CppClassPath(unit, cls_id),
       CppClassCallableName(unit, s, id), m.code, out);
@@ -239,9 +363,10 @@ void RenderClassCallableDef(
 //
 //   auto C::sv_construct(args) -> void { C* self = this; body }
 //
-// It is entered on an object already created whole -- by the C++ constructor
-// the class leaves implicit, which builds every member and gives the object
-// its class -- so every step of the construction, the base's included, is a
+// It is entered on an object already created whole -- every member built by
+// the C++ constructor the class leaves implicit, and the object given its
+// class by the library function creating it -- so every step of the
+// construction, the base's included, is a
 // statement of the body, which reaches the object through its receiver as
 // every other body does.
 void RenderConstructor(
@@ -303,7 +428,8 @@ auto NestingOf(const mir::CompilationUnit& unit) -> ClassNesting {
   std::map<support::DefPath, mir::ClassId> published_at;
   for (const mir::ClassId id : unit.classes.Ids()) {
     if (mir::IsDefinedElsewhere(unit, id)) continue;
-    if (const auto& path = unit.GetClass(id).path) {
+    if (const support::DefPath* path =
+            support::PathOf(unit.GetClass(id).identity)) {
       published_at.emplace(*path, id);
     }
   }
@@ -314,8 +440,8 @@ auto NestingOf(const mir::CompilationUnit& unit) -> ClassNesting {
           std::vector<std::vector<mir::ClassId>>(unit.classes.size())};
   for (const mir::ClassId id : unit.classes.Ids()) {
     if (mir::IsDefinedElsewhere(unit, id)) continue;
-    const std::optional<support::DefPath>& path = unit.GetClass(id).path;
-    if (!path.has_value() || !IsNestedClass(*path)) continue;
+    const support::DefPath* path = support::PathOf(unit.GetClass(id).identity);
+    if (path == nullptr || !IsNestedClass(*path)) continue;
     const auto enclosing = published_at.find(support::EnclosingPath(*path));
     if (enclosing == published_at.end()) {
       throw InternalError(
@@ -395,29 +521,12 @@ void RenderClass(
   if (s.is_final) {
     out += " final";
   }
-  // The base class first (LRM 8.13), then each interface class (LRM 8.26), all
-  // as C++ bases. An interface class is a virtual base, because one reached
-  // along several paths is one type the object is, not several (LRM 8.26.6.3):
-  // there is one copy of it to view the object as.
-  struct Base {
-    mir::ClassRef of;
-    bool is_interface_class;
-  };
-  std::vector<Base> bases;
+  // The class it extends (LRM 8.13) is its one C++ base. The interface classes
+  // it implements are none: which body answers one of their methods is read
+  // off the object's definition, and no object is laid out with a part for
+  // one (LRM 8.26).
   if (s.base.has_value()) {
-    bases.push_back(Base{.of = *s.base, .is_interface_class = false});
-  }
-  for (const mir::ClassId implemented : s.implements) {
-    bases.push_back(
-        Base{.of = mir::ClassRef{implemented}, .is_interface_class = true});
-  }
-  if (!bases.empty()) {
-    out += " : ";
-    WriteSeparated(out, bases, ", ", [&](const Base& base) {
-      Write(
-          out, base.is_interface_class ? "public virtual " : "public ",
-          CppBaseClass{.of = CppClassRef(unit, base.of)});
-    });
+    Write(out, " : public ", CppBaseClass{.of = CppClassRef(unit, *s.base)});
   }
   out += " {\n";
   out += " public:\n";
@@ -433,31 +542,15 @@ void RenderClass(
     }
   }
 
+  {
+    const TargetText::Section table_type(out);
+    RenderDispatchTableType(unit, s, out);
+  }
+
   if (s.constructor.has_value()) {
     const TargetText::Section declared(out);
     const TargetText::Section defined(code);
     RenderConstructor(unit, report, id, *s.constructor, specifiers, out, code);
-  }
-
-  // The destructor is virtual, because whoever ends a value holds it as the
-  // class every value extends, or as an interface class. Defined out of line
-  // and not inline, it is the class's key function, and the class's table and
-  // type description are emitted with it once rather than in every file that
-  // casts to it; defined inline, they are emitted wherever it is, and kept as
-  // one.
-  {
-    const TargetText::Section ended(out);
-    out.OpenLine();
-    if (s.base.has_value()) {
-      Write(out, "~", CppClassName(unit, id), "() override;\n");
-    } else {
-      Write(out, "virtual ~", CppClassName(unit, id), "();\n");
-    }
-    const TargetText::Section defined(code);
-    code.OpenLine();
-    Write(
-        code, specifiers, CppClassPath(unit, id), "::~", CppClassName(unit, id),
-        "() = default;\n");
   }
 
   // Members are public so cross-unit references can reach them directly.
@@ -471,8 +564,7 @@ void RenderClass(
     RenderClassStaticProperties(unit, s, out);
   }
 
-  // Every function the class owns except the constructor, written above. A
-  // pure virtual writes no definition, which leaves its section empty.
+  // Every function the class owns except the constructor, written above.
   {
     const TargetText::Section declared(out);
     for (const mir::CallableId callable_id : s.callables.Ids()) {
@@ -482,6 +574,12 @@ void RenderClass(
       RenderClassCallableDef(
           unit, report, specifiers, id, s, callable_id, callable, code);
     }
+  }
+
+  {
+    const TargetText::Section tables(out);
+    const TargetText::Section defined(code);
+    RenderDispatchTables(unit, id, s, specifiers, out, code);
   }
 
   // The constants the class holds and then its definition, which names them:
@@ -622,7 +720,10 @@ auto RenderUnitForwardDeclarations(const mir::CompilationUnit& unit)
   for (const mir::ClassId id : unit.classes.Ids()) {
     if (mir::IsDefinedElsewhere(unit, id)) continue;
     const mir::Class& cls = unit.GetClass(id);
-    if (cls.path.has_value() && IsNestedClass(*cls.path)) continue;
+    if (const support::DefPath* path = support::PathOf(cls.identity);
+        path != nullptr && IsNestedClass(*path)) {
+      continue;
+    }
     TargetText& out = mir::IsPublished(unit, id) ? text.signature : text.code;
     Write(out, "class ", CppClassName(unit, id), ";\n");
   }

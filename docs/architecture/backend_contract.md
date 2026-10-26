@@ -254,6 +254,13 @@ two ways.
   inlining a struct literal, deriving navigation steps from a payload). Render translates existing
   expressions, never invents them. An invented expression is HIR-to-MIR's job.
 
+- A render entry that writes a declaration no IR declaration states -- a type, a constant or a
+  function whose structure the render works out from data rather than translates. Every declaration
+  in the target output stands for one the IR holds, so that what the output shows is what the IR
+  states, and a structure two backends need is decided once, before either consumes it. What the
+  semantic IR should not carry, because it is a realization rather than a language concept, is
+  materialized by a step both backends consume, not by one backend for itself.
+
 ## Notes / Examples
 
 The canonical write rule for any value-emission entry: write it as if the target were LLVM IR. If

@@ -519,7 +519,7 @@ auto UnitLowerer::SettlePublishedScope(
     return settled->second.layout.published;
   }
   ClassShape shape;
-  shape.path = signature.class_path;
+  shape.identity = signature.class_path;
   shape.base = mir::ClassRef{mir::ObjectTreeRootRef{}};
   shape.self_pointer_type = SelfPointerTo(published);
   // It is the unit's object as other units see it, so it is the same time
@@ -569,8 +569,8 @@ auto UnitLowerer::SettlePublishedScope(
   return settled.first->second.layout.published;
 }
 
-auto UnitLowerer::TakeClassIdentities(hir::ClassId cls) -> ClassTranslation {
-  const hir::ClassDecl& decl = hir_->classes.Get(cls);
+auto UnitLowerer::TakeRandomizationHooks(hir::ClassId cls)
+    -> std::optional<RandomizationHooks> {
   const hir::ClassDeclaration& declared = hir_->classes.Declaration(cls);
   // Each method the class declares is the callable at its position, so a
   // method is named alike in this unit and in every unit reading the
@@ -579,33 +579,25 @@ auto UnitLowerer::TakeClassIdentities(hir::ClassId cls) -> ClassTranslation {
   for (std::size_t m = 0; m < declared.methods.size(); ++m) {
     callables.Take();
   }
-  std::vector<mir::CallableId> interface_forwards;
-  interface_forwards.reserve(decl.interface_forwards.size());
-  for (std::size_t f = 0; f < decl.interface_forwards.size(); ++f) {
-    interface_forwards.push_back(callables.Take());
-  }
   const auto calls_declared = [&](hir::MethodId method) {
     return RandomizationHooks::CallsDeclared{
         .body = callables.Take(), .method = method};
   };
-  std::optional<RandomizationHooks> randomization;
-  if (!declared.is_interface_class) {
-    randomization = RandomizationHooks{
-        .rand_variables = callables.Take(),
-        .constrain = callables.Take(),
-        .rand_objects = callables.Take(),
-        .pre_randomize =
-            hir::MethodReplacing(
-                declared.methods, hir::RandomizationHook::kPreRandomize)
-                .transform(calls_declared),
-        .post_randomize =
-            hir::MethodReplacing(
-                declared.methods, hir::RandomizationHook::kPostRandomize)
-                .transform(calls_declared)};
+  if (declared.is_interface_class) {
+    return std::nullopt;
   }
-  return ClassTranslation{
-      .interface_forwards = std::move(interface_forwards),
-      .randomization = randomization};
+  return RandomizationHooks{
+      .rand_variables = callables.Take(),
+      .constrain = callables.Take(),
+      .rand_objects = callables.Take(),
+      .pre_randomize =
+          hir::MethodReplacing(
+              declared.methods, hir::RandomizationHook::kPreRandomize)
+              .transform(calls_declared),
+      .post_randomize =
+          hir::MethodReplacing(
+              declared.methods, hir::RandomizationHook::kPostRandomize)
+              .transform(calls_declared)};
 }
 
 auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
@@ -629,7 +621,7 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
     covergroup_identities_.Append(unit_.DeclareClass());
   }
   for (const hir::ClassId hir_id : hir_->classes.OwnIds()) {
-    class_translations_.emplace(hir_id, TakeClassIdentities(hir_id));
+    randomization_hooks_.emplace(hir_id, TakeRandomizationHooks(hir_id));
   }
 
   // Every HIR type is MIR-representable: AST-to-HIR rejects the forms MIR has
@@ -829,6 +821,7 @@ auto UnitLowerer::PopulateModuleRoot(
           root.ConstructionTable()),
       .block_entries = std::move(block_entries)};
   PublishTypeOperations();
+  StateObjectDefinitions(unit_);
   return {};
 }
 
@@ -1005,6 +998,7 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   PublishNamespaceStorageBringUp(
       *this, unit_, std::move(install_code), std::move(value_code));
   PublishTypeOperations();
+  StateObjectDefinitions(unit_);
 
   return std::move(unit_);
 }
@@ -1059,7 +1053,7 @@ auto UnitLowerer::IncompleteClass(
     -> mir::Class {
   mir::Class declared{};
   declared.defining_unit = std::move(unit_name);
-  declared.path = std::move(class_path);
+  declared.identity = std::move(class_path);
   declared.self_pointer_type = SelfPointerTo(id);
   return declared;
 }
@@ -1125,25 +1119,26 @@ auto UnitLowerer::DeclarePublishedClass(hir::ClassId cls) -> void {
         mir::NamedCallable{
             .name = declared_method.prototype.name, .body = callable});
   }
-  // Every class but an interface class gives a body to what `randomize()` asks
-  // of every class, the hooks among them where it declares a method taking a
-  // hook's place (LRM 18.6.2).
+  // Every class but an interface class answers with a body of its own each
+  // callback `randomize()` makes on every class, the hooks among them where it
+  // declares a method taking a hook's place (LRM 18.6.2).
   if (!published.is_interface_class) {
-    for (const support::LibraryVirtual function : RandomizationOverrides(
+    for (const support::LibraryCallback function : RandomizationCallbacks(
              hir::MethodReplacing(
                  published.methods, hir::RandomizationHook::kPreRandomize)
                  .has_value(),
              hir::MethodReplacing(
                  published.methods, hir::RandomizationHook::kPostRandomize)
                  .has_value())) {
-      declared.callables.Add(
+      const mir::CallableId body = declared.callables.Add(
           mir::CallableDecl{
               .code = {},
               .foreign = std::nullopt,
-              .virtual_dispatch =
-                  mir::OverridesLibraryVirtual{.function = function},
+              .virtual_dispatch = std::nullopt,
               .type_parameters = {},
               .defining_unit = std::nullopt});
+      declared.library_callbacks.push_back(
+          mir::LibraryCallbackBody{.callback = function, .body = body});
     }
   }
   unit_.DefineClass(id, std::move(declared));

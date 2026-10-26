@@ -615,7 +615,7 @@ struct CompilationUnit {
 // declaration belongs in asks here, so none of them answers it a second way.
 [[nodiscard]] inline auto IsPublished(const CompilationUnit& unit, ClassId id)
     -> bool {
-  return unit.GetClass(id).path.has_value();
+  return support::PathOf(unit.GetClass(id).identity) != nullptr;
 }
 
 // Whether another unit defines this class, which this unit only declares. A
@@ -639,7 +639,7 @@ struct CompilationUnit {
 [[nodiscard]] inline auto IsStatedByEveryBody(
     const CompilationUnit& unit, ClassId id) -> bool {
   const Class& cls = unit.GetClass(id);
-  return cls.path.has_value() && cls.base.has_value() &&
+  return support::PathOf(cls.identity) != nullptr && cls.base.has_value() &&
          std::holds_alternative<ObjectTreeRootRef>(*cls.base);
 }
 

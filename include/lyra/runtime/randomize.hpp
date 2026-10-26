@@ -7,6 +7,7 @@
 #include <optional>
 #include <type_traits>
 
+#include "lyra/runtime/class_object.hpp"
 #include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/randomization.hpp"
@@ -46,21 +47,21 @@ template <value::LyraValue T>
 // A class's `randomize()` draws from the object's own generator (LRM 18.14.3);
 // `std::randomize()` from the running thread's (LRM 18.14.2) and always names
 // the variables it chooses.
-[[nodiscard]] auto RandomizeObject(GcObject* object, RuntimeEffects& runtime)
+[[nodiscard]] auto RandomizeObject(ClassObject* object, RuntimeEffects& runtime)
     -> value::ObjectRef;
 [[nodiscard]] auto RandomizeObjectListed(
-    GcObject* object, RuntimeEffects& runtime) -> value::ObjectRef;
+    ClassObject* object, RuntimeEffects& runtime) -> value::ObjectRef;
 [[nodiscard]] auto RandomizeScope(RuntimeEffects& runtime) -> value::ObjectRef;
 
 [[nodiscard]] inline auto RandomizeObject(
     const value::ObjectRef& handle, RuntimeEffects& runtime)
     -> value::ObjectRef {
-  return RandomizeObject(ObjectRootOf(handle), runtime);
+  return RandomizeObject(&handle.Deref<ClassObject>(), runtime);
 }
 [[nodiscard]] inline auto RandomizeObjectListed(
     const value::ObjectRef& handle, RuntimeEffects& runtime)
     -> value::ObjectRef {
-  return RandomizeObjectListed(ObjectRootOf(handle), runtime);
+  return RandomizeObjectListed(&handle.Deref<ClassObject>(), runtime);
 }
 
 // Each variable a call lists crosses as a reference to it, and as the value it
@@ -355,7 +356,7 @@ void RandomizeNested(
     GcObject* self, const value::String& name) -> bool;
 [[nodiscard]] inline auto ConstraintBlockEnabled(
     const value::ObjectRef& handle, const value::String& name) -> bool {
-  return ConstraintBlockEnabled(ObjectRootOf(handle), name);
+  return ConstraintBlockEnabled(&handle.Deref<GcObject>(), name);
 }
 [[nodiscard]] auto StaticConstraintBlockEnabled(const value::String& key)
     -> bool;
@@ -536,7 +537,7 @@ template <value::LyraValue T, value::LyraValue Part>
 }
 void ObjectRandModeSet(GcObject* object, bool on);
 inline void ObjectRandModeSet(const value::ObjectRef& handle, bool on) {
-  ObjectRandModeSet(ObjectRootOf(handle), on);
+  ObjectRandModeSet(&handle.Deref<GcObject>(), on);
 }
 
 // LRM 18.9: a block's mode, by its name on the object, and every block of an
@@ -547,14 +548,14 @@ void ConstraintModeSet(GcObject* object, const value::String& name, bool on);
 void ObjectConstraintModeSet(GcObject* object, bool on);
 inline void ConstraintModeSet(
     const value::ObjectRef& handle, const value::String& name, bool on) {
-  ConstraintModeSet(ObjectRootOf(handle), name, on);
+  ConstraintModeSet(&handle.Deref<GcObject>(), name, on);
 }
 [[nodiscard]] inline auto ConstraintModeGet(
     const value::ObjectRef& handle, const value::String& name) -> value::Int {
-  return ConstraintModeGet(ObjectRootOf(handle), name);
+  return ConstraintModeGet(&handle.Deref<GcObject>(), name);
 }
 inline void ObjectConstraintModeSet(const value::ObjectRef& handle, bool on) {
-  ObjectConstraintModeSet(ObjectRootOf(handle), on);
+  ObjectConstraintModeSet(&handle.Deref<GcObject>(), on);
 }
 void StaticConstraintModeSet(const value::String& key, bool on);
 [[nodiscard]] auto StaticConstraintModeGet(const value::String& key)

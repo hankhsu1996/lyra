@@ -61,11 +61,6 @@ auto DeclarationOf(const lir::CompilationUnit& unit, lir::TypeId declared_by)
   return *std::move(declaration);
 }
 
-// What a dynamic cast is told of where the wanted class sits relative to the
-// part it starts from (C++ ABI 2.9.7 `src2dst_offset`): nothing, so the cast
-// works it out from the descriptions.
-constexpr std::int64_t kNoCastHint = -1;
-
 }  // namespace
 
 auto CodeGenFunction::LowerInstrInto(const lir::Instr& instr)
@@ -177,14 +172,6 @@ auto CodeGenFunction::LowerRvalue(
           },
           [&](const lir::CastInstr& cast) -> Lowered {
             return LowerCast(cast, result_type);
-          },
-          [&](const lir::HandleCastInstr& cast) -> Lowered {
-            return LowerHandleCast(
-                cast, result_type, EnsureDestination(destination));
-          },
-          [&](const lir::DynamicCastInstr& cast) -> Lowered {
-            return LowerDynamicCast(
-                cast, result_type, EnsureDestination(destination));
           },
           [&](const lir::VariableStorageInstr&) -> Lowered {
             return LowerVariableStorage();
@@ -700,7 +687,7 @@ auto CodeGenFunction::OpenedReferent(llvm::Value* reference, lir::TypeId type)
   const lir::Type& referring = module_->Unit().types.Get(type);
   std::optional<std::string> opening;
   if (referring.Is<lir::ManagedRefType>()) {
-    opening = RuntimeSymbol(support::BuiltinFn::kViewOf);
+    opening = RuntimeSymbol(support::BuiltinFn::kObjectOf);
   } else if (const auto* pointer = referring.As<lir::PointerType>()) {
     switch (pointer->ownership) {
       case lir::PointerOwnership::kUnique:
@@ -985,28 +972,9 @@ auto CodeGenFunction::LowerCast(
     return std::unexpected(std::move(operand.error()));
   }
   const lir::TypeId operand_type = OperandType(cast.operand);
-  // A pointer to one part of an object read as a pointer to another is the
-  // address of that part, which is the same address except where it is an
-  // interface class's.
-  const std::optional<lir::TypeId> from = ClassBehind(operand_type);
-  const std::optional<lir::TypeId> to = ClassBehind(result_type);
-  if (from.has_value() && to.has_value()) {
-    return ConvertView(*operand, *from, *to);
-  }
-  // A part read as the part every object starts with, which the library takes
-  // an object as: a class's part is there already, and an interface class's
-  // part is wherever the object's class placed it. A handle naming no object
-  // leaves no part, and that stays so for the library to refuse.
-  if (from.has_value() && IsLibraryObjectAddress(result_type)) {
-    if (!module_->IsInterfaceClass(*from)) {
-      return *operand;
-    }
-    return IfNotNull(
-        *operand, [&](llvm::Value* part) -> diag::Result<llvm::Value*> {
-          return ObjectStartOf(
-              part, builder_.CreateLoad(module_->Types().Ptr(), part));
-        });
-  }
+  // Every part of an object starts where the object does, so a pointer to or
+  // a handle of one class read as one of another, or as the part every object
+  // starts with, is the same address and the same handle.
   // One integral type read as another is the same bytes only where the two
   // lay a value out alike, which is what a cast between them states; a
   // difference in width or in states is a conversion, which is an operation.
@@ -1059,166 +1027,11 @@ auto CodeGenFunction::LowerCast(
       *operand, target, *signedness == lir::Signedness::kSigned);
 }
 
-auto CodeGenFunction::ClassBehind(lir::TypeId reference) const
-    -> std::optional<lir::TypeId> {
-  const lir::TypePool& types = module_->Unit().types;
-  const lir::Type& referring = types.Get(reference);
-  std::optional<lir::TypeId> pointee;
-  if (const auto* pointer = referring.As<lir::PointerType>()) {
-    pointee = pointer->pointee;
-  } else if (const auto* handle = referring.As<lir::ManagedRefType>()) {
-    pointee = handle->pointee;
-  }
-  if (!pointee.has_value() || !types.Get(*pointee).Is<lir::ObjectType>()) {
-    return std::nullopt;
-  }
-  return pointee;
-}
-
-auto CodeGenFunction::IsLibraryObjectAddress(lir::TypeId address) const
-    -> bool {
-  const lir::TypePool& types = module_->Unit().types;
-  const auto* pointer = types.Get(address).As<lir::PointerType>();
-  if (pointer == nullptr) {
-    return false;
-  }
-  const auto* library = types.Get(pointer->pointee).As<lir::RuntimeClassType>();
-  return library != nullptr && library->which == support::RuntimeClass::kObject;
-}
-
-auto CodeGenFunction::ObjectStartOf(llvm::Value* part, llvm::Value* table)
+auto CodeGenFunction::BodyAt(llvm::Value* table, std::uint64_t slot)
     -> llvm::Value* {
-  llvm::Value* to_top = builder_.CreateLoad(
-      builder_.getInt64Ty(),
-      builder_.CreateGEP(
-          module_->Types().Ptr(), table,
-          llvm::ConstantInt::getSigned(
-              builder_.getInt64Ty(),
-              -static_cast<std::int64_t>(kOffsetToTopEntry))));
-  return builder_.CreateGEP(builder_.getInt8Ty(), part, to_top);
-}
-
-// Every class part of an object starts where the object does, so reaching one
-// from another is the same address. An interface class's part is wherever the
-// object's own class placed it, so the table the part the conversion starts
-// from holds at its start holds the offset to it (C++ ABI 2.5.2 virtual base
-// offsets).
-auto CodeGenFunction::ConvertView(
-    llvm::Value* view, lir::TypeId from, lir::TypeId to)
-    -> diag::Result<llvm::Value*> {
-  if (from == to || !module_->IsInterfaceClass(to)) {
-    return view;
-  }
   llvm::Type* ptr_ty = module_->Types().Ptr();
-  llvm::Type* byte_ty = builder_.getInt8Ty();
-  llvm::Value* table = builder_.CreateLoad(ptr_ty, view);
-  llvm::Value* offset = builder_.CreateLoad(
-      builder_.getInt64Ty(),
-      builder_.CreateGEP(
-          ptr_ty, table,
-          llvm::ConstantInt::getSigned(
-              builder_.getInt64Ty(),
-              -static_cast<std::int64_t>(
-                  module_->InterfacePartOffset(from, to)))));
-  return builder_.CreateGEP(byte_ty, view, offset);
-}
-
-auto CodeGenFunction::IfNotNull(
-    llvm::Value* view,
-    llvm::function_ref<diag::Result<llvm::Value*>(llvm::Value*)> reach)
-    -> diag::Result<llvm::Value*> {
-  llvm::BasicBlock* asked = builder_.GetInsertBlock();
-  llvm::BasicBlock* present =
-      llvm::BasicBlock::Create(module_->Context(), "", value_);
-  llvm::BasicBlock* joined =
-      llvm::BasicBlock::Create(module_->Context(), "", value_);
-  builder_.CreateCondBr(builder_.CreateIsNull(view), joined, present);
-  builder_.SetInsertPoint(present);
-  auto reached = reach(view);
-  if (!reached) {
-    return reached;
-  }
-  llvm::BasicBlock* reached_from = builder_.GetInsertBlock();
-  builder_.CreateBr(joined);
-  builder_.SetInsertPoint(joined);
-  llvm::PHINode* result = builder_.CreatePHI(module_->Types().Ptr(), 2);
-  result->addIncoming(
-      llvm::ConstantPointerNull::get(module_->Types().Ptr()), asked);
-  result->addIncoming(*reached, reached_from);
-  return result;
-}
-
-// The handle a conversion forms refers to the object its operand does, so only
-// the part it reaches through is worked out here, and a handle referring to no
-// object stays one.
-auto CodeGenFunction::LowerHandleCast(
-    const lir::HandleCastInstr& cast, lir::TypeId result_type, llvm::Value* out)
-    -> diag::Result<llvm::Value*> {
-  auto handle = LowerOperand(cast.operand);
-  if (!handle) {
-    return std::unexpected(std::move(handle.error()));
-  }
-  llvm::Value* view = HandleView(*handle);
-  const std::optional<lir::TypeId> from =
-      ClassBehind(OperandType(cast.operand));
-  const std::optional<lir::TypeId> to = ClassBehind(result_type);
-  if (from.has_value() && to.has_value()) {
-    auto converted = IfNotNull(view, [&](llvm::Value* present) {
-      return ConvertView(present, *from, *to);
-    });
-    if (!converted) {
-      return converted;
-    }
-    view = *converted;
-  }
-  return HandleWithView(*handle, view, out);
-}
-
-// The host's own dynamic cast answers it (C++ ABI 2.9.7), reading the
-// descriptions each class's unit emits: handed a part, which holds its table's
-// address at its start, and the descriptions of the part's class and the wanted
-// one, it answers the wanted class's part, or null.
-auto CodeGenFunction::LowerDynamicCast(
-    const lir::DynamicCastInstr& cast, lir::TypeId result_type,
-    llvm::Value* out) -> diag::Result<llvm::Value*> {
-  auto handle = LowerOperand(cast.operand);
-  if (!handle) {
-    return std::unexpected(std::move(handle.error()));
-  }
-  const std::optional<lir::TypeId> from =
-      ClassBehind(OperandType(cast.operand));
-  const std::optional<lir::TypeId> to = ClassBehind(result_type);
-  if (!from.has_value() || !to.has_value()) {
-    throw InternalError(
-        "llvm codegen: a dynamic cast between handles not both of classes -- "
-        "please report this as a bug");
-  }
-  auto found = IfNotNull(
-      HandleView(*handle),
-      [&](llvm::Value* view) -> diag::Result<llvm::Value*> {
-        const std::array<llvm::Value*, 4> args{
-            view, module_->TypeInfoOf(*from), module_->TypeInfoOf(*to),
-            llvm::ConstantInt::getSigned(builder_.getInt64Ty(), kNoCastHint)};
-        return builder_.CreateCall(module_->DynamicCast(), args);
-      });
-  if (!found) {
-    return found;
-  }
-  return HandleWithView(*handle, *found, out);
-}
-
-auto CodeGenFunction::HandleView(llvm::Value* handle) -> llvm::Value* {
-  const std::array<llvm::Value*, 1> args{handle};
-  return CallEntry(
-      RuntimeSymbol(RuntimeOp::kHandleView), module_->Types().Ptr(),
-      Addresses(1), args);
-}
-
-auto CodeGenFunction::HandleWithView(
-    llvm::Value* handle, llvm::Value* view, llvm::Value* out) -> llvm::Value* {
-  return BuildInto(
-      RuntimeSymbol(RuntimeOp::kHandleWithView), Addresses(2), {handle, view},
-      out);
+  return builder_.CreateLoad(
+      ptr_ty, builder_.CreateConstInBoundsGEP1_64(ptr_ty, table, slot));
 }
 
 auto CodeGenFunction::LowerLanding(const lir::LandingInstr& landing)
@@ -1480,6 +1293,7 @@ auto CodeGenFunction::LowerCall(
           [&](const lir::FunctionTarget& t) { return called(t); },
           [&](const lir::IndirectTarget& t) { return called(t); },
           [&](const lir::DispatchTarget& t) { return called(t); },
+          [&](const lir::InterfaceDispatchTarget& t) { return called(t); },
           // A unique pointer is the address of the storage it takes over, as a
           // Rust `Box` is; every other construction is its type's entry.
           [&](const lir::ConstructTarget& t) -> Lowered {
@@ -1665,7 +1479,7 @@ auto CodeGenFunction::LowerBitsStore(const lir::BitsStoreInstr& store)
 // declared at the type the call's arrangement has.
 auto CodeGenFunction::ResolveCallee(
     const lir::CallInstr& call, lir::TypeId result_type, const FnAbi& abi,
-    std::span<llvm::Value*> args) -> diag::Result<llvm::FunctionCallee> {
+    std::span<llvm::Value* const> args) -> diag::Result<llvm::FunctionCallee> {
   return std::visit(
       Overloaded{
           [&](const lir::BuiltinTarget& t)
@@ -1689,9 +1503,9 @@ auto CodeGenFunction::ResolveCallee(
             return llvm::FunctionCallee(
                 module_->Types().GetFunctionType(abi), *callee);
           },
-          // The value holds where its class's table is, and the table holds
-          // the body answering the behavior where the class introducing it put
-          // it, as a C++ virtual call reads one.
+          // The value holds its class's definition, the definition holds its
+          // table, and the table holds the body answering the behavior where
+          // the class introducing it put it (LRM 8.20).
           [&](const lir::DispatchTarget& t)
               -> diag::Result<llvm::FunctionCallee> {
             if (args.empty()) {
@@ -1699,31 +1513,37 @@ auto CodeGenFunction::ResolveCallee(
                   "llvm codegen: a dispatched call states no value to dispatch "
                   "on");
             }
-            auto at = module_->DispatchSlotOf(t.method);
-            if (!at) {
-              return std::unexpected(std::move(at.error()));
-            }
             llvm::Type* ptr_ty = module_->Types().Ptr();
-            const auto body_at = [&](llvm::Value* table, std::uint64_t slot) {
-              return builder_.CreateLoad(
-                  ptr_ty,
-                  builder_.CreateConstInBoundsGEP1_64(ptr_ty, table, slot));
-            };
-            llvm::Value* body = std::visit(
-                Overloaded{
-                    [&](const LineageSlot& lineage) -> llvm::Value* {
-                      return body_at(
-                          builder_.CreateLoad(ptr_ty, args[0]), lineage.slot);
-                    },
-                    // The body is entered where the object starts.
-                    [&](const InterfaceSlot& part) -> llvm::Value* {
-                      llvm::Value* table = builder_.CreateLoad(ptr_ty, args[0]);
-                      args[0] = ObjectStartOf(args[0], table);
-                      return body_at(table, part.slot);
-                    }},
-                *at);
+            llvm::Value* definition = builder_.CreateLoad(ptr_ty, args[0]);
+            llvm::Value* table = builder_.CreateLoad(
+                ptr_ty, builder_.CreateConstInBoundsGEP1_64(
+                            builder_.getInt8Ty(), definition,
+                            runtime::DefinitionLayoutOf().methods));
             return llvm::FunctionCallee(
-                module_->Types().GetFunctionType(abi), body);
+                module_->Types().GetFunctionType(abi),
+                BodyAt(table, module_->DispatchSlotOf(t.method)));
+          },
+          // The table the value's class gives the interface class is found
+          // among those its definition lists (LRM 8.26.5), and holds the body
+          // answering the method where the interface class declares it.
+          [&](const lir::InterfaceDispatchTarget& t)
+              -> diag::Result<llvm::FunctionCallee> {
+            if (args.empty()) {
+              throw InternalError(
+                  "llvm codegen: a dispatched call states no value to dispatch "
+                  "on");
+            }
+            auto iface = module_->DefinitionOf(t.requirement.introduced_by);
+            if (!iface) {
+              return std::unexpected(std::move(iface.error()));
+            }
+            const std::array<llvm::Value*, 2> found{args[0], *iface};
+            llvm::Value* table = CallEntry(
+                RuntimeSymbol(RuntimeOp::kInterfaceTable),
+                module_->Types().Ptr(), Addresses(2), found);
+            return llvm::FunctionCallee(
+                module_->Types().GetFunctionType(abi),
+                BodyAt(table, t.requirement.ordinal.value));
           },
           [&](const lir::ConstructTarget&)
               -> diag::Result<llvm::FunctionCallee> {
@@ -1736,8 +1556,7 @@ auto CodeGenFunction::ResolveCallee(
           [&](const lir::CreationTarget& t)
               -> diag::Result<llvm::FunctionCallee> {
             return module_->RuntimeFunction(
-                module_->CreationSymbol(t.cls, lir::Creation::kCompleteObject),
-                abi);
+                module_->CreationSymbol(t.cls), abi);
           },
           // A body another artifact defines is declared here and resolved by
           // the host, and its operands are this program's own values.

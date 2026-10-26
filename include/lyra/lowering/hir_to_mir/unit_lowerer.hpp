@@ -35,37 +35,38 @@
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/record_id.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/support/class_name.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
 #include "lyra/support/scope_execution.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
-// Which functions every object's part declares for `randomize()` (LRM 18.6) a
-// class that is no interface class gives a body: declaring its random
+// Which callbacks `randomize()` (LRM 18.6) makes on an object that a class that
+// is no interface class answers with a body of its own: declaring its random
 // variables, stating its constraints and naming the random objects its handles
 // reach, which every such class does, and calling the `pre_randomize` and
 // `post_randomize` it declares, where it declares one (LRM 18.6.2). A class of
 // this unit and one another unit published answer it alike.
-[[nodiscard]] inline auto RandomizationOverrides(
+[[nodiscard]] inline auto RandomizationCallbacks(
     bool declares_pre_randomize, bool declares_post_randomize)
-    -> std::vector<support::LibraryVirtual> {
-  std::vector<support::LibraryVirtual> out{
-      support::LibraryVirtual::kClassRandVariables,
-      support::LibraryVirtual::kClassConstrain,
-      support::LibraryVirtual::kClassRandObjects};
+    -> std::vector<support::LibraryCallback> {
+  std::vector<support::LibraryCallback> out{
+      support::LibraryCallback::kClassRandVariables,
+      support::LibraryCallback::kClassConstrain,
+      support::LibraryCallback::kClassRandObjects};
   if (declares_pre_randomize) {
-    out.push_back(support::LibraryVirtual::kClassPreRandomize);
+    out.push_back(support::LibraryCallback::kClassPreRandomize);
   }
   if (declares_post_randomize) {
-    out.push_back(support::LibraryVirtual::kClassPostRandomize);
+    out.push_back(support::LibraryCallback::kClassPostRandomize);
   }
   return out;
 }
 
-// The bodies a class of this unit gives those functions: the three every class
-// gives, which a class extending another of the same unit calls the one it
-// extends by, and one calling each hook it declares.
+// The bodies a class of this unit answers those callbacks with: the three every
+// class gives, which a class extending another of the same unit calls the one
+// it extends by, and one calling each hook it declares.
 struct RandomizationHooks {
   // A hook calling a method the class declares: the hook's body, and the
   // method it calls.
@@ -80,58 +81,47 @@ struct RandomizationHooks {
   std::optional<CallsDeclared> pre_randomize;
   std::optional<CallsDeclared> post_randomize;
 
-  // Each body, with the function of the library it overrides.
-  [[nodiscard]] auto Overrides() const
-      -> std::vector<std::pair<mir::CallableId, support::LibraryVirtual>> {
-    std::vector<std::pair<mir::CallableId, support::LibraryVirtual>> out;
-    for (const support::LibraryVirtual function : RandomizationOverrides(
+  // Each body, with the library callback it answers.
+  [[nodiscard]] auto Callbacks() const
+      -> std::vector<std::pair<mir::CallableId, support::LibraryCallback>> {
+    std::vector<std::pair<mir::CallableId, support::LibraryCallback>> out;
+    for (const support::LibraryCallback callback : RandomizationCallbacks(
              pre_randomize.has_value(), post_randomize.has_value())) {
-      out.emplace_back(BodyOf(function), function);
+      out.emplace_back(BodyOf(callback), callback);
     }
     return out;
   }
 
-  // The body the class gives `function`, one of those it overrides.
-  [[nodiscard]] auto BodyOf(support::LibraryVirtual function) const
+  // The body the class answers `callback` with, one of those it answers.
+  [[nodiscard]] auto BodyOf(support::LibraryCallback callback) const
       -> mir::CallableId {
-    switch (function) {
-      case support::LibraryVirtual::kClassRandVariables:
+    switch (callback) {
+      case support::LibraryCallback::kClassRandVariables:
         return rand_variables;
-      case support::LibraryVirtual::kClassConstrain:
+      case support::LibraryCallback::kClassConstrain:
         return constrain;
-      case support::LibraryVirtual::kClassRandObjects:
+      case support::LibraryCallback::kClassRandObjects:
         return rand_objects;
-      case support::LibraryVirtual::kClassPreRandomize:
+      case support::LibraryCallback::kClassPreRandomize:
         if (pre_randomize.has_value()) {
           return pre_randomize->body;
         }
         break;
-      case support::LibraryVirtual::kClassPostRandomize:
+      case support::LibraryCallback::kClassPostRandomize:
         if (post_randomize.has_value()) {
           return post_randomize->body;
         }
         break;
-      case support::LibraryVirtual::kScopeResolve:
-      case support::LibraryVirtual::kScopeInitialize:
-      case support::LibraryVirtual::kScopeCreateProcesses:
-      case support::LibraryVirtual::kScopeDescribe:
+      case support::LibraryCallback::kScopeResolve:
+      case support::LibraryCallback::kScopeInitialize:
+      case support::LibraryCallback::kScopeCreateProcesses:
+      case support::LibraryCallback::kScopeDescribe:
         break;
     }
     throw InternalError(
-        "RandomizationHooks: a function the class gives no body is asked for "
+        "RandomizationHooks: a callback the class gives no body is asked for "
         "its body -- please report this as a bug");
   }
-};
-
-// What a class this unit declares takes beyond its identity before any
-// declaration settles, so a class extending it can name it.
-struct ClassTranslation {
-  // The callable identity of each forward the class answers an interface
-  // class's behavior with, after every method the class declares, which is at
-  // the position its declaration gives it.
-  std::vector<mir::CallableId> interface_forwards;
-  // Absent for an interface class, which has no object (LRM 8.26).
-  std::optional<RandomizationHooks> randomization;
 };
 
 // One field of a class as every unit lays it out: the type it holds, and the
@@ -271,6 +261,12 @@ class UnitLowerer {
   // starts: as a program's, where the unit is one (LRM 24.3.1).
   [[nodiscard]] auto ScopeExecution() const -> support::ScopeExecution;
 
+  // The name of the next class this unit's lowering builds for its own use,
+  // counted among those alone.
+  auto NameUnnamedClass() -> support::UnnamedClass {
+    return support::UnnamedClass{.disambiguator = next_unnamed_class_++};
+  }
+
   // Where a construct was written, which a diagnostic the lowering emits names
   // its origin by (LRM 20.10).
   [[nodiscard]] auto SourceManager() const -> const diag::SourceManager& {
@@ -346,24 +342,25 @@ class UnitLowerer {
       mir::TypeId value_type, const hir::PublishedStorage& storage) const
       -> mir::TypeId;
 
-  // The callable identity of each forward a class this unit declares answers
-  // an interface class's behavior with, in the order the class lists them.
-  [[nodiscard]] auto InterfaceForwardsOf(hir::ClassId owner) const
-      -> std::span<const mir::CallableId> {
-    return OwnTranslation(owner).interface_forwards;
-  }
-
+  // The bodies the class `owner` this unit declares answers `randomize()`
+  // with, absent for an interface class, which has no object (LRM 8.26).
   [[nodiscard]] auto RandomizationHooksOf(hir::ClassId owner) const
       -> const std::optional<RandomizationHooks>& {
-    return OwnTranslation(owner).randomization;
+    const auto it = randomization_hooks_.find(owner);
+    if (it == randomization_hooks_.end()) {
+      throw InternalError(
+          "UnitLowerer::RandomizationHooksOf: only a class this unit declares "
+          "takes randomization bodies -- please report this as a bug");
+    }
+    return it->second;
   }
 
   // The method of the source an instance-method call runs: the one it names,
   // or for a hook a class has without declaring it, the one the nearest class
   // of its lineage declares, since neither hook is virtual (LRM 18.6.2).
   // Nothing where the library runs the hook: no class of the lineage declares
-  // one, or the class is an interface class, whose hooks are virtual
-  // (LRM 8.26.9).
+  // one, or the class is an interface class, whose hooks run the object's own
+  // class's (LRM 8.26.9, as Lyra reads it).
   [[nodiscard]] auto MethodRunBy(const hir::InstanceMethodCallee& callee) const
       -> std::optional<hir::ClassMethodTarget>;
 
@@ -522,18 +519,6 @@ class UnitLowerer {
   [[nodiscard]] auto EmplaceInto() -> mir::UnitCallableTarget;
 
  private:
-  // What the class `hir_id` this unit declares became.
-  [[nodiscard]] auto OwnTranslation(hir::ClassId hir_id) const
-      -> const ClassTranslation& {
-    const auto it = class_translations_.find(hir_id);
-    if (it == class_translations_.end()) {
-      throw InternalError(
-          "UnitLowerer::OwnTranslation: only a class this unit declares is "
-          "translated -- please report this as a bug");
-    }
-    return it->second;
-  }
-
   // Declares in MIR a class another unit defines, as that unit published it.
   // Every class of another unit this unit read is declared, before anything
   // names one: a place reaching a member of a class an ancestor declares walks
@@ -570,11 +555,12 @@ class UnitLowerer {
       -> diag::Result<void>;
 
   // The callables a class this unit declares has beyond the methods it
-  // declares, each at a position after them: a forward per interface class
-  // behavior it answers by inheritance, then the bodies it gives `randomize()`.
-  // Reads nothing but this class, so classes take theirs in any order and none
-  // waits on another.
-  auto TakeClassIdentities(hir::ClassId cls) -> ClassTranslation;
+  // declares, each at a position after them: the bodies answering what
+  // `randomize()` asks of it, taken before any declaration settles so a class
+  // extending it can name them. Reads nothing but this class, so classes take
+  // theirs in any order and none waits on another.
+  auto TakeRandomizationHooks(hir::ClassId cls)
+      -> std::optional<RandomizationHooks>;
 
   // Publishes everything the unit declares before any root-scope body lowers:
   // every class identity and body, every interned type and the functions each
@@ -627,10 +613,11 @@ class UnitLowerer {
   const diag::SourceManager* source_manager_;
   mir::CompilationUnit unit_;
   base::Translation<hir::TypeId, mir::TypeId> type_translations_;
-  // The class each class the unit names is, of this unit or another, and what
-  // each one this unit declares takes beyond that.
+  // The class each class the unit names is, of this unit or another, and the
+  // randomization bodies each one this unit declares takes.
   base::Translation<hir::ClassId, mir::ClassId> class_identities_;
-  std::map<hir::ClassId, ClassTranslation> class_translations_;
+  std::map<hir::ClassId, std::optional<RandomizationHooks>>
+      randomization_hooks_;
   // Where each record the unit names sits in its record registry, by the
   // declaration any unit names it by.
   std::map<mir::TypeDeclarationRef, mir::RecordId> record_translations_;
@@ -650,6 +637,7 @@ class UnitLowerer {
   std::map<hir::ScopeClassId, ScopeClassLayout> scope_layouts_;
   std::map<mir::ClassId, PublishedScope> published_scopes_;
   std::uint32_t next_synthesized_site_ = 0;
+  std::uint32_t next_unnamed_class_ = 0;
   // What the declare stage settled about each class, read by every body that
   // names a peer. Lives only on the lowerer; the finished compilation unit
   // holds the only authoritative class representation.

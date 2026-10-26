@@ -113,6 +113,10 @@ auto RuntimeLibraryKindName(RuntimeLibraryKind kind) -> const char* {
       return "scope info";
     case RuntimeLibraryKind::kScopeCallable:
       return "scope callable";
+    case RuntimeLibraryKind::kClassObjectInfo:
+      return "class object info";
+    case RuntimeLibraryKind::kInterfaceRow:
+      return "interface row";
     case RuntimeLibraryKind::kConstructionTable:
       return "construction table";
     case RuntimeLibraryKind::kInstantiation:
@@ -491,6 +495,8 @@ auto Type::IsAddressOnly() const -> bool {
       case RuntimeLibraryKind::kObjectDefinition:
       case RuntimeLibraryKind::kScopeInfo:
       case RuntimeLibraryKind::kScopeCallable:
+      case RuntimeLibraryKind::kClassObjectInfo:
+      case RuntimeLibraryKind::kInterfaceRow:
       case RuntimeLibraryKind::kConstructionTable:
       case RuntimeLibraryKind::kInstantiation:
       case RuntimeLibraryKind::kGeneratePlaces:
@@ -642,6 +648,8 @@ auto Type::HeldAs() const -> std::optional<Holding> {
               case RuntimeLibraryKind::kObjectDefinition:
               case RuntimeLibraryKind::kScopeInfo:
               case RuntimeLibraryKind::kScopeCallable:
+              case RuntimeLibraryKind::kClassObjectInfo:
+              case RuntimeLibraryKind::kInterfaceRow:
               case RuntimeLibraryKind::kDumpEntry:
               case RuntimeLibraryKind::kDumpBlock:
                 return std::nullopt;

@@ -88,7 +88,7 @@ inline constexpr ObjectLayout kHierarchySegmentStorage{
 inline constexpr ObjectLayout kChannelCancellationStorage{
     .layout = {.size = 24, .align = 8}, .ends_with_nothing_to_do = false};
 inline constexpr ObjectLayout kWeakReferenceStorage{
-    .layout = {.size = 24, .align = 8}, .ends_with_nothing_to_do = false};
+    .layout = {.size = 16, .align = 8}, .ends_with_nothing_to_do = false};
 inline constexpr ObjectLayout kLeasedReferenceStorage{
     .layout = {.size = 112, .align = 8}, .ends_with_nothing_to_do = false};
 

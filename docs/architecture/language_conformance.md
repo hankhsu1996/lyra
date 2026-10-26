@@ -427,6 +427,59 @@ property written for others to assert means by taking its disable condition as a
 meaning the declaration's own default writes it as the formal's default instead of
 `$inferred_disable`.
 
+#### A randomization hook named through an interface class handle
+
+```systemverilog
+interface class I;
+endclass
+class C implements I;
+  int n;
+  function void post_randomize();
+    n = 1;
+  endfunction
+endclass
+// C c = new; I h = c; h.post_randomize();   -- c.n is 1, or stays 0?
+```
+
+8.26.9 says "Interface classes contain two built-in empty virtual methods pre_randomize() and
+post_randomize() that are automatically called before and after randomization. These methods can be
+overridden. As a special case, pre_randomize() and post_randomize() shall not cause method name
+conflicts." Read on its own, only an implementing class can override them, since an interface class
+holds no body, and every class contains its own hooks (18.6.2), so the call runs `C`'s. But 18.6.2
+also says "The pre_randomize() and post_randomize() methods are not virtual", and 8.26.2 says "An
+inherited non-virtual method does not provide an implementation for a method of an implemented
+interface class". Read with those, nothing in `C` implements `I`'s hook, and the call runs the empty
+one. No committee record settles which.
+
+Lyra runs the hook of the object's class, its own or one it inherits, which is the body
+`randomize()` calls on that object. Each object then has one hook of each kind, whichever handle
+reaches it, and a call through an interface class's handle is decided by the object as every other
+method that handle reaches is (consequence 4). It is also what the clause's "automatically called
+before and after randomization" describes, since the hook `randomize()` calls through `h` is `C`'s.
+A design meaning the empty body has nothing to call.
+
+#### A random state method named through an interface class handle
+
+```systemverilog
+interface class I;
+endclass
+class C implements I;
+  rand int v;
+endclass
+// C c = new; I h = c; h.srandom(5); h.set_randstate(h.get_randstate());
+```
+
+8.26.9 makes `randomize()` and an inline constraint legal through an interface class handle, and
+says "Use of rand_mode and constraint_mode shall not be legal as a consequence of the name
+resolution rules and the fact that interface classes are not permitted to contain data members". It
+says nothing of `srandom()`, `get_randstate()` and `set_randstate()` (18.13.3 to 18.13.5), which an
+interface class does not declare either, so the name resolution argument it gives for the mode
+methods reads on them too, while the reason it gives, that an interface class has no data members,
+does not.
+
+The front end accepts the calls, and Lyra acts on the generator of the object the handle refers to,
+which is the only generator the call can reach.
+
 ### Allowed
 
 #### An `always_comb` writing one constant key of an associative array

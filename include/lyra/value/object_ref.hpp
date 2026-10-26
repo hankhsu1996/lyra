@@ -18,24 +18,16 @@ namespace lyra::value {
   throw SimulationError("a member reached through a null object handle");
 }
 
-// A reference to an object the simulator owns (LRM 8.3), with the pointer of
-// the class the program point assumes, through which a member is reached. Its
-// value is the handle -- which object it names -- and the pointer is only how
-// a target gets from that to a member, so every operator LRM Table 11-1 gives
-// a handle is the handle's own answer.
+// A reference to an object the simulator owns (LRM 8.3): which object it
+// names, and a share of its ownership. Every operator LRM Table 11-1 gives a
+// handle is the handle's own answer.
 //
-// One shape serves every static view. A program point's static view says what
-// may be done through a reference, never what the reference is: two units hold
-// one cell under different views wherever a name resolves at elaboration, so a
-// representation that followed the view would put two of them on one storage
-// and could be read only by arranging for the two to agree.
-//
-// So the view travels as the pointer the reference was formed with, and a point
-// that names a class reads its own pointer back out exactly -- not a
-// conversion, since that is the pointer that was stored. A point with no class
-// to name reads the handle and leaves the view alone. Which subobject sits at
-// an object's own address depends on whether the design declared a virtual
-// method, so nothing derived from a view answers which object this is.
+// One shape serves every class a program point sees the object as. A point's
+// class says what may be done through a reference, never what the reference
+// is, and every class of an object's lineage starts where the object does,
+// since a class extends one class (LRM 8.13) and an interface class adds no
+// part of its own (LRM 8.26). So the object's address is what a point reaches
+// a member through, whichever class it names.
 class ObjectRef {
  public:
   ObjectRef() = default;
@@ -43,8 +35,7 @@ class ObjectRef {
   ObjectRef(std::nullptr_t) {  // NOLINT(google-explicit-constructor)
   }
 
-  ObjectRef(ManagedRef handle, void* view)
-      : handle_(std::move(handle)), view_(view) {
+  explicit ObjectRef(ManagedRef handle) : handle_(std::move(handle)) {
   }
 
   // The object, as the class this program point assumes. A type argument
@@ -54,18 +45,19 @@ class ObjectRef {
   // that names no object is the design's own failure (LRM 8.4).
   template <typename T>
   [[nodiscard]] auto Deref() const -> T& {
-    if (view_ == nullptr) {
+    T* object = Get<T>();
+    if (object == nullptr) {
       RaiseNullObjectHandleAccess();
     }
-    return *static_cast<T*>(view_);
+    return *object;
   }
 
-  // The same pointer where nothing is reached through it -- forming another
-  // view of the object, which is defined on a reference naming none (LRM 8.4
-  // admits null as a value and forbids only reaching through it).
+  // The same address where nothing is reached through it, which is defined on
+  // a reference naming no object (LRM 8.4 admits null as a value and forbids
+  // only reaching through it).
   template <typename T>
-  [[nodiscard]] auto View() const -> T* {
-    return static_cast<T*>(view_);
+  [[nodiscard]] auto Get() const -> T* {
+    return static_cast<T*>(handle_.Share().get());
   }
 
   [[nodiscard]] auto Handle() const -> const ManagedRef& {
@@ -118,7 +110,6 @@ class ObjectRef {
   }
 
   ManagedRef handle_;
-  void* view_ = nullptr;
 };
 
 static_assert(LyraValue<ObjectRef>);

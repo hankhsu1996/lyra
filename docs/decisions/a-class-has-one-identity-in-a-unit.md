@@ -65,12 +65,13 @@ onto the signature's keys, and reading one is the inverse, so the two cannot des
 classes. A class of this unit also has bodies, which only this unit holds.
 
 Naming a class is not depending on it. A dependency is what the unit's finished MIR reads of a
-declaration another unit made: a field it accesses, a method it calls or dispatches through, a
-conversion between two classes, a class it constructs, a value whose layout it holds. A read of a
-class closes over the classes it extends and implements, since its layout and its tables read
-theirs, and a handle to a class reads nothing, as a pointer to an incomplete type does not. The set
-is derived by one walk over that MIR once lowering is done, as a C++ compiler writes out the headers
-a translation unit read (`-MD`), so the lowering records nothing and no read it adds can go
+declaration another unit made: a field it accesses, a method it calls or dispatches through, a class
+it constructs, a value whose layout it holds. A read of a class closes over the classes it extends
+and implements, since its layout and its tables read theirs. A handle to a class reads nothing, as a
+pointer to an incomplete type does not, and neither does a `$cast` to it, which names only its
+definition's address, as Itanium C++ names a class's type information by its mangled name alone. The
+set is derived by one walk over that MIR once lowering is done, as a C++ compiler writes out the
+headers a translation unit read (`-MD`), so the lowering records nothing and no read it adds can go
 unrecorded. A class of this unit is never a dependency of it.
 
 ### D3. Every member is named in one coordinate space

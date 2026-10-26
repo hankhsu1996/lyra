@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <format>
 #include <optional>
-#include <set>
 #include <span>
 #include <string>
 #include <utility>
@@ -707,162 +706,6 @@ auto ImplementationOf(const slang::ast::ClassType& cls, std::string_view name)
   return method != nullptr && InLineageOf(cls, *method) ? method : nullptr;
 }
 
-// Builds the forwarding method for one interface pure virtual method a class
-// satisfies through an inherited concrete-base method rather than a local
-// definition (LRM 8.26.2). It overrides the inherited implementation's
-// behavior, and its body forwards to that implementation through a
-// `super`-qualified call, so a backend renders it as an ordinary method rather
-// than fabricating the forward.
-auto BuildInterfaceForwardingMethod(
-    UnitLowerer& unit_lowerer, diag::SourceSpan span, std::string_view name,
-    const slang::ast::SubroutineSymbol& impl, const WalkFrame& class_frame)
-    -> diag::Result<hir::InterfaceForward> {
-  // The implementation is inherited, so the class declaring it may be another
-  // unit's, and what a call to it passes and yields is read as any call to it
-  // reads it.
-  auto forwarded = unit_lowerer.ClassMethodPrototype(impl, span);
-  if (!forwarded) return std::unexpected(std::move(forwarded.error()));
-  const hir::TypeId result_type = forwarded->result_type;
-
-  hir::ProceduralBody body;
-  OpenProceduralScope root{
-      class_frame.ProceduralScopes().Declare(),
-      hir::ProceduralScopeKind::kSubroutineRoot,
-      NameInAPath(name, impl.getParentScope()->getCompilation())};
-  std::vector<hir::SubroutineParam> params;
-  std::vector<std::optional<hir::ExprId>> args;
-  for (const hir::CalleeParam& formal : forwarded->interface.params) {
-    // The forwarder would have to hand its own completion whatever the
-    // forwarded call's completion carried back, which is a composition its
-    // one-statement body does not express.
-    switch (formal.direction) {
-      case hir::ParamDirection::kInput:
-        break;
-      case hir::ParamDirection::kOutput:
-      case hir::ParamDirection::kInOut:
-      case hir::ParamDirection::kRef:
-      case hir::ParamDirection::kConstRef:
-        return diag::Fail(
-            span, diag::DiagCode::kUnsupportedClassFeature,
-            "an interface method satisfied by an inherited implementation with "
-            "an 'output', 'inout' or 'ref' argument is not yet supported");
-    }
-    const hir::ProceduralVarId var = body.procedural_vars.Declare();
-    body.procedural_vars.Define(
-        var, hir::ProceduralVarDecl{.name = std::nullopt, .type = formal.type});
-    root.declarations.push_back(var);
-    params.push_back(
-        hir::SubroutineParam{
-            .var = var, .direction = hir::ParamDirection::kInput});
-    args.emplace_back(body.exprs.Add(
-        hir::Expr{
-            .type = formal.type,
-            .data = hir::PrimaryExpr{hir::ProceduralVarRef{.var = var}},
-            .span = span}));
-  }
-
-  std::optional<hir::ProceduralVarId> result_var;
-  if (result_type != unit_lowerer.Unit().builtins.void_type) {
-    result_var = body.procedural_vars.Declare();
-    body.procedural_vars.Define(
-        *result_var,
-        hir::ProceduralVarDecl{.name = std::nullopt, .type = result_type});
-    root.declarations.push_back(*result_var);
-  }
-
-  auto impl_callee =
-      unit_lowerer.MakeClassMethodTarget(OwningClassOf(impl), impl, span);
-  if (!impl_callee) return std::unexpected(std::move(impl_callee.error()));
-  const hir::ExprId call = body.exprs.Add(
-      hir::Expr{
-          .type = result_type,
-          .data =
-              hir::CallExpr{
-                  .callee =
-                      hir::MethodCallRef{
-                          .receiver = hir::SuperReceiver{},
-                          .callee = *std::move(impl_callee)},
-                  .arguments = std::move(args)},
-          .span = span});
-  // Forwarding is the whole body: one return of the forwarded call, with the
-  // formals and the result cell in the method's root scope.
-  const hir::StmtId root_stmt = body.stmts.Add(
-      hir::Stmt{
-          .label = std::nullopt,
-          .data = hir::ReturnStmt{.value = call},
-          .span = span});
-  body.root_scope = class_frame.SealScope(std::move(root));
-
-  // The front end requires the inherited implementation to be virtual, so it
-  // is a behavior of this class's lineage, and the forward takes it over: a
-  // value of this class answers it with the forward, which enters the
-  // implementation it was inherited with.
-  auto taken = unit_lowerer.IntroducingMethodTarget(impl, span);
-  if (!taken) return std::unexpected(std::move(taken.error()));
-
-  // The forwarder's text reads no cell of its own: what a call of it reads is
-  // what the implementation reads, which states its own as the forwarder calls
-  // it, and a method of an object is no call an implicit list follows.
-  return hir::InterfaceForward{
-      .method =
-          hir::SubroutineDecl{
-              .name = std::string{name},
-              .kind = hir::SubroutineKind::kFunction,
-              .result_type = result_type,
-              .params = std::move(params),
-              .result_var = result_var,
-              .body = std::move(body),
-              .root_stmt = root_stmt,
-              .reads = {}},
-      .overrides = *std::move(taken)};
-}
-
-// Synthesizes forwarding methods for every interface pure virtual method a
-// class satisfies by inheriting a concrete-base implementation with no local
-// override (LRM 8.26.2). C++ multiple inheritance does not let one sibling
-// base's method override another's, so without the forward the class stays
-// abstract and a call through it is ambiguous. One forwarding method per
-// inherited implementation: a single method satisfying several same-name
-// interface slots (LRM 8.26.6.1) forwards once, and the target language's
-// implicit override fills the remaining slots.
-auto SynthesizeInterfaceForwardingMethods(
-    UnitLowerer& unit_lowerer, const slang::ast::ClassType& cls,
-    diag::SourceSpan span, hir::ClassDecl& decl, const WalkFrame& class_frame)
-    -> diag::Result<void> {
-  // An interface class only aggregates contracts (LRM 8.26); it carries no
-  // implementation to forward to, so it never bridges. Its `extends` parents
-  // are pure prototypes, not satisfiers.
-  if (cls.isInterface) return {};
-  // The interface classes the declaration names and the ones those extend. What
-  // the class it extends is also a value of is that class's to forward.
-  std::vector<hir::ClassId> named;
-  for (const auto* iface_type : cls.getDeclaredInterfaces()) {
-    auto iface = unit_lowerer.ResolveClassType(*iface_type, span);
-    if (!iface) return std::unexpected(std::move(iface.error()));
-    unit_lowerer.ReachInterface(*iface, named);
-  }
-  std::set<const slang::ast::SubroutineSymbol*> bridged;
-  for (const hir::ClassId iface : named) {
-    for (const std::string& name : unit_lowerer.MethodNamesOf(iface)) {
-      // A satisfier the class defines is wired by its own method loop, so only
-      // an inherited one needs a bridge, and only one with a body to forward
-      // to: a still-abstract class may inherit nothing but a pure virtual.
-      const slang::ast::SubroutineSymbol* impl = ImplementationOf(cls, name);
-      if (impl == nullptr || &OwningClassOf(*impl) == &cls ||
-          impl->flags.has(slang::ast::MethodFlags::Pure)) {
-        continue;
-      }
-      if (!bridged.insert(impl).second) continue;
-
-      auto method_or = BuildInterfaceForwardingMethod(
-          unit_lowerer, span, name, *impl, class_frame);
-      if (!method_or) return std::unexpected(std::move(method_or.error()));
-      decl.interface_forwards.push_back(*std::move(method_or));
-    }
-  }
-  return {};
-}
-
 // The method this one overrides in its own lineage, or nothing where it
 // introduces its own behaviour. The frontend resolves the ordinary case, having
 // already matched signature, direction, return type and every other LRM 8.20
@@ -1066,24 +909,6 @@ auto UnitLowerer::IsTypeAssociatedMethod(
   return method.flags.has(slang::ast::MethodFlags::Static);
 }
 
-auto UnitLowerer::ClassMethodPrototype(
-    const slang::ast::SubroutineSymbol& method, diag::SourceSpan span)
-    -> diag::Result<hir::SubroutinePrototype> {
-  auto published = DeclaredMethodOf(method, span);
-  if (!published) return std::unexpected(std::move(published.error()));
-  if (published->has_value()) {
-    return (*published)->prototype;
-  }
-  auto interface = MakeCalleeInterface(method, span);
-  if (!interface) return std::unexpected(std::move(interface.error()));
-  auto result_type = InternType(method.getReturnType(), span);
-  if (!result_type) return std::unexpected(std::move(result_type.error()));
-  return hir::SubroutinePrototype{
-      .name = std::string{method.name},
-      .interface = *std::move(interface),
-      .result_type = *result_type};
-}
-
 auto UnitLowerer::ResolveClassType(
     const slang::ast::Type& type, diag::SourceSpan span)
     -> diag::Result<hir::ClassId> {
@@ -1116,15 +941,6 @@ auto UnitLowerer::AllInterfacesOf(hir::ClassId cls)
     ReachInterface(named, interfaces);
   }
   return interfaces;
-}
-
-auto UnitLowerer::MethodNamesOf(hir::ClassId iface)
-    -> std::vector<std::string> {
-  std::vector<std::string> names;
-  for (const hir::DeclaredMethod& method : DeclarationOf(iface).methods) {
-    names.push_back(method.prototype.name);
-  }
-  return names;
 }
 
 auto UnitLowerer::StateConformance(
@@ -1643,17 +1459,15 @@ void UnitLowerer::RequireEveryClassBodyLowered() const {
           left));
 }
 
-void UnitLowerer::ReadSignaturesOfNamedClasses() {
-  // In the order the classes entered, since the cache is keyed by address and
-  // walks in no fixed order. A class only a type names is named, not read, so
-  // only one a declaration of this unit resolved is.
-  std::vector<hir::ClassId> named;
-  for (const auto& [_, id] : class_cache_) {
-    if (!unit_.classes.IsOwn(id)) named.push_back(id);
+void UnitLowerer::ReadDeclarationLater(hir::ClassId cls) {
+  if (!unit_.classes.IsOwn(cls)) {
+    pending_declaration_reads_.push_back(cls);
   }
-  std::ranges::sort(named);
-  for (const hir::ClassId id : named) {
-    DeclarationOf(id);
+}
+
+void UnitLowerer::ReadPendingDeclarations() {
+  for (const hir::ClassId cls : pending_declaration_reads_) {
+    DeclarationOf(cls);
   }
 }
 
@@ -1727,14 +1541,6 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
     base_arguments = std::move(ctor_or->base_arguments);
   }
 
-  // Forward every interface pure virtual this class satisfies by inheritance
-  // rather than a local definition (LRM 8.26.2); a contract a method of this
-  // class satisfies is wired when that method is lowered.
-  if (auto forwards = SynthesizeInterfaceForwardingMethods(
-          *this, cls, span, decl, class_frame);
-      !forwards) {
-    return std::unexpected(std::move(forwards.error()));
-  }
   if (auto conformed = StateConformance(cls, span, decl); !conformed) {
     return std::unexpected(std::move(conformed.error()));
   }

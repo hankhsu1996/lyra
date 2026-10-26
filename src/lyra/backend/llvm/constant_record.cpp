@@ -105,15 +105,36 @@ void AppendRecord(
 void AppendRecord(
     std::vector<FieldLayout>& out, std::uint64_t at,
     const runtime::ScopeInfo& record) {
-  const auto& [metadata, exports] = record;
-  AppendFieldsOf(out, at, record, metadata, exports);
+  const auto& [metadata, exports, resolve, initialize, create_processes, describe] =
+      record;
+  AppendFieldsOf(
+      out, at, record, metadata, exports, resolve, initialize, create_processes,
+      describe);
+}
+
+void AppendRecord(
+    std::vector<FieldLayout>& out, std::uint64_t at,
+    const runtime::ClassObjectInfo& record) {
+  const auto& [rand_variables, constrain, rand_objects, pre_randomize, post_randomize] =
+      record;
+  AppendFieldsOf(
+      out, at, record, rand_variables, constrain, rand_objects, pre_randomize,
+      post_randomize);
+}
+
+void AppendRecord(
+    std::vector<FieldLayout>& out, std::uint64_t at,
+    const runtime::InterfaceRow& record) {
+  const auto& [of, entries] = record;
+  AppendFieldsOf(out, at, record, of, entries);
 }
 
 void AppendRecord(
     std::vector<FieldLayout>& out, std::uint64_t at,
     const runtime::ObjectDefinition& record) {
-  const auto& [base, scope] = record;
-  AppendFieldsOf(out, at, record, base, scope);
+  const auto& [base, scope, class_object, end, interfaces, methods] = record;
+  AppendFieldsOf(
+      out, at, record, base, scope, class_object, end, interfaces, methods);
 }
 
 void AppendRecord(
@@ -190,6 +211,10 @@ auto LayoutOfLibraryRecord(lir::RuntimeLibraryKind kind)
       return LayoutOf<runtime::ScopeInfo>();
     case lir::RuntimeLibraryKind::kScopeCallable:
       return LayoutOf<runtime::ScopeCallable>();
+    case lir::RuntimeLibraryKind::kClassObjectInfo:
+      return LayoutOf<runtime::ClassObjectInfo>();
+    case lir::RuntimeLibraryKind::kInterfaceRow:
+      return LayoutOf<runtime::InterfaceRow>();
     case lir::RuntimeLibraryKind::kConstructionTable:
       return LayoutOf<runtime::ConstructionTable>();
     case lir::RuntimeLibraryKind::kInstantiation:

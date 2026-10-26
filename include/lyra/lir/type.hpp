@@ -80,6 +80,8 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // The structures a definition is made of, which only a constant names.
   kScopeInfo,
   kScopeCallable,
+  kClassObjectInfo,
+  kInterfaceRow,
   // What a constructor is handed, what one of its entries is, and the entries
   // of one generate. A body hands a table's address to the library and never
   // reads inside it.

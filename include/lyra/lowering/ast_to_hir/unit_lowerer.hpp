@@ -959,9 +959,6 @@ class UnitLowerer {
   };
   auto ParentsOf(hir::ClassId cls) -> ClassParents;
 
-  // The names of the methods the interface class `iface` declares.
-  auto MethodNamesOf(hir::ClassId iface) -> std::vector<std::string>;
-
   // Appends the interface class `iface`, then every interface class it extends
   // (LRM 8.26.2), skipping one already in `reached`: an interface class is one
   // however many ways it is arrived at (LRM 8.26.6.3). What each extends is
@@ -986,13 +983,6 @@ class UnitLowerer {
   auto IsTypeAssociatedMethod(
       const slang::ast::SubroutineSymbol& method, diag::SourceSpan span)
       -> diag::Result<bool>;
-
-  // What a call to the class method `method` passes and awaits and what it
-  // yields: what the class declares of it, and for a method the front end
-  // supplies, the method's own symbol.
-  auto ClassMethodPrototype(
-      const slang::ast::SubroutineSymbol& method, diag::SourceSpan span)
-      -> diag::Result<hir::SubroutinePrototype>;
 
   // For a class that is not an interface class, states which behavior of its
   // lineage answers each behavior of every interface class it is also a value
@@ -1420,12 +1410,13 @@ class UnitLowerer {
   // replicates only classes the block it shares a body with defined.
   void RequireEveryClassBodyLowered() const;
 
-  // Reads the signature of every class of another unit this one named, once
-  // every body has lowered and so every name is in: a value of such a class is
-  // converted to the views it has wherever it is held, which takes its layout
-  // whether or not a member of it is ever reached -- as a C++ translation unit
-  // includes the header of every class it names.
-  void ReadSignaturesOfNamedClasses();
+  // Marks the class `cls` as one this unit reads, not only names: the
+  // declaration phase meets classes whose objects the unit makes and whose
+  // methods it calls -- the coverage library's -- while other units'
+  // signatures are not yet reachable, so their declarations are read once every
+  // body has lowered.
+  void ReadDeclarationLater(hir::ClassId cls);
+  void ReadPendingDeclarations();
 
   // Builds a HIR Expr referring to the data `route` navigates to.
   // `owner_frame` is the frame whose routes hold it.
@@ -1892,6 +1883,9 @@ class UnitLowerer {
   // up slang's parent chain finding the unit declaring a class runs once per
   // class.
   std::unordered_map<const slang::ast::ClassType*, hir::ClassId> class_cache_;
+  // The classes of other units whose declarations this unit reads once every
+  // body has lowered.
+  std::vector<hir::ClassId> pending_declaration_reads_;
   // The same for each covergroup this unit's lowering has resolved.
   std::unordered_map<const slang::ast::CovergroupType*, hir::CovergroupId>
       covergroup_cache_;

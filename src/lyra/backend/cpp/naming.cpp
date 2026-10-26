@@ -156,6 +156,11 @@ void WriteOne(TargetText& out, NameLiteral literal) {
   WriteCStringLiteral(literal.name, out);
 }
 
+void WriteOne(TargetText& out, const EntryName& name) {
+  Write(out, kMintedPrefix, "entry_");
+  std::visit([&out](auto method) { WriteOne(out, method); }, name.method);
+}
+
 void WriteOne(TargetText& out, const CppName& name) {
   std::visit(
       Overloaded{
@@ -164,7 +169,8 @@ void WriteOne(TargetText& out, const CppName& name) {
           [&out](MintedWord n) { WriteOne(out, n); },
           [&out](VerbatimName n) { WriteOne(out, n); },
           [&out](MintedPathName n) { WriteOne(out, n); },
-          [&out](const MintedAppliedName& n) { WriteOne(out, n); }},
+          [&out](const MintedAppliedName& n) { WriteOne(out, n); },
+          [&out](const EntryName& n) { WriteOne(out, n); }},
       name);
 }
 

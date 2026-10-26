@@ -8,11 +8,14 @@
 
 Accepted; D3 superseded by
 [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md) D2. Its trigger --
-a backend dispatching through an interface handle -- arrived. The execution backend gives each
-interface class a view of the object with a table of its own, so MIR states, for each behavior of
-each interface class a class reaches, which behavior of the class's lineage answers it. D1 and D2
-stand, except that D1's forwarding method is kept beside the methods a class declares and takes no
-position among them.
+a backend dispatching through an interface handle -- arrived, and MIR states, for each behavior of
+each interface class a class reaches, which body of the class's lineage answers it. D1 is reversed
+(2026-10-25): its forwarding method existed because the C++ rendering made an interface class a base
+of its own beside the class extended, so an inherited method could not override the interface's.
+Neither backend lays an interface class out as a part any longer, and a class's table for an
+interface class names the inherited body directly, so no forwarding method is made, and the one case
+the forward could not express -- an inherited implementation with an `output`, `inout` or `ref`
+argument -- needs nothing of its own. D2 stands as a general call form.
 
 ## Why this decision matters
 
@@ -57,17 +60,18 @@ and is the load-bearing part.
 
 ## The decision
 
-**D1. Inherited satisfaction is resolved at AST-to-HIR and realized as a synthesized forwarding
-method.** For each directly-declared interface, for each contract method a class does not satisfy
-locally but does satisfy through an inherited concrete-base method, translation synthesizes an
-ordinary method on the class that forwards to the inherited implementation, using slang's own
-by-name resolution (the class it returns is already conformance-validated) to find that
-implementation. The forwarding method's dispatch role names the interface slot it fills, and its
-body forwards to the inherited implementation. The backend renders it as an ordinary method; it does
-not fabricate the forwarding expression. Forwarding methods are deduplicated by (implementation,
-signature): one inherited implementation satisfying several same-signature interface slots yields
-one method, not one per interface. There is no distinct "adapter" entity, marker, or type -- the
-forwarding method is an ordinary synthesized method, the same mechanism a lifecycle body uses.
+**D1 (reversed 2026-10-25, see Status). Inherited satisfaction is resolved at AST-to-HIR and
+realized as a synthesized forwarding method.** For each directly-declared interface, for each
+contract method a class does not satisfy locally but does satisfy through an inherited concrete-base
+method, translation synthesizes an ordinary method on the class that forwards to the inherited
+implementation, using slang's own by-name resolution (the class it returns is already
+conformance-validated) to find that implementation. The forwarding method's dispatch role names the
+interface slot it fills, and its body forwards to the inherited implementation. The backend renders
+it as an ordinary method; it does not fabricate the forwarding expression. Forwarding methods are
+deduplicated by (implementation, signature): one inherited implementation satisfying several
+same-signature interface slots yields one method, not one per interface. There is no distinct
+"adapter" entity, marker, or type -- the forwarding method is an ordinary synthesized method, the
+same mechanism a lifecycle body uses.
 
 **D2. The forwarding body is a qualified, non-virtual base call, a general primitive.** The
 forwarding body is a direct, vtable-bypassing call to the inherited base method, qualified by the

@@ -2,7 +2,8 @@
 
 Date: 2026-09-23 Status: accepted, with its list of classes narrowed by
 [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), under which the
-class for a value of a class is gone. The other six stand.
+garbage-collected base, a value of a class and a scope have no virtual function. The other four
+stand.
 
 ## Context
 
@@ -58,12 +59,15 @@ defines.** The library then owns that class's dispatch table, its type informati
 destruction reaches, and a unit that derives from it produces its own class and a call.
 
 The destructor is the one to use, because every published class of this kind already has a virtual
-one and nothing else about the class has to change. Seven classes are published this way and all
-seven take it: the garbage-collected base, a value of a class, a scope, a wait, a foreign execution,
-and the two types a run can raise. The thrown pair reach a unit differently -- nothing derives from
-them, and what a unit was carrying is their type information and the destructor a `catch` needs --
-but the rule and its cause are the same, and an exception type gets its copy operations written out
-beside the destructor because throwing one copies it.
+one and nothing else about the class has to change. Four classes are published this way and all four
+take it: a wait, a foreign execution, and the two types a run can raise. The garbage-collected base,
+a value of a class and a scope took it too until 2026-10-25, when the library stopped driving an
+object through C++ virtual functions; they have no dispatch table now, and still define their
+destructor in their own source file, so whatever their destruction reaches stays the library's. The
+thrown pair reach a unit differently -- nothing derives from them, and what a unit was carrying is
+their type information and the destructor a `catch` needs -- but the rule and its cause are the
+same, and an exception type gets its copy operations written out beside the destructor because
+throwing one copies it.
 
 | Object, unoptimized             |    Before |       After |
 | ------------------------------- | --------: | ----------: |

@@ -2562,17 +2562,14 @@ enough to warrant its own focused review.
 - [x] R169 -- The C++ backend handed the runtime an adapter around each body the runtime holds,
       where the execution backend handed over the body itself, and a virtual call went through the
       C++ vtable on one backend and through the runtime's table on the other. The fix was for
-      virtual dispatch to go one way on both backends, and it now does. Both dispatch through
-      Itanium tables laid out at compile time, the C++ backend's by the host compiler and the
-      execution backend's by its own layout step, and the runtime holds no dispatch table at all.
+      virtual dispatch to go one way on both backends, and it now does. Both dispatch through tables
+      of bodies laid out at compile time, which each class's definition names, the C++ backend's by
+      the host compiler and the execution backend's by its own layout step.
 
       What remains on the C++ backend is a captureless function written where the runtime holds a
       body a DPI-C export names (LRM 35.7), entering the method on the object it is handed. It is
       C++'s spelling of a member function entered object first. Its prototype is the one MIR states
-      for the entry, and the conversion it applies is the one that pair of types takes. Rendering
-      every method as an object-first function instead would put a forwarding member on every
-      virtual method, for the host compiler's table, which moves the function rather than removing
-      it.
+      for the entry, and the conversion it applies is the one that pair of types takes.
 
 - [ ] R170 -- Every runtime operation that is not per type is written twice, once as a C++ method
       the C++ backend calls, and once as one of about nine hundred C entries the execution backend
@@ -2643,8 +2640,8 @@ enough to warrant its own focused review.
       is clang's shape. A member function that overrides one function from each of two bases lists
       both as overridden, and the table builder computes the final overrider for each base. The one
       rule SystemVerilog adds, that an inherited virtual method satisfies an interface class's
-      method, is already met by synthesizing the forwarding method C++ would make the user write,
-      after which the case is the C++ one. Not blocked, and cheaper after R172, which changes how
+      method, is the layout step's too, which names the inherited body in that interface class's
+      table. Not blocked, and cheaper after R172, which changes how
       each overridden method is named.
 
 - [ ] R174 -- The object model's code and records use words of their own where the field has settled
@@ -3227,33 +3224,25 @@ source, or not yet tried.
       method's part in dispatch is stated there alone. Below that, a class, a record or a namespace
       member another unit defines is a declared entry of the reader's own tables, holding nothing
       the reader emits, and which of them a unit depends on is read off its finished MIR by what
-      that MIR reads, never recorded while it is lowered. The methods forwarding an interface
-      class's behaviors stay, outside the members a class declares, and go with the C++ layout
-      (R255).
+      that MIR reads, never recorded while it is lowered.
 
-- [ ] R255 -- How an object is laid out for the execution backend follows the C++ ABI where
-      SystemVerilog does not ask for it, and three decisions hold each other there: an interface
-      class is a part of every object with a table of its own (a C++ virtual base), a class handle
-      carries the view of the class it is held as beside the object's identity, and the runtime
-      drives an object through C++ virtual functions of a library class every generated class
-      extends, so generated code must match the library compiler's layout of that class. The
-      language asks only that an interface class add no storage, that one reached along two paths be
-      one type (LRM 8.26.6.3), and that `$cast` between classes and interface classes test the
-      object (LRM 8.26.5). Seen on a method every class has called through an interface class
-      handle: a library entry handed an interface handle's part where it takes the object's start,
-      and a call of an interface class's virtual hook (LRM 8.26.9) realized by two library functions
-      because neither MIR nor the C++ rendering has a way to dispatch the library class's hook
-      through an interface handle. Candidates to weigh together: the object reference canonical and
-      an interface answered from class metadata the object's header names; an object pointer with an
-      interface's own table beside it, as a `dyn` reference is; MIR dispatching the library class's
-      hook on the object; the interface class carrying its two hooks as behaviors every class
-      answers. Target: language semantics -- which body a call runs, which object it is made on --
-      stated in MIR alone, and the layout, the tables and the calling convention between generated
-      code and the runtime chosen below it as one explicit boundary both backends implement; decided
-      on a matrix of hook calls through class and interface handles, interface diamonds, casts
-      between interfaces, inherited virtual and non-virtual implementations, cross-unit lineages and
-      dispatch during construction, and on measured object size, handle size, dispatch cost and
-      emitted size. Not blocked.
+- [x] R255 -- An object is laid out for the execution backend the way SystemVerilog asks rather than
+      the way the C++ ABI does. Every object starts with its class's definition, which names the
+      table of bodies its objects answer each behavior with and one table for each interface class
+      it is a value of; an interface class is no part of an object, so a class handle is the object
+      and its share of ownership, whatever class it is held as; `$cast` toward a class asks the
+      library, which walks the object's definition (LRM 8.16, 8.26.5); and the library ends, drives
+      and randomizes an object through entries its class's definition names, with no virtual
+      function of its own. MIR states which body answers each behavior of each table, an interface
+      class's behavior answered by an inherited method included, so no method is made to forward to
+      it, and an inherited method with an `output`, `inout` or `ref` argument answers one like any
+      other. Both backends lay the tables out from that: the C++ backend as structures of function
+      pointers the host compiler lays out, the execution backend by its own layout step. A `new` of
+      another unit's class calls that unit's allocating creation, so a unit creating an object reads
+      nothing of its size, and a class a unit's lowering builds for its own use is named by its
+      place among those alone, so a class another unit declares there moves no symbol of the unit's
+      own. Which hook a call naming one through an interface class handle runs (LRM 8.26.9 against
+      18.6.2) is ruled in the conformance policy as Lyra's reading.
 
 - [ ] R256 -- MIR has generic callables, but they are shaped by what the first one needed rather
       than by a generic programming model, and the step between MIR as built and MIR as the backends
@@ -3332,6 +3321,46 @@ source, or not yet tried.
       a fingerprint of the contract; references that name declaration identity, so naming need not
       finish a child before its parent; the front end's record and the prediction removed last. Not
       blocked.
+
+- [ ] R261 -- A class the lowering builds for its own use -- what realizes a scope of the design
+      hierarchy, and a node of a procedural block's storage -- is named by its place among those of
+      its unit, counted in the order the unit builds them. That keeps the name stable under anything
+      another unit declares, and it changes only when the unit's own text does, which is when the
+      unit is compiled again anyway. Once one body of a unit can be compiled again without the rest,
+      a block added early in a module would rename every such class after it. Target: name each by
+      the construct that made it, as rustc names a definition by its path and a disambiguator among
+      its siblings, so the name moves only when that construct does. Waits on a unit's bodies being
+      compiled apart.
+
+- [ ] R262 -- On the C++ path a unit that creates an object of another unit's class, or calls a
+      method of one, includes that class's whole definition, as C++ requires for both, so it is
+      compiled again whenever the class gains a property or an interface class, which the LLVM path
+      does not do since that unit's own creation makes the object. Target: a rendering where what a
+      unit compiles reads of another unit's class only what the unit uses -- the class's creation
+      and the prototypes of the methods it calls -- with the class's layout in the defining unit
+      alone. Not blocked.
+
+- [ ] R263 -- A class handle holds the object's address and a share of a count kept in storage of
+      its own beside the object, which is how the library's shared ownership keeps it, so a handle
+      carries a second pointer and every copy touches storage that is not the object's. The object
+      already starts with a header the library defines, which could hold the count itself, as a
+      Swift or a CPython object does, and a handle would then be the object's address alone. What
+      depends on the count's place: the weak references LRM 8.29 and 8.30 give, which today watch
+      the same storage, and the share a running method's object takes of itself. Not blocked.
+
+- [ ] R264 -- The C++ backend declares a type for each class's dispatch table and for each table a
+      class gives an interface class, though no IR declaration stands behind it: its members, their
+      entry-point types and the nested initializer are worked out while rendering, and the execution
+      backend lays the same tables out by its own rule in code generation. It is the one declaration
+      in the C++ output that no IR states, and a table's order, member types and initializer are
+      each settled once per backend -- the shape behind the construction, linkage and description
+      divergences between the backends. Target: a step both backends consume, after the semantic
+      lowering, that materializes each table as an ordinary record of entry points (a class's
+      holding its base's record first), a constant of it with every entry stated, and a dispatching
+      call as a read of that record; the C++ render translates them as it does any record, constant
+      and call, and a check refuses a declaration the render writes that no IR declaration states.
+      The semantic IR keeps stating only which method answers which behavior, and the entry-point
+      type of a behavior with no body is stated there once. Not blocked.
 
 ## Out of Scope
 

@@ -9,6 +9,8 @@
 
 namespace lyra::runtime {
 
+class GcObject;
+
 // The entries a unit holds as a constant array: where the array is and how
 // many entries it has, which is what a table is in a C program, a `std::span`
 // is in C++, and a slice is in Rust. The array is named as storage rather than
@@ -84,16 +86,27 @@ struct ScopeCallable {
   return nullptr;
 }
 
-// What a class of the design hierarchy tells this library about its instances
-// beyond what its type information does: its timescale, and the DPI-C exports
-// an instance answers. A DPI-C export's name is the program-global C identifier
-// the foreign side calls (LRM 35.4), so the foreign side has no type to reach
-// the body through and finds it by that name. What an instance does in each
-// phase, and how it ends, are virtual functions of its class. What a unit
-// publishes of its object has none of this, since no instance is built of it.
+// The body a class of the design hierarchy runs on an instance in one phase.
+using ScopePhase = void (*)(GcObject*);
+
+// What a class of the design hierarchy tells this library about its instances:
+// its timescale, the DPI-C exports an instance answers, and what an instance
+// does in each phase the library drives it through. A DPI-C export's name is
+// the program-global C identifier the foreign side calls (LRM 35.4), so the
+// foreign side has no type to reach the body through and finds it by that
+// name. The phases are listed in the order they run -- every route and alias
+// is bound, then every cell takes the value its declaration gives it (LRM
+// 10.5), then every process is created (LRM 9.2) -- and then what an instance
+// describes to a value dump starting (LRM 21.7.1.2); each is entered on the
+// instance, as every entry of a class's definition is. What a unit publishes of
+// its object has none of this, since no instance is built of it.
 struct ScopeInfo {
   ScopeMetadata metadata;
   ConstantSpan<ScopeCallable> exports;
+  ScopePhase resolve = nullptr;
+  ScopePhase initialize = nullptr;
+  ScopePhase create_processes = nullptr;
+  ScopePhase describe = nullptr;
 };
 
 }  // namespace lyra::runtime

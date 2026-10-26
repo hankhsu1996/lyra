@@ -1,6 +1,5 @@
 #pragma once
 
-#include <memory>
 #include <utility>
 
 #include "lyra/runtime/scope.hpp"
@@ -18,7 +17,7 @@ namespace lyra::runtime {
 // `Scope`.
 class Design {
  public:
-  explicit Design(std::unique_ptr<Scope> root) : root_(std::move(root)) {
+  explicit Design(OwnedObject<Scope> root) : root_(std::move(root)) {
   }
 
   Design(const Design&) = delete;
@@ -50,7 +49,7 @@ class Design {
     scope.ForEachChild([&fn](Scope& child) { WalkPreOrder(child, fn); });
   }
 
-  std::unique_ptr<Scope> root_;
+  OwnedObject<Scope> root_;
 };
 
 }  // namespace lyra::runtime

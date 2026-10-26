@@ -223,7 +223,7 @@ auto UnitLowerer::LowerBodies(
     }
   }
   RequireEveryClassBodyLowered();
-  ReadSignaturesOfNamedClasses();
+  ReadPendingDeclarations();
   ReadSignaturesOfNamedCovergroups();
   hir::Verify(unit_, own->construction);
   unit_.body_name = implementations.Intern(specialization_, unit_);

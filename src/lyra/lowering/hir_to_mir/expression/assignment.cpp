@@ -76,6 +76,10 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
                     [](const mir::StaticVariableRef&) { return true; },
                     [](const mir::ClassConstantRef&) { return true; },
                     [](const mir::FunctionRef&) { return true; },
+                    [](const mir::DispatchEntryRef&) { return true; },
+                    [](const mir::DestructorRef&) { return true; },
+                    [](const mir::DispatchTableRef&) { return true; },
+                    [](const mir::InterfaceTableRef&) { return true; },
                     [](const mir::ExternalObjectEntryRef&) { return true; },
                 },
                 r.target);

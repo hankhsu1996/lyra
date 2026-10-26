@@ -922,17 +922,14 @@ enum class BuiltinFn : std::uint16_t {
   // last answer -- so nothing a member holds is ever partly composed, and the
   // count never has to be known before the objects are.
   kExtendSequence,
-  // The part of the object a handle reaches it through. A body runs on that
-  // part rather than on a reference to it, and a handle refers to one without
-  // being one.
-  kViewOf,
-  // A handle to the object its operand refers to, seen as the class of the
-  // type the call is at, as clang names the two conversions of a pointer to a
-  // class. Toward a class the operand's class extends the object is always one
-  // (LRM 8.14, 8.26.5); toward any other the object answers, and the handle
-  // refers to nothing where it is not one, which is what `$cast` asks of a
-  // class handle (LRM 8.16).
-  kDerivedToBase,
+  // The object a handle names. A body runs on the object rather than on a
+  // reference to it, and a handle refers to one without being one.
+  kObjectOf,
+  // The handle its first operand is, where the object it refers to is an
+  // object of the class whose definition its second operand points at, and a
+  // handle referring to nothing otherwise: what `$cast` asks of a class handle
+  // toward a class it may not be (LRM 8.16), the class's definition answering
+  // as clang's `__dynamic_cast` reads a class's type information.
   kDynamicCast,
   // A box or a borrow of a closure made one of a closure of no known type, the
   // one the type the call is at holds, as rustc's unsizing coercion makes a
@@ -1040,8 +1037,7 @@ enum class BuiltinFn : std::uint16_t {
   kBuiltinPreRandomize,
   kBuiltinPostRandomize,
   // The two hooks the object's own class runs, which a call naming them
-  // through an interface class handle runs, since an interface class's are
-  // virtual (LRM 8.26.9).
+  // through an interface class handle runs (LRM 8.26.9, as Lyra reads it).
   kObjectPreRandomize,
   kObjectPostRandomize,
   // A call of `randomize()` (LRM 18.6, 18.7, 18.11, 18.12), as the steps its
@@ -1603,14 +1599,10 @@ enum class AnswerTold : std::uint8_t {
 // asking any of those reads the field for it, never a list of its own, so an
 // entry gains a property by saying so here and nowhere else.
 // What an entry generic over a type is told of it where the call is written:
-// the type itself; the two classes an entry seeing an object as another class
-// is told, the one the handle it is handed refers through and then the one the
-// type it is called at refers through, as a pointer conversion is between two
-// classes; or the signature a closure of no known type is called at, which is
-// what a box or a borrow of one is named by.
+// the type itself, or the signature a closure of no known type is called at,
+// which is what a box or a borrow of one is named by.
 enum class TypeArgumentNamed : std::uint8_t {
   kTheType,
-  kTheClassesSeen,
   kTheCallSignature,
 };
 

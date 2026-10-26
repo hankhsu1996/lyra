@@ -31,10 +31,11 @@ auto BodyLabel(std::optional<std::string_view> name, CallableId slot)
 
 auto DescribeClass(const CompilationUnit& unit, ClassId owner) -> std::string {
   const Class& cls = unit.GetClass(owner);
-  return cls.path.has_value() ? std::format(
-                                    "class '{}' in unit '{}'",
-                                    support::DisplayOf(*cls.path), unit.name)
-                              : std::format("a scope of unit '{}'", unit.name);
+  const support::DefPath* path = support::PathOf(cls.identity);
+  return path != nullptr ? std::format(
+                               "class '{}' in unit '{}'",
+                               support::DisplayOf(*path), unit.name)
+                         : std::format("a scope of unit '{}'", unit.name);
 }
 
 }  // namespace

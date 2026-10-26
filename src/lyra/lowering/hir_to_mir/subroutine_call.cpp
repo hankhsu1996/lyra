@@ -112,6 +112,17 @@ struct NamedCallee {
   std::optional<AmbientHandle> handle;
 };
 
+// The call of `behavior` on the object `object` points at, seen as the class
+// introducing the behavior, a class or an interface class (LRM 8.20, 8.26.5).
+auto DispatchingCallee(
+    const UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
+    const mir::VirtualSlot& behavior) -> mir::Callee {
+  const mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const mir::ExprId receiver = BuildObjectDeref(
+      unit, block, AsIntroducer(unit.types, block, object, behavior));
+  return mir::Virtual{.receiver = receiver, .slot = behavior};
+}
+
 // The callee is a slot, and which implementation runs is the receiver's dynamic
 // type to decide (LRM 8.20). The receiver rides the callee rather than the
 // argument list, so nothing leads the arguments the source wrote.
@@ -434,14 +445,8 @@ auto ResolveCallee(
               return std::unexpected(std::move(receiver_or.error()));
             }
             return ResolvedCallee{
-                .callee =
-                    mir::Virtual{
-                        .receiver = BuildObjectDeref(
-                            unit, block,
-                            AsIntroducer(
-                                unit.types, block, *receiver_or,
-                                dispatched.slot)),
-                        .slot = dispatched.slot},
+                .callee = DispatchingCallee(
+                    lowerer.Owner(), block, *receiver_or, dispatched.slot),
                 .leading = std::nullopt};
           }},
       plan.form);
@@ -790,11 +795,8 @@ auto BuildMethodCall(
     const mir::ExprId object =
         BuildObjectPointer(unit, block, block.AsValue(unit.types, *receiver));
     if (facts.target.slot.has_value()) {
-      named = mir::Virtual{
-          .receiver = BuildObjectDeref(
-              unit, block,
-              AsIntroducer(unit.types, block, object, *facts.target.slot)),
-          .slot = *facts.target.slot};
+      named =
+          DispatchingCallee(unit_lowerer, block, object, *facts.target.slot);
     } else {
       named = mir::Direct{
           .target = facts.target.direct.target,

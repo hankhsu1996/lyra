@@ -1,5 +1,6 @@
 #include "lyra/backend/cpp/render_expr.hpp"
 
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <cmath>
@@ -24,6 +25,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/class.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
@@ -290,6 +292,41 @@ void RenderReferenceExpr(
                 out, CppClassPath(view.Unit(), r.body.owner),
                 "::", CppClassCallableName(view.Unit(), owner, r.body.slot));
           },
+          // `&B::sv_entry_f`.
+          [&](const mir::DispatchEntryRef& r) {
+            const mir::Class& owner = view.Unit().GetClass(r.body.owner);
+            Write(
+                out, "&", CppClassPath(view.Unit(), r.body.owner),
+                "::", CppDispatchEntryName(view.Unit(), owner, r.body.slot));
+          },
+          // `&lyra::runtime::EndObjectOf<C>`.
+          [&](const mir::DestructorRef& r) {
+            Write(out, "&", CppObjectEnd{.of = CppClassRef(view.Unit(), r.of)});
+          },
+          // `&C::sv_methods`.
+          [&](const mir::DispatchTableRef& r) {
+            Write(
+                out, "&", CppClassPath(view.Unit(), r.of),
+                "::", CppDispatchTableName());
+          },
+          // `&C::sv_methods_0`, the class's table for the interface class.
+          [&](const mir::InterfaceTableRef& r) {
+            const std::vector<mir::InterfaceTable>& tables =
+                view.Unit().GetClass(r.of).interface_tables;
+            const auto row = std::ranges::find_if(
+                tables, [&](const mir::InterfaceTable& table) {
+                  return table.of == r.iface;
+                });
+            if (row == tables.end()) {
+              throw InternalError(
+                  "backend::cpp: a table names an interface class its class "
+                  "does not implement -- please report this as a bug");
+            }
+            Write(
+                out, "&", CppClassPath(view.Unit(), r.of), "::",
+                CppInterfaceTableName(
+                    static_cast<std::uint32_t>(row - tables.begin())));
+          },
           [&](const mir::ExternalObjectEntryRef& r) {
             Write(
                 out, CppBodyScope(r.unit_name, r.body_name),
@@ -302,8 +339,8 @@ void RenderReferenceExpr(
 // guarantees where it is a value of the type allocated
 // ([dcl.init.general]/16.6.1), whatever that type's constructors. An object's
 // initializer is its construction, whose arguments the library function
-// creating the object hands its constructor once the object exists whole:
-// `lyra::runtime::CreateObject<C>(&C::sv_construct, args)`.
+// creating the object hands its constructor once the object exists whole and
+// is of its class.
 void RenderNewExpr(
     const ScopeView& view, const mir::NewExpr& n, mir::TypeId owner,
     TargetText& out) {
@@ -331,8 +368,8 @@ void RenderNewExpr(
         "by its constructor -- please report this as a bug");
   }
   Write(
-      view, out, CppObjectCreation{.of = CppType(view.Unit(), owner)}, "<",
-      built, ">(&", built, "::", CppConstructorMemberName());
+      view, out,
+      CppObjectCreation{.of = CppType(view.Unit(), owner), .built = built});
   for (const mir::ExprId argument : construction->arguments) {
     Write(view, out, ", ", argument);
   }

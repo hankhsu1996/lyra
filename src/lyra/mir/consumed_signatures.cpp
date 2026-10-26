@@ -40,7 +40,8 @@ class Reads {
     const mir::Class& cls = unit_->GetClass(id);
     if (cls.defining_unit.has_value()) {
       Add(ConsumedClass{
-          .unit_name = *cls.defining_unit, .class_path = *cls.path});
+          .unit_name = *cls.defining_unit,
+          .class_path = *support::PathOf(cls.identity)});
     }
     for (const ClassId rested_on : RestsOnDeclaredClasses(cls)) {
       ReadClass(rested_on);
@@ -102,18 +103,18 @@ class Reads {
   void ReadBlock(const mir::Block& block) {
     for (const Expr& expr : block.exprs) {
       ReadHeld(expr.type);
-      ReadExpression(block, expr);
+      ReadExpression(expr);
     }
     for (const mir::Block& child : block.child_scopes) {
       ReadBlock(child);
     }
   }
 
-  void ReadExpression(const mir::Block& block, const Expr& expr) {
+  void ReadExpression(const Expr& expr) {
     if (const auto* access = std::get_if<FieldAccessExpr>(&expr.data)) {
       ReadField(access->field);
     } else if (const auto* call = std::get_if<CallExpr>(&expr.data)) {
-      ReadCall(block, *call);
+      ReadCall(*call);
     } else if (const auto* reference = std::get_if<ReferenceExpr>(&expr.data)) {
       ReadReference(reference->target);
     }
@@ -128,11 +129,11 @@ class Reads {
         field);
   }
 
-  void ReadCall(const mir::Block& block, const CallExpr& call) {
+  void ReadCall(const CallExpr& call) {
     std::visit(
         Overloaded{
             [&](const Direct& direct) {
-              ReadTarget(block, call, direct);
+              ReadTarget(direct);
               if (direct.part.has_value()) {
                 std::visit(
                     Overloaded{
@@ -150,8 +151,7 @@ class Reads {
         call.callee);
   }
 
-  void ReadTarget(
-      const mir::Block& block, const CallExpr& call, const Direct& direct) {
+  void ReadTarget(const Direct& direct) {
     std::visit(
         Overloaded{
             [&](const CallableTarget& target) { ReadClass(target.owner); },
@@ -163,20 +163,7 @@ class Reads {
                 Add(ConsumedNamespace{.unit_name = *defining});
               }
             },
-            // A conversion between two classes reads the lineage of both
-            // (LRM 8.15, 8.16).
-            [&](const support::BuiltinFn& entry) {
-              if (entry != support::BuiltinFn::kDerivedToBase &&
-                  entry != support::BuiltinFn::kDynamicCast) {
-                return;
-              }
-              for (const TypeId type_argument : direct.type_arguments) {
-                ReadHandled(type_argument);
-              }
-              for (const ExprId argument : call.arguments) {
-                ReadHandled(block.exprs.Get(argument).type);
-              }
-            },
+            [](const support::BuiltinFn&) {},
             [&](const ConstructorTarget& target) { ReadClass(target.cls); },
             [&](const RecordMethodTarget& target) {
               ReadRecord(target.record);
@@ -193,19 +180,14 @@ class Reads {
         direct.target);
   }
 
-  // The class a handle of `type` reaches, read whole.
-  void ReadHandled(TypeId type) {
-    if (const auto* handle = unit_->types.Get(type).As<ManagedRefType>()) {
-      ReadValue(handle->pointee);
-    }
-  }
-
   void ReadReference(const ReferenceTarget& target) {
     std::visit(
         Overloaded{
             [](const LocalRef&) {},
-            [&](const DefinitionRef& definition) { ReadClass(definition.of); },
-            [](const EnumTableRef&) {}, [](const IntegralConstantRef&) {},
+            // A definition's address is a symbol its class's identity names,
+            // as a handle's type is; it reads nothing the class declares.
+            [](const DefinitionRef&) {}, [](const EnumTableRef&) {},
+            [](const IntegralConstantRef&) {},
             [&](const StaticPropertyRef& property) {
               ReadClass(property.owner);
             },
@@ -219,6 +201,13 @@ class Reads {
             [](const ClassConstantRef&) {},
             [&](const FunctionRef& function) {
               ReadClass(function.body.owner);
+            },
+            [&](const DispatchEntryRef& entry) { ReadClass(entry.body.owner); },
+            [&](const DestructorRef& end) { ReadClass(end.of); },
+            [&](const DispatchTableRef& table) { ReadClass(table.of); },
+            [&](const InterfaceTableRef& table) {
+              ReadClass(table.of);
+              ReadClass(table.iface);
             },
             [&](const ExternalObjectEntryRef& entry) {
               Add(ConsumedObjectEntry{

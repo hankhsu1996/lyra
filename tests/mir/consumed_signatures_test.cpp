@@ -23,6 +23,7 @@
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
@@ -47,13 +48,13 @@ auto UnitReading(const Read& read) -> CompilationUnit {
   const ClassId derived = unit.DeclareClass();
   Class base_class;
   base_class.defining_unit = "P";
-  base_class.path = PathOf("Base");
+  base_class.identity = PathOf("Base");
   base_class.base = ClassRef{ManagedObjectRootRef{}};
   base_class.fields.Add(FieldDecl{.type = unit.builtins.int_type});
   unit.DefineClass(base, std::move(base_class));
   Class derived_class;
   derived_class.defining_unit = "P";
-  derived_class.path = PathOf("Derived");
+  derived_class.identity = PathOf("Derived");
   derived_class.base = ClassRef{base};
   unit.DefineClass(derived, std::move(derived_class));
   CallableCode code = CallableCode::Defined();
@@ -236,30 +237,41 @@ TEST(ConsumedSignaturesTest, WhatIsHeldOrNamedOfAnotherUnitIsRead) {
           ConsumedObjectEntry{.unit_name = "M", .body_name = "M"}}));
 }
 
-// A conversion between two class handles reads both classes, whatever the
-// body otherwise reaches of them (LRM 8.15, 8.16).
-TEST(ConsumedSignaturesTest, AConversionBetweenClassesReadsBoth) {
-  for (const support::BuiltinFn conversion :
-       {support::BuiltinFn::kDerivedToBase, support::BuiltinFn::kDynamicCast}) {
-    const CompilationUnit converting = UnitReading([conversion](
-                                                       CompilationUnit& u,
-                                                       Block& body,
-                                                       ClassId derived) {
-      const TypeId base_handle = HandleTo(u, ClassId{.value = 0});
-      const ExprId handle = body.exprs.Add(
-          Expr{.data = NullLiteral{}, .type = HandleTo(u, derived)});
-      body.AppendStmt(
-          ExprStmt{
-              .expr = body.exprs.Add(MakeCallExpr(
-                  Direct{.target = conversion, .type_arguments = {base_handle}},
-                  {handle}, base_handle))});
-    });
-    const std::vector<std::string> read =
-        Classes(ConsumedSignaturesOf(converting));
-    EXPECT_EQ(read.size(), 2U);
-    EXPECT_NE(std::ranges::find(read, "P::Derived"), read.end());
-    EXPECT_NE(std::ranges::find(read, "P::Base"), read.end());
-  }
+// A handle seen as another class's is the same handle (LRM 8.15), and a `$cast`
+// asks the object whether it is of the class it names (LRM 8.16) by that
+// class's definition alone; neither reads anything the classes declare.
+TEST(ConsumedSignaturesTest, AConversionBetweenClassesReadsNeither) {
+  const CompilationUnit seen_as =
+      UnitReading([](CompilationUnit& u, Block& body, ClassId derived) {
+        const ExprId handle = body.exprs.Add(
+            Expr{.data = NullLiteral{}, .type = HandleTo(u, derived)});
+        body.AppendStmt(
+            ExprStmt{
+                .expr = body.exprs.Add(
+                    Expr{
+                        .data = CastExpr{.operand = handle},
+                        .type = HandleTo(u, ClassId{.value = 0})})});
+      });
+  EXPECT_TRUE(Classes(ConsumedSignaturesOf(seen_as)).empty());
+
+  const CompilationUnit cast = UnitReading([](CompilationUnit& u, Block& body,
+                                              ClassId derived) {
+    const TypeId base_handle = HandleTo(u, ClassId{.value = 0});
+    const ExprId handle =
+        body.exprs.Add(Expr{.data = NullLiteral{}, .type = base_handle});
+    const ExprId definition = body.exprs.Add(MakeAddressOfExpr(
+        body.exprs.Add(
+            Expr{
+                .data = ReferenceExpr{.target = DefinitionRef{.of = derived}},
+                .type = ClassDefinitionType(u.types)}),
+        ClassDefinitionPointer(u.types)));
+    body.AppendStmt(
+        ExprStmt{
+            .expr = body.exprs.Add(MakeCallExpr(
+                Direct{.target = support::BuiltinFn::kDynamicCast},
+                {handle, definition}, HandleTo(u, derived)))});
+  });
+  EXPECT_TRUE(Classes(ConsumedSignaturesOf(cast)).empty());
 }
 
 // A subroutine of another unit's namespace is read where a body names it, and

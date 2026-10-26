@@ -108,6 +108,8 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
               case mir::RuntimeLibraryKind::kObjectDefinition:
               case mir::RuntimeLibraryKind::kScopeInfo:
               case mir::RuntimeLibraryKind::kScopeCallable:
+              case mir::RuntimeLibraryKind::kClassObjectInfo:
+              case mir::RuntimeLibraryKind::kInterfaceRow:
               case mir::RuntimeLibraryKind::kConstructionTable:
               case mir::RuntimeLibraryKind::kInstantiation:
               case mir::RuntimeLibraryKind::kGeneratePlaces:

@@ -86,13 +86,15 @@ struct UnaryExpr {
 // every target writes it in its own conversion syntax. A destination whose
 // representation differs is a reshape, which is a library call that lands at
 // that type on its own; reading an SV value out as a machine scalar is a call
-// for the same reason; and so is a handle seen as another class's, which only
-// the object's layout answers. So the pairs that arrive are a value read as the
-// machine boolean a condition tests (LRM 12.4), a machine integer at another, a
-// pointer at another pointee and a code address at the signature its
-// definition was generated with, an integral value at a type laying it out
-// alike -- an enumeration and its base -- and a reference at the same referent
-// read-only; the verification refuses every other.
+// for the same reason; and so is asking whether a handle's object is of a
+// class, which only the object answers. So the pairs that arrive are a value
+// read as the machine boolean a condition tests (LRM 12.4), a machine integer
+// at another, a pointer at another pointee and a code address at the signature
+// its definition was generated with, a class handle as one of another class --
+// the same object whatever class it is seen as (LRM 8.15, 8.26.5) -- an
+// integral value at a type laying it out alike -- an enumeration and its base
+// -- and a reference at the same referent read-only; the verification refuses
+// every other.
 struct CastExpr {
   ExprId operand;
 };
@@ -392,10 +394,14 @@ struct Indirect {
 };
 
 // A virtually-dispatched call: the receiver -- the object, as a direct call's
-// is -- is evaluated once and then the implementation of the named slot on
-// that object's dynamic type runs (LRM 8.20). The receiver rides here, distinct
-// from user-supplied `CallExpr::arguments`, so the call carries exactly the
-// arguments the SV source wrote and the receiver is not conflated with them.
+// is -- is evaluated once and then the body the object's class gives the
+// behavior `slot` runs (LRM 8.20). A behavior an interface class introduces is
+// one too, which the object's class answers for that interface class (LRM
+// 8.26.5); where that body is found is the realization's, as clang's one
+// member call becomes a table load only in code generation. The receiver rides
+// here, distinct from user-supplied `CallExpr::arguments`, so the call carries
+// exactly the arguments the SV source wrote and the receiver is not conflated
+// with them.
 struct Virtual {
   ExprId receiver;
   VirtualSlot slot;
@@ -694,6 +700,41 @@ struct ExternalObjectEntryRef {
   std::optional<BlockBodyOrdinal> block;
 };
 
+// The entry of the method `body`: the body, stated by the class defining the
+// method, that is handed the object as the root every object is and calls the
+// method on it, which is how the runtime library and a dispatching call reach a
+// method of a class they do not know. `body` is a method of a class some unit
+// declares, whichever unit defines it, so an entry is named by the method it
+// enters. `Expr::type` is the entry's machine function type.
+struct DispatchEntryRef {
+  CallableTarget body;
+};
+
+// What ends an object of the class `of`: each member, the class's own and then
+// those of what it extends, and then the storage the object was created in, as
+// a deleting destructor does. `of` is a class some unit declares that is no
+// interface class, whichever unit defines it. `Expr::type` is its machine
+// function type, taking the object as the root every object is.
+struct DestructorRef {
+  ClassId of;
+};
+
+// The table of the bodies an object of the class `of` runs for the behaviors
+// it dispatches on (LRM 8.20), and the table of those answering what the
+// interface class `iface` declares itself on an object of `of` (LRM 8.26.5),
+// each as the address the class's definition holds. Which entry fills each
+// place is what `of` states of its dispatch; how a table is laid out is the
+// target's to decide, so neither is a value this layer builds. `of` is a class
+// this unit defines. `Expr::type` is a pointer to read-only data of no type.
+struct DispatchTableRef {
+  ClassId of;
+};
+
+struct InterfaceTableRef {
+  ClassId of;
+  ClassId iface;
+};
+
 // Which declared thing a reference names. The alternatives differ in the table
 // that resolves the name -- a body's own bindings, a class's arena, another
 // unit's signature, the constants this unit holds -- and that is the
@@ -702,6 +743,7 @@ struct ExternalObjectEntryRef {
 using ReferenceTarget = std::variant<
     LocalRef, DefinitionRef, EnumTableRef, IntegralConstantRef,
     StaticPropertyRef, StaticVariableRef, ClassConstantRef, FunctionRef,
+    DispatchEntryRef, DestructorRef, DispatchTableRef, InterfaceTableRef,
     ExternalObjectEntryRef>;
 
 // Names a declared thing. Reading it loads what the name reaches, assigning to

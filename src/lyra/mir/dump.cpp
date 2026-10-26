@@ -295,7 +295,7 @@ class MirDumper {
             [this](const ClassId& id) -> std::string {
               const Class& cls = unit_->GetClass(id);
               return std::format(
-                  "Class[#{}]{}{}", id.value, FormatPath(cls.path),
+                  "Class[#{}]{}{}", id.value, FormatClassName(cls.identity),
                   cls.defining_unit.has_value()
                       ? std::format(" of {}", *cls.defining_unit)
                       : std::string{});
@@ -478,6 +478,10 @@ class MirDumper {
                   return "RuntimeLibrary(ScopeInfo)";
                 case RuntimeLibraryKind::kScopeCallable:
                   return "RuntimeLibrary(ScopeCallable)";
+                case RuntimeLibraryKind::kClassObjectInfo:
+                  return "RuntimeLibrary(ClassObjectInfo)";
+                case RuntimeLibraryKind::kInterfaceRow:
+                  return "RuntimeLibrary(InterfaceRow)";
                 case RuntimeLibraryKind::kDumpEntry:
                   return "RuntimeLibrary(DumpEntry)";
                 case RuntimeLibraryKind::kDumpBlock:
@@ -658,11 +662,6 @@ class MirDumper {
             [this](const OverridesVirtualSlot& o) -> std::string {
               return std::format(
                   "OverridesSlot[{}]", FormatVirtualSlot(o.overridden));
-            },
-            [](const OverridesLibraryVirtual& l) -> std::string {
-              return std::format(
-                  "OverridesLibraryVirtual[{}]",
-                  support::LibraryVirtualName(l.function));
             }},
         role);
   }
@@ -802,6 +801,23 @@ class MirDumper {
               return std::format(
                   "FunctionRef owner=Class[{}] body=Callable[{}]",
                   r.body.owner.value, r.body.slot.value);
+            },
+            [](const DispatchEntryRef& r) -> std::string {
+              return std::format(
+                  "DispatchEntryRef owner=Class[{}] body=Callable[{}]",
+                  r.body.owner.value, r.body.slot.value);
+            },
+            [this](const DestructorRef& r) -> std::string {
+              return std::format("DestructorRef of={}", FormatClassRef(r.of));
+            },
+            [this](const DispatchTableRef& r) -> std::string {
+              return std::format(
+                  "DispatchTableRef of={}", FormatClassRef(r.of));
+            },
+            [this](const InterfaceTableRef& r) -> std::string {
+              return std::format(
+                  "InterfaceTableRef of={} iface={}", FormatClassRef(r.of),
+                  FormatClassRef(r.iface));
             },
             [](const ExternalObjectEntryRef& r) -> std::string {
               return std::format(
@@ -971,10 +987,16 @@ class MirDumper {
     return name.has_value() ? std::format(" \"{}\"", *name) : std::string{};
   }
 
-  static auto FormatPath(const std::optional<support::DefPath>& path)
-      -> std::string {
-    return path.has_value() ? std::format(" \"{}\"", support::DisplayOf(*path))
-                            : std::string{};
+  static auto FormatClassName(const support::ClassName& name) -> std::string {
+    return std::visit(
+        Overloaded{
+            [](const support::DefPath& path) {
+              return std::format(" \"{}\"", support::DisplayOf(path));
+            },
+            [](const support::UnnamedClass& unnamed) {
+              return std::format(" unnamed {}", unnamed.disambiguator);
+            }},
+        name);
   }
 
   // A constant is an expression tree with no statements, so what is dumped
@@ -990,7 +1012,8 @@ class MirDumper {
     dumped_.insert(id.value);
     scope_stack_.push_back(&s);
     const std::string kind = s.is_interface_class ? "InterfaceClass" : "Class";
-    Line(std::format("{}{} (#{})", kind, FormatPath(s.path), id.value));
+    Line(
+        std::format("{}{} (#{})", kind, FormatClassName(s.identity), id.value));
     Indent();
 
     if (s.base.has_value()) {
@@ -1008,6 +1031,39 @@ class MirDumper {
               answered.answered_by.has_value()
                   ? FormatVirtualSlot(*answered.answered_by)
                   : std::string{"nothing"}));
+    }
+    const auto answer = [](const std::optional<CallableTarget>& body) {
+      return body.has_value() ? std::format(
+                                    "Class[{}].Callable[{}]", body->owner.value,
+                                    body->slot.value)
+                              : std::string{"nothing"};
+    };
+    for (const MethodEntry& entry : s.entries) {
+      Line(
+          std::format(
+              "Entry: Callable[{}] <- Callable[{}]", entry.method.value,
+              entry.entry.value));
+    }
+    for (const LibraryCallbackBody& answered : s.library_callbacks) {
+      Line(
+          std::format(
+              "Callback: {} <- Callable[{}]",
+              support::LibraryCallbackName(answered.callback),
+              answered.body.value));
+    }
+    for (const DispatchedBehavior& dispatched : s.dispatch) {
+      Line(
+          std::format(
+              "Dispatch: {} <- {}", FormatVirtualSlot(dispatched.behavior),
+              answer(dispatched.answered_by)));
+    }
+    for (const InterfaceTable& table : s.interface_tables) {
+      for (const std::optional<CallableTarget>& body : table.answered_by) {
+        Line(
+            std::format(
+                "InterfaceTable {}: {}", FormatClassRef(table.of),
+                answer(body)));
+      }
     }
     for (const ClassConstantId constant : s.constants.Ids()) {
       DumpValueBuild(

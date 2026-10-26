@@ -1,8 +1,7 @@
 #include "lyra/runtime/class_definition.hpp"
 
-#include <memory>
-
 #include "lyra/base/internal_error.hpp"
+#include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
 
 namespace lyra::runtime {
@@ -19,10 +18,57 @@ auto RequireDefinition(const ObjectDefinition* definition)
   return definition;
 }
 
+// The row of `iface` among those the class `object_class` defines lists, or
+// none where it does not implement it. A class implements a handful at most,
+// so a search is what finds one, as Swift's runtime searches a type's
+// conformances.
+auto RowOf(const ObjectDefinition* object_class, const ObjectDefinition* iface)
+    -> const InterfaceRow* {
+  for (const InterfaceRow& row : object_class->interfaces.Entries()) {
+    if (row.of == iface) {
+      return &row;
+    }
+  }
+  return nullptr;
+}
+
 }  // namespace
 
-auto AdoptObject(void* object) -> value::ObjectRef {
-  return RefToObject(static_cast<GcObject*>(object)->TakeCreatorsShare());
+auto IsOfClass(
+    const ObjectDefinition* object_class, const ObjectDefinition* cls) -> bool {
+  for (const ObjectDefinition* at = RequireDefinition(object_class);
+       at != nullptr; at = at->base) {
+    if (at == cls) {
+      return true;
+    }
+  }
+  return RowOf(object_class, cls) != nullptr;
+}
+
+auto DynamicCast(const value::ObjectRef& ref, const ObjectDefinition* cls)
+    -> value::ObjectRef {
+  const GcObject* object = ObjectRootOf(ref);
+  if (object == nullptr || !IsOfClass(object->definition, cls)) {
+    return value::ObjectRef{};
+  }
+  return ref;
+}
+
+auto InterfaceTableOf(
+    const ObjectDefinition* object_class, const ObjectDefinition* iface)
+    -> const void* {
+  const InterfaceRow* row = RowOf(RequireDefinition(object_class), iface);
+  if (row == nullptr) {
+    throw InternalError(
+        "class definition: a method of an interface class is called on an "
+        "object whose class does not implement it -- please report this as a "
+        "bug");
+  }
+  return row->table;
+}
+
+void EndObject(GcObject* object) noexcept {
+  object->definition->end(object);
 }
 
 auto RequireScopeClass(const ObjectDefinition* definition)
@@ -36,12 +82,8 @@ auto RequireScopeClass(const ObjectDefinition* definition)
   return definition;
 }
 
-auto ViewOf(const value::ObjectRef& ref) -> void* {
-  void* view = ref.View<void>();
-  if (view == nullptr) {
-    value::RaiseNullObjectHandleAccess();
-  }
-  return view;
+auto ObjectOf(const value::ObjectRef& ref) -> void* {
+  return &ref.Deref<GcObject>();
 }
 
 }  // namespace lyra::runtime

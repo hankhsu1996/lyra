@@ -60,19 +60,6 @@ auto TemplateArgumentsOf(
   return arguments;
 }
 
-// The two classes an entry seeing an object as another class is told: the one
-// the handle it is handed refers through, then the one the type it is called
-// at refers through, as `ViewAs<From, To>(r)` names both.
-auto ClassesSeen(
-    const mir::CompilationUnit& unit, mir::TypeId handed, mir::TypeId called_at)
-    -> std::vector<TemplateArgument> {
-  const auto class_of = [&](mir::TypeId handle) {
-    return CppType(
-        unit, unit.types.Get(handle).Get<mir::ManagedRefType>().pointee);
-  };
-  return {class_of(handed), class_of(called_at)};
-}
-
 // The template arguments a callee states, `<A, B>`, written after its name;
 // none writes nothing.
 struct TemplateArgumentList {
@@ -219,8 +206,7 @@ auto FactoryType(
 // Nothing about the call itself is read to decide which.
 void WriteEntryCallee(
     const ScopeView& view, const support::RuntimeEntry& entry,
-    const mir::Direct& direct, std::span<const mir::ExprId> arguments,
-    mir::TypeId result_type, CallWriter& callee) {
+    const mir::Direct& direct, mir::TypeId result_type, CallWriter& callee) {
   const mir::CompilationUnit& unit = view.Unit();
   std::visit(
       Overloaded{
@@ -231,10 +217,6 @@ void WriteEntryCallee(
                 case support::TypeArgumentNamed::kTheType:
                   return TemplateArgumentsOf(
                       unit, direct.type_arguments, direct.part);
-                case support::TypeArgumentNamed::kTheClassesSeen:
-                  return ClassesSeen(
-                      unit, view.Expr(arguments.front()).type,
-                      FactoryType(entry, direct, result_type));
                 case support::TypeArgumentNamed::kTheCallSignature:
                   return std::vector<TemplateArgument>{CppCallSignature(
                       unit, FactoryType(entry, direct, result_type))};
@@ -303,8 +285,7 @@ auto OperationTakesATypeArgument(support::ValueOperation operation) -> bool {
 // The name of a callee fixed at compile time. Each kind of function is looked
 // up in its own table, and that kind also decides where a receiver goes.
 void WriteDirectCallee(
-    const ScopeView& view, const mir::Direct& direct,
-    std::span<const mir::ExprId> arguments, mir::TypeId result_type,
+    const ScopeView& view, const mir::Direct& direct, mir::TypeId result_type,
     CallWriter& callee) {
   std::visit(
       Overloaded{
@@ -372,8 +353,7 @@ void WriteDirectCallee(
           },
           [&](const support::BuiltinFn& id) {
             WriteEntryCallee(
-                view, support::RuntimeEntryOf(id), direct, arguments,
-                result_type, callee);
+                view, support::RuntimeEntryOf(id), direct, result_type, callee);
           },
           // A base's constructor on the object being constructed,
           // `(*self).Base::sv_construct(args)`, qualified as a direct call to a
@@ -444,13 +424,25 @@ void WriteCallee(
   std::visit(
       Overloaded{
           [&](const mir::Direct& d) {
-            WriteDirectCallee(view, d, call.arguments, result_type, callee);
+            WriteDirectCallee(view, d, result_type, callee);
           },
           [&](const mir::Indirect& i) { callee.Computed(i.code); },
+          // The library's dispatch, told the introducer's table and the
+          // behavior's member, handed the object first:
+          // `lyra::runtime::Dispatch<B::sv_table, &B::sv_table::f>(obj, args)`;
+          // for a behavior an interface class introduced, the one finding
+          // that interface class's table among the object's.
           [&](const mir::Virtual& v) {
+            if (view.Unit().GetClass(v.slot.owner_class).is_interface_class) {
+              callee.Named(
+                  ReceiverPlacement::kIntoArgumentList,
+                  CppInterfaceDispatchCallee{
+                      .unit = &view.Unit(), .requirement = v.slot});
+              return;
+            }
             callee.Named(
-                ReceiverPlacement::kIntoCalleeName,
-                CppVirtualSlotName(view.Unit(), v.slot));
+                ReceiverPlacement::kIntoArgumentList,
+                CppDispatchCallee{.unit = &view.Unit(), .behavior = v.slot});
           },
           // What a construction names comes from its result type, through the
           // type mapping.
@@ -477,8 +469,8 @@ void RenderStructuralCall(
     TargetText& out) {
   CallWriter text(view, std::nullopt, out);
   WriteEntryCallee(
-      view, support::RuntimeEntryOf(fn), mir::Direct{.target = fn}, {},
-      result_type, text);
+      view, support::RuntimeEntryOf(fn), mir::Direct{.target = fn}, result_type,
+      text);
   text.Arguments({});
 }
 

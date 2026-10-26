@@ -887,6 +887,9 @@ auto UnitLowerer::PublishedCovergroupOf(
     auto library_class = ResolveClass(counted_by, span);
     if (!library_class)
       return std::unexpected(std::move(library_class.error()));
+    // The coverpoint is an object of this class, made and sampled through its
+    // methods, so the class is read.
+    ReadDeclarationLater(*library_class);
     auto value_type = InternType(ValueTypeOf(counted_by), span);
     if (!value_type) return std::unexpected(std::move(value_type.error()));
     published.coverpoints.push_back(
@@ -978,8 +981,13 @@ auto UnitLowerer::NameCoverageLibrary(diag::SourceSpan span)
     -> diag::Result<void> {
   if (unit_.coverage_library.has_value()) return {};
   const CoverageLibrary& library = Coverage();
-  const auto named = [&](const slang::ast::ClassType& cls) {
-    return ResolveClass(cls, span);
+  // A covergroup is lowered into calls of these classes' methods and objects
+  // of them, so each is read, not only named.
+  const auto named =
+      [&](const slang::ast::ClassType& cls) -> diag::Result<hir::ClassId> {
+    auto id = ResolveClass(cls, span);
+    if (id) ReadDeclarationLater(*id);
+    return id;
   };
   auto registry = named(*library.registry);
   if (!registry) return std::unexpected(std::move(registry.error()));

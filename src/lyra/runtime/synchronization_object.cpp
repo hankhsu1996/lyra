@@ -14,7 +14,11 @@
 
 namespace lyra::runtime {
 
-SynchronizationObject::SynchronizationObject() = default;
+const ObjectDefinition SynchronizationObject::kDefinition =
+    LibraryObjectDefinition<SynchronizationObject>();
+
+SynchronizationObject::SynchronizationObject() : GcObject(kDefinition) {
+}
 SynchronizationObject::~SynchronizationObject() = default;
 
 void SynchronizationObject::Trigger(RuntimeEffects& runtime) {
@@ -37,10 +41,6 @@ auto SynchronizationObject::Occurrences() const -> std::int64_t {
 
 namespace {
 
-auto ObjectOf(const value::ObjectRef& event) -> SynchronizationObject* {
-  return event.View<SynchronizationObject>();
-}
-
 void StateReached(const value::ObjectRef& event, ReadReport* report) {
   if (report != nullptr && event) {
     report->AddObject(event);
@@ -57,7 +57,7 @@ auto EventNew() -> value::ObjectRef {
 }
 
 void EventTrigger(const value::ObjectRef& event, RuntimeEffects& runtime) {
-  if (SynchronizationObject* object = ObjectOf(event)) {
+  if (SynchronizationObject* object = event.Get<SynchronizationObject>()) {
     object->Trigger(runtime);
   }
 }
@@ -66,7 +66,7 @@ auto EventTriggered(
     const value::ObjectRef& event, RuntimeEffects& runtime, ReadReport* report)
     -> value::Bit {
   StateReached(event, report);
-  const SynchronizationObject* object = ObjectOf(event);
+  const SynchronizationObject* object = event.Get<SynchronizationObject>();
   return object == nullptr ? value::Bit::FromBool(false)
                            : object->Triggered(runtime);
 }
@@ -74,12 +74,12 @@ auto EventTriggered(
 auto EventOccurrences(const value::ObjectRef& event, ReadReport* report)
     -> std::int64_t {
   StateReached(event, report);
-  const SynchronizationObject* object = ObjectOf(event);
+  const SynchronizationObject* object = event.Get<SynchronizationObject>();
   return object == nullptr ? 0 : object->Occurrences();
 }
 
 auto EventReportsTo(const value::ObjectRef& event) -> Observable* {
-  SynchronizationObject* const object = ObjectOf(event);
+  SynchronizationObject* const object = event.Get<SynchronizationObject>();
   return object == nullptr ? nullptr : &object->EventSource();
 }
 

@@ -28,12 +28,14 @@
 #include "lyra/mir/class_constant_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure_id.hpp"
+#include "lyra/mir/dispatch_table.hpp"
 #include "lyra/mir/enum_table_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_substitution.hpp"
 #include "lyra/mir/value_build.hpp"
 #include "lyra/support/def_path.hpp"
@@ -250,8 +252,7 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     auto fn = FunctionLowerer(
                   *this, *stating[i],
                   lir::TypeOperationSymbol(
-                      lir::QualifierOf(out_, std::nullopt),
-                      static_cast<std::uint32_t>(i)))
+                      out_.body_name, static_cast<std::uint32_t>(i)))
                   .Run();
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
@@ -284,8 +285,7 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     const mir::Class& declared = mir_->GetClass(id);
     if (declared.defining_unit.has_value()) {
       out_.classes.Define(
-          class_identities_.Get(id).lir_class,
-          LowerDeclaredClass(id, declared));
+          class_identities_.Get(id).lir_class, LowerDeclaredClass(declared));
       continue;
     }
     auto cls = LowerClass(id, declared);
@@ -311,11 +311,10 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
           lir::Member{.type = TranslateType(decl.fields.Get(field).type)});
     }
     closure.invoke = ClosureFunction(id);
-    auto fn = FunctionLowerer(
-                  *this, decl,
-                  lir::ClosureInvokeSymbol(
-                      lir::QualifierOf(out_, std::nullopt), id.value))
-                  .Run();
+    auto fn =
+        FunctionLowerer(
+            *this, decl, lir::ClosureInvokeSymbol(out_.body_name, id.value))
+            .Run();
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
     }
@@ -397,8 +396,7 @@ auto UnitLowerer::GenericInstanceSymbol(
     return generic_instances_.at(at->second).symbol;
   }
   std::string symbol = lir::GenericInstanceSymbol(
-      lir::QualifierOf(out_, std::nullopt),
-      static_cast<std::uint32_t>(at->second));
+      out_.body_name, static_cast<std::uint32_t>(at->second));
   mir::CallableCode code = mir::InstantiateDefinition(
       mir_->types, mir_->callables.Get(definition).code, at->first.second);
   generic_instances_.push_back(
@@ -435,8 +433,7 @@ auto UnitLowerer::UnitCallableSymbol(mir::CallableId id) const -> std::string {
           },
           [&](const mir::ReachedByPosition& r) {
             return lir::NamespaceCallableSymbol(
-                lir::QualifierOf(out_, std::nullopt),
-                lir::SymbolPart::Ordinal(r.slot.value));
+                out_.body_name, lir::SymbolPart::Ordinal(r.slot.value));
           }},
       mir::NamespaceReachOf(*mir_, id));
 }
@@ -459,21 +456,65 @@ auto UnitLowerer::BaseType(const mir::ClassRef& base) -> lir::TypeId {
       base);
 }
 
+namespace {
+
+// What the name every body of a dispatching method's behavior is reached by
+// contributes to a symbol.
+auto DispatchNamePart(const mir::DispatchName& name) -> lir::SymbolPart {
+  return std::visit(
+      Overloaded{
+          [](std::string_view source) { return lir::SymbolPart::Name(source); },
+          [](support::LibraryCallback function) {
+            return lir::SymbolPart::LibraryCallback(function);
+          }},
+      name);
+}
+
+}  // namespace
+
 auto UnitLowerer::ClassBodySymbol(
     lir::SymbolPart class_part, const mir::Class& cls, mir::CallableId id) const
     -> std::string {
-  // An override of a library class's function is named by the function it
-  // overrides, which a derived class of another unit calls it by.
-  const std::optional<mir::VirtualDispatchRole>& role =
-      cls.callables.Get(id).virtual_dispatch;
-  const auto* library = role.has_value()
-                            ? std::get_if<mir::OverridesLibraryVirtual>(&*role)
-                            : nullptr;
+  // An entry is named by the method it enters, which a class of another unit
+  // whose table holds it names it by.
+  for (const mir::MethodEntry& entry : cls.entries) {
+    if (entry.entry == id) {
+      return lir::MethodEntrySymbol(
+          ClassQualifier(cls), std::move(class_part),
+          DispatchNamePart(mir::DispatchNameOf(*mir_, cls, entry.method)));
+    }
+  }
+  // A body the library calls is named by the callback it answers, which a
+  // derived class of another unit calls it by.
+  const std::optional<support::LibraryCallback> callback =
+      cls.CallbackAnsweredBy(id);
   return lir::ClassCallableSymbol(
       ClassQualifier(cls), std::move(class_part),
-      library != nullptr
-          ? lir::SymbolPart::LibraryVirtual(library->function)
+      callback.has_value()
+          ? lir::SymbolPart::LibraryCallback(*callback)
           : lir::SymbolPartOf(mir::NameOf(cls.named_callables, id), id.value));
+}
+
+auto UnitLowerer::EntryConstant(
+    const mir::CallableTarget& method, lir::TypeId prototype)
+    -> lir::TableBody {
+  const mir::Class& owner = mir_->GetClass(method.owner);
+  if (!owner.defining_unit.has_value()) {
+    for (const mir::MethodEntry& entry : owner.entries) {
+      if (entry.method == method.slot) {
+        return lir::ConstantFunction{
+            .function = MethodFunction(method.owner, entry.entry)};
+      }
+    }
+    throw InternalError(
+        "mir_to_lir: a method of a class of this unit is reached through an "
+        "entry the class does not have -- please report this as a bug");
+  }
+  return lir::ConstantExternalFunction{
+      .symbol = lir::MethodEntrySymbol(
+          ClassQualifier(owner), ClassPart(method.owner),
+          DispatchNamePart(mir::DispatchNameOf(*mir_, owner, method.slot))),
+      .prototype = prototype};
 }
 
 auto UnitLowerer::TakeClassIdentities(const mir::Class& cls)
@@ -510,9 +551,9 @@ auto UnitLowerer::TakeClassIdentities(const mir::Class& cls)
 auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     -> diag::Result<lir::Class> {
   lir::Class out;
-  out.path = cls.path;
+  out.identity = cls.identity;
   out.linkage = ClassLinkage(*mir_, owner);
-  const std::string_view qualifier = lir::QualifierOf(out_, cls.path);
+  const std::string_view qualifier = lir::QualifierOf(out_, cls.identity);
   out.base = cls.base.transform(
       [&](const mir::ClassRef& base) { return BaseType(base); });
 
@@ -520,6 +561,8 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     out.members.push_back(
         lir::Member{.type = TranslateType(cls.fields.Get(id).type)});
   }
+  out.dispatch = LowerDispatch(cls);
+  out.interface_tables = LowerInterfaceTables(cls);
 
   const ClassIdentities& identities = class_identities_.Get(owner);
 
@@ -556,17 +599,6 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     }
     fn->linkage = out.linkage;
     out_.functions.Define(*body, *std::move(fn));
-  }
-  out.dispatch = LowerDispatch(owner, cls);
-  for (const mir::ClassId iface : cls.implements) {
-    out.implements.push_back(ClassValueType(iface));
-  }
-  for (const mir::ConformingBehavior& answered : cls.conforming) {
-    out.conforming.push_back(
-        lir::ConformingBehavior{
-            .interface_behavior = SlotRef(answered.interface_behavior),
-            .answered_by = answered.answered_by.transform(
-                [&](const mir::VirtualSlot& slot) { return SlotRef(slot); })});
   }
   const std::string definition = DefinitionSymbolOf(owner);
   for (const mir::ClassConstantId constant : cls.constants.Ids()) {
@@ -612,13 +644,7 @@ auto UnitLowerer::StaticPropertySymbolOf(
 }
 
 auto UnitLowerer::ClassPart(mir::ClassId id) const -> lir::SymbolPart {
-  const mir::Class& cls = mir_->GetClass(id);
-  if (cls.path.has_value()) {
-    return lir::SymbolPartOf(*cls.path);
-  }
-  // A class nothing outside this artifact names is spelled by its position
-  // among this unit's classes, as every backend spells it.
-  return lir::SymbolPart::Ordinal(class_identities_.Get(id).lir_class.value);
+  return lir::SymbolPartOf(mir_->GetClass(id).identity);
 }
 
 auto UnitLowerer::ClassQualifier(const mir::Class& cls) const
@@ -626,24 +652,19 @@ auto UnitLowerer::ClassQualifier(const mir::Class& cls) const
   if (cls.defining_unit.has_value()) {
     return *cls.defining_unit;
   }
-  return lir::QualifierOf(out_, cls.path);
+  return lir::QualifierOf(out_, cls.identity);
 }
 
-auto UnitLowerer::LowerDeclaredClass(mir::ClassId id, const mir::Class& cls)
-    -> lir::Class {
+auto UnitLowerer::LowerDeclaredClass(const mir::Class& cls) -> lir::Class {
   lir::Class record{
       .defining_unit = cls.defining_unit,
-      .path = cls.path,
+      .identity = cls.identity,
       .linkage = lir::Linkage::kExternal,
       .base = cls.base.transform(
           [&](const mir::ClassRef& base) { return BaseType(base); }),
       .members = {},
-      .dispatch = LowerDispatch(id, cls),
-      .implements = {},
-      .conforming = {}};
-  for (const mir::ClassId iface : cls.implements) {
-    record.implements.push_back(ClassValueType(iface));
-  }
+      .dispatch = LowerDispatch(cls),
+      .interface_tables = {}};
   record.members.reserve(cls.fields.size());
   for (const mir::FieldId field : cls.fields.Ids()) {
     record.members.push_back(
@@ -704,6 +725,29 @@ auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
                               BlockOrdinalOf(e.block)),
                           .prototype = TranslateType(expr.type)}};
                     },
+                    [&](const mir::DispatchEntryRef& e) -> lir::Constant {
+                      return std::visit(
+                          Overloaded{
+                              [](lir::ConstantFunction f) -> lir::Constant {
+                                return {f};
+                              },
+                              [](lir::ConstantExternalFunction f)
+                                  -> lir::Constant { return {std::move(f)}; }},
+                          EntryConstant(e.body, TranslateType(expr.type)));
+                    },
+                    [&](const mir::DestructorRef& d) -> lir::Constant {
+                      return {
+                          lir::ConstantDestructor{.cls = ClassValueType(d.of)}};
+                    },
+                    [&](const mir::DispatchTableRef& t) -> lir::Constant {
+                      return {lir::ConstantDispatchTable{
+                          .cls = ClassValueType(t.of)}};
+                    },
+                    [&](const mir::InterfaceTableRef& t) -> lir::Constant {
+                      return {lir::ConstantInterfaceTable{
+                          .cls = ClassValueType(t.of),
+                          .iface = ClassValueType(t.iface)}};
+                    },
                     [&](const mir::ClassConstantRef&) {
                       return not_data("a constant read whole");
                     },
@@ -747,6 +791,18 @@ auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
                     },
                     [&](const mir::FunctionRef&) {
                       return not_data("the address of a body's address");
+                    },
+                    [&](const mir::DispatchEntryRef&) {
+                      return not_data("the address of a body's address");
+                    },
+                    [&](const mir::DestructorRef&) {
+                      return not_data("the address of a body's address");
+                    },
+                    [&](const mir::DispatchTableRef&) {
+                      return not_data("the address of a table's address");
+                    },
+                    [&](const mir::InterfaceTableRef&) {
+                      return not_data("the address of a table's address");
                     },
                     [&](const mir::ExternalObjectEntryRef&) {
                       return not_data("the address of a body's address");
@@ -837,59 +893,48 @@ auto UnitLowerer::SlotRef(const mir::VirtualSlot& slot)
       .introduced_by = ClassValueType(slot.owner_class), .ordinal = *ordinal};
 }
 
-// The library's class introduced it, at the position its class declares it
-// among its own.
-auto UnitLowerer::LibraryVirtualRef(support::LibraryVirtual function) const
-    -> lir::StatedDispatchRef {
-  return lir::StatedDispatchRef{
-      .introduced_by = out_.types.Intern(
-          lir::Type{lir::RuntimeClassType{
-              .which = support::DeclaringClassOf(function)}}),
-      .ordinal = lir::DispatchOrdinal{support::OrdinalOf(function)}};
+auto UnitLowerer::TableBodyPrototype() -> lir::TypeId {
+  return out_.types.Intern(
+      lir::Type{lir::MachineFunctionType{
+          .params = {},
+          .result = out_.types.Intern(lir::Type{lir::VoidType{}})}});
 }
 
-auto UnitLowerer::LowerDispatch(mir::ClassId owner, const mir::Class& cls)
-    -> lir::ClassDispatch {
-  lir::ClassDispatch dispatch;
-  for (const mir::CallableId cid : cls.callables.Ids()) {
-    const mir::CallableDecl& callable = cls.callables.Get(cid);
-    if (!callable.virtual_dispatch.has_value()) {
-      continue;
-    }
-    // Every body of a class is emitted under the symbol it composes here, by
-    // the unit defining the class, so naming one by it is naming the function.
-    const bool has_body = std::visit(
-        Overloaded{
-            [](const mir::DefinedHere&) { return true; },
-            [](const mir::DefinedByAnotherUnit&) { return true; },
-            [](const mir::LeftAbstract&) { return false; },
-            [](const mir::DefinedByForeignCode&) { return false; }},
-        mir::FormOf(callable));
-    const std::optional<std::string> body =
-        has_body ? std::optional{ClassBodySymbol(ClassPart(owner), cls, cid)}
-                 : std::nullopt;
-    const auto override_with_body = [&](lir::StatedDispatchRef behavior) {
-      // Overriding a behavior without a body leaves it as the lineage already
-      // had it (LRM 8.21, one abstract class extending another).
-      if (body.has_value()) {
-        dispatch.overrides.push_back(
-            lir::Override{.behavior = behavior, .body = *body});
-      }
-    };
-    std::visit(
-        Overloaded{
-            [&](const mir::IntroducesVirtualSlot&) {
-              dispatch.introduces.push_back(body);
-            },
-            [&](const mir::OverridesVirtualSlot& o) {
-              override_with_body(SlotRef(o.overridden));
-            },
-            [&](const mir::OverridesLibraryVirtual& overridden) {
-              override_with_body(LibraryVirtualRef(overridden.function));
-            }},
-        *callable.virtual_dispatch);
+auto UnitLowerer::LowerDispatch(const mir::Class& cls)
+    -> std::vector<lir::DispatchedBehavior> {
+  const lir::TypeId erased = TableBodyPrototype();
+  std::vector<lir::DispatchedBehavior> dispatch;
+  dispatch.reserve(cls.dispatch.size());
+  for (const mir::DispatchedBehavior& dispatched : cls.dispatch) {
+    dispatch.push_back(
+        lir::DispatchedBehavior{
+            .behavior = SlotRef(dispatched.behavior),
+            .answered_by = dispatched.answered_by.transform(
+                [&](const mir::CallableTarget& body) {
+                  return EntryConstant(body, erased);
+                })});
   }
   return dispatch;
+}
+
+auto UnitLowerer::LowerInterfaceTables(const mir::Class& cls)
+    -> std::vector<lir::InterfaceTable> {
+  const lir::TypeId erased = TableBodyPrototype();
+  std::vector<lir::InterfaceTable> tables;
+  tables.reserve(cls.interface_tables.size());
+  for (const mir::InterfaceTable& implemented : cls.interface_tables) {
+    lir::InterfaceTable table{
+        .of = ClassValueType(implemented.of), .answered_by = {}};
+    for (const std::optional<mir::CallableTarget>& body :
+         implemented.answered_by) {
+      table.answered_by.push_back(
+          body.transform([&](const mir::CallableTarget& answered) {
+            return EntryConstant(answered, erased);
+          }));
+    }
+    tables.push_back(std::move(table));
+  }
+  return tables;
 }
 
 auto UnitLowerer::MethodFunction(

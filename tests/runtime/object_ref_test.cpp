@@ -1,19 +1,46 @@
 #include "lyra/runtime/object_ref.hpp"
 
+#include <array>
 #include <gtest/gtest.h>
+#include <memory>
 #include <tuple>
+
+#include "lyra/runtime/class_definition.hpp"
+#include "lyra/runtime/scope_info.hpp"
 
 namespace {
 
 using lyra::runtime::AdoptObject;
+using lyra::runtime::ConstantSpan;
+using lyra::runtime::Dispatch;
+using lyra::runtime::DynamicCast;
+using lyra::runtime::EndObjectOf;
 using lyra::runtime::GcObject;
+using lyra::runtime::InterfaceDispatch;
+using lyra::runtime::InterfaceRow;
+using lyra::runtime::IsOfClass;
+using lyra::runtime::ObjectDefinition;
 using lyra::runtime::SelfHandle;
-using lyra::runtime::ViewAs;
 using lyra::value::ObjectRef;
+
+// The definition of a class `T` extending `base`, whose objects end as `T`'s,
+// implementing `interfaces` and dispatching through `methods`.
+template <typename T>
+constexpr auto DefinitionOf(
+    const ObjectDefinition* base, ConstantSpan<InterfaceRow> interfaces = {},
+    const void* methods = nullptr) -> ObjectDefinition {
+  return ObjectDefinition{
+      .base = base,
+      .scope = nullptr,
+      .class_object = nullptr,
+      .end = &EndObjectOf<T>,
+      .interfaces = interfaces,
+      .methods = methods};
+}
 
 // Every object the runtime holds is one of a class extending the part every
 // object starts with, which is what holds its creator's reference until a
-// handle takes it over.
+// handle takes it over, and is ended as its class's definition says.
 struct Counted : GcObject {
   static inline int alive = 0;
   Counted() {
@@ -23,10 +50,21 @@ struct Counted : GcObject {
   auto operator=(const Counted&) -> Counted& = delete;
   Counted(Counted&&) = delete;
   auto operator=(Counted&&) -> Counted& = delete;
-  ~Counted() override {
+  ~Counted() {
     --alive;
   }
 };
+
+const ObjectDefinition kCounted = DefinitionOf<Counted>(nullptr);
+
+// A new object of `T`, of the class `definition` defines, held by the handle
+// its creation answers.
+template <typename T>
+auto Create(const ObjectDefinition& definition) -> ObjectRef {
+  auto object = std::make_unique<T>();
+  object->definition = &definition;
+  return AdoptObject(object.release());
+}
 
 class ObjectRefTest : public ::testing::Test {
  protected:
@@ -37,10 +75,21 @@ class ObjectRefTest : public ::testing::Test {
 
 TEST_F(ObjectRefTest, LastReferenceDropReleasesObject) {
   {
-    auto a = AdoptObject(new Counted());
+    auto a = Create<Counted>(kCounted);
     EXPECT_EQ(Counted::alive, 1);
   }
   EXPECT_EQ(Counted::alive, 0);
+}
+
+// An object's first word is its class's definition, which is where every
+// backend reads it, whichever bases the library gives the root.
+TEST_F(ObjectRefTest, AnObjectStartsWithItsDefinition) {
+  const auto a = Create<Counted>(kCounted);
+  const GcObject& object = a.Deref<GcObject>();
+  EXPECT_EQ(
+      static_cast<const void*>(&object.definition),
+      static_cast<const void*>(&object));
+  EXPECT_EQ(object.definition, &kCounted);
 }
 
 // An object refers to itself from its first moment, so a reference its
@@ -52,9 +101,11 @@ struct Registers : Counted {
   }
 };
 
+const ObjectDefinition kRegisters = DefinitionOf<Registers>(&kCounted);
+
 TEST_F(ObjectRefTest, ConstructorHandsOutAReferenceToItself) {
   {
-    auto a = AdoptObject(new Registers());
+    auto a = Create<Registers>(kRegisters);
     EXPECT_EQ(a, Registers::last);
     a = nullptr;
     EXPECT_EQ(Counted::alive, 1);
@@ -65,7 +116,7 @@ TEST_F(ObjectRefTest, ConstructorHandsOutAReferenceToItself) {
 
 TEST_F(ObjectRefTest, ReferenceCopyRetainsObject) {
   {
-    auto a = AdoptObject(new Counted());
+    auto a = Create<Counted>(kCounted);
     {
       auto b = a;
       EXPECT_EQ(Counted::alive, 1);
@@ -76,15 +127,15 @@ TEST_F(ObjectRefTest, ReferenceCopyRetainsObject) {
 }
 
 TEST_F(ObjectRefTest, ReassignmentReleasesPrevious) {
-  auto a = AdoptObject(new Counted());
-  a = AdoptObject(new Counted());
+  auto a = Create<Counted>(kCounted);
+  a = Create<Counted>(kCounted);
   EXPECT_EQ(Counted::alive, 1);
 }
 
 TEST_F(ObjectRefTest, IdentityByObject) {
-  auto a = AdoptObject(new Counted());
+  auto a = Create<Counted>(kCounted);
   auto b = a;
-  auto c = AdoptObject(new Counted());
+  auto c = Create<Counted>(kCounted);
   EXPECT_EQ(a, b);
   EXPECT_NE(a, c);
 }
@@ -93,7 +144,7 @@ TEST_F(ObjectRefTest, NullReferenceEquality) {
   ObjectRef a;
   ObjectRef b(nullptr);
   EXPECT_EQ(a, b);
-  auto c = AdoptObject(new Counted());
+  auto c = Create<Counted>(kCounted);
   EXPECT_NE(a, c);
   c = nullptr;
   EXPECT_EQ(c, a);
@@ -112,9 +163,11 @@ struct Node : Counted {
   ObjectRef next;
 };
 
+const ObjectDefinition kNode = DefinitionOf<Node>(&kCounted);
+
 TEST_F(ObjectRefTest, SelfReferentialAcyclicChainReclaims) {
-  auto head = AdoptObject(new Node());
-  auto tail = AdoptObject(new Node());
+  auto head = Create<Node>(kNode);
+  auto tail = Create<Node>(kNode);
   head.Deref<Node>().value = 1;
   tail.Deref<Node>().value = 2;
   head.Deref<Node>().next = tail;
@@ -128,169 +181,147 @@ TEST_F(ObjectRefTest, SelfReferentialAcyclicChainReclaims) {
   EXPECT_EQ(Counted::alive, 0);
 }
 
-// The two axes a target language is free to lay out differently: whether the
-// class conforms to a contract with its own dispatch, and whether the lineage
-// declares a virtual method beside the destructor every class of the source
-// declares virtual. Every combination must agree on which object a reference
-// names, and on what `this` answers.
-class Contract {
- public:
-  Contract() = default;
-  Contract(const Contract&) = delete;
-  auto operator=(const Contract&) -> Contract& = delete;
-  Contract(Contract&&) = delete;
-  auto operator=(Contract&&) -> Contract& = delete;
-  virtual ~Contract() = default;
-  [[nodiscard]] virtual auto Level() const -> int = 0;
-};
-
-class PlainRoot : public GcObject {
- public:
-  PlainRoot() = default;
-  PlainRoot(const PlainRoot&) = delete;
-  auto operator=(const PlainRoot&) -> PlainRoot& = delete;
-  PlainRoot(PlainRoot&&) = delete;
-  auto operator=(PlainRoot&&) -> PlainRoot& = delete;
-  virtual ~PlainRoot() = default;
-  int tag = 0;
+// A lineage of two classes, a class outside it, and two interface classes,
+// the second extending the first: `Base` implements `Named`, and `Heir` extends
+// it and implements `Ranked`, which extends `Named`, so `Named` is reached
+// along two paths and is one interface of `Heir` (LRM 8.26.6.3).
+struct Base : GcObject {
+  int tag = 1;
   [[nodiscard]] auto Myself() -> ObjectRef {
     return SelfHandle(this);
   }
 };
+struct Heir : Base {};
+struct Unrelated : GcObject {};
 
-class PlainHeir : public PlainRoot {};
+// An interface class's definition is its identity; no object is of it alone.
+constexpr ObjectDefinition kNamed{
+    .base = nullptr,
+    .scope = nullptr,
+    .class_object = nullptr,
+    .end = nullptr,
+    .interfaces = {},
+    .methods = nullptr};
+constexpr ObjectDefinition kRanked{
+    .base = nullptr,
+    .scope = nullptr,
+    .class_object = nullptr,
+    .end = nullptr,
+    .interfaces = {},
+    .methods = nullptr};
 
-class VirtualRoot : public GcObject {
- public:
-  VirtualRoot() = default;
-  VirtualRoot(const VirtualRoot&) = delete;
-  auto operator=(const VirtualRoot&) -> VirtualRoot& = delete;
-  VirtualRoot(VirtualRoot&&) = delete;
-  auto operator=(VirtualRoot&&) -> VirtualRoot& = delete;
-  virtual ~VirtualRoot() = default;
-  [[nodiscard]] virtual auto Tag() const -> int {
-    return 0;
-  }
-  [[nodiscard]] auto Myself() -> ObjectRef {
-    return SelfHandle(this);
-  }
+// The table type the class introducing a behavior declares, and the one a
+// class extending it declares over it, as generated code lays tables out: the
+// bodies of what the class it extends introduced first.
+struct BaseTable {
+  int (*level)(GcObject*, int);
+};
+struct HeirTable : BaseTable {
+  int (*depth)(GcObject*);
+};
+struct NamedTable {
+  int (*name)(GcObject*);
+};
+struct RankedTable {
+  int (*rank)(GcObject*);
 };
 
-class Conforming : public VirtualRoot, public Contract {
- public:
-  [[nodiscard]] auto Level() const -> int override {
-    return 7;
-  }
-};
-
-class PlainConforming : public PlainRoot, public Contract {
- public:
-  [[nodiscard]] auto Level() const -> int override {
-    return 9;
-  }
-};
-
-TEST_F(ObjectRefTest, IdentitySurvivesABaseView) {
-  auto heir = AdoptObject(new PlainHeir());
-  EXPECT_EQ((ViewAs<PlainHeir, PlainRoot>(heir)), heir);
-
-  auto conforming = AdoptObject(new Conforming());
-  EXPECT_EQ((ViewAs<Conforming, VirtualRoot>(conforming)), conforming);
+auto BaseLevel(GcObject*, int bias) -> int {
+  return 10 + bias;
+}
+auto HeirLevel(GcObject*, int bias) -> int {
+  return 20 + bias;
+}
+auto HeirDepth(GcObject*) -> int {
+  return 2;
+}
+auto BaseName(GcObject*) -> int {
+  return 100;
+}
+auto HeirRank(GcObject*) -> int {
+  return 300;
 }
 
-TEST_F(ObjectRefTest, IdentitySurvivesAContractView) {
-  auto conforming = AdoptObject(new Conforming());
-  EXPECT_EQ((ViewAs<Conforming, Contract>(conforming)), conforming);
+constexpr BaseTable kBaseMethods{.level = &BaseLevel};
+constexpr HeirTable kHeirMethods{{.level = &HeirLevel}, &HeirDepth};
+constexpr NamedTable kNamedMethods{.name = &BaseName};
+constexpr RankedTable kRankedMethods{.rank = &HeirRank};
 
-  auto plain = AdoptObject(new PlainConforming());
-  EXPECT_EQ((ViewAs<PlainConforming, Contract>(plain)), plain);
+constexpr std::array kBaseRows{
+    InterfaceRow{.of = &kNamed, .table = &kNamedMethods}};
+constexpr std::array kHeirRows{
+    InterfaceRow{.of = &kNamed, .table = &kNamedMethods},
+    InterfaceRow{.of = &kRanked, .table = &kRankedMethods}};
+
+const ObjectDefinition kBase = DefinitionOf<Base>(
+    nullptr, {.data = kBaseRows.data(), .size = kBaseRows.size()},
+    &kBaseMethods);
+const ObjectDefinition kHeir = DefinitionOf<Heir>(
+    &kBase, {.data = kHeirRows.data(), .size = kHeirRows.size()},
+    &kHeirMethods);
+const ObjectDefinition kUnrelated = DefinitionOf<Unrelated>(nullptr);
+
+// An object is of its own class, of every class its class extends, and of
+// every interface class its class implements, whichever class it extends
+// implements it; of nothing else (LRM 8.16, 8.26.5).
+TEST_F(ObjectRefTest, AnObjectIsOfItsLineageAndItsInterfaceClasses) {
+  EXPECT_TRUE(IsOfClass(&kHeir, &kHeir));
+  EXPECT_TRUE(IsOfClass(&kHeir, &kBase));
+  EXPECT_TRUE(IsOfClass(&kHeir, &kNamed));
+  EXPECT_TRUE(IsOfClass(&kHeir, &kRanked));
+  EXPECT_FALSE(IsOfClass(&kBase, &kHeir));
+  EXPECT_FALSE(IsOfClass(&kBase, &kRanked));
+  EXPECT_FALSE(IsOfClass(&kUnrelated, &kBase));
 }
 
-TEST_F(ObjectRefTest, AContractViewStillReachesTheContract) {
-  auto conforming = AdoptObject(new Conforming());
-  const ObjectRef as_contract = ViewAs<Conforming, Contract>(conforming);
-  EXPECT_EQ(as_contract.Deref<Contract>().Level(), 7);
-
-  auto plain = AdoptObject(new PlainConforming());
-  const ObjectRef plain_contract = ViewAs<PlainConforming, Contract>(plain);
-  EXPECT_EQ(plain_contract.Deref<Contract>().Level(), 9);
+// A `$cast` answers the handle it was handed where the object is of the class
+// asked about, and one referring to no object otherwise; a handle referring to
+// no object answers one referring to none (LRM 8.16).
+TEST_F(ObjectRefTest, ADynamicCastAsksTheObject) {
+  const ObjectRef heir = Create<Heir>(kHeir);
+  EXPECT_EQ(DynamicCast(heir, &kBase), heir);
+  EXPECT_EQ(DynamicCast(heir, &kRanked), heir);
+  const ObjectRef base = Create<Base>(kBase);
+  EXPECT_FALSE(static_cast<bool>(DynamicCast(base, &kHeir)));
+  EXPECT_FALSE(static_cast<bool>(DynamicCast(base, &kRanked)));
+  EXPECT_FALSE(static_cast<bool>(DynamicCast(ObjectRef{}, &kBase)));
 }
 
-// A view toward a class the static types do not prove the object is -- a
-// subclass, or an interface its class may or may not implement -- is the
-// object's to answer, and an object that is no such thing answers with a
-// reference to no object. A `$cast` asks by forming the view, so this is
-// reached with objects of either answer, and the answer is whether the result
-// refers to anything.
-TEST_F(ObjectRefTest, AViewTheTypesDoNotProveIsTheObjectsToAnswer) {
-  auto root = AdoptObject(new PlainRoot());
-  const ObjectRef as_heir = ViewAs<PlainRoot, PlainHeir>(root);
-  EXPECT_EQ(as_heir.View<PlainHeir>(), nullptr);
-  EXPECT_FALSE(static_cast<bool>(as_heir));
-  EXPECT_TRUE(static_cast<bool>(root));
-
-  auto plain = AdoptObject(new PlainConforming());
-  const ObjectRef as_root = ViewAs<PlainConforming, PlainRoot>(plain);
-  const ObjectRef as_heir_of_conforming = ViewAs<PlainRoot, PlainHeir>(as_root);
-  EXPECT_EQ(as_heir_of_conforming.View<PlainHeir>(), nullptr);
-
-  const ObjectRef as_contract = ViewAs<PlainRoot, Contract>(as_root);
-  EXPECT_EQ(as_contract.Deref<Contract>().Level(), 9);
-  EXPECT_EQ(as_contract, plain);
-  const ObjectRef back = ViewAs<Contract, PlainConforming>(as_contract);
-  EXPECT_EQ(&back.Deref<PlainConforming>(), &plain.Deref<PlainConforming>());
+// A call dispatching on a behavior reads the table of the object's class as
+// the introducer's table type, which a table of a class extending the
+// introducer begins with, so the object's own class's body runs (LRM 8.20).
+TEST_F(ObjectRefTest, ADispatchRunsTheBodyOfTheObjectsClass) {
+  const ObjectRef heir = Create<Heir>(kHeir);
+  const ObjectRef base = Create<Base>(kBase);
+  EXPECT_EQ(
+      (Dispatch<BaseTable, &BaseTable::level>(heir.Deref<GcObject>(), 1)), 21);
+  EXPECT_EQ(
+      (Dispatch<BaseTable, &BaseTable::level>(base.Deref<GcObject>(), 1)), 11);
+  EXPECT_EQ(
+      (Dispatch<HeirTable, &HeirTable::depth>(heir.Deref<GcObject>())), 2);
 }
 
+// A call through an interface class's handle reads the table the object's
+// class gives that interface class, found among those its definition lists,
+// whichever class of its lineage implements it (LRM 8.26.5).
+TEST_F(ObjectRefTest, AnInterfaceCallRunsTheTableTheObjectsClassGives) {
+  const ObjectRef heir = Create<Heir>(kHeir);
+  EXPECT_EQ(
+      (InterfaceDispatch<NamedTable, &NamedTable::name, &kNamed>(
+          heir.Deref<GcObject>())),
+      100);
+  EXPECT_EQ(
+      (InterfaceDispatch<RankedTable, &RankedTable::rank, &kRanked>(
+          heir.Deref<GcObject>())),
+      300);
+}
+
+// `this` names the object its body runs on, the same object every handle to
+// it names, whichever class of its lineage the body is of (LRM 8.11).
 TEST_F(ObjectRefTest, SelfHandleNamesTheObjectItsBodyRunsOn) {
-  auto heir = AdoptObject(new PlainHeir());
-  EXPECT_EQ(heir.Deref<PlainHeir>().Myself(), heir);
-
-  auto conforming = AdoptObject(new Conforming());
-  EXPECT_EQ(conforming.Deref<Conforming>().Myself(), conforming);
-
-  // The one that fails if identity is taken from a base subobject: the object
-  // conforms to a contract, so its common root is displaced from the object's
-  // own address.
-  auto plain = AdoptObject(new PlainConforming());
-  EXPECT_EQ(plain.Deref<PlainConforming>().Myself(), plain);
-}
-
-TEST_F(ObjectRefTest, SelfHandleAgreesWithAViewOfTheSameObject) {
-  auto plain = AdoptObject(new PlainConforming());
-  const ObjectRef as_contract = ViewAs<PlainConforming, Contract>(plain);
-  EXPECT_EQ(plain.Deref<PlainConforming>().Myself(), as_contract);
-}
-
-// An interface class is a virtual base, so one reached along two paths is one
-// part of the object (LRM 8.26.6.3): a view of it formed along either path is
-// the same part, and either names the same object.
-class Refined : public virtual Contract {
- public:
-  [[nodiscard]] virtual auto Depth() const -> int = 0;
-};
-
-class Diamond : public VirtualRoot,
-                public virtual Contract,
-                public virtual Refined {
- public:
-  [[nodiscard]] auto Level() const -> int override {
-    return 11;
-  }
-  [[nodiscard]] auto Depth() const -> int override {
-    return 2;
-  }
-};
-
-TEST_F(ObjectRefTest, AnInterfaceReachedAlongTwoPathsIsOnePart) {
-  auto diamond = AdoptObject(new Diamond());
-  const ObjectRef direct = ViewAs<Diamond, Contract>(diamond);
-  const ObjectRef as_refined = ViewAs<Diamond, Refined>(diamond);
-  const ObjectRef through = ViewAs<Refined, Contract>(as_refined);
-  EXPECT_EQ(direct.View<Contract>(), through.View<Contract>());
-  EXPECT_EQ(through, diamond);
-  EXPECT_EQ(through.Deref<Contract>().Level(), 11);
-  EXPECT_EQ(as_refined.Deref<Refined>().Depth(), 2);
-  EXPECT_EQ(diamond.Deref<Diamond>().Myself(), through);
+  const ObjectRef heir = Create<Heir>(kHeir);
+  EXPECT_EQ(heir.Deref<Heir>().Myself(), heir);
+  EXPECT_EQ(heir.Deref<Base>().Myself(), heir);
 }
 
 }  // namespace

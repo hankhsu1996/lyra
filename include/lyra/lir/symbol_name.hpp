@@ -9,6 +9,7 @@
 #include "lyra/lir/closure_id.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/support/class_name.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
 #include "lyra/support/value_operation.hpp"
@@ -25,6 +26,7 @@ enum class SymbolCategory : std::uint8_t {
   kClosureDefinition,
   kConstructor,
   kClassCallable,
+  kMethodEntry,
   kRecordMethod,
   kNamespaceCallable,
   kNamespaceStorageInstall,
@@ -36,26 +38,25 @@ enum class SymbolCategory : std::uint8_t {
   kTypeOperation,
   kGenericInstance,
   kBaseObjectCreation,
-  kCompleteObjectCreation,
+  kAllocatingCreation,
   kBaseObjectDestructor,
   kCompleteObjectDestructor,
   kDeletingDestructor,
   kClassConstant,
   kDispatchTable,
-  kTypeInfo,
 };
 
 // One component of a symbol: a name the source wrote, an ordinal the compiler
-// counted, a function of the runtime library's classes a class overrides, or
+// counted, a callback of the runtime library a class answers, or
 // the steps of the path that tells a declaration from the others of its unit.
 // Each self-delimits and says which kind it is, so a sequence of them composes
 // to one string no other sequence composes to: a block and a class carrying one
 // label are different parts, and a method the source named after a library
-// function is not the override of it.
+// callback is not the body answering it.
 struct SymbolPart {
   static auto Name(std::string_view name) -> SymbolPart;
   static auto Ordinal(std::uint32_t value) -> SymbolPart;
-  static auto LibraryVirtual(support::LibraryVirtual function) -> SymbolPart;
+  static auto LibraryCallback(support::LibraryCallback function) -> SymbolPart;
 
   std::string encoded;
 };
@@ -74,11 +75,9 @@ auto SymbolPartOf(std::optional<std::string_view> name, std::uint32_t ordinal)
 // instance of its unit is, which has no step, contributes nothing.
 auto SymbolPartOf(const support::DefPath& path) -> SymbolPart;
 
-// The same for a class of this unit, which has a path where another unit names
-// it and the position it sits at where none does.
-auto SymbolPartOf(
-    const std::optional<support::DefPath>& path, std::uint32_t ordinal)
-    -> SymbolPart;
+// The same for a class, which has a path where another unit names it and its
+// place among the classes its unit built for its own use where none does.
+auto SymbolPartOf(const support::ClassName& name) -> SymbolPart;
 
 // The symbol a declaration is linked under, program-wide.
 //
@@ -106,6 +105,12 @@ auto ClassDefinitionSymbol(std::string_view unit_name, SymbolPart cls)
     -> std::string;
 auto ClassCallableSymbol(
     std::string_view unit_name, SymbolPart cls, SymbolPart callable)
+    -> std::string;
+// The entry of a class's method, through which an object whose class the caller
+// does not know is entered: named by the method it enters, as every unit that
+// names it names the method.
+auto MethodEntrySymbol(
+    std::string_view unit_name, SymbolPart cls, SymbolPart method)
     -> std::string;
 // A record's method (LRM 7.2, 7.3), under the record the unit declares. The
 // operation it answers is its name, since a record has one method for each.
@@ -164,12 +169,11 @@ auto TypeOperationSymbol(std::string_view unit_name, std::uint32_t ordinal)
 auto GenericInstanceSymbol(std::string_view unit_name, std::uint32_t ordinal)
     -> std::string;
 
-// The name what `unit` defines is qualified by: the unit's own for a
-// declaration another unit names, `path` being how it is named, which every
-// body of the unit states alike; the body's for what was built for one body's
-// own use, which no other body states and whose position is its only identity.
-auto QualifierOf(
-    const CompilationUnit& unit, const std::optional<support::DefPath>& path)
+// The name the class `name` of `unit` is qualified by: the unit's own for a
+// class another unit names, which every body of the unit states alike; the
+// body's for a class built for one body's own use, which no other body states
+// and whose position is its only identity.
+auto QualifierOf(const CompilationUnit& unit, const support::ClassName& name)
     -> std::string_view;
 
 // The symbol `type`'s definition is linked under, or nothing where the type
@@ -187,23 +191,23 @@ auto DefinitionSymbol(const CompilationUnit& unit, ClassId id) -> std::string;
 auto DefinitionSymbol(const CompilationUnit& unit, ClosureId id) -> std::string;
 
 // The bodies that create a value of a declaration, running none of the
-// design's code, in the two the Itanium C++ ABI gives its constructors: the
-// base object creation brings into existence the part the declaration
-// declares and every part it extends, and the complete object creation does
-// that and then gives the value the declaration's tables, once. A value is
-// created by its own class's complete object creation before any constructor
-// runs on it, and a declaration extending one of another unit names its
-// base's base object creation this way.
-enum class Creation : std::uint8_t { kBaseObject, kCompleteObject };
+// design's code: the base object creation brings into existence, in storage
+// it is handed, the part the declaration declares and every part it extends;
+// the allocating creation takes the storage, does that, and then gives the
+// value its class, once -- the Itanium ABI's base object and complete object
+// allocating constructors. A value is created by its own class's allocating
+// creation before any constructor runs on it, and a declaration extending one
+// of another unit names its base's base object creation this way.
+enum class Creation : std::uint8_t { kBaseObject, kAllocating };
 
 auto CreationSymbol(std::string_view definition, Creation which) -> std::string;
 
-// The destructors the Itanium C++ ABI gives a class with a virtual destructor:
-// the base object destructor (D2) ends what the declaration declares and then
-// what it extends; the complete object destructor (D1) ends a whole value; the
-// deleting destructor (D0) also gives the value's storage back. A declaration
-// extending one of another unit names its base's base object destructor this
-// way.
+// The ends a C++ compiler gives a destructor: the base object destructor ends
+// what the declaration declares and then what it extends; the complete object
+// destructor ends a whole value; the deleting destructor also gives the
+// value's storage back, which is how a class's definition says its objects
+// end. A declaration extending one of another unit names its base's base
+// object destructor this way.
 enum class Destructor : std::uint8_t {
   kBaseObject,
   kCompleteObject,
@@ -219,10 +223,11 @@ auto ClassConstantSymbol(std::string_view definition, std::uint32_t ordinal)
     -> std::string;
 
 // The symbols of the table a value of a class dispatches through and of the
-// description of the class a cast reads, composed over the symbol its
-// definition is linked under the same way. A class extending one of another
-// unit names its base's description this way.
+// one it gives an interface class it implements, composed over the symbols
+// the definitions are linked under.
 auto DispatchTableSymbol(std::string_view definition) -> std::string;
-auto TypeInfoSymbol(std::string_view definition) -> std::string;
+auto InterfaceTableSymbol(
+    std::string_view definition, std::string_view iface_definition)
+    -> std::string;
 
 }  // namespace lyra::lir
