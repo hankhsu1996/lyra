@@ -25,12 +25,7 @@ loop_of_clocked_procedures_sized_by_index:
   - mir.types
 loop_reaching_its_neighbour:
   - bytes
-  - mir.callables
   - mir.class constants
-  - mir.classes
-  - mir.constructors
-  - mir.fields
-  - mir.types
 loop_sizing_by_index:
   - mir.callables
   - mir.class constants

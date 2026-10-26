@@ -37,13 +37,14 @@ struct InstantiationIndex {
 struct PlacedBlock;
 
 // The places of one generate, in the order its table lists them, each with
-// the block an object builds there, absent where it builds none -- an
-// alternative it did not select -- and whether each block is handed the index
+// the block an object builds there, and whether each block is handed the index
 // its loop stood at (LRM 27.4), the one value a block is ever handed, since a
 // block has no parameter ports (Syntax 27-1).
 struct GeneratePlaces {
   bool handed_an_index = false;
-  std::vector<std::optional<PlacedBlock>> places;
+  std::vector<PlacedBlock> places;
+
+  auto operator==(const GeneratePlaces&) const -> bool = default;
 };
 
 // What one object of a scope makes at each instantiation the scope declares
@@ -57,6 +58,8 @@ struct GeneratePlaces {
 // assembly needs: whether each generate hands its blocks an index.
 class ScopeInstantiations {
  public:
+  // What a place no block stands at makes: nothing.
+  ScopeInstantiations() = default;
   ScopeInstantiations(
       const CompilationUnit& unit, const StructuralScope& scope,
       const ScopeConstruction& construction);
@@ -71,16 +74,21 @@ class ScopeInstantiations {
     return generates_;
   }
 
+  auto operator==(const ScopeInstantiations&) const -> bool = default;
+
  private:
   std::vector<SpecializationRef> instantiated_;
   std::vector<GeneratePlaces> generates_;
 };
 
-// The block one place builds: its body among the unit's, and what that block
-// makes in turn.
+// The block one place builds: its body among the unit's, absent where the
+// object builds none there -- an alternative it did not select -- and what
+// that block makes in turn, nothing where there is none.
 struct PlacedBlock {
-  BlockBodyId body;
+  std::optional<BlockBodyId> body;
   ScopeInstantiations made;
+
+  auto operator==(const PlacedBlock&) const -> bool = default;
 };
 
 }  // namespace lyra::hir

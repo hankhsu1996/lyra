@@ -985,14 +985,10 @@ auto UnitNamingPolicy::BlockStepOf(const slang::ast::GenerateBlockSymbol& block)
   //
   // What it declares can name the block back -- an instance it holds whose
   // name lands in it (LRM 23.8) -- and asked again while being worked out,
-  // the block answers with its label alone, as a name in progress does. That
-  // answer is never kept, and neither is any name worked out from it.
+  // the block answers with its label alone, as a name in progress does, and
+  // that answer is never kept.
   const bool asked_again = !blocks_in_progress_.insert(&block).second;
-  if (asked_again) {
-    for (NameInProgress& asking : names_in_progress_) {
-      asking.met_nothing_outside = false;
-    }
-  } else {
+  if (!asked_again) {
     if (!DeclaresAClass(block)) {
       CollectDeclarations(block, block, "", *this, key.inputs);
     } else if (

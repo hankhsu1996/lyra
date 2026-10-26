@@ -173,8 +173,8 @@ void TakeEachUnitMade(
     take(made.unit);
   }
   for (const hir::GeneratePlaces& generate : layout.Generates()) {
-    for (const std::optional<hir::PlacedBlock>& block : generate.places) {
-      if (block.has_value()) TakeEachUnitMade(block->made, take);
+    for (const hir::PlacedBlock& block : generate.places) {
+      TakeEachUnitMade(block.made, take);
     }
   }
 }

@@ -3326,12 +3326,12 @@ source, or not yet tried.
       One name depends on another in a cycle where an instance inside a generate block writes a name
       landing back in that block: the block is named by what it declares, the instance among it, and
       the instance by where its names land, the block among them. Naming in one pass cuts the cycle
-      wherever it was entered, so the names it keeps can follow which was asked first; nothing kept
-      is worked out from the cut itself, and such a design runs, but the cycle wants naming as a
-      group. Target: one stage producing the public contract, sharing its representation with what
-      lowers the published class; a stable identity apart from a fingerprint of the contract;
-      references that name declaration identity, so naming need not finish a child before its
-      parent; the front end's record and the prediction removed last. Not blocked.
+      wherever it was entered, so the names it keeps can follow which was asked first; such a design
+      runs, but the cycle wants naming as a group. Target: one stage producing the public contract,
+      sharing its representation with what lowers the published class; a stable identity apart from
+      a fingerprint of the contract; references that name declaration identity, so naming need not
+      finish a child before its parent; the front end's record and the prediction removed last. Not
+      blocked.
 
 ## Out of Scope
 

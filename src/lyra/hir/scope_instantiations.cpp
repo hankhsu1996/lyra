@@ -42,16 +42,14 @@ ScopeInstantiations::ScopeInstantiations(
         generate.counting);
     placed.places.reserve(construction.generates[g.value].size());
     for (const BlockConstruction& block : construction.generates[g.value]) {
-      if (!block.body.has_value()) {
-        placed.places.emplace_back();
-        continue;
-      }
-      placed.places.emplace_back(
+      placed.places.push_back(
           PlacedBlock{
-              .body = *block.body,
-              .made = ScopeInstantiations(
-                  unit, unit.block_bodies.Get(*block.body).scope,
-                  block.built)});
+              .body = block.body,
+              .made = block.body.has_value()
+                          ? ScopeInstantiations(
+                                unit, unit.block_bodies.Get(*block.body).scope,
+                                block.built)
+                          : ScopeInstantiations()});
     }
   }
 }

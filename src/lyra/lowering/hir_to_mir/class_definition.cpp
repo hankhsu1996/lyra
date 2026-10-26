@@ -416,8 +416,25 @@ class ConstructionTables {
   // The table of a scope of the body `owner` laid out as `layout`: at each
   // instantiation it declares, how the specialization made there is made,
   // then at each place of each of its generates, how the block built there is
-  // made.
+  // made. Two scopes of one body laid out alike -- the blocks of a loop that
+  // build alike, above all -- are made with one table, so the tables follow
+  // what objects differ in rather than how many there are.
   auto Of(const BodyRef& owner, const hir::ScopeInstantiations& layout)
+      -> mir::ClassConstantRef {
+    for (const StatedTable& stated : of_layout_) {
+      if (stated.owner.unit == owner.unit && stated.owner.body == owner.body &&
+          stated.layout == layout) {
+        return stated.table;
+      }
+    }
+    const mir::ClassConstantRef table = State(owner, layout);
+    of_layout_.push_back(
+        StatedTable{.owner = owner, .layout = layout, .table = table});
+    return table;
+  }
+
+  // The table `Of` states for `owner` laid out as `layout`, once.
+  auto State(const BodyRef& owner, const hir::ScopeInstantiations& layout)
       -> mir::ClassConstantRef {
     const std::span<const hir::SpecializationRef> instantiated =
         layout.Instantiated();
@@ -438,10 +455,10 @@ class ConstructionTables {
       std::vector<std::optional<mir::ClassConstantRef>>& of_generate =
           block_tables.emplace_back();
       of_generate.reserve(generate.places.size());
-      for (const std::optional<hir::PlacedBlock>& block : generate.places) {
+      for (const hir::PlacedBlock& block : generate.places) {
         of_generate.push_back(
-            block.has_value() ? std::optional{Of(owner, block->made)}
-                              : std::nullopt);
+            block.body.has_value() ? std::optional{Of(owner, block.made)}
+                                   : std::nullopt);
       }
     }
 
@@ -469,11 +486,10 @@ class ConstructionTables {
               places, *unit_, at_generate, id_, *cls_,
               LibraryType(*unit_, Kind::kInstantiation), generate.places.size(),
               [&](mir::Block& entry, std::size_t k) {
-                const std::optional<hir::PlacedBlock>& block =
-                    generate.places[k];
-                return block.has_value()
+                const hir::PlacedBlock& block = generate.places[k];
+                return block.body.has_value()
                            ? EntryRecord(
-                                 entry, owner, BlockBodyOrdinalOf(block->body),
+                                 entry, owner, BlockBodyOrdinalOf(*block.body),
                                  entry_type, *block_tables[g][k])
                            : NoEntryRecord(entry);
               });
@@ -554,6 +570,14 @@ class ConstructionTables {
   const DesignInstantiations* instantiations_;
   const std::map<std::string, mir::TypeId, std::less<>>* entry_types_;
   std::map<std::string, mir::ClassConstantRef, std::less<>> of_specialization_;
+  // Each table stated for a scope, by the body it is a scope of and its
+  // layout.
+  struct StatedTable {
+    BodyRef owner;
+    hir::ScopeInstantiations layout;
+    mir::ClassConstantRef table;
+  };
+  std::vector<StatedTable> of_layout_;
 };
 
 }  // namespace
