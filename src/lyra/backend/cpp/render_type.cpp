@@ -38,6 +38,16 @@ auto OverlaidReadCppFunction() -> std::string_view {
 
 namespace {
 
+// Whether a value of `type` is an object of the root, named as its own class
+// or as a class of the library it extends: what is ended through its class's
+// definition.
+auto IsObjectOfTheRoot(const mir::TypePool& types, mir::TypeId type) -> bool {
+  const mir::Type& t = types.Get(type);
+  const auto* library = t.As<mir::RuntimeClassType>();
+  return t.Is<mir::ObjectType>() ||
+         (library != nullptr && support::IsObjectOfTheRoot(library->which));
+}
+
 auto RuntimeClassCppType(support::RuntimeClass klass) -> std::string_view {
   switch (klass) {
     case support::RuntimeClass::kScope:
@@ -357,7 +367,7 @@ void WriteOne(TargetText& out, const CppType& spelling) {
                 // An object one owner holds alone is ended through its
                 // class's definition, which knows the class it was created
                 // as.
-                if (unit.types.Get(p.pointee).Is<mir::ObjectType>()) {
+                if (IsObjectOfTheRoot(unit.types, p.pointee)) {
                   Write(
                       out, "lyra::runtime::OwnedObject<", type(p.pointee),
                       pointee_qualifier, ">");

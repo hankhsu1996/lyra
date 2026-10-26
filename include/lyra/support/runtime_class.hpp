@@ -30,6 +30,11 @@ enum class RuntimeClass : std::uint8_t {
 // What a dump calls it.
 auto RuntimeClassName(RuntimeClass klass) -> std::string_view;
 
+// Whether an object of `klass` is one of the root every object the library
+// holds is, which starts with its class's definition and is ended through it,
+// whatever class the one holding it names.
+auto IsObjectOfTheRoot(RuntimeClass klass) -> bool;
+
 // A body the library calls on an object of a class extending one of those
 // classes, which it finds through the object's definition: the three phases
 // the runtime drives every scope through, in the order it enters them -- every

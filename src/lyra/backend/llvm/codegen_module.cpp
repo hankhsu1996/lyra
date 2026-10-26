@@ -410,7 +410,11 @@ auto CodeGenModule::EndOwnedStorage(
         {storage});
     return {};
   }
-  if (pointed.Is<lir::ObjectType>()) {
+  // An object, held as its own class or as a class of the library it
+  // extends, is ended through its class's definition.
+  const auto* library = pointed.As<lir::RuntimeClassType>();
+  if (pointed.Is<lir::ObjectType>() ||
+      (library != nullptr && support::IsObjectOfTheRoot(library->which))) {
     EndObject(builder, storage);
     return {};
   }
