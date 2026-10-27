@@ -53,8 +53,6 @@ auto CategoryTag(SymbolCategory category) -> char {
       return 'i';
     case SymbolCategory::kTypeOperation:
       return 't';
-    case SymbolCategory::kGenericInstance:
-      return 'u';
     case SymbolCategory::kBaseObjectCreation:
       return 'g';
     case SymbolCategory::kAllocatingCreation:
@@ -255,13 +253,6 @@ auto TypeOperationSymbol(std::string_view unit_name, std::uint32_t ordinal)
     -> std::string {
   return SymbolName(
       SymbolCategory::kTypeOperation,
-      {SymbolPart::Name(unit_name), SymbolPart::Ordinal(ordinal)});
-}
-
-auto GenericInstanceSymbol(std::string_view unit_name, std::uint32_t ordinal)
-    -> std::string {
-  return SymbolName(
-      SymbolCategory::kGenericInstance,
       {SymbolPart::Name(unit_name), SymbolPart::Ordinal(ordinal)});
 }
 

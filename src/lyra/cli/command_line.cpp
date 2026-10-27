@@ -503,12 +503,7 @@ auto QuotedList(
 // unknown name is.
 auto ParseMirPassOverrides(std::string_view list)
     -> diag::Result<std::vector<mir_transform::PassOverride>> {
-  std::vector<std::string> optional;
-  for (const mir_transform::Pass& pass : mir_transform::Pipeline()) {
-    if (mir_transform::MayBeSkipped(pass.policy)) {
-      optional.emplace_back(pass.name);
-    }
-  }
+  const std::vector<std::string> optional = mir_transform::OptionalPasses();
   std::vector<mir_transform::PassOverride> overrides;
   for (const auto word : std::views::split(list, ',')) {
     const std::string_view asked(word.begin(), word.end());
@@ -670,8 +665,8 @@ void RegisterCliOptions(slang::CommandLine& cmd, CliOptions& opts) {
       "<+Name|-Name,...>");
   cmd.add(
       "--mir-verify-each", opts.mir_verify_each,
-      "check MIR before and after every rewrite rather than once after the "
-      "last");
+      "check MIR as lowered, after every optional rewrite and on reaching "
+      "each phase, rather than once after the last");
 }
 
 auto SplitAtSeparator(std::span<char* const> raw) -> SplitArgv {

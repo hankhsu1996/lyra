@@ -2,7 +2,6 @@
 
 #include <array>
 #include <cstdint>
-#include <functional>
 #include <gtest/gtest.h>
 #include <string>
 #include <string_view>
@@ -18,6 +17,9 @@
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
+#include "lyra/mir/closure.hpp"
+#include "lyra/mir/closure_decl.hpp"
+#include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -29,19 +31,23 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
-#include "lyra/mir/type_parameter_index.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::mir {
 namespace {
 
+// Checks `unit` as it would be held in `phase`.
+void VerifyIn(Phase phase, CompilationUnit unit) {
+  unit.phase = phase;
+  mir::Verify(unit, "under test");
+}
+
 // Checks `unit` as every backend reads it, which is the phase holding it to
 // the most.
 void Verify(const CompilationUnit& unit) {
-  mir::Verify(unit, Phase::kForBackends, "under test");
+  VerifyIn(Phase::kLegalized, unit);
 }
 
 // A body of the unit's namespace named `f`, returning `result`, whose one
@@ -66,7 +72,6 @@ void AddAwaitingBody(CompilationUnit& unit, TypeId result) {
           .code = std::move(code),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt,
-          .type_parameters = {},
           .defining_unit = std::nullopt});
   unit.named_callables.push_back(NamedCallable{.name = "f", .body = id});
 }
@@ -116,7 +121,6 @@ TEST(MirVerifyTest, ASuspensionWaitsOnWhatItsKindWaitsOn) {
           .code = std::move(code),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt,
-          .type_parameters = {},
           .defining_unit = std::nullopt});
   try {
     Verify(unit);
@@ -164,7 +168,6 @@ auto UnitWithCode(const Fill& fill) -> CompilationUnit {
           .code = std::move(code),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt,
-          .type_parameters = {},
           .defining_unit = std::nullopt});
   unit.named_callables.push_back(NamedCallable{.name = "f", .body = id});
   return unit;
@@ -178,7 +181,8 @@ auto UnitWithBody(const Fill& fill) -> CompilationUnit {
   });
 }
 
-// The verifier refuses `unit`, and its refusal says `why`.
+// The verifier refuses `unit` as every backend reads it, and its refusal says
+// `why`.
 void ExpectRefused(const CompilationUnit& unit, std::string_view why) {
   try {
     Verify(unit);
@@ -523,7 +527,6 @@ TEST(MirVerifyTest, AMemberFunctionIsEnteredOnTheObjectAPointerReaches) {
               .code = std::move(member),
               .foreign = std::nullopt,
               .virtual_dispatch = std::nullopt,
-              .type_parameters = {},
               .defining_unit = std::nullopt});
       u.DefineClass(u.DeclareClass(), std::move(cls));
       body.AppendStmt(
@@ -1039,8 +1042,8 @@ TEST(MirVerifyTest, AValueTooLargeForAFrameLiesInAllocatedStorage) {
 
   // As built, a unit states every value plainly and none is held through a
   // box yet: only the phase the backends read holds it to frames.
-  EXPECT_NO_THROW(mir::Verify(made(false), Phase::kBuilt, "under test"));
-  EXPECT_NO_THROW(mir::Verify(held_in_a_local, Phase::kBuilt, "under test"));
+  EXPECT_NO_THROW(VerifyIn(Phase::kBuilt, made(false)));
+  EXPECT_NO_THROW(VerifyIn(Phase::kBuilt, held_in_a_local));
 }
 
 // An assignment writes the storage its target names, so a target that
@@ -1247,9 +1250,9 @@ TEST(MirVerifyTest, ABlockExpressionYieldsNothingThatEndsWithIt) {
   // body declares outside them, both arrays of `int`, and a position the steps
   // declare.
   struct Yielding {
-    CompilationUnit& unit;
-    CallableCode& code;
-    Block& steps;
+    CompilationUnit* unit = nullptr;
+    CallableCode* code = nullptr;
+    Block* steps = nullptr;
     TypeId array;
     LocalId outer;
     LocalId own;
@@ -1281,9 +1284,9 @@ TEST(MirVerifyTest, ABlockExpressionYieldsNothingThatEndsWithIt) {
               .init = steps.exprs.Add(
                   Expr{.data = NullLiteral{}, .type = PositionType(u.types)})});
       Yielding given{
-          .unit = u,
-          .code = code,
-          .steps = steps,
+          .unit = &u,
+          .code = &code,
+          .steps = &steps,
           .array = array,
           .outer = outer,
           .own = own,
@@ -1305,14 +1308,14 @@ TEST(MirVerifyTest, ABlockExpressionYieldsNothingThatEndsWithIt) {
             .referent = referent, .mutability = Mutability::kReadOnly}});
   };
   const auto borrow = [&](const Yielding& y, ExprId operand) {
-    return y.steps.exprs.Add(
+    return y.steps->exprs.Add(
         Expr{
             .data = BorrowExpr{.operand = operand},
-            .type = reference_to(y.unit, y.steps.exprs.Get(operand).type)});
+            .type = reference_to(*y.unit, y.steps->exprs.Get(operand).type)});
   };
   // An element of what `receiver` names, at the position the steps hold.
   const auto element_of = [&](const Yielding& y, ExprId receiver) {
-    return y.steps.exprs.Add(
+    return y.steps->exprs.Add(
         Expr{
             .data =
                 CallExpr{
@@ -1320,59 +1323,60 @@ TEST(MirVerifyTest, ABlockExpressionYieldsNothingThatEndsWithIt) {
                         Direct{
                             .target = support::BuiltinFn::kElement,
                             .receiver = receiver},
-                    .arguments = {y.steps.ReadLocal(
-                        y.at, PositionType(y.unit.types))}},
-            .type = reference_to(y.unit, y.unit.builtins.int_type)});
+                    .arguments = {y.steps->ReadLocal(
+                        y.at, PositionType(y.unit->types))}},
+            .type = reference_to(*y.unit, y.unit->builtins.int_type)});
   };
   // A reference to `bound`, held by a local of the steps and read or moved
   // out of it.
   const auto held = [&](const Yielding& y, LocalId bound, bool moved) {
-    const ExprId reference = borrow(y, y.steps.LocalPlace(bound, y.array));
-    const TypeId type = y.steps.exprs.Get(reference).type;
-    const LocalId holder = y.code.locals.Add(LocalDecl{.type = type});
-    y.steps.AppendStmt(LocalDeclStmt{.target = holder, .init = reference});
-    const ExprId place = y.steps.LocalPlace(holder, type);
-    return moved ? y.steps.exprs.Add(
+    const ExprId reference = borrow(y, y.steps->LocalPlace(bound, y.array));
+    const TypeId type = y.steps->exprs.Get(reference).type;
+    const LocalId holder = y.code->locals.Add(LocalDecl{.type = type});
+    y.steps->AppendStmt(LocalDeclStmt{.target = holder, .init = reference});
+    const ExprId place = y.steps->LocalPlace(holder, type);
+    return moved ? y.steps->exprs.Add(
                        Expr{.data = MoveExpr{.operand = place}, .type = type})
-                 : y.steps.Read(place);
+                 : y.steps->Read(place);
   };
   constexpr std::string_view kWhy =
       "referring to storage that ends with that block";
 
   ExpectRefused(
       yielding([&](const Yielding& y) {
-        return borrow(y, y.steps.LocalPlace(y.own, y.array));
+        return borrow(y, y.steps->LocalPlace(y.own, y.array));
       }),
       kWhy);
   ExpectRefused(
       yielding([&](const Yielding& y) {
-        const ExprId literal = y.steps.exprs.Add(
+        const ExprId literal = y.steps->exprs.Add(
             Expr{
                 .data = MachineIntLiteral{.value = 1},
-                .type = y.unit.builtins.int_type});
-        return borrow(y, AddSum(y.unit, y.steps, literal, literal));
+                .type = y.unit->builtins.int_type});
+        return borrow(y, AddSum(*y.unit, *y.steps, literal, literal));
       }),
       kWhy);
   ExpectRefused(
       yielding([&](const Yielding& y) {
-        const ExprId reference = borrow(y, y.steps.LocalPlace(y.own, y.array));
-        return y.steps.exprs.Add(
+        const ExprId reference = borrow(y, y.steps->LocalPlace(y.own, y.array));
+        return y.steps->exprs.Add(
             Expr{
                 .data = CompositeExpr{.parts = {reference}},
-                .type = y.unit.types.Intern(
+                .type = y.unit->types.Intern(
                     Type{TupleType{
-                        .elements = {y.steps.exprs.Get(reference).type}}})});
+                        .elements = {y.steps->exprs.Get(reference).type}}})});
       }),
       kWhy);
   ExpectRefused(
       yielding([&](const Yielding& y) {
-        return element_of(y, y.steps.LocalPlace(y.own, y.array));
+        return element_of(y, y.steps->LocalPlace(y.own, y.array));
       }),
       kWhy);
   ExpectRefused(
       yielding([&](const Yielding& y) {
         return element_of(
-            y, y.steps.exprs.Add(Expr{.data = NullLiteral{}, .type = y.array}));
+            y,
+            y.steps->exprs.Add(Expr{.data = NullLiteral{}, .type = y.array}));
       }),
       kWhy);
   ExpectRefused(
@@ -1381,209 +1385,58 @@ TEST(MirVerifyTest, ABlockExpressionYieldsNothingThatEndsWithIt) {
       yielding([&](const Yielding& y) { return held(y, y.own, true); }), kWhy);
 
   EXPECT_NO_THROW(Verify(yielding([&](const Yielding& y) {
-    return borrow(y, y.steps.LocalPlace(y.outer, y.array));
+    return borrow(y, y.steps->LocalPlace(y.outer, y.array));
   })));
   EXPECT_NO_THROW(Verify(yielding([&](const Yielding& y) {
-    return element_of(y, y.steps.LocalPlace(y.outer, y.array));
+    return element_of(y, y.steps->LocalPlace(y.outer, y.array));
   })));
   EXPECT_NO_THROW(Verify(
       yielding([&](const Yielding& y) { return held(y, y.outer, false); })));
   EXPECT_NO_THROW(Verify(
       yielding([&](const Yielding& y) { return held(y, y.outer, true); })));
   EXPECT_NO_THROW(Verify(yielding(
-      [&](const Yielding& y) { return y.steps.ReadLocal(y.own, y.array); })));
+      [&](const Yielding& y) { return y.steps->ReadLocal(y.own, y.array); })));
 }
 
-// The type `type_parameters` numbers `index` among a definition's own.
-auto ParameterType(CompilationUnit& unit, std::uint32_t index) -> TypeId {
-  return unit.types.Intern(
-      Type{TypeParameterType{.index = TypeParameterIndex{.value = index}}});
-}
-
-// The keeper of a region's deferred effects, as a type a call can name.
-auto RegionKeeper(const CompilationUnit& unit) -> TypeId {
-  return unit.types.Get(unit.builtins.deferred_effects_ptr)
-      .Get<PointerType>()
-      .pointee;
-}
-
-// A unit whose `f` calls a generic definition of it, stating the parameters
-// `parameters_of` answers and doing nothing, at the types `arguments_of`
-// answers.
-auto UnitCallingGeneric(
-    const std::function<std::vector<TypeParameter>(const CompilationUnit&)>&
-        parameters_of,
-    const std::function<std::vector<TypeId>(CompilationUnit&)>& arguments_of)
-    -> CompilationUnit {
-  return UnitWithCode([&](CompilationUnit& u, CallableCode& code) {
-    CallableCode generic = CallableCode::Defined();
-    generic.result_type = u.builtins.void_type;
-    generic.Body().AppendStmt(ReturnStmt{.value = std::nullopt});
-    const CallableId definition = u.callables.Add(
-        CallableDecl{
-            .code = std::move(generic),
-            .foreign = std::nullopt,
-            .virtual_dispatch = std::nullopt,
-            .type_parameters = parameters_of(u),
-            .defining_unit = std::nullopt});
-    Block& body = code.Body();
-    body.AppendStmt(
-        ExprStmt{
-            .expr = body.exprs.Add(
-                Expr{
-                    .data =
-                        CallExpr{
-                            .callee =
-                                Direct{
-                                    .target =
-                                        UnitCallableTarget{.slot = definition},
-                                    .type_arguments = arguments_of(u)},
-                            .arguments = {}},
-                    .type = u.builtins.void_type})});
-  });
-}
-
-// A call of a generic definition names one type for each parameter it states,
-// and each meets the parameter's bounds: a closure where the definition calls
-// one, a keeper of deferred effects where it keeps them.
-TEST(MirVerifyTest, AGenericIsCalledAtTypesItsBoundsAdmit) {
-  const auto keeper = [](const CompilationUnit&) {
-    return std::vector{TypeParameter{.bounds = {KeeperBound{}}}};
-  };
-  const auto called = [](const CompilationUnit& u) {
-    return std::vector{TypeParameter{
-        .bounds = {CalledClosureBound{
-            .asks = support::ClosureKind::kFn,
-            .params = {},
-            .result = u.builtins.void_type,
-            .kept = support::CallableHold::kForTheCall}}}};
-  };
-  const auto at = [](const auto& type_of) {
-    return [type_of](CompilationUnit& u) {
-      return std::vector<TypeId>{type_of(u)};
-    };
-  };
-  const auto integer = [](const CompilationUnit& u) {
-    return u.builtins.int_type;
-  };
-
-  EXPECT_NO_THROW(Verify(UnitCallingGeneric(keeper, at(RegionKeeper))));
-  ExpectRefused(
-      UnitCallingGeneric(
-          keeper, [](CompilationUnit&) { return std::vector<TypeId>{}; }),
-      "states a type for other than each parameter it has");
-  ExpectRefused(
-      UnitCallingGeneric(keeper, at(integer)),
-      "a keeper that keeps no deferred effects");
-  ExpectRefused(
-      UnitCallingGeneric(called, at(integer)),
-      "a type it calls that is no closure");
-}
-
-// What a generic body reaches through a bound it reaches on a value of one of
-// its own type parameters whose bound grants it: a keeper's commit and a
-// placement's allocation on a keeper, a call on a closure it calls in place.
-TEST(MirVerifyTest, ABodyReachesThroughABoundOnlyOnAParameterThatGrantsIt) {
-  enum class Reach : std::uint8_t { kCall, kCommit, kAllocation };
-  const auto reaching = [](Reach reach, const auto& bound_of) {
-    return UnitWithCode([&](CompilationUnit& u, CallableCode& f_code) {
-      f_code.Body().AppendStmt(ReturnStmt{.value = std::nullopt});
-      const TypeId parameter = ParameterType(u, 0);
-      const TypeId pointer = u.types.Intern(
-          Type{PointerType{
-              .pointee = parameter,
-              .ownership = PointerOwnership::kBorrowed,
-              .mutability = Mutability::kMutable}});
-      CallableCode code = CallableCode::Defined();
-      code.result_type = u.builtins.void_type;
-      const LocalId held = code.AddLocal(pointer);
-      code.params = {held};
-      Block& body = code.Body();
-      const auto direct = [&](DirectTarget target) {
-        return body.exprs.Add(
-            Expr{
-                .data =
-                    CallExpr{
-                        .callee =
-                            Direct{
-                                .target = target,
-                                .receiver = body.Deref(
-                                    u.types, body.LocalPlace(held, pointer),
-                                    parameter)},
-                        .arguments = {}},
-                .type = u.builtins.void_type});
-      };
-      switch (reach) {
-        case Reach::kCall:
-          body.AppendStmt(ExprStmt{.expr = direct(BoundCallTarget{})});
-          break;
-        case Reach::kCommit:
-          body.AppendStmt(ExprStmt{.expr = direct(BoundCommitTarget{})});
-          break;
-        case Reach::kAllocation: {
-          const ExprId value = body.exprs.Add(
-              Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
-          body.AppendStmt(
-              ExprStmt{
-                  .expr = body.exprs.Add(MakePlacementNewExpr(
-                      value,
-                      PlacementAllocation{
-                          .allocate = BoundAllocation{},
-                          .arguments = {body.ReadLocal(held, pointer)}},
-                      u.types.Intern(
-                          Type{PointerType{
-                              .pointee = u.builtins.int_type,
-                              .ownership = PointerOwnership::kBorrowed,
-                              .mutability = Mutability::kMutable}})))});
-          break;
-        }
-      }
-      body.AppendStmt(ReturnStmt{.value = std::nullopt});
-      u.callables.Add(
-          CallableDecl{
-              .code = std::move(code),
-              .foreign = std::nullopt,
-              .virtual_dispatch = std::nullopt,
-              .type_parameters = {TypeParameter{.bounds = {bound_of(u)}}},
-              .defining_unit = std::nullopt});
+// A call of a callable of the unit's namespace names no type, since only a
+// library entry is generic over one, and answers what the callable returns.
+TEST(MirVerifyTest, ACallableOfTheUnitIsCalledAtNoTypesAndAnswersItsResult) {
+  const auto calling_itself = [](bool at_a_type, bool answering_void) {
+    return UnitWithBody([=](CompilationUnit& u, Block& body) {
+      body.AppendStmt(
+          ExprStmt{
+              .expr = body.exprs.Add(
+                  Expr{
+                      .data =
+                          CallExpr{
+                              .callee =
+                                  Direct{
+                                      .target =
+                                          UnitCallableTarget{
+                                              .slot = CallableId{0}},
+                                      .type_arguments =
+                                          at_a_type
+                                              ? std::vector{u.builtins.int_type}
+                                              : std::vector<TypeId>{}},
+                              .arguments = {}},
+                      .type = answering_void ? u.builtins.void_type
+                                             : u.builtins.int_type})});
     });
   };
-  const auto keeper = [](const CompilationUnit&) -> ParameterBound {
-    return KeeperBound{};
-  };
-  const auto called = [](support::ClosureKind asks) {
-    return [asks](const CompilationUnit& u) -> ParameterBound {
-      return CalledClosureBound{
-          .asks = asks,
-          .params = {},
-          .result = u.builtins.void_type,
-          .kept = support::CallableHold::kForTheCall};
-    };
-  };
 
-  EXPECT_NO_THROW(Verify(reaching(Reach::kCommit, keeper)));
-  EXPECT_NO_THROW(Verify(reaching(Reach::kAllocation, keeper)));
-  EXPECT_NO_THROW(
-      Verify(reaching(Reach::kCall, called(support::ClosureKind::kFn))));
+  EXPECT_NO_THROW(Verify(calling_itself(false, true)));
   ExpectRefused(
-      reaching(Reach::kCommit, called(support::ClosureKind::kFn)),
-      "commits through a bound on what is no keeper parameter of its own");
+      calling_itself(true, true),
+      "states a type argument to a callee generic over none");
   ExpectRefused(
-      reaching(Reach::kAllocation, called(support::ClosureKind::kFn)),
-      "allocates through a bound from what is no keeper parameter of its own");
-  ExpectRefused(
-      reaching(Reach::kCall, keeper),
-      "calls through a bound on what is no parameter of its own it may call "
-      "in place");
-  ExpectRefused(
-      reaching(Reach::kCall, called(support::ClosureKind::kFnOnce)),
-      "calls through a bound on what is no parameter of its own it may call "
-      "in place");
+      calling_itself(false, false), "calls a callable that answers type");
 }
 
 // A placement new-expression makes its value in storage its allocation
 // function hands out and owns, so it answers a pointer owning nothing, from a
-// function that hands storage out.
+// function that hands storage out -- the one its argument finds, as C++ finds
+// `operator new` by the types of the placement arguments -- and nothing but
+// such an expression reaches that function.
 TEST(MirVerifyTest, APlacementMakesItsValueInStorageItDoesNotOwn) {
   const auto placing = [](support::BuiltinFn allocate,
                           PointerOwnership answered) {
@@ -1615,7 +1468,129 @@ TEST(MirVerifyTest, APlacementMakesItsValueInStorageItDoesNotOwn) {
       "places a value but answers other than a pointer owning nothing");
   ExpectRefused(
       placing(support::BuiltinFn::kNbaEffects, PointerOwnership::kBorrowed),
-      "places a value in storage from what allocates none");
+      "names an allocation function other than the one its argument "
+      "allocates by");
+  ExpectRefused(
+      placing(
+          support::BuiltinFn::kViolationReportsAllocate,
+          PointerOwnership::kBorrowed),
+      "names an allocation function other than the one its argument "
+      "allocates by");
+
+  const CompilationUnit calling =
+      UnitWithBody([](CompilationUnit& u, Block& body) {
+        body.AppendStmt(
+            ExprStmt{
+                .expr = body.exprs.Add(
+                    Expr{
+                        .data =
+                            CallExpr{
+                                .callee =
+                                    Direct{
+                                        .target = support::BuiltinFn::
+                                            kDeferredEffectsAllocate},
+                                .arguments = {}},
+                        .type = u.builtins.void_type})});
+      });
+  ExpectRefused(
+      calling,
+      "calls an allocation function, which only a new-expression reaches");
+}
+
+// A keeper runs the effect committed to it once the frame that made the effect
+// has gone on, so an effect made in a keeper's storage holds no reference to
+// storage of that frame, where a copy of the same value is what it may hold.
+TEST(MirVerifyTest, AnEffectMadeInAKeeperRefersToNothingItsFrameEnds) {
+  const auto committing = [](bool captures_a_reference) {
+    return UnitWithCode([=](CompilationUnit& u, CallableCode& code) {
+      const TypeId value_type = u.builtins.int_type;
+      const TypeId captured =
+          captures_a_reference ? u.types.Intern(
+                                     Type{ReferenceType{
+                                         .referent = value_type,
+                                         .mutability = Mutability::kReadOnly}})
+                               : value_type;
+      const ClosureId id = u.DeclareClosure();
+      const TypeId effect_type =
+          u.types.Intern(Type{ClosureType{.closure_id = id}});
+      ClosureDecl effect;
+      const FieldId field = effect.fields.Add(FieldDecl{.type = captured});
+      effect.field_order = {field};
+      effect.invoke.receiver = effect.invoke.AddLocal(u.types.Intern(
+          Type{PointerType{
+              .pointee = effect_type,
+              .ownership = PointerOwnership::kUnique,
+              .mutability = Mutability::kMutable}}));
+      effect.invoke.result_type = u.builtins.void_type;
+      effect.invoke.Body().AppendStmt(ReturnStmt{.value = std::nullopt});
+      u.DefineClosure(id, std::move(effect));
+
+      Block& body = code.Body();
+      const LocalId value = code.AddLocal(value_type);
+      body.AppendStmt(
+          LocalDeclStmt{
+              .target = value,
+              .init = body.exprs.Add(
+                  Expr{.data = NullLiteral{}, .type = value_type})});
+      const TypeId keeper_pointer = u.builtins.deferred_effects_ptr;
+      const LocalId keeper = code.AddLocal(keeper_pointer);
+      body.AppendStmt(
+          LocalDeclStmt{
+              .target = keeper,
+              .init = body.exprs.Add(
+                  Expr{.data = NullLiteral{}, .type = keeper_pointer})});
+      const ExprId capture =
+          captures_a_reference
+              ? body.exprs.Add(
+                    Expr{
+                        .data =
+                            BorrowExpr{
+                                .operand = body.LocalPlace(value, value_type)},
+                        .type = captured})
+              : body.ReadLocal(value, value_type);
+      const ExprId made = body.exprs.Add(MakePlacementNewExpr(
+          body.exprs.Add(
+              Expr{
+                  .data =
+                      ClosureExpr{
+                          .closure = id,
+                          .field_inits = {{.target = field, .value = capture}}},
+                  .type = effect_type}),
+          PlacementAllocation{
+              .allocate = support::BuiltinFn::kDeferredEffectsAllocate,
+              .arguments = {body.ReadLocal(keeper, keeper_pointer)}},
+          u.types.Intern(
+              Type{PointerType{
+                  .pointee = effect_type,
+                  .ownership = PointerOwnership::kBorrowed,
+                  .mutability = Mutability::kMutable}})));
+      body.AppendStmt(
+          ExprStmt{
+              .expr = body.exprs.Add(
+                  Expr{
+                      .data =
+                          CallExpr{
+                              .callee =
+                                  Direct{
+                                      .target = support::BuiltinFn::
+                                          kDeferredEffectsCommit,
+                                      .receiver = body.Deref(
+                                          u.types,
+                                          body.LocalPlace(
+                                              keeper, keeper_pointer),
+                                          u.types.Get(keeper_pointer)
+                                              .Get<PointerType>()
+                                              .pointee)},
+                              .arguments = {made}},
+                      .type = u.builtins.void_type})});
+    });
+  };
+
+  EXPECT_NO_THROW(Verify(committing(false)));
+  ExpectRefused(
+      committing(true),
+      "is kept past its maker's end yet captures in field 0 a reference to "
+      "storage of the frame that made it");
 }
 
 // An entry another unit defines is declared here and holds nothing this unit
@@ -1650,7 +1625,6 @@ TEST(MirVerifyTest, AnEntryAnotherUnitDefinesHoldsNothingOfItsOwn) {
                                                : CallableCode{},
               .foreign = std::nullopt,
               .virtual_dispatch = std::nullopt,
-              .type_parameters = {},
               .defining_unit = defining});
       const StaticVariableId variable = u.static_variables.Add(
           StaticVariableDecl{
@@ -1707,7 +1681,6 @@ TEST(MirVerifyTest, ADeclaredClassHoldsNothingAndAnOwnBodyIsHere) {
                   .code = CallableCode::Defined(),
                   .foreign = std::nullopt,
                   .virtual_dispatch = std::nullopt,
-                  .type_parameters = {},
                   .defining_unit = std::nullopt});
         }
         if (declared.object_record) {
@@ -1727,7 +1700,6 @@ TEST(MirVerifyTest, ADeclaredClassHoldsNothingAndAnOwnBodyIsHere) {
                 .code = CallableCode{},
                 .foreign = std::nullopt,
                 .virtual_dispatch = std::nullopt,
-                .type_parameters = {},
                 .defining_unit = std::nullopt});
         u.DefineClass(u.DeclareClass(), std::move(own));
       }
@@ -1737,7 +1709,6 @@ TEST(MirVerifyTest, ADeclaredClassHoldsNothingAndAnOwnBodyIsHere) {
                 .code = CallableCode{},
                 .foreign = std::nullopt,
                 .virtual_dispatch = std::nullopt,
-                .type_parameters = {},
                 .defining_unit = std::nullopt});
       }
     });

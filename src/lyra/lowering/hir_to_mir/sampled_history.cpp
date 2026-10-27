@@ -150,7 +150,8 @@ auto LowerSampledHistorySampler(
   mir::Expr keeper = BuildRegionEffectsCallExpr(
       lowerer.Owner(), body_block, support::BuiltinFn::kPostponedEffects);
   const mir::ExprId kept = body_block.exprs.Add(BuildEmplacedClosure(
-      lowerer.Owner(), body_frame, std::move(keeper), closure.BuildVoid()));
+      lowerer.Owner().Unit(), body_frame, std::move(keeper),
+      closure.BuildVoid()));
   body_block.AppendStmt(mir::ExprStmt{.expr = kept});
 
   const mir::BlockId body_scope_id =
@@ -168,7 +169,6 @@ auto LowerSampledHistorySampler(
       .code = std::move(code),
       .foreign = std::nullopt,
       .virtual_dispatch = std::nullopt,
-      .type_parameters = {},
       .defining_unit = std::nullopt};
 }
 

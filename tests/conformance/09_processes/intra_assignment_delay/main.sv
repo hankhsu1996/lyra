@@ -71,6 +71,61 @@ module Top;
   endfunction
   initial landed[index_before_delay] <= #(delay_that_writes()) changed_by_delay;
 
+  // The same where what the statement read is a string or a value too wide for
+  // a machine word, a static local, or a property of an object the delay
+  // reaches through another handle, by a nonblocking and by a blocking
+  // assignment. A delay of a nonblocking assignment may not name an automatic
+  // variable (LRM 13.3.2), so one can be written only by a blocking one.
+  string text_source = "before";
+  string text_landed = "";
+  string text_blocking = "";
+  logic [3999:0] wide_source = '1;
+  logic [3999:0] wide_landed = '0;
+  function automatic int delay_that_writes_text();
+    text_source = "after";
+    return 2;
+  endfunction
+  function automatic int delay_that_writes_wide();
+    wide_source = '0;
+    return 2;
+  endfunction
+  initial text_landed <= #(delay_that_writes_text()) text_source;
+  initial wide_landed <= #(delay_that_writes_wide()) wide_source;
+
+  string static_landed = "";
+  function automatic int delay_that_writes_string(ref string s);
+    s = "after";
+    return 2;
+  endfunction
+  initial begin
+    static string kept = "before";
+    static_landed <= #(delay_that_writes_string(kept)) kept;
+  end
+
+  class Holder;
+    string text;
+  endclass
+  Holder shared_holder;
+  string property_landed = "";
+  function automatic int delay_that_writes_property();
+    shared_holder.text = "after";
+    return 2;
+  endfunction
+  initial begin
+    automatic Holder held = new;
+    held.text = "before";
+    shared_holder = held;
+    property_landed <= #(delay_that_writes_property()) held.text;
+  end
+  initial begin
+    automatic string from = "blocking before";
+    text_blocking = #(clobber(from)) from;
+  end
+  function automatic int clobber(ref string s);
+    s = "blocking after";
+    return 1;
+  endfunction
+
   final begin
     if (seen_before_deadline !== 0)
       $fatal(
@@ -93,6 +148,19 @@ module Top;
       $fatal(1, "the delayed update stored %0d, expected 5", read_first);
     if (landed[1] !== 5 || landed[3] !== 0)
       $fatal(1, "a delay that wrote what the statement read reached the update: %p", landed);
+    if (text_landed != "before")
+      $fatal(1, "a delay that wrote a string reached the update: \"%s\"", text_landed);
+    if (wide_landed !== {4000{1'b1}})
+      $fatal(1, "a delay that wrote a wide value reached the update: %h", wide_landed[7:0]);
+    if (static_landed != "before")
+      $fatal(1, "a delay that wrote a static local reached the update: \"%s\"",
+             static_landed);
+    if (property_landed != "before")
+      $fatal(1, "a delay that wrote a property reached the update: \"%s\"",
+             property_landed);
+    if (text_blocking != "blocking before")
+      $fatal(1, "a delay that wrote a string reached the blocking assignment: \"%s\"",
+             text_blocking);
     $display("All checks passed");
   end
 endmodule

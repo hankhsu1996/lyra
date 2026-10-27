@@ -21,6 +21,7 @@
 #include "lyra/mir/consumed_signatures.hpp"
 #include "lyra/mir/enum_table_id.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
+#include "lyra/mir/verify.hpp"
 #include "lyra/support/runtime_prelude.hpp"
 
 namespace lyra::backend::cpp {
@@ -362,10 +363,12 @@ auto RenderHostMain(const mir::CompilationUnit& root) -> CppArtifact {
 auto EmitCppUnit(
     const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
     -> CppUnitArtifacts {
+  mir::RequireLegalized(unit, "backend::cpp");
   return RenderUnitFiles(unit, refusals);
 }
 
 auto EmitCppHostMain(const mir::CompilationUnit& root) -> CppArtifact {
+  mir::RequireLegalized(root, "backend::cpp");
   return RenderHostMain(root);
 }
 

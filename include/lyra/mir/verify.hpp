@@ -3,16 +3,15 @@
 #include <string_view>
 
 #include "lyra/mir/expr_id.hpp"
-#include "lyra/mir/phase.hpp"
 
 namespace lyra::mir {
 
 struct Block;
 struct CompilationUnit;
 
-// Checks what this layer states about the bodies of a unit in `phase`, and
-// throws InternalError naming the body that breaks it and `when` the unit was
-// checked.
+// Checks what this layer states about the bodies of a unit in the phase it is
+// in, and throws InternalError naming the body that breaks it and `when` the
+// unit was checked.
 //
 // A body's result type is its call protocol, so a body that is not a coroutine
 // returns to its caller before anything else runs and cannot suspend: nothing
@@ -26,7 +25,12 @@ struct CompilationUnit;
 // refused here, where the body is still named after what the source wrote,
 // rather than as a machine-level fault one lowering later, as another
 // compiler's error against generated text, or as an operand that runs twice.
-void Verify(const CompilationUnit& unit, Phase phase, std::string_view when);
+void Verify(const CompilationUnit& unit, std::string_view when);
+
+// Refuses a unit `reader` is handed that is not legalized, which is the one
+// phase a backend reads: anything earlier still holds what only a conversion
+// removes.
+void RequireLegalized(const CompilationUnit& unit, std::string_view reader);
 
 // Whether evaluating the node `id` names in `block` computes nothing: it names
 // a declared thing, spells a constant, or forms a place over nodes of which the

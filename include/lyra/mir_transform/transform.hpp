@@ -1,23 +1,25 @@
 #pragma once
 
-#include <span>
+#include <string>
+#include <vector>
 
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir_transform/pass.hpp"
 
 namespace lyra::mir_transform {
 
-// The rewrites between the lowering that states what the source means and
-// every backend reading it, in the order they run.
-[[nodiscard]] auto Pipeline() -> std::span<const Pass>;
+// The names of the rewrites a build may skip, in the order they run: every one
+// that changes what a correct program costs and nothing a later stage reads.
+[[nodiscard]] auto OptionalPasses() -> std::vector<std::string>;
 
-// MIR rewritten into MIR, one unit at a time, by the pipeline. Each rewrite
-// keeps what the program does and says it only in MIR's own vocabulary, so
-// both backends translate the result as they translate anything else and
-// neither knows a rewrite ran. Every optional rewrite runs unless `options`
-// skips it, and the unit is checked as it leaves the last one, since that is
-// the form every consumer reads -- and after each one as well where `options`
-// asks.
+// MIR rewritten into MIR, one unit at a time, from the phase HIR-to-MIR builds
+// it in to the one every backend reads. Each rewrite keeps what the program
+// does and says it only in MIR's own vocabulary, so both backends translate the
+// result as they translate anything else and neither knows a rewrite ran. A
+// conversion between two phases always runs; an optional rewrite runs unless
+// `options` skips it. The unit is checked as it leaves the last rewrite, since
+// that is the form every consumer reads -- and as lowered, after each optional
+// rewrite and on reaching each phase as well where `options` asks.
 auto Transform(mir::CompilationUnit unit, const PassOptions& options)
     -> mir::CompilationUnit;
 

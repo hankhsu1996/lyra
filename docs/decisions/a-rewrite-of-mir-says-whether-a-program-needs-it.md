@@ -1,7 +1,14 @@
 # A rewrite of MIR says whether a program needs it
 
-Date: 2026-10-18. Status: accepted. Revises the stage
+Date: 2026-10-18. Status: accepted; D1 and D3 revised 2026-10-26. Revises the stage
 `a-process-stopping-only-at-its-loop-head-is-called.md` added.
+
+The 2026-10-26 revision: a policy stated on each rewrite let a required rewrite and the phase it
+brings the unit into be two facts. Required is now where a rewrite stands -- inside a conversion
+into a phase -- and the unit records its phase, so every backend refuses one that is not legalized.
+A third phase, between the two, held a unit once MIR's generic definitions were made concrete; it
+went with them
+([an-operation-over-many-types-is-built-by-the-lowering](an-operation-over-many-types-is-built-by-the-lowering.md)).
 
 ## The requirement
 
@@ -20,25 +27,36 @@ belonged to HIR-to-MIR.
 
 ## Decisions
 
-**D1. Each rewrite states its policy.** Required: skipping it leaves a unit a consumer cannot take,
-so no build skips it. Optional: skipping it leaves the same program at another cost. Holding a large
-value read where it is made in a temporary, and then holding a large value through a box, are
-required; replacing a whole select with the whole, and calling a process that stops only at its loop
-head, are optional. That a correct program does not depend on any optional rewrite is then a
-property a run can show, by skipping all of them.
+**D1. What a correct program needs is a conversion into a phase, and every other rewrite is
+optional.** A conversion is the rewrites that bring a unit from one phase into the next (D3), and a
+later stage reads the form it leaves, so no build skips it -- as Swift's mandatory pipeline is what
+commits a SIL stage, and an MLIR lowering is required where the next stage refuses what it leaves;
+one conversion may take several rewrites. A rewrite a correct program needs that brought the unit
+into no phase would leave a form no check names, which the requirement above refuses. Making the
+order an evaluation needs explicit, and then holding a value too large for a frame through a box,
+bring a unit into the legalized phase. Every other rewrite runs inside a phase and leaves the unit
+in it: skipping it leaves the same program at another cost, so a build may. Replacing a whole select
+with the whole, and calling a process that stops only at its loop head, are such rewrites. That a
+correct program does not depend on any optional rewrite is then a property a run can show, by
+skipping all of them. A required rewrite is no more than its place in the pipeline says; nothing
+states it a second time.
 
 **D2. The rewrites are one ordered list, stated once.** The stage runs the list; a rewrite is a
 function from a unit to a unit, named as its function is. Every optional rewrite runs unless a build
 skips it by name, in every build, since none is dear enough to keep out of the default build and the
 merge gate builds only the default way: a rewrite only an optimized build ran would be one nothing
 tests. Where a rewrite dear enough to keep out of the default build appears, the level a build asks
-for is what its policy reads.
+for is what decides whether it runs.
 
-**D3. A unit's form is named, and a check asks of a unit what its form requires.** As built, a unit
-states every value plainly; once the large values are boxed, it is the form every backend reads. The
-rewrite that narrows the form says so. The unit is checked once as it leaves the stage, and, where a
-build asks, as it arrives and after every rewrite against the form it is then in, so a defect is
-reported against what made it.
+**D3. A unit's phase is named, the unit records it, and a check asks of a unit what its phase
+requires.** Each phase is named by the conversion that brings a unit there, as LLVM names a machine
+function's `Legalized` and `Selected` properties: built, as HIR-to-MIR states it; legalized, with
+the order an evaluation needs explicit and no frame holding a value too large for one, which is the
+form every backend reads. Only the pipeline moves a unit from one to the next, and every backend
+refuses a unit that is not legalized. The unit is checked once as it leaves the stage, and, where a
+build asks, as it arrives, after every optional rewrite and on reaching each phase, so a defect is
+reported against what made it; between the rewrites of one conversion a unit is in neither phase, as
+rustc validates at a phase change and Swift commits a SIL stage only once its pipeline is done.
 
 **D4. Which code a unit holds is stated once, beside the unit.** Every code -- a constructor with
 the nodes it enters its base's constructor with, a class's and the unit's callables, a record's
@@ -52,13 +70,13 @@ are MIR's, so a rewrite and the lowering build the same node for the same operat
 **D6. A value handed to something of a type it states is of that type.** An assignment hands its
 target's type, a whole write through a wrapper or a reference to bits the type held or reached, a
 local's initializer the local's, a return what the body answers, an arm of a choice and the value a
-block ends with the node's own, a capture its field's, and an argument of a callable the unit
-declares its parameter's -- the relations LLVM's verifier holds every operand to, and what LRM 10.8
-calls assignment-like contexts. A value only alike in representation -- a signed vector's whole
-select, a reference taken where a `const ref` formal binds it -- is held as the other type by a
-conversion the program states, as clang states a qualification conversion and rustc a reborrow,
-never handed over as it is. Without this a rewrite that dropped the conversion a write needs
-produced a unit every check accepted, since the bits came out the same.
+block ends with the node's own, a capture its field's, an argument of a callable the unit declares
+its parameter's, and that callable its call the type it returns -- the relations LLVM's verifier
+holds every operand to, and what LRM 10.8 calls assignment-like contexts. A value only alike in
+representation -- a signed vector's whole select, a reference taken where a `const ref` formal binds
+it -- is held as the other type by a conversion the program states, as clang states a qualification
+conversion and rustc a reborrow, never handed over as it is. Without this a rewrite that dropped the
+conversion a write needs produced a unit every check accepted, since the bits came out the same.
 
 **D7. A cast joins the pairs every target writes in its own conversion syntax, and MIR says which.**
 A cast is a value read as another type, with the value unchanged or read as the machine boolean a
@@ -75,12 +93,15 @@ MIR's array type is an element type and a count, as LLVM's is.
 ## What the field does
 
 - **rustc** (`compiler/rustc_mir_transform/src/pass_manager.rs`): a `MirPass` has a name taken from
-  its type and a `PassPolicy`, `Required` ("cannot be disabled via any means") or `Optional`;
-  `-Zmir-enable-passes=+A,-B` overrides an optional one and an unknown name is reported with the
-  valid ones. `run_passes` gives each pass a profiler span and validates after each only under
-  `-Zvalidate-mir`, always at the change to the final phase. `MirPhase`
-  (`rustc_middle/src/mir/syntax.rs`) names the dialects MIR narrows through, and the validator
-  branches on the body's phase. `InstSimplify` is enabled at the debug level too.
+  its type and a `PassPolicy`, `Required` ("cannot be disabled via any means") or `Optional`. A
+  required pass need not change the phase: it implements "parts of the MIR semantics" or brings MIR
+  "into a shape that is easier to deal with" for what follows, and several run where no phase
+  changes (`AbortUnwindingCalls`, `AddCallGuards`, `MentionedItems`); `-Zmir-enable-passes=+A,-B`
+  overrides an optional one and an unknown name is reported with the valid ones. `run_passes` gives
+  each pass a profiler span and validates after each only under `-Zvalidate-mir`, always at the
+  change to the final phase. `MirPhase` (`rustc_middle/src/mir/syntax.rs`) names the dialects MIR
+  narrows through, and the validator branches on the body's phase. `InstSimplify` is enabled at the
+  debug level too.
 - **LLVM's new pass manager** (`llvm/include/llvm/IR/PassManager.h`): `RequiredPassInfoMixin` and
   `OptionalPassInfoMixin`; `-O0` still runs the required passes; `-verify-each` adds a verifier
   after every pass; a function pass reaches every function through an adaptor. One IR form, so the
@@ -88,7 +109,13 @@ MIR's array type is an element type and a count, as LLVM's is.
 - **clang** rewrites its tree through `TreeTransform` (`clang/lib/Sema/TreeTransform.h`), which
   rebuilds each node through Sema's `Build*`: a tree rewrite builds anew, through the builder the
   front end uses.
-- **MLIR** (`mlir/lib/Pass/Pass.cpp`) verifies after every pass by default.
+- **MLIR** (`mlir/lib/Pass/Pass.cpp`) verifies after every pass by default, and has no phase: what a
+  stage may hold is the legality one conversion states (`ConversionTarget`, `applyFullConversion`),
+  and a required lowering is one whose leftovers the next stage refuses.
+- **Swift** names SIL's stages Raw, Canonical and Lowered (`SILStage`, in the Swift repository's
+  `SILModule.h`), each by what it may hold, and its driver commits a stage only once the mandatory
+  pipeline that reaches it has run (`runSILDiagnosticPasses`, `runSILLoweringPasses`); the
+  performance pipeline is the part a build may skip.
 - **Casts.** clang's Sema decides each `CastExpr`'s kind
   (`clang/include/clang/AST/OperationKinds.def`) and `CastExpr::CastConsistency`
   (`clang/lib/AST/Expr.cpp`) holds the kind to the types, so CodeGen meets no kind it cannot emit
@@ -98,9 +125,11 @@ MIR's array type is an element type and a count, as LLVM's is.
   backend.
 
 Where Lyra differs: MIR is a tree whose nodes are each reached once, so a rewrite builds the body
-that replaces one rather than editing it in place, as clang's does. rustc calls its backend-facing
-dialect runtime MIR; here "runtime" names the library a program links, so the form is named by what
-reads it.
+that replaces one rather than editing it in place, as clang's does. Where rustc states a policy on
+each pass, a required one here is one inside a conversion, because each form between rewrites has to
+be one a check names, and rustc's validator names only its phases. rustc calls its backend-facing
+dialect runtime MIR; here "runtime" names the library a program links, so each phase is named by the
+conversion that reaches it instead.
 
 ## Rejected
 
@@ -114,6 +143,12 @@ reads it.
 - **Checking after every rewrite in every build.** A unit leaves the stage in the one form the
   backends read, and a check of that form is what every consumer depends on; checking each rewrite
   is asked for where a defect has to be placed, and the conformance gate asks for it on every case.
+  Checking on reaching each phase in every build is refused for the same reason: the final check is
+  of the last phase, which is the one every consumer reads.
+- **A policy stated on each rewrite** (this record's first D1, and rustc's shape). It stated beside
+  the pipeline what the pipeline's shape already said, and the two could disagree: a required
+  rewrite outside any conversion, which leaves a form no check names, or an optional one that
+  narrowed a phase.
 
 ## Consequences
 
@@ -131,6 +166,9 @@ reads it.
 ## Cross-references
 
 - `a-process-stopping-only-at-its-loop-head-is-called.md` -- the stage and its first rewrite.
-- `a-value-too-large-for-a-frame-is-held-through-a-box.md` -- the two required rewrites.
+- `a-value-too-large-for-a-frame-is-held-through-a-box.md` -- the two rewrites of the conversion
+  into the legalized phase.
+- `an-operation-over-many-types-is-built-by-the-lowering.md` -- why every body MIR holds is
+  concrete, so no conversion makes one so.
 - `a-select-names-a-position.md` -- what a deferred write restates rather than freezes.
 - `unpacked-range-belongs-to-type.md` -- the range as the static type's, which at MIR is HIR's.

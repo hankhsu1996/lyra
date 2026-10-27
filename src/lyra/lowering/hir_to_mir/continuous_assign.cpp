@@ -616,7 +616,6 @@ auto LowerContinuousDrive(
       .code = std::move(code),
       .foreign = std::nullopt,
       .virtual_dispatch = std::nullopt,
-      .type_parameters = {},
       .defining_unit = std::nullopt};
 }
 

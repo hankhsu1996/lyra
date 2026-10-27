@@ -18,7 +18,6 @@
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_constant_id.hpp"
 #include "lyra/mir/class_id.hpp"
-#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/dispatch_table.hpp"
@@ -27,7 +26,6 @@
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/record_decl.hpp"
-#include "lyra/mir/type_parameter_index.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
@@ -435,8 +433,7 @@ void WriteOne(TargetText& out, BodyScope scope);
 // body, or the entry of a method. An entry is named as the method it enters, a
 // body answering a library callback as the callback, a named body keeps its
 // name, and an unnamed one is `sv_body_<n>`, as the execution backend names
-// each. The declaration,
-// the definition and every call take it from here.
+// each. The declaration, the definition and every call take it from here.
 //
 // It takes a class rather than a unit's namespace, because a function of a
 // namespace can also be reached by a foreign linkage name or as a fixed entry,
@@ -845,13 +842,6 @@ inline void WriteOne(TargetText& out, const RecordQualifiedName& ref) {
   return MintedCppName("closure", id.value);
 }
 
-// The name of a generic definition's type parameter, `sv_type_<n>`: the
-// template parameter it is written as, which the source never named.
-[[nodiscard]] inline auto CppTypeParameterName(mir::TypeParameterIndex index)
-    -> MintedName {
-  return MintedCppName("type", index.value);
-}
-
 // The name of a closure capture, `sv_capture_<n>`. A capture is a member of
 // the closure's type, reached from its body through the closure itself, and
 // the body's parameters and locals carry source names, so it gets a name no
@@ -953,6 +943,13 @@ inline void WriteOne(TargetText& out, const RecordQualifiedName& ref) {
                           "question the library asks of a value or of its "
                           "type, and this entry is declared on neither -- "
                           "please report this as a bug");
+                    },
+                    [](const support::AllocationFunction&) -> VerbatimName {
+                      throw InternalError(
+                          "backend::cpp: a type's own operation answers a "
+                          "question the library asks of a value or of its "
+                          "type, and an allocation function is no question "
+                          "-- please report this as a bug");
                     }},
                 support::RuntimeEntryOf(fn).declaration);
           }},

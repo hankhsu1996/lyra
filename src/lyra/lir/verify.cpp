@@ -110,7 +110,8 @@ auto AllocatesStorage(const CallTarget& target) -> bool {
     throw InternalError("lir verify: unknown dynamic-storage operation");
   }
   if (const auto* entry = std::get_if<BuiltinTarget>(&target)) {
-    return support::RuntimeEntryOf(entry->fn).hands_out_storage;
+    return std::holds_alternative<support::AllocationFunction>(
+        support::RuntimeEntryOf(entry->fn).declaration);
   }
   return false;
 }

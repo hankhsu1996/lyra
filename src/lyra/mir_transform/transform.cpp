@@ -3,9 +3,14 @@
 #include <array>
 #include <format>
 #include <ranges>
-#include <span>
+#include <string>
+#include <string_view>
 #include <utility>
+#include <variant>
+#include <vector>
 
+#include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/phase.hpp"
 #include "lyra/mir/verify.hpp"
@@ -20,75 +25,96 @@ namespace lyra::mir_transform {
 
 namespace {
 
+// An evaluation order made explicit, then every value a frame would hold too
+// large for one held through a box -- the temporaries first, so boxing holds
+// them as it holds every local.
+constexpr std::array kBuiltToLegalized{
+    Pass{.name = "OrderEvaluation", .run = OrderEvaluation},
+    Pass{.name = "BoxLargeValues", .run = BoxLargeValues}};
+
+// A step of the pipeline: a conversion into the next phase, or an optional
+// rewrite inside the phase the unit is in, which leaves it there.
+using Step = std::variant<Conversion, Pass>;
+
 // InstSimplify runs on the unit as built: a whole it reads is then still a read
-// of the value, which boxing then holds wherever a frame could not. A large
-// value read where it is made is put in a temporary before boxing, which then
-// holds the temporary as it holds every local.
-constexpr std::array kPipeline{
-    Pass{
-        .name = "InstSimplify",
-        .policy = PassPolicy::kOptional,
-        .run = InstSimplify,
-        .phase_after = std::nullopt},
-    Pass{
-        .name = "OrderEvaluation",
-        .policy = PassPolicy::kRequired,
-        .run = OrderEvaluation,
-        .phase_after = std::nullopt},
-    Pass{
-        .name = "BoxLargeValues",
-        .policy = PassPolicy::kRequired,
-        .run = BoxLargeValues,
-        .phase_after = mir::Phase::kForBackends},
-    Pass{
-        .name = "SplitReactions",
-        .policy = PassPolicy::kOptional,
-        .run = SplitReactions,
-        .phase_after = std::nullopt},
+// of the value, which boxing then holds wherever a frame could not.
+constexpr std::array<Step, 3> kPipeline{
+    Pass{.name = "InstSimplify", .run = InstSimplify},
+    Conversion{.into = mir::Phase::kLegalized, .passes = kBuiltToLegalized},
+    Pass{.name = "SplitReactions", .run = SplitReactions},
 };
 
-auto Runs(const Pass& pass, const PassOptions& options) -> bool {
-  if (!MayBeSkipped(pass.policy)) {
-    return true;
+auto PhaseName(mir::Phase phase) -> std::string_view {
+  switch (phase) {
+    case mir::Phase::kBuilt:
+      return "Built";
+    case mir::Phase::kLegalized:
+      return "Legalized";
   }
+  throw InternalError("mir_transform: unknown phase");
+}
+
+auto Runs(const Pass& optional, const PassOptions& options) -> bool {
   for (const PassOverride& asked : options.overrides | std::views::reverse) {
-    if (asked.name == pass.name) {
+    if (asked.name == optional.name) {
       return asked.runs;
     }
   }
   return true;
 }
 
+auto Timed(const Pass& pass, mir::CompilationUnit unit)
+    -> mir::CompilationUnit {
+  const profiling::TimeTraceScope span(pass.name, [&] { return unit.name; });
+  return pass.run(std::move(unit));
+}
+
 }  // namespace
 
-auto Pipeline() -> std::span<const Pass> {
-  return kPipeline;
+auto OptionalPasses() -> std::vector<std::string> {
+  std::vector<std::string> names;
+  for (const Step& step : kPipeline) {
+    if (const auto* optional = std::get_if<Pass>(&step)) {
+      names.emplace_back(optional->name);
+    }
+  }
+  return names;
 }
 
 auto Transform(mir::CompilationUnit unit, const PassOptions& options)
     -> mir::CompilationUnit {
   const profiling::TimeTraceScope span(
       "transform MIR", [&] { return unit.name; });
-  mir::Phase phase = mir::Phase::kBuilt;
   if (options.verify_each) {
-    mir::Verify(unit, phase, "as lowered");
+    mir::Verify(unit, "as lowered");
   }
-  for (const Pass& pass : kPipeline) {
-    if (!Runs(pass, options)) {
-      continue;
-    }
-    {
-      const profiling::TimeTraceScope pass_span(
-          pass.name, [&] { return unit.name; });
-      unit = pass.run(std::move(unit));
-    }
-    phase = pass.phase_after.value_or(phase);
-    if (options.verify_each) {
-      mir::Verify(unit, phase, std::format("after {}", pass.name));
-    }
+  for (const Step& step : kPipeline) {
+    std::visit(
+        Overloaded{
+            [&](const Conversion& conversion) {
+              for (const Pass& pass : conversion.passes) {
+                unit = Timed(pass, std::move(unit));
+              }
+              unit.phase = conversion.into;
+              if (options.verify_each) {
+                mir::Verify(
+                    unit,
+                    std::format("on reaching {}", PhaseName(conversion.into)));
+              }
+            },
+            [&](const Pass& optional) {
+              if (!Runs(optional, options)) {
+                return;
+              }
+              unit = Timed(optional, std::move(unit));
+              if (options.verify_each) {
+                mir::Verify(unit, std::format("after {}", optional.name));
+              }
+            }},
+        step);
   }
   if (!options.verify_each) {
-    mir::Verify(unit, phase, "as it leaves its rewrites");
+    mir::Verify(unit, "as it leaves its rewrites");
   }
   return unit;
 }

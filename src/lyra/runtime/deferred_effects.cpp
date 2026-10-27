@@ -25,10 +25,16 @@ auto PlaceOf(void* made) -> detail::EffectPlace* {
   return std::prev(static_cast<detail::EffectPlace*>(made));
 }
 
-// The effect made right behind `place`. Every effect is a closure, which opens
-// with the part this library keeps.
+// The storage right behind `place`, which is what the place's allocation handed
+// out for an effect to be made in.
+auto MadeBehind(detail::EffectPlace* place) -> void* {
+  return std::next(place);
+}
+
+// The effect made behind `place`. Every effect is a closure, which opens with
+// the part this library keeps.
 auto EffectAt(detail::EffectPlace* place) -> ClosureValue* {
-  return static_cast<ClosureValue*>(static_cast<void*>(std::next(place)));
+  return static_cast<ClosureValue*>(MadeBehind(place));
 }
 
 }  // namespace

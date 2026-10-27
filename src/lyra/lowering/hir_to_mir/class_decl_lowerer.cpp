@@ -177,7 +177,6 @@ class HookBody {
         .code = std::move(code_),
         .foreign = std::nullopt,
         .virtual_dispatch = std::nullopt,
-        .type_parameters = {},
         .defining_unit = std::nullopt};
   }
 
@@ -974,7 +973,6 @@ auto ClassDeclLowerer::PopulateBodies(
                             unit_lowerer, method, shape.self_pointer_type),
                         .foreign = std::nullopt,
                         .virtual_dispatch = method_dispatch,
-                        .type_parameters = {},
                         .defining_unit = std::nullopt});
       return {};
     }
@@ -993,7 +991,6 @@ auto ClassDeclLowerer::PopulateBodies(
                       .code = *std::move(method_code_or),
                       .foreign = std::nullopt,
                       .virtual_dispatch = method_dispatch,
-                      .type_parameters = {},
                       .defining_unit = std::nullopt});
     return {};
   };
@@ -1034,7 +1031,6 @@ auto ClassDeclLowerer::PopulateBodies(
             .foreign = std::nullopt,
             .virtual_dispatch =
                 shape.callable_signatures.Get(callable).virtual_dispatch,
-            .type_parameters = {},
             .defining_unit = std::nullopt});
   }
   if (const std::optional<RandomizationHooks>& hooks =

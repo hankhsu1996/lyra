@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -403,14 +402,14 @@ class UnitLowerer {
   // only names is, and what every other declaration of another unit's class
   // starts from.
   auto IncompleteClass(
-      mir::ClassId id, std::string unit_name, support::DefPath class_path)
+      mir::ClassId id, std::string unit_name, support::DefPath class_path) const
       -> mir::Class;
 
   // A property of a class as its MIR field. The properties a class of another
   // unit publishes are a prefix of its own storage, so the position counted out
   // of its signature is the slot that class gave.
-  auto TranslateClassPropertyTarget(const hir::ClassPropertyTarget& target)
-      -> mir::ClassFieldTarget;
+  auto TranslateClassPropertyTarget(
+      const hir::ClassPropertyTarget& target) const -> mir::ClassFieldTarget;
 
   // Where a static property of a class lies: where the class this unit
   // declares placed its cell, which follows what replicates the class (LRM
@@ -422,7 +421,7 @@ class UnitLowerer {
   // A method of a class as the callable it is, whichever unit defines the
   // class: a class of another unit declares here every method it published, in
   // the order it published them.
-  auto TranslateMethodTarget(const hir::ClassMethodTarget& target)
+  auto TranslateMethodTarget(const hir::ClassMethodTarget& target) const
       -> mir::CallableTarget;
 
   // The part a method takes in its class's dispatch table (LRM 8.20), as the
@@ -517,14 +516,6 @@ class UnitLowerer {
     }
     return mir::UnitCallableTarget{.slot = it->second};
   }
-
-  // The generic function that makes a closure in the storage a keeper of
-  // deferred effects hands out and keeps it there, as C++'s `emplace` builds
-  // its element where the container holds it: given the keeper and a closure
-  // making the effect, it allocates the effect's storage, builds the effect
-  // there by calling the maker, and commits it. The unit defines it the first
-  // time a body asks for it.
-  [[nodiscard]] auto EmplaceInto() -> mir::UnitCallableTarget;
 
  private:
   // Declares in MIR a class another unit defines, as that unit published it.
@@ -652,7 +643,6 @@ class UnitLowerer {
   // holds the only authoritative class representation.
   base::SymbolTable<mir::ClassId, ClassShape> declarations_;
   std::unordered_map<hir::TypeId, mir::CallableId> assignment_pattern_texts_;
-  std::optional<mir::CallableId> emplace_into_;
 };
 
 }  // namespace lyra::lowering::hir_to_mir

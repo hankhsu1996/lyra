@@ -200,7 +200,6 @@ auto BuildPublishedClass(
                 .code = subroutine.prototype,
                 .foreign = std::nullopt,
                 .virtual_dispatch = mir::IntroducesVirtualSlot{.is_pure = true},
-                .type_parameters = {},
                 .defining_unit = std::nullopt});
     cls.named_callables.push_back(
         mir::NamedCallable{.name = subroutine.name, .body = id});
@@ -3370,7 +3369,6 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
               .code = std::move(code),
               .foreign = std::nullopt,
               .virtual_dispatch = std::nullopt,
-              .type_parameters = {},
               .defining_unit = std::nullopt});
       node_class.library_callbacks.push_back(
           mir::LibraryCallbackBody{.callback = phase, .body = body});
@@ -3435,7 +3433,6 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             .virtual_dispatch = unit_lowerer.GetClassShape(class_id_)
                                     .callable_signatures.Get(declared.callable)
                                     .virtual_dispatch,
-            .type_parameters = {},
             .defining_unit = std::nullopt});
     subroutine_callables.push_back(declared.callable);
     for (const StaticVarBinding& binding : declared.statics) {
@@ -3479,7 +3476,6 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             .code = std::move(entry.code),
             .foreign = std::nullopt,
             .virtual_dispatch = std::nullopt,
-            .type_parameters = {},
             .defining_unit = std::nullopt});
     // A foreign caller hands the entry the scope every instance is.
     exports.push_back(
@@ -3503,7 +3499,6 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             .code = *std::move(code_or),
             .foreign = std::nullopt,
             .virtual_dispatch = std::nullopt,
-            .type_parameters = {},
             .defining_unit = std::nullopt});
     // A final procedure is called when the simulation ends, and every other
     // kind starts with the scope (LRM 9.2), registered as the kind it is. What
@@ -3731,7 +3726,6 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             .code = std::move(code),
             .foreign = std::nullopt,
             .virtual_dispatch = std::nullopt,
-            .type_parameters = {},
             .defining_unit = std::nullopt});
     mir_class.library_callbacks.push_back(
         mir::LibraryCallbackBody{.callback = phase, .body = body});
@@ -3819,7 +3813,6 @@ auto StructuralScopeLowerer::PublishBlockEntry() const -> mir::CallableId {
           .code = std::move(code),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt,
-          .type_parameters = {},
           .defining_unit = std::nullopt});
 }
 

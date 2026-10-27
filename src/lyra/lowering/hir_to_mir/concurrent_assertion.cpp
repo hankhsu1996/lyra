@@ -867,7 +867,6 @@ auto LowerDisableWatcher(
       .code = std::move(code),
       .foreign = std::nullopt,
       .virtual_dispatch = std::nullopt,
-      .type_parameters = {},
       .defining_unit = std::nullopt};
 }
 
@@ -924,7 +923,8 @@ auto LowerProcess(
   mir::Expr keeper = BuildRegionEffectsCallExpr(
       lowerer.Owner(), body_block, support::BuiltinFn::kObservedEffects);
   const mir::ExprId kept = body_block.exprs.Add(BuildEmplacedClosure(
-      lowerer.Owner(), body_frame, std::move(keeper), closure.BuildVoid()));
+      lowerer.Owner().Unit(), body_frame, std::move(keeper),
+      closure.BuildVoid()));
   body_block.AppendStmt(mir::ExprStmt{.expr = kept});
 
   const mir::BlockId body_scope_id =
@@ -942,7 +942,6 @@ auto LowerProcess(
       .code = std::move(code),
       .foreign = std::nullopt,
       .virtual_dispatch = std::nullopt,
-      .type_parameters = {},
       .defining_unit = std::nullopt};
 }
 
@@ -998,21 +997,18 @@ auto LowerConcurrentAssertion(
           .code = *std::move(pass),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt,
-          .type_parameters = {},
           .defining_unit = std::nullopt});
   const mir::CallableId fail_id = mir_class.callables.Add(
       mir::CallableDecl{
           .code = *std::move(fail),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt,
-          .type_parameters = {},
           .defining_unit = std::nullopt});
   const mir::CallableId advance_id = mir_class.callables.Add(
       mir::CallableDecl{
           .code = *std::move(advance),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt,
-          .type_parameters = {},
           .defining_unit = std::nullopt});
 
   auto process = LowerProcess(

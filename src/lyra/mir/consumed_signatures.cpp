@@ -155,8 +155,7 @@ class Reads {
     std::visit(
         Overloaded{
             [&](const CallableTarget& target) { ReadClass(target.owner); },
-            [](const ClosureTarget&) {}, [](const BoundCallTarget&) {},
-            [](const BoundCommitTarget&) {},
+            [](const ClosureTarget&) {},
             [&](const UnitCallableTarget& target) {
               if (const std::optional<std::string>& defining =
                       unit_->callables.Get(target.slot).defining_unit) {

@@ -105,8 +105,7 @@ auto ClassOfObject(const TypePool& types, TypeId object) -> ClassId {
           [&](const LoopBlocksType&) { return not_an_object(); },
           [&](const RecordType&) { return not_an_object(); },
           [&](const ClosureType&) { return not_an_object(); },
-          [&](const ErasedCallableType&) { return not_an_object(); },
-          [&](const TypeParameterType&) { return not_an_object(); }});
+          [&](const ErasedCallableType&) { return not_an_object(); }});
 }
 
 auto IsLeftAbstract(const VirtualDispatchRole& role) -> bool {

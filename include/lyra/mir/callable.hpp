@@ -16,35 +16,6 @@
 
 namespace lyra::mir {
 
-// A bound saying that the type a generic definition is given for one of its
-// parameters is a closure, and how the definition uses it, as Rust's
-// `F: Fn(A) -> R + 'static` does. `asks` is how the body calls it (to read,
-// to change, or once), `params` and `result` are the types it is called with
-// and answers, and `kept` is how long the body holds it (for the call, or past
-// the caller). `result` and `params` may name another parameter of the same
-// definition, as a maker's bound names the type it makes.
-struct CalledClosureBound {
-  support::ClosureKind asks;
-  std::vector<TypeId> params;
-  TypeId result;
-  support::CallableHold kept;
-};
-
-// What a generic definition asks of the type it is handed for one of its
-// parameters where it keeps deferred effects in it: that the type is a keeper
-// of them, which hands out storage for an effect and commits the one made in
-// it -- a Rust bound on a trait whose impls are the keeper types'.
-struct KeeperBound {};
-
-using ParameterBound = std::variant<CalledClosureBound, KeeperBound>;
-
-// One type parameter of a generic definition, and what the definition asks of
-// the type a call names for it, as a Rust `where` clause lists one bound after
-// another.
-struct TypeParameter {
-  std::vector<ParameterBound> bounds;
-};
-
 // A named callable a class or a unit namespace owns. Every SystemVerilog
 // function and task, every process body, every synthesized lifecycle body, and
 // both directions of the DPI-C boundary are this one concept. What varies among
@@ -93,9 +64,6 @@ struct CallableDecl {
   CallableCode code;
   std::optional<ForeignLinkage> foreign;
   std::optional<VirtualDispatchRole> virtual_dispatch;
-  // The types the definition is generic over, numbered by position; a body
-  // names one as a type parameter type, and a call names the type it is at.
-  std::vector<TypeParameter> type_parameters;
   std::optional<std::string> defining_unit;
 };
 

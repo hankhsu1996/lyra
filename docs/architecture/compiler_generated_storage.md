@@ -124,10 +124,10 @@ Stated positively: each fixes one rule, and what is allowed or forbidden follows
     and the unit's verification holds what is handed to it to them, reading the kind and the
     signature off the erased type handed. A body the entry starts rather than calls has no
     signature, and the declaration says it is started instead. A closure made in a keeper of
-    deferred effects is no erased callable in the unit at all: the keeper takes the concrete closure
-    where it was made and holds it by the part every closure opens with, so the generic function
-    making it there states the bounds the keeper asks on the type it is made at, and the
-    verification holds the closure's own kind and signature to them where that function is called.
+    deferred effects is no erased callable in the unit at all: the keeper's commit takes a pointer
+    to the concrete closure made in its storage and holds it by the part every closure opens with,
+    so the verification reads the kind and the signature off the closure itself and holds them to
+    what the commit's declaration asks.
 
 11. **A closure value has exactly one owner at every moment, and every way out of that owner ends it
     exactly once.** The owner is the frame that made it, the box it was made in, whatever took that
@@ -224,18 +224,18 @@ live-place alias : field type = VariableRef<logic>   // an observable-cell alias
 retained cell    : field type = Shared<Var<int>>     // retain a lifted local; reach it through this
 ```
 
-A closure a region keeps is emplaced into that region's effects, a watch is made in a box the wait
-takes and erased where it is handed over, and a sort's order is erased as a borrow for the call:
+A closure a region keeps is made in storage that region's effects hand out and committed to them, a
+watch is made in a box the wait takes and erased where it is handed over, and a sort's order is
+erased as a borrow for the call:
 
 ```text
-deferred effect : C_k       --[ emplace_into ]--> region's effects   // made where the region's keeper says, which takes it over, asks FnOnce
+deferred effect : C_k       --[ ::new (k) ]--> region's effects      // made where the region's keeper says, which takes it over, asks FnOnce
 watch           : Box<C_w>  --[ cast ]--> Box<dyn (bool) -> bool>    // the wait owns it, asks FnMut
 sort order      : &C_s      --[ cast ]--> &dyn (i64, i64) -> bool    // lent for the call, asks Fn
 ```
 
-What each holder asks is stated by the entry it is handed to, or, for a closure made in a keeper, by
-the bound the generic function making it states, and a closure serves it where its own kind extends
-the kind asked.
+What each holder asks is stated by the entry it is handed to, and a closure serves it where its own
+kind extends the kind asked.
 
 In the current implementation both backends realize the erased callable the same way: the closure's
 storage starts with a pointer to a constant table its unit emits, the entry ending the closure and

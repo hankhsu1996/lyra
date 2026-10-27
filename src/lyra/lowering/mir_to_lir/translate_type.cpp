@@ -318,13 +318,6 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
             return lir::Type{lir::ErasedCallableType{
                 .params = TranslateTypes(e.params),
                 .result = TranslateType(e.result)}};
-          },
-          // A generic definition reaches this layer only made concrete, with
-          // every type parameter replaced by the type a call names for it.
-          [](const mir::TypeParameterType&) -> lir::Type {
-            throw InternalError(
-                "mir_to_lir: a type parameter reached the layer below -- "
-                "please report this as a bug");
           }});
 }
 

@@ -185,9 +185,16 @@ two ways.
    access for a wrapper's access protocol, and the shared runtime-entry declaration for an
    operation. The entry looks nothing up itself; it composes punctuation around what its children
    render to. This is invariants 2 and 3 read forward rather than as prohibitions, and it is what
-   makes the contract checkable by reading a render entry instead of reasoning about it -- a
-   property the earlier form did not have, which is why a spelling written into an emitter went
-   unnoticed for as long as it read like the emitter beside it.
+   makes the contract checkable by reading a render entry instead of reasoning about it.
+
+9. **A node renders as the one construct of the target that means what the node means, and writes
+   out nothing that construct supplies itself.** MIR sits where clang's AST does, so for C++ that
+   construct is the one clang's AST would hold for the node. Writing a node as two constructs
+   composes an operation the node does not state, which is invariant 2's defect, and spelling what
+   the construct supplies states one fact twice. A target whose construct supplies nothing -- one
+   that calls the function the construct would have reached -- is handed the same fact from the
+   type. How every target reaches a runtime entry is the shared declaration's to say (invariant 8),
+   so a render that has to work it out names a defect in the declaration.
 
 ## Boundary to Adjacent Layers
 
@@ -254,6 +261,13 @@ two ways.
   inlining a struct literal, deriving navigation steps from a payload). Render translates existing
   expressions, never invents them. An invented expression is HIR-to-MIR's job.
 
+- A render entry that writes one node as two target constructs, or spells what the one construct
+  supplies itself -- a `sizeof` beside an allocation, a receiver worked out from an argument
+  (invariant 9).
+
+- A second site deciding how a call reaches a runtime entry beside the one that reads the entry's
+  declaration: the two answer one question and nothing holds them in step (invariant 6).
+
 - A render entry that writes a declaration no IR declaration states -- a type, a constant or a
   function whose structure the render works out from data rather than translates. Every declaration
   in the target output stands for one the IR holds, so that what the output shows is what the IR
@@ -275,8 +289,19 @@ composite is the type-mapping answer around the renders of its parts. A call ent
 no more: what the target names the callee, and how it composes an object, a name, and the renders of
 its operands. The callee's name for a runtime operation is one lookup in the shared declaration,
 which already says whether a call site reaches the operation as a free function, as a method on the
-object it acts on, or as a factory on the type it builds -- so the entry chooses nothing and knows
-no identifier.
+object it acts on, or as a factory on the type it builds, or that no call reaches it because a
+new-expression names it as its allocation function -- so the entry chooses nothing and knows no
+identifier.
+
+What invariant 9 looks like for a placement new-expression. For C++ the construct is the one clang's
+AST holds, a `CXXNewExpr`, `::new (args) T(init)`: the target finds the allocation function by the
+argument types and hands it the size, and the alignment of an over-aligned type, so the render
+writes neither and names no function. It is written from the global scope so that a class's own
+allocation function is never found first, and with the declaration of the library's allocation
+functions and the unit's check that the one argument finds the function the node names, the
+expression can find only that one. The execution backend calls the function the node names and hands
+it the size and the alignment from the type's layout, as clang's code generation does; the alignment
+is the least the storage meets, so both reach storage the value fits.
 
 An operand is the one thing a call entry may not read past. Where a call carries something the
 target spells somewhere other than its argument list -- a position fixed where the call is written,
