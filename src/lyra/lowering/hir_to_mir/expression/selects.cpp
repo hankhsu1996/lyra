@@ -379,6 +379,7 @@ auto StorageFoundBy(Lowerer& lowerer, const hir::Expr& expr) -> StorageFound {
           [](const hir::AssignExpr&) { return StorageFound::kNone; },
           [](const hir::IncDecExpr&) { return StorageFound::kNone; },
           [](const hir::CallExpr&) { return StorageFound::kNone; },
+          [](const hir::CalleeDefaultExpr&) { return StorageFound::kNone; },
           [](const hir::ConversionExpr&) { return StorageFound::kNone; },
           [](const hir::ConstantExpr&) { return StorageFound::kNone; },
           [](const hir::ValueRangeExpr&) { return StorageFound::kNone; },

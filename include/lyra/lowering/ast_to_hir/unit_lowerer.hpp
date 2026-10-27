@@ -242,7 +242,15 @@ struct ScopePublicationRecord {
     const slang::ast::ModportPortSymbol* port = nullptr;
     hir::StructuralSubroutineId id;
   };
-  using Callable = std::variant<Subroutine, PortDefault, ViewRead>;
+  // The subroutine evaluating a formal's default (LRM 13.5.3), for a call that
+  // omits the formal.
+  struct ArgumentDefault {
+    const slang::ast::SubroutineSymbol* subroutine = nullptr;
+    const slang::ast::FormalArgumentSymbol* formal = nullptr;
+    hir::StructuralSubroutineId id;
+  };
+  using Callable =
+      std::variant<Subroutine, PortDefault, ViewRead, ArgumentDefault>;
 
   // A loop generate, with whatever blocks it counted out (LRM 27.4).
   struct Loop {
@@ -1120,13 +1128,18 @@ class UnitLowerer {
       const slang::ast::Symbol& holder, hir::StructuralSubroutineId evaluator);
   [[nodiscard]] auto EvaluatorOf(const slang::ast::Symbol& holder) const
       -> hir::StructuralSubroutineId;
+  // The same, or nothing where this unit evaluates no expression of
+  // `holder`'s -- a formal of a method, whose class evaluates its defaults.
+  [[nodiscard]] auto FindEvaluator(const slang::ast::Symbol& holder) const
+      -> std::optional<hir::StructuralSubroutineId>;
 
-  // The type a port (LRM 23.2.2) or a name a view offers declares, which for
-  // the name is the self-determined type of the expression it was written
-  // with (LRM 25.5.4). A unit reading the name places its selects by that
-  // range, so what crosses for it -- the value an evaluator returns, or the
-  // place a view names -- has this type, whatever its expression yields.
-  auto InternDeclaredPortType(const slang::ast::Symbol& port)
+  // The type a port (LRM 23.2.2), a name a view offers or a formal declares,
+  // which for the name is the self-determined type of the expression it was
+  // written with (LRM 25.5.4). A unit reading the name places its selects by
+  // that range, so what crosses for it -- the value an evaluator returns, or
+  // the place a view names -- has this type, whatever its expression yields;
+  // a formal's default is a value of the formal's type (LRM 13.5.3).
+  auto InternDeclaredType(const slang::ast::Symbol& holder)
       -> diag::Result<hir::TypeId>;
 
   // Interns this unit's record of a DPI-C import (LRM 35.4), classifying its
@@ -1394,6 +1407,12 @@ class UnitLowerer {
     std::vector<const slang::ast::SubroutineSymbol*> defined_methods;
     std::vector<const slang::ast::MethodPrototypeSymbol*> pure_prototypes;
     std::vector<const slang::ast::ConstraintBlockSymbol*> constraint_blocks;
+    // Every formal of a method with a default the class evaluates (LRM
+    // 13.5.3), beside the method declaring it.
+    std::vector<std::pair<
+        const slang::ast::SubroutineSymbol*,
+        const slang::ast::FormalArgumentSymbol*>>
+        defaulted_formals;
     const slang::ast::SubroutineSymbol* constructor_sym = nullptr;
   };
 

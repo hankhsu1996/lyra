@@ -126,6 +126,17 @@ struct ConstantExpr {
   auto operator==(const ConstantExpr&) const -> bool = default;
 };
 
+// An argument a call to a user subroutine omits, at the position it stands in:
+// the default the callee's declaration gives that formal, which is evaluated
+// in the scope containing that declaration, on the callee's receiver, each time
+// a call omits it (LRM 13.5.3). clang's node for the same place is
+// `CXXDefaultArgExpr`. A default here may read the callee's own storage, so it
+// belongs to the callee, which evaluates it, and the call states only that it
+// applies.
+struct CalleeDefaultExpr {
+  auto operator==(const CalleeDefaultExpr&) const -> bool = default;
+};
+
 // LRM 21.3.4.4 form 2d (`$fread(mem, fd, , count)`) and any future
 // system-call positional-elision case lands here as `std::nullopt` at the
 // elided slot; user calls and most system calls leave every entry filled.
@@ -442,11 +453,18 @@ using AssignmentValidity = std::variant<NoAssignmentAllowed, AssignmentAllowed>;
 // than re-derived because compatibility between two SystemVerilog types is the
 // front end's to decide, and a run-time check standing where the types already
 // make the assignment invalid answers a question that was settled.
+//
+// `destination_instance` is present where the destination is of a class a
+// structural scope declares, which is a type of each instance of that scope
+// alone (LRM 6.22): an object is of it only where it is of the class and
+// belongs to that instance, which this reaches from where the cast stands, as
+// a `new` of the class written there would.
 struct DynamicCastExpr {
   ExprId destination;
   ExprId source;
   AssignmentValidity validity;
   InvalidAssignmentHandling on_invalid;
+  std::optional<DeclaringInstanceReach> destination_instance;
 
   auto operator==(const DynamicCastExpr&) const -> bool = default;
 };
@@ -625,8 +643,8 @@ struct ConstraintModeGetExpr {
 
 using ExprData = std::variant<
     PrimaryExpr, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr, IncDecExpr,
-    CallExpr, ConversionExpr, ConstantExpr, ValueRangeExpr, InsideExpr,
-    ElementSelectExpr, RangeSelectExpr, MemberAccessExpr,
+    CallExpr, CalleeDefaultExpr, ConversionExpr, ConstantExpr, ValueRangeExpr,
+    InsideExpr, ElementSelectExpr, RangeSelectExpr, MemberAccessExpr,
     ClassPropertyAccessExpr, InterfaceMemberAccessExpr,
     InterfaceInstanceAccessExpr, ConcatExpr, StreamingConcatExpr,
     ReplicationExpr, AssignmentPatternExpr, AssignmentPatternReplicationExpr,

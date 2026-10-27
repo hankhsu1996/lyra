@@ -338,6 +338,13 @@ this list is what remembers.
       hierarchy. An object's identity is what those operations read, and it is the same through a
       view naming an ancestor and a view naming a contract the class conforms to.
 
+- [x] A dynamic cast toward a class an instance declares succeeds only for an object belonging to
+      that instance (LRM 6.22, 8.16), since each instance's class is a type of its own; the object
+      keeps the instance its class belongs to, and the cast compares it. Before, an object of
+      another instance's class was taken for this one's, on both backends.
+- [ ] A dynamic cast toward an interface class an instance declares still answers from the class
+      alone, so an object implementing another instance's interface class is taken for this one's.
+
 - [x] Reaching a property or entering a behavior through such a reference. The access compiles
       against the class the reached handle was declared with, so a misspelt name is refused where
       the referrer compiles. Reading a property, writing one, entering a behavior that is not

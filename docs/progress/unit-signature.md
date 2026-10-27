@@ -190,11 +190,16 @@ why nothing a signature states may rest on it.
       source wrote no call is read there. Before, the constructor was on no signature, so a change
       to its formals changed the arguments an entering unit emits while no signature changed.
 
-- [ ] S17 -- A default argument's value still reaches a caller from the front end and is on no
-      signature (LRM 13.5.3). The front end puts the default expression of a method, a package
-      subroutine or a constructor into the call, and the calling unit compiles it, so a change to a
-      default changes the caller's output with nothing recording why. A signature carries names and
-      types and no expression, so this waits on deciding which side evaluates a default.
+- [x] S17 -- A formal's default is evaluated by its callee (LRM 13.5.3): whatever declares a
+      subroutine or a method publishes a function evaluating each default beside it, and a call
+      omitting the argument calls it on the object the callee is made on. Before, the calling unit
+      compiled the callee's default expression, so a default reading the callee's own storage failed
+      for a call into another instance and read the wrong object for a method, and a change to a
+      default changed the caller's output with nothing on a signature recording why.
+- [ ] S20 -- Two defaults are still compiled by the caller: a DPI-C import's, so a call into another
+      instance whose import defaults to that instance's storage fails, and a constructor's, which
+      reads the same storage only because a class is constructed where it is visible. A default
+      reading an earlier formal is refused.
 
 - [ ] S18 -- Whether one class type converts to another is taken from the front end's answer over
       the two lineages (LRM 8.16, 8.26.5) and not worked out from the signatures. Every class it

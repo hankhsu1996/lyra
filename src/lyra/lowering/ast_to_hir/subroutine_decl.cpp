@@ -31,6 +31,7 @@
 #include "lyra/lowering/ast_to_hir/name_in_a_path.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/reads.hpp"
+#include "lyra/lowering/ast_to_hir/std_classes.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/support/dpi_abi.hpp"
 
@@ -94,6 +95,11 @@ auto ModportReadName(std::string_view modport, std::string_view port)
 
 auto PortDefaultName(std::string_view port) -> std::string {
   return std::format("port default {}", port);
+}
+
+auto ArgumentDefaultName(std::string_view subroutine, std::string_view formal)
+    -> std::string {
+  return std::format("argument default {} {}", subroutine, formal);
 }
 
 namespace {
@@ -367,7 +373,9 @@ auto LowerSubroutineDeclImpl(
         lowerer.AddProceduralVar(body_frame, body, *formal, *formal_type_or);
     params.push_back(
         hir::SubroutineParam{
-            .var = var, .direction = ParamDirectionOf(*formal)});
+            .var = var,
+            .direction = ParamDirectionOf(*formal),
+            .default_evaluator = unit_lowerer.FindEvaluator(*formal)});
   }
 
   std::optional<hir::ProceduralVarId> result_var;
@@ -432,6 +440,84 @@ auto LowerSubroutineDeclImpl(
 }
 
 }  // namespace
+
+auto EvaluatesItsOwnDefaults(const slang::ast::SubroutineSymbol& callee)
+    -> bool {
+  if (callee.flags.has(slang::ast::MethodFlags::DPIImport) ||
+      callee.flags.has(slang::ast::MethodFlags::Constructor) ||
+      callee.flags.has(slang::ast::MethodFlags::BuiltIn) ||
+      RuntimeCarriedMethodOf(callee).has_value()) {
+    return false;
+  }
+  const slang::ast::ClassType* cls = DeclaringClassOf(callee);
+  return cls == nullptr || !cls->isInterface;
+}
+
+auto OmittedFormal(const slang::ast::CallExpression& call, std::size_t position)
+    -> const slang::ast::FormalArgumentSymbol* {
+  const auto* const* sym =
+      std::get_if<const slang::ast::SubroutineSymbol*>(&call.subroutine);
+  if (sym == nullptr || *sym == nullptr) return nullptr;
+  const slang::ast::SubroutineSymbol& callee = **sym;
+  if (!EvaluatesItsOwnDefaults(callee)) return nullptr;
+  const auto formals = callee.getArguments();
+  if (position >= formals.size()) return nullptr;
+  const slang::ast::FormalArgumentSymbol& formal = *formals[position];
+  if (formal.direction != slang::ast::ArgumentDirection::In ||
+      formal.getDefaultValue() == nullptr ||
+      formal.getDefaultValue() != call.arguments()[position]) {
+    return nullptr;
+  }
+  return &formal;
+}
+
+auto LowerEvaluatorDecl(
+    UnitLowerer& unit_lowerer, const slang::ast::Symbol& holder,
+    std::string name, const slang::ast::Expression& expr, WalkFrame frame)
+    -> diag::Result<hir::SubroutineDecl> {
+  const auto span = frontend::PointSpanOf(holder.location);
+  auto result_type = unit_lowerer.InternDeclaredType(holder);
+  if (!result_type) return std::unexpected(std::move(result_type.error()));
+
+  hir::ProceduralBody body;
+  OpenProceduralScope root{
+      frame.ProceduralScopes().Declare(),
+      hir::ProceduralScopeKind::kSubroutineRoot, name};
+  const hir::ProceduralVarId result_var = body.procedural_vars.Declare();
+  body.procedural_vars.Define(
+      result_var,
+      hir::ProceduralVarDecl{.name = std::nullopt, .type = *result_type});
+  root.declarations.push_back(result_var);
+  ProcessLowerer lowerer(unit_lowerer, holder);
+  const WalkFrame body_frame =
+      frame.WithProceduralBody(&body).WithOpenScope(&root);
+  auto value = lowerer.LowerExpr(expr, body_frame);
+  if (!value) return std::unexpected(std::move(value.error()));
+  // A wait on the value asks the evaluator what it reads (LRM 9.4.2), and an
+  // expression a scope evaluates reads that scope's own storage.
+  auto cells = CellsOfWaitedExpression(lowerer, body_frame, expr);
+  if (!cells) return std::unexpected(std::move(cells.error()));
+  hir::Reads reads{
+      .cells = *std::move(cells),
+      .writes = {},
+      .calls = {},
+      .unreportable = std::nullopt};
+  const hir::StmtId root_stmt = body.stmts.Add(
+      hir::Stmt{
+          .label = std::nullopt,
+          .data = hir::ReturnStmt{.value = body.exprs.Add(*std::move(value))},
+          .span = span});
+  body.root_scope = frame.SealScope(std::move(root));
+  return hir::SubroutineDecl{
+      .name = std::move(name),
+      .kind = hir::SubroutineKind::kFunction,
+      .result_type = *result_type,
+      .params = {},
+      .result_var = result_var,
+      .body = std::move(body),
+      .root_stmt = root_stmt,
+      .reads = std::move(reads)};
+}
 
 auto BaseCallArguments(const slang::ast::Expression& base_call)
     -> std::span<const slang::ast::Expression* const> {
@@ -500,7 +586,9 @@ auto LowerMethodPrototypeDecl(
         lowerer.AddProceduralVar(body_frame, body, *formal, *formal_type_or);
     params.push_back(
         hir::SubroutineParam{
-            .var = var, .direction = ParamDirectionOf(*formal)});
+            .var = var,
+            .direction = ParamDirectionOf(*formal),
+            .default_evaluator = unit_lowerer.FindEvaluator(*formal)});
   }
 
   body.root_scope = class_frame.SealScope(std::move(root));

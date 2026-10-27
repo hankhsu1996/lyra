@@ -8,6 +8,7 @@
 #include "lyra/hir/param_direction.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
+#include "lyra/hir/subroutine_id.hpp"
 #include "lyra/hir/subroutine_kind.hpp"
 #include "lyra/hir/timing.hpp"
 #include "lyra/hir/type_id.hpp"
@@ -15,10 +16,15 @@
 namespace lyra::hir {
 
 // A formal is also a local variable of the subroutine body; `var` indexes the
-// body's procedural-var arena.
+// body's procedural-var arena. `default_evaluator` is, for a subroutine a
+// structural scope declares, the subroutine of that scope evaluating the
+// formal's default (LRM 13.5.3), which a call omitting the formal calls; it is
+// absent for a formal with no default, and for a method, whose class states
+// its defaults with the rest of what a call reads of it.
 struct SubroutineParam {
   ProceduralVarId var = {};
   ParamDirection direction = ParamDirection::kInput;
+  std::optional<StructuralSubroutineId> default_evaluator;
 
   auto operator==(const SubroutineParam&) const -> bool = default;
 };

@@ -5,6 +5,7 @@
 #include <format>
 #include <iterator>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <unordered_set>
@@ -556,6 +557,25 @@ auto UnitLowerer::StartOf(
   const std::optional<ReaderClimbs> reader = ReaderInstance();
   if (!reader.has_value()) {
     return RouteOrigin{.start = FromReader{}, .written = written.path};
+  }
+
+  // A name the body of a sequence or property writes binds in the scope
+  // declaring it (LRM 16.8, 11.12), so where the instance reached that
+  // declaration by a hierarchical name, a name declared beside it starts where
+  // that name led: the instance an interface port is bound to, from this
+  // object. The innermost such instance is the one whose body holds the name.
+  for (const ExpansionInstance& instance :
+       std::views::reverse(frame.expansion_stack)) {
+    if (instance.reached_through == nullptr ||
+        !instance.reached_through->isViaIfacePort() ||
+        &found == instance.declaration ||
+        found.getParentScope() != instance.declaration->getParentScope()) {
+      continue;
+    }
+    RouteOrigin through =
+        StartOf(frame, *instance.declaration, *instance.reached_through);
+    return RouteOrigin{
+        .start = std::move(through.start), .written = written.path};
   }
 
   // Through a port the name stands in whatever instance the port was bound to,

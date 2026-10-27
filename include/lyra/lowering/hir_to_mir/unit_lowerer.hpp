@@ -320,6 +320,14 @@ class UnitLowerer {
   [[nodiscard]] auto ClassFieldsOf(const hir::ClassDeclaration& declared) const
       -> ClassFields;
 
+  // The field an object of the class `cls` keeps the instance its class
+  // belongs to in (LRM 6.22), for a class that takes one: recorded where the
+  // class is laid out, by this unit's own declaration or by the one it took of
+  // another unit's, and read wherever the instance is asked of an object.
+  void RecordDeclaringInstanceField(mir::ClassId cls, mir::FieldId field);
+  [[nodiscard]] auto DeclaringInstanceFieldOf(mir::ClassId cls) const
+      -> mir::FieldId;
+
   // The fields of the class a scope publishes, in the order `signature`
   // states them: one per member, named as it was published, then one per
   // generate construct, then one per disable target. The scope declaring the
@@ -636,6 +644,7 @@ class UnitLowerer {
   // record of it.
   std::map<hir::ScopeClassId, ScopeClassLayout> scope_layouts_;
   std::map<mir::ClassId, PublishedScope> published_scopes_;
+  std::map<mir::ClassId, mir::FieldId> declaring_instance_fields_;
   std::uint32_t next_synthesized_site_ = 0;
   std::uint32_t next_unnamed_class_ = 0;
   // What the declare stage settled about each class, read by every body that

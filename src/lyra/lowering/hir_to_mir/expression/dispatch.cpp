@@ -122,6 +122,13 @@ auto LowerAsPlaceImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
           [&](const hir::CallExpr& c) -> diag::Result<mir::Expr> {
             return LowerHirCallExpr(lowerer, frame, c, expr.span, result_type);
           },
+          // An omitted argument's default is the callee's to evaluate, on the
+          // callee's receiver, so the call holding it lowers it.
+          [&](const hir::CalleeDefaultExpr&) -> diag::Result<mir::Expr> {
+            throw InternalError(
+                "expression lowering: an omitted argument's default is lowered "
+                "by the call it stands in, never on its own");
+          },
           // LRM 11.4.13: a value range has no value of its own -- it only
           // means something as an operand of a membership test, and the
           // lowering of that test consumes it directly. Reaching the generic
@@ -407,6 +414,7 @@ auto LowerAccessPathImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
           [&](const hir::AssignExpr&) { return names_no_storage(); },
           [&](const hir::IncDecExpr&) { return names_no_storage(); },
           [&](const hir::CallExpr&) { return names_no_storage(); },
+          [&](const hir::CalleeDefaultExpr&) { return names_no_storage(); },
           [&](const hir::ConversionExpr&) { return names_no_storage(); },
           [&](const hir::ConstantExpr&) { return names_no_storage(); },
           [&](const hir::InterfaceInstanceAccessExpr&) {

@@ -1,6 +1,7 @@
 #include "lyra/lowering/ast_to_hir/reads.hpp"
 
 #include <concepts>
+#include <cstddef>
 #include <expected>
 #include <iterator>
 #include <optional>
@@ -60,7 +61,13 @@ class ListedCalls : public slang::ast::ASTVisitor<
                 &call.subroutine)) {
       if (IsListed(call, **callee)) Add(call);
     }
-    visitDefault(call);
+    // An omitted argument's default is the callee's text, and a call it makes
+    // is the callee's, which states what it reads.
+    call.visitExprsNoArgs(*this);
+    const auto args = call.arguments();
+    for (std::size_t i = 0; i < args.size(); ++i) {
+      if (OmittedFormal(call, i) == nullptr) args[i]->visit(*this);
+    }
   }
 
   auto Take() && -> diag::Result<std::vector<hir::ExprId>> {

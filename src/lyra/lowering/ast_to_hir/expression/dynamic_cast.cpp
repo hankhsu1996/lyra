@@ -141,6 +141,17 @@ auto LowerDynamicCastExpr(
   auto type_id = lowerer.Owner().InternExpressionType(call, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
 
+  // A class a structural scope declares is a type of each of its instances
+  // (LRM 6.22), so the cast is toward the one where it stands.
+  std::optional<hir::DeclaringInstanceReach> destination_instance;
+  const slang::ast::Type& destination_type =
+      destination_actual.type->getCanonicalType();
+  if (const auto* cls = destination_type.as_if<slang::ast::ClassType>()) {
+    auto reached = lowerer.Owner().DeclaringInstanceFrom(*cls, frame, span);
+    if (!reached) return std::unexpected(std::move(reached.error()));
+    destination_instance = *std::move(reached);
+  }
+
   return hir::Expr{
       .type = *type_id,
       .data =
@@ -148,9 +159,10 @@ auto LowerDynamicCastExpr(
               .destination = destination,
               .source = source,
               .validity = ClassifyValidity(
-                  destination_actual.type->getCanonicalType(),
+                  destination_type,
                   call.arguments()[1]->type->getCanonicalType()),
-              .on_invalid = on_invalid},
+              .on_invalid = on_invalid,
+              .destination_instance = std::move(destination_instance)},
       .span = span,
   };
 }
