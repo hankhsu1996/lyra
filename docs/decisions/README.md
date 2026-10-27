@@ -399,6 +399,12 @@ the detail lives in the entry itself.
 
 ### References and construction
 
+- [a-formal-default-is-evaluated-by-its-callee](a-formal-default-is-evaluated-by-its-callee.md) --
+  an omitted argument's default is evaluated by a function of whatever declares the subroutine, on
+  the object the callee is made on, because a default may read the callee's own storage (LRM
+  13.5.3); the call states only that the default applies, and what the default reads is part of what
+  the call reads. A prologue told by a hidden argument which formals were passed, and lowering the
+  callee's text in the caller, are rejected.
 - [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md) --
   every scope a name can step into publishes every declaration a name can reach, as a class the
   referrer reaches by typed steps, offsets and calls through the object; an upward name starts at
@@ -856,9 +862,11 @@ the detail lives in the entry itself.
   units. The construct is a sequence of steps ending in the answer, and the reporting spelling is
   those steps plus a report. Its object half was superseded from 2026-09-29 to 2026-10-25 by
   [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), whose revision
-  returned it to the library's walk of the object's definition. One checked-cast node dispatched on
-  the type pair, a per-class table of the subclasses a destination accepts, binding the destination
-  as an output argument, and refusing a statically impossible pair are rejected.
+  returned it to the library's walk of the object's definition. A class an instance declares is a
+  type of that instance (LRM 6.22), so a cast toward one also compares the instance the object keeps
+  with the one the cast names. One checked-cast node dispatched on the type pair, a per-class table
+  of the subclasses a destination accepts, binding the destination as an output argument, and
+  refusing a statically impossible pair are rejected.
 - [unit-scope-naming](unit-scope-naming.md) -- the anonymous `$unit` scope (LRM 3.12.1) is a
   namespace unit named by its compilation-unit input identity, recomputed table-free by producer and
   consumer; a design-wide unit id, a fixed name, a collection ordinal, and a content digest are all

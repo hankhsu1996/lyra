@@ -961,58 +961,16 @@ auto StructuralScopeLowerer::PopulateNetMember(
   return {};
 }
 
-// The subroutine this scope evaluates `holder`'s expression in, for another
-// unit that asks for the value: the expression names declarations that would
-// mean nothing where that unit's signature is read, so what crosses is the call
-// and the expression is lowered here, in the scope that wrote it. It is one
-// return of the expression, as the type `holder` declares, and takes no
-// formals.
+// The subroutine this scope evaluates `holder`'s expression in, for a caller
+// that asks for the value.
 auto StructuralScopeLowerer::DefineEvaluator(
     const slang::ast::Symbol& holder, std::string name,
     const slang::ast::Expression& expr, WalkFrame frame) -> diag::Result<void> {
-  const auto span = frontend::PointSpanOf(holder.location);
-  auto result_type = owner_->InternDeclaredPortType(holder);
-  if (!result_type) return std::unexpected(std::move(result_type.error()));
-
-  hir::ProceduralBody body;
-  OpenProceduralScope root{
-      frame.ProceduralScopes().Declare(),
-      hir::ProceduralScopeKind::kSubroutineRoot, name};
-  const hir::ProceduralVarId result_var = body.procedural_vars.Declare();
-  body.procedural_vars.Define(
-      result_var,
-      hir::ProceduralVarDecl{.name = std::nullopt, .type = *result_type});
-  root.declarations.push_back(result_var);
-  ProcessLowerer lowerer(*owner_, holder);
-  const WalkFrame body_frame =
-      frame.WithProceduralBody(&body).WithOpenScope(&root);
-  auto value = lowerer.LowerExpr(expr, body_frame);
-  if (!value) return std::unexpected(std::move(value.error()));
-  // A wait on the value asks the evaluator what it reads (LRM 9.4.2), and an
-  // expression a scope evaluates reads that scope's own storage.
-  auto cells = CellsOfWaitedExpression(lowerer, body_frame, expr);
-  if (!cells) return std::unexpected(std::move(cells.error()));
-  hir::Reads reads{
-      .cells = *std::move(cells),
-      .writes = {},
-      .calls = {},
-      .unreportable = std::nullopt};
-  const hir::StmtId root_stmt = body.stmts.Add(
-      hir::Stmt{
-          .label = std::nullopt,
-          .data = hir::ReturnStmt{.value = body.exprs.Add(*std::move(value))},
-          .span = span});
-  body.root_scope = frame.SealScope(std::move(root));
+  auto evaluator =
+      LowerEvaluatorDecl(*owner_, holder, std::move(name), expr, frame);
+  if (!evaluator) return std::unexpected(std::move(evaluator.error()));
   frame.current_structural_scope->structural_subroutines.Define(
-      owner_->EvaluatorOf(holder), hir::SubroutineDecl{
-                                       .name = std::move(name),
-                                       .kind = hir::SubroutineKind::kFunction,
-                                       .result_type = *result_type,
-                                       .params = {},
-                                       .result_var = result_var,
-                                       .body = std::move(body),
-                                       .root_stmt = root_stmt,
-                                       .reads = std::move(reads)});
+      owner_->EvaluatorOf(holder), *std::move(evaluator));
   return {};
 }
 
@@ -1064,6 +1022,17 @@ auto StructuralScopeLowerer::PopulateSubroutineMember(
   }
   frame.current_structural_scope->structural_subroutines.Define(
       binding->subroutine_id, *std::move(decl_or));
+
+  // Each formal's default is evaluated here, in the scope declaring the
+  // subroutine, for every call that omits it (LRM 13.5.3).
+  for (const slang::ast::FormalArgumentSymbol* formal : sym.getArguments()) {
+    const slang::ast::Expression* default_value = formal->getDefaultValue();
+    if (default_value == nullptr) continue;
+    auto defined = DefineEvaluator(
+        *formal, ArgumentDefaultName(sym.name, formal->name), *default_value,
+        frame);
+    if (!defined) return std::unexpected(std::move(defined.error()));
+  }
 
   // An `export "DPI-C"` (LRM 35.5) names a subroutine of its own scope, so the
   // exported subroutine reaches this ordinary body path and the export is

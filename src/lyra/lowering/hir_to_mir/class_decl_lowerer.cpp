@@ -395,6 +395,8 @@ auto ClassDeclLowerer::DeclareShape(
     shape.declaring_instance = DeclaringInstance{
         .type = *fields.declaring_instance,
         .member = shape.AddField(*fields.declaring_instance)};
+    unit_lowerer.RecordDeclaringInstanceField(
+        class_id_, shape.declaring_instance->member);
   }
 
   // Everything the class keeps for itself rather than per object goes to one

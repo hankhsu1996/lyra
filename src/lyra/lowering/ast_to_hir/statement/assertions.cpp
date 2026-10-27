@@ -134,6 +134,13 @@ auto InstanceOf(const slang::ast::AssertionExpr& expr)
   return &simple.expr.as<slang::ast::AssertionInstanceExpression>();
 }
 
+// The hierarchical name an instance reached its declaration by, or nothing
+// where it named one of its own scope.
+auto ReachedThrough(const slang::ast::AssertionInstanceExpression& instance)
+    -> const slang::ast::HierarchicalReference* {
+  return instance.hierRef.target != nullptr ? &instance.hierRef : nullptr;
+}
+
 // The body an instance stands for, which the front end has already expanded
 // with the actual arguments substituted for the formals, so nothing here
 // re-performs the substitution. Absent where a repetition is written on the
@@ -219,7 +226,8 @@ auto EnterNestedInstance(
   return std::optional<EnteredInstance>{EnteredInstance{
       .body = body,
       .frame = frame.WithExpansionInstance(
-          InstanceOf(expr)->symbol, frame.assertion_clock)}};
+          InstanceOf(expr)->symbol, frame.assertion_clock,
+          ReachedThrough(*InstanceOf(expr)))}};
 }
 
 auto AddSequence(const WalkFrame& frame, hir::SequenceExpr expr)
@@ -793,8 +801,9 @@ auto SplitPropertySpec(
     }
     if (const auto* body = InstanceBodyOf(*cursor);
         body != nullptr && !CarriesLocalVars(*cursor)) {
-      body_frame =
-          body_frame.WithExpansionInstance(InstanceOf(*cursor)->symbol, clock);
+      body_frame = body_frame.WithExpansionInstance(
+          InstanceOf(*cursor)->symbol, clock,
+          ReachedThrough(*InstanceOf(*cursor)));
       if (const auto* event = ClockingBlockEventOf(*cursor); event != nullptr) {
         clock = event;
       }

@@ -216,7 +216,9 @@ class DeclBuilder {
       if (!var) return std::unexpected(std::move(var.error()));
       decl_.formals.push_back(
           hir::SubroutineParam{
-              .var = *var, .direction = ParamDirectionOf(*formal)});
+              .var = *var,
+              .direction = ParamDirectionOf(*formal),
+              .default_evaluator = std::nullopt});
     }
     for (const slang::ast::FormalArgumentSymbol* formal :
          SampleFormalsOf(first)) {
@@ -224,7 +226,9 @@ class DeclBuilder {
       if (!var) return std::unexpected(std::move(var.error()));
       decl_.sample_formals.push_back(
           hir::SubroutineParam{
-              .var = *var, .direction = ParamDirectionOf(*formal)});
+              .var = *var,
+              .direction = ParamDirectionOf(*formal),
+              .default_evaluator = std::nullopt});
     }
     if (lineage.size() > 1) {
       auto base =
@@ -948,7 +952,9 @@ auto UnitLowerer::PublishedFactoryOf(
     if (!type) return std::unexpected(std::move(type.error()));
     interface.params.push_back(
         hir::CalleeParam{
-            .direction = ParamDirectionOf(*formal), .type = *type});
+            .direction = ParamDirectionOf(*formal),
+            .type = *type,
+            .default_evaluator = std::nullopt});
   }
   auto made = InternType(first, span);
   if (!made) return std::unexpected(std::move(made.error()));

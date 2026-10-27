@@ -265,6 +265,7 @@ auto NamesVariable(const ConstraintWriter& w, hir::ExprId id) -> bool {
           [](const hir::AssignExpr&) { return false; },
           [](const hir::IncDecExpr&) { return false; },
           [](const hir::CallExpr&) { return false; },
+          [](const hir::CalleeDefaultExpr&) { return false; },
           [](const hir::ConversionExpr&) { return false; },
           [](const hir::ConstantExpr&) { return false; },
           [](const hir::ValueRangeExpr&) { return false; },
@@ -401,6 +402,9 @@ auto Operands(const ConstraintWriter& w, hir::ExprId id)
               if (argument.has_value()) out.push_back(*argument);
             }
             return out;
+          },
+          [](const hir::CalleeDefaultExpr&) -> std::vector<hir::ExprId> {
+            return {};
           },
           [](const hir::ConversionExpr& e) -> std::vector<hir::ExprId> {
             return {e.operand};
@@ -1198,6 +1202,11 @@ auto Term(const ConstraintWriter& w, hir::ExprId id)
           },
           [&](const hir::IncDecExpr&) -> diag::Result<mir::ExprId> {
             return Unsupported(expr.span, "an increment or a decrement");
+          },
+          [](const hir::CalleeDefaultExpr&) -> diag::Result<mir::ExprId> {
+            throw InternalError(
+                "Term: an omitted argument's default stands only in the call "
+                "omitting it -- please report this as a bug");
           },
           [](const hir::ConstantExpr&) -> diag::Result<mir::ExprId> {
             throw InternalError(

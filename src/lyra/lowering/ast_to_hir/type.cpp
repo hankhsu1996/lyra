@@ -1006,7 +1006,13 @@ auto UnitLowerer::MakeCalleeInterface(
     if (!formal_type) return std::unexpected(std::move(formal_type.error()));
     params.push_back(
         hir::CalleeParam{
-            .direction = ParamDirectionOf(*formal), .type = *formal_type});
+            .direction = ParamDirectionOf(*formal),
+            .type = *formal_type,
+            .default_evaluator = formal->getDefaultValue() == nullptr ||
+                                         !EvaluatesItsOwnDefaults(sym)
+                                     ? std::nullopt
+                                     : std::optional{ArgumentDefaultName(
+                                           sym.name, formal->name)}});
   }
   return hir::CalleeInterface{
       .kind = ToHirSubroutineKind(sym.subroutineKind),
@@ -1238,11 +1244,34 @@ auto UnitLowerer::InternOwnClass(
     defined_methods.push_back(subroutine);
   }
 
+  // A formal's default is evaluated in the class each time a call omits it
+  // (LRM 13.5.3), whatever object or scope the call is made from, so each is a
+  // method of the class a caller asks for. The call binds to the method the
+  // front end resolved, so the default is that method's and is not dispatched.
+  std::vector<std::pair<
+      const slang::ast::SubroutineSymbol*,
+      const slang::ast::FormalArgumentSymbol*>>
+      defaulted_formals;
+  const auto take_defaults = [&](const slang::ast::SubroutineSymbol& method) {
+    if (!EvaluatesItsOwnDefaults(method)) return;
+    for (const slang::ast::FormalArgumentSymbol* formal :
+         method.getArguments()) {
+      if (formal->getDefaultValue() != nullptr) {
+        defaulted_formals.emplace_back(&method, formal);
+      }
+    }
+  };
+  for (const auto* method : defined_methods) take_defaults(*method);
+  for (const auto* proto : pure_prototypes) {
+    take_defaults(*proto->getSubroutine());
+  }
+
   // Take an identity for every method before any body lowers, so a body may
   // name a peer whatever order the source declared them in (LRM 13.7) and so a
   // method whose definition sits outside the class body is still nameable from
   // inside it (LRM 8.24).
-  for (std::size_t i = 0; i < defined_methods.size() + pure_prototypes.size();
+  for (std::size_t i = 0; i < defined_methods.size() + pure_prototypes.size() +
+                                  defaulted_formals.size();
        ++i) {
     decl.methods.Declare();
   }
@@ -1357,6 +1386,25 @@ auto UnitLowerer::InternOwnClass(
       return std::unexpected(std::move(added.error()));
     }
   }
+  for (const auto& [method, formal] : defaulted_formals) {
+    auto result_type = InternType(formal->getType(), span);
+    if (!result_type) return std::unexpected(std::move(result_type.error()));
+    declaration.methods.Add(
+        hir::DeclaredMethod{
+            .prototype =
+                hir::SubroutinePrototype{
+                    .name = ArgumentDefaultName(method->name, formal->name),
+                    .interface =
+                        hir::CalleeInterface{
+                            .kind = hir::SubroutineKind::kFunction,
+                            .params = {}},
+                    .result_type = *result_type},
+            .dispatch = method->flags.has(slang::ast::MethodFlags::Static)
+                            ? hir::MethodDispatch{hir::TypeAssociated{}}
+                            : hir::MethodDispatch{hir::NotVirtual{}},
+            .replaces = std::nullopt,
+            .makes = std::nullopt});
+  }
   auto void_type = InternType(cls.getCompilation().getVoidType(), span);
   if (!void_type) return std::unexpected(std::move(void_type.error()));
   for (const auto* block : constraint_blocks) {
@@ -1418,6 +1466,7 @@ auto UnitLowerer::InternOwnClass(
           .defined_methods = std::move(defined_methods),
           .pure_prototypes = std::move(pure_prototypes),
           .constraint_blocks = std::move(constraint_blocks),
+          .defaulted_formals = std::move(defaulted_formals),
           .constructor_sym = constructor_sym});
   return id;
 }
@@ -1503,6 +1552,16 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
     if (!proto_decl) return std::unexpected(std::move(proto_decl.error()));
     decl.methods.Define(
         MethodPositionOf(pending.id, proto->name), *std::move(proto_decl));
+  }
+
+  for (const auto& [method, formal] : pending.defaulted_formals) {
+    std::string name = ArgumentDefaultName(method->name, formal->name);
+    const hir::MethodId position = MethodPositionOf(pending.id, name);
+    auto evaluator = LowerEvaluatorDecl(
+        *this, *formal, std::move(name), *formal->getDefaultValue(),
+        class_frame);
+    if (!evaluator) return std::unexpected(std::move(evaluator.error()));
+    decl.methods.Define(position, *std::move(evaluator));
   }
 
   for (const auto* block : pending.constraint_blocks) {

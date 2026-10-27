@@ -78,6 +78,25 @@ load-bearing sentence, and it is a condition rather than a gap:
 [`north_star.md`](../architecture/north_star.md) invariant 5 makes independently compilable units
 with explicit dependencies a first-class constraint, so it stays true however much gets built.
 
+### D3a. A class an instance declares is asked about that instance too (2026-10-26)
+
+"Each instance with a user-defined type declared inside the instance creates a unique type" (LRM
+6.22), so two instances of one module declaring a class `C` have two types `C`, and a `$cast` toward
+one of them succeeds only for an object of the class that belongs to that instance. One compiled
+class serves every instance, so the class's definition answers only half: the other half is which
+instance the object belongs to, and the object already keeps it, because its construction is handed
+the instance its class belongs to. So the cast first asks the object's definition, as D3 says, and
+then compares the instance the object keeps for the destination class with the one the cast names,
+reached from where the cast stands as a `new` of the class written there reaches it. A JVM class is
+likewise its name together with the loader that defined it, so one class file defined by two loaders
+is two types sharing code (JVMS 5.3, recalled).
+
+Before this, the answer came from the definition alone, so an object of another instance's class was
+taken for this instance's, on both backends; a class each generate block declared answered right
+only because each such block compiled a class of its own. An interface class an instance declares is
+still asked about its definition alone: its objects are of classes that keep their own instance, not
+the interface's.
+
 ### D4. Where the declared types settle it, the answer is a constant
 
 Two of the four situations need no run-time question at all, and one of them needs no assignment
@@ -185,6 +204,7 @@ unrelated classes, so it never can" -- and uses it only to warn, never to reject
 - [structural-access-on-an-opaque-object](structural-access-on-an-opaque-object.md) and
   [a-settled-access-is-ordinary-operations](a-settled-access-is-ordinary-operations.md) -- the
   record an object carries, which is what the class half of this asks.
-- IEEE 1800-2023: 6.24.2 (`$cast`), 6.22.3 / 6.22.4 / 6.22.5 (assignment compatible, cast
-  compatible, type incompatible), 6.19.5.6 (`name` of a non-member), 8.16 (casting between class
-  handles), 8.26 (interface classes), 20.10 (severity tasks).
+- IEEE 1800-2023: 6.24.2 (`$cast`), 6.22 (a type declared in an instance is that instance's), 6.22.3
+  / 6.22.4 / 6.22.5 (assignment compatible, cast compatible, type incompatible), 6.19.5.6 (`name` of
+  a non-member), 8.16 (casting between class handles), 8.26 (interface classes), 20.10 (severity
+  tasks).

@@ -266,6 +266,7 @@ void ForEachOperand(const ExprData& data, const auto& reach) {
               optional_operand(argument);
             }
           },
+          [](const CalleeDefaultExpr&) {},
           [&](const ConversionExpr& e) { operand(e.operand); },
           [&](const ConstantExpr& e) { operand(e.value); },
           [&](const ValueRangeExpr& e) {
@@ -671,6 +672,9 @@ auto Describe(const ExprData& data) -> std::string {
           },
           [](const CallExpr& e) -> std::string {
             return DescribeCall(e.callee);
+          },
+          [](const CalleeDefaultExpr&) -> std::string {
+            return "an omitted argument's default";
           },
           [](const ConversionExpr&) -> std::string { return "a conversion"; },
           [](const ConstantExpr&) -> std::string { return "a constant"; },

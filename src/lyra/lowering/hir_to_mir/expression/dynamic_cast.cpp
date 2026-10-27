@@ -137,18 +137,59 @@ auto LowerHirDynamicCastExpr(
         throw InternalError(
             "LowerHirDynamicCastExpr: a destination of 'dynamic_type' is "
             "answered before any value is bound");
-      case hir::RunTimeCheck::kObjectIsOfTheDestinationClass:
+      case hir::RunTimeCheck::kObjectIsOfTheDestinationClass: {
+        const mir::ClassId destination_class = mir::ClassOfObject(
+            unit.types, unit.types.Get(destination_type)
+                            .Get<mir::ManagedRefType>()
+                            .pointee);
         bind_value(body.exprs.Add(
             mir::MakeCallExpr(
                 mir::Direct{.target = support::BuiltinFn::kDynamicCast},
-                {source, BuildDefinitionRead(
-                             unit, body,
-                             mir::ClassOfObject(
-                                 unit.types, unit.types.Get(destination_type)
-                                                 .Get<mir::ManagedRefType>()
-                                                 .pointee))},
+                {source, BuildDefinitionRead(unit, body, destination_class)},
                 destination_type)));
-        return read_value(body);
+        if (!c.destination_instance.has_value()) return read_value(body);
+        // An object of the class is of this instance's type only where it
+        // belongs to this instance (LRM 6.22): the instance its construction
+        // was handed as the class's own, which the object keeps. A JVM class
+        // is likewise its name together with the loader that defined it.
+        const mir::ExprId is_of_class =
+            ReduceToCondition(unit, body, read_value(body));
+        mir::Block belongs;
+        const mir::ExprId kept = belongs.Read(belongs.exprs.Add(
+            mir::MakeFieldAccessExpr(
+                BuildObjectDeref(
+                    unit, belongs,
+                    BuildObjectPointer(unit, belongs, read_value(belongs))),
+                mir::ClassFieldTarget{
+                    .owner = destination_class,
+                    .slot = owner.DeclaringInstanceFieldOf(destination_class)},
+                unit.builtins.scope_ptr)));
+        const mir::ExprId expected = BuildImplicitInstanceArgument(
+            lowerer, steps.Frame().WithBlock(&belongs),
+            *c.destination_instance);
+        const mir::ExprId same = belongs.exprs.Add(
+            mir::MakeBinary(
+                unit, belongs, mir::BinaryOp::kEquality, kept, expected,
+                unit.builtins.machine_bool));
+        const mir::ExprId belongs_answer = body.exprs.Add(
+            mir::Expr{
+                .data =
+                    mir::BlockExpr{
+                        .scope = body.child_scopes.Add(std::move(belongs)),
+                        .value = same},
+                .type = unit.builtins.machine_bool});
+        return body.exprs.Add(
+            mir::Expr{
+                .data =
+                    mir::ConditionalExpr{
+                        .condition = is_of_class,
+                        .then_value = belongs_answer,
+                        .else_value = body.exprs.Add(
+                            mir::Expr{
+                                .data = mir::MachineBoolLiteral{.value = false},
+                                .type = unit.builtins.machine_bool})},
+                .type = unit.builtins.machine_bool});
+      }
     }
     throw InternalError("LowerHirDynamicCastExpr: unknown run-time check");
   }();

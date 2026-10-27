@@ -1458,6 +1458,15 @@ auto LowerCallExpr(
       arg_ids.emplace_back(std::nullopt);
       continue;
     }
+    if (const auto* omitted = OmittedFormal(call, i)) {
+      const auto at = frontend::PointSpanOf(omitted->location);
+      auto type = lowerer.Owner().InternType(omitted->getType(), at);
+      if (!type) return std::unexpected(std::move(type.error()));
+      arg_ids.emplace_back(frame.Exprs().Add(
+          hir::Expr{
+              .type = *type, .data = hir::CalleeDefaultExpr{}, .span = span}));
+      continue;
+    }
     auto arg_or = lowerer.LowerExpr(*arg, frame);
     if (!arg_or) return std::unexpected(std::move(arg_or.error()));
     if (i == 0) {

@@ -28,6 +28,7 @@ struct Pattern;
 
 namespace slang::ast {
 class ClassType;
+class HierarchicalReference;
 class Symbol;
 class Scope;
 class TimingControl;
@@ -57,10 +58,14 @@ struct ActiveIterationClause {
 // clock in force where the instance stands, which a `$inferred_clock` among
 // its formals' defaults stands for (LRM 16.14.7); none where no clock is. The
 // clock is the one the source wrote, resolved wherever it is used, against
-// the instances recorded beside it.
+// the instances recorded beside it. `reached_through` is the hierarchical name
+// the instance reached its declaration by, where it named one: a name the body
+// writes binds in the scope declaring it (LRM 16.8, 11.12), which is the scope
+// that name reached.
 struct ExpansionInstance {
   const slang::ast::Symbol* declaration;
   const slang::ast::TimingControl* clock;
+  const slang::ast::HierarchicalReference* reached_through;
 };
 
 // The class a covergroup's body is embedded in (LRM 19.4), and the variable of
@@ -390,13 +395,19 @@ struct WalkFrame {
   }
 
   // Enters the body of the instance of `declaration`, standing where `clock`
-  // is in force.
+  // is in force, reached through the hierarchical name `reached_through`
+  // where it wrote one.
   [[nodiscard]] auto WithExpansionInstance(
       const slang::ast::Symbol& declaration,
-      const slang::ast::TimingControl* clock) const -> WalkFrame {
+      const slang::ast::TimingControl* clock,
+      const slang::ast::HierarchicalReference* reached_through) const
+      -> WalkFrame {
     WalkFrame next = *this;
     next.expansion_stack.push_back(
-        ExpansionInstance{.declaration = &declaration, .clock = clock});
+        ExpansionInstance{
+            .declaration = &declaration,
+            .clock = clock,
+            .reached_through = reached_through});
     return next;
   }
 

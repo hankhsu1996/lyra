@@ -1091,7 +1091,9 @@ auto UnitLowerer::DeclarePublishedClass(hir::ClassId cls) -> void {
                 declared.fields.Add(mir::FieldDecl{.type = property.type})});
   }
   if (fields.declaring_instance.has_value()) {
-    declared.fields.Add(mir::FieldDecl{.type = *fields.declaring_instance});
+    RecordDeclaringInstanceField(
+        id, declared.fields.Add(
+                mir::FieldDecl{.type = *fields.declaring_instance}));
   }
   for (const hir::StaticPropertyId prop : published.static_properties.Ids()) {
     const hir::DeclaredProperty& property =
@@ -1219,6 +1221,23 @@ auto UnitLowerer::ScopeClassLayoutOf(hir::ScopeClassId hir_id) const
     throw InternalError(
         "UnitLowerer::ScopeClassLayoutOf: every scope class of another unit "
         "this unit reaches is declared before any body lowers");
+  }
+  return it->second;
+}
+
+void UnitLowerer::RecordDeclaringInstanceField(
+    mir::ClassId cls, mir::FieldId field) {
+  declaring_instance_fields_.emplace(cls, field);
+}
+
+auto UnitLowerer::DeclaringInstanceFieldOf(mir::ClassId cls) const
+    -> mir::FieldId {
+  const auto it = declaring_instance_fields_.find(cls);
+  if (it == declaring_instance_fields_.end()) {
+    throw InternalError(
+        "UnitLowerer::DeclaringInstanceFieldOf: only a class a structural "
+        "scope declares keeps the instance it belongs to, in the field laid "
+        "out for it");
   }
   return it->second;
 }

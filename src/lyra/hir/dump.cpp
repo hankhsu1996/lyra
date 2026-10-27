@@ -1367,6 +1367,9 @@ class HirDumper {
                   "CallExpr callee={} args=[{}]", FormatSubroutineRef(c.callee),
                   args);
             },
+            [](const CalleeDefaultExpr&) -> std::string {
+              return "CalleeDefaultExpr";
+            },
             [](const ConversionExpr& cv) -> std::string {
               return std::format(
                   "ConversionExpr kind={} operand=Expr[{}]",
@@ -1556,10 +1559,11 @@ class HirDumper {
             [](const DynamicCastExpr& c) -> std::string {
               return std::format(
                   "DynamicCastExpr destination=Expr[{}] source=Expr[{}] "
-                  "validity={} on_invalid={}",
+                  "validity={} on_invalid={} {}",
                   c.destination.value, c.source.value,
                   FormatAssignmentValidity(c.validity),
-                  FormatInvalidAssignmentHandling(c.on_invalid));
+                  FormatInvalidAssignmentHandling(c.on_invalid),
+                  FormatDeclaringInstance(c.destination_instance));
             },
             [](const CovergroupNewExpr& n) -> std::string {
               std::string args;

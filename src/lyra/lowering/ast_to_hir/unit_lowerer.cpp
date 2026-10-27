@@ -618,6 +618,18 @@ void UnitLowerer::DeclareSubroutine(
   MapSubroutineBinding(sub, frame, id);
   published.callables.emplace_back(
       ScopePublicationRecord::Subroutine{.symbol = &sub, .id = id});
+  // A formal's default is evaluated in this scope each time a call omits it
+  // (LRM 13.5.3), wherever the call is, so it is a subroutine of this scope
+  // the caller asks for, as a port's default is.
+  for (const slang::ast::FormalArgumentSymbol* formal : sub.getArguments()) {
+    if (formal->getDefaultValue() == nullptr) continue;
+    const hir::StructuralSubroutineId evaluator =
+        decls.structural_subroutines.Declare();
+    MapEvaluator(*formal, evaluator);
+    published.callables.emplace_back(
+        ScopePublicationRecord::ArgumentDefault{
+            .subroutine = &sub, .formal = formal, .id = evaluator});
+  }
   support::DefPath path =
       support::Extended(published.class_path, ProceduralStepOf(sub));
   published.disable_targets.push_back(
@@ -1038,7 +1050,10 @@ auto ScopePublicationRecord::CallableOf(const slang::ast::Symbol& holder) const
             [&](const PortDefault& port) -> bool {
               return port.port == &holder;
             },
-            [&](const ViewRead& read) -> bool { return read.port == &holder; }},
+            [&](const ViewRead& read) -> bool { return read.port == &holder; },
+            [&](const ArgumentDefault& argument) -> bool {
+              return argument.formal == &holder;
+            }},
         callable);
   };
   const auto it = std::ranges::find_if(callables, holds);
@@ -1087,29 +1102,40 @@ void UnitLowerer::MapEvaluator(
   }
 }
 
+auto UnitLowerer::FindEvaluator(const slang::ast::Symbol& holder) const
+    -> std::optional<hir::StructuralSubroutineId> {
+  const auto it = evaluators_.find(&holder);
+  if (it == evaluators_.end()) return std::nullopt;
+  return it->second;
+}
+
 auto UnitLowerer::EvaluatorOf(const slang::ast::Symbol& holder) const
     -> hir::StructuralSubroutineId {
-  const auto it = evaluators_.find(&holder);
-  if (it == evaluators_.end()) {
+  const std::optional<hir::StructuralSubroutineId> evaluator =
+      FindEvaluator(holder);
+  if (!evaluator.has_value()) {
     throw InternalError(
         "UnitLowerer::EvaluatorOf: an expression another unit asks for takes "
         "its identity with the unit's other structural declarations");
   }
-  return it->second;
+  return *evaluator;
 }
 
-auto UnitLowerer::InternDeclaredPortType(const slang::ast::Symbol& port)
+auto UnitLowerer::InternDeclaredType(const slang::ast::Symbol& holder)
     -> diag::Result<hir::TypeId> {
-  const auto span = frontend::PointSpanOf(port.location);
-  if (const auto* declared = port.as_if<slang::ast::PortSymbol>()) {
+  const auto span = frontend::PointSpanOf(holder.location);
+  if (const auto* declared = holder.as_if<slang::ast::PortSymbol>()) {
     return InternType(declared->getType(), span);
   }
-  if (const auto* offered = port.as_if<slang::ast::ModportPortSymbol>()) {
+  if (const auto* offered = holder.as_if<slang::ast::ModportPortSymbol>()) {
     return InternType(offered->getType(), span);
   }
+  if (const auto* formal = holder.as_if<slang::ast::FormalArgumentSymbol>()) {
+    return InternType(formal->getType(), span);
+  }
   throw InternalError(
-      "UnitLowerer::InternDeclaredPortType: only a port and a name a view "
-      "offers declare a port's type");
+      "UnitLowerer::InternDeclaredType: only a port, a name a view offers and "
+      "a formal hold an expression another unit asks this one to evaluate");
 }
 
 void UnitLowerer::MapSubroutineBinding(

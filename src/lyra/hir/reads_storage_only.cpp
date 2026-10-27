@@ -114,6 +114,7 @@ auto ReadsOnly(
           // handle or a virtual interface reaches is no storage elaboration
           // sealed, and a null one fails the evaluation (LRM 8.4, 25.9).
           [](const CallExpr&) { return false; },
+          [](const CalleeDefaultExpr&) { return false; },
           [](const AssignExpr&) { return false; },
           [](const IncDecExpr&) { return false; },
           [](const ClassPropertyAccessExpr&) { return false; },

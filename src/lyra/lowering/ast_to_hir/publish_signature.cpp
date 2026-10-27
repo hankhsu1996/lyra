@@ -371,7 +371,7 @@ auto UnitLowerer::PublishedCallableOf(
   // function of this unit that takes nothing.
   const auto evaluator = [&](std::string name, const slang::ast::Symbol& holder)
       -> diag::Result<hir::SubroutinePrototype> {
-    auto result_type = InternDeclaredPortType(holder);
+    auto result_type = InternDeclaredType(holder);
     if (!result_type) return std::unexpected(std::move(result_type.error()));
     return hir::SubroutinePrototype{
         .name = std::move(name),
@@ -406,6 +406,12 @@ auto UnitLowerer::PublishedCallableOf(
             return evaluator(
                 ModportReadName(read.modport->name, read.port->name),
                 *read.port);
+          },
+          [&](const ScopePublicationRecord::ArgumentDefault& argument) {
+            return evaluator(
+                ArgumentDefaultName(
+                    argument.subroutine->name, argument.formal->name),
+                *argument.formal);
           }},
       callable);
 }
@@ -943,7 +949,7 @@ auto UnitLowerer::PublishScopeClass(
         Overloaded{
             [&](const ScopePublicationRecord::ViewPlace&)
                 -> diag::Result<hir::PublishedModportPort> {
-              auto interned = InternDeclaredPortType(port);
+              auto interned = InternDeclaredType(port);
               if (!interned) {
                 return std::unexpected(std::move(interned.error()));
               }

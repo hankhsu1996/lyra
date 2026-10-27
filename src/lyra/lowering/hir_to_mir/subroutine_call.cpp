@@ -11,6 +11,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/arena.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/expr.hpp"
@@ -136,11 +137,16 @@ using CalleeForm = std::variant<NamedCallee, DispatchedCallee>;
 // The callee-interface facts a subroutine call needs, read uniformly however
 // the callee is named: from its HIR declaration when this unit holds one, and
 // from what another unit published about it when that unit does.
+// `defaults` holds, at the position of each formal with a default, the function
+// evaluating it (LRM 13.5.3): a function of whatever declares the callee, made
+// on the same handle the callee is, so a call omitting the formal asks the
+// callee's own scope for its value.
 struct SubroutineCallee {
   hir::SubroutineKind kind = hir::SubroutineKind::kFunction;
   std::optional<mir::TypeId> result_type;
   CompletionLayout completion;
   CalleeForm form;
+  std::vector<std::optional<CalleeForm>> defaults;
 };
 
 // A callee this unit can name: the target a direct call spells, and the slot it
@@ -151,11 +157,13 @@ struct NamedTarget {
 };
 
 // What a call reads off a class method it reaches: the interface it marshals
-// against, and what the call reaches the body by.
+// against, what the call reaches the body by, and, at the position of each
+// formal with a default, the method of the same class evaluating it.
 struct MethodCalleeFacts {
   hir::SubroutineKind kind = hir::SubroutineKind::kFunction;
   std::vector<CalleeFormal> formals;
   NamedTarget target;
+  std::vector<std::optional<mir::Direct>> defaults;
 };
 
 // Reads those facts off the declaration of the method the reference names,
@@ -169,29 +177,60 @@ auto ReadMethodCallee(
           [&](const hir::ClassMethodTarget& behavior) {
             return unit_lowerer.VirtualSlotOf(behavior);
           });
-  const hir::CalleeInterface& interface = classes.Declaration(callee.owner)
-                                              .methods.Get(callee.method)
-                                              .prototype.interface;
+  const hir::DeclaredMethods& methods =
+      classes.Declaration(callee.owner).methods;
+  const hir::CalleeInterface& interface =
+      methods.Get(callee.method).prototype.interface;
+  std::vector<std::optional<mir::Direct>> defaults;
+  for (const hir::CalleeParam& param : interface.params) {
+    defaults.push_back(
+        param.default_evaluator.transform([&](const std::string& evaluator) {
+          const std::optional<hir::MethodId> method =
+              hir::FindMethod(methods, evaluator);
+          if (!method.has_value()) {
+            throw InternalError(
+                "ReadMethodCallee: a class declaring a formal's default "
+                "declares the method evaluating it");
+          }
+          return mir::Direct{
+              .target = unit_lowerer.TranslateMethodTarget(
+                  hir::ClassMethodTarget{
+                      .owner = callee.owner, .method = *method})};
+        }));
+  }
   return MethodCalleeFacts{
       .kind = interface.kind,
       .formals = CalleeFormalsOf(unit_lowerer, interface),
-      .target = NamedTarget{
-          .direct =
-              mir::Direct{.target = unit_lowerer.TranslateMethodTarget(callee)},
-          .slot = slot}};
+      .target =
+          NamedTarget{
+              .direct =
+                  mir::Direct{
+                      .target = unit_lowerer.TranslateMethodTarget(callee)},
+              .slot = slot},
+      .defaults = std::move(defaults)};
 }
 
 // What any call to a class method states about its boundary, whatever object
 // it runs on: what the callee marshals against and yields, and how it is
 // named.
+// A formal's default is evaluated by a method of the class on the same handle
+// the call is made on, named outright: the default is the one of the method
+// the call names, whichever body the object's class runs for it.
 auto PlanMethodBoundary(
     const MethodCalleeFacts& facts, std::optional<mir::TypeId> result_type,
-    CalleeForm form) -> SubroutineCallee {
+    CalleeForm form, std::optional<AmbientHandle> handle) -> SubroutineCallee {
+  std::vector<std::optional<CalleeForm>> defaults;
+  for (const std::optional<mir::Direct>& evaluator : facts.defaults) {
+    defaults.push_back(evaluator.transform([&](const mir::Direct& direct) {
+      return CalleeForm{NamedCallee{.callee = direct, .handle = handle}};
+    }));
+  }
   return SubroutineCallee{
       .kind = facts.kind,
       .result_type = result_type,
       .completion = BuildCompletionLayout(facts.formals, result_type),
-      .form = std::move(form)};
+      .form = std::move(form),
+      .defaults = std::move(defaults)};
 }
 
 // Plans a call to an instance method (LRM 8.6), which leads with the object
@@ -214,11 +253,11 @@ auto PlanInstanceMethodCall(
       !std::holds_alternative<hir::SuperReceiver>(ref.receiver)) {
     return PlanMethodBoundary(
         facts, result_type,
-        DispatchedCallee{.receiver = object, .slot = *std::move(slot)});
+        DispatchedCallee{.receiver = object, .slot = *std::move(slot)}, object);
   }
   return PlanMethodBoundary(
       facts, result_type,
-      NamedCallee{.callee = facts.target.direct, .handle = object});
+      NamedCallee{.callee = facts.target.direct, .handle = object}, object);
 }
 
 // Plans a call to a type-associated method (LRM 8.10), which has no object to
@@ -229,14 +268,13 @@ auto PlanTypeAssociatedMethodCall(
     UnitLowerer& unit_lowerer, const hir::StaticMethodCallRef& ref,
     std::optional<mir::TypeId> result_type) -> SubroutineCallee {
   const MethodCalleeFacts facts = ReadMethodCallee(unit_lowerer, ref.callee);
+  const std::optional<AmbientHandle> handle = ref.declaring_instance.transform(
+      [](const hir::DeclaringInstanceReach& reach) {
+        return AmbientHandle{DeclaringScopeArgument{.reach = reach}};
+      });
   return PlanMethodBoundary(
       facts, result_type,
-      NamedCallee{
-          .callee = facts.target.direct,
-          .handle = ref.declaring_instance.transform(
-              [](const hir::DeclaringInstanceReach& reach) {
-                return AmbientHandle{DeclaringScopeArgument{.reach = reach}};
-              })});
+      NamedCallee{.callee = facts.target.direct, .handle = handle}, handle);
 }
 
 // Reads the callee's interface out of whichever HIR reference names it, and
@@ -271,6 +309,15 @@ auto PlanSubroutineCall(
             plan.form = NamedCallee{
                 .callee = lowerer.TranslateStructuralSubroutine(ref.subroutine),
                 .handle = AmbientHandle{OwnScopeReceiver{}}};
+            for (const hir::SubroutineParam& param : decl.params) {
+              plan.defaults.push_back(param.default_evaluator.transform(
+                  [&](hir::StructuralSubroutineId evaluator) {
+                    return CalleeForm{NamedCallee{
+                        .callee =
+                            lowerer.TranslateStructuralSubroutine(evaluator),
+                        .handle = AmbientHandle{OwnScopeReceiver{}}}};
+                  }));
+            }
             return plan;
           },
           [&](const hir::NamespaceSubroutineRef& ref) -> Planned {
@@ -285,32 +332,63 @@ auto PlanSubroutineCall(
                         .target =
                             unit_lowerer.MakeNamespaceCallableTarget(ref)},
                 .handle = std::nullopt};
+            for (const hir::CalleeParam& param : ref.interface.params) {
+              plan.defaults.push_back(param.default_evaluator.transform(
+                  [&](const std::string& evaluator) {
+                    return CalleeForm{NamedCallee{
+                        .callee =
+                            mir::Direct{
+                                .target =
+                                    unit_lowerer.MakeNamespaceCallableTarget(
+                                        hir::NamespaceSubroutineRef{
+                                            .unit_name = ref.unit_name,
+                                            .subroutine_name = evaluator,
+                                            .interface = {}})},
+                        .handle = std::nullopt}};
+                  }));
+            }
             return plan;
           },
           [&](const hir::PublishedScopeMethodRef& ref) -> Planned {
+            const hir::ScopeClassSignature& scope =
+                unit_lowerer.Hir().scope_classes.Get(ref.scope_class);
             const hir::SubroutinePrototype& published =
-                unit_lowerer.Hir()
-                    .scope_classes.Get(ref.scope_class)
-                    .callables.Get(ref.callable);
+                scope.callables.Get(ref.callable);
             SubroutineCallee plan;
             plan.kind = published.interface.kind;
             plan.result_type = result_type;
             plan.completion = BuildCompletionLayout(
                 CalleeFormalsOf(unit_lowerer, published.interface),
                 result_type);
+            const AmbientHandle receiver = std::visit(
+                Overloaded{
+                    [](const hir::RoutedObjectRef& routed) {
+                      return AmbientHandle{SealedObject{.reference = routed}};
+                    },
+                    [](const hir::InterfaceInstanceAccessExpr& held) {
+                      return AmbientHandle{HeldInterface{.access = held}};
+                    }},
+                ref.receiver);
             plan.form = DispatchedCallee{
-                .receiver = std::visit(
-                    Overloaded{
-                        [](const hir::RoutedObjectRef& routed) {
-                          return AmbientHandle{
-                              SealedObject{.reference = routed}};
-                        },
-                        [](const hir::InterfaceInstanceAccessExpr& held) {
-                          return AmbientHandle{HeldInterface{.access = held}};
-                        }},
-                    ref.receiver),
+                .receiver = receiver,
                 .slot = unit_lowerer.PublishedSubroutineSlot(
                     ref.scope_class, ref.callable)};
+            for (const hir::CalleeParam& param : published.interface.params) {
+              plan.defaults.push_back(param.default_evaluator.transform(
+                  [&](const std::string& evaluator) {
+                    const std::optional<hir::PublishedCallableId> callable =
+                        scope.FindCallable(evaluator);
+                    if (!callable.has_value()) {
+                      throw InternalError(
+                          "PlanSubroutineCall: a scope publishing a formal's "
+                          "default publishes the function evaluating it");
+                    }
+                    return CalleeForm{DispatchedCallee{
+                        .receiver = receiver,
+                        .slot = unit_lowerer.PublishedSubroutineSlot(
+                            ref.scope_class, *callable)}};
+                  }));
+            }
             return plan;
           },
           [&](const hir::MethodCallRef& ref) -> Planned {
@@ -407,49 +485,102 @@ auto BuildAmbientHandle(
       handle);
 }
 
-// How the call names its callee and what leads the arguments the source wrote,
-// evaluated in the block `frame` is writing.
+// The value the handle of `form` names, evaluated in the block `frame` is
+// writing, or nothing for a callee taking none.
 template <ExprLowerer Lowerer>
-auto ResolveCallee(
-    Lowerer& lowerer, const WalkFrame& frame, const SubroutineCallee& plan)
-    -> diag::Result<ResolvedCallee> {
-  mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+auto EvaluateHandle(
+    Lowerer& lowerer, const WalkFrame& frame, const CalleeForm& form)
+    -> diag::Result<std::optional<mir::ExprId>> {
+  const std::optional<AmbientHandle> handle = std::visit(
+      Overloaded{
+          [](const NamedCallee& named) { return named.handle; },
+          [](const DispatchedCallee& dispatched) {
+            return std::optional{dispatched.receiver};
+          }},
+      form);
+  if (!handle.has_value()) return std::nullopt;
+  auto value = BuildAmbientHandle(lowerer, frame, *handle);
+  if (!value) return std::unexpected(std::move(value.error()));
+  return std::optional{*value};
+}
+
+// How a call names the callee `form` names and what leads the arguments the
+// source wrote, where its handle evaluated to `handle`.
+auto ResolveCalleeOn(
+    const UnitLowerer& unit_lowerer, mir::Block& block, const CalleeForm& form,
+    std::optional<mir::ExprId> handle) -> ResolvedCallee {
   return std::visit(
       Overloaded{
-          [&](const NamedCallee& named) -> diag::Result<ResolvedCallee> {
+          [&](const NamedCallee& named) -> ResolvedCallee {
             if (!named.handle.has_value()) {
               return ResolvedCallee{
                   .callee = named.callee, .leading = std::nullopt};
             }
-            auto handle_or = BuildAmbientHandle(lowerer, frame, *named.handle);
-            if (!handle_or) {
-              return std::unexpected(std::move(handle_or.error()));
-            }
             if (!BindsAsReceiver(*named.handle)) {
-              return ResolvedCallee{
-                  .callee = named.callee, .leading = *handle_or};
+              return ResolvedCallee{.callee = named.callee, .leading = handle};
             }
             return ResolvedCallee{
                 .callee =
                     mir::Direct{
                         .target = named.callee.target,
-                        .receiver = BuildObjectDeref(unit, block, *handle_or)},
+                        .receiver = BuildObjectDeref(
+                            unit_lowerer.Unit(), block, *handle)},
                 .leading = std::nullopt};
           },
-          [&](const DispatchedCallee& dispatched)
-              -> diag::Result<ResolvedCallee> {
-            auto receiver_or =
-                BuildAmbientHandle(lowerer, frame, dispatched.receiver);
-            if (!receiver_or) {
-              return std::unexpected(std::move(receiver_or.error()));
-            }
+          [&](const DispatchedCallee& dispatched) -> ResolvedCallee {
             return ResolvedCallee{
                 .callee = DispatchingCallee(
-                    lowerer.Owner(), block, *receiver_or, dispatched.slot),
+                    unit_lowerer, block, *handle, dispatched.slot),
                 .leading = std::nullopt};
           }},
-      plan.form);
+      form);
+}
+
+// Whether the call omits any argument, which the callee's default stands for.
+auto OmitsAny(
+    const base::Arena<hir::Expr, hir::ExprId>& exprs,
+    std::span<const hir::ExprId> operands) -> bool {
+  return std::ranges::any_of(operands, [&](hir::ExprId id) {
+    return std::holds_alternative<hir::CalleeDefaultExpr>(exprs.Get(id).data);
+  });
+}
+
+// What the handle of `form` names, evaluated once where the call omits an
+// argument: a default is evaluated on the object the callee is made on, so
+// the one value stands at both.
+template <ExprLowerer Lowerer>
+auto EvaluateSharedHandle(
+    Lowerer& lowerer, const WalkFrame& frame, const CalleeForm& form,
+    bool omits_any) -> diag::Result<std::optional<mir::ExprId>> {
+  auto handle = EvaluateHandle(lowerer, frame, form);
+  if (!handle) return std::unexpected(std::move(handle.error()));
+  if (omits_any && handle->has_value()) {
+    return std::optional{EvaluatedOnce(frame, **handle)};
+  }
+  return handle;
+}
+
+// The value of the omitted formal at `position`: the function evaluating its
+// default, called on the callee's handle and handing on the report `frame`
+// hands on, so what the default reads is stated where the callee's own reads
+// are.
+auto EvaluateOmitted(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    const SubroutineCallee& plan, std::size_t position,
+    std::optional<mir::ExprId> handle, mir::TypeId type) -> mir::ExprId {
+  if (position >= plan.defaults.size() ||
+      !plan.defaults[position].has_value()) {
+    throw InternalError(
+        "EvaluateOmitted: an omitted formal has a default its callee "
+        "evaluates");
+  }
+  ResolvedCallee evaluator = ResolveCalleeOn(
+      unit_lowerer, *frame.current_block, *plan.defaults[position], handle);
+  std::vector<mir::ExprId> leading;
+  if (evaluator.leading.has_value()) leading.push_back(*evaluator.leading);
+  return BuildFunctionCall(
+      unit_lowerer.Unit(), frame, std::move(evaluator.callee),
+      std::move(leading), type);
 }
 
 // Whether an actual of type `actual` is handed to a formal of type `formal`
@@ -630,23 +761,33 @@ auto EmitSubroutineCall(
   const mir::TypeId call_result_type =
       SubroutineCallType(unit, plan.kind, payload_type);
 
-  auto resolved_or = ResolveCallee(lowerer, frame, plan);
-  if (!resolved_or) return std::unexpected(std::move(resolved_or.error()));
+  const std::vector<hir::ExprId> operands = RequiredOperands(call);
+  auto handle = EvaluateSharedHandle(
+      lowerer, frame, plan.form, OmitsAny(hir_exprs, operands));
+  if (!handle) return std::unexpected(std::move(handle.error()));
+  ResolvedCallee resolved =
+      ResolveCalleeOn(lowerer.Owner(), block, plan.form, *handle);
 
   std::vector<mir::ExprId> call_args;
   call_args.reserve(call.arguments.size() + 1);
-  if (resolved_or->leading.has_value()) {
-    call_args.push_back(*resolved_or->leading);
+  if (resolved.leading.has_value()) {
+    call_args.push_back(*resolved.leading);
   }
 
   std::vector<CompletionWriteback> writebacks;
 
   // A user call fills every position its completion layout declares, and the
   // two counts were matched on entry.
-  const std::vector<hir::ExprId> operands = RequiredOperands(call);
   for (std::size_t i = 0; i < operands.size(); ++i) {
     const CompletionLayout::Formal& formal = plan.completion.formals[i];
     const hir::Expr& hir_arg = hir_exprs.Get(operands[i]);
+
+    // An omitted input is the value the callee's default evaluates to.
+    if (std::holds_alternative<hir::CalleeDefaultExpr>(hir_arg.data)) {
+      call_args.push_back(EvaluateOmitted(
+          lowerer.Owner(), frame, plan, i, *handle, formal.type));
+      continue;
+    }
 
     // Exhaustive over the directions, so one added to the language is bound
     // here rather than silently passed as a value.
@@ -705,7 +846,7 @@ auto EmitSubroutineCall(
           mir::Expr{
               .data =
                   mir::CallExpr{
-                      .callee = std::move(resolved_or->callee),
+                      .callee = std::move(resolved.callee),
                       .arguments = std::move(call_args)},
               .type = call_result_type},
       .payload_type = payload_type,
@@ -924,14 +1065,17 @@ auto EmitReportingCall(
       CompletionPayloadType(unit, plan.completion.components);
   const mir::TypeId call_result_type =
       SubroutineCallType(unit, plan.kind, payload_type);
-  auto resolved = ResolveCallee(lowerer, frame, plan);
-  if (!resolved) return std::unexpected(std::move(resolved.error()));
+  const std::vector<hir::ExprId> operands = RequiredOperands(*call);
+  auto handle = EvaluateSharedHandle(
+      lowerer, frame, plan.form, OmitsAny(lowerer.HirExprs(), operands));
+  if (!handle) return std::unexpected(std::move(handle.error()));
+  ResolvedCallee resolved =
+      ResolveCalleeOn(lowerer.Owner(), block, plan.form, *handle);
 
   std::vector<mir::ExprId> call_args;
-  if (resolved->leading.has_value()) {
-    call_args.push_back(*resolved->leading);
+  if (resolved.leading.has_value()) {
+    call_args.push_back(*resolved.leading);
   }
-  const std::vector<hir::ExprId> operands = RequiredOperands(*call);
   if (operands.size() != plan.completion.formals.size()) {
     throw InternalError("EmitReportingCall: argument / formal count mismatch");
   }
@@ -947,6 +1091,15 @@ auto EmitReportingCall(
       // formal's.
       case hir::ParamDirection::kInput:
       case hir::ParamDirection::kInOut: {
+        // An omitted input is the callee's default, which is part of what the
+        // call reads, so the function evaluating it is asked here too.
+        if (std::holds_alternative<hir::CalleeDefaultExpr>(
+                lowerer.HirExprs().Get(operands[i]).data)) {
+          call_args.push_back(EvaluateOmitted(
+              lowerer.Owner(), frame.WithReportingReachedTo(report), plan, i,
+              *handle, formal.type));
+          break;
+        }
         const mir::ExprId value = block.exprs.Add(
             BuildDefaultValueFromHir(lowerer.Owner(), block, actual_type));
         call_args.push_back(
@@ -996,7 +1149,7 @@ auto EmitReportingCall(
               mir::Expr{
                   .data =
                       mir::CallExpr{
-                          .callee = std::move(resolved->callee),
+                          .callee = std::move(resolved.callee),
                           .arguments = std::move(call_args)},
                   .type = call_result_type})});
   return {};
