@@ -122,7 +122,7 @@ auto KeepInDueRegion(
                            support::BuiltinFn::kNbaEffects));
   if (!effects) return std::unexpected(std::move(effects.error()));
   return BuildEmplacedClosure(
-      process.Owner(), frame, *std::move(effects), std::move(closure));
+      process.Owner().Unit(), frame, *std::move(effects), std::move(closure));
 }
 
 auto AppendArrivalAtDueRegion(

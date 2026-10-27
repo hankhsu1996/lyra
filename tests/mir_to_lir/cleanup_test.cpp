@@ -14,6 +14,7 @@
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/phase.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
@@ -28,7 +29,6 @@ auto AddEmptyBody(mir::CompilationUnit& unit) -> mir::CallableId {
           .code = std::move(code),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt,
-          .type_parameters = {},
           .defining_unit = std::nullopt});
 }
 
@@ -38,6 +38,7 @@ auto UnitWithCleanupCalling(support::BuiltinFn in_cleanup)
     -> mir::CompilationUnit {
   mir::CompilationUnit unit;
   unit.name = "U";
+  unit.phase = mir::Phase::kLegalized;
   unit.body_name = "U";
   unit.content = mir::BroughtUpNamespace{
       .install_storage = AddEmptyBody(unit),
@@ -58,7 +59,6 @@ auto UnitWithCleanupCalling(support::BuiltinFn in_cleanup)
           .code = std::move(code),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt,
-          .type_parameters = {},
           .defining_unit = std::nullopt});
   unit.named_callables.push_back(mir::NamedCallable{.name = "g", .body = id});
   return unit;
@@ -69,6 +69,7 @@ auto UnitWithCleanupCalling(support::BuiltinFn in_cleanup)
 auto UnitCallingTwice(support::BuiltinFn callee) -> mir::CompilationUnit {
   mir::CompilationUnit unit;
   unit.name = "U";
+  unit.phase = mir::Phase::kLegalized;
   unit.body_name = "U";
   unit.content = mir::BroughtUpNamespace{
       .install_storage = AddEmptyBody(unit),
@@ -89,7 +90,6 @@ auto UnitCallingTwice(support::BuiltinFn callee) -> mir::CompilationUnit {
           .code = std::move(code),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt,
-          .type_parameters = {},
           .defining_unit = std::nullopt});
   unit.named_callables.push_back(mir::NamedCallable{.name = "f", .body = id});
   return unit;

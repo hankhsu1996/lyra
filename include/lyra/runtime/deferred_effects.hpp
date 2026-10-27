@@ -99,7 +99,7 @@ class DeferredEffects {
   ~DeferredEffects();
 
   // Where to make one effect of `size` bytes at a multiple of `alignment`,
-  // which its maker builds there and then commits. An effect made there and
+  // which the program builds there and then commits. An effect made there and
   // never committed or taken is never ended, and its bytes are never handed
   // out again; only a failed allocation can raise while one is built.
   [[nodiscard]] auto Allocate(std::size_t size, std::size_t alignment) -> void*;
@@ -159,7 +159,8 @@ class DeferredEffects {
 // The allocation function a placement new-expression naming a region's
 // deferred effects calls, so a closure the program keeps there is made in the
 // run's effect storage ([expr.new]); the over-aligned form is the one a type
-// whose alignment passes the default asks for. No deallocation function
+// whose alignment exceeds the default asks for, and the other meets the default
+// alignment, which no other type's exceeds. No deallocation function
 // matches them, so a construction that raises gives nothing back ([expr.new]),
 // as the execution backend's lowering of the same expression does; only a
 // failed allocation can raise there.

@@ -916,21 +916,21 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kDeferredEffectsAllocate:
       return {
           .name = "deferred_effects_allocate",
-          .declaration = Method{"Allocate"},
-          .hands_out_storage = true};
+          .declaration = AllocationFunction{}};
     case BuiltinFn::kDeferredEffectsCommit:
       return {
           .name = "deferred_effects_commit",
-          .declaration = Method{kKeeperCommitMethod}};
+          .declaration = Method{"Commit"},
+          .callables = {kEffectFnOncePastTheCaller}};
     case BuiltinFn::kViolationReportsAllocate:
       return {
           .name = "violation_reports_allocate",
-          .declaration = Method{"Allocate"},
-          .hands_out_storage = true};
+          .declaration = AllocationFunction{}};
     case BuiltinFn::kViolationReportsCommit:
       return {
           .name = "violation_reports_commit",
-          .declaration = Method{kKeeperCommitMethod}};
+          .declaration = Method{"Commit"},
+          .callables = {kEffectFnOncePastTheCaller}};
     case BuiltinFn::kSubmitDeferredObserved:
       return {
           .name = "submit_deferred_observed",

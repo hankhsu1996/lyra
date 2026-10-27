@@ -18,7 +18,6 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
-#include "lyra/support/runtime_class.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -60,15 +59,8 @@ auto TemplateArgumentsOf(
   return arguments;
 }
 
-// The template arguments a callee states, `<A, B>`, written after its name;
-// none writes nothing.
-struct TemplateArgumentList {
-  const mir::CompilationUnit* unit;
-  std::span<const TemplateArgument> arguments;
-};
-
 // A runtime function name, followed by the template arguments its callee
-// states.
+// states, `<A, B>`; none writes nothing.
 struct OperationName {
   const mir::CompilationUnit* unit;
   std::string_view identifier;
@@ -76,24 +68,17 @@ struct OperationName {
   NameReachedThrough reached;
 };
 
-void WriteOne(TargetText& out, const TemplateArgumentList& list);
-
 void WriteOne(TargetText& out, const OperationName& name) {
   if (!name.arguments.empty() && name.reached == NameReachedThrough::kAValue) {
     out += "template ";
   }
-  Write(
-      out, name.identifier,
-      TemplateArgumentList{.unit = name.unit, .arguments = name.arguments});
-}
-
-void WriteOne(TargetText& out, const TemplateArgumentList& list) {
-  if (list.arguments.empty()) {
+  out += name.identifier;
+  if (name.arguments.empty()) {
     return;
   }
   out += "<";
   std::string_view separator;
-  for (const TemplateArgument& argument : list.arguments) {
+  for (const TemplateArgument& argument : name.arguments) {
     out += separator;
     separator = ", ";
     std::visit(
@@ -109,7 +94,7 @@ void WriteOne(TargetText& out, const TemplateArgumentList& list) {
                         Write(out, position.value);
                       },
                       [&](const mir::ClassFieldTarget& property) {
-                        WriteMemberPointer(out, *list.unit, property);
+                        WriteMemberPointer(out, *name.unit, property);
                       }},
                   part);
             }},
@@ -252,9 +237,8 @@ void WriteEntryCallee(
           },
           // A factory is called on the type it builds, so that type is no
           // template argument of its name: `T::FromBitstream(bits)`. One
-          // generic
-          // over the type it builds is called at the type its callee states,
-          // and one building a single type answers with it.
+          // generic over the type it builds is called at the type its callee
+          // states, and one building a single type answers with it.
           [&](const support::StaticFactory& s) {
             const auto stated = TemplateArgumentsOf(unit, {}, direct.part);
             callee.Named(
@@ -265,6 +249,14 @@ void WriteEntryCallee(
                     .identifier = s.identifier,
                     .arguments = stated,
                     .reached = NameReachedThrough::kAType});
+          },
+          // A placement new-expression reaches an allocation function, and no
+          // call does.
+          [](const support::AllocationFunction&) {
+            throw InternalError(
+                "Direct call: a call names an allocation function, which only "
+                "a placement new-expression reaches -- please report this as "
+                "a bug");
           }},
       entry.declaration);
 }
@@ -323,33 +315,12 @@ void WriteDirectCallee(
             throw InternalError("backend::cpp: unknown ClosureKind");
           },
           // A function of a unit's namespace is qualified by that unit's,
-          // `::Top::f`, this unit's own included, and a generic one names the
-          // types it is called at as its template's arguments, `::Top::f<A,
-          // B>`.
+          // `::Top::f`, this unit's own included.
           [&](const mir::UnitCallableTarget& t) {
-            const std::vector<TemplateArgument> stated =
-                TemplateArgumentsOf(view.Unit(), direct.type_arguments, {});
             callee.Named(
                 ReceiverPlacement::kIntoCalleeName,
                 CppUnitScope(CppUnitCallableOwner(view.Unit(), t.slot)),
-                "::", CppUnitCallableName(view.Unit(), t.slot),
-                TemplateArgumentList{
-                    .unit = &view.Unit(), .arguments = stated});
-          },
-          // The closure a type parameter is made concrete at, called in place
-          // as the parameter's bound asks: `f.operator()(x)`, which every
-          // closure called in place declares, so a template body names it
-          // without knowing which closure it is.
-          [&](const mir::BoundCallTarget&) {
-            callee.Named(ReceiverPlacement::kIntoCalleeName, "operator()");
-          },
-          // The keeper a type parameter is made concrete at, committing the
-          // effect made at an address it handed out, `k.Commit(made)`, which
-          // every keeper the bound admits declares.
-          [&](const mir::BoundCommitTarget&) {
-            callee.Named(
-                ReceiverPlacement::kIntoCalleeName,
-                VerbatimName{.text = support::kKeeperCommitMethod});
+                "::", CppUnitCallableName(view.Unit(), t.slot));
           },
           [&](const support::BuiltinFn& id) {
             WriteEntryCallee(

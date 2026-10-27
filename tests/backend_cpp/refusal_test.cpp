@@ -11,6 +11,7 @@
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/phase.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 
@@ -24,7 +25,6 @@ auto AddBody(mir::CompilationUnit& unit, mir::CallableCode code)
           .code = std::move(code),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt,
-          .type_parameters = {},
           .defining_unit = std::nullopt});
 }
 
@@ -34,6 +34,7 @@ auto UnitWithNullOf(mir::TypeId (*type_of)(mir::CompilationUnit&))
     -> mir::CompilationUnit {
   mir::CompilationUnit unit;
   unit.name = "U";
+  unit.phase = mir::Phase::kLegalized;
   unit.body_name = "U";
   mir::CallableCode empty = mir::CallableCode::Defined();
   empty.result_type = unit.builtins.void_type;

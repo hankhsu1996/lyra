@@ -5,7 +5,8 @@
 // many updates; one carrying a delay schedules into the slot the delay names,
 // and two landing in one later slot keep their order. What an update holds is
 // held until it lands, a string and an object handle included, even where
-// nothing else holds it then (LRM 8.29). A program's nonblocking update is
+// nothing else holds it then (LRM 8.29), and so is a wide value together with
+// the position its target was selected at. A program's nonblocking update is
 // deferred as well (LRM 24.3.1).
 class C;
   int n;
@@ -36,6 +37,10 @@ module Top;
 
   C target;
   int landed_n;
+
+  logic [3999:0] wide [4];
+  logic [3999:0] wide_value;
+  int wide_at;
 
   int program_landed;
   int program_before_landing;
@@ -86,6 +91,24 @@ module Top;
     obj = null;
     #4;
     landed_n = target.n;
+  end
+
+  // The value and the position are read when each statement executes, so
+  // changing both before the updates land changes neither update.
+  initial begin
+    wide_value = '1;
+    wide_value[7:0] = 8'h5a;
+    wide_at = 2;
+    wide[wide_at] <= wide_value;
+    wide[wide_at + 1] <= #2 wide_value;
+    wide_value = '0;
+    wide_at = 0;
+    #3;
+    if (wide[2][7:0] !== 8'h5a || wide[2][3999] !== 1'b1)
+      $fatal(1, "wide[2] landed as %h", wide[2][7:0]);
+    if (wide[3][7:0] !== 8'h5a || wide[3][3999] !== 1'b1)
+      $fatal(1, "wide[3] landed as %h", wide[3][7:0]);
+    if (wide[0] !== 'x) $fatal(1, "wide[0] was written");
   end
 
   final begin

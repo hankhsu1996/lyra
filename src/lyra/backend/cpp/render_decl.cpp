@@ -643,17 +643,6 @@ void RenderFreeSignature(
 void RenderFreeCallableSignature(
     const mir::CompilationUnit& unit, mir::CallableId id,
     const mir::CallableDecl& callable, TargetText& out) {
-  // A generic definition is a function template whose parameters are its type
-  // parameters, which the host compiler instantiates where a call names them.
-  if (!callable.type_parameters.empty()) {
-    out += "template <";
-    for (std::uint32_t at = 0; at < callable.type_parameters.size(); ++at) {
-      Write(
-          out, at == 0 ? "" : ", ", "typename ",
-          CppTypeParameterName(mir::TypeParameterIndex{.value = at}));
-    }
-    out += "> ";
-  }
   RenderFreeSignature(
       unit, RenderFreeCallableLinkage(mir::NamespaceReachOf(unit, id)),
       CppUnitCallableName(unit, id), callable.code, out);

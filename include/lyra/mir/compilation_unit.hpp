@@ -1,6 +1,5 @@
 #pragma once
 
-#include <algorithm>
 #include <map>
 #include <optional>
 #include <span>
@@ -29,6 +28,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/foreign_linkage.hpp"
 #include "lyra/mir/integral_constant.hpp"
+#include "lyra/mir/phase.hpp"
 #include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/record_id.hpp"
 #include "lyra/mir/static_variable_id.hpp"
@@ -411,6 +411,8 @@ struct CompilationUnit {
   // capture counting as it is held, so no rewrite changes one; a unit is
   // lowered by one thread, so the answers are kept wherever the unit is read.
   mutable std::unordered_map<TypeId, support::Layout> layouts;
+  // Which phase the unit is in, which only the conversions between them move.
+  Phase phase = Phase::kBuilt;
 
   CompilationUnit()
       : builtins{

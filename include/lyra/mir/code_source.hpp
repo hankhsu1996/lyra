@@ -7,7 +7,6 @@
 #include <variant>
 
 #include "lyra/mir/callable_code.hpp"
-#include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/expr.hpp"

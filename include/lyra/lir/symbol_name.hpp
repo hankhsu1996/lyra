@@ -36,7 +36,6 @@ enum class SymbolCategory : std::uint8_t {
   kStaticProperty,
   kClosureInvoke,
   kTypeOperation,
-  kGenericInstance,
   kBaseObjectCreation,
   kAllocatingCreation,
   kBaseObjectDestructor,
@@ -161,12 +160,6 @@ auto ClosureInvokeSymbol(std::string_view unit_name, std::uint32_t ordinal)
 // the same way: such a type has no name of its own, and nothing outside the
 // unit reaches the function.
 auto TypeOperationSymbol(std::string_view unit_name, std::uint32_t ordinal)
-    -> std::string;
-
-// The symbol of the concrete form of a generic definition this unit made at
-// one list of types, which no other unit names, so its position among the
-// unit's instances is its identity.
-auto GenericInstanceSymbol(std::string_view unit_name, std::uint32_t ordinal)
     -> std::string;
 
 // The name the class `name` of `unit` is qualified by: the unit's own for a

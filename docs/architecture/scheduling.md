@@ -306,11 +306,11 @@ Three questions are kept apart, because each has its own owner and none answers 
   is about that one.
 
 How long a closure can run, measured against the body that made it, is one of three, and the runtime
-entry it is handed to, or the bound of the generic function that makes it in a keeper, states which,
-beside the kind it asks of the closure (`compiler_generated_storage.md` invariant 10), as a Rust
-callee bounds a callable parameter by a kind and a lifetime, the lifetime being none past the call
-for `sort_by`, the scope's for a scoped thread and `'static` for `spawn`. Where the closure is
-erased, the type it is handed over at carries its kind and its signature and no lifetime:
+entry it is handed to states which, beside the kind it asks of the closure
+(`compiler_generated_storage.md` invariant 10), as a Rust callee bounds a callable parameter by a
+kind and a lifetime, the lifetime being none past the call for `sort_by`, the scope's for a scoped
+thread and `'static` for `spawn`. Where the closure is erased, the type it is handed over at carries
+its kind and its signature and no lifetime:
 
 | How it is handed on                         | Examples                                                                         | What its references must reach                                                                                                                                                        |
 | ------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

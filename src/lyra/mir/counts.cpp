@@ -123,9 +123,9 @@ auto NestingDepth(const Block& body) -> std::uint64_t {
 
 auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
   // As for a class: every member of the unit is named here. The layouts kept
-  // on it are answers to questions asked of it, which no unit states, so they
-  // are not counted.
-  const auto& [name, body_name, source_name, types, integral_constants, enum_tables, builtins, classes, content, callables, named_callables, type_operations, static_variables, named_static_variables, foreign_scope_entries, records, record_methods, closures, layouts] =
+  // on it are answers to questions asked of it, which no unit states, and its
+  // phase says where it stands, so neither is counted.
+  const auto& [name, body_name, source_name, types, integral_constants, enum_tables, builtins, classes, content, callables, named_callables, type_operations, static_variables, named_static_variables, foreign_scope_entries, records, record_methods, closures, layouts, phase] =
       unit;
 
   HeldByClasses in_classes;

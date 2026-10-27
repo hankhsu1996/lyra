@@ -205,11 +205,9 @@ identity is the suspect, not the analysis.
   trees become instruction streams, callable invocation becomes a call instruction, and suspension
   (an await, a sensitivity wait) becomes suspend/resume edges with scheduler calls. Every MIR type
   and identity is translated into a LIR-owned one; a type MIR-to-LIR cannot translate is rejected at
-  the boundary with a diagnostic, never passed through as a MIR id. MIR-to-LIR reads only concrete
-  bodies: a generic MIR definition is made concrete before it, in MIR. Not yet so: today MIR-to-LIR
-  makes each instance itself, once per unit for each set of types a call names, with its bounds
-  resolved to the closure or the entry those types answer them by. MIR-to-LIR introduces every fact
-  LIR owns and that MIR does not (CFG structure, logical storage topology, effect ordering,
+  the boundary with a diagnostic, never passed through as a MIR id. MIR-to-LIR reads only a
+  legalized unit, and every body MIR holds is concrete. MIR-to-LIR introduces every fact LIR owns
+  and that MIR does not (CFG structure, logical storage topology, effect ordering,
   scheduling-protocol edges), and it introduces no source-language interpretation -- a lowering rule
   that must decide what a MIR node means is reading a defect in MIR, not doing LIR's job.
 - Produces a self-contained LIR program for the layers below. Physical layout and target ABI are a

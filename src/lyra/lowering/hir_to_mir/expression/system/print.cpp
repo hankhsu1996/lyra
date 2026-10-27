@@ -166,7 +166,7 @@ auto LowerStrobeCall(
   mir::Expr keeper = BuildRegionEffectsCallExpr(
       process.Owner(), block, support::BuiltinFn::kPostponedEffects);
   return BuildEmplacedClosure(
-      process.Owner(), frame, std::move(keeper), closure.BuildVoid());
+      process.Owner().Unit(), frame, std::move(keeper), closure.BuildVoid());
 }
 
 }  // namespace

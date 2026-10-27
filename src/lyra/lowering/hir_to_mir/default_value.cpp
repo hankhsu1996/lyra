@@ -413,9 +413,6 @@ auto BuildDefaultValueExpr(
           [&](const mir::ErasedCallableType&) -> mir::Expr {
             return holds_no_declared_value("a closure of no known type");
           },
-          [&](const mir::TypeParameterType&) -> mir::Expr {
-            return holds_no_declared_value("a value of a type parameter");
-          },
           [&](const mir::ErasedValueType&) -> mir::Expr {
             return holds_no_declared_value("a value of no known type");
           },

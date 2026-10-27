@@ -242,13 +242,6 @@ auto LaidOut(const CompilationUnit& unit, TypeId type, const auto& part)
                 "mir: an erased callable is laid out only behind a box or a "
                 "borrow -- please report this as a bug");
           },
-          // A generic definition holds a value of a parameter type only
-          // through a reference or a pointer, so no frame lays one out.
-          [](const TypeParameterType&) -> support::Layout {
-            throw InternalError(
-                "mir: a value of a type parameter is laid out in a frame -- "
-                "please report this as a bug");
-          },
           [&](const PointerType& t) { return handle(t); },
           [&](const ReferenceType& t) { return handle(t); },
           [&](const VariableRefType& t) { return handle(t); },
@@ -290,11 +283,6 @@ auto LayoutOf(const CompilationUnit& unit, TypeId type) -> support::Layout {
 }  // namespace
 
 auto IsTooLargeForAFrame(const CompilationUnit& unit, TypeId type) -> bool {
-  // A generic definition reaches a value of a parameter type only where a
-  // pointer leads, so none lies in a frame, whatever its size once concrete.
-  if (unit.types.Get(type).Is<TypeParameterType>()) {
-    return false;
-  }
   return TooLargeForAFrame(LayoutOf(unit, type));
 }
 

@@ -3,11 +3,9 @@
 #include <optional>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/mir/callable.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/callable_bounds.hpp"
 
 namespace lyra::mir {
 
@@ -63,14 +61,6 @@ auto KeeperEntriesOf(const TypePool& types, TypeId keeper)
       return std::nullopt;
   }
   throw InternalError("mir::KeeperEntriesOf: unknown runtime library kind");
-}
-
-auto KeptEffectBound(TypeId void_type) -> CalledClosureBound {
-  return CalledClosureBound{
-      .asks = support::ClosureKind::kFnOnce,
-      .params = {},
-      .result = void_type,
-      .kept = support::CallableHold::kPastTheCaller};
 }
 
 }  // namespace lyra::mir

@@ -37,7 +37,6 @@
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/profiling/time_trace.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/def_path.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 
@@ -222,24 +221,6 @@ auto FunctionLowerer::LowerCallTarget(
                       return lir::CallTarget{lir::FunctionTarget{
                           .function = unit_->ClosureFunction(t.closure)}};
                     },
-                    // A generic body reaches this layer only made concrete,
-                    // where such a call names its closure outright.
-                    [](const mir::BoundCallTarget&)
-                        -> diag::Result<lir::CallTarget> {
-                      throw InternalError(
-                          "mir_to_lir: a call through a type parameter's bound "
-                          "reached the layer below -- please report this as a "
-                          "bug");
-                    },
-                    // Nor a commit through one, which names its keeper's
-                    // entry outright once made concrete.
-                    [](const mir::BoundCommitTarget&)
-                        -> diag::Result<lir::CallTarget> {
-                      throw InternalError(
-                          "mir_to_lir: a commit through a type parameter's "
-                          "bound reached the layer below -- please report this "
-                          "as a bug");
-                    },
                     [&](const mir::ForeignSymbolTarget& f)
                         -> diag::Result<lir::CallTarget> {
                       // A name in the DPI-C name space is reached as an
@@ -263,15 +244,7 @@ auto FunctionLowerer::LowerCallTarget(
                     [&](const mir::UnitCallableTarget& t)
                         -> diag::Result<lir::CallTarget> {
                       // A body of a unit's namespace is reached by the symbol
-                      // the unit owning it emits it under, which composes it
-                      // from the position the body sits at where nothing names
-                      // it. A generic one is reached by the instance made at
-                      // the types the call names.
-                      if (!d.type_arguments.empty()) {
-                        return lir::CallTarget{lir::SymbolTarget{
-                            .symbol = unit_->GenericInstanceSymbol(
-                                t.slot, d.type_arguments)}};
-                      }
+                      // the unit owning it emits it under.
                       return lir::CallTarget{lir::SymbolTarget{
                           .symbol = unit_->UnitCallableSymbol(t.slot)}};
                     },
@@ -2632,10 +2605,10 @@ auto FunctionLowerer::LowerNew(
 auto FunctionLowerer::LowerPlacementNew(
     const mir::Block& block, const mir::NewExpr& allocation, lir::TypeId held)
     -> diag::Result<lir::Operand> {
-  // The placement's arguments, then the storage its allocation function hands
-  // out, told the size and the alignment a value of `held` is laid out at, as
-  // clang hands a placement `operator new` the size, then the initializer
-  // formed in it. The function owns that storage, so a way out before the
+  // The placement's arguments, then the size and the alignment a value of
+  // `held` is laid out at, as the entry declares them; clang hands a placement
+  // `operator new` the same facts, then forms the initializer in what it
+  // answers. The function owns that storage, so a way out before the
   // value is made gives nothing back: no deallocation function matches, as in
   // C++.
   std::vector<lir::Operand> arguments;
@@ -2654,18 +2627,9 @@ auto FunctionLowerer::LowerPlacementNew(
     arguments.emplace_back(
         lir::LayoutConst{.of = held, .measure = measure, .type = number});
   }
-  // A generic body reaches this layer only made concrete, where its keeper's
-  // allocation names the keeper's entry outright.
-  const auto* allocate =
-      std::get_if<support::BuiltinFn>(&allocation.placement->allocate);
-  if (allocate == nullptr) {
-    throw InternalError(
-        "mir_to_lir: an allocation through a type parameter's bound reached "
-        "the layer below -- please report this as a bug");
-  }
   auto storage = EmitCallTo(
-      lir::BuiltinTarget{.fn = *allocate}, std::move(arguments),
-      AddressType(held));
+      lir::BuiltinTarget{.fn = allocation.placement->allocate},
+      std::move(arguments), AddressType(held));
   if (!storage) {
     return storage;
   }

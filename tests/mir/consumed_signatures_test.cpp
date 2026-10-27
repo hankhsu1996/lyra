@@ -65,7 +65,6 @@ auto UnitReading(const Read& read) -> CompilationUnit {
           .code = std::move(code),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt,
-          .type_parameters = {},
           .defining_unit = std::nullopt});
   return unit;
 }
@@ -284,7 +283,6 @@ TEST(ConsumedSignaturesTest, ANamespaceMemberOfAnotherUnitIsReadWhereNamed) {
             .code = CallableCode{},
             .foreign = std::nullopt,
             .virtual_dispatch = std::nullopt,
-            .type_parameters = {},
             .defining_unit = "Q"});
     u.named_callables.push_back(NamedCallable{.name = "g", .body = declared});
     body.AppendStmt(

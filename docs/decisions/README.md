@@ -152,14 +152,15 @@ the detail lives in the entry itself.
   slot below MIR, and a lent argument the callee empties are rejected. For a class object the
   lowering is superseded by
   [an-object-is-created-whole-then-constructed](an-object-is-created-whole-then-constructed.md).
-- [a-unit-defines-generic-functions](a-unit-defines-generic-functions.md) -- a callable may be
-  generic over types, each bounded by what its body does with a value of it, and is checked where it
-  is defined, as a Rust generic is; its body holds parameter-typed values freely; instantiation is a
-  pass of the lowering to the dialect the backends read, ahead of every representation decision, so
-  both backends receive concrete bodies; an operation is generic exactly when it can be written from
-  what its bounds grant, and is otherwise built per type by one rule. C++ templates, a node per
-  operation, a pointer-only generic body and instantiation in each backend are rejected; the last
-  section says which parts the code does not carry out yet.
+- [an-operation-over-many-types-is-built-by-the-lowering](an-operation-over-many-types-is-built-by-the-lowering.md)
+  -- MIR holds no generic function and every body in it is concrete: an operation the compiler needs
+  over many types is built per site, or per type where it reads the type's structure, by the
+  lowering into MIR, as clang defines implicit members per class and rustc builds shims per type; a
+  deferred effect is made at each site by a placement new-expression in its keeper's storage and
+  committed there. A generic function returns only for an operation that cannot be stated as plainly
+  otherwise, and then with traits, a body checked against its bounds, and instantiation ahead of
+  every representation decision. Generic definitions instantiated by a conversion (built, then
+  removed), C++ templates, a node per operation and instantiation in each backend are rejected.
 - [a-value-too-large-for-a-frame-is-held-through-a-box](a-value-too-large-for-a-frame-is-held-through-a-box.md)
   -- every type is laid out flat at every size, and a local, a parameter taken by value, a made
   value and a capture of a type too large for a frame are held through a uniquely owning pointer a
@@ -542,14 +543,14 @@ the detail lives in the entry itself.
 - [construct-in-final-home](construct-in-final-home.md) -- a long-lived runtime object whose
   execution state binds to its own address is constructed where it will live and never moved. MIR
   states that home: a closure kept past its statement is made where its keeper keeps it -- a
-  region's effect in bytes the run keeps for its effects, by the unit's generic function that builds
-  it there from a maker and commits it, one a timer or an event control's observation keeps in a box
-  the keeper takes -- one a sort borrows lies in the frame, and one started as a coroutine is made
-  in a box its execution takes over, each with its captures inline. A nonblocking assignment costs
-  no allocation of its own. Build-then-move, an entry per destination, a permanent capture
-  indirection, relocatable slots, a node of its own for making a closure in a keeper, an arena per
-  region, and an allocator carried in a box's type are rejected; read its last three sections for
-  how the home came to be MIR's.
+  region's effect in bytes the run keeps for its effects, made there by a placement new-expression
+  at each site and committed, one a timer or an event control's observation keeps in a box the
+  keeper takes -- one a sort borrows lies in the frame, and one started as a coroutine is made in a
+  box its execution takes over, each with its captures inline. A nonblocking assignment costs no
+  allocation of its own. Build-then-move, an entry per destination, a permanent capture indirection,
+  relocatable slots, a node of its own for making a closure in a keeper, a generic function making
+  it there, an arena per region, and an allocator carried in a box's type are rejected; read its
+  last three sections for how the home came to be MIR's.
 - [referenceable-objects-have-stable-addresses](referenceable-objects-have-stable-addresses.md) -- a
   class object a reference can point into neither moves nor is reclaimed while that reference lives,
   so a property reference is an ordinary interior pointer. Non-moving stops being a mere realization
@@ -1425,13 +1426,14 @@ the detail lives in the entry itself.
   coroutine for it. Splitting in one backend, two process kinds upstream, kept locals, one entry
   answering three ways, and predicting a node's position are rejected.
 - [a-rewrite-of-mir-says-whether-a-program-needs-it](a-rewrite-of-mir-says-whether-a-program-needs-it.md)
-  -- the stage's rewrites are one ordered list, each required or optional, and every optional one
-  runs in every build unless a build skips it by name; a unit's form is named, the verification asks
-  what that form requires, and a build may have the unit checked after each rewrite; which code a
-  unit holds is stated once beside the unit, a rewrite builds through MIR's own builders, and a
-  value handed to something of a type it states is of that type. Each rewrite walking the unit
-  itself, optional rewrites only in an optimized build, and checking every rewrite in every build
-  are rejected.
+  -- the stage's rewrites are one ordered list, in which the conversion from the built phase into
+  the legalized one is required and every other rewrite is optional and runs in every build unless a
+  build skips it by name; a unit records its phase, the verification asks what that phase requires,
+  and a build may have the unit checked after each optional rewrite and on reaching each phase;
+  which code a unit holds is stated once beside the unit, a rewrite builds through MIR's own
+  builders, and a value handed to something of a type it states is of that type. Each rewrite
+  walking the unit itself, optional rewrites only in an optimized build, and checking every rewrite
+  in every build are rejected.
 - [activation-disposition](activation-disposition.md) -- an activation has one authoritative
   disposition (Executing / Runnable / Blocked / Suspended(saved) / Terminal); a wait is a retainable
   pending capability distinct from where the activation is parked, supplied uniformly by each

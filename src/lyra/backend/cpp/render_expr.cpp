@@ -337,27 +337,33 @@ void RenderReferenceExpr(
 
 // A new-expression. A value is formed in the storage `new` allocates, which C++
 // guarantees where it is a value of the type allocated
-// ([dcl.init.general]/16.6.1), whatever that type's constructors. An object's
-// initializer is its construction, whose arguments the library function
-// creating the object hands its constructor once the object exists whole and
-// is of its class.
+// ([dcl.init.general]/16.6.1), whatever that type's constructors. It is
+// written `::new`, so the allocation function is found in the global scope
+// only and never among the allocated type's own members ([expr.new]): the one
+// MIR states is the heap's, or the library's for the placement arguments. An
+// object's initializer is its construction, whose arguments the library
+// function creating the object hands its constructor once the object exists
+// whole and is of its class.
 void RenderNewExpr(
     const ScopeView& view, const mir::NewExpr& n, mir::TypeId owner,
-    TargetText& out) {
+    Precedence at_least, TargetText& out) {
   const mir::Expr& initializer = view.Expr(n.initializer);
   const CppType built = CppType(view.Unit(), initializer.type);
-  // A placement form is C++'s own, `new (args) T(init)`: the allocation
-  // function the library declares for those arguments is the one the
-  // expression names, and the initializer is formed in what it answers.
+  // A placement form is C++'s own, `::new (args) T(init)`, a unary
+  // expression: C++ finds the allocation function by the types of the
+  // arguments and hands it the size of `T`, and its alignment where `T` is
+  // over-aligned ([expr.new]), and those arguments find the one the node
+  // names, which the library defines as that function.
   if (n.placement.has_value()) {
-    out += "new (";
+    const Enclosure enclosure(out, Precedence::kPrefix, at_least);
+    out += "::new (";
     WriteCommaSeparated(view, out, n.placement->arguments);
     Write(view, out, ") ", built, "(", n.initializer, ")");
     return;
   }
   if (!view.Unit().types.Get(initializer.type).Is<mir::ObjectType>()) {
     Write(
-        view, out, CppNewOwner{.of = CppType(view.Unit(), owner)}, "(new ",
+        view, out, CppNewOwner{.of = CppType(view.Unit(), owner)}, "(::new ",
         built, "(", n.initializer, "))");
     return;
   }
@@ -629,7 +635,7 @@ void RenderExpr(
             RenderCallExpr(view, call, expr.type, out);
           },
           [&](const mir::NewExpr& n) {
-            RenderNewExpr(view, n, expr.type, out);
+            RenderNewExpr(view, n, expr.type, at_least, out);
           },
           [&](const mir::DerefExpr& d) { RenderDerefExpr(view, d, out); },
           [&](const mir::AddressOfExpr& a) {

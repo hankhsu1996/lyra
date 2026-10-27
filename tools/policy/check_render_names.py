@@ -31,6 +31,18 @@ own.
 Type mapping is exempt by the contract -- naming a library type is its job -- and
 so are diagnostics, which name the compiler's own functions and types on purpose
 and reach no emitted artifact.
+
+Two more readings belong to the same invariant and to invariant 9, which says a
+node renders as the one construct of the same meaning and writes out nothing
+that construct supplies itself. **An emitter writes no `sizeof` or `alignof`**:
+what a type's size and alignment are handed to, C++ hands them itself, so an
+emitter spelling one is composing a second operation around the construct it
+was given. **How a call reaches a runtime entry is decided at one site**: every
+dispatch on the entry's declaration names its alternatives, so each alternative
+named twice across the emitters is a second writer of call conventions. Both
+went unseen once: a placement new-expression rendered as a call of the
+allocation function, through a writer of its own, with the size and alignment
+spelled after its arguments.
 """
 
 from __future__ import annotations
@@ -72,6 +84,22 @@ TARGET_SYNTAX = {
 # away is what finishing that item looks like. Empty is the finished state.
 ADMITTED: dict[str, str] = {}
 
+# What a C++ construct supplies itself and an emitter therefore never writes.
+SUPPLIED_BY_THE_CONSTRUCT = {"sizeof", "alignof"}
+
+# The ways the runtime-entry declaration says code reaches an entry, read off
+# the declaration so a kind added there is checked here too. A dispatch on that
+# declaration names them, so each is named at one site.
+DECLARATION = re.compile(r"using EntryDeclaration =\s*std::variant<([^>]*)>;")
+
+
+def declaration_kinds() -> list[str]:
+    header = (ROOT / "include/lyra/support/builtin_fn.hpp").read_text()
+    declared = DECLARATION.search(header)
+    if declared is None:
+        raise SystemExit("check_render_names: no EntryDeclaration variant found")
+    return [f"support::{kind.strip()}" for kind in declared.group(1).split(",")]
+
 STRING_LITERAL = re.compile(r'"(?:[^"\\\n]|\\.)*"')
 RAW_STRING = re.compile(r'R"([^("\s\\]*)\(')
 LINE_COMMENT = re.compile(r"//[^\n]*")
@@ -90,14 +118,16 @@ class Literal:
     in_diagnostic: bool
 
 
-def literals_of(source: str) -> list[Literal]:
-    """Every string literal in the source, and whether a diagnostic takes it.
+def scan(source: str) -> tuple[list[Literal], str]:
+    """Every string literal in the source, whether a diagnostic takes it, and
+    the code around them, with comments and literals left out.
 
     A single pass, because deciding either question needs the other: telling a
     literal from a comment needs the scan, and telling which call encloses a
     literal needs parentheses counted outside of literals.
     """
     found: list[Literal] = []
+    code: list[str] = []
     # The parenthesis depths at which a diagnostic call is still open.
     diagnostics: list[int] = []
     depth = 0
@@ -106,6 +136,7 @@ def literals_of(source: str) -> list[Literal]:
         rest = source[position:]
         if comment := LINE_COMMENT.match(rest) or BLOCK_COMMENT.match(rest):
             position += comment.end()
+            code.append(" " + "\n" * comment.group().count("\n"))
             continue
         if raw := RAW_STRING.match(rest):
             close = f"){raw.group(1)}\""
@@ -118,6 +149,7 @@ def literals_of(source: str) -> list[Literal]:
                     in_diagnostic=bool(diagnostics),
                 )
             )
+            code.append(" " + "\n" * source.count("\n", position, end))
             position = end
             continue
         if literal := STRING_LITERAL.match(rest):
@@ -129,10 +161,12 @@ def literals_of(source: str) -> list[Literal]:
                 )
             )
             position += literal.end()
+            code.append(" ")
             continue
         if call := DIAGNOSTIC_CALL.match(rest):
             diagnostics.append(depth)
             depth += 1
+            code.append(call.group())
             position += call.end()
             continue
         character = source[position]
@@ -142,8 +176,9 @@ def literals_of(source: str) -> list[Literal]:
             depth -= 1
             while diagnostics and diagnostics[-1] >= depth:
                 diagnostics.pop()
+        code.append(character)
         position += 1
-    return found
+    return found, "".join(code)
 
 
 def names_in(literal: str) -> list[str]:
@@ -163,12 +198,15 @@ def names_in(literal: str) -> list[str]:
 
 def violations() -> list[str]:
     found: list[str] = []
+    # Where each way of reaching an entry is named, across every emitter.
+    named_at: dict[str, list[str]] = {kind: [] for kind in declaration_kinds()}
     for relative in EMITTERS:
         path = ROOT / relative
         if not path.exists():
             found.append(f"{relative}: listed as an emitter but does not exist")
             continue
-        for literal in literals_of(path.read_text()):
+        literals, code = scan(path.read_text())
+        for literal in literals:
             if literal.in_diagnostic:
                 continue
             for name in names_in(literal.text):
@@ -179,6 +217,23 @@ def violations() -> list[str]:
                     f"`{name}`; a name it emits comes from type mapping, "
                     f"place access, or the runtime-entry declaration"
                 )
+            for token in IDENTIFIER.findall(literal.text):
+                if token in SUPPLIED_BY_THE_CONSTRUCT:
+                    found.append(
+                        f"{relative}:{literal.line}: value emission writes "
+                        f"`{token}`, which the construct it renders supplies "
+                        f"itself"
+                    )
+        for kind in named_at:
+            for match in re.finditer(rf"\b{re.escape(kind)}\b", code):
+                line = code.count("\n", 0, match.start()) + 1
+                named_at[kind].append(f"{relative}:{line}")
+    for kind, sites in named_at.items():
+        if len(sites) > 1:
+            found.append(
+                f"`{kind}` is named at {', '.join(sites)}; how a call reaches "
+                f"a runtime entry is decided at one site"
+            )
     return found
 
 

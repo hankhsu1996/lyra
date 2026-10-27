@@ -26,12 +26,9 @@
 #include "lyra/mir/local_ref.hpp"
 #include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/static_variable_id.hpp"
-#include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/def_path.hpp"
-#include "lyra/support/runtime_class.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::mir {
@@ -187,25 +184,6 @@ struct ClosureTarget {
   auto operator==(const ClosureTarget&) const -> bool = default;
 };
 
-// The body of the closure the call's receiver is, where the receiver's type is
-// one of the definition's type parameters and that parameter's bound says the
-// definition calls it, as rustc's `Fn::call` is called on a `Self` that is a
-// parameter. Which body runs is the one of the closure the parameter is made
-// concrete at, so a generic body names the call this way and each concrete
-// form of it names that closure's body.
-struct BoundCallTarget {
-  auto operator==(const BoundCallTarget&) const -> bool = default;
-};
-
-// The commit of the keeper the call's receiver is, where the receiver's type is
-// one of the definition's type parameters and that parameter's bound says it
-// keeps deferred effects: which entry commits is the one the keeper type it is
-// made concrete at implements the commit by, as a Rust trait method called on a
-// parameter resolves to the impl of the type it is made at.
-struct BoundCommitTarget {
-  auto operator==(const BoundCommitTarget&) const -> bool = default;
-};
-
 // Identity of a symbol in the DPI-C name space (LRM 35.4): the program-global
 // linkage names imported and exported subroutines resolve to, a name space of
 // its own that no compilation-unit scope contains. It is therefore neither a
@@ -335,9 +313,7 @@ using CallPart = std::variant<base::ComponentIndex, ClassFieldTarget>;
 // The target of a `Direct` call -- the symbol identity. Each alternative is one
 // identity space, told apart by the table that resolves the name: a class this
 // unit names, whichever unit defines it (`CallableTarget`), a closure of this
-// unit (`ClosureTarget`), the closure a type parameter is made concrete at
-// (`BoundCallTarget`), the commit of the keeper one is made concrete at
-// (`BoundCommitTarget`), a unit's namespace, whichever unit it is
+// unit (`ClosureTarget`), a unit's namespace, whichever unit it is
 // (`UnitCallableTarget`), the closed set of runtime library entries
 // (`BuiltinFn`), a class's constructor (`ConstructorTarget`), a declared
 // struct's or union's methods (`RecordMethodTarget`), the operations this unit
@@ -347,10 +323,9 @@ using CallPart = std::variant<base::ComponentIndex, ClassFieldTarget>;
 // whether the call dispatches on an object -- that is the callee's receiver --
 // and none is recovered from the receiver's runtime type.
 using DirectTarget = std::variant<
-    CallableTarget, ClosureTarget, BoundCallTarget, BoundCommitTarget,
-    UnitCallableTarget, support::BuiltinFn, ConstructorTarget,
-    RecordMethodTarget, TypeOperationTarget, ExternalBringUpTarget,
-    ForeignSymbolTarget>;
+    CallableTarget, ClosureTarget, UnitCallableTarget, support::BuiltinFn,
+    ConstructorTarget, RecordMethodTarget, TypeOperationTarget,
+    ExternalBringUpTarget, ForeignSymbolTarget>;
 
 // A direct call whose callee is settled at compile time. The single shape for
 // every direct invocation: a user method, a built-in, a subroutine of this
@@ -370,12 +345,11 @@ using DirectTarget = std::variant<
 // part named has a type of its own, so a target with a type system settles the
 // part where it settles types -- which is naming the operation, not handing it
 // a value. Absent for every entry that names no part.
-// `type_arguments` are the types a callee generic over types is called at, one
-// per parameter it states, as a C++ call names a template's arguments: the
-// destination of a conversion, the type some bits of a value are read or
-// written at, the types a generic definition of this unit is made concrete at.
-// They are part of which function is called, and what the call answers with
-// follows from them. Empty for every callee that is generic over none.
+// `type_arguments` are the types a library entry generic over a type is called
+// at, as a C++ call names a template's arguments: the destination of a
+// conversion, the type some bits of a value are read or written at. They are
+// part of which function is called, and what the call answers with follows
+// from them. Empty for every other callee.
 struct Direct {
   DirectTarget target;
   std::optional<ExprId> receiver = std::nullopt;
@@ -429,19 +403,10 @@ struct CallExpr {
   std::vector<ExprId> arguments;
 };
 
-// The allocation function a placement reaches through the bound of the type
-// parameter its first argument points to: the one the keeper type a call names
-// for that parameter allocates by, named once the parameter is made concrete.
-struct BoundAllocation {
-  auto operator==(const BoundAllocation&) const -> bool = default;
-};
-
-using AllocationFunction = std::variant<support::BuiltinFn, BoundAllocation>;
-
 // Where a placement new-expression's storage comes from: the allocation
-// function, and the arguments handed to it.
+// function, a library entry, and the arguments handed to it.
 struct PlacementAllocation {
-  AllocationFunction allocate;
+  support::BuiltinFn allocate;
   std::vector<ExprId> arguments;
 };
 
@@ -462,8 +427,7 @@ struct PlacementAllocation {
 // function is asked for storage of the size and alignment of a value of the
 // pointee type, which the backend supplies, and owns that storage, so the
 // expression answers a pointer owning nothing, and an initializer that raises
-// gives nothing back (no deallocation function matches, as in C++). The
-// function is a library entry, or the one a keeper type allocates by.
+// gives nothing back (no deallocation function matches, as in C++).
 struct NewExpr {
   ExprId initializer;
   std::optional<PlacementAllocation> placement = std::nullopt;

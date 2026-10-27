@@ -555,11 +555,10 @@ enum class BuiltinFn : std::uint16_t {
   // raised it reaches a flush point first; that process is the executing one,
   // which the runtime reads ambiently.
   kViolationReports,
-  // What each keeper of deferred effects implements keeping by: storage for
-  // one effect, which a placement new-expression naming the keeper asks for,
-  // and the commit of the effect made in it, which takes it over. Each keeper
-  // type has its own pair, and a generic definition names them through the
-  // keeper's bound.
+  // What each keeper of deferred effects implements keeping by: the
+  // allocation function a placement new-expression on the keeper names, which
+  // hands out storage for one effect, and the commit of the effect made in it,
+  // which takes it over. Each keeper type has its own pair.
   kDeferredEffectsAllocate,
   kDeferredEffectsCommit,
   kViolationReportsAllocate,
@@ -1436,21 +1435,29 @@ struct Method {
   std::string_view identifier;
 };
 
-// The method every keeper of deferred effects commits an effect by, so a
-// generic definition spelling the commit through its keeper's bound names
-// what each keeper's own entry names.
-inline constexpr std::string_view kKeeperCommitMethod = "Commit";
-
 // A factory on the type the entry builds. There is no object to act on, and
 // the type it is reached on is the type of the value the call answers with.
 struct StaticFactory {
   std::string_view identifier;
 };
 
-// How a call site reaches the entry. Every entry is one of these, because an
-// operation no runtime library carries out is not named here at all: it is
-// answered where the source is read and no layer below meets it.
-using EntryDeclaration = std::variant<FreeFunction, Method, StaticFactory>;
+// An allocation function a placement new-expression names, as C++'s
+// `operator new(std::size_t, Args...)` is: no call reaches it, the expression
+// does, and it answers storage it owns ([expr.new]). A target whose
+// new-expression finds the function by the placement arguments writes the
+// expression; one that calls the function itself hands it the placement
+// arguments, then the size and the alignment of the value placed. The
+// alignment is the least the storage meets, not an exact one, since C++ hands
+// it only for an over-aligned type and otherwise the storage meets the default
+// alignment a new-expression assumes, which no other type's exceeds.
+struct AllocationFunction {};
+
+// How code reaches the entry -- a call in one of three forms, or a placement
+// new-expression naming it as its allocation function. Every entry is one of
+// these, because an operation no runtime library carries out is not named here
+// at all: it is answered where the source is read and no layer below meets it.
+using EntryDeclaration =
+    std::variant<FreeFunction, Method, StaticFactory, AllocationFunction>;
 
 // The ways a call can end, which decide what follows it: a call that returns
 // is followed by the statement after it, one that is unwound out of by the
@@ -1594,10 +1601,6 @@ enum class AnswerTold : std::uint8_t {
   kTypeCalledAt,
 };
 
-// Every property of one runtime entry: what the library calls it, how a call
-// site reaches it, and what it does with the operands it is given. A consumer
-// asking any of those reads the field for it, never a list of its own, so an
-// entry gains a property by saying so here and nowhere else.
 // What an entry generic over a type is told of it where the call is written:
 // the type itself, or the signature a closure of no known type is called at,
 // which is what a box or a borrow of one is named by.
@@ -1606,6 +1609,10 @@ enum class TypeArgumentNamed : std::uint8_t {
   kTheCallSignature,
 };
 
+// Every property of one runtime entry: what the library calls it, how code
+// reaches it, and what it does with the operands it is given. A consumer
+// asking any of those reads the field for it, never a list of its own, so an
+// entry gains a property by saying so here and nowhere else.
 struct RuntimeEntry {
   // The entry's stable spelling. It aligns with the SV method spelling where
   // one exists (LRM 6.16 / 7.9 / 7.10 / 7.12 / 15.5) and with what the library
@@ -1617,8 +1624,8 @@ struct RuntimeEntry {
   // Change it only to correct the entry's identity, never to improve how a
   // dump reads.
   std::string_view name;
-  // Where the library declares the entry, and what a call site writes to reach
-  // it.
+  // Where the library declares the entry, and what the code reaching it
+  // writes.
   EntryDeclaration declaration;
   // Whether the entry is generic over a type its operands do not settle: a
   // conversion's destination, the bits of a part, as many copies as fill the
@@ -1628,11 +1635,6 @@ struct RuntimeEntry {
   // written names it there, and one calling code compiled once for every type
   // hands over what that code needs of it.
   bool takes_a_type_argument = false;
-  // Whether the entry is an allocation function a placement new-expression
-  // may name: it is handed the expression's placement arguments, then the size
-  // and the alignment of the value placed, and answers storage it owns, as a
-  // C++ `operator new(std::size_t, Args...)` is.
-  bool hands_out_storage = false;
   // What a target resolving types where the call is written names for that
   // type. A target laying values out itself reads what it needs off the type.
   TypeArgumentNamed type_argument_named = TypeArgumentNamed::kTheType;

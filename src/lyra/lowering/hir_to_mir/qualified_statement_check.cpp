@@ -99,7 +99,7 @@ void KeepInObservedRegion(
   mir::Block& block = *frame.current_block;
   mir::Expr keeper = BuildViolationReportsCallExpr(unit_lowerer, block);
   const mir::ExprId kept = block.exprs.Add(BuildEmplacedClosure(
-      unit_lowerer, frame, std::move(keeper), std::move(body)));
+      unit_lowerer.Unit(), frame, std::move(keeper), std::move(body)));
   block.AppendStmt(mir::ExprStmt{.expr = kept});
 }
 

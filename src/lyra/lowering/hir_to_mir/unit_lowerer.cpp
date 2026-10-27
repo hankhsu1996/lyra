@@ -5,13 +5,11 @@
 #include <cstdint>
 #include <deque>
 #include <expected>
-#include <format>
 #include <map>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
-#include <string_view>
 #include <unordered_set>
 #include <utility>
 #include <variant>
@@ -23,7 +21,6 @@
 #include "lyra/base/translation.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/hir/class_decl.hpp"
 #include "lyra/hir/class_declaration.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/compilation_unit.hpp"
@@ -60,11 +57,9 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
-#include "lyra/mir/keeper.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
-#include "lyra/mir/type_parameter_index.hpp"
 #include "lyra/support/def_path.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -366,14 +361,12 @@ void PublishNamespaceStorageBringUp(
               .code = std::move(install_code),
               .foreign = std::nullopt,
               .virtual_dispatch = std::nullopt,
-              .type_parameters = {},
               .defining_unit = std::nullopt}),
       .initialize_storage = unit.callables.Add(
           mir::CallableDecl{
               .code = std::move(value_code),
               .foreign = std::nullopt,
               .virtual_dispatch = std::nullopt,
-              .type_parameters = {},
               .defining_unit = std::nullopt})};
 }
 
@@ -450,7 +443,6 @@ auto PublishObjectEntry(
           .code = std::move(code),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt,
-          .type_parameters = {},
           .defining_unit = std::nullopt});
 }
 
@@ -713,7 +705,6 @@ void UnitLowerer::PublishAssignmentPatternTexts() {
               .code = BuildAssignmentPatternTextCode(*this, type),
               .foreign = std::nullopt,
               .virtual_dispatch = std::nullopt,
-              .type_parameters = {},
               .defining_unit = std::nullopt});
     }
   }
@@ -966,7 +957,6 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
                                           .code = *std::move(code_or),
                                           .foreign = std::nullopt,
                                           .virtual_dispatch = std::nullopt,
-                                          .type_parameters = {},
                                           .defining_unit = std::nullopt});
   }
 
@@ -991,7 +981,6 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
             .code = std::move(entry.code),
             .foreign = std::move(entry.linkage),
             .virtual_dispatch = std::nullopt,
-            .type_parameters = {},
             .defining_unit = std::nullopt});
   }
 
@@ -1049,7 +1038,7 @@ auto UnitLowerer::DeclareIncompleteClass(
 }
 
 auto UnitLowerer::IncompleteClass(
-    mir::ClassId id, std::string unit_name, support::DefPath class_path)
+    mir::ClassId id, std::string unit_name, support::DefPath class_path) const
     -> mir::Class {
   mir::Class declared{};
   declared.defining_unit = std::move(unit_name);
@@ -1115,7 +1104,6 @@ auto UnitLowerer::DeclarePublishedClass(hir::ClassId cls) -> void {
             .foreign = std::nullopt,
             .virtual_dispatch = DispatchRoleOf(
                 hir::ClassMethodTarget{.owner = cls, .method = method}),
-            .type_parameters = {},
             .defining_unit = std::nullopt});
     declared.named_callables.push_back(
         mir::NamedCallable{
@@ -1137,7 +1125,6 @@ auto UnitLowerer::DeclarePublishedClass(hir::ClassId cls) -> void {
               .code = {},
               .foreign = std::nullopt,
               .virtual_dispatch = std::nullopt,
-              .type_parameters = {},
               .defining_unit = std::nullopt});
       declared.library_callbacks.push_back(
           mir::LibraryCallbackBody{.callback = function, .body = body});
@@ -1191,7 +1178,6 @@ auto UnitLowerer::DeclarePublishedScopeClass(
                     .foreign = std::nullopt,
                     .virtual_dispatch =
                         mir::IntroducesVirtualSlot{.is_pure = true},
-                    .type_parameters = {},
                     .defining_unit = std::nullopt})});
   }
   unit_.DefineClass(id, std::move(declared));
@@ -1332,7 +1318,7 @@ auto UnitLowerer::PublishedLayoutAt(
 // and in every unit reading the declaration alike, so the MIR member is that
 // position of the class's MIR identity.
 auto UnitLowerer::TranslateClassPropertyTarget(
-    const hir::ClassPropertyTarget& target) -> mir::ClassFieldTarget {
+    const hir::ClassPropertyTarget& target) const -> mir::ClassFieldTarget {
   return mir::ClassFieldTarget{
       .owner = ClassIdentity(target.owner),
       .slot = mir::FieldId{target.field.value}};
@@ -1349,8 +1335,8 @@ auto UnitLowerer::TranslateStaticPropertyTarget(
       .property = mir::StaticPropertyId{target.prop.value}};
 }
 
-auto UnitLowerer::TranslateMethodTarget(const hir::ClassMethodTarget& target)
-    -> mir::CallableTarget {
+auto UnitLowerer::TranslateMethodTarget(
+    const hir::ClassMethodTarget& target) const -> mir::CallableTarget {
   return mir::CallableTarget{
       .owner = ClassIdentity(target.owner),
       .slot = mir::CallableId{target.method.value}};
@@ -1419,7 +1405,6 @@ auto UnitLowerer::MakeNamespaceCallableTarget(
             .code = {},
             .foreign = std::nullopt,
             .virtual_dispatch = std::nullopt,
-            .type_parameters = {},
             .defining_unit = ref.unit_name});
     unit_.named_callables.push_back(
         mir::NamedCallable{.name = ref.subroutine_name, .body = callable});
@@ -1466,100 +1451,6 @@ auto UnitLowerer::PublishedSubroutineSlot(
   return mir::VirtualSlot{
       .owner_class = ScopeClassIdentity(scope_class),
       .slot = PublishedMethodOf(callable)};
-}
-
-auto UnitLowerer::EmplaceInto() -> mir::UnitCallableTarget {
-  if (emplace_into_.has_value()) {
-    return mir::UnitCallableTarget{.slot = *emplace_into_};
-  }
-  // `void emplace_into<K, T, F>(K* keeper, const F* make)`: K keeps deferred
-  // effects, T is the effect a region calls once and after this frame has
-  // ended, and F, called while this call runs, answers one.
-  const mir::TypePool& types = unit_.types;
-  const auto parameter = [&](std::uint32_t index) {
-    return types.Intern(
-        mir::Type{mir::TypeParameterType{
-            .index = mir::TypeParameterIndex{.value = index}}});
-  };
-  const mir::TypeId keeper_type = parameter(0);
-  const mir::TypeId effect_type = parameter(1);
-  const mir::TypeId maker_type = parameter(2);
-  const auto pointer = [&](mir::TypeId pointee, mir::Mutability mutability) {
-    return types.Intern(
-        mir::Type{mir::PointerType{
-            .pointee = pointee,
-            .ownership = mir::PointerOwnership::kBorrowed,
-            .mutability = mutability}});
-  };
-  const mir::TypeId keeper_pointer =
-      pointer(keeper_type, mir::Mutability::kMutable);
-  const mir::TypeId maker_pointer =
-      pointer(maker_type, mir::Mutability::kReadOnly);
-
-  mir::CallableCode code = mir::CallableCode::Defined();
-  const mir::LocalId keeper = code.AddLocal(keeper_pointer);
-  const mir::LocalId make = code.AddLocal(maker_pointer);
-  code.params = {keeper, make};
-  code.result_type = unit_.builtins.void_type;
-  mir::Block& body = code.Body();
-
-  // The effect is made where the keeper's storage lies, from what calling the
-  // maker answers, as `new (keeper) T(make())` elides the copy, and only then
-  // committed, by the address it was made at: a maker that raises leaves
-  // nothing kept.
-  const mir::ExprId made = body.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = mir::BoundCallTarget{},
-                          .receiver = body.Deref(
-                              types, body.LocalPlace(make, maker_pointer),
-                              maker_type)},
-                  .arguments = {}},
-          .type = effect_type});
-  const mir::ExprId placed = body.exprs.Add(
-      mir::MakePlacementNewExpr(
-          made,
-          mir::PlacementAllocation{
-              .allocate = mir::BoundAllocation{},
-              .arguments = {body.ReadLocal(keeper, keeper_pointer)}},
-          pointer(effect_type, mir::Mutability::kMutable)));
-  body.AppendStmt(
-      mir::ExprStmt{
-          .expr = body.exprs.Add(
-              mir::Expr{
-                  .data =
-                      mir::CallExpr{
-                          .callee =
-                              mir::Direct{
-                                  .target = mir::BoundCommitTarget{},
-                                  .receiver = body.Deref(
-                                      types,
-                                      body.LocalPlace(keeper, keeper_pointer),
-                                      keeper_type)},
-                          .arguments = {placed}},
-                  .type = unit_.builtins.void_type})});
-  body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
-
-  emplace_into_ = unit_.callables.Add(
-      mir::CallableDecl{
-          .code = std::move(code),
-          .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt,
-          .type_parameters =
-              {mir::TypeParameter{.bounds = {mir::KeeperBound{}}},
-               mir::TypeParameter{
-                   .bounds = {mir::KeptEffectBound(unit_.builtins.void_type)}},
-               mir::TypeParameter{
-                   .bounds = {mir::CalledClosureBound{
-                       .asks = support::ClosureKind::kFn,
-                       .params = {},
-                       .result = effect_type,
-                       .kept = support::CallableHold::kForTheCall}}}},
-          .defining_unit = std::nullopt});
-  return mir::UnitCallableTarget{.slot = *emplace_into_};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

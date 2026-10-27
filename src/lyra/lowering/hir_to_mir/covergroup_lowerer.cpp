@@ -617,7 +617,6 @@ auto PublishedCovergroupClass(
                           .overridden = IntroducedSlot(
                               unit_lowerer, published, behavior)}}
                     : mir::VirtualDispatchRole{mir::IntroducesVirtualSlot{}},
-            .type_parameters = {},
             .defining_unit = std::nullopt});
     declared.named_callables.push_back(
         mir::NamedCallable{.name = std::string{name}, .body = callable});
@@ -633,7 +632,6 @@ auto PublishedCovergroupClass(
                     .code = {},
                     .foreign = std::nullopt,
                     .virtual_dispatch = std::nullopt,
-                    .type_parameters = {},
                     .defining_unit = std::nullopt})});
   }
   return declared;
@@ -1653,8 +1651,8 @@ class ClassWriter {
                       claimed.Lowering(), claimed.Block(),
                       support::BuiltinFn::kPostponedEffects);
                   claimed.Do(BuildEmplacedClosure(
-                      claimed.Lowering(), claimed.Frame(), std::move(keeper),
-                      postponed.BuildVoid()));
+                      claimed.Lowering().Unit(), claimed.Frame(),
+                      std::move(keeper), postponed.BuildVoid()));
                 });
           },
           sample);
@@ -1716,7 +1714,6 @@ class ClassWriter {
                      .code = function.Finish(std::nullopt),
                      .foreign = std::nullopt,
                      .virtual_dispatch = RoleIn(*u_, Self(), kSampleBehavior),
-                     .type_parameters = {},
                      .defining_unit = std::nullopt});
     return {};
   }
@@ -1806,7 +1803,6 @@ class ClassWriter {
                 function.Finish(ConvertToType(Unit(), e.Block(), made, record)),
             .foreign = std::nullopt,
             .virtual_dispatch = RoleIn(*u_, Self(), kMakeRecordBehavior),
-            .type_parameters = {},
             .defining_unit = std::nullopt});
   }
 
@@ -1866,7 +1862,6 @@ class ClassWriter {
             .code = function.Finish(e.Block().ReadLocal(found, type)),
             .foreign = std::nullopt,
             .virtual_dispatch = std::nullopt,
-            .type_parameters = {},
             .defining_unit = std::nullopt});
   }
 
@@ -1938,7 +1933,6 @@ class ClassWriter {
                           .code = function.Finish(std::nullopt),
                           .foreign = std::nullopt,
                           .virtual_dispatch = std::nullopt,
-                          .type_parameters = {},
                           .defining_unit = std::nullopt});
     return {};
   }

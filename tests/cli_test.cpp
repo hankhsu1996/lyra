@@ -50,7 +50,6 @@ using lyra::test::RunUnderAddressLimit;
 using lyra::test::TimedOut;
 using lyra::test::WriteTrivialSource;
 using testing::Ne;
-using namespace std::chrono_literals;
 
 TEST(LyraEmit, ReEmitIntoSameDirectorySucceeds) {
   const auto lyra = ResolveLyra();
@@ -1921,7 +1920,7 @@ TEST(LyraRun, ARunStoppedFromOutsideSaysWhichProcedureWasRunning) {
           "build --backend llvm --top Test -o '{}' test.sv", program.string()));
   ASSERT_THAT(built, ExitedWithCode(0)) << built.stderr_text;
 
-  const auto run = RunChildProcess(program, {}, 2s);
+  const auto run = RunChildProcess(program, {}, std::chrono::seconds{2});
   EXPECT_TRUE(std::holds_alternative<TimedOut>(run.end))
       << Describe(run.end) << "\n"
       << run.stderr_text;
@@ -2456,6 +2455,9 @@ TEST(LyraCommandLine, NamesWhichOptionalRewritesOfMirRun) {
       {.value = "-BoxLargeValues",
        .expected = "'BoxLargeValues' given to '--mir-enable-passes' names no "
                    "rewrite a build may skip"},
+      {.value = "-OrderEvaluation",
+       .expected = "'OrderEvaluation' given to '--mir-enable-passes' names no "
+                   "rewrite a build may skip"},
       {.value = "-Nothing",
        .expected = "'Nothing' given to '--mir-enable-passes' names no "
                    "rewrite a build may skip"},
@@ -2519,6 +2521,7 @@ TEST(LyraCommandLine, NamesWhichOptionalRewritesOfMirRun) {
   };
   const std::set<std::string> skipped = spans_of("-InstSimplify");
   EXPECT_FALSE(skipped.contains("InstSimplify"));
+  EXPECT_TRUE(skipped.contains("OrderEvaluation"));
   EXPECT_TRUE(skipped.contains("BoxLargeValues"));
   EXPECT_TRUE(skipped.contains("SplitReactions"));
   const std::set<std::string> asked_back =

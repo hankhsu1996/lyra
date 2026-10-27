@@ -15,7 +15,6 @@
 #include "lyra/mir/record_id.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/mir/type_id.hpp"
-#include "lyra/mir/type_parameter_index.hpp"
 #include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/runtime_class.hpp"
 #include "lyra/value/integral_fwd.hpp"
@@ -518,18 +517,6 @@ struct ErasedCallableType {
   auto operator==(const ErasedCallableType&) const -> bool = default;
 };
 
-// A type the generic definition it is written in leaves open: that
-// definition's type parameter at `index`, as clang's `TemplateTypeParmType`
-// and rustc's `ty::Param` are. It stands for a type only inside that
-// definition, and a call of the definition says which type it is, so the
-// definition's body is made concrete once for each list of types its calls
-// name.
-struct TypeParameterType {
-  TypeParameterIndex index;
-
-  auto operator==(const TypeParameterType&) const -> bool = default;
-};
-
 // The write capability a reference or borrow grants its holder (the
 // generic-language `&T` vs `&mut T`, a method's `const` vs non-const receiver).
 // Mutability lives on references and borrows, never as a qualifier on an
@@ -818,7 +805,7 @@ class Type {
       EmptyType, ObservableType, ResolvedType, DriverType, OpenWriteType,
       DesignationType, BitsReferenceType, ObjectWriteType, SampledHistoryType,
       EvaluationAttemptsType, LoopBlocksType, RecordType, ClosureType,
-      ErasedCallableType, TypeParameterType>;
+      ErasedCallableType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

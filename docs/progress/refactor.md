@@ -3244,62 +3244,31 @@ source, or not yet tried.
       own. Which hook a call naming one through an interface class handle runs (LRM 8.26.9 against
       18.6.2) is ruled in the conformance policy as Lyra's reading.
 
-- [ ] R256 -- MIR has generic callables, but they are shaped by what the first one needed rather
-      than by a generic programming model, and the step between MIR as built and MIR as the backends
-      read it is a list of rewrites rather than a stated boundary. A generic body may reach a value
-      of a parameter type only through a pointer, because the rewrites that keep large values off
-      the stack run before anything is instantiated and cannot size one; instantiation happens in
-      the lowering to the execution IR, so the C++ backend renders a template and the host compiler
-      lays out its frames; a closure a generic calls once is borrowed rather than consumed; and a
-      body is checked at its definition only in what it reaches through its bounds, not in all it
-      does. MIR has no trait, so each thing a generic body may do with a parameter is a construct of
-      its own: one bound for "is a closure called so", one for "keeps deferred effects", and one
-      construct for each operation reached through them -- a call of the closure, a keeper's commit,
-      a placement's allocation through the keeper -- and every new generic operation would add more.
-      The architecture contract for MIR also lists keeping large values off the stack among what MIR
-      owns, while its purpose says storage placement is not MIR's. And whether a value lies inline
-      or in storage of its own is decided by size in three places that are not held to one answer:
-      the rewrite for frames, the C++ holder of a value, and the execution backend's holder at run
-      time. Target: one pass manager runs the passes between the dialect MIR is built in and the
-      dialect the backends read, each pass with a precondition and a postcondition the verifier
-      checks. Semantic passes run first; instantiation then makes every generic definition concrete
-      at each set of type arguments a concrete body calls it at, cached and on demand, and only
-      substitutes; a call through a bound is then resolved to the implementation the concrete type
-      states, a step of its own after substitution as rustc's `Instance::resolve` is, where today
-      one function does both; representation lowering then decides every value's storage, its
-      passing and where it is built, ordinary bodies included, and decides a holder's storage too,
-      which the runtime then follows. The dialect the backends read holds concrete bodies only,
-      every storage decision made, so neither backend decides one, and the C++ backend renders
-      instances rather than templates. A generic body may hold values of a parameter type as
-      parameters, locals and returns; a bound is that the type implements a trait -- a named set of
-      operations each type states its own implementation of, as Rust's traits are -- and a call
-      through a bound calls a method of that trait on a value of the parameter type, so being a
-      callable closure and keeping deferred effects are two traits and their operations three
-      methods, with no construct of their own; it is checked at its definition to use only what its
-      bounds grant; moving or copying a value of a parameter type is a bound rather than a default,
-      since a closure never moves; a closure called once is consumed where it lies. Not blocked.
-
-- [ ] R257 -- A fixed-size unpacked array's whole-value operations are written once per array type
-      by the lowering to MIR, while the C++ backend reaches a second, hand-written algorithm for the
-      same operations in the value library. Target: the operations that need nothing of the element
-      type but its own operations -- the equalities, the unknown test, the bit width and count, the
-      net folds, filling -- are generic definitions over the element type and the count, answering
-      at an associated type of the element where the answer depends on it; an operation that has to
-      compute a type from the count and the element's width, the fixed-width stream, stays built per
-      type by one rule. Blocked on R256.
+- [ ] R256 -- The conversion of MIR into the phase the backends read makes an evaluation order
+      explicit and boxes what a frame cannot hold in one step, though the first is meaning and the
+      second is representation. Whether a value lies inline or in storage of its own is decided by
+      size in three places not held to one answer -- the rewrite for frames, the C++ holder of a
+      value, and the execution backend's holder at run time -- and the size the frame rule reads is
+      not a layout for a write in progress, which it counts as an address. An operation a type with
+      no declaration answers is still named by when it was found rather than by its type. Target:
+      making the evaluation order explicit is a step of its own before representation is decided;
+      one layout, asked of concrete types, answers every size a storage decision reads, the holder's
+      decision is stated in MIR and the runtime follows it, and each backend is checked to lay out
+      exactly what the two must agree on and to be able to carry out the holding strategy MIR chose;
+      and every body made per type is named from its key. Not blocked.
 
 - [ ] R258 -- The C++ backend and the value library's own generic code reach a fixed-size array's, a
       structure's and a union's operations as members of the library's types, so the library holds a
-      second statement of each operation MIR already states. Target: the C++ backend renders the
-      operations MIR states, and the library's generic code reaches them through what the program
-      states for each type, as the execution backend's type tables do. Blocked on R257.
+      second statement of each operation MIR already states once per type. Target: the C++ backend
+      renders the operations MIR states, and the library's generic code reaches them through what
+      the program states for each type, as the execution backend's type tables do. Not blocked.
 
 - [ ] R259 -- Copying, moving and ending a structure, a tuple, an array or a closure, and creating
       and ending a class object, are composed by the code generator of the execution backend, which
       is a decision about what an operation does taken below the layer that states operations.
       Target: they are built per type by one rule where the execution IR is lowered from MIR, as
       rustc builds drop glue and clone shims per type, and the code generator only translates them;
-      the C++ backend keeps the host compiler's own rule, which is the same rule. Blocked on R256.
+      the C++ backend keeps the host compiler's own rule, which is the same rule. Not blocked.
 
 - [ ] R260 -- A unit's name answers two questions at once: which declaration and specialization it
       is, and what another unit may compile against. What another unit compiles against is decided
