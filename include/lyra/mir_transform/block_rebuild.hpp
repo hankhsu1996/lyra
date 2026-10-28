@@ -95,6 +95,15 @@ struct RebuildRules {
   // which runs after its steps.
   std::function<mir::ExprId(BlockRebuild&, mir::ExprId)> evaluation =
       [](BlockRebuild& rebuild, mir::ExprId old) { return rebuild.Expr(old); };
+  // Asked of each statement's expression whose value the statement discards --
+  // an expression statement's, a loop's step, a loop's initialization that
+  // declares nothing -- answering what stands there, which may be a value made
+  // somewhere the statement discards with it. Each begins an evaluation of its
+  // own, as the rule above answers it, unless a rewrite says otherwise.
+  std::function<mir::ExprId(BlockRebuild&, mir::ExprId)> discarded =
+      [](BlockRebuild& rebuild, mir::ExprId old) {
+        return rebuild.Evaluation(old);
+      };
   std::function<mir::TypeId(mir::TypeId)> type = [](mir::TypeId type) {
     return type;
   };

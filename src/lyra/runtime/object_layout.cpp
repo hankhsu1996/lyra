@@ -50,6 +50,7 @@
 #include "lyra/value/empty.hpp"
 #include "lyra/value/fixed_array_value.hpp"
 #include "lyra/value/format.hpp"
+#include "lyra/value/index_order.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/laid_out_value.hpp"
@@ -88,6 +89,36 @@ static_assert(Of<HierarchySegment>() == support::kHierarchySegmentStorage);
 static_assert(
     Of<ChannelCancellation>() == support::kChannelCancellationStorage);
 static_assert(Of<WeakObjectRef>() == support::kWeakReferenceStorage);
+static_assert(Of<ErasedReference>() == support::kReferenceStorage);
+static_assert(Of<AnyReference>() == support::kAnyReferenceStorage);
+static_assert(Of<SharedPointer>() == support::kSharedPointerStorage);
+static_assert(Of<OpenWrite>() == support::kOpenWriteStorage);
+static_assert(Of<ErasedDesignation>() == support::kDesignationStorage);
+static_assert(Of<ErasedObjectWrite>() == support::kObjectWriteStorage);
+static_assert(Of<value::String>() == support::kStringStorage);
+static_assert(Of<value::Real>() == support::kRealStorage);
+static_assert(Of<value::ShortReal>() == support::kShortRealStorage);
+static_assert(Of<value::Chandle>() == support::kChandleStorage);
+static_assert(Of<value::ObjectRef>() == support::kObjectRefStorage);
+static_assert(
+    Of<value::RuntimeDynamicArray>() == support::kDynamicArrayStorage);
+static_assert(Of<value::RuntimeQueue>() == support::kQueueStorage);
+static_assert(
+    Of<value::RuntimeAssociativeArray>() == support::kAssociativeArrayStorage);
+static_assert(Of<value::WildcardKey>() == support::kWildcardKeyStorage);
+static_assert(Of<value::Any>() == support::kAnyStorage);
+static_assert(Of<value::Empty>() == support::kEmptyStorage);
+static_assert(Of<value::BitVec>() == support::kBitVecStorage);
+static_assert(Of<value::PrintItem>() == support::kPrintItemStorage);
+static_assert(
+    Of<value::PrintLiteralItem>() == support::kPrintLiteralItemStorage);
+static_assert(Of<value::PrintValueItem>() == support::kPrintValueItemStorage);
+static_assert(Of<value::FormatSpec>() == support::kFormatSpecStorage);
+static_assert(Of<value::FormatArg>() == support::kFormatArgStorage);
+static_assert(Of<value::TimeFormat>() == support::kTimeFormatStorage);
+static_assert(Of<value::DpiBitBuffer>() == support::kDpiBitBufferStorage);
+static_assert(Of<value::DpiLogicBuffer>() == support::kDpiLogicBufferStorage);
+static_assert(Of<value::DpiOpenArray>() == support::kDpiOpenArrayStorage);
 
 // Every backend reads an object's class from the object's first word, which a
 // table pointer the host compiler gave a class of the library would take.
@@ -275,17 +306,17 @@ auto LayoutOf(support::LibraryObject object) -> ObjectLayout {
     case support::LibraryObject::kExecution:
       return Of<Coroutine<void>>();
     case support::LibraryObject::kSharedPointer:
-      return Of<SharedPointer>();
+      return support::kSharedPointerStorage;
     case support::LibraryObject::kOpenWrite:
-      return Of<OpenWrite>();
+      return support::kOpenWriteStorage;
     case support::LibraryObject::kDesignation:
-      return Of<ErasedDesignation>();
+      return support::kDesignationStorage;
     case support::LibraryObject::kObjectWrite:
-      return Of<ErasedObjectWrite>();
+      return support::kObjectWriteStorage;
     case support::LibraryObject::kReference:
-      return Of<ErasedReference>();
+      return support::kReferenceStorage;
     case support::LibraryObject::kAnyReference:
-      return Of<AnyReference>();
+      return support::kAnyReferenceStorage;
     case support::LibraryObject::kWeakReference:
       return support::kWeakReferenceStorage;
     case support::LibraryObject::kLeasedReference:

@@ -80,7 +80,14 @@ against the run before it; the figures are in the pull requests that measured th
       both keep the value off the stack by translating what they are given. A parameter is boxed
       wherever its signature is stated, so a call through the address of a body passes what the body
       takes. A variable's cell keeps such a value in storage of its own on both backends, as every
-      holder does, so a cell is never boxed.
+      holder does, by the one rule every holder reads.
+- [x] A frame keeps a body's values only up to a fixed sum, and a local, a variable's cell or a
+      value an expression makes past it is held through a box: a function, a process before its
+      first wait and a branch it forks, each declaring locals as large as a frame keeps one and
+      together many times the stack, run on both backends under a small stack. A frame still follows
+      how many operations and arguments the source writes, as any compiled program's does, so an
+      expression of hundreds of operands on values as large as a frame keeps one needs a stack of
+      the size such a program would.
 - [x] A list of elements an array is built from is made, elements and all, in its box where it is
       too large for a frame, on both backends.
 - [x] A value of such a type that an expression makes is made in a box and read through it, a member

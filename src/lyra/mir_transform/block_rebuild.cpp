@@ -162,7 +162,7 @@ auto BlockRebuild::WithOperandsCarried(const mir::StmtData& data)
             return s;
           },
           [&](mir::ExprStmt s) -> mir::StmtData {
-            s.expr = Evaluation(s.expr);
+            s.expr = rules_->discarded(*this, s.expr);
             return s;
           },
           [&](mir::BlockStmt s) -> mir::StmtData {
@@ -209,7 +209,7 @@ auto BlockRebuild::WithOperandsCarried(const mir::StmtData& data)
                         decl.init = Evaluation(decl.init);
                       },
                       [&](mir::ForInitExpr& expr) {
-                        expr.expr = Evaluation(expr.expr);
+                        expr.expr = rules_->discarded(*this, expr.expr);
                       }},
                   init);
             }
@@ -217,7 +217,7 @@ auto BlockRebuild::WithOperandsCarried(const mir::StmtData& data)
               s.condition = Evaluation(*s.condition);
             }
             for (mir::ExprId& step : s.step) {
-              step = Evaluation(step);
+              step = rules_->discarded(*this, step);
             }
             s.scope = Child(s.scope);
             return s;

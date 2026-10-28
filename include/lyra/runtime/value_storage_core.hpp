@@ -28,9 +28,9 @@ concept RepresentedAtRunTime = requires(const T& value, const T& other) {
 // non-movable: a cell is addressed, so its identity is its address.
 //
 // It is how a cell holds a value whose type is known where it is compiled, so
-// what the cell keeps for itself is a value of that type too. A value too large
-// for a frame is kept in storage the cell owns, as a holder keeps one, so a
-// cell is never that large itself wherever it is declared.
+// what the cell keeps for itself is a value of that type too. A value that does
+// not lie inline by the rule every holder reads is kept in storage the cell
+// owns, so a cell keeps at most that bound of a value wherever it is declared.
 template <value::LyraValue T>
 class ValueStorageCore {
  public:

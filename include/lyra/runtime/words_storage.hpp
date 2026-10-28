@@ -6,6 +6,7 @@
 
 #include "lyra/runtime/tail.hpp"
 #include "lyra/runtime/word_recycler.hpp"
+#include "lyra/value/frame_bound.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/wide.hpp"
@@ -26,7 +27,7 @@ class WordsStorage : public TailValue<WordsStorage<kDomain>> {
 
   explicit WordsStorage(std::uint64_t width)
       : TailValue<WordsStorage>(
-            IsInline(ValueLayoutFor(width))
+            value::LiesInline(ValueLayoutFor(width))
                 ? nullptr
                 : AllocateWords(BytesFor(width) / sizeof(std::uint64_t))),
         width_(width) {

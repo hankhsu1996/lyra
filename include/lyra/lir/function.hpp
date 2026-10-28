@@ -417,6 +417,15 @@ struct CoroutineTarget {
   Op op;
 };
 
+// Builds a variable's cell -- storage holding a value, which reports each
+// write to it -- in storage of dynamic duration the call is handed, which then
+// holds it: the cell its operand's type points at, as a body builds one of its
+// variables where its declaration is reached. A cell has no value apart from
+// where it lies, so it is built there rather than made and put in.
+//
+// A LIR-only target with no MIR twin: MIR states the new-expression whole.
+struct BuildCellTarget {};
+
 // The operation's stable spelling. This is an interface contract, not a display
 // string: it names the operation in a dump, and it is the operation half of the
 // runtime-library symbol a generated module calls, so changing it renames a
@@ -433,14 +442,14 @@ auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view;
 // computed, a value constructor named by the call's result type, the creation
 // of an object, a body of this program or a foreign symbol the host resolves, a
 // value-cell operation, the end or copy of an owned value, storage of dynamic
-// duration allocated or given back, a control-effect operation, or an
-// operation of the coroutine protocol.
+// duration allocated or given back, a variable's cell built in such storage, a
+// control-effect operation, or an operation of the coroutine protocol.
 using CallTarget = std::variant<
     BuiltinTarget, FunctionTarget, DispatchTarget, InterfaceDispatchTarget,
     IndirectTarget, ConstructTarget, CreationTarget, SymbolTarget,
     ForeignTarget, ValueCellTarget, OpenWriteTarget, DesignatedBitsTarget,
-    EndValueTarget, CopyValueTarget, DynamicStorageTarget, ControlEffectTarget,
-    CoroutineTarget>;
+    EndValueTarget, CopyValueTarget, DynamicStorageTarget, BuildCellTarget,
+    ControlEffectTarget, CoroutineTarget>;
 
 // How a call to `target` ends, which is a property of the callee and never of
 // what it happens to do. The design's own code can depart, wherever it stands

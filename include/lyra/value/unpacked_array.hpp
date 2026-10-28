@@ -122,15 +122,31 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
 
   UnpackedArray() = default;
 
+  // An array at the value every element starts at, then written by `fill`,
+  // which is handed it: made where whoever asked for it keeps it, since what
+  // this answers is the array being made and never a copy of one made here
+  // (C++17 guaranteed copy elision), so an array too large for a frame is
+  // never one in the frame of the operation computing it.
+  template <typename Fill>
+  [[nodiscard]] static auto Built(Fill fill) -> UnpackedArray {
+    return UnpackedArray(WrittenBy<Fill>{.fill = &fill});
+  }
+  // The same, starting from a copy of `start`.
+  template <typename Fill>
+  [[nodiscard]] static auto BuiltFrom(const UnpackedArray& start, Fill fill)
+      -> UnpackedArray {
+    return UnpackedArray(start, WrittenBy<Fill>{.fill = &fill});
+  }
+
   // An array of structures or unions defaults to each element at the default
   // its declaration states (LRM 7.4.5, 7.2.2), so the array's default is stated
   // by its element's as a record's is by its declaration.
   [[nodiscard]] static auto DeclaredDefault() -> UnpackedArray
     requires HasDeclaredDefault<T>
   {
-    UnpackedArray array;
-    std::ranges::fill(array.items_, detail::DefaultOf<T>());
-    return array;
+    return Built([](UnpackedArray& array) {
+      std::ranges::fill(array.items_, detail::DefaultOf<T>());
+    });
   }
 
   // The array `unit` fills when laid down again and again from the left:
@@ -188,11 +204,11 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
   // names.
   template <typename ElementAt>
   [[nodiscard]] static auto Gathered(ElementAt element_at) -> UnpackedArray {
-    UnpackedArray out;
-    for (std::size_t i = 0; i < N; ++i) {
-      out.Items()[i] = element_at(i);
-    }
-    return out;
+    return Built([&](UnpackedArray& out) {
+      for (std::size_t i = 0; i < N; ++i) {
+        out.Items()[i] = element_at(i);
+      }
+    });
   }
 
   UnpackedArray(const UnpackedArray&) = default;
@@ -295,9 +311,9 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
           "the range a 'with' names reaches outside the array it is unpacked "
           "into");
     }
-    UnpackedArray out = *this;
-    AssignRun(out.MutableElements(), first, WindowCount(count), values);
-    return out;
+    return BuiltFrom(*this, [&](UnpackedArray& out) {
+      AssignRun(out.MutableElements(), first, WindowCount(count), values);
+    });
   }
 
   // The slice of `elements` from `start` as an array of this type: what a
@@ -364,35 +380,36 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
   }
   [[nodiscard]] auto Dominating(const UnpackedArray& weaker) const
       -> UnpackedArray {
-    UnpackedArray out;
-    for (std::size_t i = 0; i < N; ++i) {
-      out.Items()[i] = RawAt(i).Dominating(weaker.RawAt(i));
-    }
-    return out;
+    return Built([&](UnpackedArray& out) {
+      for (std::size_t i = 0; i < N; ++i) {
+        out.Items()[i] = RawAt(i).Dominating(weaker.RawAt(i));
+      }
+    });
   }
 
   // The bits the array streams as, held as a value of `R`, which is exactly as
   // wide (LRM 6.24.3).
   template <IntegralValue R>
   [[nodiscard]] auto ToBitstream() const -> R {
-    R out = R::Zero();
-    const std::uint64_t filled =
-        WriteToStream(out.AsMutableWords().MutableView(), 0);
-    if (filled != R::kWidth) {
-      throw InternalError("an unpacked array streamed as other than its bits");
-    }
-    return out;
+    return R::Built([&](R& out) {
+      const std::uint64_t filled =
+          WriteToStream(out.AsMutableWords().MutableView(), 0);
+      if (filled != R::kWidth) {
+        throw InternalError(
+            "an unpacked array streamed as other than its bits");
+      }
+    });
   }
 
   // `prototype`'s shape with every bit set to `fill` (LRM 6.7.1).
   template <IntegralValue Fill>
   [[nodiscard]] static auto FilledLike(
       const UnpackedArray& prototype, const Fill& fill) -> UnpackedArray {
-    UnpackedArray out;
-    for (std::size_t i = 0; i < N; ++i) {
-      out.Items()[i] = FilledAs(prototype.RawAt(i), fill);
-    }
-    return out;
+    return Built([&](UnpackedArray& out) {
+      for (std::size_t i = 0; i < N; ++i) {
+        out.Items()[i] = FilledAs(prototype.RawAt(i), fill);
+      }
+    });
   }
 
   // The positions a procedural continuous assignment may hold some of (LRM
@@ -404,17 +421,17 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
       const UnpackedArray& from, std::int64_t first, std::int64_t count) const
       -> UnpackedArray {
     const std::int64_t per_element = PositionCountOf<T>();
-    UnpackedArray out = *this;
-    for (std::size_t i = 0; i < N; ++i) {
-      const auto at = static_cast<std::int64_t>(i) * per_element;
-      const std::int64_t start = std::max(first, at);
-      const std::int64_t stop = std::min(first + count, at + per_element);
-      if (start < stop) {
-        out.Items()[i] =
-            PositionsTaken(RawAt(i), from.RawAt(i), start - at, stop - start);
+    return BuiltFrom(*this, [&](UnpackedArray& out) {
+      for (std::size_t i = 0; i < N; ++i) {
+        const auto at = static_cast<std::int64_t>(i) * per_element;
+        const std::int64_t start = std::max(first, at);
+        const std::int64_t stop = std::min(first + count, at + per_element);
+        if (start < stop) {
+          out.Items()[i] =
+              PositionsTaken(RawAt(i), from.RawAt(i), start - at, stop - start);
+        }
       }
-    }
-    return out;
+    });
   }
 
   // LRM 20.9: any element carrying an unknown bit propagates up.
@@ -475,9 +492,9 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
   // The array a stream of exactly its bits holds (LRM 11.4.14.3).
   template <IntegralValue Bits>
   [[nodiscard]] static auto FromBitstream(const Bits& bits) -> UnpackedArray {
-    UnpackedArray out;
-    out.ReadFromStream(bits.AsWords().View(), 0, Bits::kWidth);
-    return out;
+    return Built([&](UnpackedArray& out) {
+      out.ReadFromStream(bits.AsWords().View(), 0, Bits::kWidth);
+    });
   }
 
   // The same where an element's width is the running program's: the stream as
@@ -486,14 +503,14 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
     return StreamOf(*this);
   }
   [[nodiscard]] static auto FromBitVec(const BitVec& run) -> UnpackedArray {
-    UnpackedArray out;
-    if (out.ReadFromStream(run.View(), 0, run.View().width) !=
-        run.View().width) {
-      throw SimulationError(
-          "a stream of bits does not divide into the elements of the array it "
-          "is read into");
-    }
-    return out;
+    return Built([&](UnpackedArray& out) {
+      if (out.ReadFromStream(run.View(), 0, run.View().width) !=
+          run.View().width) {
+        throw SimulationError(
+            "a stream of bits does not divide into the elements of the array "
+            "it is read into");
+      }
+    });
   }
 
   // The elements, in ordinal order, where they lie.
@@ -513,6 +530,21 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
 
  private:
   friend class OrdinalArrayMethods<UnpackedArray<T, N>>;
+
+  // What writes an array `Built` or `BuiltFrom` makes.
+  template <typename Fill>
+  struct WrittenBy {
+    Fill* fill;
+  };
+  template <typename Fill>
+  explicit UnpackedArray(WrittenBy<Fill> written) : UnpackedArray() {
+    (*written.fill)(*this);
+  }
+  template <typename Fill>
+  UnpackedArray(const UnpackedArray& start, WrittenBy<Fill> written)
+      : UnpackedArray(start) {
+    (*written.fill)(*this);
+  }
 
   [[nodiscard]] auto Items() const -> const T* {
     return items_.data();
@@ -548,20 +580,20 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
   // keeps the element type's default, and bytes beyond the last element are
   // dropped.
   [[nodiscard]] static auto OfBytes(std::string_view bytes) -> UnpackedArray {
-    UnpackedArray out;
-    for (std::size_t i = 0; i < std::min(N, bytes.size()); ++i) {
-      out.Items()[i] = T::FromInt(static_cast<unsigned char>(bytes[i]));
-    }
-    return out;
+    return Built([&](UnpackedArray& out) {
+      for (std::size_t i = 0; i < std::min(N, bytes.size()); ++i) {
+        out.Items()[i] = T::FromInt(static_cast<unsigned char>(bytes[i]));
+      }
+    });
   }
 
   [[nodiscard]] auto Resolved(
       NetResolution fold, const UnpackedArray& other) const -> UnpackedArray {
-    UnpackedArray out;
-    for (std::size_t i = 0; i < N; ++i) {
-      out.Items()[i] = Resolve(fold, RawAt(i), other.RawAt(i));
-    }
-    return out;
+    return Built([&](UnpackedArray& out) {
+      for (std::size_t i = 0; i < N; ++i) {
+        out.Items()[i] = Resolve(fold, RawAt(i), other.RawAt(i));
+      }
+    });
   }
 
   // Puts the value that was at `order[k]` at ordinal `k` (LRM 7.12.2). The

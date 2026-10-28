@@ -6,7 +6,9 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <variant>
+#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
@@ -249,11 +251,195 @@ auto ClosureInvokeSymbol(std::string_view unit_name, std::uint32_t ordinal)
       {SymbolPart::Name(unit_name), SymbolPart::Ordinal(ordinal)});
 }
 
-auto TypeOperationSymbol(std::string_view unit_name, std::uint32_t ordinal)
-    -> std::string {
+namespace {
+
+// `type` spelled onto `out`: a letter for its kind, then each fact that fixes
+// it ended by `;`, then the types it is made of, each spelled the same way, so
+// where each spelling ends is told by the spelling itself and no two types
+// spell alike.
+void SpellType(const CompilationUnit& unit, TypeId type, std::string& out) {
+  const auto number = [&](std::uint64_t value) {
+    out += std::format("{};", value);
+  };
+  const auto of = [&](TypeId part) { SpellType(unit, part, out); };
+  const auto all = [&](const std::vector<TypeId>& parts) {
+    number(parts.size());
+    for (const TypeId part : parts) {
+      of(part);
+    }
+  };
+  const auto named = [&](std::string_view name) {
+    out += SymbolPart::Name(name).encoded;
+  };
+  const auto kind = [&](char letter) { out += letter; };
+  unit.types.Get(type).Visit(
+      Overloaded{
+          [&](const IntegralType& t) {
+            kind('I');
+            number(t.bit_width);
+            number(std::to_underlying(t.signedness));
+            number(std::to_underlying(t.state_kind));
+          },
+          [&](const UnpackedArrayType& t) {
+            kind('A');
+            number(t.size);
+            of(t.element_type);
+          },
+          [&](const DynamicArrayType& t) {
+            kind('D');
+            of(t.element_type);
+          },
+          [&](const QueueType& t) {
+            kind('Q');
+            out += t.max_bound.has_value() ? std::format("{};", *t.max_bound)
+                                           : std::string{"-;"};
+            of(t.element_type);
+          },
+          [&](const AssociativeArrayType& t) {
+            kind('M');
+            of(t.key_type);
+            of(t.element_type);
+          },
+          [&](const WildcardIndexType&) { kind('W'); },
+          [&](const StringType&) { kind('S'); },
+          [&](const AnyType&) { kind('Y'); },
+          [&](const AnyReferenceType&) { kind('R'); },
+          [&](const MachineCStringType&) { kind('c'); },
+          [&](const MachineBoolType&) { kind('b'); },
+          [&](const MachineIntType& t) {
+            kind('i');
+            number(BitsOf(t.width));
+            number(std::to_underlying(t.signedness));
+          },
+          [&](const MachineFloatType& t) {
+            kind('f');
+            number(std::to_underlying(t.width));
+          },
+          [&](const MachineArrayType& t) {
+            kind('a');
+            number(t.size);
+            of(t.element);
+          },
+          [&](const MachineFunctionType& t) {
+            kind('F');
+            all(t.params);
+            of(t.result);
+          },
+          [&](const RealType&) { kind('r'); },
+          [&](const ShortRealType&) { kind('h'); },
+          [&](const ChandleType&) { kind('C'); },
+          [&](const VoidType&) { kind('v'); },
+          [&](const EmptyType&) { kind('e'); },
+          [&](const ObjectType& t) {
+            kind('O');
+            named(DefinitionSymbol(unit, t.class_id));
+          },
+          [&](const RuntimeClassType& t) {
+            kind('L');
+            number(std::to_underlying(t.which));
+          },
+          [&](const ClosureType& t) {
+            kind('K');
+            named(DefinitionSymbol(unit, t.closure_id));
+          },
+          [&](const ErasedCallableType& t) {
+            kind('E');
+            all(t.params);
+            of(t.result);
+          },
+          [&](const RuntimeEffectsType&) { kind('x'); },
+          [&](const FilesType&) { kind('g'); },
+          [&](const DiagnosticType&) { kind('d'); },
+          [&](const RuntimeLibraryType& t) {
+            kind('l');
+            number(std::to_underlying(t.kind));
+          },
+          [&](const CoroutineType& t) {
+            kind('T');
+            of(t.payload);
+          },
+          [&](const VariableRefType& t) {
+            kind('V');
+            number(std::to_underlying(t.mutability));
+            of(t.pointee);
+          },
+          [&](const PointerType& t) {
+            kind('P');
+            number(std::to_underlying(t.ownership));
+            number(std::to_underlying(t.mutability));
+            of(t.pointee);
+          },
+          [&](const ManagedRefType& t) {
+            kind('H');
+            of(t.pointee);
+          },
+          [&](const WeakManagedRefType& t) {
+            kind('w');
+            of(t.pointee);
+          },
+          [&](const VectorType& t) {
+            kind('Z');
+            of(t.element);
+          },
+          [&](const TupleType& t) {
+            kind('U');
+            all(t.elements);
+          },
+          // A record is the declaration it names: the unit defining it and
+          // where in that unit it is declared.
+          [&](const RecordType& t) {
+            kind('N');
+            const RecordDecl& record = unit.records.Get(t.declaration);
+            named(
+                record.defining_unit.has_value()
+                    ? std::string_view{*record.defining_unit}
+                    : std::string_view{unit.name});
+            out += SymbolPartOf(record.path).encoded;
+            out += ';';
+          },
+          [&](const ResolvedType& t) {
+            kind('n');
+            of(t.value);
+          },
+          [&](const DriverType& t) {
+            kind('j');
+            of(t.value);
+          },
+          [&](const ObservableType& t) {
+            kind('o');
+            of(t.value);
+          },
+          [&](const SampledHistoryType& t) {
+            kind('s');
+            of(t.value);
+          },
+          [&](const EvaluationAttemptsType&) { kind('t'); },
+          [&](const LoopBlocksType&) { kind('k'); },
+          [&](const OpenWriteType& t) {
+            kind('p');
+            of(t.value);
+          },
+          [&](const DesignationType& t) {
+            kind('q');
+            of(t.value);
+          }});
+}
+
+}  // namespace
+
+auto SymbolPartOf(const CompilationUnit& unit, TypeId type) -> SymbolPart {
+  std::string spelled;
+  SpellType(unit, type, spelled);
+  return SymbolPart{std::format("$y{}:{}", spelled.size(), spelled)};
+}
+
+auto TypeOperationSymbol(
+    std::string_view unit_name, SymbolPart type,
+    support::ValueOperation operation) -> std::string {
   return SymbolName(
       SymbolCategory::kTypeOperation,
-      {SymbolPart::Name(unit_name), SymbolPart::Ordinal(ordinal)});
+      {SymbolPart::Name(unit_name), std::move(type),
+       SymbolPart::Name(support::ValueOperationName(operation))});
 }
 
 auto ClassDefinitionSymbol(std::string_view unit_name, SymbolPart cls)

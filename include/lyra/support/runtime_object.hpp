@@ -74,7 +74,8 @@ struct ObjectLayout {
 // holds by value, stated where a layer compiled without the runtime reads it:
 // MIR sizes a frame holding one, a list of triggers among them, from these, and
 // the runtime answers its own layout queries with them too, after checking each
-// against the class it defines.
+// against the class it defines. A compiler building a program lays the classes
+// out itself, and checks that each fits what is stated.
 inline constexpr ObjectLayout kTriggerStorage{
     .layout = {.size = 80, .align = 8}, .ends_with_nothing_to_do = false};
 inline constexpr ObjectLayout kObservationStorage{
@@ -91,6 +92,64 @@ inline constexpr ObjectLayout kWeakReferenceStorage{
     .layout = {.size = 16, .align = 8}, .ends_with_nothing_to_do = false};
 inline constexpr ObjectLayout kLeasedReferenceStorage{
     .layout = {.size = 112, .align = 8}, .ends_with_nothing_to_do = false};
+inline constexpr ObjectLayout kReferenceStorage{
+    .layout = {.size = 72, .align = 8}, .ends_with_nothing_to_do = true};
+inline constexpr ObjectLayout kAnyReferenceStorage{
+    .layout = {.size = 40, .align = 8}, .ends_with_nothing_to_do = true};
+inline constexpr ObjectLayout kSharedPointerStorage{
+    .layout = {.size = 16, .align = 8}, .ends_with_nothing_to_do = false};
+inline constexpr ObjectLayout kOpenWriteStorage{
+    .layout = {.size = 448, .align = 8}, .ends_with_nothing_to_do = false};
+inline constexpr ObjectLayout kDesignationStorage{
+    .layout = {.size = 16, .align = 8}, .ends_with_nothing_to_do = true};
+inline constexpr ObjectLayout kObjectWriteStorage{
+    .layout = {.size = 8, .align = 8}, .ends_with_nothing_to_do = false};
+
+// The same for each class the value library keeps a value in where it does not
+// lay the value out by its type, and for each object of the value library a
+// runtime entry is handed.
+inline constexpr ObjectLayout kStringStorage{
+    .layout = {.size = 32, .align = 8}, .ends_with_nothing_to_do = false};
+inline constexpr ObjectLayout kRealStorage{
+    .layout = {.size = 8, .align = 8}, .ends_with_nothing_to_do = true};
+inline constexpr ObjectLayout kShortRealStorage{
+    .layout = {.size = 4, .align = 4}, .ends_with_nothing_to_do = true};
+inline constexpr ObjectLayout kChandleStorage{
+    .layout = {.size = 8, .align = 8}, .ends_with_nothing_to_do = true};
+inline constexpr ObjectLayout kObjectRefStorage{
+    .layout = {.size = 16, .align = 8}, .ends_with_nothing_to_do = false};
+inline constexpr ObjectLayout kDynamicArrayStorage{
+    .layout = {.size = 40, .align = 8}, .ends_with_nothing_to_do = false};
+inline constexpr ObjectLayout kQueueStorage{
+    .layout = {.size = 64, .align = 8}, .ends_with_nothing_to_do = false};
+inline constexpr ObjectLayout kAssociativeArrayStorage{
+    .layout = {.size = 80, .align = 8}, .ends_with_nothing_to_do = false};
+inline constexpr ObjectLayout kWildcardKeyStorage{
+    .layout = {.size = 80, .align = 8}, .ends_with_nothing_to_do = false};
+inline constexpr ObjectLayout kAnyStorage{
+    .layout = {.size = 24, .align = 8}, .ends_with_nothing_to_do = false};
+inline constexpr ObjectLayout kEmptyStorage{
+    .layout = {.size = 1, .align = 1}, .ends_with_nothing_to_do = true};
+inline constexpr ObjectLayout kBitVecStorage{
+    .layout = {.size = 32, .align = 8}, .ends_with_nothing_to_do = false};
+inline constexpr ObjectLayout kPrintItemStorage{
+    .layout = {.size = 72, .align = 8}, .ends_with_nothing_to_do = true};
+inline constexpr ObjectLayout kPrintLiteralItemStorage{
+    .layout = {.size = 16, .align = 8}, .ends_with_nothing_to_do = true};
+inline constexpr ObjectLayout kPrintValueItemStorage{
+    .layout = {.size = 64, .align = 8}, .ends_with_nothing_to_do = true};
+inline constexpr ObjectLayout kFormatSpecStorage{
+    .layout = {.size = 20, .align = 4}, .ends_with_nothing_to_do = true};
+inline constexpr ObjectLayout kFormatArgStorage{
+    .layout = {.size = 40, .align = 8}, .ends_with_nothing_to_do = true};
+inline constexpr ObjectLayout kTimeFormatStorage{
+    .layout = {.size = 48, .align = 8}, .ends_with_nothing_to_do = false};
+inline constexpr ObjectLayout kDpiBitBufferStorage{
+    .layout = {.size = 24, .align = 8}, .ends_with_nothing_to_do = false};
+inline constexpr ObjectLayout kDpiLogicBufferStorage{
+    .layout = {.size = 24, .align = 8}, .ends_with_nothing_to_do = false};
+inline constexpr ObjectLayout kDpiOpenArrayStorage{
+    .layout = {.size = 64, .align = 8}, .ends_with_nothing_to_do = false};
 
 // The spelling the entries over an object carry, stated once for both sides.
 // A value domain's object is spelled as the domain is, so every entry over a

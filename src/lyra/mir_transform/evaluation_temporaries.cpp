@@ -1,4 +1,4 @@
-#include "lyra/mir_transform/order_evaluation.hpp"
+#include "lyra/mir_transform/evaluation_temporaries.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -23,6 +23,7 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/verify.hpp"
 #include "lyra/mir_transform/block_rebuild.hpp"
 
@@ -33,8 +34,8 @@ namespace {
 // How the rewrite takes an operand: how its node takes it, and what the node
 // then does with it.
 enum class TakenAs : std::uint8_t {
-  // Read as a value, which one made of a large type is made in a temporary
-  // for.
+  // Read as a value, which one made of a type the rewrite holds in a temporary
+  // is made in one for.
   kValue,
   // Bound where it lies for the node's own use -- what a write lands in or an
   // address-of takes, the object a field or a call is reached on -- which such
@@ -65,27 +66,43 @@ enum class TakenAs : std::uint8_t {
   kReferredTo,
 };
 
+// Every operand read before a later one may change what it read is given a
+// temporary of its own, whatever its size.
+struct ForReadsBeforeChange {};
+
+// Every value a frame keeps apart that an expression makes and another node
+// reads is given one, which is then held through a box; the plan names each
+// temporary among the locals, apart or not.
+struct ForValuesKeptApart {
+  FramePlan* plan;
+};
+
+// Which operands a rewrite gives a temporary of its own, beside the ones every
+// rewrite gives to keep the order its steps take.
+using TemporaryFor = std::variant<ForReadsBeforeChange, ForValuesKeptApart>;
+
+// Where a temporary's value is kept: in the frame, or apart from it, in
+// storage of its own a box holds.
+enum class KeptBy : std::uint8_t { kTheFrame, kStorageOfItsOwn };
+
 // How the rewrite takes `operand` of `node`, which `node` takes as `use`.
 auto Taking(
     const mir::CompilationUnit& unit, const mir::Expr& node,
     mir::ExprId operand, mir::OperandUse use) -> TakenAs {
-  if (std::holds_alternative<mir::AwaitExpr>(node.data) ||
-      std::holds_alternative<mir::WaitExpr>(node.data)) {
-    return TakenAs::kSuspendedOn;
-  }
-  if (const auto* chosen = std::get_if<mir::ConditionalExpr>(&node.data)) {
-    return operand == chosen->condition ? TakenAs::kValue : TakenAs::kApart;
+  switch (mir::WhereOperandIsMade(node.data, operand)) {
+    case mir::OperandMadeIn::kTheRuntime:
+      return TakenAs::kSuspendedOn;
+    case mir::OperandMadeIn::kTheOperationsValue:
+      return TakenAs::kApart;
+    case mir::OperandMadeIn::kTheOperationsAllocation:
+      return TakenAs::kHandedOver;
+    case mir::OperandMadeIn::kWhereTaken:
+      break;
   }
   if (std::holds_alternative<mir::BorrowExpr>(node.data)) {
     return TakenAs::kReferredTo;
   }
   if (std::holds_alternative<mir::ClosureExpr>(node.data)) {
-    return TakenAs::kHandedOver;
-  }
-  // A new-expression's initializer is made in the storage it allocates; a
-  // placement's arguments are values handed to the allocation function.
-  if (const auto* allocation = std::get_if<mir::NewExpr>(&node.data);
-      allocation != nullptr && operand == allocation->initializer) {
     return TakenAs::kHandedOver;
   }
   if (const auto* call = std::get_if<mir::CallExpr>(&node.data)) {
@@ -246,12 +263,16 @@ auto IsReadBeforeChange(
 }
 
 // Which of `operands`, the operands of one node of `block` in the order it
-// evaluates them, are read before a later one may change what they read.
+// evaluates them, are read before a later one may change what they read, and
+// are given a temporary for it by a rewrite giving `given`.
 auto ReadsBeforeChange(
     const mir::CompilationUnit& unit, const mir::Block& block,
     const std::vector<std::pair<mir::ExprId, TakenAs>>& operands,
-    StorageChanges& changes) -> std::vector<bool> {
+    StorageChanges& changes, const TemporaryFor& given) -> std::vector<bool> {
   std::vector<bool> read_before(operands.size(), false);
+  if (!std::holds_alternative<ForReadsBeforeChange>(given)) {
+    return read_before;
+  }
   bool changed_after = false;
   for (std::size_t at = operands.size(); at-- > 0;) {
     const auto& [operand, taken] = operands[at];
@@ -266,20 +287,34 @@ auto AnyOf(const std::vector<bool>& flags) -> bool {
   return std::ranges::any_of(flags, [](bool flag) { return flag; });
 }
 
-// Whether any node of `block`, or of a block nested in it, is of a type too
-// large for a frame, or reads an operand a later one may change.
-auto NeedsATemporary(
+// Whether any node of `block`, or of a block nested in it, reads an operand a
+// later one may change.
+auto ReadsBeforeAChange(
     const mir::CompilationUnit& unit, const mir::Block& block,
     StorageChanges& changes) -> bool {
   return std::ranges::any_of(
              block.exprs,
              [&](const mir::Expr& expr) {
-               return mir::IsTooLargeForAFrame(unit, expr.type) ||
-                      AnyOf(ReadsBeforeChange(
-                          unit, block, OperandsOf(unit, expr), changes));
+               return AnyOf(ReadsBeforeChange(
+                   unit, block, OperandsOf(unit, expr), changes,
+                   ForReadsBeforeChange{}));
              }) ||
          std::ranges::any_of(block.child_scopes, [&](const mir::Block& child) {
-           return NeedsATemporary(unit, child, changes);
+           return ReadsBeforeAChange(unit, child, changes);
+         });
+}
+
+// Whether any node of `block`, or of a block nested in it, is of a type too
+// large for a frame.
+auto MakesALargeValue(const mir::CompilationUnit& unit, const mir::Block& block)
+    -> bool {
+  return std::ranges::any_of(
+             block.exprs,
+             [&](const mir::Expr& expr) {
+               return mir::IsTooLargeForAFrame(unit, expr.type);
+             }) ||
+         std::ranges::any_of(block.child_scopes, [&](const mir::Block& child) {
+           return MakesALargeValue(unit, child);
          });
 }
 
@@ -291,10 +326,11 @@ class BodyTemporaries {
   // `changes` is what was already asked of the body's nodes.
   BodyTemporaries(
       const mir::CompilationUnit& unit, const mir::CallableCode& code,
-      StorageChanges changes)
+      StorageChanges changes, TemporaryFor given)
       : unit_(&unit),
         code_(&code),
         changes_(std::move(changes)),
+        given_(given),
         completes_(unit.types.Get(code.result_type).Is<mir::CoroutineType>()),
         locals_(code.locals),
         rules_{
@@ -311,6 +347,10 @@ class BodyTemporaries {
                   return Evaluated(
                       rebuild, old, TakenAs::kAsItIs,
                       [old](BlockRebuild& in) { return in.Expr(old); });
+                },
+            .discarded =
+                [this](BlockRebuild& rebuild, mir::ExprId old) {
+                  return Discarded(rebuild, old);
                 }} {
   }
 
@@ -320,7 +360,7 @@ class BodyTemporaries {
   auto operator=(BodyTemporaries&&) -> BodyTemporaries& = delete;
   ~BodyTemporaries() = default;
 
-  // The code rewritten, and the temporaries its evaluations declared among its
+  // The code rewritten, with the temporaries its evaluations declared among its
   // locals.
   auto Rewritten() -> mir::CallableCode {
     mir::CallableCode rewritten = RebuildCode(*code_, rules_);
@@ -336,11 +376,22 @@ class BodyTemporaries {
     std::vector<mir::StmtId> steps;
   };
 
-  // Whether `operand`, a node of `block`, makes a value of a large type rather
-  // than naming one that lies in storage.
-  [[nodiscard]] auto MakesALargeValue(
+  // Whether the frame keeps apart the value `operand`, a node of `block`,
+  // stands for: one too large for a frame wherever it stands, and one the
+  // plan finds no room for.
+  [[nodiscard]] auto IsKeptApart(
       const mir::Block& block, mir::ExprId operand) const -> bool {
-    return mir::IsTooLargeForAFrame(*unit_, block.exprs.Get(operand).type) &&
+    const auto* apart = std::get_if<ForValuesKeptApart>(&given_);
+    return apart != nullptr &&
+           (mir::IsTooLargeForAFrame(*unit_, block.exprs.Get(operand).type) ||
+            apart->plan->values_apart.contains(std::pair{&block, operand}));
+  }
+
+  // Whether `operand`, a node of `block`, makes a value this rewrite holds in
+  // a temporary rather than naming one that lies in storage.
+  [[nodiscard]] auto MakesAValueItHolds(
+      const mir::Block& block, mir::ExprId operand) const -> bool {
+    return IsKeptApart(block, operand) &&
            !mir::ValueLiesInStorage(*unit_, block, operand);
   }
 
@@ -359,7 +410,7 @@ class BodyTemporaries {
     switch (taken) {
       case TakenAs::kValue:
       case TakenAs::kInPlace:
-        if (MakesALargeValue(block, operand)) {
+        if (MakesAValueItHolds(block, operand)) {
           return true;
         }
         break;
@@ -368,7 +419,14 @@ class BodyTemporaries {
           return true;
         }
         break;
+      // One too large for a frame is made where it is handed over, and any
+      // other the rewrite holds is held as a value read is.
       case TakenAs::kHandedOver:
+        if (MakesAValueItHolds(block, operand) &&
+            !mir::IsTooLargeForAFrame(*unit_, block.exprs.Get(operand).type)) {
+          return true;
+        }
+        break;
       case TakenAs::kAsItIs:
         break;
       case TakenAs::kSuspendedOn:
@@ -389,7 +447,8 @@ class BodyTemporaries {
     }
     const std::vector<std::pair<mir::ExprId, TakenAs>> operands =
         OperandsOf(*unit_, block.exprs.Get(id));
-    bool takes = AnyOf(ReadsBeforeChange(*unit_, block, operands, changes_));
+    bool takes =
+        AnyOf(ReadsBeforeChange(*unit_, block, operands, changes_, given_));
     for (const auto& [operand, taken] : operands) {
       takes = takes || TakesAStep(block, taken, operand);
     }
@@ -459,29 +518,50 @@ class BodyTemporaries {
 
   // The place of a temporary of `type` built from `value`, a node of the block
   // `rebuild` builds, and declared by a step of the evaluation that block
-  // holds.
-  auto Temporary(BlockRebuild& rebuild, mir::TypeId type, mir::ExprId value)
-      -> mir::ExprId {
+  // holds; the frame keeps it apart where it holds a value `kept` says the
+  // frame keeps apart.
+  auto Temporary(
+      BlockRebuild& rebuild, mir::TypeId type, mir::ExprId value,
+      KeptBy kept = KeptBy::kTheFrame) -> mir::ExprId {
     if (evaluations_.empty() || evaluations_.back().in != &rebuild) {
       throw InternalError(
           "mir_transform: a temporary was made outside the evaluation it "
           "belongs to");
     }
     const mir::LocalId id = locals_.Add(mir::LocalDecl{.type = type});
+    if (auto* apart = std::get_if<ForValuesKeptApart>(&given_)) {
+      switch (kept) {
+        case KeptBy::kTheFrame:
+          apart->plan->locals_apart.push_back(false);
+          break;
+        case KeptBy::kStorageOfItsOwn:
+          apart->plan->locals_apart.push_back(true);
+          break;
+      }
+    }
     evaluations_.back().steps.push_back(
         rebuild.Add(mir::LocalDeclStmt{.target = id, .init = value}));
     return rebuild.Add(mir::MakeLocalRefExpr(id, type));
   }
 
+  // Where the frame keeps the value `operand`, a node of `block`, stands for.
+  [[nodiscard]] auto KeptAt(const mir::Block& block, mir::ExprId operand) const
+      -> KeptBy {
+    return IsKeptApart(block, operand) ? KeptBy::kStorageOfItsOwn
+                                       : KeptBy::kTheFrame;
+  }
+
   // `operand`, a node of the block `rebuild` builds from, carried over where
-  // it is held: a large value it makes is made in a temporary, and what is
-  // carried is the temporary's place.
+  // it is held: a value it makes that the rewrite holds in a temporary is made
+  // in one, and what is carried is the temporary's place.
   auto Held(BlockRebuild& rebuild, mir::ExprId operand) -> mir::ExprId {
     const mir::ExprId carried = rebuild.Expr(operand);
-    if (!MakesALargeValue(rebuild.From(), operand)) {
+    if (!MakesAValueItHolds(rebuild.From(), operand)) {
       return carried;
     }
-    return Temporary(rebuild, rebuild.From().exprs.Get(operand).type, carried);
+    return Temporary(
+        rebuild, rebuild.From().exprs.Get(operand).type, carried,
+        KeptBy::kStorageOfItsOwn);
   }
 
   // `operand`, a node of the block `rebuild` builds from that a borrow refers
@@ -499,14 +579,15 @@ class BodyTemporaries {
         rebuild, referent.type,
         mir::IsPlace(referent.data)
             ? rebuild.Add(mir::MakeCopyExpr(carried, referent.type))
-            : carried);
+            : carried,
+        KeptAt(rebuild.From(), operand));
   }
 
   // `operand` carried over as a value read: one made in a temporary is read
   // out of it where it lies.
   auto Value(BlockRebuild& rebuild, mir::ExprId operand) -> mir::ExprId {
     const mir::ExprId held = Held(rebuild, operand);
-    if (!MakesALargeValue(rebuild.From(), operand)) {
+    if (!MakesAValueItHolds(rebuild.From(), operand)) {
       return held;
     }
     return rebuild.Add(
@@ -519,7 +600,7 @@ class BodyTemporaries {
   // temporary holds it already.
   [[nodiscard]] auto TakenFirst(
       BlockRebuild& rebuild, mir::ExprId operand) const -> bool {
-    return !MakesALargeValue(rebuild.From(), operand) &&
+    return !MakesAValueItHolds(rebuild.From(), operand) &&
            !mir::ValueLiesInStorage(*unit_, rebuild.From(), operand) &&
            !mir::EvaluatesNothing(rebuild.From(), operand);
   }
@@ -532,7 +613,9 @@ class BodyTemporaries {
     const mir::TypeId type = rebuild.From().exprs.Get(operand).type;
     switch (taken) {
       case TakenAs::kHandedOver:
-        if (!before_a_step && mir::IsTooLargeForAFrame(*unit_, type)) {
+        if (!before_a_step &&
+            std::holds_alternative<ForValuesKeptApart>(given_) &&
+            mir::IsTooLargeForAFrame(*unit_, type)) {
           return rebuild.Expr(operand);
         }
         [[fallthrough]];
@@ -546,9 +629,9 @@ class BodyTemporaries {
       // What is bound where it lies is formed where it is used -- a place
       // keeps its own operands there, and the object a call is entered on may
       // be a reference to part of a value, which exists only where it is
-      // taken -- so only a large value made for it is held in a temporary
-      // here; the handle its object is reached through, where a later operand
-      // may change it, is taken before this is asked.
+      // taken -- so only a value made for it that the rewrite holds is held
+      // in a temporary here; the handle its object is reached through, where a
+      // later operand may change it, is taken before this is asked.
       case TakenAs::kInPlace:
         return Held(rebuild, operand);
       case TakenAs::kReferredTo:
@@ -655,7 +738,7 @@ class BodyTemporaries {
       return rebuild.Expr(call);
     }
     const std::vector<bool> read_before = ReadsBeforeChange(
-        *unit_, rebuild.From(), OperandsOf(*unit_, expr), changes_);
+        *unit_, rebuild.From(), OperandsOf(*unit_, expr), changes_, given_);
     return rebuild.Add(WithOperands(
         rebuild, expr, [&](std::size_t at, mir::ExprId operand, TakenAs taken) {
           if (read_before[at]) {
@@ -701,7 +784,7 @@ class BodyTemporaries {
     const std::vector<std::pair<mir::ExprId, TakenAs>> operands =
         OperandsOf(*unit_, expr);
     const std::vector<bool> read_before =
-        ReadsBeforeChange(*unit_, rebuild.From(), operands, changes_);
+        ReadsBeforeChange(*unit_, rebuild.From(), operands, changes_, given_);
     for (std::size_t at = 0; at < operands.size(); ++at) {
       if (read_before[at] ||
           TakesAStep(rebuild.From(), operands[at].second, operands[at].first)) {
@@ -720,6 +803,26 @@ class BodyTemporaries {
         });
   }
 
+  // `old`, a node of the block `rebuild` builds from whose value its statement
+  // discards, carried over: a value the frame keeps apart is made in a box the
+  // statement discards with it, and so is one whose evaluation takes steps to
+  // hold its operands apart, since the block running them would otherwise
+  // yield it into the frame.
+  auto Discarded(BlockRebuild& rebuild, mir::ExprId old) -> mir::ExprId {
+    const mir::Block& from = rebuild.From();
+    const mir::TypeId type = from.exprs.Get(old).type;
+    const bool boxed = MakesAValueItHolds(from, old) ||
+                       (std::holds_alternative<ForValuesKeptApart>(given_) &&
+                        mir::FrameBytesOf(*unit_, type) > 0 &&
+                        TakesAStep(from, TakenAs::kAsItIs, old));
+    const mir::ExprId evaluated = rebuild.Evaluation(old);
+    if (!boxed) {
+      return evaluated;
+    }
+    return rebuild.Add(
+        mir::MakeNewExpr(evaluated, mir::BoxOf(unit_->types, type)));
+  }
+
   // An execution's return, whose answer is read into its completion. Every
   // other statement's expressions begin evaluations the rebuild asks for.
   auto Statement(BlockRebuild& rebuild, const mir::Stmt& stmt)
@@ -735,6 +838,8 @@ class BodyTemporaries {
   const mir::CallableCode* code_;
   // Whether a node may change storage, asked once per node of a block.
   StorageChanges changes_;
+  // Which operands the rewrite gives a temporary.
+  TemporaryFor given_;
   // Whether the body is an execution, which answers through its completion.
   bool completes_;
   // The body's locals, then the temporaries its evaluations declare.
@@ -760,12 +865,25 @@ auto OrderEvaluation(mir::CompilationUnit unit) -> mir::CompilationUnit {
           return std::nullopt;
         }
         StorageChanges changes;
-        if (!NeedsATemporary(unit, *code.body, changes)) {
+        if (!ReadsBeforeAChange(unit, *code.body, changes)) {
           return std::nullopt;
         }
-        BodyTemporaries temporaries(unit, code, std::move(changes));
+        BodyTemporaries temporaries(
+            unit, code, std::move(changes), ForReadsBeforeChange{});
         return temporaries.Rewritten();
       });
+}
+
+auto GiveTemporariesToValuesKeptApart(
+    const mir::CompilationUnit& unit, const mir::CallableCode& code,
+    FramePlan& plan) -> std::optional<mir::CallableCode> {
+  if (!code.body.has_value() ||
+      (plan.values_apart.empty() && !MakesALargeValue(unit, *code.body))) {
+    return std::nullopt;
+  }
+  BodyTemporaries temporaries(
+      unit, code, StorageChanges{}, ForValuesKeptApart{.plan = &plan});
+  return temporaries.Rewritten();
 }
 
 }  // namespace lyra::mir_transform

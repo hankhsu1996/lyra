@@ -143,6 +143,37 @@ void ForEachOperand(Data& data, const auto& reach) {
       data);
 }
 
+// Where the value an operation takes as an operand is made: where the
+// operation takes it, or elsewhere -- in the value the operation itself makes,
+// as an arm of a choice is, which clang and rustc build into the choice's
+// destination; in the storage the operation allocates, as what a
+// new-expression initializes is ([expr.new]); or by the runtime, which keeps
+// what a suspension waits on for its awaiter.
+enum class OperandMadeIn : std::uint8_t {
+  kWhereTaken,
+  kTheOperationsValue,
+  kTheOperationsAllocation,
+  kTheRuntime,
+};
+
+// Where the value `node` takes as `operand` is made.
+[[nodiscard]] inline auto WhereOperandIsMade(
+    const ExprData& node, ExprId operand) -> OperandMadeIn {
+  if (std::holds_alternative<AwaitExpr>(node) ||
+      std::holds_alternative<WaitExpr>(node)) {
+    return OperandMadeIn::kTheRuntime;
+  }
+  if (const auto* chosen = std::get_if<ConditionalExpr>(&node);
+      chosen != nullptr && operand != chosen->condition) {
+    return OperandMadeIn::kTheOperationsValue;
+  }
+  if (const auto* allocation = std::get_if<NewExpr>(&node);
+      allocation != nullptr && operand == allocation->initializer) {
+    return OperandMadeIn::kTheOperationsAllocation;
+  }
+  return OperandMadeIn::kWhereTaken;
+}
+
 // The same, with how `expr` takes each operand as it is taken where the node
 // stands: a call that binds a reference takes every operand as the storage it
 // refers to, as a C++ reference parameter binds an lvalue without reading it.

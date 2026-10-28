@@ -13,7 +13,6 @@
 #include "lyra/lir/closure_id.hpp"
 #include "lyra/lir/record_id.hpp"
 #include "lyra/lir/type_id.hpp"
-#include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
 #include "lyra/support/runtime_object.hpp"
 
@@ -326,16 +325,6 @@ struct VectorType {
   TypeId element;
 
   auto operator==(const VectorType&) const -> bool = default;
-};
-
-// The declaration a type is: the unit that holds it and which declaration of
-// that unit it is, which identifies it from anywhere. A backend spells the pair
-// in its own target language; nothing here composes one.
-struct TypeDeclarationRef {
-  std::string unit_name;
-  support::DefPath path;
-
-  auto operator==(const TypeDeclarationRef&) const -> bool = default;
 };
 
 // A heterogeneous fixed product that is its components and nothing more, each

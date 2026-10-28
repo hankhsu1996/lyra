@@ -476,28 +476,37 @@ class Integral {
     return Filled(FourStateBit::kZero);
   }
 
+  // A value with every position clear, then written by `fill`, which is
+  // handed it: made where whoever asked for it keeps it, since what this
+  // answers is the value being made and never a copy of one made here (C++17
+  // guaranteed copy elision), so a value too large for a frame is never one in
+  // the frame of the operation computing it.
+  template <typename Fill>
+  [[nodiscard]] static constexpr auto Built(Fill fill) -> Integral {
+    return Integral(WrittenBy<Fill>{.fill = &fill});
+  }
+
   // The planes as a constant states them, value then unknown -- the second
   // empty for a two-state value.
   [[nodiscard]] static constexpr auto FromWords(
       const std::array<std::uint64_t, kWords>& value,
       const std::array<std::uint64_t, kUnknownWords>& unknown) -> Integral {
-    Integral out = Zero();
-    const auto written = out.MutableView();
-    for (std::size_t i = 0; i < kWords; ++i) {
-      SetWord(written.value, i, value[i]);
-    }
-    for (std::size_t i = 0; i < kUnknownWords; ++i) {
-      SetWord(written.unknown, i, unknown[i]);
-    }
-    return out;
+    return Built([&](Integral& out) {
+      const auto written = out.MutableView();
+      for (std::size_t i = 0; i < kWords; ++i) {
+        SetWord(written.value, i, value[i]);
+      }
+      for (std::size_t i = 0; i < kUnknownWords; ++i) {
+        SetWord(written.unknown, i, unknown[i]);
+      }
+    });
   }
 
   // An integer carried into this type, its sign repeated into every position
   // above 64 (LRM 11.6.1).
   [[nodiscard]] static constexpr auto FromInt(std::int64_t value) -> Integral {
-    Integral out = Zero();
-    lyra::value::FromInt(out.MutableView(), value);
-    return out;
+    return Built(
+        [&](Integral& out) { lyra::value::FromInt(out.MutableView(), value); });
   }
 
   [[nodiscard]] static constexpr auto FromBool(bool value) -> Integral {
@@ -577,56 +586,46 @@ class Integral {
 
   // LRM 11.4.3: arithmetic at the operands' own type.
   [[nodiscard]] constexpr auto operator+(const Integral& b) const -> Integral {
-    Integral out = Zero();
-    Add(out.MutableView(), View(), b.View());
-    return out;
+    return Built(
+        [&](Integral& out) { Add(out.MutableView(), View(), b.View()); });
   }
   [[nodiscard]] constexpr auto operator-(const Integral& b) const -> Integral {
-    Integral out = Zero();
-    Subtract(out.MutableView(), View(), b.View());
-    return out;
+    return Built(
+        [&](Integral& out) { Subtract(out.MutableView(), View(), b.View()); });
   }
   [[nodiscard]] constexpr auto operator*(const Integral& b) const -> Integral {
-    Integral out = Zero();
-    Multiply(out.MutableView(), View(), b.View());
-    return out;
+    return Built(
+        [&](Integral& out) { Multiply(out.MutableView(), View(), b.View()); });
   }
   [[nodiscard]] constexpr auto operator/(const Integral& b) const -> Integral {
-    Integral out = Zero();
-    Divide(out.MutableView(), View(), b.View());
-    return out;
+    return Built(
+        [&](Integral& out) { Divide(out.MutableView(), View(), b.View()); });
   }
   [[nodiscard]] constexpr auto operator%(const Integral& b) const -> Integral {
-    Integral out = Zero();
-    Modulo(out.MutableView(), View(), b.View());
-    return out;
+    return Built(
+        [&](Integral& out) { Modulo(out.MutableView(), View(), b.View()); });
   }
   [[nodiscard]] constexpr auto operator-() const -> Integral {
-    Integral out = Zero();
-    Negate(out.MutableView(), View());
-    return out;
+    return Built([&](Integral& out) { Negate(out.MutableView(), View()); });
   }
 
   // LRM 11.4.8: the bitwise operators.
   [[nodiscard]] constexpr auto operator&(const Integral& b) const -> Integral {
-    Integral out = Zero();
-    BitwiseAnd(out.MutableView(), View(), b.View());
-    return out;
+    return Built([&](Integral& out) {
+      BitwiseAnd(out.MutableView(), View(), b.View());
+    });
   }
   [[nodiscard]] constexpr auto operator|(const Integral& b) const -> Integral {
-    Integral out = Zero();
-    BitwiseOr(out.MutableView(), View(), b.View());
-    return out;
+    return Built(
+        [&](Integral& out) { BitwiseOr(out.MutableView(), View(), b.View()); });
   }
   [[nodiscard]] constexpr auto operator^(const Integral& b) const -> Integral {
-    Integral out = Zero();
-    BitwiseXor(out.MutableView(), View(), b.View());
-    return out;
+    return Built([&](Integral& out) {
+      BitwiseXor(out.MutableView(), View(), b.View());
+    });
   }
   [[nodiscard]] constexpr auto operator~() const -> Integral {
-    Integral out = Zero();
-    BitwiseNot(out.MutableView(), View());
-    return out;
+    return Built([&](Integral& out) { BitwiseNot(out.MutableView(), View()); });
   }
 
   // LRM 11.4.4, 11.4.5: a comparison answers one bit, which can be x only
@@ -697,32 +696,33 @@ class Integral {
   // LRM 11.4.8 `~^`.
   [[nodiscard]] constexpr auto BitwiseXnor(const Integral& b) const
       -> Integral {
-    Integral out = Zero();
-    lyra::value::BitwiseXnor(out.MutableView(), View(), b.View());
-    return out;
+    return Built([&](Integral& out) {
+      lyra::value::BitwiseXnor(out.MutableView(), View(), b.View());
+    });
   }
 
   // LRM 11.4.10: the shifts, by an amount of any integral type.
   template <IntegralValue Amount>
   [[nodiscard]] constexpr auto ShiftLeft(const Amount& amount) const
       -> Integral {
-    Integral out = Zero();
-    lyra::value::ShiftLeft(out.MutableView(), View(), amount.View());
-    return out;
+    return Built([&](Integral& out) {
+      lyra::value::ShiftLeft(out.MutableView(), View(), amount.View());
+    });
   }
   template <IntegralValue Amount>
   [[nodiscard]] constexpr auto LogicalShiftRight(const Amount& amount) const
       -> Integral {
-    Integral out = Zero();
-    lyra::value::LogicalShiftRight(out.MutableView(), View(), amount.View());
-    return out;
+    return Built([&](Integral& out) {
+      lyra::value::LogicalShiftRight(out.MutableView(), View(), amount.View());
+    });
   }
   template <IntegralValue Amount>
   [[nodiscard]] constexpr auto ArithmeticShiftRight(const Amount& amount) const
       -> Integral {
-    Integral out = Zero();
-    lyra::value::ArithmeticShiftRight(out.MutableView(), View(), amount.View());
-    return out;
+    return Built([&](Integral& out) {
+      lyra::value::ArithmeticShiftRight(
+          out.MutableView(), View(), amount.View());
+    });
   }
 
   // LRM 11.4.9: the reductions, each one bit that is x only where the value
@@ -749,20 +749,20 @@ class Integral {
   // LRM 11.4.3 power.
   template <IntegralValue Exponent>
   [[nodiscard]] auto Pow(const Exponent& exponent) const -> Integral {
-    Integral out = Zero();
-    Power(
-        out.AsMutableWords().MutableView(), AsWords().View(),
-        exponent.AsWords().View());
-    return out;
+    return Built([&](Integral& out) {
+      Power(
+          out.AsMutableWords().MutableView(), AsWords().View(),
+          exponent.AsWords().View());
+    });
   }
 
   // LRM 11.4.11: the arms of a conditional whose condition is ambiguous, merged
   // at the arms' own type.
   [[nodiscard]] constexpr auto MergeConditional(const Integral& b) const
       -> Integral {
-    Integral out = Zero();
-    lyra::value::MergeConditional(out.MutableView(), View(), b.View());
-    return out;
+    return Built([&](Integral& out) {
+      lyra::value::MergeConditional(out.MutableView(), View(), b.View());
+    });
   }
 
   // LRM 6.6: two contributions to a net folded under each of the three tables,
@@ -781,9 +781,9 @@ class Integral {
   }
   [[nodiscard]] constexpr auto Dominating(const Integral& weaker) const
       -> Integral {
-    Integral out = Zero();
-    Dominate(out.MutableView(), View(), weaker.View());
-    return out;
+    return Built([&](Integral& out) {
+      Dominate(out.MutableView(), View(), weaker.View());
+    });
   }
 
   // LRM 20.8.1 `$clog2`, answered as an `integer`; LRM 20.9 `$countbits`,
@@ -799,19 +799,18 @@ class Integral {
   [[nodiscard]] constexpr auto ToBitstream() const
       -> Integral<kWidth, Signedness::kUnsigned, kDomain> {
     using Stream = Integral<kWidth, Signedness::kUnsigned, kDomain>;
-    Stream out = Stream::Zero();
-    lyra::value::Convert(out.MutableView(), View());
-    return out;
+    return Stream::Built(
+        [&](Stream& out) { lyra::value::Convert(out.MutableView(), View()); });
   }
 
   // LRM 11.4.14.2: the value's blocks of `block_bits` bits in reversed order,
   // the last one whatever the width leaves of it.
   [[nodiscard]] auto ReverseBlocks(std::int64_t block_bits) const -> Integral {
-    Integral out = Zero();
-    lyra::value::ReverseBlocks(
-        out.AsMutableWords().MutableView(), AsWords().View(),
-        static_cast<std::uint64_t>(block_bits));
-    return out;
+    return Built([&](Integral& out) {
+      lyra::value::ReverseBlocks(
+          out.AsMutableWords().MutableView(), AsWords().View(),
+          static_cast<std::uint64_t>(block_bits));
+    });
   }
 
   // A reference to the bits a part of type `Part` names of this value, which a
@@ -834,6 +833,17 @@ class Integral {
     }
   }
 
+  // What writes a value `Built` makes.
+  template <typename Fill>
+  struct WrittenBy {
+    Fill* fill;
+  };
+  template <typename Fill>
+  explicit constexpr Integral(WrittenBy<Fill> written)
+      : Integral(FourStateBit::kZero) {
+    (*written.fill)(*this);
+  }
+
   [[nodiscard]] constexpr auto Reduced(ReductionOp op) const
       -> OneBit<kDomain> {
     return OneBit<kDomain>::Filled(Reduce(View(), op));
@@ -841,9 +851,9 @@ class Integral {
 
   [[nodiscard]] constexpr auto Resolved(
       NetResolution fold, const Integral& b) const -> Integral {
-    Integral out = Zero();
-    Resolve(out.MutableView(), View(), b.View(), fold);
-    return out;
+    return Built([&](Integral& out) {
+      Resolve(out.MutableView(), View(), b.View(), fold);
+    });
   }
 
   Storage storage_;

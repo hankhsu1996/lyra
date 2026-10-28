@@ -522,6 +522,11 @@ class FunctionLowerer {
   auto LowerObjectNew(
       const mir::Block& block, const mir::Expr& initializer, mir::TypeId owner)
       -> diag::Result<lir::Operand>;
+  // A new-expression of a variable's cell: storage allocated, the cell built
+  // there empty and held by `owner`, as a body builds its variable where the
+  // declaration is reached, its value written by what follows.
+  auto LowerCellNew(const mir::Expr& initializer, mir::TypeId owner)
+      -> diag::Result<lir::Operand>;
   // A reference is the address of the storage its referent lives in, carrying
   // which of the two kinds that storage is. One built over a reference denotes
   // the storage at the end of the chain rather than binding afresh, so it

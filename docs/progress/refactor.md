@@ -3244,18 +3244,11 @@ source, or not yet tried.
       own. Which hook a call naming one through an interface class handle runs (LRM 8.26.9 against
       18.6.2) is ruled in the conformance policy as Lyra's reading.
 
-- [ ] R256 -- The conversion of MIR into the phase the backends read makes an evaluation order
-      explicit and boxes what a frame cannot hold in one step, though the first is meaning and the
-      second is representation. Whether a value lies inline or in storage of its own is decided by
-      size in three places not held to one answer -- the rewrite for frames, the C++ holder of a
-      value, and the execution backend's holder at run time -- and the size the frame rule reads is
-      not a layout for a write in progress, which it counts as an address. An operation a type with
-      no declaration answers is still named by when it was found rather than by its type. Target:
-      making the evaluation order explicit is a step of its own before representation is decided;
-      one layout, asked of concrete types, answers every size a storage decision reads, the holder's
-      decision is stated in MIR and the runtime follows it, and each backend is checked to lay out
-      exactly what the two must agree on and to be able to carry out the holding strategy MIR chose;
-      and every body made per type is named from its key. Not blocked.
+- [x] R256 -- Making the evaluation order explicit is a step of its own that asks no size, and
+      deciding where each value lies is the step after it, which also bounds what a frame keeps of a
+      body's values together. A library object a frame holds while it works -- a reference, a write
+      in progress -- is the size the runtime checks it is, which MIR reads. Every holder decides
+      inline or apart by one rule. A body made per type is named by its type and its operation.
 
 - [ ] R258 -- The C++ backend and the value library's own generic code reach a fixed-size array's, a
       structure's and a union's operations as members of the library's types, so the library holds a

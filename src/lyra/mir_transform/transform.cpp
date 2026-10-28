@@ -14,9 +14,9 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/phase.hpp"
 #include "lyra/mir/verify.hpp"
-#include "lyra/mir_transform/box_large_values.hpp"
+#include "lyra/mir_transform/bound_frames.hpp"
+#include "lyra/mir_transform/evaluation_temporaries.hpp"
 #include "lyra/mir_transform/inst_simplify.hpp"
-#include "lyra/mir_transform/order_evaluation.hpp"
 #include "lyra/mir_transform/pass.hpp"
 #include "lyra/mir_transform/reaction.hpp"
 #include "lyra/profiling/time_trace.hpp"
@@ -25,12 +25,12 @@ namespace lyra::mir_transform {
 
 namespace {
 
-// An evaluation order made explicit, then every value a frame would hold too
-// large for one held through a box -- the temporaries first, so boxing holds
-// them as it holds every local.
+// An evaluation order made explicit, which asks no value's size; then where
+// each value lies, in that order, so that no frame follows a size a design
+// declares.
 constexpr std::array kBuiltToLegalized{
     Pass{.name = "OrderEvaluation", .run = OrderEvaluation},
-    Pass{.name = "BoxLargeValues", .run = BoxLargeValues}};
+    Pass{.name = "BoundFrames", .run = BoundFrames}};
 
 // A step of the pipeline: a conversion into the next phase, or an optional
 // rewrite inside the phase the unit is in, which leaves it there.

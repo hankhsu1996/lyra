@@ -240,20 +240,6 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     out_.functions.Add(*std::move(fn));
   }
 
-  // An operation a type with no declaration answers is a function no other
-  // unit names, so its symbol is counted, within this body.
-  for (std::size_t i = 0; i < stating.size(); ++i) {
-    auto fn = FunctionLowerer(
-                  *this, *stating[i],
-                  lir::TypeOperationSymbol(
-                      out_.body_name, static_cast<std::uint32_t>(i)))
-                  .Run();
-    if (!fn) {
-      return std::unexpected(std::move(fn.error()));
-    }
-    out_.functions.Define(out_.type_operations[i].function, *std::move(fn));
-  }
-
   // A record's method is a function under a symbol composed from the record
   // and the operation it answers, which is how every unit reaching it names it.
   for (const mir::RecordId id : mir_->records.Ids()) {
@@ -315,6 +301,23 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     fn->linkage = lir::Linkage::kInternal;
     out_.functions.Define(closure.invoke, *std::move(fn));
     out_.closures.Define(ClosureDeclaration(id), std::move(closure));
+  }
+
+  // An operation a type with no declaration answers is a function no other
+  // unit names, under a symbol composed from the type and the operation, which
+  // is named once every declaration the type may name is.
+  for (std::size_t i = 0; i < stating.size(); ++i) {
+    const lir::TypeOperation stated = out_.type_operations[i];
+    auto fn = FunctionLowerer(
+                  *this, *stating[i],
+                  lir::TypeOperationSymbol(
+                      out_.body_name, lir::SymbolPartOf(out_, stated.type),
+                      stated.answers))
+                  .Run();
+    if (!fn) {
+      return std::unexpected(std::move(fn.error()));
+    }
+    out_.functions.Define(stated.function, *std::move(fn));
   }
 
   // An integral constant is its type and its bits here, which is the whole of

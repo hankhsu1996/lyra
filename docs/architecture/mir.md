@@ -159,15 +159,17 @@ what the construct means.
   needs to express; it does not grow to model a particular backend's storage realization or runtime
   library shape.
 - Which values are held through a uniquely owning pointer because a value of their type is too large
-  for a frame: a local, a parameter taken by value wherever its signature is stated, a made value
-  and a capture, each written as a box by the conversion into the legalized phase, so every backend
-  keeps such a value off the stack by translating what it is given. A closure kept past the
-  statement building it is made where its keeper keeps it: a deferred effect is made by a placement
-  new-expression in storage the effects of the region that holds it hand out, and committed to them
-  in the same expression, as C++'s `emplace` builds an element where its container holds it; a
-  closure any other keeper holds in a box that keeper takes. Every body MIR holds is concrete: an
-  operation over many types is built per site or per type by the lowering, never stated as a generic
-  function.
+  for a frame -- a local, a parameter taken by value wherever its signature is stated, a made value
+  and a capture -- or because the values a body keeps before them already take what a frame may keep
+  of them together -- a local, a variable's cell, a made value -- each written as a box by the
+  conversion into the legalized phase, so every backend keeps such a value off the stack by
+  translating what it is given. Making the evaluation order explicit asks no value's size; deciding
+  where each value lies is the step after it. A closure kept past the statement building it is made
+  where its keeper keeps it: a deferred effect is made by a placement new-expression in storage the
+  effects of the region that holds it hand out, and committed to them in the same expression, as
+  C++'s `emplace` builds an element where its container holds it; a closure any other keeper holds
+  in a box that keeper takes. Every body MIR holds is concrete: an operation over many types is
+  built per site or per type by the lowering, never stated as a generic function.
 - Action shapes for constructs that bind behavior to schedule events (always blocks, continuous
   assignments, deferred assertions, concurrent assertions).
 - A textual dumper that serializes MIR for inspection. The dumper is not a backend; its output is
@@ -352,16 +354,16 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
   passes through rewrites, each of which keeps what the program does and says what it changes in
   MIR's own vocabulary. The unit is in one of two phases, which it records: built, as HIR-to-MIR
   states it, and legalized, with the order an evaluation needs explicit and no frame holding a value
-  too large for one, which is the only phase a consumer takes. A conversion -- the rewrites that
-  bring the unit from one phase into the next -- is what a correct program needs, so no build skips
-  one; every other rewrite runs inside a phase, leaves the same program at another cost, and a build
-  may skip it. The verification asks of a unit what its phase requires; it is verified once, as it
-  leaves the rewrites, since that is the form every consumer reads, and on reaching each phase and
-  after each optional rewrite where a build asks. A rewrite builds a node through the same builders
-  as the lowering, folding included. A consumer cannot tell a node a rewrite built from one the
-  lowering built, so a cost the program's meaning does not decide -- how a process that stops only
-  at the head of its loop is compiled -- is taken out once for both backends, and HIR-to-MIR still
-  states the meaning one way.
+  too large for one or more than a frame keeps together, which is the only phase a consumer takes. A
+  conversion -- the rewrites that bring the unit from one phase into the next -- is what a correct
+  program needs, so no build skips one; every other rewrite runs inside a phase, leaves the same
+  program at another cost, and a build may skip it. The verification asks of a unit what its phase
+  requires; it is verified once, as it leaves the rewrites, since that is the form every consumer
+  reads, and on reaching each phase and after each optional rewrite where a build asks. A rewrite
+  builds a node through the same builders as the lowering, folding included. A consumer cannot tell
+  a node a rewrite built from one the lowering built, so a cost the program's meaning does not
+  decide -- how a process that stops only at the head of its loop is compiled -- is taken out once
+  for both backends, and HIR-to-MIR still states the meaning one way.
 - `binding_and_capture.md` owns the lexical reference contract MIR's value references obey: a
   reference names a binding materialized in its own callable body, and a binding crosses a closure
   boundary only as a captured environment field. MIR carries no navigation distance to a

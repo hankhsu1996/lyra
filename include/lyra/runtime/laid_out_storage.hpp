@@ -5,6 +5,7 @@
 
 #include "lyra/runtime/tail.hpp"
 #include "lyra/value/any_value.hpp"
+#include "lyra/value/frame_bound.hpp"
 #include "lyra/value/laid_out_value.hpp"
 #include "lyra/value/value_type.hpp"
 
@@ -24,20 +25,10 @@ class LaidOutStorage : public TailValue<LaidOutStorage> {
   using Owned = value::LaidOutValue;
 
   explicit LaidOutStorage(const value::ValueType& type)
-      : TailValue<LaidOutStorage>(
-            IsInline(ValueLayoutFor(type))
-                ? nullptr
-                : ::operator new(type.Size(), std::align_val_t{type.Align()})),
-        type_(&type) {
-    // Storage the value is spilled into is given back if building the value
-    // in it fails, since no destructor runs for what was never built.
-    const auto give_back = [&type](void* spilled) {
-      ::operator delete(spilled, std::align_val_t{type.Align()});
-    };
-    std::unique_ptr<void, decltype(give_back)> spilled(
-        this->IsSpilled() ? this->Bytes() : nullptr, give_back);
-    type.BuildDefault(this->Bytes());
-    spilled.release();
+      : TailValue<LaidOutStorage>(SpilledValueOf(type)), type_(&type) {
+    if (!this->IsSpilled()) {
+      type.BuildDefault(this->Bytes());
+    }
   }
   LaidOutStorage(const LaidOutStorage&) = delete;
   auto operator=(const LaidOutStorage&) -> LaidOutStorage& = delete;
@@ -91,6 +82,23 @@ class LaidOutStorage : public TailValue<LaidOutStorage> {
   }
 
  private:
+  // Storage of its own holding what `type` builds before anything writes it,
+  // where a value of it does not lie inline, and none where it does. The
+  // storage is given back if building the value in it fails, since no
+  // destructor runs for what was never built.
+  static auto SpilledValueOf(const value::ValueType& type) -> void* {
+    if (value::LiesInline(ValueLayoutFor(type))) {
+      return nullptr;
+    }
+    const auto give_back = [&type](void* spilled) {
+      ::operator delete(spilled, std::align_val_t{type.Align()});
+    };
+    std::unique_ptr<void, decltype(give_back)> spilled(
+        ::operator new(type.Size(), std::align_val_t{type.Align()}), give_back);
+    type.BuildDefault(spilled.get());
+    return spilled.release();
+  }
+
   const value::ValueType* type_;
 };
 

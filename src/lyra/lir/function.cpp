@@ -112,6 +112,7 @@ auto CallEndingOf(const CallTarget& target) -> support::CallEnding {
           [](const EndValueTarget&) { return CallEnding::kReturns; },
           [](const CopyValueTarget&) { return CallEnding::kReturns; },
           [](const DynamicStorageTarget&) { return CallEnding::kReturns; },
+          [](const BuildCellTarget&) { return CallEnding::kReturns; },
           [](const ControlEffectTarget& effect) {
             switch (effect.op) {
               case ControlEffectTarget::Op::kTakeDepartureIfDue:
