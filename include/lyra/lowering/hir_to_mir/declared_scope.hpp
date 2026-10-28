@@ -12,8 +12,7 @@
 #include "lyra/hir/fixed_name.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
-#include "lyra/mir/class_id.hpp"
-#include "lyra/mir/field.hpp"
+#include "lyra/mir/expr.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -26,34 +25,22 @@ namespace lyra::lowering::hir_to_mir {
 // activation (LRM 6.21) -- but that is storage of the declaration like any
 // other, placed by the rule that places every static cell.
 //
-// So a scope of the design hierarchy becomes a name node, a runtime object
-// carrying the segment a path matches, and everything a body there keeps is a
-// field of the class enclosing it -- both one member access from that body's
-// `self`. For
+// So a scope has no run-time existence of its own: what a body there keeps is a
+// field of the class enclosing it, one member access from that body's `self`,
+// and the place a hierarchical name reaches it at is a member of what the
+// enclosing scope publishes. For
 //
 //   initial begin : outer
 //     static int x;
 //     begin : inner ... end
 //   end
 //
-// the enclosing class holds a handle on each scope's node, and the cell `x`
-// outlives its activation in. A handle answers to no identifier -- the source
-// declared no such storage -- so each is reached by the position it sits at;
-// `x` is one a hierarchical name reaches (LRM 23.6), so it is a member of what
-// the scope publishes, under the name the source wrote.
+// the enclosing class holds the cell `x` and the target a `disable outer`
+// ends, and `x` is published under the name the source wrote, since a
+// hierarchical name reaches it (LRM 23.6).
 //
-// How the nodes nest is the HIR scope tree, and nothing here restates it. What
-// this states is only what each scope got.
-
-// The name node one procedural scope owns: the class its runtime object is an
-// instance of, and the borrowed handle the enclosing class keeps on it. The
-// handle is typed to the node's class like every other owned child's, which is
-// what keeps a class's layout a complete statement of which objects the runtime
-// builds under it.
-struct ScopeNameNode {
-  mir::ClassId class_id{};
-  mir::FieldId borrowed_handle{};
-};
+// How the scopes nest is the HIR scope tree, and nothing here restates it.
+// What this states is only what each scope got.
 
 // An event a scope's beginning or end triggers for a covergroup sampled there
 // (LRM 19.3): the one kept for the covergroup's type, where `home` keeps it,
@@ -82,25 +69,18 @@ struct ScopeBlockEvents {
 using BlockEventTriggers = std::map<hir::ProceduralScopeId, ScopeBlockEvents>;
 
 // What one procedural scope was given: the name a construct inside it reports
-// for itself (LRM 21.2.1.5), a name node, and the cell a `disable` naming the
-// scope invalidates (LRM 9.6.2). The target belongs to a scope the source
-// named and to no other, since what a `disable` reaches is what a name reaches
-// -- so nothing has to first find out which scopes some `disable` names.
-//
-// The name node and the target are not owned together. A node is a place a
-// hierarchical path reaches, which only the design hierarchy has: a class
-// object is reached by member select rather than by scope name (LRM 23.7) and
-// a package owns no object at all (LRM 26.3), so a scope there owns no node.
-// A construct inside it still reports its scope's name, and a `disable`
-// written there still names its own block or task, so the target is owned
-// wherever that scope's static-lifetime state is owned.
+// for itself (LRM 21.2.1.5), and the cell a `disable` naming the scope
+// invalidates (LRM 9.6.2). The target belongs to a scope the source named and
+// to no other, since what a `disable` reaches is what a name reaches -- so
+// nothing has to first find out which scopes some `disable` names. It is owned
+// wherever that scope's static-lifetime state is owned: an instance, a class
+// object, a package.
 //
 // A scope a covergroup is sampled at the beginning or end of also triggers an
 // event as it is entered and as it is left by its end or by a `return`,
 // `break` or `continue` out of it, but not by a `disable` (LRM 19.3, 9.6.2).
 struct DeclaredScope {
   hir::FixedName name;
-  std::optional<ScopeNameNode> name_node;
   std::optional<StaticStorageHome> disable_target;
   ScopeBlockEvents block_events = {};
 };
@@ -129,10 +109,10 @@ using DeclaredScopes = base::Translation<hir::ProceduralScopeId, DeclaredScope>;
     -> base::Translation<hir::ProceduralScopeId, hir::FixedName>;
 
 // The finished answer for a declaration scope outside the design hierarchy,
-// whose name is `declaring`: no scope owns a name node there, and a scope the
-// source named owns the target a `disable` invalidates. Every scope still has
-// an entry, so a body there reads its answer the same way a body anywhere else
-// does.
+// whose name is `declaring`: a scope the source named owns the target a
+// `disable` invalidates, on `owner`.
+// Every scope still has an entry, so a body there reads its answer the same way
+// a body anywhere else does.
 [[nodiscard]] inline auto ScopesOwningDisableTargets(
     const base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>&
         scopes,
@@ -152,7 +132,6 @@ using DeclaredScopes = base::Translation<hir::ProceduralScopeId, DeclaredScope>;
     declared.push_back(
         DeclaredScope{
             .name = names.Get(id),
-            .name_node = std::nullopt,
             .disable_target = std::move(target),
             .block_events = BlockEventsOf(triggers, id)});
   }

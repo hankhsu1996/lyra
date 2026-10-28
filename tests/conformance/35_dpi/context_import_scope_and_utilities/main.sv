@@ -7,7 +7,9 @@
 // against a scope and a key comes back under the same pair
 // (LRM Annex H.9.3). The time queries read the scope's own time unit and
 // precision and the current time scaled to either the scope's unit or the
-// simulation's (LRM Annex H.13).
+// simulation's (LRM Annex H.13). A name reaches a module, program, interface
+// or generate scope and nothing else, so a named block is not found by its
+// name (LRM Annex H.9).
 `timescale 1ns / 1ps
 module Top;
   import "DPI-C" context function string scope_name();
@@ -18,6 +20,7 @@ module Top;
   import "DPI-C" context function int time_precision_power();
   import "DPI-C" context function int time_in_scope_units();
   import "DPI-C" context function int time_in_precision_units();
+  import "DPI-C" context function int scope_is_found(input string name);
 
   string observed;
   string observed_from_block;
@@ -27,9 +30,11 @@ module Top;
   int precision_power;
   int scope_time;
   int precision_time;
+  int named_block_found;
 
-  initial begin
+  initial begin : run
     observed = scope_name();
+    named_block_found = scope_is_found("Top.run");
     // The generate block below is a second scope, so what the round trip
     // installs is a scope other than the one it started in.
     handles = scope_handle_round_trip("Top.block");
@@ -62,6 +67,8 @@ module Top;
     if (token_back !== 37)
       $fatal(1, "the stored user data came back as %0d, expected 37",
              token_back);
+    if (named_block_found !== 0)
+      $fatal(1, "a named block was found by its name as a scope");
     if (unit_power !== -9)
       $fatal(1, "the scope time unit was 1e%0d s, expected 1e-9", unit_power);
     if (precision_power !== -12)

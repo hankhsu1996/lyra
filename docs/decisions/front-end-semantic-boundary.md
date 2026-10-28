@@ -274,8 +274,8 @@ consumer that answers an absence by continuing its loop.
   compilation-unit declaration pass before any body lowers. A named block's head identity is its SV
   label, registered directly from the elaborated scope members, so a forward cross-scope reference
   to it routes independently of declaration order like every other head kind. Its intra-unit access
-  is a typed layout-visible segment: the enclosing climb reaches the borrowed handle on the
-  materialized scope, which HIR-to-MIR recovers from the label.
+  names the static itself: the enclosing climb reaches the structural scope whose class holds the
+  cell, and the label is a step of no route (`procedural-storage-scope.md` D7).
 - The endpoint-capability half of the boundary is realized. Value read, value write, and change
   observation of one target reach it through one bound endpoint: a reference that descends into a
   scope or crosses into another instance seals to a per-instance endpoint in the resolve phase and

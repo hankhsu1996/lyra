@@ -80,10 +80,10 @@ class Scope : public GcObject {
   // so a thrown constructor leaves nothing half-attached.
   static auto Attach(OwnedObject<Scope> child) -> Scope*;
 
-  // Whether this scope carries a source-visible SV name. An unnamed
-  // begin/end (synthetic anonymous scope) is emitted with an empty
-  // `HierarchySegment` base name; every other scope kind gets its SV
-  // identifier as the base name. A hierarchical path leaves the unnamed ones
+  // Whether this scope carries a source-visible SV name. `$root` is
+  // built with an empty `HierarchySegment` base name, and so is any scope the
+  // source gave no name; every other scope gets its SV identifier as the base
+  // name. A hierarchical path leaves the unnamed ones
   // out (LRM 23.6).
   [[nodiscard]] auto IsAddressable() const -> bool {
     return !segment_.BaseName().empty();
@@ -160,8 +160,7 @@ class Scope : public GcObject {
   Scope* parent_ = nullptr;
   HierarchySegment segment_;
   // Physical containment: every runtime child scope this object owns
-  // appears here once, in attach order. Includes anonymous scopes
-  // (unnamed begin/ends).
+  // appears here once, in attach order.
   std::vector<OwnedObject<Scope>> attached_children_;
   // LRM 18.14.1 puts one on each module, interface, and program instance. A
   // generate scope is none of those and nothing draws from the one it carries.

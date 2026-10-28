@@ -1,7 +1,9 @@
 // A disable statement terminates the activity of the named block or task it
 // names and every activity enabled within it, so a task the block had enabled
 // and a process the block had forked end where they stand instead of resuming
-// later, and a task enabled more than once loses every activation. A disable
+// later, and a task enabled more than once loses every activation. A block
+// inside such a task ends in every activation that is executing it, and each
+// resumes after the block. A disable
 // reaching a block from an unrelated process is allowed, without regard to any
 // parent-child relationship (LRM 9.6, 9.6.2). What makes a forked process one
 // of the activities enabled within a block is that the block spawned it rather
@@ -32,6 +34,10 @@ module Top;
   int activations_entered;
   int activations_completed;
 
+  int inner_entered;
+  int inner_completed;
+  int after_inner;
+
   int disable_time;
   int simulation_outlived_the_delays;
 
@@ -46,6 +52,20 @@ module Top;
     #100;
     activations_completed = activations_completed + 1;
   endtask
+
+  task automatic holds_a_block();
+    begin : inner
+      inner_entered = inner_entered + 1;
+      #100;
+      inner_completed = inner_completed + 1;
+    end
+    after_inner = after_inner + 1;
+  endtask
+
+  initial fork
+    holds_a_block();
+    holds_a_block();
+  join_none
 
   initial begin : parked
     parked_entered = 1;
@@ -111,6 +131,7 @@ module Top;
     disable spawner;
     disable enabled_twice;
     disable left_behind;
+    disable holds_a_block.inner;
     disable_time = $time;
   end
 
@@ -156,6 +177,12 @@ module Top;
     if (activations_completed !== 0)
       $fatal(1, "activations_completed was %0d, expected 0",
              activations_completed);
+    if (inner_entered !== 2)
+      $fatal(1, "inner_entered was %0d, expected 2", inner_entered);
+    if (inner_completed !== 0)
+      $fatal(1, "inner_completed was %0d, expected 0", inner_completed);
+    if (after_inner !== 2)
+      $fatal(1, "after_inner was %0d, expected 2", after_inner);
     $display("All checks passed");
   end
 endmodule

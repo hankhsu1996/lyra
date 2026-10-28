@@ -24,7 +24,6 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/hir/enclosing_scopes.hpp"
-#include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/scope_instantiations.hpp"
@@ -209,13 +208,6 @@ auto BuildPublishedClass(
       .cls = std::move(cls),
       .ctor = std::move(ctor),
       .ctor_prefix = std::move(prefix)};
-}
-
-auto MakeUniqueObjectPointer(UnitLowerer& unit_lowerer, mir::ClassId class_id)
-    -> mir::TypeId {
-  const mir::TypeId object_type = unit_lowerer.Unit().types.Intern(
-      mir::Type{mir::ObjectType{.of = class_id}});
-  return mir::BoxOf(unit_lowerer.Unit().types, object_type);
 }
 
 // The pointer type a handle to an object built as `alternative` has. The object
@@ -1810,87 +1802,6 @@ auto InstallPortConnections(
   return {};
 }
 
-void ValidateOwnedChildConstruction(
-    const mir::Class& owner_class, mir::ClassId child_scope_id) {
-  if (std::ranges::find(owner_class.contained, child_scope_id) ==
-      owner_class.contained.end()) {
-    throw InternalError(
-        "owned-child construction: child scope is not a direct child of the "
-        "enclosing class");
-  }
-}
-
-// Builds a child this scope's own class contains, standing at no coordinate,
-// and stores the borrowed pointer the runtime tree returns into the member
-// `handle_field` names. The child is built carrying its complete hierarchy
-// identity -- `runtime_label`, as a hierarchical name writes it (LRM 23.6),
-// empty for a scope the source gave none -- then handed to the runtime tree to
-// own, under the parent it was built with, once its constructor has committed,
-// so a thrown subobject constructor leaves no half-attached scope.
-// `arm_frame` must point at the block where the statements land and carry the
-// constructor's bindings so a `self` read resolves to the receiver binding.
-//
-// Where the child hangs in the runtime tree and who keeps the borrowed handle
-// to it are separate: `runtime_parent_handle` names an object this one already
-// holds a handle to, and the handle to the new child comes back to this class
-// regardless. So one object can build a whole nested tree and still reach
-// every node of it in one step. Absent means the child hangs directly under
-// this object.
-void AppendOwnedChildConstruction(
-    UnitLowerer& unit_lowerer, const WalkFrame& arm_frame,
-    std::optional<mir::FieldId> runtime_parent_handle,
-    const std::string& runtime_label, mir::ClassId child_scope_id,
-    const mir::ClassFieldTarget& handle_field) {
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& arm_block = *arm_frame.current_block;
-  const mir::Class& owner_class = *arm_frame.current_class.cls;
-  ValidateOwnedChildConstruction(owner_class, child_scope_id);
-
-  const mir::TypeId child_ptr_type =
-      MakeUniqueObjectPointer(unit_lowerer, child_scope_id);
-  const auto self_read = [&]() -> mir::ExprId {
-    return arm_block.exprs.Add(MakeSelfRefExpr(arm_frame));
-  };
-  const mir::ExprId parent =
-      runtime_parent_handle.has_value()
-          ? arm_block.exprs.Add(
-                mir::MakeFieldAccessExpr(
-                    BuildObjectDeref(unit, arm_block, self_read()),
-                    mir::ClassFieldTarget{
-                        .owner = arm_frame.current_class.id,
-                        .slot = *runtime_parent_handle},
-                    owner_class.fields.Get(*runtime_parent_handle).type))
-          : self_read();
-  const mir::ExprId built = arm_block.exprs.Add(
-      mir::MakeNewExpr(
-          arm_block.exprs.Add(
-              mir::MakeObjectConstructionExpr(
-                  *mir::AllocatedType(unit.types, child_ptr_type),
-                  {ObjectAs(arm_block, parent, unit.builtins.scope_ptr),
-                   BuildHierarchySegment(unit, arm_block, runtime_label, {})})),
-          child_ptr_type));
-  const mir::ExprId attached = arm_block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{.target = support::BuiltinFn::kAttachScope},
-                  .arguments = {built}},
-          .type = unit.builtins.scope_ptr});
-
-  const mir::TypeId handle_type = FieldTypeOf(unit_lowerer, handle_field);
-  const mir::ExprId member = arm_block.exprs.Add(
-      mir::MakeFieldAccessExpr(
-          BuildObjectDeref(unit, arm_block, self_read()), handle_field,
-          handle_type));
-  arm_block.AppendStmt(
-      mir::ExprStmt{
-          .expr = arm_block.exprs.Add(
-              mir::MakeAssignExpr(
-                  unit.builtins, member,
-                  ObjectAs(arm_block, attached, handle_type)))});
-}
-
 // Builds the block at place `place` of the generate `generate`, the machine
 // integer naming where it stands among the generate's places, handing it
 // `index`, the index a loop's block stands at, and hands back the borrowed
@@ -2729,16 +2640,12 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     lowerer.AddTypeBlockEvents(block_events);
   }
 
-  // Every procedural scope becomes a name node -- an object carrying the
-  // segment a hierarchical path matches (LRM 23.6) and a value dump names --
-  // whatever the source called it and whether or not anything was declared
-  // there, so one shape lowers every scope. A scope the source named carries
-  // its segment and one it did not carries none, which keeps the latter off
-  // every path while it still holds the nodes below it together.
-  //
-  // This scope keeps a borrowed handle to every one of them, however deeply
-  // they nest. The nodes' own nesting is the HIR scope tree, read where the
-  // objects are built.
+  // A procedural scope is a scope of the text and of nothing at run time:
+  // procedures are no branch of the hierarchy (LRM 23.6), `%m` names a block by
+  // text fixed where the call is written (LRM 21.2.1.5), and everything a block
+  // keeps past an activation -- its statics, what a `disable` of it ends, the
+  // events a covergroup samples at it -- is one cell per instance, so a field
+  // of this class.
   const base::Translation<hir::ProceduralScopeId, hir::FixedName> names =
       ReportedNames(hir_scope.procedural_scopes, unit_lowerer.Hir().fixed_name);
   std::vector<DeclaredScope> scopes;
@@ -2746,34 +2653,8 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   for (const hir::ProceduralScopeId scope_id :
        hir_scope.procedural_scopes.Ids()) {
     const auto& scope = hir_scope.procedural_scopes.Get(scope_id);
-
-    const mir::ClassId node_class = unit_lowerer.Unit().DeclareClass();
-    ClassShape node_shape;
-    node_shape.identity = unit_lowerer.NameUnnamedClass();
-    node_shape.base = mir::ClassRef{mir::ObjectTreeRootRef{}};
-    node_shape.is_final = true;
-    node_shape.self_pointer_type =
-        BorrowedPointerTo(unit_lowerer.Unit(), node_class);
-    node_shape.time_resolution = hir_scope.time_resolution;
-    node_shape.execution = unit_lowerer.ScopeExecution();
-    node_shape.dumped_as = support::DumpScopeKind::kBegin;
-    // A node hangs under the scope or under another node.
-    AttachRuntimeScopeCtorPrefix(unit_lowerer.Unit(), node_shape);
-    unit_lowerer.DefineClassShape(node_class, std::move(node_shape));
-    shape.contained.push_back(node_class);
-
-    // The handle is a borrowed pointer to the node's own class, the same shape
-    // an owned child instance or generate block keeps. That every owned child
-    // is reachable through a typed member is what makes a class's layout state
-    // which objects the runtime builds under it, so the node has one although
-    // no body asks it for anything.
-    DeclaredScope node{
+    DeclaredScope declared{
         .name = names.Get(scope_id),
-        .name_node =
-            ScopeNameNode{
-                .class_id = node_class,
-                .borrowed_handle = shape.AddField(
-                    BorrowedPointerTo(unit_lowerer.Unit(), node_class))},
         .disable_target = std::nullopt,
         .block_events = BlockEventsOf(block_events, scope_id)};
 
@@ -2785,16 +2666,16 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     // instance, shared by every activation of the scope -- the one placed
     // where the scope published it, where it did.
     if (disable_cells[scope_id.value].has_value()) {
-      node.disable_target =
+      declared.disable_target =
           InstanceFieldHome{.field = *disable_cells[scope_id.value]};
     } else if (scope.source_name.has_value()) {
-      node.disable_target = DeclareStaticCell(
+      declared.disable_target = DeclareStaticCell(
           InstanceStorage{.owner = class_id_, .shape = &shape, .placed = {}},
           unit_lowerer.Unit().types.Intern(
               mir::Type{mir::RuntimeLibraryType{
                   .kind = mir::RuntimeLibraryKind::kCancellationTarget}}));
     }
-    scopes.push_back(node);
+    scopes.push_back(std::move(declared));
   }
   scopes_ = {hir_scope.procedural_scopes.size(), std::move(scopes)};
 
@@ -3326,85 +3207,6 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     for (const std::string& unit : design_root_->namespaces.units) {
       call_namespace_unit(unit, mir::BringUpEntry::kInitializeStorage);
     }
-  }
-
-  // Commit the class of every procedural scope's name node. A name node carries
-  // only the segment a construct inside it reports, which the runtime scope
-  // base already gives it, so its constructor takes only the identity every
-  // scope is built with.
-  for (const hir::ProceduralScopeId scope : scopes_.Ids()) {
-    const ScopeNameNode& name_node = *scopes_.Get(scope).name_node;
-    const ClassShape& node_shape =
-        unit_lowerer.GetClassShape(name_node.class_id);
-    mir::Class node_class = node_shape.OpenClass();
-
-    mir::CallableCode node_ctor_code = mir::CallableCode::Defined();
-    CallableBindings node_ctor_bindings(unit_lowerer.Unit(), node_ctor_code);
-    node_ctor_code.params.push_back(node_ctor_bindings.Declare(
-        ReceiverOrigin{}, node_shape.self_pointer_type));
-    std::vector<mir::LocalId> node_ctor_prefix_local_ids;
-    node_ctor_prefix_local_ids.reserve(node_shape.ctor_prefix_params.size());
-    for (const mir::ParamId param : node_shape.ctor_prefix_params.Ids()) {
-      const auto& p = node_shape.ctor_prefix_params.Get(param);
-      node_ctor_prefix_local_ids.push_back(
-          node_ctor_bindings.DeclareAnonymous(p.type));
-      node_ctor_code.params.push_back(node_ctor_prefix_local_ids.back());
-    }
-    node_ctor_code.result_type = void_type;
-    ConstructBaseFirst(
-        unit_lowerer.Unit(), node_class.base.value(), node_ctor_code,
-        node_ctor_code.params.front(), node_ctor_prefix_local_ids);
-    // A name node has no work in any phase and describes nothing, which is
-    // four bodies with no statements rather than four it does not have -- the
-    // same shape a scope with work carries, so nothing downstream tells the
-    // two apart. What its named block holds the scope around it describes.
-    const auto empty_phase = [&](support::LibraryCallback phase) {
-      mir::CallableCode code = mir::CallableCode::Defined();
-      CallableBindings bindings(unit_lowerer.Unit(), code);
-      code.params = {
-          bindings.Declare(ReceiverOrigin{}, node_shape.self_pointer_type)};
-      code.result_type = void_type;
-      const mir::CallableId body = node_class.callables.Add(
-          mir::CallableDecl{
-              .code = std::move(code),
-              .foreign = std::nullopt,
-              .virtual_dispatch = std::nullopt,
-              .defining_unit = std::nullopt});
-      node_class.library_callbacks.push_back(
-          mir::LibraryCallbackBody{.callback = phase, .body = body});
-    };
-    empty_phase(support::LibraryCallback::kScopeResolve);
-    empty_phase(support::LibraryCallback::kScopeInitialize);
-    empty_phase(support::LibraryCallback::kScopeCreateProcesses);
-    empty_phase(support::LibraryCallback::kScopeDescribe);
-    node_class.constructor =
-        mir::ConstructorDecl{.code = std::move(node_ctor_code)};
-    unit_lowerer.Unit().DefineClass(name_node.class_id, std::move(node_class));
-  }
-
-  // Build the whole name tree here, in this scope's own constructor: each node
-  // hangs under the node of the scope around it, which is what the source
-  // nesting means, while the borrowed handle to it lands on this class -- so
-  // the objects nest and every one of them is still one step from a body.
-  const auto build_name_tree =
-      [&](const auto& self_ref, hir::ProceduralScopeId scope_id,
-          std::optional<mir::FieldId> parent_handle) -> void {
-    const auto& scope = hir_scope.procedural_scopes.Get(scope_id);
-    const ScopeNameNode& name_node = *scopes_.Get(scope_id).name_node;
-    AppendOwnedChildConstruction(
-        unit_lowerer, ctor_frame, parent_handle, scope.source_name.value_or(""),
-        name_node.class_id,
-        mir::ClassFieldTarget{
-            .owner = class_id_, .slot = name_node.borrowed_handle});
-    for (const hir::ProceduralScopeId child : scope.child_scopes) {
-      self_ref(self_ref, child, name_node.borrowed_handle);
-    }
-  };
-  for (const auto& s : hir_scope.structural_subroutines) {
-    build_name_tree(build_name_tree, s.body.root_scope, std::nullopt);
-  }
-  for (const auto& p : hir_scope.processes) {
-    build_name_tree(build_name_tree, p.body.root_scope, std::nullopt);
   }
 
   // The callable each subroutine lowered to, recorded where it is created so an

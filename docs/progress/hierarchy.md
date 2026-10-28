@@ -190,17 +190,17 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       at the enclosing scope of the class the front end landed on.
 - [x] D2e -- A hierarchical reference whose head is a named procedural block (a named `begin`/`end`,
       LRM 9.3.5 / 23.9). A named block is a first-class structural declaration of the compilation
-      unit: it becomes a child runtime scope of its nearest enclosing addressable scope, its
-      static-lifetime locals live on that scope's class, and `%m` inside it reports the block (LRM
-      21.2.1.5). A task or function is a scope on the same footing (LRM 23.9), so a named block
-      inside one is named below it and `%m` inside one reports the subroutine. Intra-unit access
-      (`outer.x` from a peer process) resolves as a typed route: the reference names the static
-      itself, and which named blocks stand between it and its scope follows from the declaration, so
-      a block label reused in two scopes cannot cross-bind. Cross-unit access (`Top.c.outer.x` from
-      another module) is the same: the module publishes each static of its named blocks with the
-      blocks it sits in, and the referrer reaches it as a published member, checked where it
-      compiles. A named `fork`/`join` block as head is not yet supported; the front-end still
-      rejects it at construction.
+      unit: it is a scope of the text with no run-time object of its own, its static-lifetime locals
+      live on the class of its nearest enclosing structural scope, and `%m` inside it reports the
+      block (LRM 21.2.1.5). A task or function is a scope on the same footing (LRM 23.9), so a named
+      block inside one is named below it and `%m` inside one reports the subroutine. Intra-unit
+      access (`outer.x` from a peer process) resolves as a typed route: the reference names the
+      static itself, and which named blocks stand between it and its scope follows from the
+      declaration, so a block label reused in two scopes cannot cross-bind. Cross-unit access
+      (`Top.c.outer.x` from another module) is the same: the module publishes each static of its
+      named blocks with the blocks it sits in, and the referrer reaches it as a published member,
+      checked where it compiles. A named `fork`/`join` block as head is not yet supported; the
+      front-end still rejects it at construction.
 - [x] D3 -- Multi-level dotted paths resolve through the object tree across more than one level.
       Landed for downward paths through scalar instances.
 - [x] D4 -- A combinational process reading a hierarchical reference re-triggers when the referenced

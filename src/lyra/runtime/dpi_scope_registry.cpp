@@ -15,9 +15,8 @@ DpiScopeRegistry::DpiScopeRegistry(Scope* root) {
 }
 
 void DpiScopeRegistry::RegisterSubtree(Scope& scope) {
-  // `$root` and synthetic anonymous begin/end scopes carry no source-visible
-  // name, so they are not addressable svScope handles; their named descendants
-  // still are, so the walk always recurses.
+  // `$root`, and any scope built with no name, is no `svScope` handle; its
+  // named descendants still are, so the walk always recurses.
   if (scope.IsAddressable()) {
     std::string path{scope.HierarchicalPath().View()};
     auto [it, inserted] = scope_to_path_.try_emplace(&scope, std::move(path));

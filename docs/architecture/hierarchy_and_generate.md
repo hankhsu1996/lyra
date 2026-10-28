@@ -170,7 +170,7 @@ module Mid;
     Leaf hidden ();
   end
   Leaf bank[0:1] ();
-  initial begin           // procedural, so it answers to no name at all
+  initial begin : run     // procedural: a name for paths and `%m`, no node
     ...
   end
 endmodule
@@ -189,7 +189,6 @@ flowchart TB
   M --> GB["genblk2<br/>generate scope, name the standard gave it"]
   M --> B0["bank[0]<br/>instance array element"]
   M --> B1["bank[1]"]
-  M --> AN["(unnamed)<br/>procedural scope"]
   G0 --> L0["leaf"]
   G1 --> L1["leaf"]
   GB --> H["hidden"]
@@ -207,9 +206,10 @@ its own.
 theirs the same way, so an instance array and a generate loop differ in what declared them and in
 nothing a consumer of the tree can see.
 
-**A node with no name is in the tree and no hierarchical name reaches it.** The procedural scope is
-a child like any other and contributes no segment to the paths beneath it, so a process declares its
-own scope without lengthening any hierarchical name.
+**A procedure and its blocks are no node.** A procedure is no branch of the hierarchy (LRM 23.6),
+and a named block such as `run` is one only as text: a path into it (`mid.run.x`) is a member `mid`
+publishes, and `%m` inside it is `mid`'s path with `.run` fixed by where the call is written. What a
+block keeps past an activation is a cell of `mid`.
 
 **Each scope a name can step into publishes a class.** `mid`'s class publishes its members, the
 `bank` array, and one entry per generate construct: `g`'s entry names the class its blocks are
