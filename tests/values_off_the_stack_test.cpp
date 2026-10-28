@@ -36,10 +36,18 @@ using lyra::test::RunChildProcess;
 // captures are each small and together large, a parameter left to its
 // default, overridden, and of a structure type, a value named on the command
 // line, a memory loaded from a file as text and as bytes, a change waited on,
-// a value forced and released, and its sampled value -- each checked against
-// what it must hold. A list of arguments longer than a frame keeps is checked
-// beside them.
+// a value forced and released, its sampled value, and one a loop's step
+// discards -- each checked against what it must hold. A list of arguments
+// longer than a frame keeps is checked beside them, and so are locals each as
+// large as a frame keeps one and together many times the stack: in a
+// function, which hands one by reference and a value made of them by value,
+// in a method, in a process that is done with them before it first waits, in
+// a branch it forks, and in a process that waits on one and forks a branch
+// reading them; beside a function declaring as many as a frame keeps together
+// and one discarding as many values of that size.
 constexpr int kManyArguments = 200;
+constexpr int kManyLocals = 600;
+constexpr int kLocalsAFrameKeeps = 16;
 
 constexpr std::string_view kValuesPastTheStack = R"(
 typedef struct packed { logic [4194303:0] w; } packed_wide_t;
@@ -85,6 +93,80 @@ module Test;
       end
     join
   endtask
+
+  function automatic bit by_ref(ref logic [4095:0] v);
+    return v === '1;
+  endfunction
+
+  function automatic bit by_value(logic [4095:0] v);
+    return v === '1;
+  endfunction
+
+  function automatic logic [4095:0] ones();
+    return '1;
+  endfunction
+
+  function automatic bit many_locals();
+    logic [4095:0] MANY_LOCALS;
+    return (MANY_ENDS) === '1 && by_ref(MANY_LAST) && by_value(MANY_ENDS);
+  endfunction
+
+  function automatic bit locals_a_frame_keeps();
+    logic [4095:0] FEW_LOCALS;
+    return (FEW_ENDS) === '1;
+  endfunction
+
+  function automatic bit many_discarded();
+    MANY_DISCARDS
+    return 1;
+  endfunction
+
+  class ManyLocals;
+    function bit check();
+      logic [4095:0] MANY_LOCALS;
+      return (MANY_ENDS) === '1;
+    endfunction
+  endclass
+
+  bit locals_before_wait, locals_in_fork, captured, waited;
+  initial begin
+    automatic logic [4095:0] MANY_LOCALS;
+    locals_before_wait = (MANY_ENDS) === '1;
+    #1;
+  end
+  initial fork
+    begin
+      automatic logic [4095:0] MANY_LOCALS;
+      #1;
+      locals_in_fork = (MANY_ENDS) === '1;
+    end
+  join
+  initial begin
+    automatic logic [4095:0] MANY_LOCALS;
+    fork
+      #1 MANY_LAST = '0;
+    join_none
+    @(MANY_LAST);
+    waited = MANY_LAST === '0;
+    fork
+      begin
+        #1;
+        captured = p0 === '1 && MANY_LAST === '0;
+      end
+    join
+  end
+  initial begin
+    automatic ManyLocals held = new;
+    #4;
+    if (!many_locals()) $fatal(1, "the function's many locals");
+    if (!locals_a_frame_keeps()) $fatal(1, "the locals a frame keeps");
+    if (!many_discarded()) $fatal(1, "the values discarded");
+    if (!held.check()) $fatal(1, "the method's many locals");
+    if (!locals_before_wait) $fatal(1, "the locals done with before a wait");
+    if (!locals_in_fork) $fatal(1, "the forked branch's many locals");
+    if (!waited) $fatal(1, "the local past the budget waited on");
+    if (!captured) $fatal(1, "the locals a forked branch captures");
+  end
 
   typedef logic [7:0] mem_t [524288];
   typedef union { wide_t w; mem_t x; } u_t;
@@ -178,6 +260,7 @@ module Test;
 
     later_ones(b);
     if (b !== '1) $fatal(1, "the task's output");
+    for (int i = 0; i < 2; twice(b)) i++;
     kept_across(kept);
     if (!kept) $fatal(1, "the variable kept across a wait and captured");
     text = $sformatf("MANY_FORMATS", MANY_ARGUMENTS);
@@ -219,6 +302,20 @@ TEST(ValuesOffTheStack, ValuesLargerThanTheStackAreKeptOffIt) {
     arguments += std::format("{}{}", i == 0 ? "" : ", ", i);
     printed += std::to_string(i);
   }
+  // Locals all ones, each named once, and the first and the last of them.
+  const auto locals = [](int count) {
+    std::string declared;
+    for (int i = 0; i < count; ++i) {
+      declared += std::format("{}p{} = '1", i == 0 ? "" : ", ", i);
+    }
+    return std::pair{declared, std::format("p0 & p{}", count - 1)};
+  };
+  const auto [many_locals, many_ends] = locals(kManyLocals);
+  const auto [few_locals, few_ends] = locals(kLocalsAFrameKeeps);
+  std::string discards;
+  for (int i = 0; i < kManyLocals; ++i) {
+    discards += "void'(ones());\n";
+  }
   std::string design(kValuesPastTheStack);
   const auto replace = [&](std::string_view name, const std::string& with) {
     for (std::size_t at = design.find(name); at != std::string::npos;
@@ -230,6 +327,12 @@ TEST(ValuesOffTheStack, ValuesLargerThanTheStackAreKeptOffIt) {
   replace("MANY_FORMATS", formats);
   replace("MANY_ARGUMENTS", arguments);
   replace("MANY_LENGTH", std::to_string(printed.size()));
+  replace("MANY_LOCALS", many_locals);
+  replace("MANY_ENDS", many_ends);
+  replace("MANY_LAST", std::format("p{}", kManyLocals - 1));
+  replace("MANY_DISCARDS", discards);
+  replace("FEW_LOCALS", few_locals);
+  replace("FEW_ENDS", few_ends);
   const auto src = *tmp_or / "test.sv";
   std::ofstream(src) << design;
   auto sh_or = lyra::driver::FindOnPath("sh");

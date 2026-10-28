@@ -1,24 +1,15 @@
 #pragma once
 
 #include <bit>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <new>
 #include <utility>
 
+#include "lyra/support/layout.hpp"
 #include "lyra/value/frame_bound.hpp"
-#include "lyra/value/layout.hpp"
 
 namespace lyra::runtime {
-
-// Whether a value lies inline, at the holder's tail, rather than spilled into
-// storage of its own: it fits the size a value may be and still lie in what
-// holds it, and the holder's own alignment serves it. The one rule a holder,
-// the storage made for it, and the code generator laying it out all read.
-[[nodiscard]] constexpr auto IsInline(support::Layout held) -> bool {
-  return held.size <= value::kMaxInlineBytes && held.align <= alignof(void*);
-}
 
 // What a `Holder` whose tail keeps a value of layout `held` takes: the
 // holder, then the value where it lies inline.
@@ -26,7 +17,7 @@ template <class Holder>
 [[nodiscard]] constexpr auto HolderLayoutFor(support::Layout held)
     -> support::Layout {
   return {
-      .size = sizeof(Holder) + (IsInline(held) ? held.size : 0),
+      .size = sizeof(Holder) + (value::LiesInline(held) ? held.size : 0),
       .align = alignof(Holder)};
 }
 
@@ -43,13 +34,14 @@ auto MakeWithTail(support::Layout held, Args&&... args)
   };
   std::unique_ptr<void, decltype(give_back)> storage(
       ::operator new(holder.size, align), give_back);
-  Holder* made = std::construct_at(
+  std::construct_at(
       static_cast<Holder*>(storage.get()), std::forward<Args>(args)...);
-  storage.release();
-  return std::shared_ptr<Holder>(made, [align](Holder* ended) {
-    std::destroy_at(ended);
-    ::operator delete(ended, align);
-  });
+  // Built, the holder is its owners' to end and give back.
+  return std::shared_ptr<Holder>(
+      static_cast<Holder*>(storage.release()), [align](Holder* ended) {
+        std::destroy_at(ended);
+        ::operator delete(ended, align);
+      });
 }
 
 // What every storage of a value at its holder's tail is, written once: the
@@ -88,8 +80,7 @@ class TailValue {
   }
 
  protected:
-  // The value lies at the tail, or in `spilled` where it does not, as
-  // `IsInline` decides.
+  // The value lies at the tail, or in `spilled` where it does not lie inline.
   explicit TailValue(void* spilled)
       : bytes_(spilled != nullptr ? spilled : Tail()) {
   }
@@ -100,7 +91,7 @@ class TailValue {
   // lies was decided: an address one past the holder is no answer, since
   // storage allocated apart may begin there.
   [[nodiscard]] auto IsSpilled() const -> bool {
-    return !IsInline(Self().ValueLayout());
+    return !value::LiesInline(Self().ValueLayout());
   }
 
  private:

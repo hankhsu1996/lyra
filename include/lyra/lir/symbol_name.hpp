@@ -46,8 +46,9 @@ enum class SymbolCategory : std::uint8_t {
 };
 
 // One component of a symbol: a name the source wrote, an ordinal the compiler
-// counted, a callback of the runtime library a class answers, or
-// the steps of the path that tells a declaration from the others of its unit.
+// counted, a callback of the runtime library a class answers, a type spelled
+// by its structure, or the steps of the path that tells a declaration from the
+// others of its unit.
 // Each self-delimits and says which kind it is, so a sequence of them composes
 // to one string no other sequence composes to: a block and a class carrying one
 // label are different parts, and a method the source named after a library
@@ -156,11 +157,18 @@ auto NamespaceVariableSymbol(std::string_view unit_name, SymbolPart variable)
 auto ClosureInvokeSymbol(std::string_view unit_name, std::uint32_t ordinal)
     -> std::string;
 
-// A function answering an operation at a type with no declaration is counted
-// the same way: such a type has no name of its own, and nothing outside the
-// unit reaches the function.
-auto TypeOperationSymbol(std::string_view unit_name, std::uint32_t ordinal)
-    -> std::string;
+// What a type contributes to a symbol: what it is -- its kind, what fixes it,
+// and the types it is made of, each in turn -- and a declaration it names by
+// the symbol that declaration is defined under. Two types compose the same part
+// exactly where they are the same type, so it is the type's name however the
+// unit came to name it.
+auto SymbolPartOf(const CompilationUnit& unit, TypeId type) -> SymbolPart;
+
+// A function answering an operation at a type with no declaration is named by
+// the type and the operation, as rustc names drop glue by the type it drops.
+auto TypeOperationSymbol(
+    std::string_view unit_name, SymbolPart type,
+    support::ValueOperation operation) -> std::string;
 
 // The name the class `name` of `unit` is qualified by: the unit's own for a
 // class another unit names, which every body of the unit states alike; the

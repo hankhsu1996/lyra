@@ -369,6 +369,7 @@ cc_library(
         ":mir",
         ":profiling",
         ":support",
+        ":value",
     ],
 )
 

@@ -2575,6 +2575,9 @@ auto FunctionLowerer::LowerNew(
   if (unit_->Mir().types.Get(initializer.type).Is<mir::ObjectType>()) {
     return LowerObjectNew(block, initializer, owner);
   }
+  if (unit_->Mir().types.Get(initializer.type).Is<mir::ObservableType>()) {
+    return LowerCellNew(initializer, owner);
+  }
   const lir::TypeId held = unit_->TranslateType(initializer.type);
   if (allocation.placement.has_value()) {
     return LowerPlacementNew(block, allocation, held);
@@ -2639,6 +2642,31 @@ auto FunctionLowerer::LowerPlacementNew(
     return std::unexpected(std::move(made.error()));
   }
   return storage;
+}
+
+auto FunctionLowerer::LowerCellNew(
+    const mir::Expr& initializer, mir::TypeId owner)
+    -> diag::Result<lir::Operand> {
+  // A cell has no value apart from where it lies, as an object has none, so
+  // it is built in the storage allocated for it rather than made and put in.
+  const auto* construction = std::get_if<mir::CallExpr>(&initializer.data);
+  if (construction == nullptr ||
+      !std::holds_alternative<mir::Construct>(construction->callee) ||
+      !construction->arguments.empty()) {
+    return Unsupported("a cell is made only empty, as a variable is declared");
+  }
+  const lir::Operand storage = Emit(
+      AddressType(unit_->TranslateType(initializer.type)),
+      lir::CallInstr{
+          .target =
+              lir::DynamicStorageTarget{
+                  .op = lir::DynamicStorageTarget::Op::kAllocate},
+          .args = {}});
+  Emit(
+      unit_->TranslateType(unit_->Mir().builtins.void_type),
+      lir::CallInstr{.target = lir::BuildCellTarget{}, .args = {storage}});
+  return EmitCallTo(
+      lir::ConstructTarget{}, {storage}, unit_->TranslateType(owner));
 }
 
 auto FunctionLowerer::LowerObjectNew(

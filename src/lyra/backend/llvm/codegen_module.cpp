@@ -7,7 +7,6 @@
 #include <format>
 #include <iterator>
 #include <optional>
-#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -417,6 +416,14 @@ auto CodeGenModule::EndOwnedStorage(
       (library != nullptr && support::IsObjectOfTheRoot(library->which))) {
     EndObject(builder, storage);
     return {};
+  }
+  // A variable's cell is ended as a body's variable is, by its storage.
+  if (pointed.Is<lir::ObservableType>()) {
+    const support::DeclaredMemberStorage cell = CellStorage(pointee);
+    if (!MemberLayout(pointee, cell).ends_with_nothing_to_do) {
+      builder.CreateCall(MemberStorageDestructor(cell), {storage});
+    }
+    return EmitDeleteCall(builder, pointee, storage);
   }
   if (!types_.LayoutOf(pointee).ends_with_nothing_to_do) {
     const std::array<llvm::Value*, 1> args{storage};
@@ -968,7 +975,11 @@ auto CodeGenModule::PlacedMembersOf(lir::TypeId type)
 
 auto CodeGenModule::AllocationLayoutOf(lir::TypeId type)
     -> diag::Result<support::Layout> {
-  // A value no declaration lays out takes what its type lays it out in.
+  // A variable's cell takes what a body's variable of it does, and a value no
+  // declaration lays out what its type lays it out in.
+  if (unit_->types.Get(type).Is<lir::ObservableType>()) {
+    return MemberLayout(type, CellStorage(type)).layout;
+  }
   const std::optional<lir::TypeDeclaration> declaration =
       unit_->types.Get(type).Declaration();
   if (!declaration.has_value()) {
@@ -1030,6 +1041,24 @@ auto CodeGenModule::MemberLayout(
   return runtime::LayoutOf(
       storage, ValuesHeldByMember(type).transform(
                    [&](lir::TypeId held) { return types_.LayoutOf(held); }));
+}
+
+auto CodeGenModule::CellStorage(lir::TypeId cell) const
+    -> support::DeclaredMemberStorage {
+  const std::optional<support::DeclaredMemberStorage> storage =
+      DeclaredStorageOf(*unit_, cell, MemberSlotRole::kVariable);
+  if (!storage) {
+    throw InternalError(
+        "llvm codegen: a cell is asked of a type held as none -- please "
+        "report this as a bug");
+  }
+  return *storage;
+}
+
+auto CodeGenModule::BuildCell(
+    llvm::IRBuilderBase& builder, lir::TypeId cell, llvm::Value* storage)
+    -> diag::Result<void> {
+  return BuildMemberStorage(builder, cell, CellStorage(cell), storage);
 }
 
 // A member holding no value of the program's holds none.
@@ -1221,7 +1250,7 @@ auto CodeGenModule::EmitCreations(
   // known where the class is defined, so a `new` in another unit reads
   // nothing of its layout -- as Swift's allocating initializer is the
   // defining module's, for a class whose layout its clients may not know.
-  llvm::Function* allocating = llvm::cast<llvm::Function>(
+  auto* allocating = llvm::cast<llvm::Function>(
       module_
           ->getOrInsertFunction(
               lir::CreationSymbol(

@@ -167,10 +167,13 @@ the detail lives in the entry itself.
   MIR-to-MIR rewrite writes, sized by one query over MIR types; a large value is made in its box, a
   conditional's arm and a block's value are made where its value is, no body answers a box, and a
   closure kept past its statement is made where its keeper keeps it -- a region's effect where its
-  region's keeper says, any other in a box its keeper takes. The rewrite making those temporaries
-  also takes an operand read out of storage into one before a later operand may change or end it, so
-  a call's object is not reclaimed under it. Each backend deciding from a shared constant, the
-  render choosing per position, and a body answering a box are rejected.
+  region's keeper says, any other in a box its keeper takes. A frame keeps at most a fixed sum of a
+  body's values, and a local, a variable's cell or a made value past it is held through a box too.
+  The rewrite making the evaluation order explicit asks no size and takes an operand read out of
+  storage into a temporary before a later operand may change or end it, so a call's object is not
+  reclaimed under it; deciding where each value lies is the rewrite after it. Each backend deciding
+  from a shared constant, the render choosing per position, a body answering a box and a heap frame
+  per scope are rejected.
 - [an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md)
   -- what a position of an array holds before it is written (LRM 7.4.5, Table 7-1) is a fact of the
   element type, for a fixed-size array, a dynamic array, a queue and an associative array alike. A

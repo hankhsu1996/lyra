@@ -4,12 +4,10 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <string_view>
 #include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/overloaded.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/base/translation.hpp"
 #include "lyra/lir/class_id.hpp"
@@ -331,15 +329,6 @@ struct CompilationUnit {
     return std::nullopt;
   }
   return RecordKindOf(unit, *record);
-}
-
-// The declaration any unit names the record `record` by.
-[[nodiscard]] inline auto RecordDeclarationOf(
-    const CompilationUnit& unit, RecordId record) -> TypeDeclarationRef {
-  const RecordDecl& declared = unit.records.Get(record);
-  return TypeDeclarationRef{
-      .unit_name = declared.defining_unit.value_or(unit.name),
-      .path = declared.path};
 }
 
 // The components of a product -- a tuple or a structure, which are reached the

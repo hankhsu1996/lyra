@@ -2491,8 +2491,8 @@ TEST(LyraCommandLine, NamesWhichOptionalRewritesOfMirRun) {
     std::string expected;
   };
   const std::vector<Refusal> refusals = {
-      {.value = "-BoxLargeValues",
-       .expected = "'BoxLargeValues' given to '--mir-enable-passes' names no "
+      {.value = "-BoundFrames",
+       .expected = "'BoundFrames' given to '--mir-enable-passes' names no "
                    "rewrite a build may skip"},
       {.value = "-OrderEvaluation",
        .expected = "'OrderEvaluation' given to '--mir-enable-passes' names no "
@@ -2561,7 +2561,7 @@ TEST(LyraCommandLine, NamesWhichOptionalRewritesOfMirRun) {
   const std::set<std::string> skipped = spans_of("-InstSimplify");
   EXPECT_FALSE(skipped.contains("InstSimplify"));
   EXPECT_TRUE(skipped.contains("OrderEvaluation"));
-  EXPECT_TRUE(skipped.contains("BoxLargeValues"));
+  EXPECT_TRUE(skipped.contains("BoundFrames"));
   EXPECT_TRUE(skipped.contains("SplitReactions"));
   const std::set<std::string> asked_back =
       spans_of("-InstSimplify,+InstSimplify");

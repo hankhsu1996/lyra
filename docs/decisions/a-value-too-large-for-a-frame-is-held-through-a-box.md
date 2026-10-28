@@ -8,7 +8,11 @@ a value a borrow refers to is made in a temporary of the evaluation too, where i
 inside whichever step formed the borrow and ended with it. Revised 2026-10-24: an operand read out
 of storage a later operand may change or end is taken into a temporary too, where D2 used to let a
 later operand's step run before what is bound where it lies; a later operand dropping the last
-handle to the object a call is entered on reclaimed it before the call ran.
+handle to the object a call is entered on reclaimed it before the call ran. Revised 2026-10-27: a
+bound on each value did not bound a frame -- 600 locals of 1,024 bytes, each within it, overflowed a
+512 KB stack on both backends -- so a frame now also has a bound on what it keeps together (D7);
+making the evaluation order explicit no longer asks any value's size, and the storage rewrite gives
+a value it keeps apart a temporary in the order that rewrite left (D3).
 
 ## Context
 
@@ -81,19 +85,25 @@ each of its arguments is an evaluation of its own. A box handed to a body is bui
 handed, since the body owns it from there and nothing reads it here.
 
 **D3. The box is written by two rewrites of the MIR-to-MIR stage, one job each**, after HIR-to-MIR
-has stated every value plainly, and both backends read the rewritten unit. The first orders each
-evaluation through temporaries -- every large value an expression makes and then reads, and every
-operand read before a later one may change it, as above; the second holds every large local -- the
-temporaries among them -- parameter, capture, argument handed to a body and value made and discarded
-through a box. Both are required. Go's compiler divides the work the same way: one pass states
-evaluation order through temporaries (`cmd/compile/internal/walk/order.go`), and a later one decides
-which variables leave the frame. Each rewrite asks a type how large a value of it is by one query
-over MIR types, as rustc's passes ask `layout_of`; no MIR node carries a size. As rustc's query and
-clang's record layout are, the answer is worked out once per type and kept with the unit, because a
-structure's size is worked out from every member and is asked at every value of it. A closure is
-sized by its captures as it holds them, as D2 says, so the rewrite that boxes a capture changes no
-closure's size, and the kept answers hold for the unit's whole life. The unit's verification refuses
-a body that leaves a value too large for a frame outside a box.
+has stated every value plainly, and both backends read the rewritten unit. The first makes the
+evaluation order explicit through temporaries -- every operand read before a later one may change
+it, and what a borrow refers to -- and asks no value's size, so a change to one type's size moves
+only where values of it lie. The second decides where every value lies: it plans the frame (D7),
+gives each value it keeps apart that an expression makes and then reads a temporary, in the order
+the first left, and holds every value kept apart -- the temporaries among them, and a value a
+statement discards, made in a box the statement discards with it -- and every large parameter,
+capture and argument handed to a body through a box. Placing a temporary keeps the order through the
+same rule the first rewrite follows -- an operand that computes something and is evaluated before
+one taking a step is taken first -- so the second knows no evaluation order of its own. Both are
+required. Go's compiler divides the work the same way: one pass states evaluation order through
+temporaries (`cmd/compile/internal/walk/order.go`), and a later one decides which variables leave
+the frame. The second asks a type how large a value of it is by one query over MIR types, as rustc's
+passes ask `layout_of`; no MIR node carries a size. As rustc's query and clang's record layout are,
+the answer is worked out once per type and kept with the unit, because a structure's size is worked
+out from every member and is asked at every value of it. A closure is sized by its captures as it
+holds them, as D2 says, so the rewrite that boxes a capture changes no closure's size, and the kept
+answers hold for the unit's whole life. The unit's verification refuses a body that leaves a value
+too large for a frame outside a box.
 
 **D4. A large value is made in its box, and no body answers a box.** An expression of a large type
 is evaluated into the storage its new-expression allocates, never into storage of its own first.
@@ -117,6 +127,35 @@ the started body takes the box over. No backend places a closure on its own acco
 closure of a known type is an ordinary box, which both backends spell and end as they do any box,
 and each builds the closure, its library's part included, where its value lies.
 
+**D7. A frame keeps at most a fixed sum of a body's values, 16 KiB, and every value past it is held
+apart through a box.** A bound on each value bounds a frame only by how many values the source
+writes, so a body declaring 600 locals of 1,024 bytes, or an expression of 600 such operands, took
+600 KB of a stack the design did not size. The values counted are a value of the design -- an
+integral, an array, a structure, a string, what the library holds as a value -- each larger than the
+address that would stand in its place: the locals a body declares, in the order it declares them,
+then each value one node makes and another reads or its statement discards, block by block. A node
+that computes nothing names a value lying elsewhere, an arm of a choice is made where the choice's
+value is, what a new-expression initializes is made in its storage and what a suspension waits on is
+the runtime's, so none of them is counted; a parameter lies where the signature the source wrote
+puts it, and only one too large for a frame is held apart. What the library builds for a call and
+machine data are as many as the calls the source wrote, and a frame keeps them as the target's own
+code keeps them. A variable's cell keeps its value inline, so a cell counts that value, and past the
+budget the cell itself is held through a box -- whether the frame keeps the holder, apart from
+whether the holder keeps the value inline. The unit's verification refuses a body whose frame keeps
+more. The budget is a constant of the representation, beside the bound on one value.
+
+So no width a design declares reaches a frame, and the values a body keeps past the budget cost it
+an address each. That bounds what MIR states and not the target's whole frame, which still follows
+how many things the source writes: a parameter, what the library builds for a call, and what a code
+generator keeps of an operation's operands while it works, each of a size no declaration grows past
+the bound on one value. Every compiled program's frame does the same. Clang reports a frame past a
+size it is given (`-Wframe-larger-than`, read after register allocation by LLVM's
+`PrologEpilogInserter`) and clippy's `large_stack_frames` sums a function's locals, temporaries and
+arguments; both only report, and the remedy clippy names is to hold the value through a `Box`. The
+budget applies that remedy for the author, since the source language gives them no way to write it.
+The stack a simulation runs on is the one its user started it with, as a C++ or Rust program runs on
+the stack its process was given.
+
 ## Where Lyra differs, and why
 
 | Point                         | Field                                                                                                                                                                                                                                                                                                                                        | Lyra                                                                          | Reason                                                                                                            |
@@ -138,17 +177,34 @@ and each builds the closure, its library's part included, where its value lies.
 - **A made value boxed where it is read.** The box encloses the expression making the value and the
   reader encloses the box, so a flat chain of N links nests three brackets a link, and a sum of a
   few hundred wide values is text no C++ compiler has to accept.
-- **Making temporaries and boxes in one rewrite.** Every case of the first -- a value handed to a
-  body, a suspension's call, an execution's answer, a value discarded -- then grew a case of the
-  second, and the rewrite came to know the evaluation order of every node in order to place a box.
-  Apart, the boxing rewrite holds locals, and a temporary is a local.
+- **Making the evaluation order and the boxes in one rewrite.** Every case of the first -- a value
+  handed to a body, a suspension's call, an execution's answer, a value discarded -- then grew a
+  case of the second, and the rewrite came to know the evaluation order of every node in order to
+  place a box. The storage rewrite of D3 does place temporaries, but through the order-keeping rule
+  the first rewrite follows, never a rule of its own, and its boxing holds locals, of which a
+  temporary is one.
+- **Making the order explicit with a temporary for each large value made**, as this record first
+  did. The first rewrite then asked every value's size, so how a type was sized changed the shape of
+  every evaluation over it, and a bound on the frame could not be added without a second, different
+  set of temporaries.
+- **One heap frame per scope holding the values past the budget, made at scope entry**, as Roslyn's
+  closure conversion makes one per scope that has captured variables (`ClosureConversion.cs`,
+  `IntroduceFrame`). A frame made first needs each moved value's value-before-anything-is-written,
+  which only HIR-to-MIR can build -- a structure's needs its declaration's member initializers --
+  and making it from the initializers fails where a later one reads an earlier moved local. A box
+  per value costs the frame an address each, which is what a frame costs per declaration anyway.
 - **A body answering a box.** Once a body has a return place, as rustc's `_0` and clang's `sret`,
   answering a box is a second convention beside it.
 
 ## Consequences
 
 - No frame's size follows a declared size on either backend; a design whose every value is twice the
-  stack it runs on runs on both.
+  stack it runs on runs on both, and so does one whose values are each within the bound and together
+  many times the stack, in a function, in a process before its first wait and in a branch it forks.
 - The execution backend keeps nothing apart from a frame on its own account.
-- A holder keeps a large value in storage of its own, as the holder record states, so a cell is
-  never boxed.
+- A holder keeps a large value in storage of its own, as the holder record states, and decides it by
+  the one rule every holder reads, a value's size and alignment; a cell the frame has no room for is
+  held through a box, which the execution backend builds in the storage it allocates, as a body
+  builds its variables.
+- A body declaring more than the budget pays an allocation for each value past it, and nothing else
+  changes for it.

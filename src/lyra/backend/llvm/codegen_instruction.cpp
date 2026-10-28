@@ -1337,6 +1337,22 @@ auto CodeGenFunction::LowerCall(
             throw InternalError(
                 "llvm codegen: unknown dynamic-storage operation");
           },
+          [&](const lir::BuildCellTarget&) -> Lowered {
+            auto storage = LowerOperand(call.args.at(0));
+            if (!storage) {
+              return std::unexpected(std::move(storage.error()));
+            }
+            auto built = module_->BuildCell(
+                builder_,
+                *module_->Unit()
+                     .types.Get(OperandType(call.args.at(0)))
+                     .Pointee(),
+                *storage);
+            if (!built) {
+              return std::unexpected(std::move(built.error()));
+            }
+            return nullptr;
+          },
           [&](const lir::CreationTarget& t) { return called(t); },
           [&](const lir::SymbolTarget& t) { return called(t); },
           [&](const lir::ForeignTarget& t) { return called(t); },
@@ -1615,6 +1631,12 @@ auto CodeGenFunction::ResolveCallee(
                 "llvm codegen: storage of dynamic duration is allocated or "
                 "given back where the call is lowered, and names no callee -- "
                 "please report this as a bug");
+          },
+          [&](const lir::BuildCellTarget&)
+              -> diag::Result<llvm::FunctionCallee> {
+            throw InternalError(
+                "llvm codegen: a cell is built where the call is lowered, and "
+                "names no callee -- please report this as a bug");
           },
           [&](const lir::ControlEffectTarget& t)
               -> diag::Result<llvm::FunctionCallee> {

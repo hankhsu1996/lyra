@@ -7,7 +7,6 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
-#include <variant>
 #include <vector>
 
 #include <llvm/IR/LLVMContext.h>
@@ -22,15 +21,14 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/class_id.hpp"
 #include "lyra/lir/closure_id.hpp"
+#include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/enum_table_id.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/integral_constant_id.hpp"
 #include "lyra/lir/linkage.hpp"
-#include "lyra/lir/symbol_name.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/layout.hpp"
 #include "lyra/support/member_storage_kind.hpp"
-#include "lyra/support/runtime_class.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
 #include "lyra/value/integral.hpp"
@@ -217,6 +215,12 @@ class CodeGenModule {
   // `operator delete` told, and what a type's size or alignment answers.
   auto AllocationLayoutOf(lir::TypeId type) -> diag::Result<support::Layout>;
 
+  // Builds, at `storage`, a variable's cell of the type `cell`, as a body's
+  // variable is built where its declaration is reached.
+  auto BuildCell(
+      llvm::IRBuilderBase& builder, lir::TypeId cell, llvm::Value* storage)
+      -> diag::Result<void>;
+
   // `storage`, holding a complete object of `pointee` no longer, given back to
   // the host's sized deallocation function, as clang's `EmitDeleteCall` does.
   auto EmitDeleteCall(
@@ -282,6 +286,10 @@ class CodeGenModule {
   // it is holds.
   [[nodiscard]] auto ValuesHeldByMember(lir::TypeId type) const
       -> std::optional<lir::TypeId>;
+  // How a variable's cell of the type `cell` is held, which is how a body holds
+  // one of its variables.
+  [[nodiscard]] auto CellStorage(lir::TypeId cell) const
+      -> support::DeclaredMemberStorage;
   // Builds, at `at`, the storage a member of `type` is held as.
   auto BuildMemberStorage(
       llvm::IRBuilderBase& builder, lir::TypeId type,

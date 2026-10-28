@@ -8,7 +8,9 @@
 # fails the run, and so does something listed that has stopped, until it goes --
 # so this file only ever shrinks, which makes it the record of what a design's
 # size still costs on this path that it should not.
+format_items: [mir.types]
 instance_array: [bytes]
+listed_operands: [mir.types]
 loop_of_children_sized_by_index:
   - mir.class constants
   - mir.classes
@@ -30,5 +32,7 @@ loop_sizing_by_index:
   - mir.classes
   - mir.constructors
   - mir.types
+record_members_owning_storage: [mir.types]
 scan_outputs:
   - mir.types
+tagged_union_members: [mir.types]

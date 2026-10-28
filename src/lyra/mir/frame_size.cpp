@@ -11,38 +11,25 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/operand_use.hpp"
+#include "lyra/mir/stmt.hpp"
+#include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/mir/verify.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/layout.hpp"
 #include "lyra/support/runtime_object.hpp"
-#include "lyra/value/any.hpp"
-#include "lyra/value/bit_vec.hpp"
-#include "lyra/value/chandle.hpp"
-#include "lyra/value/dpi_canonical.hpp"
-#include "lyra/value/dpi_open_array.hpp"
-#include "lyra/value/empty.hpp"
-#include "lyra/value/format.hpp"
 #include "lyra/value/frame_bound.hpp"
-#include "lyra/value/index_order.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/layout.hpp"
-#include "lyra/value/object_ref.hpp"
-#include "lyra/value/real.hpp"
-#include "lyra/value/runtime_associative_array.hpp"
-#include "lyra/value/runtime_dynamic_array.hpp"
-#include "lyra/value/runtime_queue.hpp"
-#include "lyra/value/string.hpp"
 
 namespace lyra::mir {
 
 namespace {
 
-template <typename T>
-constexpr auto LayoutOfClass() -> support::Layout {
-  return support::Layout{.size = sizeof(T), .align = alignof(T)};
-}
-
-constexpr support::Layout kAddress = LayoutOfClass<void*>();
+constexpr support::Layout kAddress{
+    .size = sizeof(void*), .align = alignof(void*)};
 
 auto LayoutOfIntegral(const IntegralType& integral) -> support::Layout {
   return support::Layout{
@@ -51,32 +38,31 @@ auto LayoutOfIntegral(const IntegralType& integral) -> support::Layout {
       .align = value::IntegralAlignFor(integral.bit_width)};
 }
 
-// An object of the library's: the class it is, where that class is the value
-// library's, and the storage stated for it where the runtime defines it and a
-// frame holds one by value. Every other class of the runtime's is reached by
-// address, and is counted as the word a frame names one by.
+// An object of the library's a frame holds by value: the storage stated for
+// it. Every other class of the runtime's is reached by address, and is counted
+// as the word a frame names one by.
 auto LayoutOfLibraryObject(RuntimeLibraryKind kind) -> support::Layout {
   switch (kind) {
     case RuntimeLibraryKind::kBitVec:
-      return LayoutOfClass<value::BitVec>();
+      return support::kBitVecStorage.layout;
     case RuntimeLibraryKind::kPrintItem:
-      return LayoutOfClass<value::PrintItem>();
+      return support::kPrintItemStorage.layout;
     case RuntimeLibraryKind::kPrintLiteralItem:
-      return LayoutOfClass<value::PrintLiteralItem>();
+      return support::kPrintLiteralItemStorage.layout;
     case RuntimeLibraryKind::kPrintValueItem:
-      return LayoutOfClass<value::PrintValueItem>();
+      return support::kPrintValueItemStorage.layout;
     case RuntimeLibraryKind::kFormatSpec:
-      return LayoutOfClass<value::FormatSpec>();
+      return support::kFormatSpecStorage.layout;
     case RuntimeLibraryKind::kFormatArg:
-      return LayoutOfClass<value::FormatArg>();
+      return support::kFormatArgStorage.layout;
     case RuntimeLibraryKind::kTimeFormat:
-      return LayoutOfClass<value::TimeFormat>();
+      return support::kTimeFormatStorage.layout;
     case RuntimeLibraryKind::kDpiBitBuffer:
-      return LayoutOfClass<value::DpiBitBuffer>();
+      return support::kDpiBitBufferStorage.layout;
     case RuntimeLibraryKind::kDpiLogicBuffer:
-      return LayoutOfClass<value::DpiLogicBuffer>();
+      return support::kDpiLogicBufferStorage.layout;
     case RuntimeLibraryKind::kDpiOpenArray:
-      return LayoutOfClass<value::DpiOpenArray>();
+      return support::kDpiOpenArrayStorage.layout;
     // A table the unit states once and every use names.
     case RuntimeLibraryKind::kEnumeration:
       return kAddress;
@@ -143,11 +129,13 @@ auto Overlay(const auto& part, std::span<const TypeId> members)
 
 // A value laid out by what it holds is that; a value of the library's is the
 // class the library keeps it as; a machine value is what a register holding it
-// holds. Storage the library keeps -- a cell, a write in progress, an object of
-// the hierarchy -- is never a part of a value, and keeps a value too large for
-// a frame in storage of its own, as every holder does, so it is never too large
-// for one either; it is counted as the handle a frame names it by. `part`
-// answers the layout of each type `type` is made of.
+// holds; an object of the library's a frame holds while it works -- a
+// reference, a write in progress -- is the storage stated for it. Storage the
+// library keeps -- a cell, an object of the hierarchy -- is never a part of a
+// value, and keeps a value too large for a frame in storage of its own, as
+// every holder does, so it is never too large for one either; it is counted as
+// the handle a frame names it by. `part` answers the layout of each type
+// `type` is made of.
 auto LaidOut(const CompilationUnit& unit, TypeId type, const auto& part)
     -> support::Layout {
   const auto handle = [](const auto&) { return kAddress; };
@@ -194,39 +182,42 @@ auto LaidOut(const CompilationUnit& unit, TypeId type, const auto& part)
             return value::ProductLayoutOf(parts).whole;
           },
           [](const DynamicArrayType&) {
-            return LayoutOfClass<value::RuntimeDynamicArray>();
+            return support::kDynamicArrayStorage.layout;
           },
-          [](const QueueType&) { return LayoutOfClass<value::RuntimeQueue>(); },
+          [](const QueueType&) { return support::kQueueStorage.layout; },
           [](const AssociativeArrayType&) {
-            return LayoutOfClass<value::RuntimeAssociativeArray>();
+            return support::kAssociativeArrayStorage.layout;
           },
           [](const WildcardIndexType&) {
-            return LayoutOfClass<value::WildcardKey>();
+            return support::kWildcardKeyStorage.layout;
           },
-          [](const StringType&) { return LayoutOfClass<value::String>(); },
-          [](const AnyType&) { return LayoutOfClass<value::Any>(); },
+          [](const StringType&) { return support::kStringStorage.layout; },
+          [](const AnyType&) { return support::kAnyStorage.layout; },
           [](const ErasedValueType&) -> support::Layout {
             throw InternalError(
                 "mir: a value of a type known only where the program runs is "
                 "laid out only behind a reference -- please report this as a "
                 "bug");
           },
-          [](const RealType&) { return LayoutOfClass<value::Real>(); },
+          [](const RealType&) { return support::kRealStorage.layout; },
           [](const ShortRealType&) {
-            return LayoutOfClass<value::ShortReal>();
+            return support::kShortRealStorage.layout;
           },
-          [](const ChandleType&) { return LayoutOfClass<value::Chandle>(); },
+          [](const ChandleType&) { return support::kChandleStorage.layout; },
           [](const ManagedRefType&) {
-            return LayoutOfClass<value::ObjectRef>();
+            return support::kObjectRefStorage.layout;
           },
           [](const WeakManagedRefType&) {
             return support::kWeakReferenceStorage.layout;
           },
-          [](const EmptyType&) { return LayoutOfClass<value::Empty>(); },
+          [](const EmptyType&) { return support::kEmptyStorage.layout; },
           [](const VoidType&) {
             return support::Layout{.size = 0, .align = 1};
           },
-          [](const MachineBoolType&) { return LayoutOfClass<bool>(); },
+          [](const MachineBoolType&) {
+            return support::Layout{
+                .size = sizeof(bool), .align = alignof(bool)};
+          },
           [](const MachineIntType& t) {
             const std::uint64_t bytes = BitsOf(t.width) / 8;
             return support::Layout{.size = bytes, .align = bytes};
@@ -242,10 +233,29 @@ auto LaidOut(const CompilationUnit& unit, TypeId type, const auto& part)
                 "mir: an erased callable is laid out only behind a box or a "
                 "borrow -- please report this as a bug");
           },
-          [&](const PointerType& t) { return handle(t); },
+          // A shared pointer is the library's object counting its holds; any
+          // other is the address it holds.
+          [&](const PointerType& t) {
+            switch (t.ownership) {
+              case PointerOwnership::kShared:
+                return support::kSharedPointerStorage.layout;
+              case PointerOwnership::kUnique:
+              case PointerOwnership::kBorrowed:
+                return kAddress;
+            }
+            throw InternalError("mir: unknown pointer ownership");
+          },
           [&](const ReferenceType& t) { return handle(t); },
-          [&](const VariableRefType& t) { return handle(t); },
-          [&](const ReferenceWrapperType& t) { return handle(t); },
+          // A variable's reference is the library's object naming where its
+          // referent lies and whatever is told of a write through it.
+          [&](const VariableRefType& t) {
+            return unit.types.Get(t.pointee).Is<ErasedValueType>()
+                       ? support::kAnyReferenceStorage.layout
+                       : support::kReferenceStorage.layout;
+          },
+          [](const ReferenceWrapperType&) {
+            return support::kReferenceStorage.layout;
+          },
           [&](const VectorType& t) { return handle(t); },
           [&](const CoroutineType& t) { return handle(t); },
           [&](const DriverType& t) { return handle(t); },
@@ -259,13 +269,49 @@ auto LaidOut(const CompilationUnit& unit, TypeId type, const auto& part)
           },
           [&](const ObservableType& t) { return handle(t); },
           [&](const ResolvedType& t) { return handle(t); },
-          [&](const OpenWriteType& t) { return handle(t); },
-          [&](const DesignationType& t) { return handle(t); },
+          // A write in progress and a place designated within one are the
+          // library's objects the writer holds for as long as the write lasts.
+          [](const OpenWriteType&) {
+            return support::kOpenWriteStorage.layout;
+          },
+          [](const DesignationType&) {
+            return support::kDesignationStorage.layout;
+          },
           [&](const BitsReferenceType& t) { return handle(t); },
-          [&](const ObjectWriteType& t) { return handle(t); },
+          [](const ObjectWriteType&) {
+            return support::kObjectWriteStorage.layout;
+          },
           [&](const SampledHistoryType& t) { return handle(t); },
           [&](const EvaluationAttemptsType& t) { return handle(t); },
           [&](const LoopBlocksType& t) { return handle(t); }});
+}
+
+// Calls `discard` with each expression `data` evaluates and discards the value
+// of. A declaration's initializer is made in the variable it declares, a
+// return's answer where the caller or the completion takes it, and every other
+// expression a statement evaluates is read by it.
+void ForEachDiscarded(const StmtData& data, const auto& discard) {
+  std::visit(
+      Overloaded{
+          [](const EmptyStmt&) {}, [](const LocalDeclStmt&) {},
+          [&](const ExprStmt& s) { discard(s.expr); }, [](const BlockStmt&) {},
+          [](const TryStmt&) {}, [](const RaiseStmt&) {},
+          [](const FinallyStmt&) {}, [](const IfStmt&) {},
+          [](const SwitchStmt&) {},
+          [&](const ForStmt& s) {
+            for (const ForInit& init : s.init) {
+              std::visit(
+                  Overloaded{
+                      [](const ForInitDecl&) {},
+                      [&](const ForInitExpr& expr) { discard(expr.expr); }},
+                  init);
+            }
+            std::ranges::for_each(s.step, discard);
+          },
+          [](const WhileStmt&) {}, [](const DoWhileStmt&) {},
+          [](const BreakStmt&) {}, [](const ContinueStmt&) {},
+          [](const ReturnStmt&) {}},
+      data);
 }
 
 // `type`'s layout, worked out the first time it is asked of `unit` and kept on
@@ -284,6 +330,53 @@ auto LayoutOf(const CompilationUnit& unit, TypeId type) -> support::Layout {
 
 auto IsTooLargeForAFrame(const CompilationUnit& unit, TypeId type) -> bool {
   return TooLargeForAFrame(LayoutOf(unit, type));
+}
+
+auto FrameBytesOf(const CompilationUnit& unit, TypeId type) -> std::size_t {
+  const Type& held = unit.types.Get(type);
+  // A variable's cell keeps its value inline where the one rule every holder
+  // reads lays it there, which is what holding the cell apart spares the frame.
+  if (const auto* cell = held.As<ObservableType>()) {
+    return value::LiesInline(LayoutOf(unit, cell->value))
+               ? FrameBytesOf(unit, cell->value)
+               : 0;
+  }
+  if (!held.IsIntegral() && !held.IsRuntimeStoredValue()) {
+    return 0;
+  }
+  const std::size_t bytes = LayoutOf(unit, type).size;
+  return bytes > kAddress.size ? bytes : 0;
+}
+
+auto ValuesAFrameKeeps(const CompilationUnit& unit, const Block& block)
+    -> std::vector<ExprId> {
+  std::vector<bool> made(block.exprs.size(), false);
+  for (const Expr& expr : block.exprs) {
+    ForEachOperand(expr.data, [&](ExprId operand, OperandUse) {
+      switch (WhereOperandIsMade(expr.data, operand)) {
+        case OperandMadeIn::kWhereTaken:
+          made.at(operand.value) = true;
+          break;
+        case OperandMadeIn::kTheOperationsValue:
+        case OperandMadeIn::kTheOperationsAllocation:
+        case OperandMadeIn::kTheRuntime:
+          break;
+      }
+    });
+  }
+  for (const Stmt& stmt : block.stmts) {
+    ForEachDiscarded(stmt.data, [&](ExprId id) { made.at(id.value) = true; });
+  }
+  std::vector<ExprId> kept;
+  for (const ExprId id : block.exprs.Ids()) {
+    const TypeId type = block.exprs.Get(id).type;
+    if (made.at(id.value) && !ValueLiesInStorage(unit, block, id) &&
+        (IsTooLargeForAFrame(unit, type) ||
+         (!EvaluatesNothing(block, id) && FrameBytesOf(unit, type) > 0))) {
+      kept.push_back(id);
+    }
+  }
+  return kept;
 }
 
 auto TakesAValueTooLargeForAFrame(const CompilationUnit& unit, TypeId type)

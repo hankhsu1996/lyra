@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <functional>
 #include <map>
-#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -17,7 +16,6 @@
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/function_id.hpp"
-#include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/machine_signature.hpp"
 #include "lyra/support/value_operation.hpp"
@@ -110,19 +108,14 @@ class CodeGenValueTypes {
   auto EmitDeclared() -> void;
 
  private:
-  auto ComponentKey(lir::TypeId component) -> std::string;
   // The type constant `named` stands for, defined as `content` at `align`, as
   // the library's record of it is laid out: it takes the name and every use of
   // `named`, which a body emitted while filling it may hold, and `named` goes.
   auto Defined(
       const std::string& key, llvm::GlobalVariable* named,
       llvm::Constant* content, std::size_t align) -> llvm::GlobalVariable*;
-  // The declaration of the struct or the union `type` is, or nothing for any
-  // other type.
-  [[nodiscard]] auto DeclarationOf(lir::TypeId type) const
-      -> std::optional<lir::TypeDeclarationRef>;
-  // A name the type's components or members settle, which tells one type's
-  // code from another's when reading the module.
+  // The name a type has in every unit, which tells one type's code and
+  // constants from another's.
   auto KeyOf(lir::TypeId type) -> const std::string&;
   auto Emit(lir::TypeId type, LifecycleStep step, llvm::Function* fn) -> void;
   // A function of this unit answering one operation of the type, and the

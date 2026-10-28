@@ -296,104 +296,8 @@ auto CodeGenValueTypes::KeyOf(lir::TypeId type) -> const std::string& {
   if (const auto found = keys_.find(type); found != keys_.end()) {
     return found->second;
   }
-  // A record is its declaration, which names it from any module; an array is
-  // its count and element, and a tuple its components. The declaration is
-  // spelled as a symbol's parts are, each stating its own extent, so no two
-  // declarations share a key.
-  if (const std::optional<lir::TypeDeclarationRef> declared =
-          DeclarationOf(type)) {
-    return keys_
-        .emplace(
-            type, std::format(
-                      "record{{{}{}}}",
-                      lir::SymbolPart::Name(declared->unit_name).encoded,
-                      lir::SymbolPartOf(declared->path).encoded))
-        .first->second;
-  }
-
-  const lir::Type& stated = unit_->types.Get(type);
-  if (const auto* array = stated.As<lir::UnpackedArrayType>()) {
-    return keys_
-        .emplace(
-            type,
-            std::format(
-                "[{}x{}]", array->size, ComponentKey(array->element_type)))
-        .first->second;
-  }
-  const std::span<const lir::TypeId> parts =
-      types_->LayoutOfProduct(type).components;
-  std::string key = "{";
-  for (std::size_t i = 0; i < parts.size(); ++i) {
-    if (i != 0) {
-      key += ",";
-    }
-    key += ComponentKey(parts[i]);
-  }
-  key += "}";
-  return keys_.emplace(type, std::move(key)).first->second;
-}
-
-// What one component, member or element contributes to the key of the type
-// holding it: everything about its type that makes two types holding it two
-// types. An integral one's width, signedness and states are its type, and a
-// type laid out by its type has a key of its own; a container's type is its
-// domain and what it holds -- its element, an associative array's index, a
-// queue's bound -- and any other value is an object of the library's, which is
-// one type per domain.
-auto CodeGenValueTypes::ComponentKey(lir::TypeId component) -> std::string {
-  const lir::Type& stated = unit_->types.Get(component);
-  constexpr const char* kNoDomain =
-      "llvm codegen: a component is no value of a runtime domain";
-  const std::optional<lir::Holding> held = stated.HeldAs();
-  if (!held.has_value()) {
-    throw InternalError(kNoDomain);
-  }
-  return std::visit(
-      Overloaded{
-          [&](const lir::IntegralBits&) -> std::string {
-            const value::IntegralShape shape =
-                types_->RequiredIntegralShapeOf(component);
-            return std::format(
-                "{}{}{}", shape.width,
-                shape.signedness == value::Signedness::kSigned ? "s" : "u",
-                shape.IsFourState() ? "4" : "2");
-          },
-          [&](ValueDomain domain) -> std::string {
-            if (IsLaidOutByType(domain)) {
-              return KeyOf(component);
-            }
-            const std::string_view named = support::ValueDomainName(domain);
-            if (const auto* dynamic = stated.As<lir::DynamicArrayType>()) {
-              return std::format(
-                  "{}<{}>", named, ComponentKey(dynamic->element_type));
-            }
-            if (const auto* queue = stated.As<lir::QueueType>()) {
-              return std::format(
-                  "{}<{}:{}>", named, ComponentKey(queue->element_type),
-                  queue->max_bound
-                      .transform([](std::uint64_t bound) {
-                        return std::to_string(bound);
-                      })
-                      .value_or("unbounded"));
-            }
-            if (const auto* associative =
-                    stated.As<lir::AssociativeArrayType>()) {
-              return std::format(
-                  "{}<{},{}>", named, ComponentKey(associative->element_type),
-                  ComponentKey(associative->key_type));
-            }
-            return std::string(named);
-          },
-          [&](support::LibraryObject) -> std::string {
-            throw InternalError(kNoDomain);
-          },
-          [&](const lir::OwnedStorageAddress&) -> std::string {
-            throw InternalError(kNoDomain);
-          },
-          [&](const lir::ClosureStorage&) -> std::string {
-            throw InternalError(kNoDomain);
-          }},
-      *held);
+  return keys_.emplace(type, lir::SymbolPartOf(*unit_, type).encoded)
+      .first->second;
 }
 
 auto CodeGenValueTypes::Function(lir::TypeId type, LifecycleStep step)
@@ -1100,7 +1004,7 @@ auto CodeGenValueTypes::GetAddrOfLaidOutType(lir::TypeId type)
 auto CodeGenValueTypes::GetAddrOfIntegralType(lir::TypeId type)
     -> llvm::Constant* {
   const value::IntegralShape shape = types_->RequiredIntegralShapeOf(type);
-  const std::string key = ComponentKey(type);
+  const std::string& key = KeyOf(type);
   if (const auto found = integral_types_.find(key);
       found != integral_types_.end()) {
     return found->second;
@@ -1152,15 +1056,6 @@ auto CodeGenValueTypes::EmitDeclared() -> void {
     GetAddrOfLaidOutType(
         unit_->types.Intern(lir::Type{lir::RecordType{.declaration = id}}));
   }
-}
-
-auto CodeGenValueTypes::DeclarationOf(lir::TypeId type) const
-    -> std::optional<lir::TypeDeclarationRef> {
-  const lir::RecordId* record = lir::RecordOf(unit_->types.Get(type));
-  if (record == nullptr) {
-    return std::nullopt;
-  }
-  return lir::RecordDeclarationOf(*unit_, *record);
 }
 
 auto CodeGenValueTypes::Emit(

@@ -55,11 +55,12 @@ out the way clang carries it out.**
   acted on. Only the first is owned and ended by the caller.
 - **A frame holds values of bounded size.** A frame is taken from a stack whose size whoever started
   the program chose, and a design's author states widths with no way to say where a value lives. So
-  what one call takes from the stack is bounded by a constant whatever the design declares. A value
-  of a type too large for a frame is held through a box MIR states before either backend reads the
-  unit
+  no width a design declares reaches a frame. A value of a type too large for a frame, and a value
+  past what a frame keeps of a body's values together, is held through a box MIR states before
+  either backend reads the unit
   ([a-value-too-large-for-a-frame-is-held-through-a-box](a-value-too-large-for-a-frame-is-held-through-a-box.md)),
-  so a frame holds the box and never the value.
+  so a frame holds the box and never the value. A frame still follows how many things the source
+  writes, as every compiled program's does.
 - **When a frame's bytes for a value are in use is stated below MIR, apart from the value's end.**
   The two differ. A value handed to a slot or returned leaves behind the bytes it was made in while
   it goes on existing, and a slot's bytes hold one value after another. A slot's bytes come into use

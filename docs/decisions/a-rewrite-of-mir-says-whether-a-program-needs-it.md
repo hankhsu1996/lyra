@@ -33,13 +33,13 @@ later stage reads the form it leaves, so no build skips it -- as Swift's mandato
 commits a SIL stage, and an MLIR lowering is required where the next stage refuses what it leaves;
 one conversion may take several rewrites. A rewrite a correct program needs that brought the unit
 into no phase would leave a form no check names, which the requirement above refuses. Making the
-order an evaluation needs explicit, and then holding a value too large for a frame through a box,
-bring a unit into the legalized phase. Every other rewrite runs inside a phase and leaves the unit
-in it: skipping it leaves the same program at another cost, so a build may. Replacing a whole select
-with the whole, and calling a process that stops only at its loop head, are such rewrites. That a
-correct program does not depend on any optional rewrite is then a property a run can show, by
-skipping all of them. A required rewrite is no more than its place in the pipeline says; nothing
-states it a second time.
+order an evaluation needs explicit, and then deciding where each value lies -- a value too large for
+a frame, or one the frame has no room left for, held through a box -- bring a unit into the
+legalized phase. Every other rewrite runs inside a phase and leaves the unit in it: skipping it
+leaves the same program at another cost, so a build may. Replacing a whole select with the whole,
+and calling a process that stops only at its loop head, are such rewrites. That a correct program
+does not depend on any optional rewrite is then a property a run can show, by skipping all of them.
+A required rewrite is no more than its place in the pipeline says; nothing states it a second time.
 
 **D2. The rewrites are one ordered list, stated once.** The stage runs the list; a rewrite is a
 function from a unit to a unit, named as its function is. Every optional rewrite runs unless a build
@@ -51,12 +51,13 @@ for is what decides whether it runs.
 **D3. A unit's phase is named, the unit records it, and a check asks of a unit what its phase
 requires.** Each phase is named by the conversion that brings a unit there, as LLVM names a machine
 function's `Legalized` and `Selected` properties: built, as HIR-to-MIR states it; legalized, with
-the order an evaluation needs explicit and no frame holding a value too large for one, which is the
-form every backend reads. Only the pipeline moves a unit from one to the next, and every backend
-refuses a unit that is not legalized. The unit is checked once as it leaves the stage, and, where a
-build asks, as it arrives, after every optional rewrite and on reaching each phase, so a defect is
-reported against what made it; between the rewrites of one conversion a unit is in neither phase, as
-rustc validates at a phase change and Swift commits a SIL stage only once its pipeline is done.
+the order an evaluation needs explicit and no frame holding a value too large for one or more than a
+frame keeps together, which is the form every backend reads. Only the pipeline moves a unit from one
+to the next, and every backend refuses a unit that is not legalized. The unit is checked once as it
+leaves the stage, and, where a build asks, as it arrives, after every optional rewrite and on
+reaching each phase, so a defect is reported against what made it; between the rewrites of one
+conversion a unit is in neither phase, as rustc validates at a phase change and Swift commits a SIL
+stage only once its pipeline is done.
 
 **D4. Which code a unit holds is stated once, beside the unit.** Every code -- a constructor with
 the nodes it enters its base's constructor with, a class's and the unit's callables, a record's

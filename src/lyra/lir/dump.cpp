@@ -499,6 +499,7 @@ class LirDumper {
             [](const DynamicStorageTarget& d) -> std::string {
               return std::string{DynamicStorageOpName(d.op)};
             },
+            [](const BuildCellTarget&) -> std::string { return "build_cell"; },
             [](const ControlEffectTarget& c) -> std::string {
               return std::string{ControlEffectOpName(c.op)};
             },

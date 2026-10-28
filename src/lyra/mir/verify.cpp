@@ -49,6 +49,7 @@
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/integral_operation.hpp"
 #include "lyra/support/value_operation.hpp"
+#include "lyra/value/frame_bound.hpp"
 
 namespace lyra::mir {
 
@@ -1855,19 +1856,51 @@ void VerifyLargeValuesLieInStorage(
   }
 }
 
-// No body keeps a value too large for a frame in one: every such local is held
-// through a box.
+// The bytes the frame keeps for the values `block`, and the blocks nested in
+// it, make and read.
+auto MadeValueFrameBytes(const CompilationUnit& unit, const Block& block)
+    -> std::size_t {
+  std::size_t kept = 0;
+  for (const ExprId id : ValuesAFrameKeeps(unit, block)) {
+    kept += FrameBytesOf(unit, block.exprs.Get(id).type);
+  }
+  for (const Block& child : block.child_scopes) {
+    kept += MadeValueFrameBytes(unit, child);
+  }
+  return kept;
+}
+
+// No body keeps a value too large for a frame in one, nor values together
+// larger than a frame may keep of them -- the locals it declares and what its
+// expressions make and read: every such value is held through a box.
 void VerifyFramesHoldNoLargeValue(
     const CompilationUnit& unit, const CallableCode& code,
     const auto& describe) {
-  for (const LocalDecl& local : code.locals) {
-    if (IsTooLargeForAFrame(unit, local.type)) {
+  std::size_t kept = 0;
+  for (const LocalId id : code.locals.Ids()) {
+    const TypeId type = code.locals.Get(id).type;
+    if (IsTooLargeForAFrame(unit, type)) {
       throw InternalError(
           std::format(
               "mir verify: {} declares a local too large for a frame -- please "
               "report this as a bug",
               describe()));
     }
+    // A parameter lies where the signature the source wrote puts it, which no
+    // frame chooses.
+    if (!std::ranges::contains(code.params, id)) {
+      kept += FrameBytesOf(unit, type);
+    }
+  }
+  if (code.body.has_value()) {
+    kept += MadeValueFrameBytes(unit, *code.body);
+  }
+  if (kept > value::kMaxFrameBytes) {
+    throw InternalError(
+        std::format(
+            "mir verify: {} keeps {} bytes of values in its frame, more than "
+            "{} -- please report this as a bug",
+            describe(), kept, value::kMaxFrameBytes));
   }
   if (code.body.has_value()) {
     VerifyLargeValuesLieInStorage(

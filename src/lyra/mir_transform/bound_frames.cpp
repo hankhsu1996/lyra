@@ -1,6 +1,7 @@
-#include "lyra/mir_transform/box_large_values.hpp"
+#include "lyra/mir_transform/bound_frames.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <optional>
 #include <utility>
 #include <variant>
@@ -16,11 +17,12 @@
 #include "lyra/mir/frame_size.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/value_build.hpp"
 #include "lyra/mir_transform/block_rebuild.hpp"
+#include "lyra/mir_transform/evaluation_temporaries.hpp"
+#include "lyra/value/frame_bound.hpp"
 
 namespace lyra::mir_transform {
 
@@ -51,9 +53,8 @@ auto WithParamsBoxed(const mir::CompilationUnit& unit, mir::TypeId type)
   return unit.types.Intern(mir::Type{std::move(boxed)});
 }
 
-// The type a declared place -- a local, a capture -- holds a value of `type`
-// as: in a box where the value is too large for a frame, as itself with its
-// large parameters boxed otherwise.
+// The type a capture holds a value of `type` as: in a box where the value is
+// too large for a frame, as itself with its large parameters boxed otherwise.
 auto HeldAs(const mir::CompilationUnit& unit, mir::TypeId type) -> mir::TypeId {
   return mir::IsTooLargeForAFrame(unit, type) ? mir::BoxOf(unit.types, type)
                                               : WithParamsBoxed(unit, type);
@@ -78,22 +79,72 @@ auto BoxingChanges(const mir::CompilationUnit& unit, const mir::Block& block)
          });
 }
 
-// The rewrite of one body whose large values are held through a box: a local
-// is declared as the box its value is built in, a parameter arrives as one,
-// and every name of either reaches the value through the box. An argument of a
-// large type is handed to a body this program compiles in a box built from it
-// where it is handed, a capture likewise, and a large value a statement makes
-// and discards is made in a box the statement discards with it. It holds what
+// The values `block` and the blocks nested in it make and read that `apart`,
+// asked of each in turn, says the frame keeps apart, added to `plan`.
+void PlanValues(
+    const mir::CompilationUnit& unit, const mir::Block& block,
+    const auto& apart, FramePlan& plan) {
+  for (const mir::ExprId id : mir::ValuesAFrameKeeps(unit, block)) {
+    if (apart(block.exprs.Get(id).type)) {
+      plan.values_apart.emplace(&block, id);
+    }
+  }
+  for (const mir::Block& child : block.child_scopes) {
+    PlanValues(unit, child, apart, plan);
+  }
+}
+
+// Which of `code`'s values its frame keeps apart. A value is kept in the frame
+// while it fits one and the frame still has room for it beside the values kept
+// before it: the body's locals in the order it declares them, then what its
+// expressions make and read, block by block. A parameter is kept where the
+// signature the source wrote puts it, which no frame chooses, so only one too
+// large for a frame is held apart, and it takes none of the room.
+auto PlanFrame(const mir::CompilationUnit& unit, const mir::CallableCode& code)
+    -> FramePlan {
+  FramePlan plan{
+      .locals_apart = std::vector<bool>(code.locals.size(), false),
+      .values_apart = {}};
+  std::size_t kept = 0;
+  const auto apart = [&](mir::TypeId type) {
+    const std::size_t bytes = mir::FrameBytesOf(unit, type);
+    if (mir::IsTooLargeForAFrame(unit, type) ||
+        kept + bytes > value::kMaxFrameBytes) {
+      return true;
+    }
+    kept += bytes;
+    return false;
+  };
+  for (const mir::LocalId id : code.locals.Ids()) {
+    const mir::TypeId type = code.locals.Get(id).type;
+    plan.locals_apart.at(id.value) = std::ranges::contains(code.params, id)
+                                         ? mir::IsTooLargeForAFrame(unit, type)
+                                         : apart(type);
+  }
+  if (code.body.has_value()) {
+    PlanValues(unit, *code.body, apart, plan);
+  }
+  return plan;
+}
+
+// The rewrite of one body whose values its frame keeps apart are held through a
+// box: a local is declared as the box its value is built in, a parameter
+// arrives as one, and every name of either reaches the value through the box.
+// An argument of a large type is handed to a body this program compiles in a
+// box built from it where it is handed, and a capture likewise. It holds what
 // it learns of the body once, and has a step for each kind of node and
 // statement, each handed the block it builds.
 class BodyBoxing {
  public:
-  BodyBoxing(const mir::CompilationUnit& unit, const mir::CallableCode& code)
+  // `locals_apart` is which of `code`'s locals its frame keeps apart.
+  BodyBoxing(
+      const mir::CompilationUnit& unit, const mir::CallableCode& code,
+      const std::vector<bool>& locals_apart)
       : unit_(&unit), code_(&code), local_boxes_(code.locals.size()) {
     for (const mir::LocalId id : code.locals.Ids()) {
-      const mir::TypeId type = code.locals.Get(id).type;
-      if (mir::IsTooLargeForAFrame(unit, type)) {
-        local_boxes_.at(id.value) = mir::BoxOf(unit.types, type);
+      if (locals_apart.at(id.value)) {
+        local_boxes_.at(id.value) =
+            mir::BoxOf(unit.types, code.locals.Get(id).type);
       }
     }
   }
@@ -113,9 +164,10 @@ class BodyBoxing {
   [[nodiscard]] auto ChangesAnything() const -> bool {
     return BoxingChanges(*unit_, code_->result_type) ||
            std::ranges::any_of(
-               code_->locals,
-               [&](const mir::LocalDecl& local) {
-                 return BoxingChanges(*unit_, local.type);
+               code_->locals.Ids(),
+               [&](mir::LocalId id) {
+                 return local_boxes_.at(id.value).has_value() ||
+                        BoxingChanges(*unit_, code_->locals.Get(id).type);
                }) ||
            (code_->body.has_value() && BoxingChanges(*unit_, *code_->body));
   }
@@ -125,8 +177,13 @@ class BodyBoxing {
       -> base::Arena<mir::LocalDecl, mir::LocalId> {
     base::Arena<mir::LocalDecl, mir::LocalId> locals;
     for (const mir::LocalId id : code_->locals.Ids()) {
+      const std::optional<mir::TypeId>& box = local_boxes_.at(id.value);
       locals.Add(
-          mir::LocalDecl{.type = HeldAs(*unit_, code_->locals.Get(id).type)});
+          mir::LocalDecl{
+              .type =
+                  box.has_value()
+                      ? *box
+                      : WithParamsBoxed(*unit_, code_->locals.Get(id).type)});
     }
     return locals;
   }
@@ -219,22 +276,9 @@ class BodyBoxing {
     return std::nullopt;
   }
 
-  // A boxed local is declared as the box its value is built in, and a large
-  // value a statement makes and discards is made in a box the statement
-  // discards with it.
+  // A boxed local is declared as the box its value is built in.
   auto Statement(BlockRebuild& rebuild, const mir::Stmt& stmt)
       -> std::optional<mir::StmtData> {
-    if (const auto* evaluated = std::get_if<mir::ExprStmt>(&stmt.data)) {
-      const mir::ExprId old = evaluated->expr;
-      const mir::TypeId type = rebuild.From().exprs.Get(old).type;
-      if (!mir::IsTooLargeForAFrame(*unit_, type) ||
-          mir::ValueLiesInStorage(*unit_, rebuild.From(), old)) {
-        return std::nullopt;
-      }
-      return mir::ExprStmt{
-          .expr = BoxBuiltFrom(
-              rebuild, mir::BoxOf(unit_->types, type), rebuild.Expr(old))};
-    }
     const auto* decl = std::get_if<mir::LocalDeclStmt>(&stmt.data);
     if (decl == nullptr || !local_boxes_.at(decl->target.value).has_value()) {
       return std::nullopt;
@@ -248,7 +292,8 @@ class BodyBoxing {
 
   const mir::CompilationUnit* unit_;
   const mir::CallableCode* code_;
-  // The box each local of a large type is held through, none for every other.
+  // The box each local the frame keeps apart is held through, none for every
+  // other.
   std::vector<std::optional<mir::TypeId>> local_boxes_;
 };
 
@@ -271,7 +316,7 @@ auto BoxedBuild(const mir::CompilationUnit& unit, const mir::ValueBuild& build)
 
 }  // namespace
 
-auto BoxLargeValues(mir::CompilationUnit unit) -> mir::CompilationUnit {
+auto BoundFrames(mir::CompilationUnit unit) -> mir::CompilationUnit {
   // A capture of a large value is held through its box, as a local is. A
   // closure is as large as its captures as it holds them, so the fields are
   // replaced first, before any body asks how large a closure is.
@@ -313,8 +358,12 @@ auto BoxLargeValues(mir::CompilationUnit unit) -> mir::CompilationUnit {
         if (mir::IsEnteredForeign(unit, at)) {
           return std::nullopt;
         }
-        BodyBoxing boxing(unit, code);
-        if (!boxing.ChangesAnything()) {
+        FramePlan plan = PlanFrame(unit, code);
+        const std::optional<mir::CallableCode> given =
+            GiveTemporariesToValuesKeptApart(unit, code, plan);
+        BodyBoxing boxing(
+            unit, given.has_value() ? *given : code, plan.locals_apart);
+        if (!given.has_value() && !boxing.ChangesAnything()) {
           return std::nullopt;
         }
         return boxing.Rewritten();

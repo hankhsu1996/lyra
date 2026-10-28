@@ -5,16 +5,17 @@
 #include <type_traits>
 #include <utility>
 
+#include "lyra/support/layout.hpp"
 #include "lyra/value/frame_bound.hpp"
 
 namespace lyra::value {
 
 // One value of `T`, kept inline in whatever holds the box where a value of `T`
-// fits a frame and in storage the box owns past that, so a holder that lies in
-// a frame never takes a value too large for one, and one that holds a small
-// value pays no allocation for it. It holds its value from the moment it is
-// built, is moved and never copied, and what was moved from is good only for
-// being ended.
+// lies inline by the rule every holder reads and in storage the box owns past
+// that, so a holder that lies in a frame never takes a value too large for
+// one, and one that holds a small value pays no allocation for it. It holds its
+// value from the moment it is built, is moved and never copied, and what was
+// moved from is good only for being ended.
 template <typename T>
 class SmallBox {
  public:
@@ -32,7 +33,7 @@ class SmallBox {
   // A box holding what `make` answers, made where the box keeps it.
   template <typename Make>
   [[nodiscard]] static auto BuiltBy(Make make) -> SmallBox {
-    return SmallBox(Made{}, make);
+    return SmallBox(MadeBy<Make>{.make = &make});
   }
 
   SmallBox(const SmallBox&) = delete;
@@ -63,16 +64,21 @@ class SmallBox {
   }
 
  private:
-  static constexpr bool kInline = sizeof(T) <= kMaxInlineBytes;
+  static constexpr bool kInline =
+      LiesInline(support::Layout{.size = sizeof(T), .align = alignof(T)});
 
-  struct Made {};
+  // What builds the value a box made by its factory holds.
   template <typename Make>
-  SmallBox(Made, Make& make)
+  struct MadeBy {
+    Make* make;
+  };
+  template <typename Make>
+  explicit SmallBox(MadeBy<Make> made)
       : held_([&] {
           if constexpr (kInline) {
-            return make();
+            return (*made.make)();
           } else {
-            return std::unique_ptr<T>(new T(make()));
+            return std::unique_ptr<T>(new T((*made.make)()));
           }
         }()) {
   }
