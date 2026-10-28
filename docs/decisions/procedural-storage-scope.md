@@ -2,16 +2,17 @@
 
 ## Date
 
-2026-10-23 (revised; earlier 2026-08-13, original 2026-06-30)
+2026-10-28 (revised; earlier 2026-10-23, 2026-08-13, original 2026-06-30)
 
 ## Status
 
 Accepted. **Every by-name mechanism this entry describes is removed by
 [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**:
-D5's signal registration and by-name lookup, D7's runtime walk for a cross-unit descent, and D8's
-indexed by-name lookup for an array element. A static of a named block is published with the named
-blocks it sits in, and an array element is reached through the member or generate entry that holds
-it, selected. The rest stands.
+signal registration and by-name lookup, D7's runtime walk for a cross-unit descent, and indexed
+by-name lookup for an array element. A static of a named block is published with the named blocks it
+sits in, and an array element is reached through the member or generate entry that holds it,
+selected. **D2 to D5 and D8 were revised on 2026-10-28: a procedural scope has no run-time object**
+(D3 says why). The rest stands.
 
 ## Why this decision matters
 
@@ -19,12 +20,12 @@ A named procedural block (LRM 9.3.5 `begin : name ... end`) is a hierarchical-re
 23.9): `Top.outer.x` reaches a static inside `outer` from another scope. The block is therefore not
 statement-tree decoration -- it is part of the compilation unit's hierarchical structure. Once that
 is true, every existing rule for structural declaration applies to it: it has a stable identity, its
-layout and storage are settled before any executable lowering, and a peer body reaches it through a
-route resolved before any body lowers, not by re-walking source.
+storage and what it publishes are settled before any executable lowering, and a peer body reaches it
+through a route resolved before any body lowers, not by re-walking source.
 
-This decision pins the named procedural block as a first-class structural concept, separates the
-HIR-side lexical view from the MIR-side runtime realization, and forbids body lowering from creating
-any of the structural state the runtime tree exposes.
+This decision pins the named procedural block as a first-class structural concept of the text,
+separates the HIR-side lexical view from what the run keeps, and forbids body lowering from creating
+any structural state.
 
 ## The invariant
 
@@ -42,10 +43,9 @@ enclosing structural scope uses for the same two relations, where the declaratio
 scopes are arenas the scope owns outright. A scope is reached by walking the scope tree, never by
 walking the statement tree.
 
-Every procedural scope materializes as a runtime hierarchy child of the scope it nests in. Its
-identity, the storage its declarations take on the enclosing class, and its parent-attachment are
-all settled before any executable lowering runs; body lowering reads those bindings and never
-creates new structural shape.
+No procedural scope exists at run time. Its identity and the storage its declarations take on the
+enclosing class are settled before any executable lowering runs; body lowering reads those bindings
+and never creates new structural shape.
 
 This is the strict reading of `declarations-before-bodies.md`'s D5: body lowering grows no
 structural shape, not even shape that happens to be peer-unreferenced. Structural shape includes any
@@ -111,69 +111,58 @@ which is also the only pass that knows the lexical nesting: the frontend records
 of its own (the bindings of a pattern arm, the control variables of a loop) and lists those symbols
 as siblings of the process rather than inside it, so its member nesting is not the source's.
 
-A scope's runtime addressability -- whether an SV path can name it -- is exactly whether the source
-gave it an identifier, which is what LRM 23.9's procedural entries come to: a task or function root,
-which is always named, and a begin/end the source labelled. Nothing has to be read off the kind or
-out of a spelling, and named forks need no new kind to qualify.
+A scope's addressability -- whether an SV path can name it -- is exactly whether the source gave it
+an identifier, which is what LRM 23.9's procedural entries come to: a task or function root, which
+is always named, and a begin/end the source labelled. Nothing has to be read off the kind or out of
+a spelling, and named forks need no new kind to qualify.
 
-### D2. Three distinct layers: HIR lexical scope, MIR name node, MIR storage
+### D2. Two layers: HIR lexical scope, MIR storage on the enclosing class
 
 ```
-HIR lexical scope tree = every declaration-bearing scope (root + unnamed + named)
-MIR name node          = one runtime object per scope, carrying the identity a path matches
+HIR lexical scope tree = every scope the source wrote (root + unnamed + named)
 MIR storage            = a field of the class enclosing the body
 ```
 
 The lexical tree preserves SV semantics (visibility, shadowing, and `disable`, which names a scope
-by static declaration identity). The object graph has the same shape as that tree. Storage does not:
-a static-lifetime local of a body in this hierarchy is one cell per instance (LRM 6.21, and
-`variable-lifetime-storage.md` for what decides that count elsewhere), which says how many cells
-exist and how long they live, and says nothing about which object holds one. Reachability is the
-separate question, and the LRM answers it separately -- LRM 6.21 lets a hierarchical reference name
-any static variable except one declared inside an unnamed block, so a path descends through the
-named blocks to reach the cell.
+by static declaration identity). Storage is a separate question: a static-lifetime local of a body
+in this hierarchy is one cell per instance (LRM 6.21, and `variable-lifetime-storage.md` for what
+decides that count elsewhere), which says how many cells exist and how long they live, and says
+nothing about which object holds one. Reachability is a third question, and the LRM answers it
+separately -- LRM 6.21 lets a hierarchical reference name any static variable except one declared
+inside an unnamed block, so a path descends through the named blocks to reach the cell. That path is
+text: the enclosing scope publishes the static with the named blocks it sits in, and a route
+resolves it at compile time to a member of the published class.
 
-Serving both with one mechanism -- putting the cell inside the block's object -- makes the first pay
-for the second. Every read from the body then walks one object per enclosing block, and, because the
-walk has to be known before any body lowers, a pre-pass has to compute and record each scope's whole
-descent. Keeping them separate costs nothing: the name node answers reachability, and the cell sits
-where every other per-instance cell already sits, so a body reads it directly off `self`.
+### D3. No procedural scope is an object
 
-### D3. Every scope materializes a name node
+A procedure is no branch of the hierarchy (LRM 23.6), and of a block every run-time obligation is a
+cell of the instance: its statics (D4), the target a `disable` of it ends (LRM 9.6.2), the events a
+covergroup sampled at its beginning or end triggers (LRM 19.3). What reports it is text -- `%m`
+(D9), a dump's `begin` scope, which the enclosing scope's own description states -- and what reaches
+it from elsewhere is the enclosing scope's published class. So no scope of a body becomes a class, a
+field or an object, named or not, declaring anything or not, and no predicate decides which would:
+one shape still lowers every scope, and it is the absence of a realization.
 
-A procedural scope becomes a runtime object whatever the source called it and whether or not
-anything was declared there. So one shape lowers every scope, and no property of a subtree decides
-what an enclosing scope realizes.
+An inspection interface would need the scope tree as data -- an instance's identity and the scope's
+place in its unit -- and the lexical tree is where that is read; nothing of it asks for an object
+the run constructs and walks.
 
-Whether a hierarchical path can name a scope is a separate question, and it decides only what the
-scope exposes. LRM 23.9 lists the constructs that define a scope; of the procedural ones a task, a
-function, and a named begin/end are named by the source, and LRM 23.9's own example reaches into
-them (`t.b.r`). LRM 23.6 shows the contents of an unnamed begin/end unreachable even though the
-declaration still creates a scope. A scope the source did not name therefore carries no segment: it
-holds the nodes below it together and stays off every hierarchical path, which is the LRM's answer
-without a second realization to reach it.
+A DPI scope is a module, program, interface or generate scope (LRM Annex H.9), so a block is no DPI
+scope and `svGetScopeFromName` finds none.
 
-A predicate here was tried and is what this decision replaces. Gating the object on "named AND
-something reachable under it" gave one construct two realizations, so a name had to be rebuilt from
-an object path plus a compile-time remainder. It also hid a defect: a scope no consumer ever reached
-was a scope whose absence nobody noticed.
-
-A declaration scope that is not itself part of the design hierarchy gives no scope a node at all. A
-class is one: its object is reached by member select, not by scope name (LRM 23.7), so no
-hierarchical path names a block inside a method. A construct written there still reports a name of
-its own (D9), which the text fixes, so no object is needed to answer it.
+This replaced, on 2026-10-28, "every scope materializes a name node". Its two reasons were that a
+predicate gave one construct two realizations, with a name rebuilt from an object path plus a
+compile-time remainder, and that a scope no consumer reached went unnoticed. The first needed a
+realization to exist at all: with by-name lookup gone and `%m` a constant below the instance, none
+of a scope's readers asked its node for anything. The second turned on its author: the nodes were
+the unreached thing -- built in every constructor, walked through four empty phases, a handle no
+body loaded -- and on a 41,190-line module of about 3,800 procedures they were 71,514 entries.
 
 A scope's cancellation source -- what a `disable` of it invalidates (LRM 9.6.2) -- is one cell per
-instance, so it is a field of the enclosing class rather than something the node holds. Which scopes
-own one is LRM 9.6.2's own target set: the blocks and tasks a name reaches, so no pass has to first
-find out which scopes some `disable` names, and a scope the source did not name owns none because
-nothing can name it. A declaration scope outside the design hierarchy owns none at all, for the same
-reason it gives no scope a node.
-
-Where a node does exist it is handed that cell's address at construction, which is how a `disable`
-written in another unit reaches the source: the route walks to the node and asks it, the way a
-reference walks to a node and asks it for a static's cell. This one takes no name, because a scope
-carries exactly one and reaching the scope is the whole of naming what a `disable` there ends.
+instance, so it is a field of the enclosing class. Which scopes own one is LRM 9.6.2's own target
+set: the blocks and tasks a name reaches, so no pass has to first find out which scopes some
+`disable` names, and a scope the source did not name owns none because nothing can name it. A
+`disable` written in another unit reaches the cell as a member the enclosing scope publishes.
 
 ### D4. The lexical owner is the naming owner
 
@@ -182,41 +171,40 @@ own variables, an instance member, or the slot a stored route fills. A body read
 one step, and nothing has to know which blocks stand between the declaration and the body.
 
 What the declaring scope owns is the name. A static declared in a scope the source named is
-registered under its source spelling on that scope's name node, so a descent reaches the node by
-name and takes the cell's address from it; one declared in a scope the source did not name is
-registered nowhere, so `Top.outer.hidden` does not resolve for a `hidden` inside an unnamed block
-under `outer` -- which is what SV's hierarchical-reference rules already say.
+published under its source spelling with the named blocks and subroutines it sits in, so a path
+through them reaches the cell; one declared in a scope the source did not name is published nowhere,
+so `Top.outer.hidden` does not resolve for a `hidden` inside an unnamed block under `outer` -- which
+is what SV's hierarchical-reference rules already say (LRM 6.21).
 
 Which scope declares it is the source's own answer and never the shape of the statements below it. A
-task's `int counted;` is declared by the task however its statements are grouped, so the task's node
-registers it and `Top.c.tick.counted` resolves; a `begin ... end` the source wrote inside that task
-is a scope of its own, and unnamed it registers nothing. Reconstructing the declaring scope from
-statement nesting instead puts every declaration written without a `begin ... end` behind a block
-nobody wrote, where the rule above then correctly refuses to register it.
+task's `int counted;` is declared by the task however its statements are grouped, so it is published
+under the task and `Top.c.tick.counted` resolves; a `begin ... end` the source wrote inside that
+task is a scope of its own, and unnamed it publishes nothing. Reconstructing the declaring scope
+from statement nesting instead puts every declaration written without a `begin ... end` behind a
+block nobody wrote, where the rule above then correctly refuses to publish it.
 
 Reachability also decides the storage's shape. Storage in the design hierarchy is an observable
 cell, because a hierarchical reference can read it and an event control can wait on it, so a write
 has to reach subscribers. Storage on a class is a plain cell -- nothing outside the body can name
 it.
 
-### D5. A procedural scope is an ordinary scope class
+### D5. A procedural scope is no class
 
-A procedural scope's class is the same kind of thing as a generate scope's: same runtime base, same
-attach-to-parent, same signal registration, same by-name lookup, same definition record. Nothing
-distinguishes them at the type level, because nothing downstream acts on the distinction -- the
-source-language origin is a fact of the HIR the class was lowered from, not of the class.
+A generate scope is a class and an object, because how many blocks a loop counts out and which arm a
+conditional takes are decided at construction (LRM 27.4, 27.5), so other units step into an object
+the run made. A procedural scope's shape is fixed by the text, so nothing it has is decided at
+construction, and the class enclosing the body states all of it.
 
 ### D6. The shape phase reads the scope tree; nothing is inherited down it
 
 The HIR-to-MIR shape phase reads the lexical scope tree, never the statement tree. What it gives a
-scope -- a name node, a cancellation source if the source named it -- depends on that scope alone,
-so it is one flat pass over the scope registry with nothing carried from a parent to a child. What
-each static gets depends only on its declaring scope, so it is one descent per body, taken because a
-declaration states its scope by sitting in it and holds no link back up.
+scope -- its reported name, a cancellation source if the source named it -- depends on that scope
+alone, so it is one flat pass over the scope registry with nothing carried from a parent to a child.
+What each static gets depends only on its declaring scope, so it is one descent per body, taken
+because a declaration states its scope by sitting in it and holds no link back up.
 
 There is no preliminary pass computing a property of a scope from the scopes around it. Where the
-nesting matters is where the objects are built, and there the constructor descends the same lexical
-tree once, reading each scope's node as it goes.
+nesting matters -- the name a scope reports -- it is read by descending the same lexical tree once.
 
 Both are shared by every declaration scope that owns bodies and re-derive nothing. There is one
 answer to "what does this scope own", not one per owner kind.
@@ -240,32 +228,20 @@ body that lowers first, and giving such a static a second, reference-only identi
 name systems on one declaration.
 
 Its executable realization is a typed enclosing climb to the storage's structural scope and then the
-field -- typed member accesses, no by-name lookup anywhere. The runtime by-name walk serves only a
-cross-compilation-unit descent, where the block labels are the only identity that crosses the
-boundary.
+field -- typed member accesses, no by-name lookup anywhere. A descent from another unit takes the
+same step through what the structural scope publishes, where the block labels are the names that
+cross the boundary.
 
-### D8. Ownership is the runtime tree; the borrowed handle is naming only
+### D8. A borrowed handle names an object the run built
 
-A name node's lifetime is owned by the runtime object tree: it is attached to the node of the scope
-around it, built through the one owned-child construction form, so the objects nest exactly as the
-source nests and a by-name descent walks that nesting. The member the enclosing class keeps on that
-node is a **borrowed handle** -- a typed non-owning pointer, filled at construction from the value
-the runtime's owned-child construction returns. Ownership (the runtime tree) and naming (the
-borrowed handle) are separate concerns: the handle never owns the child and never carries the
-child's lifetime.
+An instance and a scalar generate-block child each keep a borrowed handle -- a typed non-owning
+pointer, filled at construction from the value the runtime's owned-child construction returns --
+while the runtime tree owns the child. Ownership (the runtime tree) and naming (the borrowed handle)
+are separate concerns: the handle never owns the child and never carries the child's lifetime. An
+array element (a generate-for iteration, an instance array) keeps no handle and is reached through
+the entry that holds it, selected. A procedural scope keeps none, being no object (D3).
 
-Where a node hangs and who keeps a handle on it are separate too: the enclosing class keeps one
-handle per procedural scope however deeply the scope nests. That the handles are flat while the
-objects nest is the point -- reproducing the nesting in the handles would state twice what the
-runtime tree already holds.
-
-The same split holds for an instance and a scalar generate-block child; each keeps a borrowed handle
-for its scalar layout-visible head while the runtime tree owns the child. An array element (a
-generate-for iteration, an instance array) keeps no handle and is reached by an indexed by-name
-child lookup downcast to the child's typed class.
-
-The handle is typed to the child's own class in every one of those cases, including a procedural
-scope's, which no body reads (D9). That uniformity is what makes a class's layout a complete
+The handle is typed to the child's own class, which is what makes a class's layout a complete
 statement of which objects the runtime builds under it, and a consumer that needs that set -- an
 execution backend deciding which classes to give a runtime definition -- reads it from the layout
 rather than from a list kept beside it.
@@ -293,9 +269,7 @@ for an instantiation only where that declaration is a template's.
 
 Either way `%m` lowers to one value, which is what lets a format width apply to the whole name and
 what lets a format string parsed at run time answer `%m` from the same operand a parsed-at-compile-
-time one does. Every body takes the same realization, so no predicate chooses between two of them,
-which is the defect D3 records of the design it replaced; the name nodes stay for what reaches a
-scope by its path, and nothing asks one for a name.
+time one does. Every body takes the same realization, so no predicate chooses between two of them.
 
 ## Forbidden shapes
 
@@ -315,21 +289,23 @@ scope by its path, and nothing asks one for a name.
   property of the construct; it is asked once and every pass reads that answer.
 - A shape pass that walks the statement tree to derive scope ownership. The lexical scope tree is
   that pass's input; the statement tree carries execution semantics, not declaration semantics.
-- A predicate deciding whether a scope becomes a runtime object. Every scope does; naming decides
-  only what it exposes.
+- A run-time object, class or handle for a procedural scope, for some scopes or for all. What a
+  scope keeps is a cell of the instance and what reports it is text (D3); an object would be built
+  and walked for no reader.
 - A second identity for a static-lifetime local, minted so that a reference can name what the
   declaration arena assigns too late. One declaration has one id; if a reference cannot name it, the
   declaration is being minted at the wrong stage.
-- A block label used as the identity of a scope or of the storage inside it. The label is the
-  runtime segment; identity is the id the declaration pass mints.
-- A static's cell inside a procedural scope's own object. Reachability is what the scope owns, and
-  it is answered by registering a name on the scope's node; moving the cell there as well makes
-  every read from the body pay for a question it did not ask.
+- A block label used as the identity of a scope or of the storage inside it. The label is a segment
+  of the path text; identity is the id the declaration pass mints.
+- A static's cell anywhere but the class enclosing the body. Reachability is answered by what that
+  class publishes; a cell elsewhere makes every read from the body pay for a question it did not
+  ask.
 - A pre-pass that computes, for each scope, a path assembled from the scopes above it. Whatever such
   a path is for is something a reader has to be handed rather than reach directly, and the pass
   exists only to hand it over.
 - An unnamed scope's static exposed under its source name. Holding a cell does not imply
-  hierarchical addressability; the source-name registration follows the declaring scope's kind.
+  hierarchical addressability; the declaring scope publishes a static only where the source named
+  it.
 
 ## Consequences
 
@@ -339,12 +315,8 @@ scope by its path, and nothing asks one for a name.
 - Every cell a body of this hierarchy owns beyond an activation -- a static, a cancellation source
   -- is a field of the class enclosing the body, so it shares one declaration form, one access
   shape, and one render path with the scope's own variables.
-- The owned-child binding registry carries an enlarged set of head kinds; the lookup path is
-  unchanged.
-- Every procedural scope contributes a class and one object per instance, built once at elaboration.
-  Once the cells moved out, that object holds no storage of its own -- only the names it answers
-  with and the address of what a `disable` naming it ends -- which is the price of there being a
-  single realization rather than two.
+- A procedural scope contributes nothing at run time beyond the cells of its declarations and its
+  `disable` target, so a procedure costs its own body and no class, however many blocks it writes.
 
 ## Rejected alternatives
 
@@ -381,15 +353,14 @@ scope by its path, and nothing asks one for a name.
   arrangement actually bought was reachability, and it charged every read for it: a body reached its
   own static through one object per enclosing block, and the chain of them had to be computed and
   recorded by a pre-pass before any body lowered -- the same record-and-consult the reading was
-  meant to avoid, reintroduced for the access path instead of the placement. Registering the name on
-  the node and leaving the cell on the instance answers reachability without charging anyone else.
+  meant to avoid, reintroduced for the access path instead of the placement. Publishing the name
+  with the enclosing scope and leaving the cell on the instance answers reachability without
+  charging anyone else.
 
 ## Cross-references
 
-- `declarations-before-bodies.md` -- the strict-D5 invariant a procedural-scope class respects.
+- `declarations-before-bodies.md` -- the strict-D5 invariant a procedural scope's storage respects.
 - `variable-lifetime-storage.md` -- the storage-owner rule for static-lifetime body locals, read
   through the addressable-scope concept this decision provides.
 - `hierarchical-reference-routing.md` -- one routing path per access shape; a route into a
-  procedural static is a typed enclosing climb to the structural scope that holds it, and the
-  runtime by-name walk serves cross-unit access.
-- `object-model-storage.md` -- the unit's class registry that holds the procedural-scope classes.
+  procedural static is a typed enclosing climb to the structural scope that holds it.

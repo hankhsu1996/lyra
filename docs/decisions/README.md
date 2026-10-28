@@ -764,13 +764,10 @@ the detail lives in the entry itself.
   Binding the actual's sequence whole, taking the pairing from the front end for every actual form,
   a shared helper computing it once, and carrying the ranges beside the port's type are rejected.
 - [procedural-storage-scope](procedural-storage-scope.md) -- HIR carries a lexical procedural scope
-  tree (downward ownership, no backrefs) alongside its statement tree; a HIR-to-MIR two-pass
-  scope-tree fold decides which named begin/ends materialize as runtime hierarchy children and where
-  each static's storage physically lives; lexical owner and physical owner are distinct so an
-  unnamed scope nested in a named one places its statics in the named scope's class without exposing
-  them to cross-unit by-name lookup. **Its by-name registration and lookup are removed by
-  [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**,
-  where a static of a named block is published with the blocks it sits in.
+  tree (downward ownership, no backrefs) alongside its statement tree; no procedural scope is a
+  run-time object, named or not, and what it keeps past an activation -- its statics, its `disable`
+  target, its covergroup events -- is a field of the class enclosing the body, while a static of a
+  named block is published with the blocks it sits in.
 - [elaboration-lifecycle-phases](elaboration-lifecycle-phases.md) -- a generated constructor only
   allocates; elaboration is a staged build / resolve / initialize / activate protocol.
 - [processes-start-in-turn-at-time-zero](processes-start-in-turn-at-time-zero.md) -- what starts at

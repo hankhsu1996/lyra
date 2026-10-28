@@ -132,7 +132,8 @@ a port of unknown direction (LRM 21.7.4.3.1).
 
 Whether an instance is recorded as a module or a block (LRM 21.7.2.1 `scope_type`) is known when its
 class is declared, so it is held with the class's other constant properties, beside its timescale. A
-unit's own instance is a module; a generate block and a named procedural block are blocks. A level
+unit's own instance is a module and a generate block is a block. A named procedural block has no
+class and no object, so the scope holding it describes it as a `begin` scope of its own. A level
 `$dumpvars` counts is an instance. A block belongs to the instance holding it, so
 `$dumpvars(1, top)` records the variables of `top`'s generate blocks as well as its own.
 

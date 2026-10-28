@@ -153,7 +153,7 @@ auto PopulateNamespaceOwnStorage(
     UnitLowerer& unit_lowerer, const hir::StructuralScope& scope,
     const base::Translation<hir::StructuralSubroutineId, StaticVarBindings>&
         subroutine_statics,
-    const DeclaredScopes& scope_nodes, const WalkFrame& install_frame,
+    const DeclaredScopes& scopes, const WalkFrame& install_frame,
     const WalkFrame& value_frame) -> diag::Result<void> {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& install_block = *install_frame.current_block;
@@ -239,7 +239,7 @@ auto PopulateNamespaceOwnStorage(
     const StaticVarBindings& statics = subroutine_statics.Get(id);
     ProcessLowerer body_lowerer(
         unit_lowerer, nullptr, scope.time_resolution, src.body, std::nullopt,
-        WalkFrame{}.WithScopeName(unit_lowerer.Hir().fixed_name), scope_nodes,
+        WalkFrame{}.WithScopeName(unit_lowerer.Hir().fixed_name), scopes,
         statics);
     for (const StaticVarBinding& binding : statics) {
       auto integ = IntegrateStaticInitializer(
@@ -837,10 +837,8 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   // structural-scope body machinery. A body's own static-lifetime variables
   // take the same unit-level storage its variables do, being one program-global
   // cell each. The frame has no owner class, so the produced body carries no
-  // `self`
-  // -- and with no object to hang one under, none of its scopes owns a name
-  // node. Every body the namespace owns starts from one frame, which says what
-  // a name reported in it begins with.
+  // `self`. Every body the namespace owns starts from one frame, which says
+  // what a name reported in it begins with.
   const hir::StructuralScope& scope = hir_->root_scope;
   const WalkFrame namespace_frame = WalkFrame{}.WithScopeName(hir_->fixed_name);
 
@@ -857,7 +855,7 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
     lowerer.DeclareShape(nullptr, std::nullopt);
     lowerer.AddTypeBlockEvents(block_events);
   }
-  const DeclaredScopes package_scope_nodes = ScopesOwningDisableTargets(
+  const DeclaredScopes package_scopes = ScopesOwningDisableTargets(
       scope.procedural_scopes, hir_->fixed_name,
       UnitStorage{.variables = &unit_.static_variables},
       unit_.types.Intern(
@@ -912,7 +910,7 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
                                     .WithBindings(&value_bindings);
 
   if (auto own = PopulateNamespaceOwnStorage(
-          *this, scope, subroutine_statics, package_scope_nodes, install_frame,
+          *this, scope, subroutine_statics, package_scopes, install_frame,
           value_frame);
       !own) {
     return std::unexpected(std::move(own.error()));
@@ -958,7 +956,7 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
     const hir::SubroutineDecl& src = scope.structural_subroutines.Get(id);
     ProcessLowerer subroutine_lowerer(
         *this, nullptr, scope.time_resolution, src.body, src.root_stmt,
-        namespace_frame, package_scope_nodes, subroutine_statics.Get(id));
+        namespace_frame, package_scopes, subroutine_statics.Get(id));
     auto code_or = subroutine_lowerer.Run(src, std::nullopt);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
     unit_.callables.Define(

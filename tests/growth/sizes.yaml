@@ -35,8 +35,10 @@ loop_of_one_body: 512
 loop_reaching_its_neighbour: 256
 loop_selecting_by_index: 256
 loop_sizing_by_index: 64
+named_blocks: 256
 packed_value_width: 4194304
 port_connections: 256
+procedures: 256
 record_members: 160
 record_members_owning_storage: 160
 scan_outputs: 512

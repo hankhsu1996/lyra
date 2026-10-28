@@ -54,10 +54,11 @@ C++ local at its source position.** A process and a method use the identical mec
 - The per-instance member is a flat member on the owner class's member arena -- not a sub-struct
   grouping per callable. SystemVerilog's per-callable scoping is already settled by HIR name-binding
   before MIR sees the program; the cross-scope dimension the LRM exposes is the addressable scope (a
-  named block, not a callable), and within one addressable scope's class MIR has no per-callable
-  visibility to preserve. Modeling each static as a plain member collapses static-local storage and
-  access onto the same paths the rest of MIR already uses for module-level signals (one type of
-  decl, one MemberAccess shape, one render path, no static-frame walker state on the backend).
+  named block, not a callable), which publishes names and holds no storage, so within the owner
+  class MIR has no per-callable visibility to preserve. Modeling each static as a plain member
+  collapses static-local storage and access onto the same paths the rest of MIR already uses for
+  module-level signals (one type of decl, one MemberAccess shape, one render path, no static-frame
+  walker state on the backend).
 - The cell answers to no identifier, so nothing has to keep two of them apart. Sibling callables in
   the same owner class (`static int x;` in two processes) and nested blocks repeating an identifier
   can all claim the same source name, and each still takes its own position in the pool its owner

@@ -40,6 +40,10 @@ int32_t scope_handle_round_trip(const char* other_name) {
   return result;
 }
 
+int32_t scope_is_found(const char* name) {
+  return svGetScopeFromName(name) != NULL;
+}
+
 /* The recommended form of a user key is the address of a static object in the
    C code, which is unique across everything else that could run
    (LRM Annex H.9.3). */

@@ -184,10 +184,10 @@ mechanism.
   declarations, virtual interface targets) is shape; a body that references it reads through the
   registry.
 - **Procedural scope realization** (`procedural-storage-scope.md`). A procedural block scope is a
-  structural declaration: its class identity, the handle reaching its runtime object, the statics
-  declared in it, and the contained-class edge are minted by the shape pass. A sibling process's
-  body lowering reaches its peer block's static through a binding the shape pass already registered;
-  the body never mints any of these.
+  structural declaration: the statics declared in it and the target a `disable` of it ends are
+  minted by the shape pass as fields of the enclosing class. A sibling process's body lowering
+  reaches its peer block's static through a binding the shape pass already registered; the body
+  never mints any of these.
 - **A static a hierarchical path can name** (LRM 23.9), at the AST-to-HIR boundary. A process may
   read a static declared by a process that has not yet lowered, so the static's HIR id is minted by
   the compilation unit's declaration pass and the declaring body binds that id instead of assigning
