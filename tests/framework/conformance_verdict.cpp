@@ -3,8 +3,11 @@
 #include <algorithm>
 #include <cstddef>
 #include <format>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -23,12 +26,41 @@ auto Forbids(ReportKind forbidden, ReportKind seen) -> bool {
          (forbidden == ReportKind::kError && seen == ReportKind::kFatal);
 }
 
+template <class T>
+auto EqualWhereAsked(
+    const std::optional<T>& asked, const std::optional<T>& seen) -> bool {
+  return !asked || seen == asked;
+}
+
+// The message a claim names is the whole of what the program supplied, which
+// a reader has already taken out of the tool's own wording, so one that merely
+// begins with it is another value: "final saw 2" is not "final saw 23".
 auto Matches(const ReportPattern& asked, const ObservedReport& seen) -> bool {
-  return asked.kind == seen.kind && (!asked.line || seen.line == asked.line) &&
-         (!asked.time || seen.time == asked.time) &&
-         (!asked.scope || seen.scope == asked.scope) &&
-         (!asked.message ||
-          seen.message.find(*asked.message) != std::string::npos);
+  return asked.kind == seen.kind && EqualWhereAsked(asked.line, seen.line) &&
+         EqualWhereAsked(asked.time, seen.time) &&
+         EqualWhereAsked(asked.scope, seen.scope) &&
+         EqualWhereAsked(asked.message, seen.message);
+}
+
+// A field the claim names and the report did not give is not read, which is
+// not the same as one that differs.
+template <class T>
+auto EqualOrNotRead(const std::optional<T>& asked, const std::optional<T>& seen)
+    -> bool {
+  return !asked || !seen || seen == asked;
+}
+
+// The report may be the one asked for: nothing it gave differs from the claim,
+// though something the claim names was not read from it.
+auto MayMatch(const ReportPattern& asked, const ObservedReport& seen) -> bool {
+  return asked.kind == seen.kind && EqualOrNotRead(asked.line, seen.line) &&
+         EqualOrNotRead(asked.time, seen.time) &&
+         EqualOrNotRead(asked.scope, seen.scope) &&
+         EqualOrNotRead(asked.message, seen.message);
+}
+
+auto Times(std::size_t n) -> std::string {
+  return n == 1 ? std::string("once") : std::format("{} times", n);
 }
 
 auto DescribePattern(const ReportPattern& pattern) -> std::string {
@@ -59,33 +91,82 @@ struct Answered {
   std::vector<const ObservedReport*> left;
 };
 
-auto Answer(
-    const std::vector<ReportPattern>& asked,
-    const std::vector<ObservedReport>& issued) -> Answered {
-  Answered out;
-  std::vector<bool> taken(issued.size(), false);
-  for (const ReportPattern& pattern : asked) {
-    bool found = false;
-    for (std::size_t i = 0; i < issued.size() && !found; ++i) {
-      if (!taken[i] && Matches(pattern, issued[i])) {
-        taken[i] = true;
-        found = true;
+// Claims and reports are paired so that as many claims are answered as can
+// be. Taking the first report that fits each claim in turn can leave a claim
+// unanswered that another pairing answers -- a claim of a line taking the one
+// report that also carries the message another claim names -- so a claim that
+// finds every fitting report taken moves the claim holding one to another
+// report where it can (an augmenting path).
+class Pairing {
+ public:
+  Pairing(
+      std::span<const ReportPattern> asked,
+      std::span<const ObservedReport> issued)
+      : asked_(asked), issued_(issued), claim_of_(issued.size()) {
+  }
+
+  auto Answer() -> Answered {
+    Answered out;
+    for (std::size_t p = 0; p < asked_.size(); ++p) {
+      tried_.assign(issued_.size(), false);
+      (Place(p) ? out.answered : out.missing).push_back(&asked_[p]);
+    }
+    for (std::size_t i = 0; i < issued_.size(); ++i) {
+      if (!claim_of_[i]) {
+        out.left.push_back(&issued_[i]);
       }
     }
-    (found ? out.answered : out.missing).push_back(&pattern);
+    return out;
   }
-  for (std::size_t i = 0; i < issued.size(); ++i) {
-    if (!taken[i]) {
-      out.left.push_back(&issued[i]);
+
+ private:
+  auto Place(std::size_t p) -> bool {
+    for (std::size_t i = 0; i < issued_.size(); ++i) {
+      if (tried_[i] || !Matches(asked_[p], issued_[i])) {
+        continue;
+      }
+      tried_[i] = true;
+      if (!claim_of_[i] || Place(*claim_of_[i])) {
+        claim_of_[i] = p;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  std::span<const ReportPattern> asked_;
+  std::span<const ObservedReport> issued_;
+  std::vector<std::optional<std::size_t>> claim_of_;
+  std::vector<bool> tried_;
+};
+
+// The line ties a report to the statement that issued it, and nothing else in
+// a report names a statement. A report from a line a claim names answers that
+// line's claims, or a claim of its kind naming no line, which any line's report
+// may answer; one more than those can take is the statement reporting an
+// execution the standard does not have it report.
+auto Overreported(const IssuesReports& asked, const Observation& seen)
+    -> std::optional<std::string> {
+  for (const ReportPattern& p : asked.reports) {
+    if (!p.line) {
+      continue;
+    }
+    const auto from_the_line = [&](const auto& r) {
+      return r.kind == p.kind && r.line == p.line;
+    };
+    const auto wanted = std::ranges::count_if(asked.reports, from_the_line);
+    const auto anywhere = std::ranges::count_if(
+        asked.reports,
+        [&](const ReportPattern& q) { return q.kind == p.kind && !q.line; });
+    const auto issued = std::ranges::count_if(seen.reports, from_the_line);
+    if (issued > wanted + anywhere) {
+      return std::format(
+          "the standard requires {} {} report{} from line {} here, and the "
+          "run issued {}",
+          wanted, SpellingOf(p.kind), wanted == 1 ? "" : "s", *p.line, issued);
     }
   }
-  return out;
-}
-
-// A claim naming nothing but the kind of report it asks for, which any report
-// of that kind answers as well as another.
-auto Undistinguished(const ReportPattern& pattern) -> bool {
-  return !pattern.line && !pattern.time && !pattern.scope && !pattern.message;
+  return std::nullopt;
 }
 
 auto Unchecked(std::string_view marker) -> Verdict {
@@ -144,7 +225,8 @@ auto JudgeRun(const Claim& claim, const Ran& ran, const Observation& seen)
                 may_end ? kReadyForTheReport : kAllChecksPassed;
             const bool marked =
                 may_end ? seen.ready_for_the_report : seen.checks_passed;
-            const Answered answered = Answer(asked.reports, seen.reports);
+            const Answered answered =
+                Pairing(asked.reports, seen.reports).Answer();
             const bool asks_fatal =
                 std::ranges::any_of(asked.reports, [](const ReportPattern& r) {
                   return r.kind == ReportKind::kFatal;
@@ -160,65 +242,93 @@ auto JudgeRun(const Claim& claim, const Ran& ran, const Observation& seen)
             // The case is ready for its report before the standard lets the
             // report be issued, so a run ended at that report short of the
             // marker was ended by a report the tool issued too early.
-            const auto too_early = std::ranges::find_if(
+            const auto ending = std::ranges::find_if(
                 answered.answered,
                 [](const ReportPattern* p) { return MayEndTheRun(p->kind); });
-            if (!marked && too_early != answered.answered.end()) {
+            if (!marked && ending != answered.answered.end()) {
               return DoesNotConform{std::format(
                   "the tool issued {} before the program reached the point "
                   "the standard issues it after, and ended the run there",
-                  DescribePattern(**too_early))};
+                  DescribePattern(**ending))};
             }
             if (!marked) {
               return Unchecked(marker);
             }
-            // A run that ended at a report, short of going on past them all, is
-            // held to the reports before that end; one that went on is held to
-            // every report asked for.
-            const bool ended_early = may_end && !seen.checks_passed;
-            if (ended_early && !answered.answered.empty()) {
-              return Conforms{};
+            // What is shown wrong is said before anything that leaves the
+            // verdict open, since nothing left unread can make it right.
+            if (std::optional<std::string> over = Overreported(asked, seen)) {
+              return DoesNotConform{std::move(*over)};
+            }
+            if (!may_end && ran.exit_code != 0) {
+              return DoesNotConform{std::format(
+                  "the run passed its checks and ended with status {}",
+                  ran.exit_code)};
             }
             if (answered.missing.empty()) {
-              // A report asked for by its kind alone cannot be told from
-              // another of that kind, so one more than asked for leaves which
-              // answered the claim undecided.
+              // A count is exact, so a report that may be one more of those
+              // asked for -- of a kind asked for by kind alone, or lacking
+              // what would tell it apart -- leaves the count undecided, and so
+              // does a line the reader could not place.
               const auto more = std::ranges::find_if(
                   answered.left, [&](const ObservedReport* r) {
                     return std::ranges::any_of(
                         asked.reports, [&](const ReportPattern& p) {
-                          return Undistinguished(p) && Matches(p, *r);
+                          return MayMatch(p, *r);
                         });
                   });
               if (more != answered.left.end()) {
                 return Unresolved{std::format(
-                    "the run issued more reports of the kind asked for than "
-                    "the case asks, and nothing tells which answers it: {}",
+                    "every report the case asks for was read, and the run "
+                    "issued one that may be one more of them: {}",
                     (*more)->written)};
               }
-              if (!may_end && ran.exit_code != 0) {
-                return DoesNotConform{std::format(
-                    "the run passed its checks and ended with status {}",
-                    ran.exit_code)};
+              if (!seen.unplaced.empty()) {
+                return unplaced(
+                    "every report the case asks for was read, and one more "
+                    "may be among what was not");
               }
               return Conforms{};
             }
             const ReportPattern& first = *answered.missing.front();
-            const std::string missing = std::format(
-                "the standard requires {} here, and none was read",
-                DescribePattern(first));
-            // A report the tool gave no line for may be the one asked for,
-            // and cannot be told from it.
-            const bool unplaceable =
-                first.line && std::ranges::any_of(
-                                  answered.left, [&](const ObservedReport* r) {
-                                    return !r->line && r->kind == first.kind;
-                                  });
-            if (unplaceable) {
+            const auto times = std::ranges::count(asked.reports, first);
+            const auto read = std::ranges::count_if(
+                answered.answered,
+                [&](const ReportPattern* p) { return *p == first; });
+            const std::string missing =
+                times == 1
+                    ? std::format(
+                          "the standard requires {} here, and none was read",
+                          DescribePattern(first))
+                    : std::format(
+                          "the standard requires {} here {}, and {} {} read",
+                          DescribePattern(first),
+                          Times(static_cast<std::size_t>(times)), read,
+                          read == 1 ? "was" : "were");
+            // A run that ended at a report the standard lets it end at, short
+            // of going on past them all, may have been ended there by the
+            // tool, so that fails nothing; but a report it never reached was
+            // never observed, so nothing shows whether it would have been
+            // issued.
+            if (ending != answered.answered.end() && !seen.checks_passed) {
               return Unresolved{std::format(
-                  "{}; a report of that kind was issued with no line to tie "
-                  "it to the statement",
+                  "{}; the run ended at a report the standard lets it end at, "
+                  "before the rest were observed",
                   missing)};
+            }
+            // A report missing something the claim names -- a line, a time, a
+            // scope, a message the reader could not cut out -- may be the one
+            // asked for, and cannot be told from it.
+            const auto unread = std::ranges::find_if(
+                answered.left, [&](const ObservedReport* r) {
+                  return std::ranges::any_of(
+                      answered.missing,
+                      [&](const ReportPattern* p) { return MayMatch(*p, *r); });
+                });
+            if (unread != answered.left.end()) {
+              return Unresolved{std::format(
+                  "{}; the run issued a report lacking something a claim "
+                  "names, which may be one of those not read: {}",
+                  missing, (*unread)->written)};
             }
             if (!seen.unplaced.empty()) {
               return unplaced(missing);
@@ -241,15 +351,15 @@ auto JudgeRun(const Claim& claim, const Ran& ran, const Observation& seen)
                   "issued one: {}",
                   SpellingOf(issued->kind), issued->written)};
             }
-            if (!seen.unplaced.empty()) {
-              return unplaced(
-                  "none of the reports the standard forbids here "
-                  "was read");
-            }
             if (ran.exit_code != 0) {
               return DoesNotConform{std::format(
                   "the run passed its checks and ended with status {}",
                   ran.exit_code)};
+            }
+            if (!seen.unplaced.empty()) {
+              return unplaced(
+                  "none of the reports the standard forbids here "
+                  "was read");
             }
             return Conforms{};
           }},

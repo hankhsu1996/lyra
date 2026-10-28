@@ -124,7 +124,7 @@ void ReadLine(std::string_view line, Observation& seen) {
         .line = placed->line,
         .time = time,
         .scope = std::nullopt,
-        .message = std::string(rest),
+        .message = std::nullopt,
         .written = std::string(line)};
     if (rest == "Verilog $stop") {
       report.kind = ReportKind::kStop;
@@ -138,15 +138,20 @@ void ReadLine(std::string_view line, Observation& seen) {
       if (scoped.starts_with(kFailedIn)) {
         scoped.remove_prefix(kFailedIn.size());
       }
+      // A qualified statement's violation report names the statement and says
+      // it was violated (LRM 12.4.2.1), in the tool's words alone.
+      const bool violation = rest.ends_with("statement violated");
+      if (violation) {
+        report.kind = ReportKind::kViolation;
+      }
+      // The program's message follows the scope; where no scope is written,
+      // nothing marks where the tool's words end and the message begins.
       const std::size_t scope_end = scoped.find(": ");
       if (scope_end != std::string_view::npos) {
         report.scope = std::string(scoped.substr(0, scope_end));
-        report.message = std::string(scoped.substr(scope_end + 2));
-      }
-      // A qualified statement's violation report names the statement and says
-      // it was violated (LRM 12.4.2.1).
-      if (report.message.ends_with("statement violated")) {
-        report.kind = ReportKind::kViolation;
+        if (!violation) {
+          report.message = std::string(scoped.substr(scope_end + 2));
+        }
       }
     }
     seen.reports.push_back(std::move(report));

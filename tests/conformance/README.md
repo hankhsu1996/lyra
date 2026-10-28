@@ -183,9 +183,10 @@ assertion calls by default, LRM 16.14.1), `violation` for a unique or priority s
 (LRM 12.4.2.1, 12.5.3.1), and `finish` and `stop` for the message those tasks print (LRM 20.2). It
 may then name what the standard fixes of that report: the `line`, the `time` and the `scope` a
 severity task's report carries (LRM 20.10), and the `message` the program itself supplied, which is
-the only text the standard puts in a report and so the only text a case may name. A claim is met by
-a report of the severity it names and no other: a case's own failing check is a `$fatal`, and it
-never stands in for the error a case asks for.
+the only text the standard puts in a report and so the only text a case may name. The message is
+named whole, since one that only begins with it is another value. A claim is met by a report of the
+severity it names and no other: a case's own failing check is a `$fatal`, and it never stands in for
+the error a case asks for.
 
 ```systemverilog
 // @reports: info line=21 time=37 scope=Top.probe message="a probe report"
@@ -195,18 +196,25 @@ never stands in for the error a case asks for.
 case requires is a `@reports:` line of its own, or a `count=` on one, and each is answered by a
 report of its own, so two required reports are not met by one. Where the standard puts the source
 line in the report -- a severity task, a failing assertion's default action -- the claim names that
-line. Where it does not -- a violation, an operation's run-time error -- the case is written so that
-only the statement under test can issue a report of that kind, since a claim naming the kind alone
-is met by any report of it; a run issuing more of them than the case asks for leaves the verdict
-unresolved rather than met. A case whose requirement is something besides the report is better
-split, so that the report is the one obligation the case states.
+line. The line is what ties a report to its statement, and nothing else in a report does: one more
+report from that line, whatever it carries, is the statement reporting an execution the standard
+does not have it report, and the run does not conform. Where it does not -- a violation, an
+operation's run-time error -- the case is written so that only the statement under test can issue a
+report of that kind, since a claim naming the kind alone is met by any report of it; a run issuing
+more of them than the case asks for leaves the verdict unresolved rather than met. Either way the
+count is exact, so a report lacking something the claim names, or a line in the shape of a report
+that the reader could not place, may be one more, and leaves the verdict unresolved even where every
+report asked for was read. A case whose requirement is something besides the report is better split,
+so that the report is the one obligation the case states.
 
 **Where the standard lets a tool end the run at the report, the case says it is ready for the report
 instead of printing its sentinel there.** That is a fatal error, a violation reported through the
 tool's own mechanism, `$stop`, and an error, after which nothing promises the run goes on. The case
 makes its checks, prints `Ready for the report` before the statement that issues it, and prints
 `All checks passed` in the same procedure after the last report, where only a run that went on past
-them reaches it -- never in a final procedure, which a tool ending the run at the report runs too:
+them reaches it -- never in a final procedure, which a tool ending the run at the report runs too.
+Whether readiness comes before the report shows only in a run that ends there; a run that goes on
+past the report says nothing about it, which is one thing a second tool's run of the corpus is for:
 
 ```systemverilog
 // @reports: error
@@ -219,9 +227,11 @@ them reaches it -- never in a final procedure, which a tool ending the run at th
 
 The run is held to being ready and to the report. A check after the report holds where the run
 reaches it -- a `$fatal` there fails the case -- and a run that went on past every report is held to
-every report the case asks for; where a tool ended it at the first, that one is enough. `info` and
-`warning` leave the run going, and `$finish` runs the final procedures (LRM 9.2.3), so a case
-claiming one of those prints its sentinel at its end as any case does.
+every report the case asks for. Where a tool ended it at a report before the rest, that fails
+nothing, but the rest were never observed, so the verdict is unresolved; a case is therefore decided
+on every tool only where it asks for one such report. `info` and `warning` leave the run going, and
+`$finish` runs the final procedures (LRM 9.2.3), so a case claiming one of those prints its sentinel
+at its end as any case does.
 
 `@reports-none:` names the kinds of report the standard forbids where the case puts them, and the
 run is held to issuing none of them; `error` forbids `fatal` too. A tool may write anything else --
@@ -257,16 +267,18 @@ which output interleaves.
 
 What a tool did is read by a reader written for that tool, which knows how to ask it for each use
 model a case needs and how to read what it wrote: whether it refused the program, whether the
-program ran and printed the sentinel, how it ended, and each report it issued, by kind, time, scope
-and message. A line in the shape of one of its reports that the reader cannot place is kept apart as
-unplaced, never passed over. One judgement then turns the claim and that reading into a verdict, the
-same for every tool:
+program ran and printed the sentinel, how it ended, and each report it issued, by kind, line, time,
+scope and message, each where the tool gave it. A line in the shape of one of its reports that the
+reader cannot place is kept apart as unplaced, never passed over. One judgement then turns the claim
+and that reading into a verdict, the same for every tool:
 
 - **conforms** -- the run did what the claim says the standard requires;
 - **does not conform** -- it did something else: a wrong answer, a refusal of a legal program, a
   legal refusal not made, or no use model the standard requires every tool to offer;
-- **unresolved** -- what was read cannot decide the claim: the run did not end in its time, or the
-  report the claim asks about could be among the lines the reader could not place;
+- **unresolved** -- what was read cannot decide the claim: the run did not end in its time; the
+  report the claim asks about could be among the lines the reader could not place, or is one that
+  lacks something the claim names; more reports of a kind asked for by kind alone were issued than
+  asked; or the run ended at a report before the rest the case asks for were observed;
 - **not run** -- the case never reached the tool: the harness could not hand it the files. It says
   nothing of the tool.
 

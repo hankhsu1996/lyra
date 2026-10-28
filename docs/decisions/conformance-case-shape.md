@@ -66,8 +66,8 @@ D5. There is no per-case manifest file. Metadata that a case genuinely needs is 
 
 D6. Golden output is a sibling file, and exists only where the output channel is itself the subject
     (LRM 21: what $display writes, how stdout and stderr divide, the order output interleaves).
-    Format-string behavior is checked in-language through $sformatf, which returns the formatted text
-    as a value.
+    Format-string behavior is checked in-language through $sformatf, which returns the formatted
+    text as a value.
 
 D7. What a path cannot do is recorded once per path, not once per case, as a list of case paths and
     the refusal each currently produces. A case that unexpectedly passes fails the run just as an
@@ -89,12 +89,12 @@ D9. A test whose subject is not an IEEE 1800 requirement is not a case. The comm
 
 D10. A run is read by a reader written for the tool that made it, and judged once, the same for
     every tool. The reader knows how to ask its tool for each use model a case needs and how to
-    read what it wrote -- a refusal, the sentinel, how the run ended, each report by kind, time,
-    scope and message, and the lines in the shape of a report it cannot place. The judgement turns
-    claim and reading into one of four verdicts: conforms; does not conform; unresolved, where the
-    reading cannot decide the claim; not run, where the case never reached the tool -- the harness
-    could not hand it the files. A tool lacking a use model the standard requires of every tool
-    does not conform.
+    read what it wrote -- a refusal, the sentinel, how the run ended, each report by kind, line,
+    time, scope and message, and the lines in the shape of a report it cannot place. The
+    judgement turns claim and reading into one of four verdicts: conforms; does not conform;
+    unresolved, where the reading cannot decide the claim; not run, where the case never reached
+    the tool -- the harness could not hand it the files. A tool lacking a use model the standard
+    requires of every tool does not conform.
 
 D11. What Lyra chose where the standard leaves the answer to the tool is held in a corpus of its
     own, in the same shape, which only Lyra runs. It is a regression of Lyra's, never a statement

@@ -32,6 +32,13 @@ auto RanReadyForTheReport(int exit_code = 0) -> Observation {
   return seen;
 }
 
+// A run that was ready for its reports and went on past them all.
+auto RanPastItsReports() -> Observation {
+  Observation seen = RanReadyForTheReport();
+  seen.checks_passed = true;
+  return seen;
+}
+
 auto Report(ReportKind kind, std::optional<std::uint64_t> line = std::nullopt)
     -> ObservedReport {
   return ObservedReport{
@@ -39,7 +46,7 @@ auto Report(ReportKind kind, std::optional<std::uint64_t> line = std::nullopt)
       .line = line,
       .time = std::nullopt,
       .scope = std::nullopt,
-      .message = {},
+      .message = std::nullopt,
       .written = "a report"};
 }
 
@@ -107,9 +114,23 @@ TEST(ConformanceVerdictTest, AReportClaimIsMetByItsKindAndWhatTheCaseNames) {
           .line = 21,
           .time = 37,
           .scope = "Top.probe",
-          .message = "the tool's words: a probe report",
+          .message = "a probe report",
           .written = {}});
   EXPECT_TRUE(Is<Conforms>(Judge(claim, reported)));
+
+  // The message is the program's own text, which the case wrote whole, so one
+  // that only begins with it is another message.
+  Observation longer = reported;
+  longer.reports.front().message = "a probe report 2";
+  EXPECT_TRUE(Is<DoesNotConform>(Judge(claim, longer)));
+  // A reader that could not tell where the program's message ends gives none,
+  // and a message not read is not one that differs.
+  Observation no_message = reported;
+  no_message.reports.front().message = std::nullopt;
+  EXPECT_TRUE(Is<Unresolved>(Judge(claim, no_message)));
+  Observation no_time = reported;
+  no_time.reports.front().time = std::nullopt;
+  EXPECT_TRUE(Is<Unresolved>(Judge(claim, no_time)));
 
   Observation elsewhere = reported;
   elsewhere.reports.front().scope = "Top";
@@ -136,8 +157,7 @@ TEST(ConformanceVerdictTest, EachReportAskedForIsAnsweredByOneOfItsOwn) {
   const IssuesReports two{
       .reports = {
           Asking(ReportKind::kViolation), Asking(ReportKind::kViolation)}};
-  Observation once = RanReadyForTheReport();
-  once.checks_passed = true;
+  Observation once = RanPastItsReports();
   once.reports.push_back(Report(ReportKind::kViolation));
   EXPECT_TRUE(Is<DoesNotConform>(Judge(two, once)));
   Observation twice = once;
@@ -147,11 +167,15 @@ TEST(ConformanceVerdictTest, EachReportAskedForIsAnsweredByOneOfItsOwn) {
   Observation thrice = twice;
   thrice.reports.push_back(Report(ReportKind::kViolation));
   EXPECT_TRUE(Is<Unresolved>(Judge(two, thrice)));
-  // A run the first report ended is held to that report alone, and one that
-  // first report ended before the case was ready ended it too early.
+  // A run the first report ended may have been ended by the tool, as the
+  // standard lets it, so it fails nothing; but the second report was never
+  // observed, so nothing shows it would have been issued either. A claim of
+  // that one report alone is decided by it.
   Observation ended_at_first = once;
   ended_at_first.checks_passed = false;
-  EXPECT_TRUE(Is<Conforms>(Judge(two, ended_at_first)));
+  EXPECT_TRUE(Is<Unresolved>(Judge(two, ended_at_first)));
+  const IssuesReports one{.reports = {Asking(ReportKind::kViolation)}};
+  EXPECT_TRUE(Is<Conforms>(Judge(one, ended_at_first)));
   Observation early_at_first = ended_at_first;
   early_at_first.ready_for_the_report = false;
   const Verdict early = Judge(two, early_at_first);
@@ -171,6 +195,135 @@ TEST(ConformanceVerdictTest, EachReportAskedForIsAnsweredByOneOfItsOwn) {
   Observation erred = RanReadyForTheReport(1);
   erred.reports.push_back(Report(ReportKind::kError));
   EXPECT_TRUE(Is<DoesNotConform>(Judge(fatal, erred)));
+}
+
+TEST(ConformanceVerdictTest, AReportTiedToItsStatementIsCountedExactly) {
+  const IssuesReports two{
+      .reports = {
+          Asking(ReportKind::kError, 20), Asking(ReportKind::kError, 20)}};
+  Observation went_on = RanPastItsReports();
+  went_on.reports.push_back(Report(ReportKind::kError, 20));
+  const Verdict short_one = Judge(two, went_on);
+  ASSERT_TRUE(Is<DoesNotConform>(short_one));
+  EXPECT_NE(
+      std::get<DoesNotConform>(short_one).why.find("2 times, and 1 was read"),
+      std::string::npos);
+
+  went_on.reports.push_back(Report(ReportKind::kError, 20));
+  EXPECT_TRUE(Is<Conforms>(Judge(two, went_on)));
+
+  // A line the reader could not place may be one more of them, so the count
+  // cannot be confirmed, whether or not the claim names the line.
+  Observation unread = went_on;
+  unread.unplaced.emplace_back("%Error: something unread");
+  EXPECT_TRUE(Is<Unresolved>(Judge(two, unread)));
+  const IssuesReports kind_alone{.reports = {Asking(ReportKind::kError)}};
+  Observation once_unread = RanPastItsReports();
+  once_unread.reports.push_back(Report(ReportKind::kError));
+  EXPECT_TRUE(Is<Conforms>(Judge(kind_alone, once_unread)));
+  once_unread.unplaced.emplace_back("%Error: something unread");
+  EXPECT_TRUE(Is<Unresolved>(Judge(kind_alone, once_unread)));
+
+  // A third from the same line is that statement reporting once more than the
+  // standard has it report, which its line leaves no doubt about.
+  went_on.reports.push_back(Report(ReportKind::kError, 20));
+  const Verdict one_over = Judge(two, went_on);
+  ASSERT_TRUE(Is<DoesNotConform>(one_over));
+  EXPECT_NE(
+      std::get<DoesNotConform>(one_over).why.find(
+          "2 error reports from line 20 here, and the run issued 3"),
+      std::string::npos);
+
+  // One from another line answers nothing asked and is no one's surplus.
+  Observation beside = went_on;
+  beside.reports.back().line = 30;
+  EXPECT_TRUE(Is<Conforms>(Judge(two, beside)));
+  // One the tool placed nowhere may be line 20's third.
+  Observation unplaced_third = went_on;
+  unplaced_third.reports.back().line = std::nullopt;
+  EXPECT_TRUE(Is<Unresolved>(Judge(two, unplaced_third)));
+
+  // Even a run that ended without its sentinel has said the statement
+  // reported three times.
+  Observation ended_over = went_on;
+  ended_over.checks_passed = false;
+  EXPECT_TRUE(Is<DoesNotConform>(Judge(two, ended_over)));
+}
+
+TEST(ConformanceVerdictTest, TheLineTiesAReportToItsStatementAndNothingElse) {
+  // A second report from the line asked about, carrying another message, is
+  // that statement reporting once more than asked.
+  ReportPattern saw_two = Asking(ReportKind::kError, 13);
+  saw_two.message = "final saw 2";
+  const IssuesReports once{.reports = {saw_two}};
+  Observation twice = RanPastItsReports();
+  twice.reports.push_back(Report(ReportKind::kError, 13));
+  twice.reports.back().message = "final saw 2";
+  EXPECT_TRUE(Is<Conforms>(Judge(once, twice)));
+  twice.reports.push_back(Report(ReportKind::kError, 13));
+  twice.reports.back().message = "final saw 3";
+  EXPECT_TRUE(Is<DoesNotConform>(Judge(once, twice)));
+
+  // A surplus from one line is a failure even while another line's report is
+  // missing and might be among what was not read.
+  const IssuesReports two_lines{
+      .reports = {
+          Asking(ReportKind::kError, 20), Asking(ReportKind::kError, 30)}};
+  Observation over_and_unread = RanPastItsReports();
+  over_and_unread.reports.push_back(Report(ReportKind::kError, 20));
+  over_and_unread.reports.push_back(Report(ReportKind::kError, 20));
+  over_and_unread.reports.push_back(Report(ReportKind::kError));
+  EXPECT_TRUE(Is<DoesNotConform>(Judge(two_lines, over_and_unread)));
+
+  // A claim of the kind alone may be answered by a report from any line, so a
+  // second report from line 20 may be its answer rather than line 20's
+  // surplus.
+  const IssuesReports line_and_kind{
+      .reports = {Asking(ReportKind::kError), Asking(ReportKind::kError, 20)}};
+  Observation from_one_line = RanPastItsReports();
+  from_one_line.reports.push_back(Report(ReportKind::kError, 20));
+  from_one_line.reports.push_back(Report(ReportKind::kError, 20));
+  EXPECT_TRUE(Is<Conforms>(Judge(line_and_kind, from_one_line)));
+  from_one_line.reports.push_back(Report(ReportKind::kError, 20));
+  EXPECT_TRUE(Is<DoesNotConform>(Judge(line_and_kind, from_one_line)));
+
+  // Reports are given to claims so that as many are answered as can be: the
+  // claim naming a message takes the report carrying it, whichever claim is
+  // written first.
+  ReportPattern carrying = Asking(ReportKind::kError, 20);
+  carrying.message = "x";
+  const IssuesReports either{
+      .reports = {Asking(ReportKind::kError, 20), carrying}};
+  Observation both = RanPastItsReports();
+  both.reports.push_back(Report(ReportKind::kError, 20));
+  both.reports.back().message = "x";
+  both.reports.push_back(Report(ReportKind::kError, 20));
+  both.reports.back().message = "y";
+  EXPECT_TRUE(Is<Conforms>(Judge(either, both)));
+}
+
+TEST(ConformanceVerdictTest, ARunEndsAtAReportOnlyWhereOneMayEndIt) {
+  // A warning does not end the run, so a run that stopped after one, short of
+  // the error asked for, issued no error.
+  const IssuesReports warning_then_error{
+      .reports = {
+          Asking(ReportKind::kWarning, 10), Asking(ReportKind::kError, 20)}};
+  Observation stopped = RanReadyForTheReport();
+  stopped.reports.push_back(Report(ReportKind::kWarning, 10));
+  EXPECT_TRUE(Is<DoesNotConform>(Judge(warning_then_error, stopped)));
+}
+
+TEST(ConformanceVerdictTest, AStatusThatFailsIsNotHiddenByAnUnreadLine) {
+  const IssuesReports warning{.reports = {Asking(ReportKind::kWarning, 5)}};
+  Observation failed = RanToItsSentinel(1);
+  failed.reports.push_back(Report(ReportKind::kWarning, 5));
+  failed.unplaced.emplace_back("%Error: something unread");
+  EXPECT_TRUE(Is<DoesNotConform>(Judge(warning, failed)));
+
+  const IssuesNoReportOf none{.kinds = {ReportKind::kError}};
+  Observation silent_failed = RanToItsSentinel(1);
+  silent_failed.unplaced.emplace_back("%Error: something unread");
+  EXPECT_TRUE(Is<DoesNotConform>(Judge(none, silent_failed)));
 }
 
 TEST(ConformanceVerdictTest, AReportTheRunGoesOnPastIsHeldToItsStatus) {
@@ -255,22 +408,32 @@ TEST(ConformanceReaderTest, LyraReportsAreReadOffTheirOwnShape) {
       "note: in 'Top.probe' at time 37\n"
       "main.sv:9:5: note: '$finish' at time 12\n"
       "main.sv:30:5: error: a message that says: info: inside it\n"
-      "something no report looks like\n",
+      "something no report looks like\n"
+      "main.sv:31:5: error:  100% of it, spaced : \n"
+      "main.sv:32:5: error: a message on\n"
+      "two lines\n",
       seen);
-  ASSERT_EQ(seen.reports.size(), 4U);
+  ASSERT_EQ(seen.reports.size(), 6U);
+  // The message is the program's text exactly, spaces and all; a line it runs
+  // on to is not placed, and $finish supplies no message of the program's.
+  EXPECT_EQ(seen.reports[3].message, "a message that says: info: inside it");
+  EXPECT_EQ(seen.reports[4].message, " 100% of it, spaced : ");
+  EXPECT_EQ(seen.reports[2].message, std::nullopt);
   // The report's own word is the earliest in the line.
   EXPECT_EQ(seen.reports[3].kind, ReportKind::kError);
   EXPECT_EQ(seen.reports[3].line, 30U);
   EXPECT_EQ(seen.reports[0].kind, ReportKind::kViolation);
+  EXPECT_EQ(seen.reports[0].message, std::nullopt);
   EXPECT_EQ(seen.reports[0].line, 16U);
   EXPECT_EQ(seen.reports[0].time, 0U);
   EXPECT_EQ(seen.reports[1].kind, ReportKind::kInfo);
   EXPECT_EQ(seen.reports[1].line, 21U);
   EXPECT_EQ(seen.reports[1].scope, "Top.probe");
   EXPECT_EQ(seen.reports[1].time, 37U);
+  EXPECT_EQ(seen.reports[1].message, "a probe report");
   EXPECT_EQ(seen.reports[2].kind, ReportKind::kFinish);
   EXPECT_EQ(seen.reports[2].time, 12U);
-  ASSERT_EQ(seen.unplaced.size(), 1U);
+  ASSERT_EQ(seen.unplaced.size(), 2U);
 }
 
 TEST(ConformanceReaderTest, VerilatorReportsAreReadAmongTheProgramsOutput) {
@@ -288,10 +451,12 @@ TEST(ConformanceReaderTest, VerilatorReportsAreReadAmongTheProgramsOutput) {
       seen);
   ASSERT_EQ(seen.reports.size(), 3U);
   EXPECT_EQ(seen.reports[0].kind, ReportKind::kViolation);
+  EXPECT_EQ(seen.reports[0].message, std::nullopt);
   EXPECT_EQ(seen.reports[0].scope, "Top.unnamedblk1");
   EXPECT_EQ(seen.reports[0].line, 18U);
   EXPECT_EQ(seen.reports[0].time, 0U);
   EXPECT_EQ(seen.reports[1].kind, ReportKind::kStop);
+  EXPECT_EQ(seen.reports[1].message, std::nullopt);
   EXPECT_EQ(seen.reports[2].kind, ReportKind::kInfo);
   EXPECT_EQ(seen.reports[2].scope, "Top.probe");
   EXPECT_EQ(seen.reports[2].message, "a probe report");
