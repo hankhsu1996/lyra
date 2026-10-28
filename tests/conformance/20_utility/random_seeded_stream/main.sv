@@ -12,6 +12,10 @@ module Top;
   int drawn;
   int as_random;
   int as_uniform;
+  bit [15:0] narrow_seed;
+  bit [15:0] narrow_uniform_seed;
+  longint wide_seed;
+  longint wide_uniform_seed;
 
   final begin
     seed = 1;
@@ -58,6 +62,38 @@ module Top;
              as_uniform, as_random);
     if (uniform_seed !== seed)
       $fatal(1, "the two spellings left seeds %0d and %0d", uniform_seed, seed);
+
+    // The seed may be any integral variable, so it is read and written back at
+    // the type it is declared with, narrower or wider than the 32 bits the
+    // algorithm works in, the same for both spellings.
+    narrow_seed = 16'hBEEF;
+    narrow_uniform_seed = 16'hBEEF;
+    repeat (3) begin
+      as_random = $random(narrow_seed);
+      as_uniform = $dist_uniform(narrow_uniform_seed, -2147483648, 2147483647);
+      if (as_uniform !== as_random)
+        $fatal(1, "with a 16-bit seed the uniform draw gave %0d, $random %0d",
+               as_uniform, as_random);
+    end
+    if (narrow_seed === 16'hBEEF) $fatal(1, "a 16-bit seed was not advanced");
+    if (narrow_uniform_seed !== narrow_seed)
+      $fatal(1, "16-bit seeds were left at %0d and %0d", narrow_uniform_seed,
+             narrow_seed);
+
+    wide_seed = 64'h1234_5678_0000_0005;
+    wide_uniform_seed = 64'h1234_5678_0000_0005;
+    repeat (3) begin
+      as_random = $random(wide_seed);
+      as_uniform = $dist_uniform(wide_uniform_seed, -2147483648, 2147483647);
+      if (as_uniform !== as_random)
+        $fatal(1, "with a 64-bit seed the uniform draw gave %0d, $random %0d",
+               as_uniform, as_random);
+    end
+    if (wide_seed === 64'h1234_5678_0000_0005)
+      $fatal(1, "a 64-bit seed was not advanced");
+    if (wide_uniform_seed !== wide_seed)
+      $fatal(1, "64-bit seeds were left at %0d and %0d", wide_uniform_seed,
+             wide_seed);
 
     $display("All checks passed");
   end

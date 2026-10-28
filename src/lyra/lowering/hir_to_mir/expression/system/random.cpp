@@ -6,7 +6,6 @@
 #include <limits>
 #include <span>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "lyra/base/arena.hpp"
@@ -49,20 +48,6 @@ auto ProcessDrawEntry(support::RandomKind kind, std::size_t argument_count)
       return support::BuiltinFn::kUrandomRange;
   }
   throw InternalError("ProcessDrawEntry: unknown RandomKind");
-}
-
-// The variable a seed argument names (LRM 20.14.1: the seed "shall be an
-// integral variable"). A seed whose declared type is not the one the argument
-// position takes arrives read through conversions; the variable the draw
-// advances is what they read.
-auto SeedVariable(
-    const base::Arena<hir::Expr, hir::ExprId>& exprs, hir::ExprId seed)
-    -> hir::ExprId {
-  while (const auto* conversion =
-             std::get_if<hir::ConversionExpr>(&exprs.Get(seed).data)) {
-    seed = conversion->operand;
-  }
-  return seed;
 }
 
 // The runtime entry each LRM 20.14.2 distribution function generates through.
@@ -167,12 +152,9 @@ auto LowerDistributionSystemSubroutineCall(
   const WalkFrame& step_frame = steps.Frame();
 
   // LRM 20.14.1 / 20.14.2 make the seed an integral variable the draw reads and
-  // advances. A seed declared as something other than the entry's own operand
-  // type is read through a conversion, and the variable is what the conversion
-  // reads -- the store then lands the advanced value in the declared type,
-  // which is what the design reads next.
-  const hir::Expr& hir_seed =
-      hir_exprs.Get(SeedVariable(hir_exprs, operands[0]));
+  // advances. It keeps the type the design declared, so the advanced value is
+  // stored back in that type, which is what the design reads next.
+  const hir::Expr& hir_seed = hir_exprs.Get(operands[0]);
   const mir::TypeId seed_type = unit_lowerer.TranslateType(hir_seed.type);
   if (IsJoin(hir_seed)) {
     return diag::Fail(
