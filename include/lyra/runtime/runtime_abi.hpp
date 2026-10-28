@@ -318,14 +318,10 @@ void lyra_rt_process_kill(const void* self, void* runtime);
 auto lyra_rt_process_await(const void* self, void* runtime, void* out) -> void*;
 void lyra_rt_process_suspend(const void* self, void* runtime);
 void lyra_rt_process_resume(const void* self, void* runtime);
-void lyra_rt_process_srandom(
-    const void* self, const void* seed, std::int64_t seed_width,
-    bool seed_is_signed, bool seed_is_four_state);
-auto lyra_rt_process_get_randstate(const void* self, void* out) -> void*;
-void lyra_rt_process_set_randstate(const void* self, const void* state);
 
-// LRM 18.13.3 -- 18.13.5 on the generator of a class object (LRM 18.14.3),
-// which crosses as the object itself, however the call reached it.
+// LRM 18.13.3 -- 18.13.5 on the generator of a class object (LRM 18.14.3), a
+// process's included (LRM 9.7), which crosses as the object itself, however
+// the call reached it.
 void lyra_rt_object_srandom(
     void* object, const void* seed, std::int64_t seed_width,
     bool seed_is_signed, bool seed_is_four_state);
@@ -345,8 +341,6 @@ void lyra_rt_object_post_randomize(void* object);
 // where no wait evaluates it.
 auto lyra_rt_weak_downgrade(const void* strong, void* out) -> void*;
 auto lyra_rt_weak_upgrade(const void* weak, void* evaluation, void* out)
-    -> void*;
-auto lyra_rt_weak_upgrade_process(const void* weak, void* evaluation, void* out)
     -> void*;
 auto lyra_rt_weak_refers_to(const void* weak, const void* strong) -> bool;
 auto lyra_rt_object_identity(const void* object, void* out) -> void*;

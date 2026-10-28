@@ -7,28 +7,10 @@
 
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/read_report.hpp"
-#include "lyra/runtime/runtime_process.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/managed_ref.hpp"
 
 namespace lyra::runtime {
-
-namespace {
-
-// The object `weak` refers to, held while it is answered, and the place its
-// expiry is told at, found from the object as the kind of object it is.
-template <typename Referent>
-auto UpgradeOf(const WeakObjectRef& weak, ReadReport* report)
-    -> value::ObjectRef {
-  std::shared_ptr<void> share = weak.Share().lock();
-  if (share == nullptr) return value::ObjectRef{};
-  if (report != nullptr) {
-    report->AddExpiry(static_cast<Referent*>(share.get())->Expiry(), share);
-  }
-  return value::ObjectRef(value::ManagedRef(std::move(share)));
-}
-
-}  // namespace
 
 auto Downgrade(const value::ObjectRef& strong) -> WeakObjectRef {
   return WeakObjectRef(strong.Handle().Share());
@@ -36,12 +18,12 @@ auto Downgrade(const value::ObjectRef& strong) -> WeakObjectRef {
 
 auto Upgrade(const WeakObjectRef& weak, ReadReport* report)
     -> value::ObjectRef {
-  return UpgradeOf<GcObject>(weak, report);
-}
-
-auto UpgradeProcess(const WeakObjectRef& weak, ReadReport* report)
-    -> value::ObjectRef {
-  return UpgradeOf<RuntimeProcess>(weak, report);
+  std::shared_ptr<void> share = weak.Share().lock();
+  if (share == nullptr) return value::ObjectRef{};
+  if (report != nullptr) {
+    report->AddExpiry(static_cast<GcObject*>(share.get())->Expiry(), share);
+  }
+  return value::ObjectRef(value::ManagedRef(std::move(share)));
 }
 
 auto WeakRefersTo(const WeakObjectRef& weak, const value::ObjectRef& strong)

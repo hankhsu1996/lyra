@@ -1589,19 +1589,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "process_resume",
           .declaration = RuntimeFunction("ProcessResume"),
           .takes_the_runtime_handle = true};
-    case BuiltinFn::kProcessSrandom:
-      return {
-          .name = "process_srandom",
-          .declaration = RuntimeFunction("ProcessSrandom"),
-          .operands = {kMachine, kNumber}};
-    case BuiltinFn::kProcessGetRandstate:
-      return {
-          .name = "process_get_randstate",
-          .declaration = RuntimeFunction("ProcessGetRandstate")};
-    case BuiltinFn::kProcessSetRandstate:
-      return {
-          .name = "process_set_randstate",
-          .declaration = RuntimeFunction("ProcessSetRandstate")};
     case BuiltinFn::kWeakDowngrade:
       return {
           .name = "weak_downgrade",
@@ -1610,11 +1597,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "weak_upgrade",
           .declaration = RuntimeFunction("Upgrade"),
-          .takes_the_read_report = true};
-    case BuiltinFn::kWeakUpgradeProcess:
-      return {
-          .name = "weak_upgrade_process",
-          .declaration = RuntimeFunction("UpgradeProcess"),
           .takes_the_read_report = true};
     case BuiltinFn::kWeakRefersTo:
       return {

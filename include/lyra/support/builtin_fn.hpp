@@ -1002,32 +1002,29 @@ enum class BuiltinFn : std::uint16_t {
   // each target calls it where it realizes one, once its handler has begun
   // handling what arrived, which is the thing it asks about.
   kReceiveDeparture,
-  // LRM 9.7's `process` methods. The class is one the runtime library defines
-  // and every unit imports rather than declares, so no per-unit declaration
-  // names these and the library carries each of them out. `kProcessSelf` names
-  // the running process, so it acts on no object; the others act on a handle it
-  // answered with.
+  // LRM 9.7's `process` methods that only a process has. The class is one the
+  // runtime library defines and every unit imports rather than declares, so no
+  // per-unit declaration names these and the library carries each of them out.
+  // `kProcessSelf` names the running process, so it acts on no object; the
+  // others act on a handle it answered with. What a process has as every class
+  // object does -- its generator's methods among them -- it has through the
+  // entries every class object is reached by.
   kProcessSelf,
   kProcessStatus,
   kProcessKill,
   kProcessAwait,
   kProcessSuspend,
   kProcessResume,
-  kProcessSrandom,
-  kProcessGetRandstate,
-  kProcessSetRandstate,
   // LRM 18.13.3 -- 18.13.5 on a class object's own generator (LRM 18.14.3),
   // acting on whatever reaches the object: a handle, or a method's own object.
   kObjectSrandom,
   kObjectGetRandstate,
   kObjectSetRandstate,
   // LRM 8.30's weak reference to an object: one made from a handle, the object
-  // it answers while the object has not expired -- for a class object and for
-  // a process, which are objects of two kinds -- and an object's identity. The
+  // it answers while the object has not expired, and an object's identity. The
   // answer tells a wait evaluating it to watch the object's expiry.
   kWeakDowngrade,
   kWeakUpgrade,
-  kWeakUpgradeProcess,
   kWeakRefersTo,
   kObjectIdentity,
   // The built-in `pre_randomize()` and `post_randomize()` (LRM 18.6.2), on

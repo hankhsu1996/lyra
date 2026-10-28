@@ -34,7 +34,7 @@ void CancellationTarget::Invalidate(RuntimeEffects& effects) {
         }
         return;
       case MembershipOrigin::kEnabledWithin:
-        ended.push_back(member.process->shared_from_this());
+        ended.push_back(member.process->Shared());
         return;
     }
     throw InternalError(

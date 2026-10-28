@@ -29,7 +29,7 @@ struct InterfaceRow {
   const void* table = nullptr;
 };
 
-// What `randomize()` asks of an object of a source class (LRM 18.6): to
+// What `randomize()` asks of an object of a class (LRM 18.6): to
 // declare its random variables (LRM 18.4) and state its constraints (LRM 18.5)
 // to the call's problem, to name the random objects its handles reach, and the
 // hooks before and after (LRM 18.6.2). Each entry is the body the nearest class
@@ -44,8 +44,8 @@ struct ClassObjectInfo {
 };
 
 // The definition of one class: what it extends, what a class whose values
-// stand in the design hierarchy or are objects of a source class states of
-// them, how an object of it ends, the interface classes it implements, and the
+// stand in the design hierarchy or are class objects (LRM 8.3) states of them,
+// how an object of it ends, the interface classes it implements, and the
 // body each of its virtual methods runs (LRM 8.20). Which body initializes a
 // value is settled where the value is asked for rather than by the class it is
 // of (LRM 8.7), so what a definition carries is what every value of the class
@@ -64,7 +64,8 @@ struct ObjectDefinition {
   // What only a class whose values stand in the design hierarchy has, absent
   // for every other class.
   const ScopeInfo* scope = nullptr;
-  // What only a source class has, absent for every other class.
+  // What only a class of the language has, whether the source or this library
+  // defines it, absent for every other class.
   const ClassObjectInfo* class_object = nullptr;
   // Ends an object of the class: every member, the class's own and then what
   // it extends, and then the storage it was created in. Absent for an

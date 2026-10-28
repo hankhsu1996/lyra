@@ -331,8 +331,7 @@ void Runtime::RunAction(
         "Runtime::RunAction: an action starts from the region it is due in, "
         "between executions, and one is executing");
   }
-  auto action =
-      std::make_shared<RuntimeProcess>(context, std::move(coroutine), rng);
+  auto action = RuntimeProcess::Create(context, std::move(coroutine), rng);
   Activation* const top = action->TopActivation();
   roots_.Adopt(std::move(action));
   RuntimeProcess::Run(*this, top);
@@ -419,11 +418,7 @@ auto Runtime::NamespaceSeeds(std::string_view name) -> InitializationRng& {
 }
 
 void Runtime::EnterStaticInit(const ExecutionContext& context) {
-  displacing_.push_back(
-      DisplacingState{
-          .state = RunningState{context.SplitInitializationRng()},
-          .context = context,
-          .displaced = running_});
+  displacing_.emplace_back(context.SplitInitializationRng(), context, running_);
   running_ = &displacing_.back().state;
 }
 
@@ -593,7 +588,7 @@ void Runtime::ExecuteFinalProcedures() {
   // so LRM 18.14.1 says nothing of its generator; it is split from the root's
   // initialization RNG, last of all, which moves no draw made before.
   Scope& root = design_->Root();
-  auto thread = std::make_shared<RuntimeProcess>(
+  auto thread = RuntimeProcess::Create(
       ExecutionContext{
           .procedure = {.seeds = &root.InitializationSeeds()},
           .creator = ThreadCreator::kTheFinalProcedures},
@@ -691,7 +686,7 @@ auto CreatorOf(StartKind kind) -> ThreadCreator {
 
 auto StartingProcess(const ExecutionContext& context, Coroutine<void> coroutine)
     -> std::shared_ptr<RuntimeProcess> {
-  return std::make_shared<RuntimeProcess>(
+  return RuntimeProcess::Create(
       context, std::move(coroutine), context.SplitInitializationRng());
 }
 

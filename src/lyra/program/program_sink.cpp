@@ -910,9 +910,6 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_process_await", &lyra_rt_process_await);
   add("lyra_rt_process_suspend", &lyra_rt_process_suspend);
   add("lyra_rt_process_resume", &lyra_rt_process_resume);
-  add("lyra_rt_process_srandom", &lyra_rt_process_srandom);
-  add("lyra_rt_process_get_randstate", &lyra_rt_process_get_randstate);
-  add("lyra_rt_process_set_randstate", &lyra_rt_process_set_randstate);
   add("lyra_rt_object_srandom", &lyra_rt_object_srandom);
   add("lyra_rt_object_get_randstate", &lyra_rt_object_get_randstate);
   add("lyra_rt_object_set_randstate", &lyra_rt_object_set_randstate);
@@ -922,7 +919,6 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_object_post_randomize", &lyra_rt_object_post_randomize);
   add("lyra_rt_weak_downgrade", &lyra_rt_weak_downgrade);
   add("lyra_rt_weak_upgrade", &lyra_rt_weak_upgrade);
-  add("lyra_rt_weak_upgrade_process", &lyra_rt_weak_upgrade_process);
   add("lyra_rt_weak_refers_to", &lyra_rt_weak_refers_to);
   add("lyra_rt_object_identity", &lyra_rt_object_identity);
   add("lyra_rt_randomize_object", &lyra_rt_randomize_object);

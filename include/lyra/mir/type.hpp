@@ -423,7 +423,7 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // states as a constant: `lyra::runtime::ScopeInfo` is what a class of the
   // design hierarchy states of its instances, `ScopeCallable` a DPI-C
   // export's C name with its body (LRM 35.5.3), `ClassObjectInfo` what
-  // `randomize()` asks of an object of a source class (LRM 18.6), and
+  // `randomize()` asks of an object of a class (LRM 18.6), and
   // `InterfaceRow` one interface class the class implements with the bodies
   // answering what it declares (LRM 8.26).
   kScopeInfo,

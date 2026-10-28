@@ -151,25 +151,46 @@ struct ExecutionContext {
 // subroutine body is compiled once and reached from more than one runner, so
 // each is read from whatever is running rather than passed in.
 //
-// A process owns one for its whole life, so its generator survives a suspension
-// and two foreign calls suspended on different processes never share a chain. A
-// static initialization owns one for its single run, which is why this is not
-// state of a process: a variable declaration assignment runs before any
-// procedure starts (LRM 10.5, 26.2) and can reach both of these.
+// A process owns one for its whole life, so two foreign calls suspended on
+// different processes never share a chain. A static initialization owns one
+// for its single run, which is why this is not state of a process: a variable
+// declaration assignment runs before any procedure starts (LRM 10.5, 26.2) and
+// can reach both of these.
+//
+// The generator is not among what this owns. A process's is the generator of
+// the object the process is, which its `srandom()` seeds (LRM 18.13.3), so it
+// survives a suspension with the process; a static initialization keeps its
+// own beside this.
 struct RunningState {
-  // What runs starts from the generator it is handed, inside no foreign call.
-  explicit RunningState(DrawRng initial) : rng(initial) {
+  // What runs draws from `generator`, inside no foreign call.
+  explicit RunningState(DrawRng& generator) : generator(&generator) {
   }
 
-  DrawRng rng;
+  // Never null.
+  DrawRng* generator;
   ImportCallChain import_calls;
   // Null where no evaluation is in progress.
   ReadReport* evaluation_report = nullptr;
 };
 
 // A `RunningState` a static initialization owns, carrying what it displaced so
-// that leaving restores whatever was running before.
+// that leaving restores whatever was running before. Its place never moves,
+// since its state draws from the generator beside it.
 struct DisplacingState {
+  DisplacingState(
+      DrawRng initial, const ExecutionContext& context, RunningState* displaced)
+      : generator(initial),
+        state(generator),
+        context(context),
+        displaced(displaced) {
+  }
+  DisplacingState(const DisplacingState&) = delete;
+  auto operator=(const DisplacingState&) -> DisplacingState& = delete;
+  DisplacingState(DisplacingState&&) = delete;
+  auto operator=(DisplacingState&&) -> DisplacingState& = delete;
+  ~DisplacingState() = default;
+
+  DrawRng generator;
   RunningState state;
   // What the initialization runs in, which a deferred assertion it reaches
   // takes its action's context from.

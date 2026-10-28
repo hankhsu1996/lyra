@@ -134,13 +134,22 @@ auto ClassifyMethodReceiver(
   if (call.lookupInfo.viaSuper) return hir::SuperReceiver{};
   const auto* this_class = call.thisClass();
   if (this_class == nullptr || NamesCurrentInstance(*this_class)) {
+    const auto* const* method =
+        std::get_if<const slang::ast::SubroutineSymbol*>(&call.subroutine);
     // A covergroup a class embeds calls the embedding object's methods as if
     // it were that object (LRM 19.4).
-    if (const auto* const* method =
-            std::get_if<const slang::ast::SubroutineSymbol*>(&call.subroutine);
-        method != nullptr && ReachedThroughEmbedding(frame, **method)) {
+    if (method != nullptr && ReachedThroughEmbedding(frame, **method)) {
       return hir::HandleReceiver{
           .expr = EmbeddingObject(frame, frontend::SpanOf(call.sourceRange))};
+    }
+    if (const slang::ast::ClassType* owner =
+            method != nullptr ? DeclaringClassOf(**method) : nullptr) {
+      auto randomized = RandomizedObjectReaching(
+          lowerer.Owner(), frame, *owner, frontend::SpanOf(call.sourceRange));
+      if (!randomized) return std::unexpected(std::move(randomized.error()));
+      if (randomized->has_value()) {
+        return hir::HandleReceiver{.expr = **randomized};
+      }
     }
     return hir::SelfReceiver{};
   }
@@ -887,21 +896,9 @@ auto LowerSystemCall(
   };
 }
 
-// The refusal of a method every class has (LRM 18.6, 18.8, 18.9) called on a
-// class the runtime library defines. The library carries out only the methods
-// the standard lists for that class (LRM 9.7), and the class has these too.
-auto RuntimeClassBuiltinUnsupported(
-    const slang::ast::ClassType& cls, std::string_view method,
-    diag::SourceSpan span) -> std::unexpected<diag::Diagnostic> {
-  return diag::Fail(
-      span, diag::DiagCode::kUnsupportedExpressionForm,
-      "the built-in method '{}' of '{}' is not yet supported", method,
-      cls.name);
-}
-
 // The object a call of `randomize()`, a mode method or a method of the
 // object's generator acts on, where the call reached it through a handle; the
-// running method's own where it named none.
+// object a method named without one reaches where it named none.
 template <ExprLowerer Lowerer>
 auto ObjectOfCall(
     Lowerer& lowerer, const WalkFrame& frame,
@@ -912,6 +909,11 @@ auto ObjectOfCall(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     return frame.Exprs().Add(*std::move(lowered));
   }
+  auto randomized = RandomizedObjectReaching(
+      lowerer.Owner(), frame,
+      class_type.getCanonicalType().as<slang::ast::ClassType>(), span);
+  if (!randomized) return std::unexpected(std::move(randomized.error()));
+  if (randomized->has_value()) return **randomized;
   auto type = lowerer.Owner().InternType(class_type, span);
   if (!type) return std::unexpected(std::move(type.error()));
   return frame.Exprs().Add(hir::MakeRefExpr(hir::ThisHandle{}, *type, span));
@@ -931,10 +933,14 @@ auto LowerBuiltinClassMethodCall(
   const auto expr = [&](hir::ExprData data) {
     return hir::Expr{.type = *type, .data = std::move(data), .span = span};
   };
+  const std::optional<hir::RandomizationHook> hook =
+      LowerRandomizationHookName(sym.name);
   // A hook is a method of the class whether or not the class declares it (LRM
-  // 18.6.2), so a call naming one is a method call like any other.
-  if (const std::optional<hir::RandomizationHook> hook =
-          LowerRandomizationHookName(sym.name)) {
+  // 18.6.2), so a call naming one is a method call like any other, whose body
+  // is the one the nearest class of the lineage declaring it gives. A class the
+  // runtime library defines has no lineage of the source's and is extended by
+  // none, so the body is the one every object starts with, which does nothing.
+  if (hook.has_value() && !ImportedRuntimeClassOf(declaring).has_value()) {
     auto cls = lowerer.Owner().ResolveClass(declaring, span);
     if (!cls) return std::unexpected(std::move(cls.error()));
     auto receiver = ClassifyMethodReceiver(lowerer, frame, call);
@@ -955,6 +961,15 @@ auto LowerBuiltinClassMethodCall(
     operands.insert(operands.end(), arg_ids.begin(), arg_ids.end());
     return expr(BuiltinCall(fn, std::move(operands)));
   };
+  if (hook.has_value()) {
+    switch (*hook) {
+      case hir::RandomizationHook::kPreRandomize:
+        return on_object(support::BuiltinFn::kBuiltinPreRandomize);
+      case hir::RandomizationHook::kPostRandomize:
+        return on_object(support::BuiltinFn::kBuiltinPostRandomize);
+    }
+    throw InternalError("AST->HIR: unknown randomization hook");
+  }
   if (sym.name == "srandom") {
     return on_object(support::BuiltinFn::kObjectSrandom);
   }
@@ -998,17 +1013,18 @@ auto LowerSubroutineCall(
 
   // A method the runtime carries out routes to the library entry. A static
   // method acts on no object, whatever handle the call is written through (LRM
-  // 8.10); an instance method acts on the handle `thisClass` carries.
+  // 8.10); an instance method acts on the object the call reaches, or on the
+  // running method's own where it names none -- in an inline constraint, the
+  // object being randomized (LRM 18.7).
   if (const auto carried = RuntimeCarriedMethodOf(*sym)) {
     auto result_type = unit_lowerer.InternExpressionType(call, span);
     if (!result_type) return std::unexpected(std::move(result_type.error()));
     std::optional<hir::ExprId> receiver;
-    if (const slang::ast::Expression* this_class = call.thisClass();
-        this_class != nullptr &&
-        !sym->flags.has(slang::ast::MethodFlags::Static)) {
-      auto receiver_or = lowerer.LowerExpr(*this_class, frame);
-      if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
-      receiver = frame.Exprs().Add(*std::move(receiver_or));
+    if (!sym->flags.has(slang::ast::MethodFlags::Static)) {
+      auto object =
+          ObjectOfCall(lowerer, frame, call.thisClass(), *declaring, span);
+      if (!object) return std::unexpected(std::move(object.error()));
+      receiver = *object;
     }
     return hir::Expr{
         .type = *result_type,
@@ -1022,9 +1038,6 @@ auto LowerSubroutineCall(
         .span = span,
     };
   }
-  if (declaring != nullptr && ImportedRuntimeClassOf(*declaring).has_value()) {
-    return RuntimeClassBuiltinUnsupported(*declaring, sym->name, span);
-  }
 
   // A covergroup's, a coverpoint's or a cross's built-in method (LRM 19.8).
   if (IsCovergroupMember(*sym)) {
@@ -1035,10 +1048,9 @@ auto LowerSubroutineCall(
   // A class method the front end supplies itself has no body, so there is no
   // declaration of this unit for the call to name. Every class has such
   // methods for its generator, its constraints and the hooks `randomize()`
-  // runs (LRM 18.6, 18.8, 18.9, 18.13.3 -- 18.13.5); those of a library
-  // class the runtime defines were carried out or refused above. A method of a
-  // `std` class Lyra defines is that definition's method, so it is one of these
-  // exactly when the definition's is.
+  // runs (LRM 18.6, 18.8, 18.9, 18.13.3 -- 18.13.5), whoever defines the
+  // class. A method of a `std` class Lyra defines is that definition's method,
+  // so it is one of these exactly when the definition's is.
   if (declaring != nullptr) {
     const slang::ast::SubroutineSymbol& defining = *unit_lowerer.Defining(*sym);
     if (defining.flags.has(slang::ast::MethodFlags::BuiltIn)) {
@@ -1389,9 +1401,6 @@ auto LowerRandomizationCall(
         }
         const auto& randomized =
             class_type->getCanonicalType().as<slang::ast::ClassType>();
-        if (ImportedRuntimeClassOf(randomized).has_value()) {
-          return RuntimeClassBuiltinUnsupported(randomized, "randomize", span);
-        }
         auto object = ObjectOfCall(lowerer, frame, handle, *class_type, span);
         if (!object) return std::unexpected(std::move(object.error()));
         within = frame.WithRandomizedClass(randomized);

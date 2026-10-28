@@ -209,9 +209,6 @@ auto LowerProcessMethodName(std::string_view name)
   if (name == "await") return support::BuiltinFn::kProcessAwait;
   if (name == "suspend") return support::BuiltinFn::kProcessSuspend;
   if (name == "resume") return support::BuiltinFn::kProcessResume;
-  if (name == "srandom") return support::BuiltinFn::kProcessSrandom;
-  if (name == "get_randstate") return support::BuiltinFn::kProcessGetRandstate;
-  if (name == "set_randstate") return support::BuiltinFn::kProcessSetRandstate;
   return std::nullopt;
 }
 

@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "lyra/runtime/cancellation.hpp"
+#include "lyra/runtime/class_object.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
 #include "lyra/runtime/owned_processes.hpp"
@@ -86,15 +87,23 @@ struct DeferredReportValidity {
 // task or function it called (LRM 9.6.1): a subroutine call runs in the
 // caller's thread and creates no process of its own. They therefore accumulate
 // across every fork the process executes.
-class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
+//
+// A process is an object of a class (LRM 9.7), so it starts with the part
+// every class object does: its class's definition, through which the library
+// does to it whatever it does to an object whose class it does not know, and
+// its generator. The object's generator is the thread's, which the process's
+// `srandom()` seeds (LRM 18.13.3); there is no other.
+class RuntimeProcess : public ClassObject {
  public:
-  // `rng` is this process's own generator. LRM 18.14.1 fixes where it comes
-  // from by how the process was created: a dynamically created one takes it
-  // out of the process that created it, and one nothing that is a thread
-  // creates -- a static process, an assertion's action -- out of the
-  // initialization RNG of its context's instance.
-  RuntimeProcess(
-      ExecutionContext context, Coroutine<void> coroutine, DrawRng rng);
+  // A process created whole, held by the reference its creator takes.
+  // `generator` is the thread's own. LRM 18.14.1 fixes where it comes from by
+  // how the process was created: a dynamically created one takes it out of the
+  // process that created it, and one nothing that is a thread creates -- a
+  // static process, an assertion's action -- out of the initialization RNG of
+  // its context's instance.
+  [[nodiscard]] static auto Create(
+      ExecutionContext context, Coroutine<void> coroutine, DrawRng generator)
+      -> std::shared_ptr<RuntimeProcess>;
 
   RuntimeProcess(const RuntimeProcess&) = delete;
   auto operator=(const RuntimeProcess&) -> RuntimeProcess& = delete;
@@ -113,10 +122,10 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
 
   // What is in force while this process runs: the generator its randomization
   // calls draw from and a process spawned from here takes its seed out of (LRM
-  // 18.14.2), and the DPI scope chain its foreign calls report through (LRM
-  // 35.5.3). It belongs to the process rather than to the run so that a
-  // generator survives a suspension and two foreign calls suspended on
-  // different processes never share a chain.
+  // 18.14.2), which is this object's own, and the DPI scope chain its foreign
+  // calls report through (LRM 35.5.3). It belongs to the process rather than
+  // to the run so that two foreign calls suspended on different processes
+  // never share a chain.
   [[nodiscard]] auto Running() -> RunningState& {
     return running_;
   }
@@ -191,13 +200,6 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // settles any terminal state -- normal completion or a kill.
   [[nodiscard]] auto Termination() -> IntrusiveList<WaitMembership>& {
     return termination_;
-  }
-
-  // The waits that reached this process through a weak reference (LRM 8.30.3),
-  // told once nothing refers to it any more -- which a process that has
-  // terminated may still be referred to by long after.
-  [[nodiscard]] auto Expiry() -> IntrusiveList<WaitMembership>& {
-    return expiry_;
   }
 
   // Stops the frame carrying this process's thread at `awaiter`, and answers
@@ -443,7 +445,13 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // not a call on the released node: the release destroys it.
   static void ReleaseTerminatedLineage(RuntimeProcess& process);
 
+  // A reference to this process, owning what every other reference to it owns.
+  [[nodiscard]] auto Shared() -> std::shared_ptr<RuntimeProcess>;
+
  private:
+  RuntimeProcess(
+      ExecutionContext context, Coroutine<void> coroutine, DrawRng generator);
+
   // Resumes `activation` -- the specific frame that suspended (the innermost
   // one when a task enabled by this process is suspended). Symmetric transfer
   // carries control back up the enable chain. Returns true if the whole process
@@ -566,7 +574,6 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // spawned it, an `await` of it (LRM 9.3.2, 9.7) -- asked when this process
   // settles a terminal state.
   IntrusiveList<WaitMembership> termination_;
-  IntrusiveList<WaitMembership> expiry_;
 };
 
 }  // namespace lyra::runtime

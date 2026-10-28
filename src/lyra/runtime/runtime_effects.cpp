@@ -442,9 +442,9 @@ auto RuntimeEffects::Spawn(Coroutine<void> coroutine)
   // the spawner's, so a whole subtree of threads follows from the seed of the
   // one at its root and the order the branches then run in does not move any
   // of it.
-  auto child = std::make_shared<RuntimeProcess>(
+  auto child = RuntimeProcess::Create(
       parent.Context().ForStarted(), std::move(coroutine),
-      parent.Running().rng.Split());
+      parent.Generator().Split());
   Activation* const activation = child->TopActivation();
   // The spawned activity is enabled within whatever disable targets the spawner
   // is inside (LRM 9.6.2), so it takes that membership here rather than
@@ -474,7 +474,7 @@ void RuntimeEffects::StartDetached(
   // draws from a generator of its own. No thread creates it, so that generator
   // is the next of the context's initialization RNG (LRM 18.14.1), and the
   // draws of whatever reached the statement do not move.
-  auto execution = std::make_shared<RuntimeProcess>(
+  auto execution = RuntimeProcess::Create(
       context, std::move(coroutine), context.SplitInitializationRng());
   Activation* const activation = execution->TopActivation();
   // No lineage and no disable membership: the standard makes a process of

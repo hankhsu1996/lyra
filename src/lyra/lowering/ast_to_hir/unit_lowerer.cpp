@@ -55,6 +55,7 @@
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/library_cell.hpp"
 #include "lyra/lowering/ast_to_hir/statement/assertions.hpp"
+#include "lyra/lowering/ast_to_hir/std_classes.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
@@ -925,6 +926,11 @@ auto UnitLowerer::HeldByAnotherDesignElement(
 auto UnitLowerer::TakesDeclaringInstance(
     const slang::ast::ClassType& cls, diag::SourceSpan span)
     -> diag::Result<bool> {
+  // A class the runtime library defines belongs to no instance, and no unit
+  // declares it.
+  if (ImportedRuntimeClassOf(cls).has_value()) {
+    return false;
+  }
   auto id = ResolveClass(cls, span);
   if (!id) return std::unexpected(std::move(id.error()));
   return DeclarationOf(*id).takes_declaring_instance;

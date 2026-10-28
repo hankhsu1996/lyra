@@ -2009,14 +2009,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kProcessAwait:
     case support::BuiltinFn::kProcessSuspend:
     case support::BuiltinFn::kProcessResume:
-    case support::BuiltinFn::kProcessSrandom:
-    case support::BuiltinFn::kProcessGetRandstate:
-    case support::BuiltinFn::kProcessSetRandstate:
       // A class object's hooks and generator, and the steps of a call of
-      // `randomize()`:
-      // each is one library function, whatever class it acts on and whatever
-      // type a variable it names is of, since every variable crosses with its
-      // type.
+      // `randomize()`: each is one library function, whatever class it acts on
+      // and whatever type a variable it names is of, since every variable
+      // crosses with its type.
     case support::BuiltinFn::kBuiltinPreRandomize:
     case support::BuiltinFn::kBuiltinPostRandomize:
     case support::BuiltinFn::kObjectPreRandomize:
@@ -2026,7 +2022,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kObjectSetRandstate:
     case support::BuiltinFn::kWeakDowngrade:
     case support::BuiltinFn::kWeakUpgrade:
-    case support::BuiltinFn::kWeakUpgradeProcess:
     case support::BuiltinFn::kWeakRefersTo:
     case support::BuiltinFn::kObjectIdentity:
     case support::BuiltinFn::kRandomizeObject:

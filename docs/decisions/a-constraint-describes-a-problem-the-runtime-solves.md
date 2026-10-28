@@ -1,6 +1,6 @@
 # A constraint describes a problem the runtime solves
 
-Date: 2026-10-22 Status: accepted
+Date: 2026-10-22, revised 2026-10-28: a class the library defines. Status: accepted
 
 ## Context
 
@@ -29,13 +29,15 @@ constraint library writes it; MIR has no node for a constraint or for a random v
   is a call answering a term; each constraint is a requirement or a preference on one. A random
   array enters element by element, walked by the runtime from the value's type, so the compiler
   states a property once whatever its shape.
-- **Every source class's object starts with the part the runtime library declares for it**, which
-  holds the object's generator and its modes, and declares five virtual functions: declare the
-  random variables, state the constraints, name the random objects the handles reach, and the two
-  hooks. Each class overrides the first three, doing what the class it extends does first -- calling
-  that class's body directly, whichever unit declares it -- and then adding its own. A constraint
-  block is a virtual method of its class, called where its mode is on, so a block of the same name
-  in an extension replaces it by the ordinary means. A class declaring `pre_randomize` or
+- **Every class object starts with the part the runtime library declares for it**, whatever defines
+  its class, which holds the object's generator beside the modes every object keeps, and its class's
+  definition states five bodies: declare the random variables, state the constraints, name the
+  random objects the handles reach, and the two hooks. Each source class states the first three,
+  doing what the class it extends does first -- calling that class's body directly, whichever unit
+  declares it -- and then adding its own. A class the library defines, a process, states none of the
+  five, so randomizing one chooses nothing and checks only what the call writes with it. A
+  constraint block is a virtual method of its class, called where its mode is on, so a block of the
+  same name in an extension replaces it by the ordinary means. A class declaring `pre_randomize` or
   `post_randomize` overrides the hook with a call to it; one that does not inherits its base's. A
   variable's mode and a `randc` variable's cycle are kept for the variable the class declares and
   the positions of an element within it, never for the element's storage, which moves when an array
@@ -125,12 +127,13 @@ by which completion a solver happened to find.
 
 ## Consequences
 
-- Every object holds the 32 bytes of its generator, as
-  `a-generator-is-split-from-the-one-that-made-it.md` foresaw, and the generator that made it
-  advances by four draws. It also holds a pointer to its modes, which are made the first time
-  anything reads or sets one.
-- Each class has three more virtual functions, defined whether or not it declares anything random,
-  so a class of another unit can call its base's without knowing what the base declares.
+- Every class object holds the 32 bytes of its generator, as
+  `a-generator-is-split-from-the-one-that-made-it.md` foresaw, and for an object `new` makes the
+  generator that made it advances by four draws; a process's is its thread's, which nothing splits
+  again. It also holds a pointer to its modes, which are made the first time anything reads or sets
+  one.
+- Each source class states three more bodies in its definition, whether or not it declares anything
+  random, so a class of another unit can call its base's without knowing what the base declares.
 - A real random variable, an associative array declared random and an array of structures declared
   random are refused when a call reaches them; the solver has integral terms only.
 - A program carries CUDD (BSD-3-Clause) and CaDiCaL (MIT) inside its runtime, with their notices,

@@ -9,6 +9,8 @@
 // it is settled here as well, because a read a process is sensitive to builds
 // no Expr and asks the same question.
 
+#include <optional>
+
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
@@ -18,6 +20,7 @@
 namespace slang::ast {
 class ArbitrarySymbolExpression;
 class ClassPropertySymbol;
+class ClassType;
 class HierarchicalValueExpression;
 class NamedValueExpression;
 class Symbol;
@@ -94,6 +97,15 @@ auto FailOnUnsupportedReferent(Referent referent, diag::SourceSpan span)
 // ordinary variable reference, so a consumer that treats every variable
 // reference as storage reaches for a cell that does not exist.
 auto NamesCurrentInstance(const slang::ast::Expression& expr) -> bool;
+
+// In the constraints a `randomize() with` call writes, the object a member of
+// `owner` named without a handle reaches: the object the call randomizes, where
+// `owner` is its class or one it extends (LRM 18.7). Nothing elsewhere, where
+// such a member is the running method's own.
+auto RandomizedObjectReaching(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    const slang::ast::ClassType& owner, diag::SourceSpan span)
+    -> diag::Result<std::optional<hir::ExprId>>;
 
 // A member of the current instance reached through `this` (LRM 8.11). The
 // keyword qualifies what an unqualified name already reaches -- a property of

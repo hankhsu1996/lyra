@@ -124,6 +124,7 @@ static_assert(Of<value::DpiOpenArray>() == support::kDpiOpenArrayStorage);
 // table pointer the host compiler gave a class of the library would take.
 static_assert(!std::is_polymorphic_v<GcObject>);
 static_assert(!std::is_polymorphic_v<ClassObject>);
+static_assert(!std::is_polymorphic_v<RuntimeProcess>);
 static_assert(!std::is_polymorphic_v<Scope>);
 static_assert(!std::is_polymorphic_v<SynchronizationObject>);
 static_assert(!std::is_polymorphic_v<ConstraintProblem>);
