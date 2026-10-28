@@ -6,7 +6,8 @@
 // and the copy out lands in the element the copy in was read from. The same
 // holds where the language itself takes an argument that way: the index an
 // associative array's traversal method reads and updates (LRM 7.9.4 to 7.9.7)
-// and the seed a distribution function reads and advances (LRM 20.14.2). It
+// and the seed a distribution function or `$random` reads and advances (LRM
+// 20.14.1, 20.14.2). It
 // holds too for a variable a system function is handed to store into: the one
 // `$value$plusargs` converts a plusarg into (LRM 21.6), the one `$fread` reads
 // bytes into (LRM 21.3.4.4), and the memory `$readmemh` loads, which may be a
@@ -77,6 +78,7 @@ module Top;
   int on_property;
   int on_traversal;
   int on_seed;
+  int on_random_seed;
   int drawn;
   int on_plusarg;
   int on_fread;
@@ -110,6 +112,10 @@ module Top;
     calls = 0;
     drawn = $dist_uniform(seeds[counted(2)], 0, 9);
     on_seed = calls;
+
+    calls = 0;
+    drawn = $random(seeds[counted(1)]);
+    on_random_seed = calls;
 
     converted = '{5, 5, 5, 5};
     calls = 0;
@@ -147,8 +153,9 @@ module Top;
     if (keys[3] !== 7)
       $fatal(1, "the traversal left its index at %0d, expected 7", keys[3]);
     if (seeds[2] === 1) $fatal(1, "the draw did not advance its seed");
-    if (seeds[0] !== 1 || seeds[1] !== 1 || seeds[3] !== 1)
-      $fatal(1, "the draw advanced a seed it was not given");
+    if (seeds[1] === 1) $fatal(1, "$random did not advance its seed");
+    if (seeds[0] !== 1 || seeds[3] !== 1)
+      $fatal(1, "a draw advanced a seed it was not given");
 
     if (on_task !== 1)
       $fatal(1, "a task's inout actual ran its index %0d times, expected 1",
@@ -164,6 +171,9 @@ module Top;
              on_traversal);
     if (on_seed !== 1)
       $fatal(1, "a draw ran its seed operand %0d times, expected 1", on_seed);
+    if (on_random_seed !== 1)
+      $fatal(1, "$random ran its seed operand %0d times, expected 1",
+             on_random_seed);
 
     if (matched === 0) $fatal(1, "DEST=%%d did not match +DEST=7");
     if (converted[2] !== 7)
