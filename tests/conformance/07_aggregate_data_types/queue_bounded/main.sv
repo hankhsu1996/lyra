@@ -1,4 +1,4 @@
-// @reports: declared bound
+// @reports: warning count=9
 //
 // A queue declared with a right bound shall hold no element whose index is
 // greater than that bound, so after any write that would leave it longer the

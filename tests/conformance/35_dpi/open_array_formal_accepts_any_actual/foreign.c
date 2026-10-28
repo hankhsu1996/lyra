@@ -2,7 +2,7 @@
    everything about the actual is asked of that handle (LRM Annex H.8.6,
    H.12.2). Both entries below run over whatever indices the actual declared,
    so neither assumes a range of its own. */
-#include "dpi.h"
+#include <svdpi.h>
 
 /* A byte element is a packed type, so the array holds it in canonical form and
    it is read one chunk at a time (LRM Annex H.7.3, H.12.5). */

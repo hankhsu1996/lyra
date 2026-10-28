@@ -3,10 +3,6 @@
 // or a [low:high] range whose bounds are both included. Where no member matches
 // but a comparison was unknown the result is 1'bx, so the result is a four-state
 // bit and a four-state variable is what holds it (LRM 11.4.13).
-//
-// Parked: storing the result in a four-state variable aborts the run, reporting
-// that a required conversion was not emitted, so this case cannot reach a check
-// to fail at.
 module Top;
   int v;
   int sum_of_results;

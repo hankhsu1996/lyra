@@ -1,4 +1,4 @@
-// @reports-nothing:
+// @reports-none: error
 //
 // A `restrict` states a constraint for a formal tool to converge a proof on,
 // and it is the one assertion directive a simulator does not verify: it has the

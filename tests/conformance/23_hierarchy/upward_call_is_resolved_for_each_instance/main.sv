@@ -1,4 +1,4 @@
-// @error: too few arguments
+// @rejected:
 //
 // A name not found where it is written is searched for upward from each
 // instance of the module writing it (LRM 23.8), so one call resolves to a

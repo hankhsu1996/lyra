@@ -345,6 +345,19 @@ auto Describe(const ProcessEnd& end) -> std::string {
       end);
 }
 
+auto Transcript(
+    const std::filesystem::path& exe, std::span<const std::string> args,
+    const ProcessOutcome& outcome) -> std::string {
+  std::string command = exe.string();
+  for (const std::string& arg : args) {
+    command += ' ';
+    command += arg;
+  }
+  return std::format(
+      "$ {}\n{}\nstdout:\n{}\nstderr:\n{}\n", command, Describe(outcome.end),
+      outcome.stdout_text, outcome.stderr_text);
+}
+
 void PrintTo(const ProcessOutcome& outcome, std::ostream* out) {
   *out << "a child that " << Describe(outcome.end);
 }

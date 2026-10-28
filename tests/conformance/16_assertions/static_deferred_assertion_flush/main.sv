@@ -1,4 +1,4 @@
-// @reports-nothing:
+// @reports-none: error
 //
 // A deferred assertion written outside procedural code is treated as if it
 // were contained in an always_comb procedure (LRM 16.4.3). So it is evaluated
@@ -7,7 +7,7 @@
 // still pending from a value that did not last. Whichever order the continuous
 // assignment to not_a and these procedures settle in, once they have every
 // expression holds and no report survives to mature, so a conforming tool
-// reports nothing -- for each deferred form, labelled or not, and in a
+// issues no failure report -- for each deferred form, labelled or not, and in a
 // generate block or an interface as in the module itself.
 interface Watch (input logic a, input logic not_a);
   assert #0 (not_a != a);

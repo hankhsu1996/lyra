@@ -1,4 +1,4 @@
-// @reports: violation
+// @reports: violation count=2
 //
 // A unique-if and a unique0-if are violated when more than one condition is
 // found true, and a unique-case and a unique0-case when more than one case_item
@@ -6,7 +6,9 @@
 // claimed, so it answers for whether some arm holds and never for whether two
 // do: overlap is reported with a catch-all present exactly as without one. The
 // statement that runs is still the first matching arm's and only that one's
-// (LRM 12.4.2, 12.5.3).
+// (LRM 12.4.2, 12.5.3). The reports are issued in the Observed region
+// (LRM 12.4.2.1, 12.5.3.1), and a tool may end the run there, so the checks are
+// made where the statements ran, before it.
 module Top;
   int if_taken;
   int case_taken;
@@ -26,12 +28,11 @@ module Top;
       3'b01?: case_taken = 2;
       default: case_taken = 7;
     endcase
-  end
 
-  final begin
     if (if_taken !== 1) $fatal(1, "if_taken was %0d, expected 1", if_taken);
     if (case_taken !== 1)
       $fatal(1, "case_taken was %0d, expected 1", case_taken);
-    $display("All checks passed");
+    $display("Ready for the report");
+    #1 $display("All checks passed");
   end
 endmodule

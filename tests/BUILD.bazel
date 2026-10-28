@@ -1,3 +1,4 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("//tools/bazel:copts.bzl", "LYRA_COPTS")
@@ -65,6 +66,16 @@ cc_library(
         "@googletest//:gtest",
         "@nlohmann_json//:json",
         "@yaml-cpp//:yaml-cpp",
+    ],
+)
+
+cc_test(
+    name = "conformance_verdict_test",
+    srcs = ["conformance_verdict_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        ":framework",
+        "@googletest//:gtest_main",
     ],
 )
 
@@ -777,8 +788,11 @@ CONFORMANCE_DATA = [
     "//:lyra",
 ] + glob(
     [
+        "choices/**/*.c",
+        "choices/**/*.cpp",
+        "choices/**/*.sv",
+        "choices/**/lib.map",
         "conformance/**/*.sv",
-        "conformance/**/*.sv.deferred",
         "conformance/**/*.c",
         "conformance/**/*.cpp",
         "conformance/**/lib.map",
@@ -849,6 +863,31 @@ cc_test(
         "@bazel_tools//tools/cpp/runfiles",
         "@fmt",
         "@googletest//:gtest",
+    ],
+)
+
+# The corpus held up against Verilator, judged by the same claims as Lyra, to
+# learn whether a case says only what the standard requires. It reads the
+# machine's own Verilator from PATH and builds every case with the host
+# compiler, so it is a program run by hand and never a test:
+# `bazel run //tests:verilator_conformance -- <case id>...`.
+cc_binary(
+    name = "verilator_conformance",
+    srcs = ["verilator_conformance.cpp"],
+    copts = LYRA_COPTS,
+    data = glob(
+        [
+            "conformance/**/*.sv",
+            "conformance/**/*.c",
+            "conformance/**/*.cpp",
+            "conformance/**/lib.map",
+        ],
+        allow_empty = True,
+    ),
+    deps = [
+        ":framework",
+        "@bazel_tools//tools/cpp/runfiles",
+        "@fmt",
     ],
 )
 

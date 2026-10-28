@@ -1,4 +1,4 @@
-// @reports-nothing:
+// @reports-none: error
 //
 // A deferred immediate assertion suppresses false reports from transient
 // combinational values (LRM 16.4). Its report is queued when the expression is
@@ -6,7 +6,7 @@
 // before then -- an always_comb resuming on one of its dependent signals -- is a
 // flush point that clears the queue. Whichever order the continuous assignment
 // to not_a and the block settle in, once they have the expression holds and no
-// report survives to mature, so a conforming tool reports nothing.
+// report survives to mature, so a conforming tool issues no failure report.
 module Top;
   logic a;
   logic not_a;

@@ -3,9 +3,8 @@
    that the pipe holds all of it before anything reads. */
 #include <stdio.h>
 #include <string.h>
+#include <svdpi.h>
 #include <unistd.h>
-
-#include "dpi.h"
 
 int32_t feed_standard_input(const char* text) {
   int ends[2];

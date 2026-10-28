@@ -1,9 +1,9 @@
-// @reports-nothing:
+// @reports-none: warning
 //
 // A bound is the greatest index a queue may hold, so a queue declared with one
 // holds that many elements plus the one at index zero without ever exceeding
 // it. A write that leaves the queue no longer than that discards nothing, and a
-// tool has nothing to say about it -- the bound is a property the declaration
+// tool issues no warning for it -- the bound is a property the declaration
 // states, not a limit reaching it is an error (LRM 7.10.5).
 module Top;
   bit [7:0] pushed [$:2];

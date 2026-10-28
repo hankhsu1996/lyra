@@ -1,0 +1,10 @@
+# The cases no path runs, one entry per conformance case: the case's id, and
+# why running it does harm rather than simply failing -- a run that never ends,
+# or one that takes the machine's memory with it.
+#
+# A parked case is held only to elaborating, which no path decides, so that it
+# is still a legal program whenever it is taken up again. This is the last
+# resort: nothing notices a parked case starting to work, so an entry goes as
+# soon as its case can run on every path, refused or answered wrongly as the
+# other records say.
+21_output/value_plusargs_real_conversion: "a real destination of $value$plusargs ends the run out of memory"

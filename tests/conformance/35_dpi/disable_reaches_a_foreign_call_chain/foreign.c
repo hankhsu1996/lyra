@@ -8,7 +8,9 @@
    once the protocol has closed the exported ones. */
 #include <svdpi.h>
 
-#include "dpi.h"
+/* The exported subroutines called from here, declared as the design
+   exports them (LRM 35.5.6, Annex H). */
+int32_t step(int32_t);
 
 static int32_t calls = 0;
 static int32_t last = 0;

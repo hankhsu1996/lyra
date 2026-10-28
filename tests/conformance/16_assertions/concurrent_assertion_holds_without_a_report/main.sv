@@ -1,9 +1,9 @@
-// @reports-nothing:
+// @reports-none: error
 //
 // The default report belongs to a false result alone. A concurrent assert with
 // no action block at all writes nothing for an attempt that holds (LRM
 // 16.14.1), so a design whose properties are all true is one a conforming tool
-// has no comment on -- however many attempts it evaluated. A failing one whose
+// reports no failure for -- however many attempts it evaluated. A failing one whose
 // else clause is a null statement has none either: "When no action is needed,
 // a null statement (i.e., ;) is specified", and the tool's report stands only
 // where the else clause is omitted (LRM 16.14.1).

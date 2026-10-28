@@ -1,8 +1,10 @@
 # The conformance corpus
 
-Every case here answers one question: does Lyra implement IEEE 1800 correctly? A case states what
+Every case here answers one question: does a tool implement IEEE 1800 correctly? A case states what
 the standard requires of a program and checks itself against it, so it is valid under any conforming
-simulator and says nothing about Lyra.
+simulator and says nothing about Lyra. Lyra is held to the corpus, and so is any other tool someone
+writes a reader for; the first half of this file is what a case is, and the second is how Lyra holds
+itself to it.
 
 ## A case is a directory, entered through `main.sv`
 
@@ -31,15 +33,19 @@ module Top;
 endmodule
 ```
 
-There is no manifest beside it. The harness runs the case and reads exactly two things: the exit
-status, and whether `All checks passed` appears on stdout. `$fatal` sets a non-zero exit (LRM 20.10)
-and a `final` procedure runs once at the end of simulation (LRM 9.2.3), so the two signals together
-separate "a check failed" from "the checks never ran".
+There is no manifest beside it. A run is judged by whether it printed `All checks passed`, how it
+ended, and -- for the cases that claim one -- the reports it issued. `$fatal` ends the run with an
+error code (LRM 20.10) and a `final` procedure runs once at the end of simulation (LRM 9.2.3), so
+the sentinel and the end together separate "a check failed" from "the checks never ran".
 
 Five rules follow from that shape:
 
-- **The expected value is written by hand and is never one Lyra produced.** A comparison whose two
+- **The expected value is written by hand and is never one a tool produced.** A comparison whose two
   sides both come from the implementation proves only that it agrees with itself.
+- **Every legal answer passes.** Where the standard allows more than one result -- an order it does
+  not fix, a value it leaves open within a set -- the case accepts each of them. A case that pins
+  one is testing a tool's choice, and that is not a case here (see
+  [Lyra's choices](#lyras-choices)).
 - **Every target is set to something the check would reject before the case writes the value it
   checks.** Otherwise "the operation never ran" passes as "the operation answered correctly", and a
   whole class of requirements walks into this by construction: `.name()` of a non-member is the
@@ -47,18 +53,18 @@ Five rules follow from that shape:
   read is the element default. For all of those the right answer _is_ the target's default, so the
   check can only discriminate if the target held something else first.
 - **Every check has run by the time the sentinel is printed.** A case that reports success without
-  having checked anything is the one failure the harness cannot catch, so the sentinel goes last in
-  the same `final` procedure the checks are in. A case whose subject is that something does _not_
-  run is the exception that proves the rule: it prints the sentinel and then places a `$fatal` where
-  nothing should reach, which still fails the case, because a non-zero exit is read before the
-  sentinel is.
+  having run its checks is the one failure the judgement cannot catch, so the sentinel goes after
+  the last check. A case whose subject is that something does _not_ run prints the sentinel and then
+  places a `$fatal` where nothing should reach.
 - **Checks use `if`, case equality, and `$fatal`, and nothing else.** Whatever the corpus leans on
   is something whose defects fail every case, so the foundation stays as small as it can be.
   Immediate assertions are a subject the corpus tests, not a tool it uses.
-- **A case names no backend, no command, and no host tool.** `$system` (LRM 20.17.1) is the one
-  exception the standard itself creates: its meaning is a command the host runs, so a case for it
-  writes a command line, keeps to what a command processor answers for on its own, and asserts only
-  the distinction the standard fixes rather than the encoding a particular host gives it.
+
+**A case names no tool, no option, no generated file, and no message wording.** `$system` (LRM
+20.17.1) is the one exception the standard itself creates: its meaning is a command the host runs,
+so a case for it writes a command line, keeps to what a command processor answers for on its own,
+and asserts only the distinction the standard fixes rather than the encoding a particular host gives
+it.
 
 ## What else the directory may hold
 
@@ -78,7 +84,10 @@ directive has to say:
 - Every other `.sv` in the directory is compiled **before** `main.sv`, in name order. A reference
   reaches only the part of a compilation-unit scope declared before it (LRM 3.12.1), so a case is
   written against what its companions declare rather than the other way round.
-- Every `.c` and `.cpp` is built and linked as a source of foreign symbols (LRM 35.4).
+- Every `.c` and `.cpp` is built and linked as a source of foreign symbols (LRM 35.4). It includes
+  `svdpi.h`, the one header the standard defines (Annex H), and declares the exported subroutines it
+  calls itself, by the standard's mapping (LRM 35.5.6). A header a tool generates for a design is
+  that tool's own, and a case never includes one.
 - A `lib.map` is the case's library map (LRM 33.3.1), saying which library each companion belongs
   to. The standard leaves the file's name to the tool and writes its own examples against this one.
   A path in it is relative to the map, so it names a companion by its file name.
@@ -112,9 +121,8 @@ separator. A name outside it is rejected rather than quietly folded into one tha
 
 What a case needs that its sources cannot state is a `// @key: value` line at the top of `main.sv`.
 Directives come first, then a blank `//`, then the prose that states the claim. Prose is never
-parsed, and an unrecognized key is an error rather than a line quietly ignored.
-
-Most cases carry none.
+parsed, and an unrecognized key is an error rather than a line quietly ignored. Most cases carry
+none.
 
 ### `@top`
 
@@ -125,17 +133,6 @@ The instances to elaborate, whitespace-separated. A case that omits this elabora
 //
 // Two top-level modules elaborate independently, and each one's initial
 // procedure runs (LRM 23.3.1).
-```
-
-### `@args`
-
-Options for the front end, whitespace-separated.
-
-```systemverilog
-// @args: --single-unit
-//
-// Declarations in one file's compilation-unit scope are visible in another
-// when both are compiled as a single unit (LRM 3.12.1).
 ```
 
 ### `@argv`
@@ -149,49 +146,96 @@ The simulated program's own arguments, which is where LRM 21.6 plusargs reach a 
 // assigns the matched text to its variable (LRM 21.6.3).
 ```
 
-### `@error`
+### `@compilation-units`
 
-For a program IEEE 1800 requires a tool to reject. Such a case makes no checks and prints no
-sentinel; what it is held to is the rejection and the reason given. The value is text the diagnostic
-must contain.
+Which of the two use models a case's files are compiled under: `single`, where every file is one
+compilation unit, or `separate`, where each file is one of its own. The standard requires every tool
+to offer both and leaves which it takes by default to the tool (LRM 3.12.1), so a case whose meaning
+depends on it says which, and one whose meaning does not says nothing.
 
 ```systemverilog
-// @error: cannot invoke a task
+// @compilation-units: single
 //
-// A function shall not enable a task, so a conforming tool rejects this
-// program (LRM 13.4.1).
+// Declarations in one file's compilation-unit scope are visible in another
+// when both are compiled as a single unit (LRM 3.12.1).
 ```
 
-### `@reports` and `@reports-nothing`
+### What the run is held to
 
-For a requirement whose whole observable is a message. A program cannot read a message about itself,
-so where the standard's requirement is that a report is issued -- or that none is -- the case states
-it here and checks everything else in SystemVerilog as usual.
+A case states at most one of these. One that states none claims that it runs: it reaches its
+sentinel, having passed every check, and ends with a status of success.
 
-`@reports` gives text the run's diagnostics must contain. `@reports-nothing` takes no value and
-requires the run to write no diagnostic at all, because a conforming tool has no comment on a
-correct program.
-
-A case claiming silence therefore cannot end with a bare `$finish`, which writes a message of its
-own at the default severity (LRM 20.2). Let the run end by exhausting its work -- a clock driven a
-bounded number of times rather than forever -- or name the level that reports nothing.
+`@rejected:` takes no value and is a program the standard requires a tool to refuse before it runs.
+Such a case makes no checks and prints no sentinel. Refusing it is the whole of what it is held to,
+so a tool that crashes, or one the harness could not hand the program to, has not refused it.
 
 ```systemverilog
-// @reports: 'priority' violation
+// @rejected:
 //
-// A priority-if that reaches no condition and has no else issues a violation
-// report (LRM 12.4.2).
+// It shall be an error to connect any bit of a uwire net to more than one
+// driver, so a conforming tool rejects this program (LRM 6.6.2).
 ```
 
+`@reports:` is a requirement whose observable is a report the run issues, since a program cannot
+read a message about itself. It names the kind of report, by what the standard says issues it --
+`info`, `warning`, `error` and `fatal` for a severity (LRM 20.10, and the `$error` a failing
+assertion calls by default, LRM 16.14.1), `violation` for a unique or priority statement's report
+(LRM 12.4.2.1, 12.5.3.1), and `finish` and `stop` for the message those tasks print (LRM 20.2). It
+may then name what the standard fixes of that report: the `line`, the `time` and the `scope` a
+severity task's report carries (LRM 20.10), and the `message` the program itself supplied, which is
+the only text the standard puts in a report and so the only text a case may name. A claim is met by
+a report of the severity it names and no other: a case's own failing check is a `$fatal`, and it
+never stands in for the error a case asks for.
+
 ```systemverilog
-// @reports-nothing:
+// @reports: info line=21 time=37 scope=Top.probe message="a probe report"
+```
+
+**A claim is met by the report of the statement that should issue it, and no other.** Each report a
+case requires is a `@reports:` line of its own, or a `count=` on one, and each is answered by a
+report of its own, so two required reports are not met by one. Where the standard puts the source
+line in the report -- a severity task, a failing assertion's default action -- the claim names that
+line. Where it does not -- a violation, an operation's run-time error -- the case is written so that
+only the statement under test can issue a report of that kind, since a claim naming the kind alone
+is met by any report of it; a run issuing more of them than the case asks for leaves the verdict
+unresolved rather than met. A case whose requirement is something besides the report is better
+split, so that the report is the one obligation the case states.
+
+**Where the standard lets a tool end the run at the report, the case says it is ready for the report
+instead of printing its sentinel there.** That is a fatal error, a violation reported through the
+tool's own mechanism, `$stop`, and an error, after which nothing promises the run goes on. The case
+makes its checks, prints `Ready for the report` before the statement that issues it, and prints
+`All checks passed` in the same procedure after the last report, where only a run that went on past
+them reaches it -- never in a final procedure, which a tool ending the run at the report runs too:
+
+```systemverilog
+// @reports: error
+...
+    $display("Ready for the report");
+    word = Word'(bytes);        // an error (LRM 6.24.3)
+    $display("All checks passed");
+  end
+```
+
+The run is held to being ready and to the report. A check after the report holds where the run
+reaches it -- a `$fatal` there fails the case -- and a run that went on past every report is held to
+every report the case asks for; where a tool ended it at the first, that one is enough. `info` and
+`warning` leave the run going, and `$finish` runs the final procedures (LRM 9.2.3), so a case
+claiming one of those prints its sentinel at its end as any case does.
+
+`@reports-none:` names the kinds of report the standard forbids where the case puts them, and the
+run is held to issuing none of them; `error` forbids `fatal` too. A tool may write anything else --
+a banner, a summary, a remark of its own -- so silence as a whole is never the claim.
+
+```systemverilog
+// @reports-none: violation
 //
 // An explicit else covers every value no condition matched, so a priority-if
 // carrying one issues no violation report (LRM 12.4.2).
 ```
 
 **A requirement of this kind is only covered when both directions are written**, as two cases. An
-implementation that never reports satisfies every claim of silence on its own, and one that reports
+implementation that never reports satisfies every claim of absence on its own, and one that reports
 everywhere satisfies every claim of a report; neither half discriminates alone.
 
 ## Checking what a program prints
@@ -209,7 +253,38 @@ value prints from failing every case that happens to print one. Recorded output 
 cases whose subject is the output channel itself -- how stdout and stderr divide, and the order in
 which output interleaves.
 
-## What a path cannot do
+## How a run is judged
+
+What a tool did is read by a reader written for that tool, which knows how to ask it for each use
+model a case needs and how to read what it wrote: whether it refused the program, whether the
+program ran and printed the sentinel, how it ended, and each report it issued, by kind, time, scope
+and message. A line in the shape of one of its reports that the reader cannot place is kept apart as
+unplaced, never passed over. One judgement then turns the claim and that reading into a verdict, the
+same for every tool:
+
+- **conforms** -- the run did what the claim says the standard requires;
+- **does not conform** -- it did something else: a wrong answer, a refusal of a legal program, a
+  legal refusal not made, or no use model the standard requires every tool to offer;
+- **unresolved** -- what was read cannot decide the claim: the run did not end in its time, or the
+  report the claim asks about could be among the lines the reader could not place;
+- **not run** -- the case never reached the tool: the harness could not hand it the files. It says
+  nothing of the tool.
+
+A reader exists for Lyra, used by the targets below, and for Verilator, which is held to the corpus
+to learn whether a case says only what the standard requires:
+
+```bash
+bazel run //tests:verilator_conformance -- 09_processes/always_comb_combinational_value
+```
+
+Verilator is a second opinion here, never an oracle: what it answers is judged by the same claim.
+
+## How Lyra holds itself to the corpus
+
+Everything from here on is Lyra's, and none of it changes a verdict: it says which verdict Lyra is
+known to give, and every case is run with Lyra's own checks of itself switched on.
+
+### What a path cannot do
 
 A path is the artifact a run produces -- the C++ project, or the LLVM module -- not the way that
 artifact is executed. What a path currently refuses is recorded once for the path, in
@@ -219,24 +294,22 @@ artifact is executed. What a path currently refuses is recorded once for the pat
 16_assertions/immediate_assertion_severity: "assertions are not yet supported"
 ```
 
-A case listed there is expected to be refused, with a diagnostic containing that text. One that
-starts running instead fails until its entry is removed, so the file only ever shrinks. That is what
-makes it the coverage report: the cases absent from it are the cases the path runs.
+A case listed there is expected to fall short with output containing that text. One that conforms
+instead fails until its entry is removed, so the file only ever shrinks. That is what makes it the
+coverage report: the cases absent from it are the cases the path runs.
 
 Absence of an entry is therefore a claim, which is why no case carries a per-path tag. A tag's
 absence cannot tell "this path refuses the construct" from "nobody has tagged it yet".
 
 A compiler bug is neither. A run that reports one fails whatever the records say, because "not
 implemented yet" and "implemented wrongly" recorded the same way would leave nothing able to report
-coverage.
+coverage. Every case is lowered with Lyra's verification of its middle form after each rewrite, and
+also reading each instance through a body of its own, each held to the compiled unit it shares; one
+that lowers differently fails as a compiler bug. A foreign source is compiled after the header Lyra
+generates for the design, so a prototype that header gets wrong is a failure of the case even though
+the case never includes it.
 
-Every case is also lowered reading each instance through a body of its own, each held to the
-compiled unit it shares, and one that lowers differently fails as a compiler bug. Two instances that
-share a unit while lowering differently are one of them built as the other, and a case sees that
-only where it happens to check the instance that came out wrong -- which is why a case about
-something that differs between instances checks an instance other than the first.
-
-## Where a path answers wrongly
+### Where a path answers wrongly
 
 A wrong answer is not a refusal, so it is recorded separately, in `tests/paths/<path>.defects.yaml`,
 holding text the failing run produces:
@@ -245,10 +318,10 @@ holding text the failing run produces:
 11_operators/packed_power_operator: "zero_base_negative_exponent was"
 ```
 
-The case keeps every check it makes. It is expected to fail, and to fail saying that; the day the
-answer becomes right the case passes, and the run then fails until the entry goes. That is the point
-of recording a defect here rather than commenting the check out inside the case, where the check
-stops running and nothing notices when the behaviour is fixed.
+The case keeps every check it makes. It is expected to fall short, and to say that; the day the
+answer becomes right the case conforms, and the run then fails until the entry goes. That is the
+point of recording a defect here rather than commenting the check out inside the case, where the
+check stops running and nothing notices when the behaviour is fixed.
 
 A run whose programs are built to check their memory (`--sanitize address`, in the run that checks
 Lyra's own) sees what no other run does, so what it finds unfixed is recorded apart, in
@@ -256,20 +329,25 @@ Lyra's own) sees what no other run does, so what it finds unfixed is recorded ap
 case passes in every other.
 
 A case appears in at most one of the records -- refused and wrong are different outcomes and a case
-recorded twice leaves no saying which it is held to. So the cases the path genuinely runs are the
-ones absent from all of them, and that is the coverage the corpus reports.
+recorded twice leaves no saying which it is held to. No record is a place for a failure that is
+merely inconvenient. What goes in is a defect someone has diagnosed, with an entry in the matching
+progress doc saying what the standard requires.
 
-No record is a place for a failure that is merely inconvenient. What goes in is a defect someone has
-diagnosed, with an entry in the matching progress doc saying what the standard requires.
+### A case no path can run
 
-## A case that cannot run at all
+A case Lyra cannot run without harm -- one that never ends, or takes the machine's memory with it --
+is named in `tests/paths/parked.yaml` with why, and is held only to elaborating. The case itself is
+left as it is, so every other tool runs it. This is the last resort, because a parked case is the
+one shape here that nothing watches.
 
-A case Lyra cannot get far enough into to fail usefully is parked by renaming its entry to
-`main.sv.deferred`, which the harness does not collect; the reasoning stays in the file rather than
-being written twice. This is the last resort, because a parked case is the one shape here that
-nothing watches.
+### Lyra's choices
 
-## Running
+Where the standard leaves an answer to the tool and Lyra has chosen one, a case holding Lyra to that
+choice lives in `tests/choices/`, in the same shape and under the same clause, and only Lyra runs
+it. It is how a choice is kept from changing by accident, and it is never a statement of the
+standard.
+
+### Running
 
 ```bash
 bazel test //tests:llvm_tests

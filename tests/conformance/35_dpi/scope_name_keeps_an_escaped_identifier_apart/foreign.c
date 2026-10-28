@@ -2,8 +2,7 @@
    finds that scope again (LRM Annex H.9.3). Every answer is read back out to
    the design rather than judged here. */
 #include <stddef.h>
-
-#include "dpi.h"
+#include <svdpi.h>
 
 const char* scope_name(void) {
   return svGetNameFromScope(svGetScope());

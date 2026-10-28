@@ -1,4 +1,4 @@
-// @reports-nothing:
+// @reports-none: error
 //
 // A deferred immediate assertion holds its action for a later region of the
 // time step rather than running it inline (LRM 16.4), and the outcome still

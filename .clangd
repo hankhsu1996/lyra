@@ -14,6 +14,17 @@ CompileFlags:
 
 ---
 
+# A case's foreign source is C (LRM 35.5.1.6), which no compilation database
+# entry says, so it is named as C here rather than read as C++.
+If:
+  PathMatch: .*\.c
+CompileFlags:
+  Add:
+    - "-xc"
+    - "-std=c17"
+
+---
+
 Diagnostics:
   ClangTidy:
     FastCheckFilter: Strict
@@ -34,17 +45,5 @@ InlayHints:
 
 If:
   PathMatch: playground/.*
-Diagnostics:
-  Suppress: '*'
-
----
-
-# A conformance case's own C sources are inputs to the project lyra emits, not
-# to this repository's build: they include the ABI header lyra generates for
-# that project, which exists only after an emit. clangd has no compilation
-# database entry for them and can only report the generated header and
-# everything it declares as missing.
-If:
-  PathMatch: tests/conformance/.*
 Diagnostics:
   Suppress: '*'

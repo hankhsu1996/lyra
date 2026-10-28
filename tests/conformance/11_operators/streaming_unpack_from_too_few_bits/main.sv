@@ -1,4 +1,4 @@
-// @error: holds fewer bits than the variables it is unpacked into need
+// @reports: error
 //
 // Unpacking a stream that holds fewer bits than its targets need is an error,
 // and where the stream's width is the running program's, a queue holding one
@@ -9,6 +9,8 @@ module Top;
   initial begin
     byte bytes[$];
     bytes = {8'h01};
+    $display("Ready for the report");
     {>>{word}} = bytes;
+    $display("All checks passed");
   end
 endmodule

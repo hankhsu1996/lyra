@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
+#include <cstdint>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -10,7 +12,10 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <unordered_set>
+#include <utility>
+#include <variant>
 #include <vector>
 
 namespace lyra::test {
@@ -88,6 +93,82 @@ auto ReadDirectives(std::string_view source, const std::filesystem::path& path)
   return out;
 }
 
+auto ReportKindNamed(std::string_view word) -> std::optional<ReportKind> {
+  for (const ReportKind kind :
+       {ReportKind::kInfo, ReportKind::kWarning, ReportKind::kError,
+        ReportKind::kFatal, ReportKind::kViolation, ReportKind::kFinish,
+        ReportKind::kStop}) {
+    if (SpellingOf(kind) == word) {
+      return kind;
+    }
+  }
+  return std::nullopt;
+}
+
+// A claim of `count=N` asks for N reports of the same description, each
+// answered by one of its own.
+struct ReadPattern {
+  ReportPattern pattern;
+  std::uint64_t count = 1;
+};
+
+// The fields of a report a claim names, as `key=value` after the kind, a value
+// holding spaces written in double quotes. Nothing when the text is not in that
+// form.
+auto ReadReportPattern(std::string_view text) -> std::optional<ReadPattern> {
+  text = Trim(text);
+  const std::size_t kind_end = text.find(' ');
+  const std::optional<ReportKind> kind =
+      ReportKindNamed(text.substr(0, kind_end));
+  if (!kind) {
+    return std::nullopt;
+  }
+  ReadPattern read;
+  ReportPattern& pattern = read.pattern;
+  pattern.kind = *kind;
+  std::string_view rest =
+      kind_end == std::string_view::npos ? "" : text.substr(kind_end);
+  while (!(rest = Trim(rest)).empty()) {
+    const std::size_t equals = rest.find('=');
+    if (equals == std::string_view::npos) {
+      return std::nullopt;
+    }
+    const std::string_view key = rest.substr(0, equals);
+    rest.remove_prefix(equals + 1);
+    std::string_view value;
+    if (rest.starts_with('"')) {
+      const std::size_t close = rest.find('"', 1);
+      if (close == std::string_view::npos) {
+        return std::nullopt;
+      }
+      value = rest.substr(1, close - 1);
+      rest.remove_prefix(close + 1);
+    } else {
+      const std::size_t end = rest.find(' ');
+      value = rest.substr(0, end);
+      rest.remove_prefix(end == std::string_view::npos ? rest.size() : end);
+    }
+    if (key == "line" || key == "time" || key == "count") {
+      const std::optional<std::uint64_t> value_read = ReadDecimal(value);
+      if (!value_read || (key == "count" && *value_read == 0)) {
+        return std::nullopt;
+      }
+      if (key == "count") {
+        read.count = *value_read;
+      } else {
+        (key == "line" ? pattern.line : pattern.time) = *value_read;
+      }
+    } else if (key == "scope") {
+      pattern.scope = std::string(value);
+    } else if (key == "message") {
+      pattern.message = std::string(value);
+    } else {
+      return std::nullopt;
+    }
+  }
+  return read;
+}
+
 // A case sits inside the clause directory it tests, so its id names a clause
 // and a subject within it. A case directly under the corpus root names no
 // clause, which leaves it outside the one enumeration coverage is measured
@@ -150,8 +231,7 @@ void CollectCompanions(
 
 auto ParseCase(
     const std::filesystem::path& corpus_root,
-    const std::filesystem::path& directory, std::string_view entry_name)
-    -> ConformanceCase {
+    const std::filesystem::path& directory) -> ConformanceCase {
   ConformanceCase c;
   c.directory = directory;
   c.id = directory.lexically_relative(corpus_root).generic_string();
@@ -159,42 +239,95 @@ auto ParseCase(
   CheckFiledUnderClause(c.id, directory);
   CollectCompanions(directory, c);
 
-  const std::filesystem::path entry = directory / entry_name;
+  const std::filesystem::path entry = directory / kCaseEntrySource;
   c.entry = entry;
   std::unordered_set<std::string> seen;
+  std::optional<std::string> claimed_by;
+  const auto claim = [&](const Directive& d, Claim stated) {
+    if (claimed_by) {
+      throw std::runtime_error(
+          std::format(
+              "{}: '@{}' and '@{}' each state what the run is held to, and a "
+              "case states one requirement",
+              entry.string(), *claimed_by, d.key));
+    }
+    claimed_by = d.key;
+    c.claim = std::move(stated);
+  };
+  const auto take_no_value = [&](const Directive& d) {
+    if (!d.value.empty()) {
+      throw std::runtime_error(
+          std::format(
+              "{}: '@{}' takes no value, and was given '{}'", entry.string(),
+              d.key, d.value));
+    }
+  };
+  // Each report a case requires is a line of its own, one report answering
+  // each, so that line is the one directive given more than once.
+  IssuesReports reported;
   for (const Directive& d : ReadDirectives(ReadFile(entry), entry)) {
-    if (!seen.insert(d.key).second) {
+    if (d.key != "reports" && !seen.insert(d.key).second) {
       throw std::runtime_error(
           std::format(
               "{}: '@{}' is given twice; a directive states its whole value "
               "once",
               entry.string(), d.key));
     }
-    if (d.key == "top") {
-      c.tops = SplitOnWhitespace(d.value);
-    } else if (d.key == "args") {
-      c.front_end_args = SplitOnWhitespace(d.value);
-    } else if (d.key == "argv") {
-      c.program_args = SplitOnWhitespace(d.value);
-    } else if (d.key == "error") {
-      c.required_error = d.value;
-    } else if (d.key == "reports") {
-      if (d.value.empty()) {
+    if (d.key == "rejected") {
+      take_no_value(d);
+      claim(d, RejectedBeforeRunning{});
+    } else if (d.key == "reports-none") {
+      IssuesNoReportOf forbidden;
+      for (const std::string& word : SplitOnWhitespace(d.value)) {
+        const std::optional<ReportKind> kind = ReportKindNamed(word);
+        if (!kind) {
+          throw std::runtime_error(
+              std::format(
+                  "{}: '@reports-none' names the kinds of report the run must "
+                  "not issue, and '{}' is not one",
+                  entry.string(), word));
+        }
+        forbidden.kinds.push_back(*kind);
+      }
+      if (forbidden.kinds.empty()) {
         throw std::runtime_error(
             std::format(
-                "{}: '@reports' needs the text the report must contain; empty "
-                "text is matched by every run",
+                "{}: '@reports-none' names the kinds of report the run must "
+                "not issue, and names none",
                 entry.string()));
       }
-      c.reports = ReportsText{.text = d.value};
-    } else if (d.key == "reports-nothing") {
-      if (!d.value.empty()) {
+      claim(d, std::move(forbidden));
+    } else if (d.key == "compilation-units") {
+      if (d.value == "single") {
+        c.compilation_units = CompilationUnits::kSingle;
+      } else if (d.value == "separate") {
+        c.compilation_units = CompilationUnits::kSeparate;
+      } else {
         throw std::runtime_error(
             std::format(
-                "{}: '@reports-nothing' takes no value, and was given '{}'",
+                "{}: '@compilation-units' is 'single' or 'separate', and was "
+                "given '{}'",
                 entry.string(), d.value));
       }
-      c.reports = ReportsNothing{};
+    } else if (d.key == "reports") {
+      std::optional<ReadPattern> pattern = ReadReportPattern(d.value);
+      if (!pattern) {
+        throw std::runtime_error(
+            std::format(
+                "{}: '@reports' names a kind of report and what the standard "
+                "fixes of it, as 'error line=12 time=5 scope=Top "
+                "message=\"...\" count=2', and was given '{}'",
+                entry.string(), d.value));
+      }
+      if (reported.reports.empty()) {
+        claim(d, IssuesReports{});
+      }
+      reported.reports.insert(
+          reported.reports.end(), pattern->count, pattern->pattern);
+    } else if (d.key == "top") {
+      c.tops = SplitOnWhitespace(d.value);
+    } else if (d.key == "argv") {
+      c.program_args = SplitOnWhitespace(d.value);
     } else {
       throw std::runtime_error(
           std::format(
@@ -203,6 +336,9 @@ auto ParseCase(
     }
   }
 
+  if (!reported.reports.empty()) {
+    c.claim = std::move(reported);
+  }
   if (c.tops.empty()) {
     c.tops.emplace_back("Top");
   }
@@ -211,10 +347,52 @@ auto ParseCase(
 
 }  // namespace
 
-namespace {
+auto ReadDecimal(std::string_view text) -> std::optional<std::uint64_t> {
+  std::uint64_t number = 0;
+  const auto [end, error] =
+      std::from_chars(text.data(), text.data() + text.size(), number);
+  if (error != std::errc{} || end != text.data() + text.size()) {
+    return std::nullopt;
+  }
+  return number;
+}
 
-auto LoadEntered(
-    const std::filesystem::path& corpus_root, std::string_view entry_name)
+auto SpellingOf(ReportKind kind) -> std::string_view {
+  switch (kind) {
+    case ReportKind::kInfo:
+      return "info";
+    case ReportKind::kWarning:
+      return "warning";
+    case ReportKind::kError:
+      return "error";
+    case ReportKind::kFatal:
+      return "fatal";
+    case ReportKind::kViolation:
+      return "violation";
+    case ReportKind::kFinish:
+      return "finish";
+    case ReportKind::kStop:
+      return "stop";
+  }
+  return "info";
+}
+
+auto MayEndTheRun(ReportKind kind) -> bool {
+  switch (kind) {
+    case ReportKind::kError:
+    case ReportKind::kFatal:
+    case ReportKind::kViolation:
+    case ReportKind::kStop:
+      return true;
+    case ReportKind::kInfo:
+    case ReportKind::kWarning:
+    case ReportKind::kFinish:
+      return false;
+  }
+  return true;
+}
+
+auto LoadConformanceCases(const std::filesystem::path& corpus_root)
     -> std::vector<ConformanceCase> {
   std::vector<ConformanceCase> cases;
   if (!std::filesystem::exists(corpus_root)) {
@@ -227,24 +405,12 @@ auto LoadEntered(
   for (const auto& entry :
        std::filesystem::recursive_directory_iterator(corpus_root)) {
     if (entry.is_directory() &&
-        std::filesystem::exists(entry.path() / entry_name)) {
-      cases.push_back(ParseCase(corpus_root, entry.path(), entry_name));
+        std::filesystem::exists(entry.path() / kCaseEntrySource)) {
+      cases.push_back(ParseCase(corpus_root, entry.path()));
     }
   }
   std::ranges::sort(cases, {}, &ConformanceCase::id);
   return cases;
-}
-
-}  // namespace
-
-auto LoadConformanceCases(const std::filesystem::path& corpus_root)
-    -> std::vector<ConformanceCase> {
-  return LoadEntered(corpus_root, kCaseEntrySource);
-}
-
-auto LoadParkedCases(const std::filesystem::path& corpus_root)
-    -> std::vector<ConformanceCase> {
-  return LoadEntered(corpus_root, kParkedCaseEntry);
 }
 
 }  // namespace lyra::test

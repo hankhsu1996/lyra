@@ -1,7 +1,11 @@
 /* A foreign task that consumes simulation time by calling back an exported
    task that suspends (LRM 35.5.1.1). The run ends while this frame is part way
    through its loop. */
-#include "dpi.h"
+#include <svdpi.h>
+
+/* The exported subroutines called from here, declared as the design
+   exports them (LRM 35.5.6, Annex H). */
+int32_t step(const char*, int32_t);
 
 int32_t advance(const char* tag, int32_t rounds) {
   int32_t i;

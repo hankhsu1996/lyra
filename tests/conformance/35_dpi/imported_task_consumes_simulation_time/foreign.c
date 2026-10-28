@@ -6,7 +6,11 @@
    Every suspension is one step longer than the one before it, so how many
    there were and how long the first one was reach the answer separately
    rather than only as their product. */
-#include "dpi.h"
+#include <svdpi.h>
+
+/* The exported subroutines called from here, declared as the design
+   exports them (LRM 35.5.6, Annex H). */
+int32_t step(int32_t);
 
 int32_t advance(int32_t rounds, int32_t amount) {
   int32_t i;

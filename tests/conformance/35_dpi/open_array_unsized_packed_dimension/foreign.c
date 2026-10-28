@@ -1,7 +1,7 @@
 /* Dimension 0 of an open-array handle refers to the packed part, which is
    always one-dimensional; dimensions above 0 refer to the unpacked part, and
    this formal has none (LRM Annex H.12.2). */
-#include "dpi.h"
+#include <svdpi.h>
 
 int32_t packed_query(const svOpenArrayHandle h, int32_t which) {
   switch (which) {

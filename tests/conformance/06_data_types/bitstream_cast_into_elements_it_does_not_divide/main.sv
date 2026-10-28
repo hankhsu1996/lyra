@@ -1,4 +1,4 @@
-// @error: does not divide into the elements
+// @reports: error
 //
 // A bit-stream cast to a dynamically sized type sizes it to hold exactly the
 // operand's bits, so an operand whose bits do not divide into whole elements
@@ -13,6 +13,8 @@ module Top;
   initial begin
     Nibble nibbles[$];
     nibbles = {4'h1, 4'h2, 4'h3};
+    $display("Ready for the report");
     bytes = Bytes'(nibbles);
+    $display("All checks passed");
   end
 endmodule

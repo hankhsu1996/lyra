@@ -1,4 +1,4 @@
-// @args: --single-unit
+// @compilation-units: single
 //
 // A conforming tool offers a use model in which all the files on one
 // compilation command line make a single compilation unit, and a declaration in

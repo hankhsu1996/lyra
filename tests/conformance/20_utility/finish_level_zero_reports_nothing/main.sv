@@ -1,4 +1,4 @@
-// @reports-nothing:
+// @reports-none: finish
 //
 // The optional argument of $finish is an expression that selects the
 // diagnostic message the tool prints, and level 0 prints nothing (LRM 20.2,

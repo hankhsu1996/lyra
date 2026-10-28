@@ -2,8 +2,7 @@
    and no two arguments of a call are equal, so an actual that never reached
    this side cannot yield the answer the design checks for. */
 #include <stdio.h>
-
-#include "dpi.h"
+#include <svdpi.h>
 
 int32_t mix(int32_t high, int32_t low) {
   return (high * 1000) + low;

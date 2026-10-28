@@ -1,4 +1,4 @@
-// @reports: which is no member of the memory's enumeration
+// @reports: error count=14
 //
 // A load into a memory of a 2-state type reads an x or z digit as 0. A load
 // into a memory of an enumerated type reads the members' numeric values, and a
@@ -46,6 +46,7 @@ module Top;
     fd = $fopen("no_member.hex", "w");
     $fwrite(fd, "1 2 7 1\n");
     $fclose(fd);
+    $display("Ready for the report");
     fixed = '{default: C};
     $readmemh("no_member.hex", fixed);
     descending = '{default: C};
@@ -108,68 +109,70 @@ module Top;
     $fclose(fd);
     unknown_member = '{default: K0};
     $readmemb("unknown_member.bin", unknown_member);
-  end
 
-  final begin
-    automatic int expected_ints[4] = '{1, 0, 0, 3};
-    automatic bit [3:0] expected_bits[4] = '{1, 0, 0, 3};
-    automatic four_state_t stopped[4] = '{A, B, C, C};
-    automatic four_state_t windowed_stopped[4] = '{C, C, B, A};
-    automatic four_state_t rows_stopped[2][2] = '{'{A, B}, '{C, C}};
-    automatic four_state_t sliced_stopped[6] = '{C, A, B, C, C, C};
-    automatic four_state_t from_x_stopped[3] = '{A, C, C};
-    automatic four_state_t too_wide_stopped[2] = '{C, C};
-    automatic two_state_t two_state_stopped[5] = '{Q, P, P, Q, Q};
-    automatic int_based_t int_based_stopped[3] = '{I5, I0, I0};
-    automatic unknown_member_t unknown_member_read[2] = '{KX, K0};
-    automatic four_state_t past_stopped[2] = '{C, C};
+    // Where the run goes on past the errors, each load left what the standard
+    // says it does.
+    begin
+      automatic int expected_ints[4] = '{1, 0, 0, 3};
+      automatic bit [3:0] expected_bits[4] = '{1, 0, 0, 3};
+      automatic four_state_t stopped[4] = '{A, B, C, C};
+      automatic four_state_t windowed_stopped[4] = '{C, C, B, A};
+      automatic four_state_t rows_stopped[2][2] = '{'{A, B}, '{C, C}};
+      automatic four_state_t sliced_stopped[6] = '{C, A, B, C, C, C};
+      automatic four_state_t from_x_stopped[3] = '{A, C, C};
+      automatic four_state_t too_wide_stopped[2] = '{C, C};
+      automatic two_state_t two_state_stopped[5] = '{Q, P, P, Q, Q};
+      automatic int_based_t int_based_stopped[3] = '{I5, I0, I0};
+      automatic unknown_member_t unknown_member_read[2] = '{KX, K0};
+      automatic four_state_t past_stopped[2] = '{C, C};
 
-    if (ints != expected_ints)
-      $fatal(1, "an int memory read %p, expected x and z as 0", ints);
-    if (bits != expected_bits)
-      $fatal(1, "a bit memory read %p, expected x and z as 0", bits);
+      if (ints != expected_ints)
+        $fatal(1, "an int memory read %p, expected x and z as 0", ints);
+      if (bits != expected_bits)
+        $fatal(1, "a bit memory read %p, expected x and z as 0", bits);
 
-    if (fixed !== stopped)
-      $fatal(1, "a fixed memory read %p, expected %p", fixed, stopped);
-    foreach (stopped[i])
-      if (descending[i] !== stopped[i])
-        $fatal(1, "a descending memory read %p, expected the load to stop at address 2",
-               descending);
-    if (windowed !== windowed_stopped)
-      $fatal(1, "a window counting down read %p, expected %p", windowed,
-             windowed_stopped);
-    foreach (stopped[i])
-      if (dynamic[i] !== stopped[i])
-        $fatal(1, "a dynamic array read %p, expected %p", dynamic, stopped);
-    foreach (stopped[i])
-      if (queued[i] !== stopped[i])
-        $fatal(1, "a queue read %p, expected %p", queued, stopped);
-    if (rows !== rows_stopped)
-      $fatal(1, "a memory of rows read %p, expected %p", rows, rows_stopped);
-    if (sliced !== sliced_stopped)
-      $fatal(1, "a slice read %p, expected %p", sliced, sliced_stopped);
-    if (keyed.num() != 1 || keyed[0] !== A)
-      $fatal(1, "an associative memory read %p, expected only its first entry", keyed);
-    if (binary !== stopped)
-      $fatal(1, "$readmemb read %p, expected %p", binary, stopped);
+      if (fixed !== stopped)
+        $fatal(1, "a fixed memory read %p, expected %p", fixed, stopped);
+      foreach (stopped[i])
+        if (descending[i] !== stopped[i])
+          $fatal(1, "a descending memory read %p, expected the load to stop at address 2",
+                 descending);
+      if (windowed !== windowed_stopped)
+        $fatal(1, "a window counting down read %p, expected %p", windowed,
+               windowed_stopped);
+      foreach (stopped[i])
+        if (dynamic[i] !== stopped[i])
+          $fatal(1, "a dynamic array read %p, expected %p", dynamic, stopped);
+      foreach (stopped[i])
+        if (queued[i] !== stopped[i])
+          $fatal(1, "a queue read %p, expected %p", queued, stopped);
+      if (rows !== rows_stopped)
+        $fatal(1, "a memory of rows read %p, expected %p", rows, rows_stopped);
+      if (sliced !== sliced_stopped)
+        $fatal(1, "a slice read %p, expected %p", sliced, sliced_stopped);
+      if (keyed.num() != 1 || keyed[0] !== A)
+        $fatal(1, "an associative memory read %p, expected only its first entry", keyed);
+      if (binary !== stopped)
+        $fatal(1, "$readmemb read %p, expected %p", binary, stopped);
 
-    if (past_the_memory !== past_stopped)
-      $fatal(1, "a word past the memory read %p, expected the load to stop at it",
-             past_the_memory);
-    if (from_x !== from_x_stopped)
-      $fatal(1, "an x word read %p, expected the load to stop at it", from_x);
-    if (too_wide !== too_wide_stopped)
-      $fatal(1, "a word wider than its type read %p, expected the load to stop at it",
-             too_wide);
-    if (two_state !== two_state_stopped)
-      $fatal(1, "a 2-state enumeration read %p, expected %p", two_state,
-             two_state_stopped);
-    if (int_based !== int_based_stopped)
-      $fatal(1, "an int-based enumeration read %p, expected %p", int_based,
-             int_based_stopped);
-    if (unknown_member !== unknown_member_read)
-      $fatal(1, "a member holding x read %p, expected %p", unknown_member,
-             unknown_member_read);
-    $display("All checks passed");
+      if (past_the_memory !== past_stopped)
+        $fatal(1, "a word past the memory read %p, expected the load to stop at it",
+               past_the_memory);
+      if (from_x !== from_x_stopped)
+        $fatal(1, "an x word read %p, expected the load to stop at it", from_x);
+      if (too_wide !== too_wide_stopped)
+        $fatal(1, "a word wider than its type read %p, expected the load to stop at it",
+               too_wide);
+      if (two_state !== two_state_stopped)
+        $fatal(1, "a 2-state enumeration read %p, expected %p", two_state,
+               two_state_stopped);
+      if (int_based !== int_based_stopped)
+        $fatal(1, "an int-based enumeration read %p, expected %p", int_based,
+               int_based_stopped);
+      if (unknown_member !== unknown_member_read)
+        $fatal(1, "a member holding x read %p, expected %p", unknown_member,
+               unknown_member_read);
+      $display("All checks passed");
+    end
   end
 endmodule

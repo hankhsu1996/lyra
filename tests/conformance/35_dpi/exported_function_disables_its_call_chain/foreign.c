@@ -4,7 +4,9 @@
    protocol requires of an imported function. */
 #include <svdpi.h>
 
-#include "dpi.h"
+/* The exported subroutines called from here, declared as the design
+   exports them (LRM 35.5.6, Annex H). */
+int32_t answer(int32_t);
 
 static int32_t queried = 0;
 

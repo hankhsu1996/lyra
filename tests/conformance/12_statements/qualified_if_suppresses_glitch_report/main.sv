@@ -1,11 +1,11 @@
-// @reports-nothing:
+// @reports-none: violation
 //
 // A unique-if violation report is deferred to the Observed region and cleared
 // by a flush point -- an always_comb resuming on a dependent signal -- so a
 // transient combinational value that momentarily matches no condition does not
 // produce a false report (LRM 12.4.2.1). Whichever order the continuous
 // assignment to not_a and the block settle in, once they have exactly one
-// condition holds, so a conforming tool reports nothing.
+// condition holds, so a conforming tool issues no violation report.
 module Top;
   logic a;
   logic not_a;

@@ -1,4 +1,4 @@
-// @reports-nothing:
+// @reports-none: error
 //
 // An exported function may disable a block its own foreign caller is running
 // inside (LRM 9.6.2), which puts that imported subroutine in the disabled state

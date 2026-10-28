@@ -1,11 +1,11 @@
-// @reports-nothing:
+// @reports-none: error
 //
 // Disabling the outermost scope of a procedure that has an active deferred
 // assertion queue flushes that queue, and every pending report on it is cleared
 // (LRM 16.4.2, 16.4.4). Here the assertion's expression is false where the
 // statement is reached, so a report is queued; another procedure disables the
 // enclosing block in the same time step, before the report can mature, so a
-// conforming tool reports nothing.
+// conforming tool issues no failure report.
 module Top;
   logic go;
   logic clear;

@@ -1,4 +1,4 @@
-// @reports-nothing:
+// @reports-none: error
 //
 // A disable statement may target a block whose execution is part way through a
 // mixed-language call chain (LRM 35.9). The foreign call stack cannot be

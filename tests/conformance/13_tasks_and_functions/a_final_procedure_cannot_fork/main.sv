@@ -1,4 +1,4 @@
-// @error: cannot schedule what takes effect after it returns
+// @reports: error
 //
 // A function may hold a fork-join_none, but scheduling what cannot become
 // active until the function returns is allowed only on a thread an initial or
@@ -9,8 +9,10 @@ module Top;
   initial #5;
 
   final begin
+    $display("Ready for the report");
     fork
       $display("a process spawned in a final procedure");
     join_none
+    $display("All checks passed");
   end
 endmodule

@@ -1,7 +1,7 @@
-// @reports-nothing:
+// @reports-none: error
 //
 // A load into a memory of an enumerated type whose file writes only the
-// members' values reads every word and reports nothing (LRM 21.4.2).
+// members' values reads every word and reports no error (LRM 21.4.2).
 module Top;
   typedef enum logic [3:0] {A = 1, B = 2, C = 4} four_state_t;
 

@@ -3,8 +3,8 @@
 ## Purpose
 
 Define what a test may claim, where it lives, and who decides whether it passed. The corpus answers
-one question -- does Lyra implement IEEE 1800 correctly -- so it is a conformance suite against a
-published standard, and everything below follows from that.
+one question -- does a tool implement IEEE 1800 correctly -- so it is a conformance suite against a
+published standard that Lyra is held to like any other tool, and everything below follows from that.
 
 ## Owns
 
@@ -23,18 +23,21 @@ published standard, and everything below follows from that.
 ## Core Invariants
 
 1. **A case states what IEEE 1800 requires of a program, and nothing else.** It names no path
-   through the compiler, no backend, no command, and no host tool. The same file is valid whether
-   Lyra has one path or twenty, and runs unmodified under any conforming simulator.
+   through the compiler, no backend, no command, no option, no generated file, and no wording of a
+   tool's message. The same file is valid whether Lyra has one path or twenty, and runs unmodified
+   under any conforming simulator.
 
 2. **A case checks itself in SystemVerilog.** It compares in the language, calls `$fatal` on
-   mismatch, and prints a fixed sentinel from a single `final` procedure once every check has
-   passed. Pass or fail is read from the exit status and the presence of that sentinel; nothing else
-   about the program's output is parsed. The two signals divide the failures between them: `$fatal`
-   sets a nonzero exit (LRM 20.10), and a missing sentinel means the checks never ran.
+   mismatch, and prints a fixed sentinel once every check has passed. Where its requirement is a
+   report, that report is the one thing it claims beside the checks, by kind and by what the
+   standard fixes of it, and where the standard lets a tool end the run at it the case says it is
+   ready for the report before it, with a marker of its own. Nothing else about the program's output
+   is read.
 
-3. **The expected value is written by a human and is never a value Lyra produced.** A comparison
-   whose both sides pass through the same implementation proves only that the implementation agrees
-   with itself.
+3. **The expected value is written by a human and is never a value a tool produced, and every answer
+   the standard allows passes.** A comparison whose both sides pass through the same implementation
+   proves only that the implementation agrees with itself, and a case that pins one of several legal
+   answers tests a choice, which lives apart from the corpus.
 
 4. **The corpus rests on the smallest subset that can express a check** -- a conditional, case
    equality, and `$fatal`. A construct the corpus depends on is a construct whose defects fail every
@@ -100,6 +103,11 @@ published standard, and everything below follows from that.
     from, and that same correction is applied here until the suite holds it, so the design goes on
     being measured on the work it was written to do.
 
+14. **A run is read by a reader for its tool and judged once for every tool.** The reader asks its
+    tool for what the case needs and reads what it wrote; the judgement gives conforms, does not
+    conform, unresolved where the reading cannot decide, or not run where the case never reached the
+    tool. A failure of the harness is never read as an answer of the tool.
+
 ## Boundary to Adjacent Layers
 
 - A case exercises the whole pipeline, so a failure in one may point at any layer. Bisecting it is
@@ -116,6 +124,7 @@ published standard, and everything below follows from that.
 - Golden output used as the general mechanism. It couples every case to output formatting; reserve
   it for cases whose subject is the output channel itself.
 - A path, backend, or execution mode named anywhere in the corpus tree or in a case.
+- A tool's option, a header a tool generates, or a tool's message wording named by a case.
 - A per-case tag declaring which paths run it. Absence of such a tag cannot distinguish a refusal
   from an omission.
 - An expectation derived by recording a run, which freezes present behavior as the specification.
@@ -150,9 +159,11 @@ module Top;
 endmodule
 ```
 
-What a case genuinely needs beyond that -- extra sources, a front-end flag, the simulated program's
-argv, a required refusal -- is a `// @key: value` line at the top of the same file. Golden output,
-where the output channel is the subject, is a sibling file.
+What a case genuinely needs beyond that -- the instances to elaborate, the simulated program's argv,
+the compilation-unit use model its files are compiled under, a required refusal or report -- is a
+`// @key: value` line at the top of the same file; extra sources are files beside it. Golden output,
+where the output channel is the subject, is a sibling file. What Lyra chose where the standard
+leaves the answer open is held by cases of the same shape in `tests/choices/`, which only Lyra runs.
 
 Adding a SystemVerilog feature means adding or extending a case first, then implementing until it
 passes.

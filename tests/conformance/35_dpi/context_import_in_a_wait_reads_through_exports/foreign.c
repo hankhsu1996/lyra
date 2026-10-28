@@ -1,6 +1,12 @@
 #include <stddef.h>
+#include <svdpi.h>
 
-#include "dpi.h"
+/* The exported subroutines called from here, declared as the design
+   exports them (LRM 35.5.6, Annex H). */
+int32_t read_held(void);
+int32_t read_g(void);
+int32_t read_level(void);
+int32_t read_deep(void);
 
 static int32_t g_calls = 0;
 

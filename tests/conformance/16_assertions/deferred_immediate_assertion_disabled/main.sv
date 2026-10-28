@@ -1,4 +1,4 @@
-// @reports-nothing:
+// @reports-none: error
 //
 // Disabling a specific deferred assertion cancels any pending assertion reports
 // for it (LRM 16.4.4). A statement label creates a named block around the
@@ -6,7 +6,7 @@
 // is, and the `disable` naming it withdraws the report that the false
 // expression queued before that report could mature. This is the standard's own
 // idiom for reporting a failure only in time steps where a condition does not
-// settle, so a conforming tool reports nothing here.
+// settle, so a conforming tool issues no failure report here.
 module Top;
   logic bad_val;
   logic bad_val_ok;

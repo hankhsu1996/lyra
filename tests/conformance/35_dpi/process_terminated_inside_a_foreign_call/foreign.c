@@ -4,7 +4,11 @@
    called and the imported task returns 1. The rounds are few enough that the
    loop ends on its own either way, so the count of calls is the same whichever
    answer the tool gives. */
-#include "dpi.h"
+#include <svdpi.h>
+
+/* The exported subroutines called from here, declared as the design
+   exports them (LRM 35.5.6, Annex H). */
+int32_t step(int32_t);
 
 static int32_t calls = 0;
 

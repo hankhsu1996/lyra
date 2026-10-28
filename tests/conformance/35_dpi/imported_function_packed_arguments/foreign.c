@@ -2,7 +2,7 @@
    unknown plane, so the pair (0,0) is 0, (1,0) is 1, (0,1) is z and (1,1) is x
    (LRM Annex H.7.7, H.10.1.2). The bits above a value's width are undetermined
    on the way in and are masked off here rather than read. */
-#include "dpi.h"
+#include <svdpi.h>
 
 /* Both planes reach the answer, in separate decimal places, so the design can
    tell a lost unknown plane from a lost value plane. */

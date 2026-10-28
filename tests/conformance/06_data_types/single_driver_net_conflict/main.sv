@@ -1,4 +1,4 @@
-// @error: cannot have multiple drivers
+// @rejected:
 //
 // It shall be an error to connect any bit of a uwire net to more than one
 // driver, so a conforming tool rejects this program (LRM 6.6.2). The second

@@ -1,11 +1,11 @@
-// @reports-nothing:
+// @reports-none: error
 //
 // An immediate cover statement names the success of its expression as a
 // coverage goal, which inverts the disposition an assert has: the statement it
 // carries is what a true expression selects, and a false expression is not a
 // failure, so it neither runs that statement nor issues any report (LRM 16.3).
 // A cover therefore has no fail arm at all, and a run over a design whose
-// covers are only partly reached is a run a conforming tool has no comment on.
+// covers are only partly reached issues no error report.
 module Top;
   int hits;
   int completed;

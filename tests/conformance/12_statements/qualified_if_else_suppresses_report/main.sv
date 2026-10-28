@@ -1,11 +1,11 @@
-// @reports-nothing:
+// @reports-none: violation
 //
 // A violation report is issued when no condition of a unique-if or priority-if
 // matches, unless there is an explicit else. An else covers every value the
 // conditions left, so a chain carrying one asserts nothing about whether some
 // condition holds and no report is issued however the conditions come out. A
-// unique0-if never reports a no-match either way, so all three forms are
-// silent here (LRM 12.4.2).
+// unique0-if never reports a no-match either way, so none of the three forms
+// issues a violation report here (LRM 12.4.2).
 module Top;
   int unique_taken;
   int unique0_taken;
