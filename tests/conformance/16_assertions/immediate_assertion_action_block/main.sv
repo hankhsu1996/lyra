@@ -1,4 +1,4 @@
-// @reports-nothing:
+// @reports-none: error
 //
 // An immediate assert tests its expression where the statement executes and
 // runs the action block arm that outcome selects: the pass statement when the
@@ -6,7 +6,7 @@
 // where that arm is omitted (LRM 16.3). The expression is read the way the
 // condition of a procedural if is read, so x, z, and 0 are each false. Every
 // assertion here either passes or supplies a fail statement of its own, and a
-// conforming tool has no comment on any of them.
+// conforming tool reports a failure for none of them.
 module Top;
   int pass_hits;
   int fail_hits;

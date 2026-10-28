@@ -1,4 +1,4 @@
-// @error: applies only to a process an initial or always procedure created
+// @reports: error
 //
 // kill(), await(), suspend() and resume() are restricted to a process created
 // by an initial or always procedure, or a fork of one (LRM 9.7). A concurrent
@@ -13,6 +13,8 @@ module Top;
   initial begin
     #1 clk = 1;
     #1;
+    $display("Ready for the report");
     action_process.kill();
+    $display("All checks passed");
   end
 endmodule

@@ -1,11 +1,11 @@
-// @reports-nothing:
+// @reports-none: error finish
 //
 // A function a package exports (LRM 35.5.1) may call $finish (LRM 13.4, 20.2),
 // and the simulation ends there with a foreign call beneath it. The foreign
 // function still gets control back and returns of its own accord (LRM 35.9),
 // following the disable protocol for whatever state it finds. Nothing of the
 // design runs afterwards, and the exchange conforms, so a conforming tool
-// reports nothing.
+// issues no error report, and $finish(0) prints no finish message (LRM 20.2).
 package exporting_pkg;
   export "DPI-C" function answer;
 

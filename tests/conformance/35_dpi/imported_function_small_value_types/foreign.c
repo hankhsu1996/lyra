@@ -3,8 +3,7 @@
    so a definition here that disagreed with the design would not compile. */
 #include <stdio.h>
 #include <stdlib.h>
-
-#include "dpi.h"
+#include <svdpi.h>
 
 int8_t byte_mix(int8_t a, int8_t b) {
   return (int8_t)((a * 3) + b);

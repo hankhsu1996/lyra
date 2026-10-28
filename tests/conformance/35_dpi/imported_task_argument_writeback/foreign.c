@@ -1,7 +1,7 @@
 /* An imported task is written in C as a function returning int: the value
    reports whether the task acknowledged a disable, and none is active here
    (LRM 35.5.4, 35.9). */
-#include "dpi.h"
+#include <svdpi.h>
 
 int32_t set_pair(int32_t seed, int32_t* doubled, int32_t* next) {
   *doubled = seed * 2;

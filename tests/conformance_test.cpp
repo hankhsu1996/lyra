@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <future>
 #include <gtest/gtest.h>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <span>
@@ -31,7 +32,6 @@ using lyra::test::ConformanceCase;
 using lyra::test::ConformancePath;
 using lyra::test::FindConformancePath;
 using lyra::test::LoadConformanceCases;
-using lyra::test::LoadParkedCases;
 using lyra::test::PathRecords;
 using lyra::test::RunConformanceCase;
 
@@ -51,9 +51,13 @@ auto HostCompiler() -> std::string {
 #endif
 }
 
+// The cases every tool is held to, and beside them, in the same shape, the
+// ones holding Lyra to what it chose where the standard leaves the answer to
+// the tool. Lyra runs both, and only the first say anything of the standard.
 struct Corpus {
   std::filesystem::path lyra_exe;
   std::filesystem::path cases_root;
+  std::filesystem::path choices_root;
   std::filesystem::path paths_root;
 };
 
@@ -217,6 +221,7 @@ auto main(int argc, char** argv) -> int {
   static const Corpus kCorpus{
       .lyra_exe = runfiles->Rlocation("_main/lyra"),
       .cases_root = runfiles->Rlocation("_main/tests/conformance"),
+      .choices_root = runfiles->Rlocation("_main/tests/choices"),
       .paths_root = runfiles->Rlocation("_main/tests/paths")};
 
   // The path to run, and what each program it builds is checked for while it
@@ -262,8 +267,26 @@ auto main(int argc, char** argv) -> int {
     return path;
   }();
 
-  static const std::vector<ConformanceCase> kCases =
-      LoadConformanceCases(kCorpus.cases_root);
+  static const std::vector<ConformanceCase> kCases = [] {
+    std::vector<ConformanceCase> cases =
+        LoadConformanceCases(kCorpus.cases_root);
+    std::vector<ConformanceCase> choices =
+        LoadConformanceCases(kCorpus.choices_root);
+    cases.insert(
+        cases.end(), std::make_move_iterator(choices.begin()),
+        std::make_move_iterator(choices.end()));
+    return cases;
+  }();
+  // A record names a case by its id alone, so no two cases may share one.
+  std::unordered_map<std::string, std::size_t> named;
+  for (const ConformanceCase& c : kCases) {
+    if (++named[c.id] == 2) {
+      fmt::print(
+          stderr, "'{}' names a case of the corpus and one of Lyra's choices\n",
+          c.id);
+      return 1;
+    }
+  }
   if (kCases.empty()) {
     fmt::print(
         stderr,
@@ -272,6 +295,9 @@ auto main(int argc, char** argv) -> int {
     return 1;
   }
 
+  // The cases no path runs, held only to elaborating.
+  static const CaseRecord kParked =
+      CaseRecord::Load(kCorpus.paths_root / "parked.yaml");
   const CaseRecord refusals =
       CaseRecord::Load(kCorpus.paths_root / (kPath.name + ".yaml"));
   const CaseRecord defects =
@@ -288,7 +314,8 @@ auto main(int argc, char** argv) -> int {
   bool records_hold = true;
   for (const auto& [record, kind] :
        {std::pair{&refusals, "refusal"}, std::pair{&defects, "defect"},
-        std::pair{&found_by_sanitizer, "sanitizer finding"}}) {
+        std::pair{&found_by_sanitizer, "sanitizer finding"},
+        std::pair{&kParked, "parked case"}}) {
     for (const std::string& id : record->UnmatchedIds(kCases)) {
       fmt::print(
           stderr, "the '{}' path records a {} for '{}', which is not a case\n",
@@ -304,8 +331,11 @@ auto main(int argc, char** argv) -> int {
             &refusals, &found_by_sanitizer,
             "a refusal and a sanitizer finding"},
         std::tuple{
-            &defects, &found_by_sanitizer,
-            "a defect and a sanitizer finding"}}) {
+            &defects, &found_by_sanitizer, "a defect and a sanitizer finding"},
+        std::tuple{&kParked, &refusals, "parked and a refusal"},
+        std::tuple{&kParked, &defects, "parked and a defect"},
+        std::tuple{
+            &kParked, &found_by_sanitizer, "parked and a sanitizer finding"}}) {
     for (const std::string& id : first->SharedIds(*second)) {
       fmt::print(
           stderr, "the '{}' path records '{}' as both {}\n", kPath.name, id,
@@ -331,6 +361,9 @@ auto main(int argc, char** argv) -> int {
   testing::AddGlobalTestEnvironment(owned_runs.release());
 
   for (const ConformanceCase& c : kCases) {
+    if (kParked.Find(c.id)) {
+      continue;
+    }
     const FilterName filter = SplitCaseId(c.id);
     runs->Register(filter.group + "." + filter.name, c);
     testing::RegisterTest(
@@ -341,12 +374,13 @@ auto main(int argc, char** argv) -> int {
   }
 
   // Parked cases are held only to elaborating, which no path decides, so every
-  // target holds them to the same thing rather than one being picked to.
-  static const std::vector<ConformanceCase> kParked =
-      LoadParkedCases(kCorpus.cases_root);
-  // A parked case answers to a group of its own, since a target holds both
-  // kinds and only the name says which of the two a result came from.
-  for (const ConformanceCase& c : kParked) {
+  // target holds them to the same thing rather than one being picked to. A
+  // parked case answers to a group of its own, since a target holds both kinds
+  // and only the name says which of the two a result came from.
+  for (const ConformanceCase& c : kCases) {
+    if (!kParked.Find(c.id)) {
+      continue;
+    }
     const FilterName filter = SplitCaseId(c.id);
     const std::string name = filter.group + "." + filter.name;
     testing::RegisterTest(

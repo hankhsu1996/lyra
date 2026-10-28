@@ -3,8 +3,7 @@
    H.13). Every answer is read back out to the design rather than judged here,
    so what the design checks is the observation and not a verdict. */
 #include <stddef.h>
-
-#include "dpi.h"
+#include <svdpi.h>
 
 const char* scope_name(void) {
   return svGetNameFromScope(svGetScope());

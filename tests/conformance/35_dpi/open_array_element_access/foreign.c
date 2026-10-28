@@ -2,7 +2,7 @@
    through the accessor its element type calls for: a canonical copy for a
    packed element, a direct read or write for a scalar one (LRM Annex H.12.3,
    H.12.5, H.12.6). */
-#include "dpi.h"
+#include <svdpi.h>
 
 /* What is written depends on both the seed and the index, so a written
    element differs from every other and from what the actual held. */

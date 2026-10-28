@@ -7,7 +7,15 @@
    Then a chain of tasks that each call back an exported task, which in turn
    calls the next one in, so the foreign calls nest; each passes the exported
    task's answer on, which is how a disable reaches the outermost (LRM 35.9). */
-#include "dpi.h"
+#include <svdpi.h>
+
+/* The exported subroutines called from here, declared as the design
+   exports them (LRM 35.5.6, Annex H). */
+int32_t middle(int32_t);
+void note(int32_t);
+int32_t relay(int32_t);
+int32_t leaf(int32_t);
+int32_t bottom(void);
 
 int32_t outer_call(int32_t amount) {
   middle(amount);

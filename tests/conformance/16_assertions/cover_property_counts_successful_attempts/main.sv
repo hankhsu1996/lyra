@@ -1,11 +1,11 @@
-// @reports-nothing:
+// @reports-none: error
 //
 // A cover statement names the success of a property as a coverage goal. Its
 // pass statement runs once for each evaluation attempt that succeeds, at most
 // once per attempt, and an attempt that does not succeed is not a failure: it
 // runs no statement and reaches no report (LRM 16.14.3). So a run over a design
-// whose covers are only partly reached is one a conforming tool has no comment
-// on, which is why a cover statement has no fail arm to write.
+// whose covers are only partly reached issues no error report, which is why a
+// cover statement has no fail arm to write.
 //
 // Coverage is per attempt rather than per statement, so two attempts that begin
 // at different ticks and both match count twice.

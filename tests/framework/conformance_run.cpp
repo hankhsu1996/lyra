@@ -2,12 +2,16 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <expected>
 #include <filesystem>
 #include <format>
+#include <fstream>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <tuple>
 #include <unordered_set>
 #include <variant>
 #include <vector>
@@ -15,134 +19,72 @@
 
 #include "cli_fixture.hpp"
 #include "conformance_case.hpp"
-#include "lyra/base/overloaded.hpp"
+#include "conformance_observation.hpp"
+#include "conformance_verdict.hpp"
+#include "lyra/driver/project_layout.hpp"
+#include "lyra_adapter.hpp"
 #include "process.hpp"
 
 namespace lyra::test {
 namespace {
 
-// How lyra reports the violation of an invariant it established itself. That
-// is a fact about the command line, like the exit status and the two streams,
-// so the harness reads it from the output rather than linking a compiler
-// library to learn it.
-constexpr std::string_view kInternalErrorReport = "internal error:";
-
-// How long one case may take before it is called stuck. It is a guard against a
-// run that never ends, not a budget for how fast a case builds: a case builds
-// its program with whatever compiler the executing machine has, and one with no
-// prepared header takes several times as long as one with, so the guard sits
-// well above the slowest honest build.
+// How long elaborating a parked case may take before it is called stuck: a
+// guard against one that never ends, well above any honest elaboration.
 constexpr std::chrono::seconds kStuckAfter{300};
 
-auto Render(
-    std::string_view what, const ConformanceCase& test_case,
-    std::string_view path_name, const std::vector<std::string>& argv,
-    const ProcessOutcome& outcome) -> std::string {
-  std::string rendered;
-  for (const std::string& arg : argv) {
-    if (!rendered.empty()) {
-      rendered += ' ';
-    }
-    rendered += arg;
-  }
-  return std::format(
-      "{}\n\ncase: {}\npath: {}\nargv: {}\nended: {}\n"
-      "stdout:\n{}\nstderr:\n{}",
-      what, test_case.id, path_name, rendered, Describe(outcome.end),
-      outcome.stdout_text, outcome.stderr_text);
-}
-
-// Why a run's diagnostics fall short of what the case claims of them, where
-// they do. A claim of silence is the run writing nothing at all, because a
-// conforming tool has no comment on a correct program.
-auto ReportClaimBroken(const ReportClaim& claim, std::string_view diagnostics)
-    -> std::optional<std::string> {
-  return std::visit(
-      Overloaded{
-          [](const ReportsUnstated&) -> std::optional<std::string> {
-            return std::nullopt;
-          },
-          [&](const ReportsText& required) -> std::optional<std::string> {
-            if (diagnostics.find(required.text) != std::string_view::npos) {
-              return std::nullopt;
-            }
-            return std::format(
-                "the standard requires a report here, and nothing the run "
-                "wrote mentions '{}'",
-                required.text);
-          },
-          [&](const ReportsNothing&) -> std::optional<std::string> {
-            if (diagnostics.empty()) {
-              return std::nullopt;
-            }
-            return std::string(
-                "the standard allows no report here, and the run wrote one");
-          }},
-      claim);
-}
-
-// The design a case states, as the front end is handed it: what to elaborate,
-// the case's own options, its library map, and its sources.
-//
-// A supporting source is what the case is written against, and a reference
-// reaches only the part of a compilation-unit scope declared before it
-// (LRM 3.12.1), so the sources beside the entry one are compiled ahead of it.
-// Otherwise the file holding the checks could not be the file that reads what
-// the others declare.
-void AppendDesign(
-    const ConformanceCase& test_case, std::vector<std::string>& argv) {
-  for (const std::string& top : test_case.tops) {
-    argv.emplace_back("--top");
-    argv.push_back(top);
-  }
-  for (const std::string& arg : test_case.front_end_args) {
-    argv.push_back(arg);
-  }
-  if (test_case.library_map.has_value()) {
-    argv.emplace_back("--libmap");
-    argv.push_back(test_case.library_map->string());
-  }
-  for (const std::filesystem::path& supporting : test_case.supporting_sources) {
-    argv.push_back(supporting.string());
-  }
-  argv.push_back(test_case.entry.string());
-}
-
-auto BuildArgv(const ConformancePath& path, const ConformanceCase& test_case)
-    -> std::vector<std::string> {
-  std::vector<std::string> argv;
-  argv.emplace_back("run");
-  for (const std::string& arg : path.selector) {
-    argv.push_back(arg);
-  }
+// What every build of a case on a path is given beyond the design: the path's
+// selector, and what the run asks of the compiler itself.
+auto BuildOptions(const ConformancePath& path) -> std::vector<std::string> {
+  std::vector<std::string> options = path.selector;
   // A refusal is matched against recorded text, and read by whoever the match
   // failed for. Both want the diagnostic as it was written rather than wrapped
   // in the escape sequences that colour it for a terminal.
-  argv.emplace_back("--no-color");
+  options.emplace_back("--no-color");
   // Each case's MIR is checked as the lowering states it and after every
   // rewrite, so a defect is reported against whichever made it rather than
   // only as the unit leaves the last.
-  argv.emplace_back("--mir-verify-each");
+  options.emplace_back("--mir-verify-each");
   if (const char* scratch = std::getenv("TEST_TMPDIR");
       scratch != nullptr && *scratch != '\0') {
     // Keeping what a run builds beside the shard's other scratch lets one
     // prepared header serve every case the shard runs, without reaching into
     // a store shared with whatever else is running on the machine.
-    argv.emplace_back("--cache-dir");
-    argv.push_back(std::string(scratch) + "/lyra-cache");
+    options.emplace_back("--cache-dir");
+    options.push_back(std::string(scratch) + "/lyra-cache");
   }
-  for (const std::filesystem::path& native : test_case.link_sources) {
-    argv.emplace_back("--dpi-link");
-    argv.push_back(native.string());
+  return options;
+}
+
+// The case with each foreign source compiled after the header Lyra generates
+// for the design's DPI boundary. A case's own C declares what it calls by the
+// standard's mapping alone (LRM 35.5.6, Annex H), so a prototype the header
+// derives otherwise is a compile error of the case rather than a wrong value
+// read across the boundary.
+auto WithGeneratedHeader(
+    const ConformanceCase& test_case, const std::filesystem::path& directory)
+    -> std::expected<ConformanceCase, std::string> {
+  ConformanceCase checked = test_case;
+  const std::filesystem::path wrappers = directory / "against_generated_header";
+  std::error_code created;
+  std::filesystem::create_directories(wrappers, created);
+  if (created) {
+    return std::unexpected(
+        std::format(
+            "cannot create '{}': {}", wrappers.string(), created.message()));
   }
-  AppendDesign(test_case, argv);
-  if (!test_case.program_args.empty()) {
-    argv.emplace_back("--");
-    for (const std::string& arg : test_case.program_args) {
-      argv.push_back(arg);
+  for (std::filesystem::path& source : checked.link_sources) {
+    const std::filesystem::path wrapper = wrappers / source.filename();
+    std::ofstream out(wrapper);
+    out << std::format(
+        "#include \"{}\"\n#include \"{}\"\n", driver::kDpiAbiHeader,
+        source.string());
+    if (!out) {
+      return std::unexpected(
+          std::format("cannot write '{}'", wrapper.string()));
     }
+    source = wrapper;
   }
-  return argv;
+  return checked;
 }
 
 }  // namespace
@@ -229,18 +171,20 @@ auto CheckParkedCase(
     const std::filesystem::path& lyra_exe, const ConformanceCase& test_case)
     -> std::optional<std::string> {
   std::vector<std::string> argv{"check", "--no-color"};
-  AppendDesign(test_case, argv);
+  const std::vector<std::string> design = LyraDesignArguments(test_case);
+  argv.insert(argv.end(), design.begin(), design.end());
 
   const ProcessOutcome outcome = RunChildProcess(lyra_exe, argv, kStuckAfter);
   const auto report = [&](std::string_view what) {
-    return Render(what, test_case, "elaboration only", argv, outcome);
+    return std::format(
+        "{}\n\ncase: {}\n\n{}", what, test_case.id,
+        Transcript(lyra_exe, argv, outcome));
   };
-
-  const bool elaborated = ExitCodeOf(outcome) == 0;
 
   // A case the standard requires a tool to reject is parked the same way any
   // other is, and elaborating one is supposed to fail.
-  if (test_case.required_error.has_value()) {
+  const bool elaborated = ExitCodeOf(outcome) == 0;
+  if (std::holds_alternative<RejectedBeforeRunning>(test_case.claim)) {
     if (elaborated) {
       return report(
           "the standard requires this program to be rejected, and it "
@@ -254,11 +198,14 @@ auto CheckParkedCase(
   return std::nullopt;
 }
 
+// The verdict a case's run on a path gets, held to what the path's records say
+// of that case. The verdict is the standard's; the records only say which
+// verdict this path is known to give, and a verdict that has moved off them
+// fails either way, so a record can only shrink.
 auto RunConformanceCase(
     const std::filesystem::path& lyra_exe, const ConformancePath& path,
     const ConformanceCase& test_case, const PathRecords& records)
     -> std::optional<std::string> {
-  const std::vector<std::string> argv = BuildArgv(path, test_case);
   // A program opens files where it starts, under names another case may use
   // too, and a shard runs several cases at once, so each case starts in a
   // directory of its own.
@@ -267,107 +214,61 @@ auto RunConformanceCase(
     return std::format(
         "{}: no directory to run the case in: {}", test_case.id, here.error());
   }
-  const ProcessOutcome outcome =
-      RunChildProcess(lyra_exe, argv, kStuckAfter, *here);
-  const auto report = [&](std::string_view what) {
-    return Render(what, test_case, path.name, argv, outcome);
-  };
-
-  const std::optional<int> exit_code = ExitCodeOf(outcome);
-  if (!exit_code) {
-    return report("the run did not reach an exit status of its own");
+  const auto built_against_header = WithGeneratedHeader(test_case, *here);
+  if (!built_against_header) {
+    return std::format("{}: {}", test_case.id, built_against_header.error());
   }
-
-  const bool succeeded = *exit_code == 0;
-  const bool checked =
-      outcome.stdout_text.find(kAllChecksPassed) != std::string::npos;
+  const Observation seen = ObserveWithLyra(
+      LyraTool{.exe = lyra_exe, .build_options = BuildOptions(path)},
+      *built_against_header, *here);
+  const Verdict verdict = Judge(test_case.claim, seen);
+  const auto report = [&](std::string_view what) {
+    return std::format(
+        "{}\n\ncase: {}\npath: {}\nverdict: {}\n\n{}", what, test_case.id,
+        path.name, Describe(verdict), seen.evidence);
+  };
   const auto mentions = [&](std::string_view text) {
-    return outcome.stderr_text.find(text) != std::string::npos;
+    return seen.written.find(text) != std::string::npos;
   };
 
   // A compiler bug is not a limitation and not a wrong answer, so it is neither
-  // of the outcomes a path may be recorded as producing, nor the rejection a
-  // case requires. It fails whatever is recorded, which is what keeps "not
-  // implemented yet" and "implemented wrongly" answerable apart.
+  // of the outcomes a path may be recorded as producing. It fails whatever is
+  // recorded, which is what keeps "not implemented yet" and "implemented
+  // wrongly" answerable apart.
   if (mentions(kInternalErrorReport)) {
     return report("the run reported a compiler bug");
   }
-
-  // A program IEEE 1800 requires a tool to reject makes no checks, so what it
-  // is held to is the rejection and the reason given for it.
-  if (test_case.required_error.has_value()) {
-    if (succeeded) {
-      return report(
-          "the standard requires this program to be rejected, and it was "
-          "accepted");
+  const bool conforms = std::holds_alternative<Conforms>(verdict);
+  const bool falls_short = std::holds_alternative<DoesNotConform>(verdict);
+  for (const auto& [record, kind, drop] :
+       {std::tuple{
+            &records.refusals, "refusal",
+            "this path runs the case now; drop its entry from the path's "
+            "refusal record so the coverage it just gained is held from here "
+            "on"},
+        std::tuple{
+            &records.defects, "defect",
+            "this path answers this case correctly now; drop its entry from "
+            "the path's defect record so the behaviour is held from here "
+            "on"}}) {
+    const std::optional<std::string> recorded = record->Find(test_case.id);
+    if (!recorded) {
+      continue;
     }
-    if (!mentions(*test_case.required_error)) {
+    if (conforms) {
+      return report(drop);
+    }
+    if (!falls_short || !mentions(*recorded)) {
       return report(
           std::format(
-              "the rejection does not mention '{}'",
-              *test_case.required_error));
-    }
-    return std::nullopt;
-  }
-
-  if (const std::optional<std::string> refusal =
-          records.refusals.Find(test_case.id)) {
-    if (succeeded && checked) {
-      return report(
-          "this path runs the case now; drop its entry from the path's refusal "
-          "record so the coverage it just gained is held from here on");
-    }
-    if (succeeded) {
-      return report(
-          "the path neither refused the case nor ran its checks to the end");
-    }
-    if (!mentions(*refusal)) {
-      return report(
-          std::format(
-              "the path refuses this case for a reason other than the recorded "
+              "this case falls short for a reason other than the recorded {} "
               "'{}'",
-              *refusal));
+              kind, *recorded));
     }
     return std::nullopt;
   }
-
-  // A recorded defect is a wrong answer someone diagnosed and left standing, so
-  // what the run is held to is producing that same wrong answer. The case keeps
-  // every check it makes, which is what lets the run notice the day the answer
-  // becomes right.
-  if (const std::optional<std::string> defect =
-          records.defects.Find(test_case.id)) {
-    if (succeeded && checked) {
-      return report(
-          "this path answers this case correctly now; drop its entry from the "
-          "path's defect record so the behaviour is held from here on");
-    }
-    const bool says_so =
-        outcome.stdout_text.find(*defect) != std::string::npos ||
-        mentions(*defect);
-    if (!says_so) {
-      return report(
-          std::format(
-              "this case fails for a reason other than the recorded defect "
-              "'{}'",
-              *defect));
-    }
-    return std::nullopt;
-  }
-
-  if (!succeeded) {
-    return report("a check in this case failed, or the path could not run it");
-  }
-  if (!checked) {
-    return report(
-        std::format(
-            "the program ran to completion without printing '{}', so its "
-            "checks did not all run",
-            kAllChecksPassed));
-  }
-  if (const std::optional<std::string> broken =
-          ReportClaimBroken(test_case.reports, outcome.stderr_text)) {
-    return report(*broken);
+  if (!conforms) {
+    return report("the path does not run this case as the standard requires");
   }
   return std::nullopt;
 }

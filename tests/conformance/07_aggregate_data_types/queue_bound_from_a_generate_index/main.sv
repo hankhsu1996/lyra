@@ -1,4 +1,4 @@
-// @reports: declared bound
+// @reports: warning count=10
 //
 // A loop generate's index names an implicit localparam whose value is the one
 // the index held when that block was elaborated (LRM 27.4), and a queue's

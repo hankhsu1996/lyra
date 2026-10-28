@@ -3,8 +3,18 @@
    call it is passed to does not answer with, so an argument that was never
    written reads as that rather than as an answer. */
 #include <math.h>
+#include <svdpi.h>
 
-#include "dpi.h"
+/* The exported subroutines called from here, declared as the design
+   exports them (LRM 35.5.6, Annex H). */
+void scale_pair(int32_t, int32_t*, int32_t*);
+void accumulate(int32_t*);
+void fill_wide(int32_t, svBitVecVal*);
+int32_t weigh_wide(const svBitVecVal*);
+void make_pattern(int32_t, svLogicVecVal*);
+int32_t classify(const svLogicVecVal*);
+void step_logic(svLogic, svLogic*);
+void negate(double*);
 
 int32_t drive(void) {
   int32_t verdict = 0;

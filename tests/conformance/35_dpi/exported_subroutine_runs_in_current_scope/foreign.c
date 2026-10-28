@@ -2,8 +2,12 @@
    answers is decided by the call chain's scope, never by anything written
    here. */
 #include <stddef.h>
+#include <svdpi.h>
 
-#include "dpi.h"
+/* The exported subroutines called from here, declared as the design
+   exports them (LRM 35.5.6, Annex H). */
+int32_t read_id(void);
+int32_t read_tag(void);
 
 /* This import was declared in the enclosing module, so its chain starts there
    and the export it wants belongs to another scope. Naming that scope and

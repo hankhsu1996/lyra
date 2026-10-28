@@ -3,10 +3,6 @@
 // %e, %f and %g are among the format strings $value$plusargs converts a matched
 // plusarg by, so the remainder of the match is read as a real number and stored
 // in the variable given (LRM 21.6).
-//
-// Parked: a real destination is rejected while the emitted project is built,
-// with no matching conversion for the call, so this case cannot reach a check
-// to fail at.
 module Top;
   int matched_real;
   real rate;

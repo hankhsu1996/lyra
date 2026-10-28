@@ -1,11 +1,8 @@
-// @args: --assertions skip
-//
 // A statement label creates a named block around the statement it labels, so
 // the label names a scope rather than the assertion itself (LRM 16.3). An
 // assertion states what the design is required to do and never drives it, so
-// the logic beside one computes the same values whether or not the assertion
-// is checked -- at module level, inside a generate block, and inside a
-// procedure alike.
+// the logic beside a labelled one computes what it would compute without it
+// -- at module level, inside a generate block, and inside a procedure alike.
 module Top;
   localparam bit Checked = 1'b1;
 

@@ -20,6 +20,10 @@ the feature file its domain belongs to.
         from any other thread (LRM 24.7).
 - [ ] `$readmemh` / `$readmemb` on an associative memory with a wildcard index, or on a memory of
       several dimensions with one of variable size, stops the build as not yet supported.
+- [ ] Each `$readmemh` / `$readmemb` that reads a word no member of an enumerated memory holds is an
+      error (LRM 21.4.2), and a run reports only the first ten of them from one procedure: the error
+      is placed where the procedure is written rather than at the call, and a run shows no more than
+      ten reports from one place.
 - [ ] `$dist_*` with a seed written as a concatenation of variables stops the build as not yet
       supported.
 - [ ] `$countbits` with a control bit the running simulation computes (LRM 20.9 takes any 1-bit

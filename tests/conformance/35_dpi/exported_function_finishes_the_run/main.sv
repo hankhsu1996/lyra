@@ -1,4 +1,4 @@
-// @reports-nothing:
+// @reports-none: error finish
 //
 // An exported function may call $finish (LRM 13.4, 20.2), and the simulation
 // ends there even with a foreign call beneath it. The foreign function still
@@ -6,8 +6,8 @@
 // the design runs after that: not the rest of the exported function, and not
 // the statements after the import call. The foreign side follows the disable
 // protocol for whatever state it finds, which is a conforming exchange, so a
-// conforming tool has nothing to report, and $finish(0) prints nothing either
-// (LRM 20.2, Table 20-1).
+// conforming tool issues no error report, and $finish(0) prints no finish
+// message (LRM 20.2, Table 20-1).
 module Top;
   import "DPI-C" context function int ask(input int seed);
   import "DPI-C" function int returned_normally();

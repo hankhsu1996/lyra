@@ -1,9 +1,10 @@
-// @reports: $finish
+// @reports: finish time=5
 //
 // $finish called with no argument takes a level of 1, which prints the
 // simulation time and the location of the call (LRM 20.2, Table 20-1). A
 // program cannot read a message about itself, so what the report says is
-// claimed above and everything else is checked here.
+// claimed above and everything else is checked here. The final procedures run
+// when $finish ends the simulation (LRM 9.2.3), so they may make the checks.
 //
 // This is the other direction of the same requirement: level 0 prints nothing,
 // and the default prints something, so an implementation that is uniformly

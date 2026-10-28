@@ -1,4 +1,4 @@
-// @error: null virtual interface
+// @reports: error
 //
 // A virtual interface holds null until it is assigned, and reaching a component
 // through one that holds null is a fatal run-time error (LRM 25.9), unlike a
@@ -11,5 +11,9 @@ endinterface
 module Top;
   virtual Bus held;
 
-  initial held.data = 8'h01;
+  initial begin
+    $display("Ready for the report");
+    held.data = 8'h01;
+    $display("All checks passed");
+  end
 endmodule

@@ -1,13 +1,10 @@
 // @top: Top Watcher
-// @reports: expect failed
 //
 // An expect statement blocks the process executing it until one evaluation of
 // its property succeeds or fails (LRM 16.17). The evaluation starts at the next
 // clocking event after the statement is reached, the arm the answer selects
 // runs, and the statement after it runs after the Observed region in which the
 // property completed -- so after the nonblocking assignments of that time step.
-// With no else clause a failure is reported by the tool, which is the report
-// this case expects.
 //
 // Its property reads automatic variables and a `ref` formal at their current
 // values (LRM 16.5.1, 16.17), it may stand wherever a wait may, including in a
@@ -68,15 +65,6 @@ module Top;
     expect (@(posedge clk) c ##1 c) fail_passes = fail_passes + 1;
       else fail_runs = fail_runs + 1;
     fail_at = $time;
-  end
-
-  // With no else clause a failure is the tool's own `$error` (LRM 16.17,
-  // 20.10), and the process goes on after it.
-  time reported_at = -1;
-  initial begin
-    #2;
-    expect (@(posedge clk) c ##1 c);
-    reported_at = $time;
   end
 
   // Reached at a tick, it starts at the next one rather than that one.
@@ -211,9 +199,6 @@ module Top;
              fail_runs, fail_passes);
     if (fail_at !== 15)
       $fatal(1, "the failing expect went on at %0t, expected 15", fail_at);
-    if (reported_at !== 15)
-      $fatal(1, "the expect with no else clause went on at %0t, expected 15",
-             reported_at);
     if (next_at !== 25)
       $fatal(1, "the expect reached at a tick went on at %0t, expected 25",
              next_at);

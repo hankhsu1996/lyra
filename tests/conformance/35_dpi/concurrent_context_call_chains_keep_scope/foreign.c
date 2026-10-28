@@ -4,7 +4,11 @@
    (LRM 35.5.3). The design supplies the name its own scope has, so what the
    chain observes is held against a scope named from outside rather than only
    against itself. */
-#include "dpi.h"
+#include <svdpi.h>
+
+/* The exported subroutines called from here, declared as the design
+   exports them (LRM 35.5.6, Annex H). */
+int32_t nap_and_report(int32_t, int32_t*);
 
 int32_t observe(const char* path, int32_t amount, int32_t* verdict) {
   svScope before = svGetScope();

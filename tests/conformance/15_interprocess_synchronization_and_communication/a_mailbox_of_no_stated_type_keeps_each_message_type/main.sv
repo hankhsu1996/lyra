@@ -1,4 +1,4 @@
-// @reports-nothing:
+// @reports-none: error
 //
 // A mailbox declared with no type carries messages of any type, each keeping
 // the type it was put with (LRM 15.4.5, 15.4.9). A message is taken or copied

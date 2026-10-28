@@ -1,7 +1,11 @@
 /* One definition per imported name, whichever SystemVerilog scope declared it:
    the foreign name space is global and holds no trace of that scope
    (LRM 35.4). */
-#include "dpi.h"
+#include <svdpi.h>
+
+/* The exported subroutines called from here, declared as the design
+   exports them (LRM 35.5.6, Annex H). */
+int32_t pkg_double(int32_t);
 
 int32_t scale(int32_t a, int32_t b) {
   return (a * 10) + b;

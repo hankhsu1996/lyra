@@ -1,3 +1,5 @@
+// @compilation-units: separate
+//
 // A conforming tool offers a use model in which each source file is a separate
 // compilation unit, and then the declarations in a file's compilation-unit
 // scope are accessible only within that file (LRM 3.12.1). Two files declaring

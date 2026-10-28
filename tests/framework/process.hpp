@@ -54,6 +54,12 @@ auto ExitCodeOf(const ProcessOutcome& outcome) -> std::optional<int>;
 // How the child ended, in words: "exited with 3", "ended by signal 9".
 auto Describe(const ProcessEnd& end) -> std::string;
 
+// A command and everything it did: what was run, how it ended, and both
+// streams, as a reader who was not there needs them.
+auto Transcript(
+    const std::filesystem::path& exe, std::span<const std::string> args,
+    const ProcessOutcome& outcome) -> std::string;
+
 // What an assertion shows of an outcome it rejected: how it ended. The streams
 // are long, so a caller adds whichever one says why.
 void PrintTo(const ProcessOutcome& outcome, std::ostream* out);

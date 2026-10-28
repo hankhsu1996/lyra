@@ -1571,12 +1571,13 @@ the detail lives in the entry itself.
 ### Conformance testing
 
 - [conformance-case-shape](conformance-case-shape.md) -- a case is a self-checking SystemVerilog
-  program indexed by LRM clause; it names no path, states no expected variable, and carries no
-  manifest, and what a path cannot do is recorded once per path.
+  program indexed by LRM clause that names nothing of any tool; a reader per tool reads a run and
+  one judgement gives every tool the same four verdicts; what a path cannot do is recorded once per
+  path, and what Lyra chose where the standard is silent lives apart.
 - [conformance-diagnostic-claims](conformance-diagnostic-claims.md) -- a requirement whose whole
-  observable is a report is stated as a directive and written in both directions; a claim of silence
-  is the run writing nothing rather than the absence of one wording, and golden output stays
-  reserved for cases whose subject is the output channel.
+  observable is a report is stated as a directive, by the kind of report and what the standard fixes
+  of it, and written in both directions; an absence is of named kinds, never of all output, and
+  golden output stays reserved for cases whose subject is the output channel.
 
 ### Measurement
 

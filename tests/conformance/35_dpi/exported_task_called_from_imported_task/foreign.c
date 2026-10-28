@@ -1,7 +1,13 @@
 /* An imported task is written here as a function returning int, and so is
    every exported task it calls: no disable is active, so each of those calls
    has to report 0 (LRM 35.8, 35.9). */
-#include "dpi.h"
+#include <svdpi.h>
+
+/* The exported subroutines called from here, declared as the design
+   exports them (LRM 35.5.6, Annex H). */
+int32_t add_delta(int32_t);
+int32_t scale_pair(int32_t, int32_t*, int32_t*);
+int32_t accumulate(int32_t*);
 
 int32_t drive(int32_t seed, int32_t* verdict) {
   int32_t checks = 0;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -15,38 +16,96 @@ namespace lyra::test {
 // merely surviving.
 inline constexpr std::string_view kAllChecksPassed = "All checks passed";
 
+// What a case whose claim is a report the run may end at prints before the
+// statement that issues the report. It says every check before it passed and
+// the run reached the statement. Such a case prints the sentinel only once the
+// run has gone on past every report, so the two say different things, and a
+// tool may end the run between them.
+inline constexpr std::string_view kReadyForTheReport = "Ready for the report";
+
 // The source a case is entered through. A case is a directory, and this is the
 // file in it that states the claim and makes the checks.
 inline constexpr std::string_view kCaseEntrySource = "main.sv";
-
-// What a case's entry source is renamed to when the case is parked, which is
-// what a case whose subject cannot be reached at all comes to. The harness does
-// not run one, so this name is what keeps it out of the corpus proper.
-inline constexpr std::string_view kParkedCaseEntry = "main.sv.deferred";
 
 // The library map a case's directory may hold. The standard's own examples
 // assume a file of this name beside the sources, read before any of them
 // (LRM 33.3.1).
 inline constexpr std::string_view kCaseLibraryMap = "lib.map";
 
-// What a case claims about the diagnostics its run writes. IEEE 1800 states
-// requirements whose whole observable is a message -- LRM 12.4.2 requires a
-// violation report where no condition of a qualified if matched, and forbids
-// one where an explicit else covers the rest -- and a program cannot read a
-// message about itself, so such a claim is stated beside the checks instead of
-// being made in SystemVerilog.
-//
-// Both directions exist because either alone is satisfied by an implementation
-// that says nothing at all, or by one that says something everywhere.
-struct ReportsUnstated {};
-
-struct ReportsText {
-  std::string text;
+// The kinds of report the standard names. A severity task's report carries the
+// severity it was called at (LRM 20.10), a failing assertion's default action
+// is a call of $error (LRM 16.14.1), and an operation's run-time error is a
+// report at error severity. A violation report (LRM 12.4.2.1) and the message
+// $finish or $stop prints (LRM 20.2) are reports of their own kind, with no
+// severity the standard fixes.
+enum class ReportKind : std::uint8_t {
+  kInfo,
+  kWarning,
+  kError,
+  kFatal,
+  kViolation,
+  kFinish,
+  kStop,
 };
 
-struct ReportsNothing {};
+auto SpellingOf(ReportKind kind) -> std::string_view;
 
-using ReportClaim = std::variant<ReportsUnstated, ReportsText, ReportsNothing>;
+// Whether the standard lets a tool end the run at a report of this kind.
+// $fatal ends it (LRM 20.10), $stop suspends it and what follows is the tool's
+// (LRM 20.2), a violation is reported through the tool's own mechanism
+// (LRM 12.4.2.1), and nothing promises the run goes on after an error. A
+// warning or a message of no severity leaves it running, and $finish ends it
+// through the final procedures (LRM 9.2.3), so a case may check after those.
+auto MayEndTheRun(ReportKind kind) -> bool;
+
+// A report a claim asks for, by what the standard fixes of it. A severity
+// task's report shall carry the line of its call, the scope it is made in and
+// the time (LRM 20.10) -- a failing assertion's default action included, since
+// it is a call of $error (LRM 16.14.1) -- so a claim may name any of them, and
+// the line is what ties the report to the statement that should issue it. The
+// one text the standard puts in a report is the message the program itself
+// supplied, so that is the only text a claim may name; whatever a tool words
+// around it is the tool's own.
+struct ReportPattern {
+  ReportKind kind = ReportKind::kInfo;
+  std::optional<std::uint64_t> line;
+  std::optional<std::uint64_t> time;
+  std::optional<std::string> scope;
+  std::optional<std::string> message;
+};
+
+// What a case claims the standard requires of its run, which is one of four
+// things. A program that
+// runs reaches its sentinel having passed every check. One the standard forbids
+// is refused before it runs. One whose requirement is reports issues each of
+// them, one report answering one claim; where the run may end at one, the case
+// prints that it is ready for the report before it, and a check after the
+// report holds only if the run reaches it. One
+// whose requirement is the absence of some kinds of report issues none of
+// them; a tool may write anything else it likes, so silence as a whole is
+// never a requirement.
+struct RunsToItsChecks {};
+
+struct RejectedBeforeRunning {};
+
+struct IssuesReports {
+  std::vector<ReportPattern> reports;
+};
+
+struct IssuesNoReportOf {
+  std::vector<ReportKind> kinds;
+};
+
+using Claim = std::variant<
+    RunsToItsChecks, RejectedBeforeRunning, IssuesReports, IssuesNoReportOf>;
+
+// The two use models every tool shall offer for which files form a
+// compilation unit (LRM 3.12.1). Which one a tool takes when asked for neither
+// is its own choice, so a case whose meaning depends on it says which.
+enum class CompilationUnits : std::uint8_t {
+  kSingle,
+  kSeparate,
+};
 
 // One conformance case: a SystemVerilog program stating what IEEE 1800 requires
 // and checking itself against it. A case is a directory, so what belongs to it
@@ -59,8 +118,7 @@ struct ConformanceCase {
   // within that clause.
   std::string id;
   std::filesystem::path directory;
-  // The source stating the claim and making the checks, which a parked case
-  // holds under a name the harness does not collect.
+  // The source stating the claim and making the checks.
   std::filesystem::path entry;
   // The sources compiled ahead of the entry source, in the order given. A
   // reference reaches only the part of a compilation-unit scope declared before
@@ -74,30 +132,21 @@ struct ConformanceCase {
   std::optional<std::filesystem::path> library_map;
   // The instances to elaborate. A case that names none elaborates `Top`.
   std::vector<std::string> tops;
-  std::vector<std::string> front_end_args;
   // The simulated program's own arguments, where LRM 21.6 plusargs reach a
   // design.
   std::vector<std::string> program_args;
-  // Set when IEEE 1800 requires the program to be rejected rather than run,
-  // holding text the diagnostic has to contain. Such a case makes no checks and
-  // prints no sentinel.
-  std::optional<std::string> required_error;
-  // What the standard requires this run to report, where a report is the whole
-  // of what it requires. A case making no such claim is held to nothing about
-  // what it wrote.
-  ReportClaim reports;
+  Claim claim;
+  std::optional<CompilationUnits> compilation_units;
 };
+
+// A decimal number written as the whole of `text`, or nothing where it is not
+// one.
+auto ReadDecimal(std::string_view text) -> std::optional<std::uint64_t>;
 
 // Every case under `corpus_root`, ordered by id. A directory holding the entry
 // source is a case; one that does not is a clause, so the corpus's shape is
 // read directly rather than inferred from what the cases mention.
 auto LoadConformanceCases(const std::filesystem::path& corpus_root)
-    -> std::vector<ConformanceCase>;
-
-// Every parked case under `corpus_root`, ordered by id. Nothing runs one, so
-// nothing would notice it ceasing to be a legal program either; collecting them
-// is what lets the run hold them to at least that much.
-auto LoadParkedCases(const std::filesystem::path& corpus_root)
     -> std::vector<ConformanceCase>;
 
 }  // namespace lyra::test

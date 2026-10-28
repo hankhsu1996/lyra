@@ -1542,6 +1542,45 @@ TEST(LyraRun, ADesignErrorEndsTheRunThroughItsFinalProcedures) {
       << "stdout: " << run.stdout_text;
 }
 
+// A build asked to leave the design's assertions out of it checks none of them,
+// and the design computes what it computes with them checked, since an
+// assertion validates a behavior of the design rather than producing one
+// (LRM 16.2).
+TEST(LyraRun, ABuildLeavingAssertionsOutComputesWhatTheDesignComputes) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  const auto src = *tmp_or / "test.sv";
+  std::ofstream(src)
+      << "module Test;\n"
+      << "  logic clk = 0;\n"
+      << "  int ticks = 0;\n"
+      << "  initial repeat (4) #5 clk = ~clk;\n"
+      << "  always_ff @(posedge clk) ticks <= ticks + 1;\n"
+      << "  a_concurrent: assert property (@(posedge clk) ticks < 0)\n"
+      << "    else $fatal(1, \"a concurrent assertion was checked\");\n"
+      << "  initial begin\n"
+      << "    a_immediate: assert (ticks < 0)\n"
+      << "      else $fatal(1, \"an immediate assertion was checked\");\n"
+      << "  end\n"
+      << "  final $display(\"ticks=%0d\", ticks);\n"
+      << "endmodule\n";
+
+  const std::vector<std::string> args = {"run",          "--backend", "llvm",
+                                         "--assertions", "skip",      "--top",
+                                         "Test",         src.string()};
+  const auto run = RunChildProcess(lyra, args);
+  ASSERT_THAT(run, ExitedWithCode(0)) << run.stdout_text << run.stderr_text;
+  EXPECT_NE(run.stdout_text.find("ticks=2"), std::string::npos)
+      << run.stdout_text;
+  EXPECT_EQ(run.stdout_text.find("was checked"), std::string::npos)
+      << run.stdout_text;
+  EXPECT_EQ(run.stderr_text.find("was checked"), std::string::npos)
+      << run.stderr_text;
+}
+
 // Variable initialization is simulation activity at time zero (LRM 4), not
 // construction, so an error raised by an initializer is a run-time error of the
 // design: it is reported, and it ends the simulation the way $fatal does, so

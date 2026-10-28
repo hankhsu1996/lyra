@@ -1,4 +1,4 @@
-// @reports-nothing:
+// @reports-none: violation
 //
 // A default is one of the two forms a case_item takes, and it is the item
 // selected when no other one matches. A qualified case carrying one therefore

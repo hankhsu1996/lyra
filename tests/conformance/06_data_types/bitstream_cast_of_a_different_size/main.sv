@@ -1,4 +1,4 @@
-// @error: does not hold as many bits as its type
+// @reports: error
 //
 // A bit-stream cast whose operand holds a different number of bits than the
 // casting type is an error, and where the operand's width is the running
@@ -12,6 +12,8 @@ module Top;
   initial begin
     byte bytes[$];
     bytes = {8'h01};
+    $display("Ready for the report");
     word = Word'(bytes);
+    $display("All checks passed");
   end
 endmodule

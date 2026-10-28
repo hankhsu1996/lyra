@@ -3,8 +3,7 @@
    none, which the C layer reports as a null handle; the name of that is spelled
    here so the design compares two strings either way. */
 #include <stddef.h>
-
-#include "dpi.h"
+#include <svdpi.h>
 
 const char* where(void) {
   svScope scope = svGetScope();

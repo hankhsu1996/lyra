@@ -21,11 +21,13 @@
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <unistd.h>
+#include <variant>
 #include <vector>
 
 #include <fmt/format.h>
@@ -33,6 +35,7 @@
 
 #include "lyra/compiler/compile.hpp"
 #include "tests/framework/conformance_case.hpp"
+#include "tests/framework/lyra_adapter.hpp"
 #include "tools/cpp/runfiles/runfiles.h"
 
 namespace lyra::test {
@@ -55,17 +58,8 @@ inline auto Elaborate(const ConformanceCase& test_case) -> Compilation {
   out.driver->addStandardArgs();
 
   std::vector<std::string> args{"lyra"};
-  for (const std::string& top : test_case.tops) {
-    args.emplace_back("--top");
-    args.push_back(top);
-  }
-  for (const std::string& arg : test_case.front_end_args) {
-    args.push_back(arg);
-  }
-  for (const std::filesystem::path& supporting : test_case.supporting_sources) {
-    args.push_back(supporting.string());
-  }
-  args.push_back(test_case.entry.string());
+  const std::vector<std::string> design = LyraDesignArguments(test_case);
+  args.insert(args.end(), design.begin(), design.end());
 
   std::vector<const char*> argv;
   argv.reserve(args.size());
@@ -230,8 +224,16 @@ auto RunOverCorpus(
     return 1;
   }
 
-  static const std::vector<ConformanceCase> kCases =
-      LoadConformanceCases(runfiles->Rlocation("_main/tests/conformance"));
+  static const std::vector<ConformanceCase> kCases = [&] {
+    std::vector<ConformanceCase> cases =
+        LoadConformanceCases(runfiles->Rlocation("_main/tests/conformance"));
+    std::vector<ConformanceCase> choices =
+        LoadConformanceCases(runfiles->Rlocation("_main/tests/choices"));
+    cases.insert(
+        cases.end(), std::make_move_iterator(choices.begin()),
+        std::make_move_iterator(choices.end()));
+    return cases;
+  }();
   if (kCases.empty()) {
     fmt::print(
         stderr,
@@ -243,7 +245,7 @@ auto RunOverCorpus(
   for (const ConformanceCase& test_case : kCases) {
     // A design the standard requires to be rejected never reaches a compiled
     // form, so there is nothing of it to compare.
-    if (test_case.required_error.has_value()) {
+    if (std::holds_alternative<RejectedBeforeRunning>(test_case.claim)) {
       continue;
     }
     const std::size_t split = test_case.id.rfind('/');

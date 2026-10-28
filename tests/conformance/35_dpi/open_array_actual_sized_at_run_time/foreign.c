@@ -2,7 +2,7 @@
    is asked of that handle (LRM Annex H.8.6, H.12.2). Neither entry assumes a
    range of its own, so the same code serves an actual whose extent the
    SystemVerilog side only fixed while it was running. */
-#include "dpi.h"
+#include <svdpi.h>
 
 /* A byte element is a packed type, so the array holds it in canonical form and
    it is read one chunk at a time (LRM Annex H.7.3, H.12.5). */
