@@ -30,7 +30,13 @@ OVERRIDE = re.compile(
 
 
 def run_git(cwd: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git"] + args, capture_output=True, text=True, cwd=cwd)
+    # A fetch starts git's automatic maintenance, which runs detached from the
+    # command and goes on writing into the scratch repository while it is being
+    # removed. The repository is thrown away at once, so it has nothing to keep.
+    return subprocess.run(
+        ["git", "-c", "maintenance.auto=false", "-c", "gc.auto=0"] + args,
+        capture_output=True, text=True, cwd=cwd,
+    )
 
 
 def check(module_text: str) -> list[str]:
