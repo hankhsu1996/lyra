@@ -887,6 +887,18 @@ auto LowerSystemCall(
   };
 }
 
+// The refusal of a method every class has (LRM 18.6, 18.8, 18.9) called on a
+// class the runtime library defines. The library carries out only the methods
+// the standard lists for that class (LRM 9.7), and the class has these too.
+auto RuntimeClassBuiltinUnsupported(
+    const slang::ast::ClassType& cls, std::string_view method,
+    diag::SourceSpan span) -> std::unexpected<diag::Diagnostic> {
+  return diag::Fail(
+      span, diag::DiagCode::kUnsupportedExpressionForm,
+      "the built-in method '{}' of '{}' is not yet supported", method,
+      cls.name);
+}
+
 // The object a call of `randomize()`, a mode method or a method of the
 // object's generator acts on, where the call reached it through a handle; the
 // running method's own where it named none.
@@ -964,7 +976,8 @@ auto LowerBuiltinClassMethodCall(
   }
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedExpressionForm,
-      "the built-in class method '{}' is not yet supported", sym.name);
+      "the built-in method '{}' of '{}' is not yet supported", sym.name,
+      declaring.name);
 }
 
 // A call to a subroutine the source declared: a method of a class or one the
@@ -981,6 +994,7 @@ auto LowerSubroutineCall(
     throw InternalError(
         "AST->HIR call: user call missing resolved SubroutineSymbol");
   }
+  const slang::ast::ClassType* declaring = DeclaringClassOf(*sym);
 
   // A method the runtime carries out routes to the library entry. A static
   // method acts on no object, whatever handle the call is written through (LRM
@@ -1008,6 +1022,9 @@ auto LowerSubroutineCall(
         .span = span,
     };
   }
+  if (declaring != nullptr && ImportedRuntimeClassOf(*declaring).has_value()) {
+    return RuntimeClassBuiltinUnsupported(*declaring, sym->name, span);
+  }
 
   // A covergroup's, a coverpoint's or a cross's built-in method (LRM 19.8).
   if (IsCovergroupMember(*sym)) {
@@ -1019,14 +1036,16 @@ auto LowerSubroutineCall(
   // declaration of this unit for the call to name. Every class has such
   // methods for its generator, its constraints and the hooks `randomize()`
   // runs (LRM 18.6, 18.8, 18.9, 18.13.3 -- 18.13.5); those of a library
-  // class the runtime defines were routed above, and those of a `std` class
-  // Lyra defines are that definition's methods, called as any other class's.
-  if (const slang::ast::ClassType* declaring = DeclaringClassOf(*sym);
-      sym->flags.has(slang::ast::MethodFlags::BuiltIn) &&
-      declaring != nullptr && unit_lowerer.Defining(*declaring) == declaring) {
-    return LowerBuiltinClassMethodCall(
-        lowerer, frame, call, *sym, *declaring,
-        std::move(actuals).WithNoDefault(), span);
+  // class the runtime defines were carried out or refused above. A method of a
+  // `std` class Lyra defines is that definition's method, so it is one of these
+  // exactly when the definition's is.
+  if (declaring != nullptr) {
+    const slang::ast::SubroutineSymbol& defining = *unit_lowerer.Defining(*sym);
+    if (defining.flags.has(slang::ast::MethodFlags::BuiltIn)) {
+      return LowerBuiltinClassMethodCall(
+          lowerer, frame, call, defining, *DeclaringClassOf(defining),
+          std::move(actuals).WithNoDefault(), span);
+    }
   }
 
   // A static class method call (LRM 8.10): the target has no receiver, so it
@@ -1037,13 +1056,13 @@ auto LowerSubroutineCall(
   // static call reaches the base's arena the same way an instance-method
   // call does under LRM 8.13.
   bool is_type_associated = false;
-  if (DeclaringClassOf(*sym) != nullptr) {
+  if (declaring != nullptr) {
     auto answered = unit_lowerer.IsTypeAssociatedMethod(*sym, span);
     if (!answered) return std::unexpected(std::move(answered.error()));
     is_type_associated = *answered;
   }
   if (is_type_associated) {
-    const auto& declaring_class = *DeclaringClassOf(*sym);
+    const auto& declaring_class = *declaring;
     auto callee =
         unit_lowerer.MakeClassMethodTarget(declaring_class, *sym, span);
     if (!callee) return std::unexpected(std::move(callee.error()));
@@ -1091,7 +1110,7 @@ auto LowerSubroutineCall(
   if (IsMadeOnAnObject(call, *sym)) {
     auto receiver_or = ClassifyMethodReceiver(lowerer, frame, call);
     if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
-    const auto& declaring_class = *DeclaringClassOf(*sym);
+    const auto& declaring_class = *declaring;
     auto callee =
         unit_lowerer.MakeClassMethodTarget(declaring_class, *sym, span);
     if (!callee) return std::unexpected(std::move(callee.error()));
@@ -1368,10 +1387,14 @@ auto LowerRandomizationCall(
           }
           class_type = method_class;
         }
+        const auto& randomized =
+            class_type->getCanonicalType().as<slang::ast::ClassType>();
+        if (ImportedRuntimeClassOf(randomized).has_value()) {
+          return RuntimeClassBuiltinUnsupported(randomized, "randomize", span);
+        }
         auto object = ObjectOfCall(lowerer, frame, handle, *class_type, span);
         if (!object) return std::unexpected(std::move(object.error()));
-        within = frame.WithRandomizedClass(
-            class_type->getCanonicalType().as<slang::ast::ClassType>());
+        within = frame.WithRandomizedClass(randomized);
         if (auto r = list(within); !r) {
           return std::unexpected(std::move(r.error()));
         }

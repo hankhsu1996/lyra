@@ -1,6 +1,7 @@
 # The classes of `std` are written in SystemVerilog
 
-Date: 2026-10-20, revised 2026-10-23: `weak_reference` (D5). Status: accepted.
+Date: 2026-10-20, revised 2026-10-23: `weak_reference` (D5), and 2026-10-28: the cost a runtime
+class was weighed with. Status: accepted.
 
 ## Context
 
@@ -93,8 +94,12 @@ carries out is decided per method, not per class.
 ## Rejected
 
 - **`weak_reference` as a runtime library class, as `process` is.** It would need a library class as
-  a source class's base to be extended, and a second implementation of every class-wide feature --
-  randomizing one, seeding its generator -- for this one class.
+  a source class's base to be extended. This bullet also said it would need a second implementation
+  of every class-wide feature -- randomizing one, seeding its generator -- for this one class.
+  Re-derived on 2026-10-28, once the front end gave `process` the methods every class has: that cost
+  is not a runtime class's as such. It follows from Lyra describing no class the runtime defines to
+  the operations every class has, which read the part an object of a source class starts with, so
+  `process` has the same gap, and describing such a class once would close it for every one.
 - **`get_id` defined here over a body that answers nothing**, to keep every declared method defined.
   A body that does not answer what it is asked is a wrong definition held to its declaration.
 - **A runtime library class per `std` class, as `process` is.** `process` reflects state only the

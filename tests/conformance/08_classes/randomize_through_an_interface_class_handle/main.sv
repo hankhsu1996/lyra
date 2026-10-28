@@ -3,8 +3,8 @@
 // inherits (LRM 18.6.2). That holds through an interface class that extends
 // another, with an inline constraint on a state variable, and where the
 // interface class and the base are declared in another unit. The standard
-// grants no other method of an object through such a handle, and does not
-// settle which hook a call naming one runs, so this case calls neither.
+// does not settle which hook a call naming one through such a handle runs, so
+// this case calls none.
 package p;
   interface class I;
   endclass

@@ -60,6 +60,17 @@ Done when:
       assignment, which runs before any procedure starts -- answers a null handle. The same three
       methods reach an object's own generator, the one its `randomize()` draws from (LRM 18.15).
 
+- [x] The methods every class has, on the classes of `std` and on classes extending them:
+      `randomize()` with and without an inline constraint, the two hooks, the generator's three
+      methods and the mode methods on a `semaphore`, a `mailbox` or a `weak_reference`, and a
+      subclass's hook reaching its base's through `super` (LRM 8.30, 15.1, 18.6). Through an
+      interface class handle, `rand_mode()` and `constraint_mode()` are refused by the front end, as
+      LRM 8.26.9 requires.
+
+- [ ] The same methods on a `process` (LRM 9.7, 18.6 -- 18.9): `randomize()`, the hooks and the mode
+      methods are refused as not yet supported; only the generator's three methods are carried out
+      on it.
+
 - [x] The probabilistic distribution functions -- `$dist_uniform`, `$dist_normal`,
       `$dist_exponential`, `$dist_poisson`, `$dist_chi_square`, `$dist_t`, `$dist_erlang` (LRM
       20.14.2). These sit outside the stability model above: each carries its seed as an `inout`

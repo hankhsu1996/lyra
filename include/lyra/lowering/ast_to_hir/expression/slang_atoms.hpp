@@ -51,11 +51,13 @@ auto LowerRandomizationHookName(std::string_view name)
 auto LowerStringMethodName(std::string_view name)
     -> std::optional<support::BuiltinFn>;
 
-// LRM 9.7's `process` methods. The runtime library carries each of them out,
-// so a call names the entry and no per-unit method declaration exists. The
-// front end declares the class with exactly the methods LRM 9.7 lists, so every
-// name it can hand over has an entry.
-auto LowerProcessMethodName(std::string_view name) -> support::BuiltinFn;
+// The `process` methods the runtime library carries out, so a call names the
+// entry and no per-unit method declaration exists. They are those LRM 9.7
+// lists, whose random state methods act on the process's own generator (LRM
+// 18.13.3); the other methods every class has (LRM 18.6, 18.8, 18.9) have no
+// entry.
+auto LowerProcessMethodName(std::string_view name)
+    -> std::optional<support::BuiltinFn>;
 
 // The array methods the library carries out as they stand, asking nothing of
 // an entry (LRM 7.5, 7.9, 7.10, 7.12.2).
