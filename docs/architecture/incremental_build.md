@@ -23,7 +23,7 @@ assumes whole-design lowering forecloses it.
 - The granularity at which incremental reuse is tracked.
 - The rule that invalidation is bounded by ownership.
 - The staging that makes units independent of each other: every unit's signature is derived before
-  any unit's bodies are lowered, and a unit's later work consumes only signatures.
+  any unit's bodies are lowered, and a unit's later work consumes only what other units publish.
 - The rule that the only cross-unit synchronization points are that staging barrier and the final
   link.
 
@@ -71,16 +71,16 @@ assumes whole-design lowering forecloses it.
    between its own declarations: a body cannot reference what has not been declared, whatever scope
    "declared" is measured in.
 10. **After that point a unit's remaining work names no other unit's work.** Each stage's inputs are
-    the unit's own prior stage plus the signatures of the units it references, so the stages of
-    different units interleave freely: one unit may be emitting while another is still lowering
-    bodies. A stage that needs no signature receives an empty set, which is the same shape as
-    receiving many.
-11. **What a unit's compiled output reads of another's signature is its dependency on it.** The set
-    is read off the unit's finished output, as a C++ compiler writes out the headers it read, so the
-    query graph's cross-unit edges are enumerable rather than discovered and no read the lowering
-    adds can be left out of them. A fact reaching a unit by any other path is a dependency the graph
-    does not have, and it is invisible until a cached result is reused, at which point it is a stale
-    result rather than an error.
+    the unit's own prior stage plus what the units it references publish -- their signatures and the
+    values of the specializations it reaches -- so the stages of different units interleave freely:
+    one unit may be emitting while another is still lowering bodies. A stage that needs no signature
+    receives an empty set, which is the same shape as receiving many.
+11. **What a unit's compiled output reads of what another publishes is its dependency on it.** The
+    set is read off the unit's finished output, as a C++ compiler writes out the headers it read, so
+    the query graph's cross-unit edges are enumerable rather than discovered and no read the
+    lowering adds can be left out of them. A fact reaching a unit by any other path is a dependency
+    the graph does not have, and it is invisible until a cached result is reused, at which point it
+    is a stale result rather than an error.
 
 ## Boundary to Adjacent Layers
 
@@ -183,3 +183,15 @@ The first and third rows are what the signature buys, and the first is the commo
 element publishes every declaration a hierarchical name may reach, so what it keeps to itself is
 mostly what no name reaches -- an automatic variable, a declaration in an unnamed block -- while its
 bodies change far more often than any declaration.
+
+### What the front end consumed before any unit lowers
+
+The front end elaborates the whole design before the first unit lowers, and in doing so it reads
+across units on the reader's behalf: it folds a constant the language requires inside the reader's
+own declarations (`logic [pkg::W-1:0] x`), binds every name, answers `$typename` of the reader's own
+operand, and expands every sequence, property or `let` instance with the declaration's text. Each is
+part of what the reader's lowering takes as its own input, and each depends on another unit.
+Recording what a unit reads of the signatures it consumes does not see these, so a query-based build
+either tracks them where the front end runs or runs the front end again. Everything a lowering
+itself takes of another unit -- a declared type's definition, a parameter's value, a member, a
+callable, a clocking event -- comes from that unit's published statement.

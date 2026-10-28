@@ -175,7 +175,7 @@ class NameCollector : public slang::ast::ASTVisitor<
     for (std::size_t i = 0; i < args.size(); ++i) {
       // An omitted argument's default is the callee's text, which reads the
       // callee's own declarations, and the callee states what it reads.
-      if (OmittedFormal(call, i) != nullptr) continue;
+      if (OmitsArgument(call, i)) continue;
       const auto& formal = *formals[i];
       if (formal.direction == slang::ast::ArgumentDirection::Ref &&
           !formal.flags.has(slang::ast::VariableFlags::Const)) {

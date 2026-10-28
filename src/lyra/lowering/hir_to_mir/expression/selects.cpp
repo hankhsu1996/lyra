@@ -12,7 +12,6 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
@@ -20,7 +19,6 @@
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
-#include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
@@ -268,7 +266,7 @@ auto TagRequiredByMember(
     const UnitLowerer& unit_lowerer, const hir::Type& aggregate,
     base::ComponentIndex index) -> std::optional<TagRequirement> {
   if (const auto* unpacked = aggregate.As<hir::UnpackedUnionType>()) {
-    if (!unpacked->tagged) {
+    if (!unit_lowerer.Hir().DefinitionOf(*unpacked).tagged) {
       return std::nullopt;
     }
     return HeldTag{.member = index};
@@ -669,7 +667,7 @@ auto MemberStep(
         .to = StepToComponent{.position = index}, .part_type = part_type};
   }
   if (const auto* unpacked = aggregate.As<hir::UnpackedUnionType>()) {
-    if (unpacked->tagged) {
+    if (unit_lowerer.Hir().DefinitionOf(*unpacked).tagged) {
       return DescentStep{
           .to = StepToTaggedMember{.position = index}, .part_type = part_type};
     }

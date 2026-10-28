@@ -34,6 +34,8 @@ module Child;
   function automatic int g(int x = base);
     return x;
   endfunction
+  int own_call;
+  always_comb own_call = g();
 endmodule
 
 class Base;
@@ -91,6 +93,8 @@ module Top;
     #1;
     if (follows !== 42)
       $fatal(1, "a procedure calling the function holds %0d", follows);
+    if (c.own_call !== 42)
+      $fatal(1, "a call from the declaring instance holds %0d", c.own_call);
     if (c.f() !== 42) $fatal(1, "another instance read %0d", c.f());
     if (c.f(5) !== 5) $fatal(1, "a passed argument read %0d", c.f(5));
     if (c.evaluated !== 1)

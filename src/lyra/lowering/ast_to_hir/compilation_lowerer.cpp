@@ -649,6 +649,8 @@ struct DeclaredDesign::Units {
         sink.Report(std::move(declared.error()));
         continue;
       }
+      signatures.PublishValues(
+          lowerer->SpecializationName(), lowerer->TakeValues());
       hir::UnitSignature signature = lowerer->TakeSignature();
       const hir::UnitSignature* kept = signatures.Find(signature.unit_name);
       if (kept == nullptr) {

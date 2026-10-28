@@ -400,6 +400,15 @@ the detail lives in the entry itself.
 
 ### References and construction
 
+- [a-unit-takes-what-another-holds-from-what-it-publishes](a-unit-takes-what-another-holds-from-what-it-publishes.md)
+  -- of another unit, a unit takes from the front end only what its own text resolved to, and
+  everything about that from what the other unit publishes: a declared type is named by its
+  declaration and its definition is published, parameter values are published per specialization,
+  and a clocking block is published structure. The type of the reader's own expression is the front
+  end's, and the type a declaration states -- a member's, a formal's -- is the declarer's published
+  one. What the front end's elaboration consumed (folded constants, sequence expansions) is a
+  dependency the published boundary does not see. Importing a type in full while publishing, a
+  declared read exception for sequence bodies, and a published sequence template are rejected.
 - [a-formal-default-is-evaluated-by-its-callee](a-formal-default-is-evaluated-by-its-callee.md) --
   an omitted argument's default is evaluated by a function of whatever declares the subroutine, on
   the object the callee is made on, because a default may read the callee's own storage (LRM

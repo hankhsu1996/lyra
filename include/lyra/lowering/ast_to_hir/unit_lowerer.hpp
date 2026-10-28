@@ -32,7 +32,6 @@
 #include "lyra/hir/method_id.hpp"
 #include "lyra/hir/pattern_id.hpp"
 #include "lyra/hir/published_callable.hpp"
-#include "lyra/hir/scope_construction.hpp"
 #include "lyra/hir/specialization.hpp"
 #include "lyra/hir/specialization_ref.hpp"
 #include "lyra/hir/stmt.hpp"
@@ -57,6 +56,7 @@
 #include "lyra/support/def_path.hpp"
 
 namespace slang::ast {
+class ClockingBlockSymbol;
 class Expression;
 class ClassPropertySymbol;
 class ClassType;
@@ -67,6 +67,7 @@ class ModportPortSymbol;
 class ModportSymbol;
 class PortSymbol;
 class Scope;
+class SignalEventControl;
 class TimingControl;
 class ValueSymbol;
 class VariableSymbol;
@@ -249,8 +250,17 @@ struct ScopePublicationRecord {
     const slang::ast::FormalArgumentSymbol* formal = nullptr;
     hir::StructuralSubroutineId id;
   };
-  using Callable =
-      std::variant<Subroutine, PortDefault, ViewRead, ArgumentDefault>;
+  // The subroutine evaluating the operand or the `iff` qualifier of one event
+  // of a clocking block's clocking event (LRM 14.3, 9.4.2.3), for a unit
+  // clocking a sequence or property the block declares (LRM 14.13, 16.16).
+  struct ClockingExpression {
+    const slang::ast::ClockingBlockSymbol* block = nullptr;
+    const slang::ast::Expression* expression = nullptr;
+    std::string name;
+    hir::StructuralSubroutineId id;
+  };
+  using Callable = std::variant<
+      Subroutine, PortDefault, ViewRead, ArgumentDefault, ClockingExpression>;
 
   // A loop generate, with whatever blocks it counted out (LRM 27.4).
   struct Loop {
@@ -289,6 +299,19 @@ struct ScopePublicationRecord {
     std::vector<ViewName> names;
   };
 
+  // A named clocking block of the scope (LRM 14.3): each event of its clocking
+  // event, in the order its event list wrote them, with the callables
+  // evaluating its operand and its qualifier.
+  struct ClockingEntry {
+    const slang::ast::SignalEventControl* event = nullptr;
+    hir::PublishedCallableId operand;
+    std::optional<hir::PublishedCallableId> condition;
+  };
+  struct Clocking {
+    const slang::ast::ClockingBlockSymbol* block = nullptr;
+    std::vector<ClockingEntry> events;
+  };
+
   // Which class of the unit an object of the scope is: each generate block
   // down to this scope as the application of its definition it is, and no step
   // for the unit's own scope.
@@ -298,6 +321,7 @@ struct ScopePublicationRecord {
   std::vector<Construct> generates;
   std::vector<DisableTarget> disable_targets;
   std::vector<View> views;
+  std::vector<Clocking> clockings;
 
   // Where the member standing for `declared` sits among the members, or
   // nothing where the scope publishes no member for it.
@@ -678,6 +702,13 @@ class UnitLowerer {
   // ones it may read.
   [[nodiscard]] auto TakeSignature() -> hir::UnitSignature;
 
+  // What this specialization holds that its unit does not, under its name,
+  // moved out with the signature.
+  [[nodiscard]] auto SpecializationName() const -> const std::string& {
+    return specialization_;
+  }
+  [[nodiscard]] auto TakeValues() -> hir::SpecializationValues;
+
   // The body phase: everything this unit executes, resolved against what the
   // design's units published. Which of those publications this unit ends up
   // depending on is the set it reads, so nothing decides that set in advance.
@@ -715,6 +746,49 @@ class UnitLowerer {
   // spellings of one type reach the same id whether or not either took it.
   auto InternType(const slang::ast::Type& type, diag::SourceSpan span)
       -> diag::Result<hir::TypeId>;
+
+  // Records what a declared type of this unit's own declares, as `define`
+  // works it out from the unit's declaration, the first time the type is
+  // named. Another unit's is what that unit published, taken when it is read,
+  // so nothing of another unit's declaration is read.
+  template <typename Define>
+  auto DefineType(const hir::TypeDeclarationRef& declaration, Define define)
+      -> diag::Result<void> {
+    if (!unit_.IsItself(declaration.unit_name) ||
+        unit_.type_definitions.Find(declaration) != nullptr) {
+      return {};
+    }
+    diag::Result<hir::TypeDefinition> definition = define();
+    if (!definition) return std::unexpected(std::move(definition.error()));
+    unit_.type_definitions.Define(declaration, *std::move(definition));
+    return {};
+  }
+
+  // What a declared type this unit names declares: its own, as it defined it,
+  // and another unit's, as that unit published it, taken the first time it is
+  // asked for, which is after every unit has published.
+  auto TypeDefinitionOf(const hir::TypeDeclarationRef& declaration)
+      -> const hir::TypeDefinition&;
+  auto DefinitionOf(const hir::EnumType& type) -> const hir::EnumDefinition& {
+    return std::get<hir::EnumDefinition>(TypeDefinitionOf(type.declaration));
+  }
+  auto DefinitionOf(const hir::UnpackedStructType& type)
+      -> const hir::UnpackedStructDefinition& {
+    return std::get<hir::UnpackedStructDefinition>(
+        TypeDefinitionOf(type.declaration));
+  }
+  auto DefinitionOf(const hir::UnpackedUnionType& type)
+      -> const hir::UnpackedUnionDefinition& {
+    return std::get<hir::UnpackedUnionDefinition>(
+        TypeDefinitionOf(type.declaration));
+  }
+
+  // The value the value parameter `param` holds where a name reaching it is
+  // folded: this specialization's own, as the front end evaluated it, and
+  // another specialization's, as that one published it.
+  auto ParameterValueOf(
+      const slang::ast::ParameterSymbol& param, diag::SourceSpan span)
+      -> diag::Result<hir::ConstantValue>;
 
   // The type of `expr`, which is the one way an expression's type is interned.
   // What a declaration types -- a name, a member, an element, a user
@@ -1118,20 +1192,23 @@ class UnitLowerer {
       const slang::ast::SubroutineSymbol& sym) const
       -> std::optional<SubroutineBinding>;
 
-  // The subroutine this unit evaluates a declaration's expression in, for
+  // The subroutine this unit evaluates an expression of its own in, for
   // another unit that asks for the value because the expression names
   // declarations it cannot see: a name a view offers only for reading (LRM
-  // 25.5.4), and a port's default (LRM 23.2.2.4). The identity is minted with
-  // every other structural identity so the signature can name it before any
-  // body is lowered.
+  // 25.5.4), a port's default (LRM 23.2.2.4), a formal's default (LRM 13.5.3),
+  // and an event of a clocking block's clocking event with its qualifier (LRM
+  // 14.3). The identity is minted with every other structural identity so the
+  // signature can name it before any body is lowered.
   void MapEvaluator(
-      const slang::ast::Symbol& holder, hir::StructuralSubroutineId evaluator);
-  [[nodiscard]] auto EvaluatorOf(const slang::ast::Symbol& holder) const
+      const slang::ast::Expression& evaluated,
+      hir::StructuralSubroutineId evaluator);
+  [[nodiscard]] auto EvaluatorOf(const slang::ast::Expression& evaluated) const
       -> hir::StructuralSubroutineId;
-  // The same, or nothing where this unit evaluates no expression of
-  // `holder`'s -- a formal of a method, whose class evaluates its defaults.
-  [[nodiscard]] auto FindEvaluator(const slang::ast::Symbol& holder) const
-      -> std::optional<hir::StructuralSubroutineId>;
+  // The same, or nothing where this unit evaluates `evaluated` in no
+  // subroutine of its own -- a formal's default of a method, whose class
+  // evaluates it.
+  [[nodiscard]] auto FindEvaluator(const slang::ast::Expression& evaluated)
+      const -> std::optional<hir::StructuralSubroutineId>;
 
   // The type a port (LRM 23.2.2), a name a view offers or a formal declares,
   // which for the name is the self-determined type of the expression it was
@@ -1232,7 +1309,7 @@ class UnitLowerer {
   // routes it belongs to.
   [[nodiscard]] auto SelectsWritten(
       const WalkFrame& frame,
-      std::span<const slang::ast::HierarchicalReference::Element> written)
+      std::span<const slang::ast::HierarchicalReference::Element> written) const
       -> diag::Result<LoopSelectOf>;
 
   // The scope holding the routes of what is read where `frame` stands: the
@@ -1384,11 +1461,12 @@ class UnitLowerer {
   // is complete before any reference resolves.
   auto InternOwnClassDeclarations() -> diag::Result<void>;
 
-  // Interns every unpacked structure and union a typedef of this unit declares
-  // outside a body, in the same scopes classes are declared in, so the type --
-  // and with it the operations its declaration brings -- is in the unit that
-  // declares it whatever the unit's bodies use.
-  auto InternOwnRecordDeclarations() -> diag::Result<void>;
+  // Interns every enumeration, unpacked structure and unpacked union a
+  // declaration of this unit states outside a body, in the same scopes classes
+  // are declared in, so the type -- and with it what it declares and the
+  // operations its declaration brings -- is in the unit that declares it
+  // whatever the unit's bodies use.
+  auto InternOwnTypeDeclarations() -> diag::Result<void>;
 
   // A class whose declarations are settled and whose bodies are not. A class
   // body names what encloses the class the way any other body does, so it
@@ -1436,12 +1514,18 @@ class UnitLowerer {
   // body has lowered.
   void ReadDeclarationLater(hir::ClassId cls);
   void ReadPendingDeclarations();
+  // Takes what each declared type this unit names declares, which a later
+  // layer reads off the unit rather than off the declaring one.
+  void ReadTypeDefinitions();
 
   // Builds a HIR Expr referring to the data `route` navigates to.
   // `owner_frame` is the frame whose routes hold it.
   auto MakeRoutedMemberRef(
       ScopeFrameId owner_frame, hir::ValueRoute route, diag::SourceSpan span)
       -> hir::Expr;
+  // The storage `route` reaches, as what a wait watches.
+  auto RoutedMemberCell(ScopeFrameId owner_frame, hir::ValueRoute route)
+      -> hir::RoutedValueRef;
 
   // The reference to `value` over a route the caller derived: the route says
   // how the reader reaches it, and what the route ends at follows from the
@@ -1542,6 +1626,15 @@ class UnitLowerer {
   [[nodiscard]] auto StartOf(
       const WalkFrame& frame, const slang::ast::Symbol& found,
       const slang::ast::HierarchicalReference& written) -> RouteOrigin;
+
+  // The events the clocking event of another instance's clocking block stands
+  // for (LRM 14.3, 9.4.2.1), as that instance published them: each a call of
+  // what it evaluates for the block, on the object the block's instance is,
+  // waited on at the members it reads, and qualified by a call where the block
+  // wrote a qualifier.
+  [[nodiscard]] auto PublishedClockingEntries(
+      const WalkFrame& frame, const ClockOfAnotherInstance& clock,
+      diag::SourceSpan span) -> diag::Result<std::vector<hir::EventEntry>>;
 
   // Where a route to `target` starts when no name says so -- a scope reached
   // because a type belongs to it: at the reader where `target` stands in this
@@ -1655,6 +1748,14 @@ class UnitLowerer {
   // covergroup it declares is published beside them, as what the step to MIR
   // makes its class from (LRM 19.3).
   auto PublishTypeSignatures() -> diag::Result<void>;
+  // The definition of each enumeration, unpacked structure and unpacked union
+  // this unit declares, into the signature, for a unit naming one to take.
+  void PublishTypeDefinitions();
+  // The value of each value parameter this specialization declares, for a unit
+  // reading one by name to fold. One whose value no constant of this compiler
+  // states is left out, and a reader of it refuses it as a reader of this
+  // unit's own would.
+  void PublishParameterValues();
 
   // Derives what this unit publishes about each subroutine its namespace
   // declares (LRM 26.3). A design element declares none another unit calls by
@@ -1710,6 +1811,14 @@ class UnitLowerer {
   auto ObservedThroughModport(
       const slang::ast::ModportPortSymbol& offered, const WalkFrame& frame,
       RouteOrigin origin) -> diag::Result<std::vector<hir::SensitivityEntry>>;
+
+  // A watch of the whole of each of `members`, which the scope of class
+  // `scope_class` published, on the object `route` reaches.
+  auto WholeMembersAlong(
+      const WalkFrame& frame, const ScopeRoute& route,
+      hir::ScopeClassId scope_class,
+      std::span<const hir::PublishedMemberId> members)
+      -> std::vector<hir::SensitivityEntry>;
 
   // Where each of `names`, the names a read was reached by, starts: once per
   // name leaving the reader's instance or selecting a loop's block, which
@@ -1792,6 +1901,9 @@ class UnitLowerer {
   void DeclareModportEvaluators(
       const slang::ast::ModportSymbol& modport, ScopeDeclarations& decls,
       ScopePublicationRecord& published);
+  void DeclareClockingEvaluators(
+      const slang::ast::ClockingBlockSymbol& block, ScopeDeclarations& decls,
+      ScopePublicationRecord& published);
   void DeclareProcess(
       const slang::ast::ProceduralBlockSymbol& proc, ScopeDeclarations& decls,
       ScopePublicationRecord& published, ScopeFrameId frame);
@@ -1868,6 +1980,7 @@ class UnitLowerer {
   // What this unit publishes, built by the declaration phase and moved out
   // before any body lowers.
   hir::UnitSignature signature_;
+  hir::SpecializationValues values_;
   // What the design's units publish, for the body phase alone. The declaration
   // phase has none, which is what makes "a declaration reads only its own unit"
   // a property of the code rather than a discipline.
@@ -1927,7 +2040,7 @@ class UnitLowerer {
   std::unordered_map<const slang::ast::Symbol*, InterfacePortBinding>
       interface_port_bindings_;
   SubroutineBindings subroutine_bindings_;
-  std::unordered_map<const slang::ast::Symbol*, hir::StructuralSubroutineId>
+  std::unordered_map<const slang::ast::Expression*, hir::StructuralSubroutineId>
       evaluators_;
   ForeignImportBindings foreign_import_bindings_;
   ForeignImportScopes foreign_import_scopes_;

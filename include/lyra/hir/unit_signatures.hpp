@@ -9,16 +9,21 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/hir/specialization_values.hpp"
+#include "lyra/hir/type.hpp"
 #include "lyra/hir/unit_signature.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace lyra::hir {
 
-// What every unit in the design publishes: filled by the declaration phase and
-// read by the body phase. Holding them in one place is what makes the set of
-// facts that crossed enumerable, rather than whatever the frontend's
-// whole-design graph happened to reach.
+// What every unit in the design publishes, and the values each of its
+// specializations holds: filled by the declaration phase and read by the body
+// phase. Holding them in one place is what makes the set of facts that crossed
+// enumerable, rather than whatever the frontend's whole-design graph happened
+// to reach.
 //
-// A unit is found by name, which is the identity a reference carries across the
+// A unit is found by name, and a specialization's values by the
+// specialization's name, which is the identity a reference carries across the
 // boundary; there is no shared table of ids to match on. Which units a unit
 // ends up depending on is read off what it compiled to rather than decided in
 // advance -- a set decided in advance would be an approximation, and it
@@ -65,6 +70,21 @@ class UnitSignatures {
     return *signature;
   }
 
+  // What the unit declaring `declaration` publishes. A unit names a declared
+  // type only of a unit the design compiles, so the absence is a compiler bug.
+  [[nodiscard]] auto Declaring(const TypeDeclarationRef& declaration) const
+      -> const UnitSignature& {
+    const UnitSignature* signature = Find(declaration.unit_name);
+    if (signature == nullptr) {
+      throw InternalError(
+          std::format(
+              "UnitSignatures::Declaring: no signature of '{}', which declares "
+              "'{}'; the design compiles every unit a type names",
+              declaration.unit_name, support::DisplayOf(declaration.path)));
+    }
+    return *signature;
+  }
+
   // The units of the design that root no object, in name order. A namespace is
   // exactly such a unit (LRM 26.2), and a signature says which it is, so the
   // one artifact that has to bring every namespace up reads the set off the
@@ -81,8 +101,34 @@ class UnitSignatures {
     return names;
   }
 
+  // Records what the specialization named `specialization` holds.
+  void PublishValues(std::string specialization, SpecializationValues values) {
+    if (!values_.emplace(std::move(specialization), std::move(values)).second) {
+      throw InternalError(
+          "UnitSignatures::PublishValues: one specialization publishes its "
+          "values once");
+    }
+  }
+
+  // What the specialization named `specialization` holds. Every
+  // specialization of the design publishes, so an absent one is a compiler
+  // bug.
+  [[nodiscard]] auto ValuesOf(const std::string& specialization) const
+      -> const SpecializationValues& {
+    const auto it = values_.find(specialization);
+    if (it == values_.end()) {
+      throw InternalError(
+          std::format(
+              "UnitSignatures::ValuesOf: specialization '{}' published no "
+              "values; every specialization of the design publishes",
+              specialization));
+    }
+    return it->second;
+  }
+
  private:
   std::unordered_map<std::string, UnitSignature> by_name_;
+  std::unordered_map<std::string, SpecializationValues> values_;
 };
 
 }  // namespace lyra::hir

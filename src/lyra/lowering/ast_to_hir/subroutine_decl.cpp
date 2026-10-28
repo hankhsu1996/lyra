@@ -88,6 +88,17 @@ auto ViewDefinesTheName(const slang::ast::Symbol& item) -> bool {
   return port != nullptr && port->explicitConnection != nullptr;
 }
 
+auto ViewExpressionOf(const slang::ast::ModportPortSymbol& port)
+    -> const slang::ast::Expression& {
+  const slang::ast::Expression* connection = port.getConnectionExpr();
+  if (connection == nullptr) {
+    throw InternalError(
+        "ViewExpressionOf: a name the view defines is the expression it was "
+        "written with");
+  }
+  return *connection;
+}
+
 auto ModportReadName(std::string_view modport, std::string_view port)
     -> std::string {
   return std::format("modport read {} {}", modport, port);
@@ -102,7 +113,28 @@ auto ArgumentDefaultName(std::string_view subroutine, std::string_view formal)
   return std::format("argument default {} {}", subroutine, formal);
 }
 
+auto ClockingEventName(std::string_view block, std::size_t entry)
+    -> std::string {
+  return std::format("clocking event {} {}", block, entry);
+}
+
+auto ClockingConditionName(std::string_view block, std::size_t entry)
+    -> std::string {
+  return std::format("clocking condition {} {}", block, entry);
+}
+
 namespace {
+
+// The function evaluating `formal`'s default, or nothing where it has none or
+// this unit evaluates it in no subroutine of its own.
+auto DefaultEvaluatorOf(
+    const UnitLowerer& unit_lowerer,
+    const slang::ast::FormalArgumentSymbol& formal)
+    -> std::optional<hir::StructuralSubroutineId> {
+  const slang::ast::Expression* default_value = formal.getDefaultValue();
+  if (default_value == nullptr) return std::nullopt;
+  return unit_lowerer.FindEvaluator(*default_value);
+}
 
 // The ABI projection of one DPI-C type: the carrier it crosses as, and the SV
 // type whose values the boundary marshals. The two differ for an open array,
@@ -375,7 +407,7 @@ auto LowerSubroutineDeclImpl(
         hir::SubroutineParam{
             .var = var,
             .direction = ParamDirectionOf(*formal),
-            .default_evaluator = unit_lowerer.FindEvaluator(*formal)});
+            .default_evaluator = DefaultEvaluatorOf(unit_lowerer, *formal)});
   }
 
   std::optional<hir::ProceduralVarId> result_var;
@@ -453,32 +485,27 @@ auto EvaluatesItsOwnDefaults(const slang::ast::SubroutineSymbol& callee)
   return cls == nullptr || !cls->isInterface;
 }
 
-auto OmittedFormal(const slang::ast::CallExpression& call, std::size_t position)
-    -> const slang::ast::FormalArgumentSymbol* {
+auto OmitsArgument(const slang::ast::CallExpression& call, std::size_t position)
+    -> bool {
   const auto* const* sym =
       std::get_if<const slang::ast::SubroutineSymbol*>(&call.subroutine);
-  if (sym == nullptr || *sym == nullptr) return nullptr;
+  if (sym == nullptr || *sym == nullptr) return false;
   const slang::ast::SubroutineSymbol& callee = **sym;
-  if (!EvaluatesItsOwnDefaults(callee)) return nullptr;
+  if (!EvaluatesItsOwnDefaults(callee)) return false;
   const auto formals = callee.getArguments();
-  if (position >= formals.size()) return nullptr;
+  if (position >= formals.size()) return false;
   const slang::ast::FormalArgumentSymbol& formal = *formals[position];
-  if (formal.direction != slang::ast::ArgumentDirection::In ||
-      formal.getDefaultValue() == nullptr ||
-      formal.getDefaultValue() != call.arguments()[position]) {
-    return nullptr;
-  }
-  return &formal;
+  return formal.direction == slang::ast::ArgumentDirection::In &&
+         formal.getDefaultValue() != nullptr &&
+         formal.getDefaultValue() == call.arguments()[position];
 }
 
 auto LowerEvaluatorDecl(
     UnitLowerer& unit_lowerer, const slang::ast::Symbol& holder,
-    std::string name, const slang::ast::Expression& expr, WalkFrame frame)
+    std::string name, const slang::ast::Expression& expr,
+    hir::TypeId result_type, WalkFrame frame)
     -> diag::Result<hir::SubroutineDecl> {
   const auto span = frontend::PointSpanOf(holder.location);
-  auto result_type = unit_lowerer.InternDeclaredType(holder);
-  if (!result_type) return std::unexpected(std::move(result_type.error()));
-
   hir::ProceduralBody body;
   OpenProceduralScope root{
       frame.ProceduralScopes().Declare(),
@@ -486,7 +513,7 @@ auto LowerEvaluatorDecl(
   const hir::ProceduralVarId result_var = body.procedural_vars.Declare();
   body.procedural_vars.Define(
       result_var,
-      hir::ProceduralVarDecl{.name = std::nullopt, .type = *result_type});
+      hir::ProceduralVarDecl{.name = std::nullopt, .type = result_type});
   root.declarations.push_back(result_var);
   ProcessLowerer lowerer(unit_lowerer, holder);
   const WalkFrame body_frame =
@@ -511,7 +538,7 @@ auto LowerEvaluatorDecl(
   return hir::SubroutineDecl{
       .name = std::move(name),
       .kind = hir::SubroutineKind::kFunction,
-      .result_type = *result_type,
+      .result_type = result_type,
       .params = {},
       .result_var = result_var,
       .body = std::move(body),
@@ -588,7 +615,7 @@ auto LowerMethodPrototypeDecl(
         hir::SubroutineParam{
             .var = var,
             .direction = ParamDirectionOf(*formal),
-            .default_evaluator = unit_lowerer.FindEvaluator(*formal)});
+            .default_evaluator = DefaultEvaluatorOf(unit_lowerer, *formal)});
   }
 
   body.root_scope = class_frame.SealScope(std::move(root));

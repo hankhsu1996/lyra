@@ -13,6 +13,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/case_keyword.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/type_definition.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
@@ -394,11 +395,13 @@ auto Renderer::BuildUnpackedAggregate(
     const WalkFrame& frame, mir::LocalId value, hir::TypeId type)
     -> mir::ExprId {
   const hir::Type& t = HirType(type);
+  const hir::CompilationUnit& hir = Owner().Hir();
   const bool is_union = t.Is<hir::UnpackedUnionType>();
-  const bool tagged = is_union && t.Get<hir::UnpackedUnionType>().tagged;
+  const bool tagged =
+      is_union && hir.DefinitionOf(t.Get<hir::UnpackedUnionType>()).tagged;
   const std::vector<hir::UnpackedAggregateField>& fields =
-      is_union ? t.Get<hir::UnpackedUnionType>().fields
-               : t.Get<hir::UnpackedStructType>().fields;
+      is_union ? hir.DefinitionOf(t.Get<hir::UnpackedUnionType>()).fields
+               : hir.DefinitionOf(t.Get<hir::UnpackedStructType>()).fields;
   const mir::TypeId mir_type = Owner().TranslateType(type);
 
   std::vector<mir::ExprId> parts;
@@ -733,8 +736,12 @@ auto PatternReadingOf(const hir::CompilationUnit& hir, hir::TypeId type)
           [](const hir::EnumType&) {
             return PatternReading::kTheTypeNamesTheValue;
           },
-          [&](const hir::UnpackedStructType& t) { return all_of(t.fields); },
-          [&](const hir::UnpackedUnionType& t) { return all_of(t.fields); },
+          [&](const hir::UnpackedStructType& t) {
+            return all_of(hir.DefinitionOf(t).fields);
+          },
+          [&](const hir::UnpackedUnionType& t) {
+            return all_of(hir.DefinitionOf(t).fields);
+          },
           [&](const hir::PackedStructType& t) { return all_of(t.fields); },
           [&](const hir::PackedUnionType& t) { return all_of(t.fields); },
           [&](const hir::UnpackedArrayType& t) {

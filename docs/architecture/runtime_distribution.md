@@ -17,8 +17,7 @@ prints it when run with `+lyra+licenses`, and `emit cpp` writes it beside a proj
 ## What form the runtime ships in
 
 A build asked for `--lto` optimizes the design's code together with the runtime it calls, by the
-compiler that compiles the design, so the runtime ships in a form each such compiler can read
-([../decisions/the-design-is-optimized-with-the-runtime-at-the-link.md](../decisions/the-design-is-optimized-with-the-runtime-at-the-link.md)).
+compiler that compiles the design, so the runtime ships in a form each such compiler can read.
 
 - **The static library carries machine code and bitcode in each object.** The bitcode is that of the
   LLVM release Lyra links, because the one link that reads it is the execution backend's link under
@@ -30,9 +29,8 @@ compiler that compiles the design, so the runtime ships in a form each such comp
   compiler builds them where it checks a program for its sanitizer.
 - **A second build of the library is compiled for the address sanitizer, beside that release's
   sanitizer runtime.** The execution backend instruments a design's code with the LLVM release Lyra
-  links, and instrumented code names its runtime's version, so a checked program links both
-  ([../decisions/a-program-is-checked-by-the-sanitizer-of-whoever-instrumented-it.md](../decisions/a-program-is-checked-by-the-sanitizer-of-whoever-instrumented-it.md)).
-  It carries machine code alone, since the release refuses to instrument a fat object's modules a
+  links, and instrumented code names its runtime's version, so a checked program links both. It
+  carries machine code alone, since the release refuses to instrument a fat object's modules a
   second time. The release's `llvm-symbolizer` ships beside its sanitizer runtime, which starts it
   to name the functions in a report.
 

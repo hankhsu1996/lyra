@@ -6,12 +6,11 @@
 #include <vector>
 
 #include "lyra/hir/case_keyword.hpp"
-#include "lyra/hir/type.hpp"
+#include "lyra/hir/type_definition.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/value_operation.hpp"
@@ -20,22 +19,21 @@ namespace lyra::lowering::hir_to_mir {
 
 class UnitLowerer;
 
-// A method for every operation on a whole value the struct `declaration`
-// names has (LRM 7.2), over values of `structure` whose members are of
-// `members`, and the value its declaration `source` gives a variable of it to
-// start as. Asked while the declaration is being made, so what the struct
-// itself answers is read off its members; a member that is itself a struct
-// is reached by the declaration naming it, which is settled before this one.
+// A method for every operation on a whole value the struct `record` names has
+// (LRM 7.2), over values of `structure` whose members are of `members`, and
+// the value what it declares, `source`, gives a variable of it to start as.
+// What the struct itself answers is read off its members; a member that is
+// itself a struct is reached by the record naming it, which is defined before
+// any record's methods are asked for.
 [[nodiscard]] auto StructMethodsOf(
-    UnitLowerer& lowerer, const hir::UnpackedStructType& source,
+    UnitLowerer& lowerer, const hir::UnpackedStructDefinition& source,
     mir::RecordId record, mir::TypeId structure,
     std::span<const mir::TypeId> members) -> std::vector<mir::RecordMethod>;
 
 // A method for every operation on a whole value the union `record` names
 // has (LRM 7.3), over values of `overlay`, whose members are of `members`:
 // each is its first member's, read as that member's type holds a value (LRM
-// 7.3.2). Asked while the declaration is being made, so what the union itself
-// answers is read off its members.
+// 7.3.2). What the union itself answers is read off its members.
 [[nodiscard]] auto UnionMethodsOf(
     UnitLowerer& lowerer, mir::RecordId record, mir::TypeId overlay,
     std::span<const mir::TypeId> members) -> std::vector<mir::RecordMethod>;

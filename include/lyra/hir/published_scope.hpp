@@ -11,6 +11,7 @@
 #include "lyra/base/arena.hpp"
 #include "lyra/base/pool_id.hpp"
 #include "lyra/hir/published_callable.hpp"
+#include "lyra/hir/published_clocking.hpp"
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/published_modport.hpp"
 #include "lyra/hir/subroutine_prototype.hpp"
@@ -127,10 +128,11 @@ struct PublishedDisableTargetId {
 // which class of the unit it is, the members another unit may name on it, the
 // subroutines another unit may call on it, the generate constructs a name steps
 // through into their blocks -- its loops, and the constructs that build at most
-// one block -- what a `disable` of one of its named blocks or tasks ends, and,
-// for an instance, the views it offers over those members. A unit's name and
-// the name of the class it builds are two facts, so a referrer reads the class
-// it reaches here rather than deriving it from the unit it reached through.
+// one block -- what a `disable` of one of its named blocks or tasks ends, the
+// clocking blocks it declares, and, for an instance, the views it offers over
+// those members. A unit's name and the name of the class it builds are two
+// facts, so a referrer reads the class it reaches here rather than deriving it
+// from the unit it reached through.
 // Every type here is one of the pool of whoever holds the record: the unit's
 // signature, the unit's own scope, or a referrer's record of it.
 //
@@ -154,6 +156,7 @@ struct ScopeClassSignature {
   base::Arena<PublishedChoice, PublishedChoiceId> choices;
   base::Arena<PublishedDisableTarget, PublishedDisableTargetId> disable_targets;
   std::vector<PublishedModport> modports;
+  std::vector<PublishedClockingBlock> clocking_blocks;
 
   // The member the scope published for the declaration `name` of the scope
   // `holder` of the unit, or nothing when it published none.

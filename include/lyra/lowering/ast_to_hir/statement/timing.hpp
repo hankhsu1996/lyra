@@ -7,11 +7,14 @@
 //   - WaitStatement (LRM 9.4.3)
 //   - EventTriggerStatement (LRM 15.5.1)
 
+#include <slang/ast/SemanticFacts.h>
+
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
+#include "lyra/support/event_edge.hpp"
 
 namespace slang::ast {
 class AssignmentExpression;
@@ -22,6 +25,9 @@ class WaitStatement;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
+
+// Which transition of an event's operand the event is (LRM 9.4.2).
+auto LowerEventEdge(slang::ast::EdgeKind kind) -> support::EventEdge;
 
 // LRM A.6.5 `delay_or_event_control`: the control a statement carries towards
 // deciding when its effect happens. Every position the grammar admits one reads
@@ -35,13 +41,14 @@ auto LowerDelayOrEventControl(
 
 // An `event_control` (LRM 9.4.2), each of whose entries waits for a change in a
 // value or for an event to be triggered (LRM 15.5.2). A clocking event is one
-// of these by whichever of LRM 16.9.3's rules supplied it, because each is a
-// timing control the front end built, so counting its ticks needs no second
-// vocabulary. One a sampled value function counts ticks of may stand outside
-// any procedure, so it is lowered wherever an expression is.
+// of these by whichever of LRM 16.9.3's rules supplied it -- a timing control
+// the front end built, or the clocking event another instance's clocking block
+// publishes -- so counting its ticks needs no second vocabulary. One a sampled
+// value function counts ticks of may stand outside any procedure, so it is
+// lowered wherever an expression is.
 template <typename Lowerer>
 auto LowerEventControl(
-    Lowerer& lowerer, WalkFrame frame, const slang::ast::TimingControl& tc,
+    Lowerer& lowerer, WalkFrame frame, const ClockingEvent& clock,
     diag::SourceSpan span) -> diag::Result<hir::EventControl>;
 
 // LRM 9.4.5 Table 9-3: a blocking assignment carrying an intra-assignment

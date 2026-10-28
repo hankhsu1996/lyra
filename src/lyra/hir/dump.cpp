@@ -351,7 +351,7 @@ class HirDumper {
   auto Dump(const Specialization& lowered) -> std::string {
     Line(
         std::format(
-            "Specialization \"{}\" of implementation \"{}\"", lowered.name,
+            R"(Specialization "{}" of implementation "{}")", lowered.name,
             lowered.implementation.body_name));
     Indent();
     DumpUnit(lowered.implementation);
@@ -405,11 +405,12 @@ class HirDumper {
     return s == Signedness::kSigned ? "signed" : "unsigned";
   }
 
-  // A packed aggregate's members in declaration order, which is the only
-  // thing that positions them: where each lands in the vector is projected
-  // downstream, so there is nothing positional to print here.
-  static auto FormatPackedAggregateFields(
-      const std::vector<PackedAggregateField>& fields) -> std::string {
+  // An aggregate's members in declaration order, which is the only thing that
+  // positions them: where a packed one's members land in its vector is
+  // projected downstream, so there is nothing positional to print here.
+  template <typename Field>
+  static auto FormatAggregateFields(const std::vector<Field>& fields)
+      -> std::string {
     std::string out;
     for (std::size_t i = 0; i < fields.size(); ++i) {
       if (i > 0) out += ", ";
@@ -450,6 +451,41 @@ class HirDumper {
         p.dim.right, p.element_type.value, FormatSignedness(p.signedness));
   }
 
+  static auto FormatTypeDeclaration(const TypeDeclarationRef& declaration)
+      -> std::string {
+    return std::format(
+        "{}::{}", declaration.unit_name, support::DisplayOf(declaration.path));
+  }
+
+  static auto FormatTypeDefinition(const TypeDefinition& definition)
+      -> std::string {
+    return std::visit(
+        Overloaded{
+            [](const EnumDefinition& e) -> std::string {
+              std::string members;
+              for (std::size_t i = 0; i < e.members.size(); ++i) {
+                if (i > 0) members += ", ";
+                members += std::format(
+                    "{}={}", e.members[i].name,
+                    FormatIntegralConstant(e.members[i].value));
+              }
+              return std::format(
+                  "Enum(base=Type[{}], members=[{}])", e.base_type.value,
+                  members);
+            },
+            [](const UnpackedStructDefinition& s) -> std::string {
+              return std::format(
+                  "UnpackedStruct(fields=[{}])",
+                  FormatAggregateFields(s.fields));
+            },
+            [](const UnpackedUnionDefinition& u) -> std::string {
+              return std::format(
+                  "UnpackedUnion(tagged={}, fields=[{}])", u.tagged,
+                  FormatAggregateFields(u.fields));
+            }},
+        definition);
+  }
+
   static auto FormatType(const Type& t) -> std::string {
     return t.Visit(
         Overloaded{
@@ -463,49 +499,25 @@ class HirDumper {
               return std::format(
                   "PackedStruct(signed={}, fields=[{}])",
                   FormatSignedness(s.signedness),
-                  FormatPackedAggregateFields(s.fields));
+                  FormatAggregateFields(s.fields));
             },
             [](const PackedUnionType& u) -> std::string {
               return std::format(
                   "PackedUnion(signed={}, tagged={}, fields=[{}])",
                   FormatSignedness(u.signedness), u.tagged,
-                  FormatPackedAggregateFields(u.fields));
+                  FormatAggregateFields(u.fields));
             },
             [](const EnumType& e) -> std::string {
-              std::string members;
-              for (std::size_t i = 0; i < e.members.size(); ++i) {
-                if (i > 0) members += ", ";
-                members += std::format(
-                    "{}={}", e.members[i].name,
-                    FormatIntegralConstant(e.members[i].value));
-              }
               return std::format(
-                  "Enum({}::{}, base=Type[{}], members=[{}])",
-                  e.declaration.unit_name,
-                  support::DisplayOf(e.declaration.path), e.base_type.value,
-                  members);
+                  "Enum({})", FormatTypeDeclaration(e.declaration));
             },
             [](const UnpackedStructType& s) -> std::string {
-              std::string fields;
-              for (std::size_t i = 0; i < s.fields.size(); ++i) {
-                if (i > 0) fields += ", ";
-                fields += std::format(
-                    "{}:Type[{}]", s.fields[i].name, s.fields[i].type.value);
-              }
               return std::format(
-                  "UnpackedStruct({}::{}, fields=[{}])",
-                  s.declaration.unit_name,
-                  support::DisplayOf(s.declaration.path), fields);
+                  "UnpackedStruct({})", FormatTypeDeclaration(s.declaration));
             },
             [](const UnpackedUnionType& u) -> std::string {
-              std::string fields;
-              for (std::size_t i = 0; i < u.fields.size(); ++i) {
-                if (i > 0) fields += ", ";
-                fields += std::format(
-                    "{}:Type[{}]", u.fields[i].name, u.fields[i].type.value);
-              }
               return std::format(
-                  "UnpackedUnion(tagged={}, fields=[{}])", u.tagged, fields);
+                  "UnpackedUnion({})", FormatTypeDeclaration(u.declaration));
             },
             [](const UnpackedArrayType& u) -> std::string {
               return std::format(
@@ -1668,6 +1680,16 @@ class HirDumper {
     Indent();
     for (const TypeId id : u.types.Ids()) {
       Line(std::format("[{}] {}", id.value, FormatType(u.types.Get(id))));
+    }
+    Dedent();
+
+    Line("Type definitions:");
+    Indent();
+    for (const auto& [declaration, definition] : u.type_definitions) {
+      Line(
+          std::format(
+              "{} {}", FormatTypeDeclaration(declaration),
+              FormatTypeDefinition(definition)));
     }
     Dedent();
 

@@ -15,6 +15,7 @@
 #include "lyra/hir/pattern.hpp"
 #include "lyra/hir/pattern_id.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/type_definition.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
@@ -65,11 +66,11 @@ auto SubjectMember(
             owner.Unit(), block,
             MemberStep(owner, block, ty, index, member_type(fields)), subject));
       };
-  if (const auto* s = ty.As<hir::UnpackedStructType>()) {
-    return unpacked(s->fields);
+  if (const auto* structure = ty.As<hir::UnpackedStructType>()) {
+    return unpacked(owner.Hir().DefinitionOf(*structure).fields);
   }
-  if (const auto* u = ty.As<hir::UnpackedUnionType>()) {
-    return unpacked(u->fields);
+  if (const auto* overlay = ty.As<hir::UnpackedUnionType>()) {
+    return unpacked(owner.Hir().DefinitionOf(*overlay).fields);
   }
   const PackedProjection projection = ProjectPackedAggregate(owner, ty);
   if (index.value >= projection.members.size()) {

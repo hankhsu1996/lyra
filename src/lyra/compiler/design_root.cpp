@@ -20,6 +20,7 @@
 #include "lyra/hir/specialization_ref.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/type_definition.hpp"
 #include "lyra/hir/type_import.hpp"
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/hir/unit_signatures.hpp"
@@ -108,7 +109,8 @@ auto BuildDesignRootHir(
       .loops = {},
       .choices = {},
       .disable_targets = {},
-      .modports = {}};
+      .modports = {},
+      .clocking_blocks = {}};
   std::vector<hir::PublishedDecl> instances;
   for (const lowering::ast_to_hir::TopLevelUnit& top : tops) {
     // The root reaches a top the way any parent reaches a child it builds:
@@ -216,6 +218,25 @@ auto PublishedObjectEntries(
   return entries;
 }
 
+// What each declared type the root names declares, as the unit declaring it
+// published it.
+void ReadTypeDefinitions(
+    hir::CompilationUnit& root, const hir::UnitSignatures& signatures) {
+  std::map<std::string, hir::TypeImportMemo, std::less<>> memos;
+  hir::ForEachNamedDeclaration(
+      root.types, [&](const hir::TypeDeclarationRef& declaration) {
+        if (root.type_definitions.Find(declaration) != nullptr) return;
+        const hir::UnitSignature& signature = signatures.Declaring(declaration);
+        hir::TypeImporter importer = hir::ReaderImporter(
+            signature, root.types, root.classes, root.covergroups,
+            root.scope_classes, memos[declaration.unit_name]);
+        root.type_definitions.Define(
+            declaration, hir::ImportTypeDefinition(
+                             importer, hir::PublishedTypeDefinition(
+                                           signature, declaration)));
+      });
+}
+
 }  // namespace
 
 auto SynthesizeDesignRoot(
@@ -234,6 +255,7 @@ auto SynthesizeDesignRoot(
   auto object_entries = PublishedObjectEntries(
       signatures, instantiations, root_unit.types, root_unit.classes,
       root_unit.covergroups, root_unit.scope_classes);
+  ReadTypeDefinitions(root_unit, signatures);
   lowering::hir_to_mir::UnitLowerer root_lowerer(root_unit, source_manager);
   auto root_mir = root_lowerer.RunDesignRoot(
       lowering::hir_to_mir::DesignRootInputs{

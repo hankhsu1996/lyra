@@ -152,8 +152,7 @@ auto MakeQueryConstant(
     return std::unexpected(std::move(type_id.error()));
   }
   return MakeConstantValueExpr(
-      unit_lowerer.Unit(), frame, call.type->coerceValue(value), *type_id,
-      span);
+      unit_lowerer, frame, call.type->coerceValue(value), *type_id, span);
 }
 
 auto QueryInt(std::int64_t value) -> slang::SVInt {

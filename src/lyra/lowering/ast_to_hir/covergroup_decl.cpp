@@ -301,7 +301,8 @@ class DeclBuilder {
     const slang::ast::TimingControl* event = first.getCoverageEvent();
     if (event == nullptr) return hir::CoverageSampling{hir::SampledByCall{}};
     if (event->kind != slang::ast::TimingControlKind::BlockEventList) {
-      auto control = LowerEventControl(lowerer_, frame_, *event, span_);
+      auto control =
+          LowerEventControl(lowerer_, frame_, ClockingEvent{event}, span_);
       if (!control) return std::unexpected(std::move(control.error()));
       return hir::CoverageSampling{
           hir::SampledOnEvent{.event = *std::move(control)}};

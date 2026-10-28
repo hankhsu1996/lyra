@@ -12,6 +12,7 @@
 #include "lyra/hir/foreign_export.hpp"
 #include "lyra/hir/foreign_import.hpp"
 #include "lyra/hir/subroutine.hpp"
+#include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace slang::ast {
@@ -20,6 +21,7 @@ class ClassType;
 class Expression;
 class FormalArgumentSymbol;
 class MethodPrototypeSymbol;
+class ModportPortSymbol;
 class SubroutineSymbol;
 class Symbol;
 }  // namespace slang::ast
@@ -64,19 +66,30 @@ auto ParamDirectionOf(const slang::ast::FormalArgumentSymbol& formal)
 // view defines.
 auto ViewDefinesTheName(const slang::ast::Symbol& item) -> bool;
 
+// The expression a view wrote for a name it defines, which is what the name
+// stands for.
+auto ViewExpressionOf(const slang::ast::ModportPortSymbol& port)
+    -> const slang::ast::Expression&;
+
 // The subroutines a unit makes up to evaluate an expression of its own for
 // another unit: one name a view offers only for reading (LRM 25.5.4), one
-// port's default (LRM 23.2.2.4), and one formal's default (LRM 13.5.3), which a
-// caller omitting the formal asks the subroutine's own scope or class for. The
-// declaring unit both publishes each and
-// builds it, so the two are spelled through one function and cannot describe
-// different subroutines. Each name holds a space, which no identifier can,
-// escaped ones included (LRM 5.6.1), so it cannot be the name of anything the
-// unit itself declares.
+// port's default (LRM 23.2.2.4), one formal's default (LRM 13.5.3), which a
+// caller omitting the formal asks the subroutine's own scope or class for, and
+// the operand and the `iff` qualifier of one event of a clocking block's
+// clocking event, counted from 0 in the order its event list wrote them (LRM
+// 14.3, 9.4.2.1). The declaring unit both publishes each and builds it, so the
+// two are spelled through one function and cannot describe different
+// subroutines. Each name holds a space, which no identifier can, escaped ones
+// included (LRM 5.6.1), so it cannot be the name of anything the unit itself
+// declares.
 auto ModportReadName(std::string_view modport, std::string_view port)
     -> std::string;
 auto PortDefaultName(std::string_view port) -> std::string;
 auto ArgumentDefaultName(std::string_view subroutine, std::string_view formal)
+    -> std::string;
+auto ClockingEventName(std::string_view block, std::size_t entry)
+    -> std::string;
+auto ClockingConditionName(std::string_view block, std::size_t entry)
     -> std::string;
 
 // Whether whatever declares `callee` evaluates the defaults of its formals in a
@@ -90,25 +103,26 @@ auto ArgumentDefaultName(std::string_view subroutine, std::string_view formal)
 auto EvaluatesItsOwnDefaults(const slang::ast::SubroutineSymbol& callee)
     -> bool;
 
-// The formal the argument at `position` of `call` stands for, where the call
-// omitted it and the front end filled in the formal's default (LRM 13.5.3),
-// which it does by placing the default's own expression there: an argument
-// that is that expression is one the call omitted. Only where the callee
-// evaluates its own defaults is one answered, and only for an input, the one
-// direction whose value a default stands for. Nothing of such an argument is
-// lowered or analyzed where the call stands; it is the callee's.
-auto OmittedFormal(const slang::ast::CallExpression& call, std::size_t position)
-    -> const slang::ast::FormalArgumentSymbol*;
+// Whether `call` omitted the argument at `position`, leaving it to the formal's
+// default (LRM 13.5.3). The front end fills an omitted argument in by placing
+// the default's own expression there, so an argument that is that expression
+// is one the call omitted. Only where the callee evaluates its own defaults is
+// one answered, and only for an input, the one direction whose value a default
+// stands for. Nothing of such an argument is lowered or analyzed where the call
+// stands; it is the callee's.
+auto OmitsArgument(const slang::ast::CallExpression& call, std::size_t position)
+    -> bool;
 
-// The function evaluating `holder`'s expression `expr` in the scope or class
-// that wrote it, for a caller that asks for the value: the expression names
-// declarations of that scope, which would mean nothing where the caller stands,
-// so what crosses is the call and the expression is lowered where it was
-// written. It is one return of the expression, as the type `holder` declares,
+// The function evaluating the expression `expr` that `holder` holds, in the
+// scope or class that wrote it, for a caller that asks for the value: the
+// expression names declarations of that scope, which would mean nothing where
+// the caller stands, so what crosses is the call and the expression is lowered
+// where it was written. It is one return of the expression as `result_type`,
 // and takes no formals.
 auto LowerEvaluatorDecl(
     UnitLowerer& unit_lowerer, const slang::ast::Symbol& holder,
-    std::string name, const slang::ast::Expression& expr, WalkFrame frame)
+    std::string name, const slang::ast::Expression& expr,
+    hir::TypeId result_type, WalkFrame frame)
     -> diag::Result<hir::SubroutineDecl>;
 
 // Lowers a slang subroutine (LRM 13) into a hir::SubroutineDecl: its result

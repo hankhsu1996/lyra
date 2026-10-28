@@ -430,10 +430,6 @@ auto ConnectDataPort(
   // 23.2.2.2), and the descent between the two is published alongside.
   const hir::PublishedMemberLeaf member =
       unit_lowerer.PublishedMemberLeafOf(child.scope_class, projection->member);
-  const auto* internal =
-      port->internalSymbol == nullptr
-          ? nullptr
-          : port->internalSymbol->as_if<slang::ast::ValueSymbol>();
   // What crosses is the type the child published, taken into this unit's own
   // pool -- so the parent's record of the connection rests on the child's
   // statement of its port and not on a second reading of the frontend.
@@ -534,22 +530,12 @@ auto ConnectDataPort(
             "ConnectDataPort: an output port connection is stated as an "
             "assignment to the parent-side target");
       }
-      if (internal == nullptr) {
-        return PortConnectionUnsupported(
-            span,
-            "an output port whose name reaches no single declaration of the "
-            "child is not yet supported");
-      }
       auto peer_or = scope.LowerExpr(*target, frame);
       if (!peer_or) return std::unexpected(std::move(peer_or.error()));
       peer = frame.Exprs().Add(*std::move(peer_or));
-      auto entries = unit_lowerer.SensitivityEntriesOf(
-          scope,
-          {AccessedPart{
-              .symbol = internal, .part = WholePart{}, .reached_by = {}}},
-          frame);
-      if (!entries) return std::unexpected(std::move(entries.error()));
-      sensitivity = *std::move(entries);
+      sensitivity = {hir::SensitivityEntry{
+          .cell = unit_lowerer.RoutedMemberCell(child.home_frame, port_route),
+          .part = hir::WatchedWhole{}}};
       break;
     }
     case hir::PortDirection::kRef: {

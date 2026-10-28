@@ -1,5 +1,6 @@
 #pragma once
 
+#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -11,11 +12,9 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/interner.hpp"
-#include "lyra/hir/class_ref.hpp"
-#include "lyra/hir/constant_value.hpp"
+#include "lyra/hir/class_id.hpp"
 #include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/integral_constant.hpp"
-#include "lyra/hir/random_qualifier.hpp"
 #include "lyra/hir/scope_class_id.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/support/def_path.hpp"
@@ -78,19 +77,19 @@ struct TypeDeclarationRef {
   support::DefPath path;
 
   auto operator==(const TypeDeclarationRef&) const -> bool = default;
+  auto operator<=>(const TypeDeclarationRef&) const
+      -> std::strong_ordering = default;
 };
 
-struct EnumMember {
-  std::string name;
-  IntegralConstant value;
-
-  auto operator==(const EnumMember&) const -> bool = default;
-};
-
+// An enumeration, an unpacked structure and an unpacked union are each named
+// by the declaration they are, and own no copy of what it declares: naming one
+// needs only the declaration, so a unit names a type another unit declares
+// before anything of that unit is known, as a class is named. What each
+// declares is its definition, which the unit holding the type keeps beside its
+// types and takes from the declaring unit's signature where another unit
+// declares it.
 struct EnumType {
   TypeDeclarationRef declaration;
-  TypeId base_type;
-  std::vector<EnumMember> members;
 
   auto operator==(const EnumType&) const -> bool = default;
 };
@@ -133,26 +132,6 @@ struct PackedUnionType {
   auto operator==(const PackedUnionType&) const -> bool = default;
 };
 
-// A named member of an unpacked aggregate (struct or union). Unlike a packed
-// aggregate field, an unpacked member has its own independent storage of its
-// declared type -- there is no shared bit vector, so no offset or width. The
-// member is identified by its position in declaration order (LRM 7.2 / 7.3),
-// the same index a member-access expression carries. `default_init` holds the
-// member's own declaration initializer (LRM 7.2.2) as a folded constant value
-// -- type metadata, like an enum member's value -- which takes precedence over
-// the member type's Table 7-1 default when the enclosing struct is
-// default-constructed; absent when the member has no initializer. `random` is
-// how a member of a structure is declared random, which it is wherever the
-// structure is (LRM 18.4).
-struct UnpackedAggregateField {
-  std::string name;
-  TypeId type;
-  std::optional<ConstantValue> default_init;
-  RandomQualifier random = RandomQualifier::kNone;
-
-  auto operator==(const UnpackedAggregateField&) const -> bool = default;
-};
-
 // LRM 7.2 unpacked structure: a heterogeneous aggregate whose members each hold
 // independent storage of their declared type. Distinct from a packed struct,
 // whose members share one bit vector; an unpacked member may be any type,
@@ -160,21 +139,14 @@ struct UnpackedAggregateField {
 // Two declarations with the same members are two types (LRM 6.22.1).
 struct UnpackedStructType {
   TypeDeclarationRef declaration;
-  std::vector<UnpackedAggregateField> fields;
 
   auto operator==(const UnpackedStructType&) const -> bool = default;
 };
 
-// LRM 7.3 unpacked union: one storage its member types overlay. `tagged` (LRM
-// 7.3.2) marks a type-checked union that carries a tag naming the member it
-// holds; an untagged union (the default) is the type-loophole form with no
-// tag, read through any member. A tagged union may declare a `void`
-// member (LRM 7.3.2) when all information is in the tag. Two declarations with
-// the same members are two types (LRM 6.22.1).
+// LRM 7.3 unpacked union: one storage its member types overlay. Two
+// declarations with the same members are two types (LRM 6.22.1).
 struct UnpackedUnionType {
   TypeDeclarationRef declaration;
-  std::vector<UnpackedAggregateField> fields;
-  bool tagged;
 
   auto operator==(const UnpackedUnionType&) const -> bool = default;
 };
@@ -448,6 +420,10 @@ class Type {
   // value held beside the others.
   [[nodiscard]] auto ContainerElementType() const -> std::optional<TypeId>;
 
+  // The declaration this type is where it is an enumeration, an unpacked
+  // structure or an unpacked union, and nothing for any other type.
+  [[nodiscard]] auto NamedDeclaration() const -> const TypeDeclarationRef*;
+
   template <typename T>
   [[nodiscard]] auto Is() const -> bool {
     return std::holds_alternative<T>(data_);
@@ -491,19 +467,19 @@ class Type {
   Data data_;
 };
 
-// The types one compilation unit names. A type's identity here is its
-// structure, so two declarations spelling the same type are one entry however
+// The types one compilation unit names. A type's identity here is what the
+// type is, so two declarations spelling the same type are one entry however
 // each was reached -- read off the frontend, composed by the lowering, or taken
-// out of another unit's signature. The declaration a class or an unpacked
-// structure names is part of that structure, which is how two of them with the
-// same members stay apart (LRM 8.3, 6.22.1). That is what makes a `TypeId` mean
-// a type rather than a place where one happened to be written, and it is what
-// keeps a type arriving from outside from becoming a second copy of one already
-// here.
+// out of another unit's signature. A class, an enumeration, an unpacked
+// structure and an unpacked union are the declaration they name, which is how
+// two of them with the same members stay apart (LRM 8.3, 6.22.1); any other
+// type is its structure. That is what makes a `TypeId` mean a type rather than
+// a place where one happened to be written, and it is what keeps a type
+// arriving from outside from becoming a second copy of one already here.
 //
-// Identity is structural and not the frontend's: a pool outlives the frontend
-// object that fed it and belongs to one unit alone, so nothing in it may rest
-// on a table shared with another unit.
+// Identity is the type's own and not the frontend's: a pool outlives the
+// frontend object that fed it and belongs to one unit alone, so nothing in it
+// may rest on a table shared with another unit.
 using TypePool = base::Interner<Type, TypeId, Type::Hash>;
 
 // The unpacked nesting a type wraps around one element: every range it

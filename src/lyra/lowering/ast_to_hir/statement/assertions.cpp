@@ -164,30 +164,51 @@ auto CarriesLocalVars(const slang::ast::AssertionExpr& expr) -> bool {
   return instance != nullptr && !instance->localVars.empty();
 }
 
-// The event of the clocking block an instance's declaration stands in, which
-// clocks the sequence or property it declares (LRM 16.16 b). Nothing for any
-// other node.
-auto ClockingBlockEventOf(const slang::ast::AssertionExpr& expr)
-    -> const slang::ast::TimingControl* {
+// The clocking event of the clocking block an instance's declaration stands
+// in, which clocks the sequence or property it declares (LRM 16.16 b), as
+// `frame` reaches it; nothing for any other node. The declaration is reached by
+// a hierarchical name, by a name a body reached that way wrote, or plainly; a
+// block such a name finds outside the reader's own instance clocks by what the
+// instance declaring it publishes.
+auto DeclaredClockOf(
+    UnitLowerer& owner, const slang::ast::AssertionExpr& expr,
+    const WalkFrame& frame) -> std::optional<ClockingEvent> {
   const auto* instance = InstanceOf(expr);
   if (instance == nullptr) {
-    return nullptr;
+    return std::nullopt;
   }
   const slang::ast::Scope* scope = instance->symbol.getParentScope();
   if (scope == nullptr ||
       scope->asSymbol().kind != slang::ast::SymbolKind::ClockingBlock) {
-    return nullptr;
+    return std::nullopt;
   }
-  return &scope->asSymbol().as<slang::ast::ClockingBlockSymbol>().getEvent();
+  const auto& block = scope->asSymbol().as<slang::ast::ClockingBlockSymbol>();
+  ClockOfAnotherInstance reach{
+      .block = &block,
+      .declaration = &instance->symbol,
+      .reached_through = ReachedThrough(*instance)};
+  if (reach.reached_through == nullptr) {
+    if (const ExpansionInstance* through =
+            ExpansionDeclaringBeside(frame, instance->symbol)) {
+      reach.declaration = through->declaration;
+      reach.reached_through = through->reached_through;
+    }
+  }
+  if (reach.reached_through != nullptr &&
+      !NamesOwnDeclaration(
+          owner.StartOf(frame, *reach.declaration, *reach.reached_through))) {
+    return ClockingEvent{reach};
+  }
+  return ClockingEvent{&block.getEvent()};
 }
 
 // Whether a clocking event met inside an assertion's body is another clock
 // than the one in force there, which makes the assertion multiclocked (LRM
 // 16.13). One identical to it changes nothing (LRM 16.13.3).
 auto BeginsAnotherClock(
-    const slang::ast::TimingControl& event, const WalkFrame& frame,
-    diag::SourceSpan span) -> diag::Result<bool> {
-  if (frame.assertion_clock == nullptr) {
+    const ClockingEvent& event, const WalkFrame& frame, diag::SourceSpan span)
+    -> diag::Result<bool> {
+  if (!frame.assertion_clock.has_value()) {
     throw InternalError(
         "BeginsAnotherClock: an assertion's body lowered with no clock");
   }
@@ -207,14 +228,16 @@ struct EnteredInstance {
 // declaration is clocked otherwise than the assertion is refused rather than
 // read under the wrong clock.
 auto EnterNestedInstance(
-    const slang::ast::AssertionExpr& expr, const WalkFrame& frame,
-    diag::SourceSpan span) -> diag::Result<std::optional<EnteredInstance>> {
+    UnitLowerer& owner, const slang::ast::AssertionExpr& expr,
+    const WalkFrame& frame, diag::SourceSpan span)
+    -> diag::Result<std::optional<EnteredInstance>> {
   const slang::ast::AssertionExpr* body = InstanceBodyOf(expr);
   if (body == nullptr) {
     return std::optional<EnteredInstance>{};
   }
-  if (const auto* event = ClockingBlockEventOf(expr); event != nullptr) {
-    auto another = BeginsAnotherClock(*event, frame, span);
+  if (const std::optional<ClockingEvent> declared =
+          DeclaredClockOf(owner, expr, frame)) {
+    auto another = BeginsAnotherClock(*declared, frame, span);
     if (!another) return std::unexpected(std::move(another.error()));
     if (*another) {
       return RefuseAssertionForm(
@@ -349,7 +372,7 @@ auto LowerSequenceExpr(
   if (CarriesLocalVars(expr)) {
     return RefuseAssertionForm(span, "a local variable");
   }
-  auto entered_or = EnterNestedInstance(expr, frame, span);
+  auto entered_or = EnterNestedInstance(proc.Owner(), expr, frame, span);
   if (!entered_or) return std::unexpected(std::move(entered_or.error()));
   if (entered_or->has_value()) {
     return LowerSequenceExpr(
@@ -397,7 +420,8 @@ auto LowerSequenceExpr(
     case slang::ast::AssertionExprKind::Clocking: {
       const auto& clocking = expr.as<slang::ast::ClockingAssertionExpr>();
       // LRM 16.13.
-      auto another = BeginsAnotherClock(clocking.clocking, frame, span);
+      auto another =
+          BeginsAnotherClock(ClockingEvent{&clocking.clocking}, frame, span);
       if (!another) return std::unexpected(std::move(another.error()));
       if (*another) {
         return RefuseAssertionForm(
@@ -612,7 +636,7 @@ auto LowerPropertyExpr(
   if (CarriesLocalVars(expr)) {
     return RefuseAssertionForm(span, "a local variable");
   }
-  auto entered_or = EnterNestedInstance(expr, frame, span);
+  auto entered_or = EnterNestedInstance(proc.Owner(), expr, frame, span);
   if (!entered_or) return std::unexpected(std::move(entered_or.error()));
   if (entered_or->has_value()) {
     return LowerPropertyExpr(
@@ -726,7 +750,8 @@ auto LowerPropertyExpr(
     case slang::ast::AssertionExprKind::Clocking: {
       const auto& clocking = expr.as<slang::ast::ClockingAssertionExpr>();
       // LRM 16.13.
-      auto another = BeginsAnotherClock(clocking.clocking, frame, span);
+      auto another =
+          BeginsAnotherClock(ClockingEvent{&clocking.clocking}, frame, span);
       if (!another) return std::unexpected(std::move(another.error()));
       if (*another) {
         return RefuseAssertionForm(
@@ -760,10 +785,9 @@ auto LowerPropertyExpr(
 // because the clocking event a property declares -- in its body, or by being
 // declared in a clocking block (LRM 16.16 b) -- leads the assertion.
 struct PropertySpecParts {
-  // Never null: a statement left with no clock is refused before its parts
-  // exist. It is the clocking event the source wrote, so it is resolved where
-  // the instances it may name are recorded.
-  const slang::ast::TimingControl* clock;
+  // A statement left with no clock is refused before its parts exist. One the
+  // source wrote is resolved where the instances it may name are recorded.
+  ClockingEvent clock;
   const slang::ast::Expression* disable_condition;
   const slang::ast::AssertionExpr* body;
   // The frame the clock, the disable condition, the body and the action blocks
@@ -781,14 +805,14 @@ auto SplitPropertySpec(
     const slang::ast::AssertionExpr& spec,
     const slang::ast::Expression* inherited_disable, diag::SourceSpan span)
     -> diag::Result<PropertySpecParts> {
-  const slang::ast::TimingControl* clock = ClockInForce(proc, frame);
+  std::optional<ClockingEvent> clock = ClockInForce(proc, frame);
   const slang::ast::Expression* written_disable = nullptr;
   WalkFrame body_frame = frame;
   const slang::ast::AssertionExpr* cursor = &spec;
   while (true) {
     if (cursor->kind == slang::ast::AssertionExprKind::Clocking) {
       const auto& clocking = cursor->as<slang::ast::ClockingAssertionExpr>();
-      clock = &clocking.clocking;
+      clock = ClockingEvent{&clocking.clocking};
       cursor = &clocking.expr;
       continue;
     }
@@ -804,15 +828,16 @@ auto SplitPropertySpec(
       body_frame = body_frame.WithExpansionInstance(
           InstanceOf(*cursor)->symbol, clock,
           ReachedThrough(*InstanceOf(*cursor)));
-      if (const auto* event = ClockingBlockEventOf(*cursor); event != nullptr) {
-        clock = event;
+      if (std::optional<ClockingEvent> declared =
+              DeclaredClockOf(proc.Owner(), *cursor, body_frame)) {
+        clock = *std::move(declared);
       }
       cursor = body;
       continue;
     }
     break;
   }
-  if (clock == nullptr) {
+  if (!clock.has_value()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedStatementForm,
         "this concurrent assertion names no clocking event and none is settled "
@@ -823,7 +848,7 @@ auto SplitPropertySpec(
           ? ResolveWrittenDisable(*frame.reader_scope, *written_disable)
           : inherited_disable;
   return PropertySpecParts{
-      .clock = clock,
+      .clock = *std::move(clock),
       .disable_condition = disable,
       .body = cursor,
       .body_frame = std::move(body_frame)};
@@ -837,7 +862,7 @@ auto LowerPropertySpec(
     hir::SequenceStrength strength, diag::SourceSpan span)
     -> diag::Result<hir::PropertySpec> {
   const WalkFrame& frame = parts.body_frame;
-  auto event_or = LowerEventControl(proc, frame, *parts.clock, span);
+  auto event_or = LowerEventControl(proc, frame, parts.clock, span);
   if (!event_or) return std::unexpected(std::move(event_or.error()));
 
   // LRM 16.12 tests the disable condition across the whole interval from the
@@ -860,8 +885,7 @@ auto LowerPropertySpec(
   }
 
   auto body_or = LowerPropertyExpr(
-      proc, frame.WithAssertionClock(*parts.clock), *parts.body, strength,
-      span);
+      proc, frame.WithAssertionClock(parts.clock), *parts.body, strength, span);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
 
   return hir::PropertySpec{
@@ -889,7 +913,7 @@ auto LowerExpectStmt(
   // A sampled value function in an action block counts ticks of the
   // assertion's leading clock (LRM 16.9.3).
   const WalkFrame clocked =
-      parts_or->body_frame.WithAssertionClock(*parts_or->clock);
+      parts_or->body_frame.WithAssertionClock(parts_or->clock);
   auto pass_or = LowerActionArm(proc, clocked, as.ifTrue);
   if (!pass_or) return std::unexpected(std::move(pass_or.error()));
 
@@ -1046,7 +1070,7 @@ auto LowerConcurrentAssertion(
   // A sampled value function in an action block counts ticks of the
   // assertion's leading clock (LRM 16.9.3).
   const WalkFrame clocked =
-      parts_or->body_frame.WithAssertionClock(*parts_or->clock);
+      parts_or->body_frame.WithAssertionClock(parts_or->clock);
   auto pass_or = LowerActionArm(proc, clocked, as.ifTrue);
   if (!pass_or) return std::unexpected(std::move(pass_or.error()));
 

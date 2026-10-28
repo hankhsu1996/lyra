@@ -2,10 +2,8 @@
 #include <concepts>
 #include <cstdint>
 #include <expected>
-#include <format>
 #include <iterator>
 #include <optional>
-#include <ranges>
 #include <span>
 #include <string>
 #include <unordered_set>
@@ -34,6 +32,7 @@
 #include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/expr_builders.hpp"
+#include "lyra/hir/published_clocking.hpp"
 #include "lyra/hir/published_modport.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/value_ref.hpp"
@@ -42,6 +41,7 @@
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/expression/view_names.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
+#include "lyra/lowering/ast_to_hir/inferred_clocking.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
@@ -308,7 +308,7 @@ auto UnitLowerer::RouteHolderOf(const WalkFrame& frame) const
 
 auto UnitLowerer::SelectsWritten(
     const WalkFrame& frame,
-    std::span<const slang::ast::HierarchicalReference::Element> written)
+    std::span<const slang::ast::HierarchicalReference::Element> written) const
     -> diag::Result<LoopSelectOf> {
   // Each loop's block a route passes is the one its select picks in the
   // object the route is walked from, so the select goes where the route is
@@ -360,9 +360,14 @@ auto UnitLowerer::MakeRoutedMemberRef(
     ScopeFrameId owner_frame, hir::ValueRoute route, diag::SourceSpan span)
     -> hir::Expr {
   const hir::TypeId type = hir::CellOf(route.leaf).type;
-  const hir::RoutedValueRefId id =
-      MapOrGetRoute(RoutesOf(owner_frame).values, std::move(route));
-  return hir::MakeRefExpr(hir::RoutedValueRef{.id = id}, type, span);
+  return hir::MakeRefExpr(
+      RoutedMemberCell(owner_frame, std::move(route)), type, span);
+}
+
+auto UnitLowerer::RoutedMemberCell(
+    ScopeFrameId owner_frame, hir::ValueRoute route) -> hir::RoutedValueRef {
+  return hir::RoutedValueRef{
+      .id = MapOrGetRoute(RoutesOf(owner_frame).values, std::move(route))};
 }
 
 auto UnitLowerer::PublishedMemberLeafOf(
@@ -561,21 +566,13 @@ auto UnitLowerer::StartOf(
 
   // A name the body of a sequence or property writes binds in the scope
   // declaring it (LRM 16.8, 11.12), so where the instance reached that
-  // declaration by a hierarchical name, a name declared beside it starts where
-  // that name led: the instance an interface port is bound to, from this
-  // object. The innermost such instance is the one whose body holds the name.
-  for (const ExpansionInstance& instance :
-       std::views::reverse(frame.expansion_stack)) {
-    if (instance.reached_through == nullptr ||
-        !instance.reached_through->isViaIfacePort() ||
-        &found == instance.declaration ||
-        found.getParentScope() != instance.declaration->getParentScope()) {
-      continue;
-    }
-    RouteOrigin through =
-        StartOf(frame, *instance.declaration, *instance.reached_through);
-    return RouteOrigin{
-        .start = std::move(through.start), .written = written.path};
+  // declaration by a hierarchical name, a name declared beside it is reached
+  // the way that name reached the declaration: where it led, and through the
+  // blocks it selected on the way. The innermost such instance is the one whose
+  // body holds the name.
+  if (const ExpansionInstance* instance =
+          ExpansionDeclaringBeside(frame, found)) {
+    return StartOf(frame, *instance->declaration, *instance->reached_through);
   }
 
   // Through a port the name stands in whatever instance the port was bound to,
@@ -1511,24 +1508,109 @@ auto UnitLowerer::ObservedThroughModport(
   }
   const ScopeRoute& route = *reached;
   const hir::ScopeClassId scope_class = on->scope_class;
-  const std::vector<hir::PublishedMemberId> watched =
+  return WholeMembersAlong(
+      frame, route, scope_class,
       hir::WatchedMembers(PublishedViewNameMeaning(
-          *this, scope_class, view->asSymbol().name, offered.name));
-  std::vector<hir::SensitivityEntry> out;
-  out.reserve(watched.size());
-  for (const hir::PublishedMemberId id : watched) {
-    const hir::RoutedValueRefId reference = MapOrGetRoute(
-        RoutesOf(frame.Current()).values,
-        hir::ValueRoute{
-            .base = route.base,
-            .steps = route.steps,
-            .leaf = PublishedMemberLeafOf(scope_class, id)});
-    out.push_back(
+          *this, scope_class, view->asSymbol().name, offered.name)));
+}
+
+auto UnitLowerer::WholeMembersAlong(
+    const WalkFrame& frame, const ScopeRoute& route,
+    hir::ScopeClassId scope_class,
+    std::span<const hir::PublishedMemberId> members)
+    -> std::vector<hir::SensitivityEntry> {
+  std::vector<hir::SensitivityEntry> watched;
+  watched.reserve(members.size());
+  for (const hir::PublishedMemberId id : members) {
+    watched.push_back(
         hir::SensitivityEntry{
-            .cell = hir::RoutedValueRef{.id = reference},
+            .cell = RoutedMemberCell(
+                frame.Current(),
+                hir::ValueRoute{
+                    .base = route.base,
+                    .steps = route.steps,
+                    .leaf = PublishedMemberLeafOf(scope_class, id)}),
             .part = hir::WatchedWhole{}});
   }
-  return out;
+  return watched;
+}
+
+auto UnitLowerer::PublishedClockingEntries(
+    const WalkFrame& frame, const ClockOfAnotherInstance& clock,
+    diag::SourceSpan span) -> diag::Result<std::vector<hir::EventEntry>> {
+  // The instance declaring the block is reached the way a name in a body the
+  // block declares reaches it (LRM 16.8).
+  auto walked = RouteToScope(
+      frame, *clock.block->getParentScope(),
+      StartOf(frame, *clock.declaration, *clock.reached_through));
+  if (!walked) return std::unexpected(std::move(walked.error()));
+  std::optional<ScopeRoute> reached = *std::move(walked);
+  const auto* on = reached.has_value()
+                       ? std::get_if<InPublishedScope>(&reached->place)
+                       : nullptr;
+  if (on == nullptr) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedTimingControlKind,
+        "a clocking block of another instance, reached by a path of this "
+        "shape, is not yet supported");
+  }
+  const ScopeRoute& route = *reached;
+  const hir::ScopeClassId scope_class = on->scope_class;
+  const hir::ScopeClassSignature& declaring =
+      unit_.scope_classes.Get(scope_class);
+  const hir::PublishedClockingBlock* block =
+      hir::FindClockingBlock(declaring.clocking_blocks, clock.block->name);
+  if (block == nullptr) {
+    throw InternalError(
+        "UnitLowerer::PublishedClockingEntries: a scope publishes every named "
+        "clocking block it declares");
+  }
+
+  // What the scope evaluates for the block, asked of the object the route
+  // reaches.
+  const auto evaluated = [&](hir::PublishedCallableId callable) {
+    return frame.Exprs().Add(
+        hir::Expr{
+            .type = declaring.callables.Get(callable).result_type,
+            .data =
+                hir::CallExpr{
+                    .callee =
+                        hir::PublishedScopeMethodRef{
+                            .receiver = MakeRoutedObjectRef(
+                                frame.Current(), route,
+                                ScopeClassTypeOf(scope_class)),
+                            .scope_class = scope_class,
+                            .callable = callable},
+                    .arguments = {}},
+            .span = span});
+  };
+  std::vector<hir::EventEntry> entries;
+  entries.reserve(block->events.size());
+  for (const hir::PublishedClockingEntry& event : block->events) {
+    const hir::ExprId operand = evaluated(event.evaluate);
+    auto occurrence = std::visit(
+        Overloaded{
+            [&](const hir::PublishedClockingChange& change)
+                -> std::variant<hir::ValueChange, hir::NamedEventTrigger> {
+              return hir::ValueChange{
+                  .signal = operand,
+                  .edge = change.edge,
+                  .cells = WholeMembersAlong(
+                      frame, route, scope_class, change.observes)};
+            },
+            [&](const hir::PublishedClockingTrigger&)
+                -> std::variant<hir::ValueChange, hir::NamedEventTrigger> {
+              return hir::NamedEventTrigger{.event = operand};
+            }},
+        event.occurrence);
+    entries.push_back(
+        hir::EventEntry{
+            .occurrence = std::move(occurrence),
+            .condition = event.condition.has_value()
+                             ? std::optional{evaluated(*event.condition)}
+                             : std::nullopt});
+  }
+  return entries;
 }
 
 template <typename PartsOf, typename DeclaredBy>

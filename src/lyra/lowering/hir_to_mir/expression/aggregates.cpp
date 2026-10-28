@@ -524,7 +524,7 @@ auto LowerHirDynamicArrayNewExpr(
                 .arguments = std::move(args)},
         .type = result_type};
   };
-  if (!HoldsADeclaredEvent(unit_lowerer.Hir().types, element)) {
+  if (!HoldsADeclaredEvent(unit_lowerer.Hir(), element)) {
     return made(size, source);
   }
 

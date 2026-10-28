@@ -27,22 +27,6 @@ auto ImportPackedFields(
   return copied;
 }
 
-auto ImportUnpackedFields(
-    const std::vector<UnpackedAggregateField>& fields, TypeImporter& importer)
-    -> std::vector<UnpackedAggregateField> {
-  std::vector<UnpackedAggregateField> copied;
-  copied.reserve(fields.size());
-  for (const auto& field : fields) {
-    copied.push_back(
-        UnpackedAggregateField{
-            .name = field.name,
-            .type = importer.Import(field.type),
-            .default_init = field.default_init,
-            .random = field.random});
-  }
-  return copied;
-}
-
 }  // namespace
 
 TypeImporter::TypeImporter(
@@ -141,23 +125,12 @@ auto TypeImporter::Import(const Type& type) -> Type {
                 .signedness = t.signedness,
                 .tagged = t.tagged}};
           },
-          [this](const EnumType& t) -> Type {
-            return Type{EnumType{
-                .declaration = t.declaration,
-                .base_type = Import(t.base_type),
-                .members = t.members}};
-          },
-          [this](const UnpackedStructType& t) -> Type {
-            return Type{UnpackedStructType{
-                .declaration = t.declaration,
-                .fields = ImportUnpackedFields(t.fields, *this)}};
-          },
-          [this](const UnpackedUnionType& t) -> Type {
-            return Type{UnpackedUnionType{
-                .declaration = t.declaration,
-                .fields = ImportUnpackedFields(t.fields, *this),
-                .tagged = t.tagged}};
-          },
+          // A declared type is its declaration, whatever pool holds it; what
+          // the declaration declares crosses on its own, where it is asked
+          // for.
+          [](const EnumType& t) -> Type { return Type{t}; },
+          [](const UnpackedStructType& t) -> Type { return Type{t}; },
+          [](const UnpackedUnionType& t) -> Type { return Type{t}; },
           [this](const UnpackedArrayType& t) -> Type {
             return Type{UnpackedArrayType{
                 .element_type = Import(t.element_type), .dim = t.dim}};

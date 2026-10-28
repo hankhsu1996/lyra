@@ -1,11 +1,13 @@
 #include "lyra/hir/unit_signature.hpp"
 
+#include <format>
 #include <optional>
 #include <span>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/callee_interface.hpp"
 #include "lyra/hir/class_declaration.hpp"
@@ -17,7 +19,9 @@
 #include "lyra/hir/scope_class.hpp"
 #include "lyra/hir/subroutine_prototype.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/type_definition.hpp"
 #include "lyra/hir/type_import.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace lyra::hir {
 
@@ -69,7 +73,8 @@ auto ImportScopeClass(TypeImporter& importer, ScopeClassSignature published)
       .loops = std::move(published.loops),
       .choices = std::move(published.choices),
       .disable_targets = std::move(published.disable_targets),
-      .modports = std::move(published.modports)};
+      .modports = std::move(published.modports),
+      .clocking_blocks = std::move(published.clocking_blocks)};
   for (const PublishedMemberId id : published.members.Ids()) {
     PublishedMember member = published.members.Get(id);
     member.type = importer.Import(member.type);
@@ -100,19 +105,69 @@ auto ImportScopeClass(TypeImporter& importer, ScopeClassSignature published)
   return imported;
 }
 
+auto ImportTypeDefinition(
+    TypeImporter& importer, const TypeDefinition& definition)
+    -> TypeDefinition {
+  const auto fields = [&](const std::vector<UnpackedAggregateField>& declared) {
+    std::vector<UnpackedAggregateField> imported;
+    imported.reserve(declared.size());
+    for (const UnpackedAggregateField& field : declared) {
+      imported.push_back(
+          UnpackedAggregateField{
+              .name = field.name,
+              .type = importer.Import(field.type),
+              .default_init = field.default_init,
+              .random = field.random});
+    }
+    return imported;
+  };
+  return std::visit(
+      Overloaded{
+          [&](const EnumDefinition& enumeration) -> TypeDefinition {
+            return EnumDefinition{
+                .base_type = importer.Import(enumeration.base_type),
+                .members = enumeration.members};
+          },
+          [&](const UnpackedStructDefinition& structure) -> TypeDefinition {
+            return UnpackedStructDefinition{.fields = fields(structure.fields)};
+          },
+          [&](const UnpackedUnionDefinition& overlay) -> TypeDefinition {
+            return UnpackedUnionDefinition{
+                .fields = fields(overlay.fields), .tagged = overlay.tagged};
+          }},
+      definition);
+}
+
+auto PublishedTypeDefinition(
+    const UnitSignature& signature, const TypeDeclarationRef& declaration)
+    -> const TypeDefinition& {
+  const TypeDefinition* published =
+      signature.type_definitions.Find(declaration);
+  if (published == nullptr) {
+    throw InternalError(
+        std::format(
+            "hir::PublishedTypeDefinition: '{}' published no type '{}', and a "
+            "type named it -- please report this as a bug",
+            declaration.unit_name, support::DisplayOf(declaration.path)));
+  }
+  return *published;
+}
+
 auto ReaderImporter(
     const UnitSignature& signature, TypePool& into, ClassRegistry& classes,
     CovergroupRegistry& covergroups, ScopeClassRegistry& scope_classes,
     TypeImportMemo& memo) -> TypeImporter {
-  return TypeImporter(
-      signature.types, into, memo,
+  return {
+      signature.types,
+      into,
+      memo,
       [&](ClassId id) { return classes.Import(signature.ClassKeyOf(id)); },
       [&](CovergroupId id) {
         return covergroups.Import(signature.CovergroupKeyOf(id));
       },
       [&](ScopeClassId id) {
         return scope_classes.Import(signature.ScopeClassKeyOf(id));
-      });
+      }};
 }
 
 auto ImportClassDeclaration(
