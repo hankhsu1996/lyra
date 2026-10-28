@@ -18,7 +18,7 @@
 // a program could have written (LRM 8.30 `weak_reference`, 15.3 `semaphore`,
 // 15.4 `mailbox`). A class defined in SystemVerilog may still have a method
 // only the runtime can answer -- an object's identity (LRM 8.30.5) -- which the
-// runtime carries out as it does every method of a runtime class.
+// runtime carries out as it does the methods LRM 9.7 lists for a process.
 namespace lyra::lowering::ast_to_hir {
 
 // The runtime library class `cls` is, where it is one.

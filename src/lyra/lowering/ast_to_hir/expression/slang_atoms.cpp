@@ -1,6 +1,5 @@
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 
-#include <format>
 #include <optional>
 
 #include <slang/ast/expressions/AssignmentExpressions.h>
@@ -202,7 +201,8 @@ auto LowerStringMethodName(std::string_view name)
   return std::nullopt;
 }
 
-auto LowerProcessMethodName(std::string_view name) -> support::BuiltinFn {
+auto LowerProcessMethodName(std::string_view name)
+    -> std::optional<support::BuiltinFn> {
   if (name == "self") return support::BuiltinFn::kProcessSelf;
   if (name == "status") return support::BuiltinFn::kProcessStatus;
   if (name == "kill") return support::BuiltinFn::kProcessKill;
@@ -212,9 +212,7 @@ auto LowerProcessMethodName(std::string_view name) -> support::BuiltinFn {
   if (name == "srandom") return support::BuiltinFn::kProcessSrandom;
   if (name == "get_randstate") return support::BuiltinFn::kProcessGetRandstate;
   if (name == "set_randstate") return support::BuiltinFn::kProcessSetRandstate;
-  throw InternalError(
-      std::format(
-          "LowerProcessMethodName: 'process' has no method '{}'", name));
+  return std::nullopt;
 }
 
 auto LowerArrayMethodName(std::string_view name)

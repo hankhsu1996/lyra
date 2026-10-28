@@ -3324,6 +3324,26 @@ source, or not yet tried.
       The semantic IR keeps stating only which method answers which behavior, and the entry-point
       type of a behavior with no body is stated there once. Not blocked.
 
+- [ ] R265 -- `process` is a class (LRM 9.7) and so has the methods every class has -- `randomize()`
+      with or without an inline constraint, the two hooks, and the mode methods (LRM 18.6 -- 18.9)
+      -- but Lyra carries out on it only the methods LRM 9.7 lists, and refuses the rest as not yet
+      supported. Three questions are tied together that need not be: whether a type is a class,
+      whether its methods have SystemVerilog bodies or runtime ones, and what a handle to it points
+      at. Every operation every class has reads the part an object of a source class starts with,
+      and HIR holds a runtime library class's identity but no description of it, so a class the
+      runtime defines has none of them. Target: HIR describes a class with no source body -- final,
+      no base, no random variables, no declared constraints, empty hooks, its handle the runtime's
+      own -- and every runtime library class must state that description, checked when the unit is
+      verified rather than found at run time; the randomization and mode operations reach such a
+      class through an adapter over the shared algorithm, so `randomize()` on a process checks its
+      inline constraint over no random variables (answering 0 when it fails, and changing no state
+      variable), the hooks and mode methods change nothing, and each still refuses a null handle.
+      The process keeps its own generator (LRM 18.13.3), and no second one is made for it. A `rand`
+      property holding a process is the same position reached without a call: today the run stops
+      there as randomizing a variable of a type not yet supported, where the enclosing object's
+      `randomize()` should randomize the process object and run its hooks (LRM 18.4, 18.6.2). Not
+      blocked.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,
