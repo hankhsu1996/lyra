@@ -15,14 +15,18 @@
 namespace lyra::test {
 
 // A report as one tool's reader placed it: what the standard fixes of a report,
-// read off whatever that tool writes -- the source line among it, where the
-// tool gave one -- and the text it was read from.
+// read off whatever that tool writes -- each where the tool gave it -- and the
+// text it was read from. The message is the program's own, cut out of the
+// tool's wording at boundaries the reader knows, since a claim naming one is
+// met only by that text whole; a reader that cannot tell where it ends gives
+// none, and so does one that knows the report carries no message of the
+// program's.
 struct ObservedReport {
   ReportKind kind = ReportKind::kInfo;
   std::optional<std::uint64_t> line;
   std::optional<std::uint64_t> time;
   std::optional<std::string> scope;
-  std::string message;
+  std::optional<std::string> message;
   std::string written;
 };
 

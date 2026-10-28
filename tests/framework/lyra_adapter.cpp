@@ -112,7 +112,8 @@ auto IsViolation(std::string_view body) -> bool {
          body.substr(close + 1).starts_with(" violation");
 }
 
-// The message $finish or $stop prints: the task quoted, then the time.
+// The message $finish or $stop prints: the task quoted, then the time. It is
+// all the tool's, since neither task takes a message of the program's.
 auto ReadSimulationControl(std::string_view body)
     -> std::optional<ObservedReport> {
   for (const auto& [task, kind] :
@@ -126,7 +127,7 @@ auto ReadSimulationControl(std::string_view body)
           .line = std::nullopt,
           .time = ReadDecimal(time),
           .scope = std::nullopt,
-          .message = std::string(body),
+          .message = std::nullopt,
           .written = {}};
     }
   }
@@ -195,14 +196,21 @@ void ReadLyraReports(std::string_view stream, Observation& seen) {
       }
       continue;
     }
+    // Everything after the report's word is the program's message, where the
+    // program supplied one. A violation is worded by the tool alone, and so
+    // are an error the run raises itself and a failing assertion's default
+    // report, which read the same as an $error; a claim never names a message
+    // for those, so the tool's words there match nothing.
+    const bool violation = IsViolation(split->body);
     seen.reports.push_back(
         ObservedReport{
-            .kind = IsViolation(split->body) ? ReportKind::kViolation
-                                             : KindOfWord(split->word),
+            .kind =
+                violation ? ReportKind::kViolation : KindOfWord(split->word),
             .line = ReadPlaceLine(split->place),
             .time = std::nullopt,
             .scope = std::nullopt,
-            .message = std::string(split->body),
+            .message = violation ? std::nullopt
+                                 : std::optional<std::string>(split->body),
             .written = line});
     last = seen.reports.size() - 1;
   }

@@ -76,16 +76,31 @@ E4. A case still checks itself. A report directive is stated beside the checks, 
     stop -- the case prints that it is ready for the report before it, and the sentinel in the
     same procedure after the last report, never in a final procedure, which runs whether or not
     the run went on past it. The run is held to being ready and to the report; a check after the
-    report holds where the run reaches it, and so does every report after the first.
+    report holds where the run reaches it, and a report after the first that the run never
+    reached leaves the verdict unresolved (E7).
 
 E5. No wording of a tool is ever named. The only text a claim names is the message the program
-    itself supplied, which the standard requires the report to include.
+    itself supplied, which the standard requires the report to include, and it names it whole: a
+    message that only begins with it is another value.
 
 E6. A claim is met only by the report of the statement that should issue it. Each required report
     is answered by one report of its own, of the severity it names: a case's own failing check is a
     $fatal, so a fatal never answers a claim of an error. Where the standard puts the source line in
-    the report, the claim names the line; where it does not, the case lets only the statement under
-    test issue a report of that kind, and a run issuing more of them than asked for is unresolved.
+    the report, the claim names the line and its count is exact, since one more report from that
+    line is the statement reporting an execution the standard does not report; where it does not,
+    the case lets only the statement under test issue a report of that kind, and a run issuing more
+    of them than asked for is unresolved. A count is exact either way, so a report lacking
+    something the claim names, or a line the reader could not place, leaves it unresolved even
+    when every report asked for was read.
+
+E7. A verdict is about the tool, and the case's own validity is a separate question. Evidence that
+    only happens to fit the claim is never "conforms" -- it is unresolved -- and a case written
+    wrong is never the tool's "does not conform". A run observes a prefix of what the program would
+    do, and what lies past its end is not shown: a run the tool ended at the first of two reports
+    asked for leaves the second unresolved, and a claim of absence holds only for a run that reached
+    its sentinel. Where a case's mistake cannot show in a run that takes one of the paths the
+    standard allows -- readiness printed after a report the tool went on past -- it is found by a
+    tool taking another of those paths, not by the judge.
 ```
 
 ## What the revision found
@@ -107,6 +122,16 @@ report is tied to the statement that issues it. A second form then printed the s
 procedure, which a tool that ends the run at an error runs as well, so a check meant for a run that
 went on read as failed in one that had legitimately ended; the sentinel now comes from the procedure
 that issues the reports.
+
+Every case the revision rewrote was then made to fail on purpose, one injection at a time, and two
+of the injections passed. A claim of three reports from one line was met by three and also by two,
+because only a claim naming the kind alone looked at reports beyond what it asked for; and a message
+claim was met by any report whose message contained it, so `final saw 2` would have accepted the
+`final saw 23` that the case exists to tell apart. clang's `-verify` and rustc's compiletest both
+match a message by containment, because what they match is the compiler's own wording, which a test
+abbreviates; what a case names is program text it wrote in full, so containment only lets wrong
+values through. Both also hold a count exactly and fail on reports nobody asked for, which E6 now
+does wherever the line ties the report to its statement.
 
 ## What this does not become
 

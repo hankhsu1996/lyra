@@ -72,18 +72,19 @@ struct ReportPattern {
   std::optional<std::uint64_t> time;
   std::optional<std::string> scope;
   std::optional<std::string> message;
+
+  auto operator==(const ReportPattern&) const -> bool = default;
 };
 
 // What a case claims the standard requires of its run, which is one of four
-// things. A program that
-// runs reaches its sentinel having passed every check. One the standard forbids
-// is refused before it runs. One whose requirement is reports issues each of
-// them, one report answering one claim; where the run may end at one, the case
-// prints that it is ready for the report before it, and a check after the
-// report holds only if the run reaches it. One
-// whose requirement is the absence of some kinds of report issues none of
-// them; a tool may write anything else it likes, so silence as a whole is
-// never a requirement.
+// things. A program that runs reaches its sentinel having passed every check.
+// One the standard forbids is refused before it runs. One whose requirement is
+// reports issues each of them, one report answering one claim; where the run
+// may end at one, the case prints that it is ready for the report before it,
+// and a check after the report holds only if the run reaches it. One whose
+// requirement is the absence of some kinds of report issues none of them; a
+// tool may write anything else it likes, so silence as a whole is never a
+// requirement.
 struct RunsToItsChecks {};
 
 struct RejectedBeforeRunning {};
