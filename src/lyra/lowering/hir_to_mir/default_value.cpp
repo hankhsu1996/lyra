@@ -15,6 +15,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/real_bits.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/type_definition.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/real_literal.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -114,12 +115,15 @@ auto MaterializeConstant(
           },
           [&](const std::vector<hir::ConstantValue>& components) -> mir::Expr {
             const auto& hir_ty = unit_lowerer.Hir().types.Get(hir_type);
-            if (const auto* st = hir_ty.As<hir::UnpackedStructType>()) {
+            if (const auto* declared = hir_ty.As<hir::UnpackedStructType>()) {
+              const hir::UnpackedStructDefinition& structure =
+                  unit_lowerer.Hir().DefinitionOf(*declared);
               std::vector<mir::ExprId> component_ids;
               component_ids.reserve(components.size());
               for (std::size_t i = 0; i < components.size(); ++i) {
                 component_ids.push_back(block.exprs.Add(MaterializeConstant(
-                    unit_lowerer, block, st->fields[i].type, components[i])));
+                    unit_lowerer, block, structure.fields[i].type,
+                    components[i])));
               }
               return mir::Expr{
                   .data = mir::CompositeExpr{.parts = std::move(component_ids)},
@@ -435,7 +439,8 @@ auto BuildDefaultValueExpr(
 
 auto BuildDeclaredStructValue(
     const UnitLowerer& unit_lowerer, mir::Block& block,
-    const hir::UnpackedStructType& source, mir::TypeId structure) -> mir::Expr {
+    const hir::UnpackedStructDefinition& source, mir::TypeId structure)
+    -> mir::Expr {
   std::vector<mir::ExprId> components;
   components.reserve(source.fields.size());
   for (const auto& field : source.fields) {

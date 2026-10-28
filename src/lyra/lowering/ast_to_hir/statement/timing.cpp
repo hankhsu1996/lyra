@@ -1,6 +1,8 @@
 #include "lyra/lowering/ast_to_hir/statement/timing.hpp"
 
+#include <algorithm>
 #include <expected>
+#include <iterator>
 #include <optional>
 #include <utility>
 #include <variant>
@@ -25,8 +27,6 @@
 
 namespace lyra::lowering::ast_to_hir {
 
-namespace {
-
 auto LowerEventEdge(slang::ast::EdgeKind kind) -> support::EventEdge {
   switch (kind) {
     case slang::ast::EdgeKind::None:
@@ -40,6 +40,8 @@ auto LowerEventEdge(slang::ast::EdgeKind kind) -> support::EventEdge {
   }
   throw InternalError("LowerEventEdge: unknown slang EdgeKind value");
 }
+
+namespace {
 
 // LRM 9.4.2.3: the `iff` qualifier, which an occurrence must hold for to be an
 // event. What it reads is no part of the wait's sensitivity -- the standard
@@ -161,7 +163,7 @@ auto LowerTimingControl(
     }
     case slang::ast::TimingControlKind::SignalEvent:
     case slang::ast::TimingControlKind::EventList: {
-      auto event_or = LowerEventControl(proc, frame, tc, span);
+      auto event_or = LowerEventControl(proc, frame, ClockingEvent{&tc}, span);
       if (!event_or) return std::unexpected(std::move(event_or.error()));
       return hir::TimingControl{*std::move(event_or)};
     }
@@ -221,28 +223,42 @@ auto LowerTriggerTiming(
 //
 // LRM 9.4.2.1 `@(a or b)` / `@(a, b)`: every entry watches for its own event
 // and the wait ends on the first of them. A clocking event names its entries
-// through what `$inferred_clock` stands for, so they are taken resolved.
+// through what `$inferred_clock` stands for, so they are taken resolved, and
+// another instance's clocking block through what that instance publishes.
 template <typename Lowerer>
 auto LowerEventControl(
-    Lowerer& lowerer, WalkFrame frame, const slang::ast::TimingControl& tc,
+    Lowerer& lowerer, WalkFrame frame, const ClockingEvent& clock,
     diag::SourceSpan span) -> diag::Result<hir::EventControl> {
-  auto events = ResolvedClockEntries(frame, tc, span);
+  auto events = ResolvedClockEntries(frame, clock, span);
   if (!events) return std::unexpected(std::move(events.error()));
   hir::EventControl control;
-  for (const slang::ast::SignalEventControl* event : *events) {
-    auto entry = LowerEventEntry(lowerer, frame, *event, span);
-    if (!entry) return std::unexpected(std::move(entry.error()));
-    control.entries.push_back(*std::move(entry));
+  for (const ClockEntry& event : *events) {
+    auto entries = std::visit(
+        Overloaded{
+            [&](const slang::ast::SignalEventControl* written)
+                -> diag::Result<std::vector<hir::EventEntry>> {
+              auto entry = LowerEventEntry(lowerer, frame, *written, span);
+              if (!entry) return std::unexpected(std::move(entry.error()));
+              return std::vector<hir::EventEntry>{*std::move(entry)};
+            },
+            [&](const ClockOfAnotherInstance& published)
+                -> diag::Result<std::vector<hir::EventEntry>> {
+              return lowerer.Owner().PublishedClockingEntries(
+                  frame, published, span);
+            }},
+        event);
+    if (!entries) return std::unexpected(std::move(entries.error()));
+    std::ranges::move(*entries, std::back_inserter(control.entries));
   }
   return control;
 }
 
 template auto LowerEventControl(
-    ProcessLowerer&, WalkFrame, const slang::ast::TimingControl&,
-    diag::SourceSpan) -> diag::Result<hir::EventControl>;
+    ProcessLowerer&, WalkFrame, const ClockingEvent&, diag::SourceSpan)
+    -> diag::Result<hir::EventControl>;
 template auto LowerEventControl(
-    StructuralScopeLowerer&, WalkFrame, const slang::ast::TimingControl&,
-    diag::SourceSpan) -> diag::Result<hir::EventControl>;
+    StructuralScopeLowerer&, WalkFrame, const ClockingEvent&, diag::SourceSpan)
+    -> diag::Result<hir::EventControl>;
 
 auto LowerDelayOrEventControl(
     ProcessLowerer& proc, WalkFrame frame, const slang::ast::TimingControl& tc,
@@ -256,7 +272,7 @@ auto LowerDelayOrEventControl(
     }
     case slang::ast::TimingControlKind::SignalEvent:
     case slang::ast::TimingControlKind::EventList: {
-      auto event_or = LowerEventControl(proc, frame, tc, span);
+      auto event_or = LowerEventControl(proc, frame, ClockingEvent{&tc}, span);
       if (!event_or) return std::unexpected(std::move(event_or.error()));
       return hir::DelayOrEventControl{*std::move(event_or)};
     }
@@ -268,7 +284,8 @@ auto LowerDelayOrEventControl(
       auto count_or = proc.LowerExpr(repeated.expr, frame);
       if (!count_or) return std::unexpected(std::move(count_or.error()));
       const hir::ExprId count = frame.Exprs().Add(*std::move(count_or));
-      auto event_or = LowerEventControl(proc, frame, repeated.event, span);
+      auto event_or =
+          LowerEventControl(proc, frame, ClockingEvent{&repeated.event}, span);
       if (!event_or) return std::unexpected(std::move(event_or.error()));
       return hir::DelayOrEventControl{hir::RepeatedEventControl{
           .count = count, .event = *std::move(event_or)}};

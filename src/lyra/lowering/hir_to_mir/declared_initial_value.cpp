@@ -9,6 +9,7 @@
 #include "lyra/base/component_index.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/type_definition.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
@@ -29,10 +30,10 @@ namespace {
 // initial value of its own (LRM 7.2.2) -- and that type holds an event a
 // declaration gives a new object.
 auto MemberTakesNewEvents(
-    const hir::TypePool& types, const hir::UnpackedAggregateField& member)
+    const hir::CompilationUnit& hir, const hir::UnpackedAggregateField& member)
     -> bool {
   return !member.default_init.has_value() &&
-         HoldsADeclaredEvent(types, member.type);
+         HoldsADeclaredEvent(hir, member.type);
 }
 
 }  // namespace
@@ -42,18 +43,19 @@ auto MemberTakesNewEvents(
 // does. A variable-size array starts with no elements. An untagged union holds
 // no event (LRM 7.3), and a tagged one starts undefined (LRM 11.9), so neither
 // starts with one. No other type holds an event.
-auto HoldsADeclaredEvent(const hir::TypePool& types, hir::TypeId type) -> bool {
-  return types.Get(type).Visit(
+auto HoldsADeclaredEvent(const hir::CompilationUnit& hir, hir::TypeId type)
+    -> bool {
+  return hir.types.Get(type).Visit(
       Overloaded{
           [](const hir::EventType&) { return true; },
           [&](const hir::UnpackedArrayType& array) {
-            return HoldsADeclaredEvent(types, array.element_type);
+            return HoldsADeclaredEvent(hir, array.element_type);
           },
           [&](const hir::UnpackedStructType& structure) {
             return std::ranges::any_of(
-                structure.fields,
+                hir.DefinitionOf(structure).fields,
                 [&](const hir::UnpackedAggregateField& member) {
-                  return MemberTakesNewEvents(types, member);
+                  return MemberTakesNewEvents(hir, member);
                 });
           },
           [](const hir::DynamicArrayType&) { return false; },
@@ -103,8 +105,8 @@ void GiveNewEvents(
     hir::TypeId type) {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& block = *frame.current_block;
-  const hir::TypePool& types = unit_lowerer.Hir().types;
-  types.Get(type).Visit(
+  const hir::CompilationUnit& hir = unit_lowerer.Hir();
+  hir.types.Get(type).Visit(
       Overloaded{
           [&](const hir::EventType&) {
             const mir::ExprId made = block.exprs.Add(
@@ -127,10 +129,12 @@ void GiveNewEvents(
                 mir::BuildIntLiteral(
                     unit, block, static_cast<std::int64_t>(count)));
           },
-          [&](const hir::UnpackedStructType& structure) {
+          [&](const hir::UnpackedStructType& declared) {
+            const hir::UnpackedStructDefinition& structure =
+                hir.DefinitionOf(declared);
             for (std::size_t i = 0; i < structure.fields.size(); ++i) {
               const hir::UnpackedAggregateField& member = structure.fields[i];
-              if (!MemberTakesNewEvents(types, member)) {
+              if (!MemberTakesNewEvents(hir, member)) {
                 continue;
               }
               GiveNewEvents(
@@ -221,7 +225,7 @@ auto BuildDeclaredInitialValue(
   const mir::TypeId value_type = unit_lowerer.TranslateType(type);
   const mir::ExprId default_value =
       block.exprs.Add(BuildDefaultValueExpr(unit, block, value_type));
-  if (!HoldsADeclaredEvent(unit_lowerer.Hir().types, type)) {
+  if (!HoldsADeclaredEvent(unit_lowerer.Hir(), type)) {
     return default_value;
   }
   const mir::LocalId held = DeclareLocal(frame, default_value);

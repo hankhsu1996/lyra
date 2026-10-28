@@ -484,9 +484,10 @@ Unlocks `refs/hierarchical_refs`, `refs/upward_refs`, and `instantiation/hierarc
       that part, so two ports selecting disjoint parts of one name each carry their own connection
       into their own bits and neither disturbs the other's. The unit publishes which of its
       declarations the port reaches and the descent that reaches the part, so the connection lands
-      on that part and the storage the two ports share stays one declaration. A `ref` port naming a
-      part is rejected with a clean diagnostic, since such a port seals to the whole of the
-      connected variable's cell (LRM 23.3.3.2).
+      on that part and the storage the two ports share stays one declaration. An output port works
+      the same way, the explicit form of an ANSI header included (`output .lo(r[3:0])`), which
+      declares nothing of its own. A `ref` port naming a part is rejected with a clean diagnostic,
+      since such a port seals to the whole of the connected variable's cell (LRM 23.3.3.2).
 
 Unlocks the port-connection surface.
 

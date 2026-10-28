@@ -4,13 +4,14 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
-#include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/constant_value.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace lyra::lowering::ast_to_hir {
+
+class UnitLowerer;
 
 // Fold an already-evaluated slang ConstantValue into its HIR value form: a
 // scalar leaf, or an unpacked aggregate's ordered component values (recursively
@@ -24,16 +25,19 @@ auto MakeConstantValue(const slang::ConstantValue& cv, diag::SourceSpan span)
 
 // Materialize an already-evaluated slang ConstantValue as an HIR constant of
 // `type`, a `ConstantExpr` holding what states it. A scalar value (integral,
-// real, shortreal, string) is stated by a literal, and an unpacked array by an
-// AssignmentPatternExpr whose elements are themselves stated so, appended to
-// the frame's expr arena; `unit` supplies the element type the recursion
-// descends into. Packed aggregates never reach here -- slang folds them to a
-// single integral value. Used wherever a slang-folded constant is spliced into
-// the HIR -- parameter references, type queries, and defaulted port
-// connections.
+// real, shortreal, string) is stated by a literal, and an unpacked array or
+// structure by an AssignmentPatternExpr whose elements are themselves stated
+// so, appended to the frame's expr arena; the unit supplies the element type
+// the recursion descends into. Packed aggregates never reach here -- slang
+// folds them to a single integral value. Used wherever a slang-folded constant
+// is spliced into the HIR -- type queries and values a parent hands a child.
 auto MakeConstantValueExpr(
-    const hir::CompilationUnit& unit, WalkFrame frame,
-    const slang::ConstantValue& cv, hir::TypeId type, diag::SourceSpan span)
-    -> diag::Result<hir::Expr>;
+    UnitLowerer& unit_lowerer, WalkFrame frame, const slang::ConstantValue& cv,
+    hir::TypeId type, diag::SourceSpan span) -> diag::Result<hir::Expr>;
+
+// The same for a value already in its HIR form, as a parameter's is read.
+auto MakeConstantValueExpr(
+    UnitLowerer& unit_lowerer, WalkFrame frame, const hir::ConstantValue& value,
+    hir::TypeId type, diag::SourceSpan span) -> diag::Result<hir::Expr>;
 
 }  // namespace lyra::lowering::ast_to_hir

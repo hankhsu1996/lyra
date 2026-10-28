@@ -17,7 +17,7 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/case_keyword.hpp"
-#include "lyra/hir/type.hpp"
+#include "lyra/hir/type_definition.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/bitstream.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
@@ -39,7 +39,6 @@
 #include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
-#include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/value_operation.hpp"
@@ -457,7 +456,7 @@ class OperationBodies {
 
   // A local of `code` holding a value of `type`, declared after what `block`
   // holds and starting at `initial`.
-  auto Declared(
+  static auto Declared(
       mir::CallableCode& code, mir::Block& block, mir::TypeId type,
       mir::ExprId initial) -> mir::LocalId {
     const mir::LocalId local = code.AddLocal(type);
@@ -518,7 +517,7 @@ class OperationBodies {
 
   // A value of `type` built by `value` after what `block` holds, kept in a
   // local of `code` so that what follows cannot change what it reads.
-  auto Held(
+  static auto Held(
       mir::CallableCode& code, mir::Block& block, mir::TypeId type,
       mir::ExprId value) -> mir::ExprId {
     return block.ReadLocal(Declared(code, block, type, value), type);
@@ -722,7 +721,7 @@ auto MethodsOf(mir::RecordId record) -> OperationBodies::OwnTarget {
 class StructBodies : public OperationBodies {
  public:
   StructBodies(
-      UnitLowerer& lowerer, const hir::UnpackedStructType& source,
+      UnitLowerer& lowerer, const hir::UnpackedStructDefinition& source,
       mir::RecordId record, mir::TypeId structure,
       std::vector<mir::TypeId> members)
       : OperationBodies(
@@ -781,7 +780,7 @@ class StructBodies : public OperationBodies {
             .type = WholeType()});
   }
 
-  const hir::UnpackedStructType* source_;
+  const hir::UnpackedStructDefinition* source_;
 };
 
 // LRM 11.4.5: equal when every pair of members is, and unknown where no pair is
@@ -2059,7 +2058,7 @@ auto BuildBitIdentity(
 }
 
 auto StructMethodsOf(
-    UnitLowerer& lowerer, const hir::UnpackedStructType& source,
+    UnitLowerer& lowerer, const hir::UnpackedStructDefinition& source,
     mir::RecordId record, mir::TypeId structure,
     std::span<const mir::TypeId> members) -> std::vector<mir::RecordMethod> {
   const mir::CompilationUnit& unit = lowerer.Unit();

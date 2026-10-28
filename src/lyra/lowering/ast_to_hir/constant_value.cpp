@@ -11,7 +11,9 @@
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/real_bits.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/type_definition.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
+#include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -25,9 +27,8 @@ namespace {
 // in an expression context; the value itself is folded once, at the sole
 // boundary that reads slang's constant representation.
 auto MaterializeConstantExpr(
-    const hir::CompilationUnit& unit, WalkFrame frame,
-    const hir::ConstantValue& value, hir::TypeId type, diag::SourceSpan span)
-    -> diag::Result<hir::Expr> {
+    UnitLowerer& unit_lowerer, WalkFrame frame, const hir::ConstantValue& value,
+    hir::TypeId type, diag::SourceSpan span) -> diag::Result<hir::Expr> {
   return std::visit(
       Overloaded{
           [&](const hir::IntegralConstant& integral)
@@ -50,9 +51,12 @@ auto MaterializeConstantExpr(
           },
           [&](const std::vector<hir::ConstantValue>& components)
               -> diag::Result<hir::Expr> {
-            const auto& ty = unit.types.Get(type);
+            const auto& ty = unit_lowerer.Unit().types.Get(type);
             const auto* arr = ty.As<hir::UnpackedArrayType>();
-            const auto* st = ty.As<hir::UnpackedStructType>();
+            const auto* declared = ty.As<hir::UnpackedStructType>();
+            const hir::UnpackedStructDefinition* st =
+                declared == nullptr ? nullptr
+                                    : &unit_lowerer.DefinitionOf(*declared);
             if (arr == nullptr && st == nullptr) {
               return diag::Fail(
                   span, diag::DiagCode::kUnsupportedExpressionForm,
@@ -64,7 +68,7 @@ auto MaterializeConstantExpr(
               const hir::TypeId component_type =
                   arr != nullptr ? arr->element_type : st->fields[i].type;
               auto element = MaterializeConstantExpr(
-                  unit, frame, components[i], component_type, span);
+                  unit_lowerer, frame, components[i], component_type, span);
               if (!element) return std::unexpected(std::move(element.error()));
               element_ids.push_back(frame.Exprs().Add(*std::move(element)));
             }
@@ -114,12 +118,17 @@ auto MakeConstantValue(const slang::ConstantValue& cv, diag::SourceSpan span)
 }
 
 auto MakeConstantValueExpr(
-    const hir::CompilationUnit& unit, WalkFrame frame,
-    const slang::ConstantValue& cv, hir::TypeId type, diag::SourceSpan span)
-    -> diag::Result<hir::Expr> {
+    UnitLowerer& unit_lowerer, WalkFrame frame, const slang::ConstantValue& cv,
+    hir::TypeId type, diag::SourceSpan span) -> diag::Result<hir::Expr> {
   auto value = MakeConstantValue(cv, span);
   if (!value) return std::unexpected(std::move(value.error()));
-  auto stated = MaterializeConstantExpr(unit, frame, *value, type, span);
+  return MakeConstantValueExpr(unit_lowerer, frame, *value, type, span);
+}
+
+auto MakeConstantValueExpr(
+    UnitLowerer& unit_lowerer, WalkFrame frame, const hir::ConstantValue& value,
+    hir::TypeId type, diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  auto stated = MaterializeConstantExpr(unit_lowerer, frame, value, type, span);
   if (!stated) return std::unexpected(std::move(stated.error()));
   return hir::Expr{
       .type = type,

@@ -66,7 +66,7 @@ class ListedCalls : public slang::ast::ASTVisitor<
     call.visitExprsNoArgs(*this);
     const auto args = call.arguments();
     for (std::size_t i = 0; i < args.size(); ++i) {
-      if (OmittedFormal(call, i) == nullptr) args[i]->visit(*this);
+      if (!OmitsArgument(call, i)) args[i]->visit(*this);
     }
   }
 

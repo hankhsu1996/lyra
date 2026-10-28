@@ -25,6 +25,7 @@
 #include "lyra/hir/param_direction.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/type_definition.hpp"
 #include "lyra/hir/unary_op.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/hir/with_clause_id.hpp"
@@ -85,7 +86,7 @@ class ConstraintWriter {
         loop_vars.push_back(*var);
       }
     }
-    return ConstraintWriter(*lowerer_, frame, std::move(loop_vars));
+    return {*lowerer_, frame, std::move(loop_vars)};
   }
 
   [[nodiscard]] auto IsLoopVar(hir::ProceduralVarId var) const -> bool {
@@ -317,7 +318,7 @@ auto SizedArray(const ConstraintWriter& w, hir::ExprId id)
       !method->receiver.has_value() || !NamesVariable(w, *method->receiver)) {
     return std::nullopt;
   }
-  return *method->receiver;
+  return method->receiver;
 }
 
 // The call `id` is and the array it reduces, where it is `sum()`,
@@ -643,9 +644,11 @@ auto NameModeVariables(const ConstraintWriter& w, hir::ExprId id)
       return named;
     };
     const hir::Type& held = unit_lowerer.Hir().types.Get(type);
-    if (const auto* structure = held.As<hir::UnpackedStructType>()) {
-      for (std::uint32_t i = 0; i < structure->fields.size(); ++i) {
-        const hir::TypeId member = structure->fields[i].type;
+    if (const auto* declared = held.As<hir::UnpackedStructType>()) {
+      const hir::UnpackedStructDefinition& structure =
+          unit_lowerer.Hir().DefinitionOf(*declared);
+      for (std::uint32_t i = 0; i < structure.fields.size(); ++i) {
+        const hir::TypeId member = structure.fields[i].type;
         std::vector<DescentStep> deeper = more;
         deeper.push_back(MemberStep(
             unit_lowerer, block, held, base::ComponentIndex{.value = i},
@@ -969,8 +972,8 @@ auto AtWidth(const ConstraintWriter& w, hir::ExprId id, std::int64_t width)
 // far and the element, as a term, and its index in the coordinates the array
 // was declared with.
 struct FoldedElement {
-  const ConstraintWriter& writer;
-  const WalkFrame& frame;
+  const ConstraintWriter* writer;
+  const WalkFrame* frame;
   mir::ExprId so_far;
   mir::LocalId element;
   mir::LocalId index;
@@ -1035,15 +1038,15 @@ auto InsideTerm(const ConstraintWriter& w, const hir::InsideExpr& e)
       auto found = FoldElements(
           w, item, NumberTerm(w, 0),
           [&](const FoldedElement& e) -> diag::Result<mir::ExprId> {
-            const mir::ExprId value = e.writer.Term(
+            const mir::ExprId value = e.writer->Term(
                 BuiltinFn::kConstraintResize,
-                {e.writer.ReadTerm(e.element), e.writer.Machine(width),
-                 e.writer.Bool(element_signed)});
-            return e.writer.Term(
+                {e.writer->ReadTerm(e.element), e.writer->Machine(width),
+                 e.writer->Bool(element_signed)});
+            return e.writer->Term(
                 BuiltinFn::kConstraintLogicalOr,
-                {e.so_far, e.writer.Term(
+                {e.so_far, e.writer->Term(
                                BuiltinFn::kConstraintEqual,
-                               {e.writer.ReadTerm(held), value})});
+                               {e.writer->ReadTerm(held), value})});
           });
       if (!found) return found;
       matches = *found;
@@ -1399,8 +1402,8 @@ auto FoldElements(
       in_pass.Bind(unit.builtins.machine_int64, element_term);
   auto next = fold(
       FoldedElement{
-          .writer = in_pass,
-          .frame = at,
+          .writer = &in_pass,
+          .frame = &at,
           .so_far = in_pass.ReadTerm(acc),
           .element = element_local,
           .index = index_local});
@@ -1468,19 +1471,19 @@ auto ReductionTerm(
   return FoldElements(
       w, reduction.array, start,
       [&](const FoldedElement& e) -> diag::Result<mir::ExprId> {
-        const mir::TypeId int_type = e.writer.Unit().builtins.int_type;
+        const mir::TypeId int_type = e.writer->Unit().builtins.int_type;
         mir::ExprId item{};
         if (reduction.method->with_clause.has_value()) {
           const ConstraintWriter bound = w.Iterating(
-              e.frame,
+              *e.frame,
               ConstraintWriter::Iteration{
                   .clause = reduction.method->with_clause->id,
                   .element = e.element,
-                  .index = e.writer.Bind(
-                      e.writer.Unit().builtins.machine_int64,
-                      e.writer.Term(
+                  .index = e.writer->Bind(
+                      e.writer->Unit().builtins.machine_int64,
+                      e.writer->Term(
                           BuiltinFn::kConstraintConstant,
-                          {e.writer.Block().ReadLocal(e.index, int_type)}))});
+                          {e.writer->Block().ReadLocal(e.index, int_type)}))});
           auto term = Term(bound, reduction.method->with_clause->expr);
           if (!term) return term;
           item = bound.Term(
@@ -1489,12 +1492,12 @@ auto ReductionTerm(
                bound.Bool(
                    IsSigned(bound, reduction.method->with_clause->expr))});
         } else {
-          item = e.writer.Term(
+          item = e.writer->Term(
               BuiltinFn::kConstraintResize,
-              {e.writer.ReadTerm(e.element), e.writer.Machine(width),
-               e.writer.Bool(false)});
+              {e.writer->ReadTerm(e.element), e.writer->Machine(width),
+               e.writer->Bool(false)});
         }
-        return e.writer.Term(fold, {e.so_far, item});
+        return e.writer->Term(fold, {e.so_far, item});
       });
 }
 

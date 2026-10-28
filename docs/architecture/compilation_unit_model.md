@@ -9,8 +9,9 @@ Define what a compilation unit is, what it owns, and the rules that make it self
 - The identity of the compilation unit as the primary semantic boundary of the compiler.
 - The enumeration of compilation-unit kinds: module, package, interface, and a package generic's
   specialization no instance replicates.
-- The rule that a compilation unit compiles independently, given only its own contents and the
-  signatures of the units it references.
+- The rule that a compilation unit compiles independently, given only its own contents and what the
+  units it references publish: their signatures, and the parameter values of each specialization it
+  reaches.
 - The signature a unit publishes across the compilation boundary: the declarations other units may
   name, produced by the unit from its own contents and consumed by other units by name. What a
   signature contains follows the unit's kind.
@@ -47,22 +48,25 @@ Define what a compilation unit is, what it owns, and the rules that make it self
    full elaboration, but the compiler operates on compilation units and specializations. Instance
    expansion does not drive compilation, and compile-time identity does not depend on instance
    enumeration.
-8. A unit's only cross-boundary surface is its signature: the set of declarations it publishes,
-   whose content follows the unit's kind -- a package publishes its declarations, and a module or an
-   interface publishes every declaration a hierarchical name may reach (LRM 23.6): its data objects
-   and ports, its child instances, the statics of its named blocks and subroutines and its named
-   blocks' disable targets, each stated with the named blocks and subroutines it sits in, the
-   classes it declares, whole, for an interface its views and the names each defines, its
+8. A unit's only cross-boundary surface is what it publishes: its signature, the set of declarations
+   it publishes, whose content follows the unit's kind -- a package publishes its declarations, and
+   a module or an interface publishes every declaration a hierarchical name may reach (LRM 23.6):
+   its data objects and ports, its child instances, the statics of its named blocks and subroutines
+   and its named blocks' disable targets, each stated with the named blocks and subroutines it sits
+   in, the classes it declares, whole, for an interface its views and the names each defines, its
    subroutines' signatures, and per generate construct the class each block was published as. Each
    generate block it elaborates publishes a class of its own the same way. A class a package
    publishes is published with its declaration whole -- the type of each property it keeps to itself
    included and unnamed, and every method with its prototype -- so a class of another unit extending
-   it is laid out at compile time and a call to one of its methods reads the callee there. The unit
-   produces its signature from its own contents, so nothing it publishes can contradict what it is.
-   A unit that instantiates or references another depends only on that signature, identified by
-   name, never on the other unit's body or internal ids. Units compile independently and in any
-   order and are combined by matching names; they share no identifier space and exchange no internal
-   state.
+   it is laid out at compile time and a call to one of its methods reads the callee there. An
+   enumeration, an unpacked structure or an unpacked union it declares is published as what it
+   declares, under the declaration a type naming it names. Beside the signature, each specialization
+   publishes the value of every value parameter it declares, since specializations one signature
+   covers may hold different values. The unit produces its signature from its own contents, so
+   nothing it publishes can contradict what it is. A unit that instantiates or references another
+   depends only on that signature, identified by name, never on the other unit's body or internal
+   ids. Units compile independently and in any order and are combined by matching names; they share
+   no identifier space and exchange no internal state.
 9. A signature names each class it publishes, and names which of them a referrer instantiates. A
    unit's name, the name of a class it declares, and where a backend places the emitted code are
    three separate facts; none substitutes for another, and a published class is never identified by
@@ -71,22 +75,24 @@ Define what a compilation unit is, what it owns, and the rules that make it self
     that signature where the referrer compiles, and reaches the target's own access protocol. A name
     the target did not publish has nothing to compile against and is refused there; it is never
     resolved by name while the design elaborates or runs.
-11. A unit's emission is a function of its own contents and the signatures it consumes, and of
-    nothing else. This is what makes a signature's content decidable: a fact absent from every
-    signature cannot have reached a referrer, so it cannot invalidate one. A lowering that reaches a
-    fact about another unit by any other path breaks that property, and the break is invisible until
-    compiled units are reused, at which point it is a stale result rather than an error. **"Nothing
-    else" includes the run that produced it.** Where the design's data landed in memory, and any
-    order derived from that, are not among a unit's contents, so two runs over one unchanged design
-    owe the same bytes. An emission that varies between them breaks the invariant exactly as a
-    cross-unit leak does and is invisible for the same reason -- a simulated program cannot observe
-    which of two orderings a set was written in, so nothing the design states can report it.
+11. A unit's emission is a function of its own contents and what it consumes of what other units
+    publish, and of nothing else. This is what makes a signature's content decidable: a fact absent
+    from everything published cannot have reached a referrer, so it cannot invalidate one. A
+    lowering that reaches a fact about another unit by any other path breaks that property, and the
+    break is invisible until compiled units are reused, at which point it is a stale result rather
+    than an error. **"Nothing else" includes the run that produced it.** Where the design's data
+    landed in memory, and any order derived from that, are not among a unit's contents, so two runs
+    over one unchanged design owe the same bytes. An emission that varies between them breaks the
+    invariant exactly as a cross-unit leak does and is invisible for the same reason -- a simulated
+    program cannot observe which of two orderings a set was written in, so nothing the design states
+    can report it.
 12. A signature carries the storage its own identities index. It is read where the publishing unit's
     storage is not, so an identity written on one addresses storage the signature itself holds,
     never the publishing unit's. A consumer takes the structure into its own storage and answers
     with its own identity for it, so what crosses the boundary is structure and nothing else. This
     is invariant 8's "never on the other unit's internal ids" applied to a fact too compound to be a
-    name -- a type, whose value is a graph.
+    name -- a type, whose value is a graph that ends at the declarations it names, whose definitions
+    cross on their own.
 
 ## Boundary to Adjacent Layers
 

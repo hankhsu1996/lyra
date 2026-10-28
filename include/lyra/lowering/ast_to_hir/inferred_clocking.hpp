@@ -7,6 +7,8 @@
 // 16.14.7).
 
 #include <concepts>
+#include <optional>
+#include <variant>
 #include <vector>
 
 #include "lyra/diag/diagnostic.hpp"
@@ -16,13 +18,30 @@
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace slang::ast {
+class ClockingBlockSymbol;
 class Expression;
 class Scope;
 class SignalEventControl;
+class Symbol;
 class TimingControl;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
+
+// The innermost sequence or property instance being expanded whose declaration
+// was reached by a hierarchical name or through an interface port and stands
+// where `declared` stands, out of any clocking block: a name the body writes
+// binds where the declaration is (LRM 16.8, 11.12), so `declared` is a
+// declaration of the instance that name led to. Nothing where no such instance
+// encloses what is being lowered.
+auto ExpansionDeclaringBeside(
+    const WalkFrame& frame, const slang::ast::Symbol& declared)
+    -> const ExpansionInstance*;
+
+// The events of a clocking block's clocking event, in the order its event list
+// wrote them (LRM 14.3, 9.4.2.1); one written alone is a list of one.
+auto ClockingEventsOf(const slang::ast::ClockingBlockSymbol& block)
+    -> std::vector<const slang::ast::SignalEventControl*>;
 
 // The event of the default clocking in force at `scope`, or nothing where no
 // default clocking is declared there.
@@ -36,38 +55,46 @@ auto DefaultClockingEvent(const slang::ast::Scope& scope)
 // no rule yields one.
 template <typename Lowerer>
 auto ClockInForce(Lowerer& lowerer, const WalkFrame& frame)
-    -> const slang::ast::TimingControl* {
-  if (frame.assertion_clock != nullptr) {
+    -> std::optional<ClockingEvent> {
+  if (frame.assertion_clock.has_value()) {
     return frame.assertion_clock;
   }
   if constexpr (std::same_as<Lowerer, ProcessLowerer>) {
     if (const auto* clock =
             lowerer.Owner().InferredProcedureClock(lowerer.ContainingSymbol());
         clock != nullptr) {
-      return clock;
+      return ClockingEvent{clock};
     }
   }
-  return DefaultClockingEvent(*frame.reader_scope);
+  if (const auto* clock = DefaultClockingEvent(*frame.reader_scope)) {
+    return ClockingEvent{clock};
+  }
+  return std::nullopt;
 }
 
-// The events a clocking event the source wrote stands for, as the entries of
-// one event list (LRM 9.4.2.1): a list flattened into its entries, and each
-// `$inferred_clock` replaced by the entries of the clock in force where the
-// sequence or property whose formal it defaults is instantiated (LRM 16.14.7),
-// found among the instances `frame` records. One whose instance stands where
-// no clock is in force is refused, as a construct no rule gives a clock is.
-auto ResolvedClockEntries(
-    const WalkFrame& frame, const slang::ast::TimingControl& written,
-    diag::SourceSpan span)
-    -> diag::Result<std::vector<const slang::ast::SignalEventControl*>>;
+// One entry of an event list a clock stands for (LRM 9.4.2.1): an event the
+// source wrote, or the clocking event of another instance's clocking block,
+// whose own events that instance publishes.
+using ClockEntry =
+    std::variant<const slang::ast::SignalEventControl*, ClockOfAnotherInstance>;
 
-// Whether two clocking events the source wrote are one clock where `frame`
-// stands: the same entries, each as the front end compares two events (LRM
-// 16.13.3).
+// The entries a clocking event stands for: a list flattened into its entries,
+// and each `$inferred_clock` replaced by the entries of the clock in force
+// where the sequence or property whose formal it defaults is instantiated (LRM
+// 16.14.7), found among the instances `frame` records. One whose instance
+// stands where no clock is in force is refused, as a construct no rule gives a
+// clock is.
+auto ResolvedClockEntries(
+    const WalkFrame& frame, const ClockingEvent& clock, diag::SourceSpan span)
+    -> diag::Result<std::vector<ClockEntry>>;
+
+// Whether two clocking events are one clock where `frame` stands: the same
+// entries, two the source wrote compared as the front end compares two events
+// (LRM 16.13.3), and two of another instance's clocking blocks the same where
+// they are one block of one instance.
 auto IsSameClock(
-    const WalkFrame& frame, const slang::ast::TimingControl& first,
-    const slang::ast::TimingControl& second, diag::SourceSpan span)
-    -> diag::Result<bool>;
+    const WalkFrame& frame, const ClockingEvent& first,
+    const ClockingEvent& second, diag::SourceSpan span) -> diag::Result<bool>;
 
 // The condition of the `default disable iff` in force at `scope`: the
 // innermost one among it and the scopes it is declared in, which reaches into

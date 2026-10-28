@@ -20,6 +20,7 @@
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_kind.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/type_definition.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
@@ -581,18 +582,20 @@ void ClassDeclLowerer::DefineRandomizationHooks(
   // what is random of it.
   const auto each_random_variable = [&](HookBody& body, const auto& visit) {
     mir::CompilationUnit& unit = body.Unit();
-    const hir::TypePool& hir_types = unit_lowerer.Hir().types;
+    const hir::CompilationUnit& hir = unit_lowerer.Hir();
     const auto walk = [&](const auto& self, AccessPath path,
                           hir::TypeId hir_type, mir::TypeId type,
                           hir::RandomQualifier random) -> void {
-      const hir::Type& declared = hir_types.Get(hir_type);
-      const auto* structure = declared.As<hir::UnpackedStructType>();
-      if (structure == nullptr) {
+      const hir::Type& held = hir.types.Get(hir_type);
+      const auto* structure_type = held.As<hir::UnpackedStructType>();
+      if (structure_type == nullptr) {
         visit(path, hir_type, type, random);
         return;
       }
-      for (std::uint32_t i = 0; i < structure->fields.size(); ++i) {
-        const hir::UnpackedAggregateField& member = structure->fields[i];
+      const hir::UnpackedStructDefinition& structure =
+          hir.DefinitionOf(*structure_type);
+      for (std::uint32_t i = 0; i < structure.fields.size(); ++i) {
+        const hir::UnpackedAggregateField& member = structure.fields[i];
         if (!hir::IsRandom(member.random)) {
           continue;
         }
@@ -601,7 +604,7 @@ void ClassDeclLowerer::DefineRandomizationHooks(
             self,
             DescendInto(
                 path, MemberStep(
-                          unit_lowerer, body.Block(), declared,
+                          unit_lowerer, body.Block(), held,
                           base::ComponentIndex{.value = i}, member_type)),
             member.type, member_type, member.random);
       }

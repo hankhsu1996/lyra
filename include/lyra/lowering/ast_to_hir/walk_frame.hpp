@@ -6,6 +6,7 @@
 #include <optional>
 #include <ranges>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/arena.hpp"
@@ -28,6 +29,7 @@ struct Pattern;
 
 namespace slang::ast {
 class ClassType;
+class ClockingBlockSymbol;
 class HierarchicalReference;
 class Symbol;
 class Scope;
@@ -54,17 +56,34 @@ struct ActiveIterationClause {
   hir::WithClauseId clause;
 };
 
+// The clocking event of a clocking block of another instance, which clocks a
+// sequence or property the block declares (LRM 14.13, 16.16). That instance
+// publishes the event; `declaration` and `reached_through` are an instance of
+// a sequence or property -- one the block declares, or one declared beside the
+// block whose body named it -- and the hierarchical name it reached its
+// declaration by, which together say which instance the block is one of.
+struct ClockOfAnotherInstance {
+  const slang::ast::ClockingBlockSymbol* block;
+  const slang::ast::Symbol* declaration;
+  const slang::ast::HierarchicalReference* reached_through;
+};
+
+// A clocking event in force (LRM 16.9.3, 16.16): one the source wrote, read
+// where it is written, or one another instance publishes.
+using ClockingEvent =
+    std::variant<const slang::ast::TimingControl*, ClockOfAnotherInstance>;
+
 // A named sequence or property instance whose body is being lowered, and the
 // clock in force where the instance stands, which a `$inferred_clock` among
-// its formals' defaults stands for (LRM 16.14.7); none where no clock is. The
-// clock is the one the source wrote, resolved wherever it is used, against
-// the instances recorded beside it. `reached_through` is the hierarchical name
-// the instance reached its declaration by, where it named one: a name the body
+// its formals' defaults stands for (LRM 16.14.7); none where no clock is. A
+// clock the source wrote is resolved wherever it is used, against the
+// instances recorded beside it. `reached_through` is the hierarchical name the
+// instance reached its declaration by, where it named one: a name the body
 // writes binds in the scope declaring it (LRM 16.8, 11.12), which is the scope
 // that name reached.
 struct ExpansionInstance {
   const slang::ast::Symbol* declaration;
-  const slang::ast::TimingControl* clock;
+  std::optional<ClockingEvent> clock;
   const slang::ast::HierarchicalReference* reached_through;
 };
 
@@ -186,11 +205,11 @@ struct WalkFrame {
 
   // The clocking event of the concurrent assertion whose property or action
   // block is being lowered, which is the clock a sampled value function there
-  // counts ticks of (LRM 16.9.3, by the clock flow of 16.13.3). Null outside
+  // counts ticks of (LRM 16.9.3, by the clock flow of 16.13.3). None outside
   // them, and in the assertion's own clock and disable condition, where a
   // sampled value function writes its clock; there the enclosing procedure or
   // the scope's default clocking answers instead.
-  const slang::ast::TimingControl* assertion_clock = nullptr;
+  std::optional<ClockingEvent> assertion_clock;
 
   // The sequence and property instances whose bodies enclose what is being
   // lowered, outermost first, as the front end's clock inference keeps them.
@@ -387,10 +406,10 @@ struct WalkFrame {
 
   // Enters the property or an action block of a concurrent assertion clocked by
   // `clock`.
-  [[nodiscard]] auto WithAssertionClock(
-      const slang::ast::TimingControl& clock) const -> WalkFrame {
+  [[nodiscard]] auto WithAssertionClock(const ClockingEvent& clock) const
+      -> WalkFrame {
     WalkFrame next = *this;
-    next.assertion_clock = &clock;
+    next.assertion_clock = clock;
     return next;
   }
 
@@ -399,7 +418,7 @@ struct WalkFrame {
   // where it wrote one.
   [[nodiscard]] auto WithExpansionInstance(
       const slang::ast::Symbol& declaration,
-      const slang::ast::TimingControl* clock,
+      const std::optional<ClockingEvent>& clock,
       const slang::ast::HierarchicalReference* reached_through) const
       -> WalkFrame {
     WalkFrame next = *this;

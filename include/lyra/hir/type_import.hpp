@@ -34,9 +34,10 @@ using TypeImportMemo = std::vector<std::optional<TypeId>>;
 
 // Takes types out of one pool and into another. A type identity indexes the
 // pool that minted it and means nothing in any other, so a type reaching a new
-// pool arrives as its whole subgraph, interned there. A type the destination
-// already holds is not copied: the destination's identity is structural, so the
-// import lands on the entry it already had.
+// pool arrives as its whole subgraph, interned there, down to the declared
+// types it names, each of which is its declaration alone. A type the
+// destination already holds is not copied: the destination's identity is the
+// type's own, so the import lands on the entry it already had.
 class TypeImporter {
  public:
   TypeImporter(

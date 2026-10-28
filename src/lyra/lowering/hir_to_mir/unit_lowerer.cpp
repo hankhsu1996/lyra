@@ -624,16 +624,25 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
   type_translations_ =
       base::Translation<hir::TypeId, mir::TypeId>{hir_->types.size()};
   for (const hir::TypeId hir_id : hir_->types.Ids()) {
-    const hir::Type& type = hir_->types.Get(hir_id);
-    const mir::TypeId translated = unit_.types.Intern(TranslateType(type));
-    type_translations_.Append(translated);
-    // A struct or a union this unit declares is settled, and its methods,
-    // which take values of its type, are stated once that type is interned.
+    type_translations_.Append(
+        unit_.types.Intern(TranslateType(hir_->types.Get(hir_id))));
+  }
+  // A struct or a union is named before what it holds is settled, since its
+  // members may be of types minted after it; each is defined once every type
+  // has its translation. The methods of one this unit declares, which take
+  // values of its type and read what its members hold, follow once every
+  // record is defined.
+  for (const hir::TypeId hir_id : hir_->types.Ids()) {
+    const mir::RecordId* id =
+        mir::RecordOf(unit_.types.Get(type_translations_.Get(hir_id)));
+    if (id == nullptr) continue;
+    DefineRecord(hir_->types.Get(hir_id), *id);
+  }
+  for (const hir::TypeId hir_id : hir_->types.Ids()) {
+    const mir::TypeId translated = type_translations_.Get(hir_id);
     const mir::RecordId* id = mir::RecordOf(unit_.types.Get(translated));
-    if (id == nullptr || unit_.GetRecord(*id).defining_unit.has_value()) {
-      continue;
-    }
-    DefineRecordMethods(type, *id, translated);
+    if (id == nullptr) continue;
+    DefineRecordMethods(hir_->types.Get(hir_id), *id, translated);
   }
 
   for (const hir::ClassId published : hir_->classes.ImportedIds()) {

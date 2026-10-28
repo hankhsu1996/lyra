@@ -1,6 +1,7 @@
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
 
 #include <expected>
+#include <format>
 #include <optional>
 #include <string>
 #include <utility>
@@ -26,6 +27,7 @@
 #include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/primary.hpp"
+#include "lyra/hir/type_definition.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/covergroup_access.hpp"
@@ -340,34 +342,56 @@ auto MakeEnumValueExpr(
   return MakeIntegralLiteralExpr(cv.integer(), type, span);
 }
 
-// A parameter read here is folded to the value one elaboration gave it. That
-// holds where the value varies only with the parameterization of the unit,
-// package or class declaring it, since a parameterization is an artifact of its
-// own. Some parameters vary with something else, and a name reaching one
-// resolves to its declaration instead: one a generate block declares, which
-// varies with the index; one a unit's instance is handed when it is built (LRM
-// 23.10.2), or works out from such a value, which varies per instance; and a
-// constant a subroutine or a procedural block declares from either, which its
-// body holds.
+// A parameter read here is folded to the value one elaboration gave it, as the
+// specialization declaring it holds it: this one's own, or another's as that
+// one published it. That holds where the value varies only with the
+// parameterization of the unit, package or class declaring it, since a
+// parameterization is an artifact of its own. Some parameters vary with
+// something else, and a name reaching one resolves to its declaration instead:
+// one a generate block declares, which varies with the index; one a unit's
+// instance is handed when it is built (LRM 23.10.2), or works out from such a
+// value, which varies per instance; and a constant a subroutine or a
+// procedural block declares from either, which its body holds.
 auto MakeParameterConstantExpr(
     UnitLowerer& unit_lowerer, WalkFrame frame, const slang::ast::Symbol& sym,
     const slang::ast::Type& type, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   auto type_id = unit_lowerer.InternType(type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
-  return MakeConstantValueExpr(
-      unit_lowerer.Unit(), frame,
-      sym.as<slang::ast::ParameterSymbol>().getValue(), *type_id, span);
+  auto value = unit_lowerer.ParameterValueOf(
+      sym.as<slang::ast::ParameterSymbol>(), span);
+  if (!value) return std::unexpected(std::move(value.error()));
+  return MakeConstantValueExpr(unit_lowerer, frame, *value, *type_id, span);
 }
 
+// A member's value is part of what its enumeration declares (LRM 6.19), so it
+// is read off the definition the unit declaring the enumeration states, by the
+// member's name. An enumeration of the runtime's own library is its base type
+// here and declares nothing a unit states, so its member is read as the front
+// end folded it.
 auto MakeEnumConstantExpr(
     UnitLowerer& unit_lowerer, const slang::ast::Symbol& sym,
     const slang::ast::Type& type, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   auto type_id = unit_lowerer.InternType(type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
-  return MakeEnumValueExpr(
-      sym.as<slang::ast::EnumValueSymbol>(), *type_id, span);
+  const auto* enumeration =
+      unit_lowerer.Unit().types.Get(*type_id).As<hir::EnumType>();
+  if (enumeration == nullptr) {
+    return MakeEnumValueExpr(
+        sym.as<slang::ast::EnumValueSymbol>(), *type_id, span);
+  }
+  for (const hir::EnumMember& member :
+       unit_lowerer.DefinitionOf(*enumeration).members) {
+    if (member.name == sym.name) {
+      return MakeIntegerLiteralFromConstant(member.value, *type_id, span);
+    }
+  }
+  throw InternalError(
+      std::format(
+          "MakeEnumConstantExpr: the enumeration holding '{}' declares no "
+          "member of that name",
+          sym.name));
 }
 
 // LRM 7.12.4: a reference to an array-method `with`-clause iteration element

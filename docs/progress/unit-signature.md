@@ -49,8 +49,11 @@ moved and the ones that first need a representation it can cross in.
 A type is the first fact that needed one. It crosses by the signature carrying its own pool, so an
 identity on a signature indexes storage the signature holds; the consuming unit takes the structure
 in and answers with its own identity for it. What that in turn required is that a unit's pool decide
-identity by structure rather than by a key borrowed from the frontend -- otherwise a type arriving
-from a signature becomes a second entry beside the one the reader already had.
+identity by what a type is -- its structure, or for an enumeration, structure or union the
+declaration it is (LRM 6.22.1) -- rather than by a key borrowed from the frontend; otherwise a type
+arriving from a signature becomes a second entry beside the one the reader already had. A declared
+type names its declaration alone, so what it declares crosses on its own, taken once every signature
+exists (S21).
 
 It also explains why the frontend has been the carrier all along: its elaborated graph is the one
 representation both units share, so a lowering that wanted a fact about another unit had nowhere
@@ -214,6 +217,31 @@ why nothing a signature states may rest on it.
       construct the class each block was published as, keyed by index or label. The publication is
       derived from the unit's declarations and waits for no body. Before, a module published its
       ports and everything else was found by its text while the design elaborated.
+
+- [x] S21 -- An enumeration, an unpacked structure and an unpacked union are named by their
+      declaration, and what each declares is published by the unit declaring it, one a declaration
+      states without a typedef included: a signature naming another unit's such type names it alone,
+      and a unit reading what it holds takes it from that unit's signature once every signature
+      exists. Before, every unit rebuilt another unit's type from the front end, including while it
+      published, so deriving one signature read another unit.
+- [x] S22 -- The value of each value parameter is published by the specialization declaring it, and
+      a name folding a parameter of another specialization reads that value. An enumeration constant
+      is read off its type's published definition. Before, both were read off the other instance's
+      front-end objects.
+- [x] S23 -- A clocking block is published with its clocking event, and a sequence or property
+      declared in another instance's clocking block is clocked by what that instance publishes (LRM
+      14.13, 16.16), whether it is reached through an interface port or by a hierarchical name, and
+      whatever its clocking event is: an edge, an edge qualified by `iff`, an event, or a list. A
+      module's own block reached by a hierarchical name is its own. Before, the referrer read the
+      block's event off the front end, and a name inside such a sequence used through an interface
+      port was an internal error.
+- [ ] S24 -- Waiting on another instance's clocking block (`@(p.cb)`, LRM 14.10) is refused, as
+      waiting on one's own is; clocking block signals are refused.
+- [ ] S25 -- A few facts a declaration of another unit states are still read off the front end where
+      a name reaches it: the direction of a callee's formal, where a procedure's read set decides
+      whether an argument is also written, and the declared type at the end of a name a wait
+      watches. Each is a fact the declaring unit publishes, so each has two sources until it is read
+      from there.
 
 ## Out of scope
 

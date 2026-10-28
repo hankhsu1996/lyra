@@ -11,13 +11,11 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/hir/class_decl.hpp"
 #include "lyra/hir/class_declaration.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/published_covergroup.hpp"
-#include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type.hpp"
-#include "lyra/support/def_path.hpp"
+#include "lyra/hir/type_definition.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -90,7 +88,8 @@ auto CoverageLibrary::EnumeratorOf(hir::TypeId type, std::string_view name)
   if (enumeration == nullptr) {
     Unpublished(std::format("enumeration holding '{}'", name));
   }
-  for (const hir::EnumMember& member : enumeration->members) {
+  for (const hir::EnumMember& member :
+       unit_->DefinitionOf(*enumeration).members) {
     if (member.name == name) return member.value;
   }
   Unpublished(std::format("enumerator '{}'", name));

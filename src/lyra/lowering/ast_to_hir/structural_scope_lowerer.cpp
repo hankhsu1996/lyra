@@ -7,7 +7,6 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -17,6 +16,7 @@
 #include <slang/ast/SemanticFacts.h>
 #include <slang/ast/Statement.h>
 #include <slang/ast/Symbol.h>
+#include <slang/ast/TimingControl.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
@@ -45,6 +45,7 @@
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/hierarchy_override.hpp"
+#include "lyra/lowering/ast_to_hir/inferred_clocking.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/name_in_a_path.hpp"
 #include "lyra/lowering/ast_to_hir/net_overlay.hpp"
@@ -361,8 +362,7 @@ auto LowerParameterAssignments(
             [&](const GivenElsewhere&)
                 -> diag::Result<std::optional<hir::ExprId>> {
               auto constant = MakeConstantValueExpr(
-                  owner.Unit(), frame, source.parameter->getValue(), type,
-                  span);
+                  owner, frame, source.parameter->getValue(), type, span);
               if (!constant) {
                 return std::unexpected(std::move(constant.error()));
               }
@@ -823,9 +823,12 @@ auto StructuralScopeLowerer::PopulateMember(
     case SymbolKind::SystemTimingCheck:
       return {};
 
+    case SymbolKind::ClockingBlock:
+      return PopulateClockingMember(
+          member.as<slang::ast::ClockingBlockSymbol>(), frame);
+
     // Declarations whose effect happens where they are used, not where they
     // are written, so the use site is what has to support them.
-    case SymbolKind::ClockingBlock:
     case SymbolKind::ClockVar:
     case SymbolKind::LetDecl:
       return {};
@@ -961,16 +964,17 @@ auto StructuralScopeLowerer::PopulateNetMember(
   return {};
 }
 
-// The subroutine this scope evaluates `holder`'s expression in, for a caller
-// that asks for the value.
+// The subroutine this scope evaluates `expr`, which `holder` holds, in as
+// `result_type`, for a caller that asks for the value.
 auto StructuralScopeLowerer::DefineEvaluator(
     const slang::ast::Symbol& holder, std::string name,
-    const slang::ast::Expression& expr, WalkFrame frame) -> diag::Result<void> {
-  auto evaluator =
-      LowerEvaluatorDecl(*owner_, holder, std::move(name), expr, frame);
+    const slang::ast::Expression& expr, hir::TypeId result_type,
+    WalkFrame frame) -> diag::Result<void> {
+  auto evaluator = LowerEvaluatorDecl(
+      *owner_, holder, std::move(name), expr, result_type, frame);
   if (!evaluator) return std::unexpected(std::move(evaluator.error()));
   frame.current_structural_scope->structural_subroutines.Define(
-      owner_->EvaluatorOf(holder), *std::move(evaluator));
+      owner_->EvaluatorOf(expr), *std::move(evaluator));
   return {};
 }
 
@@ -985,15 +989,45 @@ auto StructuralScopeLowerer::PopulateModportMember(
     const auto* port = item.as_if<slang::ast::ModportPortSymbol>();
     if (port == nullptr || !ViewDefinesTheName(*port)) continue;
     if (port->direction != slang::ast::ArgumentDirection::In) continue;
-    const auto* connection = port->getConnectionExpr();
-    if (connection == nullptr) {
-      throw InternalError(
-          "PopulateModportMember: a name the view defines is the expression it "
-          "was written with");
-    }
+    auto type = owner_->InternDeclaredType(*port);
+    if (!type) return std::unexpected(std::move(type.error()));
     auto defined = DefineEvaluator(
-        *port, ModportReadName(modport.name, port->name), *connection, frame);
+        *port, ModportReadName(modport.name, port->name),
+        ViewExpressionOf(*port), *type, frame);
     if (!defined) return std::unexpected(std::move(defined.error()));
+  }
+  return {};
+}
+
+// A named clocking block's clocking event clocks a sequence or property it
+// declares wherever the declaration is instantiated (LRM 14.13, 16.16), so a
+// unit instantiating it from elsewhere asks this scope for the value of each
+// event's operand and qualifier. Each answers its own expression's type, which
+// is what the event is taken of.
+auto StructuralScopeLowerer::PopulateClockingMember(
+    const slang::ast::ClockingBlockSymbol& block, WalkFrame frame)
+    -> diag::Result<void> {
+  if (block.name.empty()) return {};
+  const auto span = frontend::PointSpanOf(block.location);
+  const auto define = [&](const slang::ast::Expression& expression,
+                          std::string name) -> diag::Result<void> {
+    auto type = owner_->InternExpressionType(expression, span);
+    if (!type) return std::unexpected(std::move(type.error()));
+    return DefineEvaluator(block, std::move(name), expression, *type, frame);
+  };
+  const std::vector<const slang::ast::SignalEventControl*> events =
+      ClockingEventsOf(block);
+  for (std::size_t at = 0; at < events.size(); ++at) {
+    const slang::ast::SignalEventControl& event = *events[at];
+    if (auto r = define(event.expr, ClockingEventName(block.name, at)); !r) {
+      return r;
+    }
+    if (event.iffCondition == nullptr) continue;
+    if (auto r =
+            define(*event.iffCondition, ClockingConditionName(block.name, at));
+        !r) {
+      return r;
+    }
   }
   return {};
 }
@@ -1005,7 +1039,10 @@ auto StructuralScopeLowerer::PopulatePortMember(
     const slang::ast::PortSymbol& port, WalkFrame frame) -> diag::Result<void> {
   const slang::ast::Expression* initializer = port.getInitializer();
   if (initializer == nullptr) return {};
-  return DefineEvaluator(port, PortDefaultName(port.name), *initializer, frame);
+  auto type = owner_->InternDeclaredType(port);
+  if (!type) return std::unexpected(std::move(type.error()));
+  return DefineEvaluator(
+      port, PortDefaultName(port.name), *initializer, *type, frame);
 }
 
 auto StructuralScopeLowerer::PopulateSubroutineMember(
@@ -1028,9 +1065,11 @@ auto StructuralScopeLowerer::PopulateSubroutineMember(
   for (const slang::ast::FormalArgumentSymbol* formal : sym.getArguments()) {
     const slang::ast::Expression* default_value = formal->getDefaultValue();
     if (default_value == nullptr) continue;
+    auto type = owner_->InternDeclaredType(*formal);
+    if (!type) return std::unexpected(std::move(type.error()));
     auto defined = DefineEvaluator(
         *formal, ArgumentDefaultName(sym.name, formal->name), *default_value,
-        frame);
+        *type, frame);
     if (!defined) return std::unexpected(std::move(defined.error()));
   }
 

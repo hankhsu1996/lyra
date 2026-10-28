@@ -389,14 +389,15 @@ struct CompilationUnit {
   // party assembling the program keeps one; a definition up there calls that
   // unit's own subroutine and no other artifact can write it.
   std::vector<ForeignScopeEntry> foreign_scope_entries;
-  // Every structure and union this unit names, settled where its type is
-  // translated: the ones its source declares, and those of another unit it
-  // holds a value of, declared with what that unit published. A record type
-  // names one of these by where it sits.
+  // Every structure and union this unit names, declared where its type is
+  // translated and defined once every type is, since its members' types may
+  // be translated after it: the ones its source declares, and those of
+  // another unit it holds a value of, defined with what that unit published.
+  // A record type names one of these by where it sits.
   base::Registry<RecordDecl, RecordId> records;
-  // The methods of each of those, by the same identity, stated once its type
-  // is interned, since a method reaches the record's own members; none for a
-  // record another unit declares, which states its own.
+  // The methods of each of those, by the same identity, stated once every
+  // record is defined, since a method reaches its members' records; none for
+  // a record another unit declares, which states its own.
   base::Registry<RecordMethods, RecordId> record_methods;
   // Every closure of this unit, one per closure site -- an anonymous concrete
   // callable value (capture fields plus one invoke). Its `ClosureId` is the

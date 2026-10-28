@@ -13,10 +13,10 @@
 #include "lyra/hir/fixed_name.hpp"
 #include "lyra/hir/foreign_import.hpp"
 #include "lyra/hir/foreign_import_id.hpp"
-#include "lyra/hir/published_covergroup.hpp"
 #include "lyra/hir/scope_class.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/type_definition.hpp"
 #include "lyra/hir/type_id.hpp"
 
 namespace lyra::hir {
@@ -96,6 +96,9 @@ struct CompilationUnit {
   FixedName fixed_name;
   UnitRole role = UnitRole::kModuleOrInterface;
   TypePool types;
+  // What each enumeration, unpacked structure and unpacked union `types` names
+  // declares, whichever unit declares it.
+  TypeDefinitions type_definitions;
   BuiltinHirTypes builtins;
   StructuralScope root_scope;
   // Every body a generate block of the unit compiles to (LRM 27), each once:
@@ -135,6 +138,21 @@ struct CompilationUnit {
   // it the way a reference to any other unit does, by its name.
   [[nodiscard]] auto IsItself(std::string_view unit_name) const -> bool {
     return unit_name == name;
+  }
+
+  // What the declaration an enumeration, an unpacked structure or an unpacked
+  // union names declares.
+  [[nodiscard]] auto DefinitionOf(const EnumType& type) const
+      -> const EnumDefinition& {
+    return type_definitions.Of<EnumDefinition>(type.declaration);
+  }
+  [[nodiscard]] auto DefinitionOf(const UnpackedStructType& type) const
+      -> const UnpackedStructDefinition& {
+    return type_definitions.Of<UnpackedStructDefinition>(type.declaration);
+  }
+  [[nodiscard]] auto DefinitionOf(const UnpackedUnionType& type) const
+      -> const UnpackedUnionDefinition& {
+    return type_definitions.Of<UnpackedUnionDefinition>(type.declaration);
   }
 
  private:

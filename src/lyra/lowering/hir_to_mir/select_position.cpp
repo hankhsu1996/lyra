@@ -87,7 +87,9 @@ auto PositionMapOf(const UnitLowerer& unit_lowerer, hir::TypeId receiver)
           },
           // An enumeration is numbered the way its base is (LRM 6.19).
           [&](const hir::EnumType& enumeration) {
-            return PositionMapOf(unit_lowerer, enumeration.base_type);
+            return PositionMapOf(
+                unit_lowerer,
+                unit_lowerer.Hir().DefinitionOf(enumeration).base_type);
           },
           [&](const hir::ScalarBitType&) { return kBitsFromZero; },
           [&](const hir::PackedStructType&) { return kBitsFromZero; },

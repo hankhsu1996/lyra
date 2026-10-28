@@ -35,6 +35,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_prototype.hpp"
+#include "lyra/hir/type_definition.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/constraint_block.hpp"
 #include "lyra/lowering/ast_to_hir/covergroup_decl.hpp"
@@ -276,20 +277,31 @@ auto LowerUnpackedAggregateFields(
   return out;
 }
 
+// The declaration a declared type is, named the way every unit names it.
+auto TypeDeclarationOf(
+    const slang::ast::Type& declared, UnitLowerer& unit_lowerer)
+    -> hir::TypeDeclarationRef {
+  return hir::TypeDeclarationRef{
+      .unit_name =
+          CompilationUnitName(UnitHomeOf(declared), unit_lowerer.Naming()),
+      .path = DefPathOf(declared, unit_lowerer.Naming())};
+}
+
 auto LowerUnpackedStruct(
     const slang::ast::UnpackedStructType& struct_type,
     diag::SourceSpan decl_span, UnitLowerer& unit_lowerer)
     -> diag::Result<hir::UnpackedStructType> {
-  auto fields_or =
-      LowerUnpackedAggregateFields(struct_type.fields, decl_span, unit_lowerer);
-  if (!fields_or) return std::unexpected(std::move(fields_or.error()));
-  return hir::UnpackedStructType{
-      .declaration =
-          hir::TypeDeclarationRef{
-              .unit_name = CompilationUnitName(
-                  UnitHomeOf(struct_type), unit_lowerer.Naming()),
-              .path = DefPathOf(struct_type, unit_lowerer.Naming())},
-      .fields = *std::move(fields_or)};
+  hir::TypeDeclarationRef declaration =
+      TypeDeclarationOf(struct_type, unit_lowerer);
+  auto defined = unit_lowerer.DefineType(
+      declaration, [&]() -> diag::Result<hir::TypeDefinition> {
+        auto fields = LowerUnpackedAggregateFields(
+            struct_type.fields, decl_span, unit_lowerer);
+        if (!fields) return std::unexpected(std::move(fields.error()));
+        return hir::UnpackedStructDefinition{.fields = *std::move(fields)};
+      });
+  if (!defined) return std::unexpected(std::move(defined.error()));
+  return hir::UnpackedStructType{.declaration = std::move(declaration)};
 }
 
 // The part of a value of `type` only a tagged union may hold (LRM 7.3) -- a
@@ -328,37 +340,38 @@ auto PartOnlyATaggedUnionMayHold(const slang::ast::Type& type)
 auto LowerUnpackedUnion(
     const slang::ast::UnpackedUnionType& union_type, diag::SourceSpan decl_span,
     UnitLowerer& unit_lowerer) -> diag::Result<hir::UnpackedUnionType> {
-  // Both the untagged overlapping-storage form (LRM 7.3) and the tagged
-  // type-checked sum form (LRM 7.3.2) come through here.
-  //
-  // An untagged union's members lie over one another's bytes, so a member
-  // owning what it holds, or one whose value is no bits, has no such bytes to
-  // share. The standard admits one only in a tagged union (LRM 7.3, 6.16), and
-  // the front end lets a string, a class handle and an event through.
-  if (!union_type.isTagged) {
-    for (const slang::ast::FieldSymbol* field : union_type.fields) {
-      if (const slang::ast::Type* part =
-              PartOnlyATaggedUnionMayHold(field->getType())) {
-        return diag::Fail(
-            decl_span, diag::DiagCode::kUnsupportedTypeKind,
-            "an untagged union member cannot hold a '{}'; only a tagged "
-            "union may hold one",
-            part->toString());
-      }
-    }
-  }
-  auto fields_or =
-      LowerUnpackedAggregateFields(union_type.fields, decl_span, unit_lowerer);
-  if (!fields_or) return std::unexpected(std::move(fields_or.error()));
-  return hir::UnpackedUnionType{
-      .declaration =
-          hir::TypeDeclarationRef{
-              .unit_name = CompilationUnitName(
-                  UnitHomeOf(union_type), unit_lowerer.Naming()),
-              .path = DefPathOf(union_type, unit_lowerer.Naming())},
-      .fields = *std::move(fields_or),
-      .tagged = union_type.isTagged,
-  };
+  hir::TypeDeclarationRef declaration =
+      TypeDeclarationOf(union_type, unit_lowerer);
+  auto defined = unit_lowerer.DefineType(
+      declaration, [&]() -> diag::Result<hir::TypeDefinition> {
+        // Both the untagged overlapping-storage form (LRM 7.3) and the tagged
+        // type-checked sum form (LRM 7.3.2) come through here.
+        //
+        // An untagged union's members lie over one another's bytes, so a
+        // member owning what it holds, or one whose value is no bits, has no
+        // such bytes to share. The standard admits one only in a tagged union
+        // (LRM 7.3, 6.16), and the front end lets a string, a class handle and
+        // an event through.
+        if (!union_type.isTagged) {
+          for (const slang::ast::FieldSymbol* field : union_type.fields) {
+            if (const slang::ast::Type* part =
+                    PartOnlyATaggedUnionMayHold(field->getType())) {
+              return diag::Fail(
+                  decl_span, diag::DiagCode::kUnsupportedTypeKind,
+                  "an untagged union member cannot hold a '{}'; only a tagged "
+                  "union may hold one",
+                  part->toString());
+            }
+          }
+        }
+        auto fields = LowerUnpackedAggregateFields(
+            union_type.fields, decl_span, unit_lowerer);
+        if (!fields) return std::unexpected(std::move(fields.error()));
+        return hir::UnpackedUnionDefinition{
+            .fields = *std::move(fields), .tagged = union_type.isTagged};
+      });
+  if (!defined) return std::unexpected(std::move(defined.error()));
+  return hir::UnpackedUnionType{.declaration = std::move(declaration)};
 }
 
 // A member's value varies with the enumeration it belongs to (LRM 6.19), and a
@@ -369,29 +382,29 @@ auto LowerUnpackedUnion(
 auto LowerEnum(
     const slang::ast::EnumType& enum_type, diag::SourceSpan decl_span,
     UnitLowerer& unit_lowerer) -> diag::Result<hir::EnumType> {
-  auto base_id_or = unit_lowerer.InternType(enum_type.baseType, decl_span);
-  if (!base_id_or) return std::unexpected(std::move(base_id_or.error()));
-  std::vector<hir::EnumMember> members;
-  for (const auto& value_sym : enum_type.values()) {
-    const auto& cv = value_sym.getValue();
-    if (!cv.isInteger()) {
-      throw InternalError("LowerEnum: enum value is not integral");
-    }
-    members.push_back(
-        hir::EnumMember{
-            .name = std::string(value_sym.name),
-            .value = LowerSVIntToIntegralConstant(cv.integer()),
-        });
-  }
-  return hir::EnumType{
-      .declaration =
-          hir::TypeDeclarationRef{
-              .unit_name = CompilationUnitName(
-                  UnitHomeOf(enum_type), unit_lowerer.Naming()),
-              .path = DefPathOf(enum_type, unit_lowerer.Naming())},
-      .base_type = *base_id_or,
-      .members = std::move(members),
-  };
+  hir::TypeDeclarationRef declaration =
+      TypeDeclarationOf(enum_type, unit_lowerer);
+  auto defined = unit_lowerer.DefineType(
+      declaration, [&]() -> diag::Result<hir::TypeDefinition> {
+        auto base_type = unit_lowerer.InternType(enum_type.baseType, decl_span);
+        if (!base_type) return std::unexpected(std::move(base_type.error()));
+        std::vector<hir::EnumMember> members;
+        for (const auto& value_sym : enum_type.values()) {
+          const auto& cv = value_sym.getValue();
+          if (!cv.isInteger()) {
+            throw InternalError("LowerEnum: enum value is not integral");
+          }
+          members.push_back(
+              hir::EnumMember{
+                  .name = std::string(value_sym.name),
+                  .value = LowerSVIntToIntegralConstant(cv.integer()),
+              });
+        }
+        return hir::EnumDefinition{
+            .base_type = *base_type, .members = std::move(members)};
+      });
+  if (!defined) return std::unexpected(std::move(defined.error()));
+  return hir::EnumType{.declaration = std::move(declaration)};
 }
 
 auto TranslateType(
@@ -1557,9 +1570,11 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
   for (const auto& [method, formal] : pending.defaulted_formals) {
     std::string name = ArgumentDefaultName(method->name, formal->name);
     const hir::MethodId position = MethodPositionOf(pending.id, name);
+    auto result_type = InternDeclaredType(*formal);
+    if (!result_type) return std::unexpected(std::move(result_type.error()));
     auto evaluator = LowerEvaluatorDecl(
         *this, *formal, std::move(name), *formal->getDefaultValue(),
-        class_frame);
+        *result_type, class_frame);
     if (!evaluator) return std::unexpected(std::move(evaluator.error()));
     decl.methods.Define(position, *std::move(evaluator));
   }

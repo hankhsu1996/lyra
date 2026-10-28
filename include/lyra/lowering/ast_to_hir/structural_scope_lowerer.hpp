@@ -3,7 +3,6 @@
 #include <span>
 #include <string>
 #include <unordered_map>
-#include <utility>
 #include <vector>
 
 #include <slang/ast/Expression.h>
@@ -135,10 +134,13 @@ class StructuralScopeLowerer {
       -> diag::Result<void>;
   auto DefineEvaluator(
       const slang::ast::Symbol& holder, std::string name,
-      const slang::ast::Expression& expr, WalkFrame frame)
-      -> diag::Result<void>;
+      const slang::ast::Expression& expr, hir::TypeId result_type,
+      WalkFrame frame) -> diag::Result<void>;
   auto PopulateModportMember(
       const slang::ast::ModportSymbol& modport, WalkFrame frame)
+      -> diag::Result<void>;
+  auto PopulateClockingMember(
+      const slang::ast::ClockingBlockSymbol& block, WalkFrame frame)
       -> diag::Result<void>;
   auto PopulatePortMember(const slang::ast::PortSymbol& port, WalkFrame frame)
       -> diag::Result<void>;

@@ -14,12 +14,12 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/hir/class_decl.hpp"
 #include "lyra/hir/class_declaration.hpp"
 #include "lyra/hir/covergroup.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/type_definition.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
@@ -80,8 +80,9 @@ auto LibraryField(
 auto OptionMember(
     UnitLowerer& unit_lowerer, AccessPath path, hir::TypeId type,
     std::string_view name) -> AccessPath {
-  const auto& structure =
-      unit_lowerer.Hir().types.Get(type).Get<hir::UnpackedStructType>();
+  const hir::CompilationUnit& hir = unit_lowerer.Hir();
+  const hir::UnpackedStructDefinition& structure =
+      hir.DefinitionOf(hir.types.Get(type).Get<hir::UnpackedStructType>());
   for (std::size_t i = 0; i < structure.fields.size(); ++i) {
     if (structure.fields[i].name != name) continue;
     return DescendInto(
@@ -1424,7 +1425,8 @@ class ClassWriter {
       // 19.5.3).
       if (const auto* enumeration =
               u_->Hir().types.Get(counted_by.value_type).As<hir::EnumType>()) {
-        for (const hir::EnumMember& member : enumeration->members) {
+        for (const hir::EnumMember& member :
+             u_->Hir().DefinitionOf(*enumeration).members) {
           e.Do(e.Call(
               item, cls, "name_enumeration_value",
               {mir::BuildIntegralLiteral(

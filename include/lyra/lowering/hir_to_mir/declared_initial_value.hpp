@@ -1,6 +1,6 @@
 #pragma once
 
-#include "lyra/hir/type.hpp"
+#include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -26,7 +26,7 @@ namespace lyra::lowering::hir_to_mir {
 // Whether a value of `type` holds an event a new position of it is given an
 // object for, as above.
 [[nodiscard]] auto HoldsADeclaredEvent(
-    const hir::TypePool& types, hir::TypeId type) -> bool;
+    const hir::CompilationUnit& hir, hir::TypeId type) -> bool;
 
 // The same for `count` positions of the array the local `array` holds, from
 // the `int` position `first` on, whose elements are of `element`: the elements

@@ -590,21 +590,23 @@ class UnitLowerer {
 
   [[nodiscard]] auto TranslateType(const hir::Type& type) -> mir::Type;
 
-  // The record type naming the declaration `source`, a structure or a union
-  // of `kind` whose members are of `elements`. One this unit declares is
-  // settled here and its methods once its type is interned, since a method
-  // names the type of the value it is asked of; one another unit declares is
-  // named by that declaration, and holding a value of it depends on that unit.
-  [[nodiscard]] auto TranslateRecordType(
-      const hir::TypeDeclarationRef& source, mir::RecordKind kind,
-      std::vector<mir::TypeId> elements) -> mir::RecordType;
+  // The record type a structure or a union is, its record declared here and
+  // defined once every type has its translation: its members may be of types
+  // a definition another unit published minted after the type naming it.
+  [[nodiscard]] auto DeclareRecord() -> mir::RecordType;
 
   // The types of a union's members, a `void` one holding no information.
-  [[nodiscard]] auto UnionMemberTypes(const hir::UnpackedUnionType& src)
+  [[nodiscard]] auto UnionMemberTypes(const hir::UnpackedUnionDefinition& src)
       -> std::vector<mir::TypeId>;
 
-  // States the methods of the struct or the union `id` this unit declares from
-  // `source`, over values of `type`, the interned type naming it.
+  // Defines the record `id` the struct or the union `source` names: its kind,
+  // its members, and the unit declaring it where that is another, which a
+  // value of it then depends on.
+  void DefineRecord(const hir::Type& source, mir::RecordId id);
+
+  // States the methods of the struct or the union `id` from `source`, over
+  // values of `type`, the interned type naming it: none for one another unit
+  // declares, which states its own.
   void DefineRecordMethods(
       const hir::Type& source, mir::RecordId id, mir::TypeId type);
 
@@ -617,9 +619,6 @@ class UnitLowerer {
   base::Translation<hir::ClassId, mir::ClassId> class_identities_;
   std::map<hir::ClassId, std::optional<RandomizationHooks>>
       randomization_hooks_;
-  // Where each record the unit names sits in its record registry, by the
-  // declaration any unit names it by.
-  std::map<mir::TypeDeclarationRef, mir::RecordId> record_translations_;
   // The callable and the cell each member of a unit's namespace this unit names
   // is, by that unit and the name the member was published under.
   std::map<std::pair<std::string, std::string>, mir::CallableId>

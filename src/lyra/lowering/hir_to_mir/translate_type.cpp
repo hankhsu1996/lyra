@@ -1,11 +1,12 @@
 #include <cstddef>
+#include <optional>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/type_definition.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -14,7 +15,6 @@
 #include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/record_id.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/support/runtime_class.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -83,39 +83,17 @@ auto TranslateMemberTypes(
 
 }  // namespace
 
-auto UnitLowerer::TranslateRecordType(
-    const hir::TypeDeclarationRef& source, mir::RecordKind kind,
-    std::vector<mir::TypeId> elements) -> mir::RecordType {
-  const mir::TypeDeclarationRef declaration{
-      .unit_name = source.unit_name, .path = source.path};
-  if (const auto known = record_translations_.find(declaration);
-      known != record_translations_.end()) {
-    return mir::RecordType{.declaration = known->second};
-  }
-  // A record another unit declares brings that unit's statement of its
-  // operations with it.
-  const bool is_own = hir_->IsItself(source.unit_name);
-  const mir::RecordId id = unit_.records.Add(
-      mir::RecordDecl{
-          .defining_unit =
-              is_own ? std::nullopt : std::optional{source.unit_name},
-          .path = source.path,
-          .kind = kind,
-          .elements = std::move(elements)});
+auto UnitLowerer::DeclareRecord() -> mir::RecordType {
+  const mir::RecordId id = unit_.records.Declare();
   if (unit_.record_methods.Declare() != id) {
     throw InternalError(
         "hir_to_mir: a record's methods and its declaration took different "
         "identities -- please report this as a bug");
   }
-  // Another unit states the methods of a record it declares.
-  if (!is_own) {
-    unit_.record_methods.Define(id, mir::RecordMethods{});
-  }
-  record_translations_.emplace(declaration, id);
   return mir::RecordType{.declaration = id};
 }
 
-auto UnitLowerer::UnionMemberTypes(const hir::UnpackedUnionType& src)
+auto UnitLowerer::UnionMemberTypes(const hir::UnpackedUnionDefinition& src)
     -> std::vector<mir::TypeId> {
   std::vector<mir::TypeId> members = TranslateMemberTypes(*this, src.fields);
   // A `void` member (LRM 7.3.2) occupies a value slot, so its component is
@@ -129,15 +107,49 @@ auto UnitLowerer::UnionMemberTypes(const hir::UnpackedUnionType& src)
   return members;
 }
 
+void UnitLowerer::DefineRecord(const hir::Type& source, mir::RecordId id) {
+  const hir::TypeDeclarationRef& declaration = *source.NamedDeclaration();
+  const bool is_own = hir_->IsItself(declaration.unit_name);
+  const auto declared = [&](mir::RecordKind kind,
+                            std::vector<mir::TypeId> elements) {
+    return mir::RecordDecl{
+        .defining_unit =
+            is_own ? std::nullopt : std::optional{declaration.unit_name},
+        .path = declaration.path,
+        .kind = kind,
+        .elements = std::move(elements)};
+  };
+  if (const auto* structure = source.As<hir::UnpackedStructType>()) {
+    unit_.records.Define(
+        id, declared(
+                mir::RecordKind::kStruct,
+                TranslateMemberTypes(
+                    *this, hir_->DefinitionOf(*structure).fields)));
+  } else {
+    const hir::UnpackedUnionDefinition& overlay =
+        hir_->DefinitionOf(source.Get<hir::UnpackedUnionType>());
+    unit_.records.Define(
+        id, declared(
+                overlay.tagged ? mir::RecordKind::kTaggedUnion
+                               : mir::RecordKind::kUnion,
+                UnionMemberTypes(overlay)));
+  }
+}
+
 void UnitLowerer::DefineRecordMethods(
     const hir::Type& source, mir::RecordId id, mir::TypeId type) {
-  const mir::RecordDecl declared = unit_.GetRecord(id);
+  const mir::RecordDecl& declared = unit_.GetRecord(id);
+  // Another unit states the methods of a record it declares.
+  if (declared.defining_unit.has_value()) {
+    unit_.record_methods.Define(id, mir::RecordMethods{});
+    return;
+  }
   unit_.record_methods.Define(id, [&] {
     switch (declared.kind) {
       case mir::RecordKind::kStruct:
         return StructMethodsOf(
-            *this, source.Get<hir::UnpackedStructType>(), id, type,
-            declared.elements);
+            *this, Hir().DefinitionOf(source.Get<hir::UnpackedStructType>()),
+            id, type, declared.elements);
       case mir::RecordKind::kUnion:
         return UnionMethodsOf(*this, id, type, declared.elements);
       case mir::RecordKind::kTaggedUnion:
@@ -172,14 +184,20 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
             return mir::Type{IntegralOfPackedAggregate(
                 ProjectPackedAggregate(*this, type), src.signedness)};
           },
-          [&](const hir::EnumType& src) -> mir::Type {
+          [&](const hir::EnumType& declared) -> mir::Type {
             // An enumeration keeps a MIR type of its own, carrying its base
             // integral type and its members. A value operation reads the base
             // and so treats the value as that integral; only what an
             // enumeration answers about a value (LRM 6.19.5, 6.24.2) reads the
             // members.
+            // The base is read as a type of its own rather than by its
+            // translation: a definition another unit published names types
+            // minted after the enumeration naming it.
+            const hir::EnumDefinition& src = Hir().DefinitionOf(declared);
             const auto* base = Unit()
-                                   .types.Get(TranslateType(src.base_type))
+                                   .types
+                                   .Get(unit_.types.Intern(TranslateType(
+                                       Hir().types.Get(src.base_type))))
                                    .As<mir::IntegralType>();
             if (base == nullptr) {
               throw InternalError(
@@ -200,17 +218,11 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
                 .members = std::move(members),
             }};
           },
-          [&](const hir::UnpackedStructType& src) -> mir::Type {
-            return mir::Type{TranslateRecordType(
-                src.declaration, mir::RecordKind::kStruct,
-                TranslateMemberTypes(*this, src.fields))};
+          [&](const hir::UnpackedStructType&) -> mir::Type {
+            return mir::Type{DeclareRecord()};
           },
-          [&](const hir::UnpackedUnionType& src) -> mir::Type {
-            return mir::Type{TranslateRecordType(
-                src.declaration,
-                src.tagged ? mir::RecordKind::kTaggedUnion
-                           : mir::RecordKind::kUnion,
-                UnionMemberTypes(src))};
+          [&](const hir::UnpackedUnionType&) -> mir::Type {
+            return mir::Type{DeclareRecord()};
           },
           [&](const hir::UnpackedArrayType& src) -> mir::Type {
             return mir::Type{mir::UnpackedArrayType{

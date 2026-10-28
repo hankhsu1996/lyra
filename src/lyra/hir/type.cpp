@@ -4,7 +4,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <variant>
 #include <vector>
 
 #include "lyra/base/hash.hpp"
@@ -79,6 +78,12 @@ auto HashFields(std::size_t seed, const std::vector<Field>& fields)
   return hash;
 }
 
+// A declared type is the declaration it names, so that is all it hashes by.
+auto HashDeclaration(std::size_t seed, const TypeDeclarationRef& declaration)
+    -> std::size_t {
+  return Combine(Combine(seed, declaration.unit_name), declaration.path);
+}
+
 }  // namespace
 
 auto Type::Hash::operator()(const Type& type) const -> std::size_t {
@@ -100,14 +105,13 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             return HashFields(seed, t.fields);
           },
           [seed](const EnumType& t) {
-            return Combine(HashTypeId(seed, t.base_type), t.members.size());
+            return HashDeclaration(seed, t.declaration);
           },
           [seed](const UnpackedStructType& t) {
-            return Combine(
-                Combine(seed, t.declaration.unit_name), t.declaration.path);
+            return HashDeclaration(seed, t.declaration);
           },
           [seed](const UnpackedUnionType& t) {
-            return HashFields(seed, t.fields);
+            return HashDeclaration(seed, t.declaration);
           },
           [seed](const UnpackedArrayType& t) {
             return Combine(
@@ -271,8 +275,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           // A packed array names an element type and a packed aggregate names
           // members, and neither is a sequence of values: the whole of such a
           // type is one vector of bits, so reaching into it selects bits of
-          // that
-          // vector rather than reading a value held beside the others.
+          // that vector rather than reading a value held beside the others.
           [](const PackedArrayType&) -> Element { return std::nullopt; },
           [](const PackedStructType&) -> Element { return std::nullopt; },
           [](const PackedUnionType&) -> Element { return std::nullopt; },
@@ -305,6 +308,48 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const NullType&) -> Element { return std::nullopt; },
           [](const DynamicType&) -> Element { return std::nullopt; },
           [](const VoidType&) -> Element { return std::nullopt; },
+      });
+}
+
+auto Type::NamedDeclaration() const -> const TypeDeclarationRef* {
+  using Declared = const TypeDeclarationRef*;
+  // One arm per HIR type and no catch-all, so a type added later fails to
+  // compile here until it says whether it is a declaration.
+  return Visit(
+      Overloaded{
+          // A class is named by a declaration as well, and its definition is
+          // held apart by the class registry rather than beside these.
+          [](const EnumType& t) -> Declared { return &t.declaration; },
+          [](const UnpackedStructType& t) -> Declared {
+            return &t.declaration;
+          },
+          [](const UnpackedUnionType& t) -> Declared { return &t.declaration; },
+
+          [](const ScalarBitType&) -> Declared { return nullptr; },
+          [](const PackedArrayType&) -> Declared { return nullptr; },
+          [](const PackedStructType&) -> Declared { return nullptr; },
+          [](const PackedUnionType&) -> Declared { return nullptr; },
+          [](const UnpackedArrayType&) -> Declared { return nullptr; },
+          [](const DynamicArrayType&) -> Declared { return nullptr; },
+          [](const QueueType&) -> Declared { return nullptr; },
+          [](const AssociativeArrayType&) -> Declared { return nullptr; },
+          [](const WildcardIndexType&) -> Declared { return nullptr; },
+          [](const StringType&) -> Declared { return nullptr; },
+          [](const EventType&) -> Declared { return nullptr; },
+          [](const RealType&) -> Declared { return nullptr; },
+          [](const ShortRealType&) -> Declared { return nullptr; },
+          [](const RealTimeType&) -> Declared { return nullptr; },
+          [](const ChandleType&) -> Declared { return nullptr; },
+          [](const ClassHandleType&) -> Declared { return nullptr; },
+          [](const ImportedClassHandleType&) -> Declared { return nullptr; },
+          [](const WeakHandleType&) -> Declared { return nullptr; },
+          [](const CovergroupHandleType&) -> Declared { return nullptr; },
+          [](const UnitObjectType&) -> Declared { return nullptr; },
+          [](const UnitObjectsType&) -> Declared { return nullptr; },
+          [](const VirtualInterfaceType&) -> Declared { return nullptr; },
+          [](const NullType&) -> Declared { return nullptr; },
+          [](const DynamicType&) -> Declared { return nullptr; },
+          [](const VoidType&) -> Declared { return nullptr; },
       });
 }
 

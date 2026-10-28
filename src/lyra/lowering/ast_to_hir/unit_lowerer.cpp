@@ -17,6 +17,7 @@
 #include <slang/ast/Expression.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
+#include <slang/ast/TimingControl.h>
 #include <slang/ast/statements/MiscStatements.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/ClassSymbols.h>
@@ -50,6 +51,7 @@
 #include "lyra/hir/verify.hpp"
 #include "lyra/lowering/ast_to_hir/fixed_name.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
+#include "lyra/lowering/ast_to_hir/inferred_clocking.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/library_cell.hpp"
 #include "lyra/lowering/ast_to_hir/statement/assertions.hpp"
@@ -156,8 +158,8 @@ auto UnitLowerer::Declare() -> diag::Result<void> {
     }
   }
   {
-    const profiling::TimeTraceScope step("declare records");
-    if (auto r = InternOwnRecordDeclarations(); !r) {
+    const profiling::TimeTraceScope step("declare types");
+    if (auto r = InternOwnTypeDeclarations(); !r) {
       return std::unexpected(std::move(r.error()));
     }
   }
@@ -165,23 +167,49 @@ auto UnitLowerer::Declare() -> diag::Result<void> {
   return PublishSignature();
 }
 
-auto UnitLowerer::InternOwnRecordDeclarations() -> diag::Result<void> {
-  // A structure's or a union's typedef declares the type, and the declaration
-  // brings the operations the language defines on its whole value (LRM 7.2,
-  // 7.3), so the type exists in the unit that declares it whether or not that
-  // unit ever holds a value of it -- another unit naming it reaches those
-  // operations here. It runs after the class walk, because a member may be a
-  // handle to any class the unit declares.
+namespace {
+
+// The type a declaration states, where what it states is, or holds as the
+// elements of an array, an enumeration, an unpacked structure or an unpacked
+// union: the types a declaration declares by being written (LRM 6.19, 7.2,
+// 7.3), whether or not a typedef names them.
+auto DeclaredTypeOf(const slang::ast::Symbol& member)
+    -> const slang::ast::Type* {
+  const slang::ast::Type* stated = nullptr;
+  if (const auto* alias = member.as_if<slang::ast::TypeAliasType>()) {
+    stated = &alias->targetType.getType();
+  } else if (const auto* value = member.as_if<slang::ast::ValueSymbol>()) {
+    stated = &value->getType();
+  } else {
+    return nullptr;
+  }
+  const slang::ast::Type* held = stated;
+  while (const slang::ast::Type* element = held->getArrayElementType()) {
+    held = element;
+  }
+  if (!held->isEnum() && !held->isUnpackedStruct() &&
+      !held->isUnpackedUnion()) {
+    return nullptr;
+  }
+  return stated;
+}
+
+}  // namespace
+
+auto UnitLowerer::InternOwnTypeDeclarations() -> diag::Result<void> {
+  // A declaration stating an enumeration, a structure or a union declares the
+  // type, and the type brings what it declares and the operations the language
+  // defines on its whole value (LRM 6.19, 7.2, 7.3), so the type exists in the
+  // unit that declares it whether or not that unit ever holds a value of it --
+  // another unit naming it takes its definition and reaches those operations
+  // here. That holds of one a typedef names and of one a variable, a net or a
+  // parameter states without a name, which another unit reaches through the
+  // declaration holding it. It runs after the class walk, because a member may
+  // be a handle to any class the unit declares.
   auto visit = [&](const slang::ast::Symbol& member) -> diag::Result<void> {
-    if (member.kind != slang::ast::SymbolKind::TypeAlias) {
-      return {};
-    }
-    const slang::ast::Type& declared =
-        member.as<slang::ast::TypeAliasType>().targetType.getType();
-    if (!declared.isUnpackedStruct() && !declared.isUnpackedUnion()) {
-      return {};
-    }
-    if (auto r = InternType(declared, frontend::PointSpanOf(member.location));
+    const slang::ast::Type* declared = DeclaredTypeOf(member);
+    if (declared == nullptr) return {};
+    if (auto r = InternType(*declared, frontend::PointSpanOf(member.location));
         !r) {
       return std::unexpected(std::move(r.error()));
     }
@@ -225,6 +253,7 @@ auto UnitLowerer::LowerBodies(
   RequireEveryClassBodyLowered();
   ReadPendingDeclarations();
   ReadSignaturesOfNamedCovergroups();
+  ReadTypeDefinitions();
   hir::Verify(unit_, own->construction);
   unit_.body_name = implementations.Intern(specialization_, unit_);
   return hir::Specialization{
@@ -406,7 +435,7 @@ void UnitLowerer::DeclareMemberIdentities(
           port.getInitializer() != nullptr) {
         const hir::StructuralSubroutineId id =
             decls.structural_subroutines.Declare();
-        MapEvaluator(member, id);
+        MapEvaluator(*port.getInitializer(), id);
         published.callables.emplace_back(
             ScopePublicationRecord::PortDefault{.port = &port, .id = id});
       }
@@ -541,9 +570,12 @@ void UnitLowerer::DeclareMemberIdentities(
     case SymbolKind::TimingPath:
     case SymbolKind::PulseStyle:
     case SymbolKind::SystemTimingCheck:
-    case SymbolKind::ClockingBlock:
     case SymbolKind::ClockVar:
     case SymbolKind::LetDecl:
+      return;
+    case SymbolKind::ClockingBlock:
+      DeclareClockingEvaluators(
+          member.as<slang::ast::ClockingBlockSymbol>(), decls, published);
       return;
   }
   throw InternalError(
@@ -622,10 +654,11 @@ void UnitLowerer::DeclareSubroutine(
   // (LRM 13.5.3), wherever the call is, so it is a subroutine of this scope
   // the caller asks for, as a port's default is.
   for (const slang::ast::FormalArgumentSymbol* formal : sub.getArguments()) {
-    if (formal->getDefaultValue() == nullptr) continue;
+    const slang::ast::Expression* default_value = formal->getDefaultValue();
+    if (default_value == nullptr) continue;
     const hir::StructuralSubroutineId evaluator =
         decls.structural_subroutines.Declare();
-    MapEvaluator(*formal, evaluator);
+    MapEvaluator(*default_value, evaluator);
     published.callables.emplace_back(
         ScopePublicationRecord::ArgumentDefault{
             .subroutine = &sub, .formal = formal, .id = evaluator});
@@ -662,13 +695,57 @@ void UnitLowerer::DeclareModportEvaluators(
     }
     const hir::StructuralSubroutineId id =
         decls.structural_subroutines.Declare();
-    MapEvaluator(*port, id);
+    MapEvaluator(ViewExpressionOf(*port), id);
     view.names.emplace_back(ScopePublicationRecord::ViewComputed{.port = port});
     published.callables.emplace_back(
         ScopePublicationRecord::ViewRead{
             .modport = &modport, .port = port, .id = id});
   }
   published.views.push_back(std::move(view));
+}
+
+// A named clocking block clocks a sequence or property it declares wherever the
+// declaration is instantiated (LRM 14.13, 16.16), and another unit reaches the
+// declaration through a name. The clocking event's operands and qualifiers name
+// this scope's declarations, so each is an expression this unit evaluates for
+// that unit, a subroutine of this scope as a view's computed name is. A block
+// with no name is reached by no name, and is never another unit's clock.
+void UnitLowerer::DeclareClockingEvaluators(
+    const slang::ast::ClockingBlockSymbol& block, ScopeDeclarations& decls,
+    ScopePublicationRecord& published) {
+  if (block.name.empty()) return;
+  const auto evaluator = [&](const slang::ast::Expression& expression,
+                             std::string name) {
+    const hir::StructuralSubroutineId id =
+        decls.structural_subroutines.Declare();
+    MapEvaluator(expression, id);
+    const hir::PublishedCallableId position{
+        static_cast<std::uint32_t>(published.callables.size())};
+    published.callables.emplace_back(
+        ScopePublicationRecord::ClockingExpression{
+            .block = &block,
+            .expression = &expression,
+            .name = std::move(name),
+            .id = id});
+    return position;
+  };
+  ScopePublicationRecord::Clocking clocking{.block = &block, .events = {}};
+  const std::vector<const slang::ast::SignalEventControl*> events =
+      ClockingEventsOf(block);
+  for (std::size_t at = 0; at < events.size(); ++at) {
+    const slang::ast::SignalEventControl& event = *events[at];
+    const hir::PublishedCallableId operand =
+        evaluator(event.expr, ClockingEventName(block.name, at));
+    std::optional<hir::PublishedCallableId> condition;
+    if (event.iffCondition != nullptr) {
+      condition =
+          evaluator(*event.iffCondition, ClockingConditionName(block.name, at));
+    }
+    clocking.events.push_back(
+        ScopePublicationRecord::ClockingEntry{
+            .event = &event, .operand = operand, .condition = condition});
+  }
+  published.clockings.push_back(std::move(clocking));
 }
 
 // An assertion whose enabling condition is 1 is not a procedure the design
@@ -1053,7 +1130,11 @@ auto ScopePublicationRecord::CallableOf(const slang::ast::Symbol& holder) const
             [&](const ViewRead& read) -> bool { return read.port == &holder; },
             [&](const ArgumentDefault& argument) -> bool {
               return argument.formal == &holder;
-            }},
+            },
+            // A clocking block holds an expression per event of its clocking
+            // event, so its callables are found through its events rather
+            // than by the block.
+            [](const ClockingExpression&) -> bool { return false; }},
         callable);
   };
   const auto it = std::ranges::find_if(callables, holds);
@@ -1093,26 +1174,27 @@ auto UnitLowerer::LookupStructuralDataObjectBinding(
 }
 
 void UnitLowerer::MapEvaluator(
-    const slang::ast::Symbol& holder, hir::StructuralSubroutineId evaluator) {
-  const auto [_, inserted] = evaluators_.emplace(&holder, evaluator);
+    const slang::ast::Expression& evaluated,
+    hir::StructuralSubroutineId evaluator) {
+  const auto [_, inserted] = evaluators_.emplace(&evaluated, evaluator);
   if (!inserted) {
     throw InternalError(
-        "UnitLowerer::MapEvaluator: a declaration's expression is evaluated in "
-        "one subroutine");
+        "UnitLowerer::MapEvaluator: an expression is evaluated in one "
+        "subroutine");
   }
 }
 
-auto UnitLowerer::FindEvaluator(const slang::ast::Symbol& holder) const
+auto UnitLowerer::FindEvaluator(const slang::ast::Expression& evaluated) const
     -> std::optional<hir::StructuralSubroutineId> {
-  const auto it = evaluators_.find(&holder);
+  const auto it = evaluators_.find(&evaluated);
   if (it == evaluators_.end()) return std::nullopt;
   return it->second;
 }
 
-auto UnitLowerer::EvaluatorOf(const slang::ast::Symbol& holder) const
+auto UnitLowerer::EvaluatorOf(const slang::ast::Expression& evaluated) const
     -> hir::StructuralSubroutineId {
   const std::optional<hir::StructuralSubroutineId> evaluator =
-      FindEvaluator(holder);
+      FindEvaluator(evaluated);
   if (!evaluator.has_value()) {
     throw InternalError(
         "UnitLowerer::EvaluatorOf: an expression another unit asks for takes "

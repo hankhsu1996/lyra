@@ -33,10 +33,16 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
+#include "lyra/hir/callee_interface.hpp"
+#include "lyra/hir/class_ref.hpp"
+#include "lyra/hir/class_registry.hpp"
+#include "lyra/hir/declared_method.hpp"
+#include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/sampled_history.hpp"
 #include "lyra/hir/scope_class.hpp"
+#include "lyra/hir/subroutine_prototype.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
@@ -63,6 +69,56 @@
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
+
+// What a call wrote at each position: the value it passed, nothing where it
+// elided one or wrote a clocking event, and the positions where it left an
+// input to the callee's default (LRM 13.5.3). A default is of the type the
+// callee states for that formal, which whoever declares the callee published,
+// so it is built only once the callee is known.
+struct WrittenActuals {
+  std::vector<std::optional<hir::ExprId>> values;
+  std::vector<std::size_t> omitted;
+
+  // The arguments of a call made through `interface`.
+  auto Through(
+      const hir::CalleeInterface& interface, WalkFrame frame,
+      diag::SourceSpan span) && -> std::vector<std::optional<hir::ExprId>> {
+    for (const std::size_t position : omitted) {
+      if (position >= interface.params.size()) {
+        throw InternalError(
+            "AST->HIR call: a call omits a formal its callee does not state");
+      }
+      values[position] = frame.Exprs().Add(
+          hir::Expr{
+              .type = interface.params[position].type,
+              .data = hir::CalleeDefaultExpr{},
+              .span = span});
+    }
+    return std::move(values);
+  }
+
+  // The arguments of a call of a callee that evaluates no default of its own,
+  // where the front end stood every default the call omitted as an argument.
+  auto WithNoDefault() && -> std::vector<std::optional<hir::ExprId>> {
+    if (!omitted.empty()) {
+      throw InternalError(
+          "AST->HIR call: a callee evaluating no default of its own was left "
+          "one to evaluate");
+    }
+    return std::move(values);
+  }
+};
+
+// What a call of the method `target` passes and awaits, as the class declaring
+// it declared the method, whichever unit that is.
+auto MethodInterfaceOf(
+    const UnitLowerer& unit_lowerer, const hir::ClassMethodTarget& target)
+    -> const hir::CalleeInterface& {
+  return unit_lowerer.Unit()
+      .classes.Declaration(target.owner)
+      .methods.Get(target.method)
+      .prototype.interface;
+}
 
 // Classifies which object an instance-method call runs against into a
 // MethodReceiver arm. Super takes precedence over an accompanying `thisClass`,
@@ -166,14 +222,14 @@ auto ResolveClockingEvent(
     Lowerer& lowerer, const WalkFrame& frame,
     const slang::ast::CallExpression& call, std::size_t clock_arg,
     std::string_view name, diag::SourceSpan span)
-    -> diag::Result<const slang::ast::TimingControl*> {
-  const slang::ast::Expression* written = WrittenArgument(call, clock_arg);
-  const slang::ast::TimingControl* clock =
-      written != nullptr
-          ? &written->as<slang::ast::ClockingEventExpression>().timingControl
-          : ClockInForce(lowerer, frame);
-  if (clock != nullptr) {
-    return clock;
+    -> diag::Result<ClockingEvent> {
+  if (const slang::ast::Expression* written = WrittenArgument(call, clock_arg);
+      written != nullptr) {
+    return ClockingEvent{
+        &written->as<slang::ast::ClockingEventExpression>().timingControl};
+  }
+  if (std::optional<ClockingEvent> clock = ClockInForce(lowerer, frame)) {
+    return *std::move(clock);
   }
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedExpressionForm,
@@ -224,7 +280,7 @@ auto RecordSampledHistory(
   auto subject_or = lowerer.LowerExpr(*call.arguments()[0], scope_frame);
   if (!subject_or) return std::unexpected(std::move(subject_or.error()));
 
-  auto event_or = LowerEventControl(lowerer, scope_frame, **clock_or, span);
+  auto event_or = LowerEventControl(lowerer, scope_frame, *clock_or, span);
   if (!event_or) return std::unexpected(std::move(event_or.error()));
   // The gate belongs to the event, and the event already carries a qualifier
   // of exactly that shape -- the LRM 9.4.2.3 `iff`, read where an occurrence
@@ -408,9 +464,8 @@ auto BuiltinCall(
 // publication.
 auto LowerObjectSubroutineCall(
     UnitLowerer& unit_lowerer, WalkFrame frame, RouteOrigin origin,
-    const slang::ast::SubroutineSymbol& sym,
-    std::vector<std::optional<hir::ExprId>> arguments, diag::SourceSpan span)
-    -> diag::Result<hir::Expr> {
+    const slang::ast::SubroutineSymbol& sym, WrittenActuals actuals,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
   const auto refuse = [&](base::DiagFormat<> message) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
@@ -437,13 +492,13 @@ auto LowerObjectSubroutineCall(
       unit_lowerer.Unit().scope_classes.Get(scope_class);
   const auto callable = published.FindCallable(sym.name);
   if (!callable.has_value()) return unsupported();
-  const hir::TypeId result_type =
-      published.callables.Get(*callable).result_type;
+  const hir::SubroutinePrototype& prototype =
+      published.callables.Get(*callable);
   const hir::RoutedObjectRef receiver = unit_lowerer.MakeRoutedObjectRef(
       frame.Current(), std::move(route),
       unit_lowerer.ScopeClassTypeOf(scope_class));
   return hir::Expr{
-      .type = result_type,
+      .type = prototype.result_type,
       .data =
           hir::CallExpr{
               .callee =
@@ -451,7 +506,8 @@ auto LowerObjectSubroutineCall(
                       .receiver = receiver,
                       .scope_class = scope_class,
                       .callable = *callable},
-              .arguments = std::move(arguments)},
+              .arguments =
+                  std::move(actuals).Through(prototype.interface, frame, span)},
       .span = span,
   };
 }
@@ -466,9 +522,8 @@ template <ExprLowerer Lowerer>
 auto LowerHeldInterfaceCall(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::Expression& held,
     const slang::ast::VirtualInterfaceType& handle_type,
-    const slang::ast::SubroutineSymbol& sym,
-    std::vector<std::optional<hir::ExprId>> arguments, diag::SourceSpan span)
-    -> diag::Result<hir::Expr> {
+    const slang::ast::SubroutineSymbol& sym, WrittenActuals actuals,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
   auto& unit_lowerer = lowerer.Owner();
   auto handle = lowerer.LowerExpr(held, frame);
   if (!handle) return std::unexpected(std::move(handle.error()));
@@ -484,8 +539,10 @@ auto LowerHeldInterfaceCall(
         "LowerHeldInterfaceCall: a scope publishes every subroutine it "
         "declares, and this one is not among them");
   }
+  const hir::SubroutinePrototype& prototype =
+      published.callables.Get(*callable);
   return hir::Expr{
-      .type = published.callables.Get(*callable).result_type,
+      .type = prototype.result_type,
       .data =
           hir::CallExpr{
               .callee =
@@ -493,7 +550,8 @@ auto LowerHeldInterfaceCall(
                       .receiver = std::move(descent->instance),
                       .scope_class = descent->place.scope_class,
                       .callable = *callable},
-              .arguments = std::move(arguments)},
+              .arguments =
+                  std::move(actuals).Through(prototype.interface, frame, span)},
       .span = span};
 }
 
@@ -915,8 +973,7 @@ auto LowerBuiltinClassMethodCall(
 template <ExprLowerer Lowerer>
 auto LowerSubroutineCall(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
-    std::vector<std::optional<hir::ExprId>> arg_ids, diag::SourceSpan span)
-    -> diag::Result<hir::Expr> {
+    WrittenActuals actuals, diag::SourceSpan span) -> diag::Result<hir::Expr> {
   auto& unit_lowerer = lowerer.Owner();
   const auto* sym =
       std::get<const slang::ast::SubroutineSymbol*>(call.subroutine);
@@ -946,7 +1003,7 @@ auto LowerSubroutineCall(
                 .callee =
                     hir::BuiltinMethodRef{
                         .method = *carried, .receiver = receiver},
-                .arguments = std::move(arg_ids),
+                .arguments = std::move(actuals).WithNoDefault(),
             },
         .span = span,
     };
@@ -955,7 +1012,7 @@ auto LowerSubroutineCall(
   // A covergroup's, a coverpoint's or a cross's built-in method (LRM 19.8).
   if (IsCovergroupMember(*sym)) {
     return LowerCovergroupMethodCall(
-        lowerer, frame, call, std::move(arg_ids), span);
+        lowerer, frame, call, std::move(actuals).WithNoDefault(), span);
   }
 
   // A class method the front end supplies itself has no body, so there is no
@@ -968,7 +1025,8 @@ auto LowerSubroutineCall(
       sym->flags.has(slang::ast::MethodFlags::BuiltIn) &&
       declaring != nullptr && unit_lowerer.Defining(*declaring) == declaring) {
     return LowerBuiltinClassMethodCall(
-        lowerer, frame, call, *sym, *declaring, std::move(arg_ids), span);
+        lowerer, frame, call, *sym, *declaring,
+        std::move(actuals).WithNoDefault(), span);
   }
 
   // A static class method call (LRM 8.10): the target has no receiver, so it
@@ -998,6 +1056,8 @@ auto LowerSubroutineCall(
     if (!declaring_instance) {
       return std::unexpected(std::move(declaring_instance.error()));
     }
+    auto arguments = std::move(actuals).Through(
+        MethodInterfaceOf(unit_lowerer, *callee), frame, span);
     return hir::Expr{
         .type = *static_result_type,
         .data =
@@ -1006,7 +1066,7 @@ auto LowerSubroutineCall(
                     hir::StaticMethodCallRef{
                         .callee = *std::move(callee),
                         .declaring_instance = *std::move(declaring_instance)},
-                .arguments = std::move(arg_ids),
+                .arguments = std::move(arguments),
             },
         .span = span,
     };
@@ -1018,7 +1078,7 @@ auto LowerSubroutineCall(
             this_class->type->getCanonicalType()
                 .as_if<slang::ast::VirtualInterfaceType>()) {
       return LowerHeldInterfaceCall(
-          lowerer, frame, *this_class, *handle_type, *sym, std::move(arg_ids),
+          lowerer, frame, *this_class, *handle_type, *sym, std::move(actuals),
           span);
     }
   }
@@ -1039,6 +1099,8 @@ auto LowerSubroutineCall(
     if (!method_result_type) {
       return std::unexpected(std::move(method_result_type.error()));
     }
+    auto arguments = std::move(actuals).Through(
+        MethodInterfaceOf(unit_lowerer, *callee), frame, span);
     return hir::Expr{
         .type = *method_result_type,
         .data =
@@ -1047,7 +1109,7 @@ auto LowerSubroutineCall(
                     hir::MethodCallRef{
                         .receiver = *std::move(receiver_or),
                         .callee = *std::move(callee)},
-                .arguments = std::move(arg_ids),
+                .arguments = std::move(arguments),
             },
         .span = span,
     };
@@ -1084,7 +1146,7 @@ auto LowerSubroutineCall(
                 .callee =
                     hir::ForeignImportRef{
                         .id = *import_id, .declaring_scope = declaring_scope},
-                .arguments = std::move(arg_ids),
+                .arguments = std::move(actuals).WithNoDefault(),
             },
         .span = span,
     };
@@ -1104,6 +1166,7 @@ auto LowerSubroutineCall(
     if (!interface) return std::unexpected(std::move(interface.error()));
     auto result_type = unit_lowerer.InternExpressionType(call, span);
     if (!result_type) return std::unexpected(std::move(result_type.error()));
+    auto arguments = std::move(actuals).Through(*interface, frame, span);
     return hir::Expr{
         .type = *result_type,
         .data =
@@ -1113,7 +1176,7 @@ auto LowerSubroutineCall(
                         .unit_name = std::move(unit_name),
                         .subroutine_name = std::string{sym->name},
                         .interface = *std::move(interface)},
-                .arguments = std::move(arg_ids)},
+                .arguments = std::move(arguments)},
         .span = span,
     };
   }
@@ -1137,10 +1200,12 @@ auto LowerSubroutineCall(
   if (!binding.has_value() ||
       !unit_lowerer.IsOwnScope(frame, *sym->getParentScope())) {
     return LowerObjectSubroutineCall(
-        unit_lowerer, frame, std::move(start), *sym, std::move(arg_ids), span);
+        unit_lowerer, frame, std::move(start), *sym, std::move(actuals), span);
   }
   auto result_type = unit_lowerer.InternExpressionType(call, span);
   if (!result_type) return std::unexpected(std::move(result_type.error()));
+  auto interface = unit_lowerer.MakeCalleeInterface(*sym, span);
+  if (!interface) return std::unexpected(std::move(interface.error()));
   return hir::Expr{
       .type = *result_type,
       .data =
@@ -1148,7 +1213,7 @@ auto LowerSubroutineCall(
               .callee =
                   hir::StructuralSubroutineRef{
                       .subroutine = binding->subroutine_id},
-              .arguments = std::move(arg_ids),
+              .arguments = std::move(actuals).Through(*interface, frame, span),
           },
       .span = span,
   };
@@ -1431,8 +1496,8 @@ auto LowerCallExpr(
   if (!randomization) return std::unexpected(std::move(randomization.error()));
   if (randomization->has_value()) return *std::move(*randomization);
 
-  std::vector<std::optional<hir::ExprId>> arg_ids;
-  arg_ids.reserve(call.arguments().size());
+  WrittenActuals actuals;
+  actuals.values.reserve(call.arguments().size());
   std::optional<hir::TypeId> receiver_type;
   for (std::size_t i = 0; i < call.arguments().size(); ++i) {
     // LRM 13.5: HIR carries an `output` / `inout` actual as the lvalue it is.
@@ -1447,7 +1512,7 @@ auto LowerCallExpr(
     // per-subroutine HIR-to-MIR handler can decide whether elision is valid
     // at this position; positions stay aligned with slang's arg list.
     if (arg->kind == slang::ast::ExpressionKind::EmptyArgument) {
-      arg_ids.emplace_back(std::nullopt);
+      actuals.values.emplace_back(std::nullopt);
       continue;
     }
     // A clocking event names an event rather than standing for a value, so
@@ -1455,16 +1520,12 @@ auto LowerCallExpr(
     // event's ticks a sampled value function counts -- is taken from the call
     // itself, where the rest of the rule for finding it also applies.
     if (arg->kind == slang::ast::ExpressionKind::ClockingEvent) {
-      arg_ids.emplace_back(std::nullopt);
+      actuals.values.emplace_back(std::nullopt);
       continue;
     }
-    if (const auto* omitted = OmittedFormal(call, i)) {
-      const auto at = frontend::PointSpanOf(omitted->location);
-      auto type = lowerer.Owner().InternType(omitted->getType(), at);
-      if (!type) return std::unexpected(std::move(type.error()));
-      arg_ids.emplace_back(frame.Exprs().Add(
-          hir::Expr{
-              .type = *type, .data = hir::CalleeDefaultExpr{}, .span = span}));
+    if (OmitsArgument(call, i)) {
+      actuals.values.emplace_back(std::nullopt);
+      actuals.omitted.push_back(i);
       continue;
     }
     auto arg_or = lowerer.LowerExpr(*arg, frame);
@@ -1472,14 +1533,15 @@ auto LowerCallExpr(
     if (i == 0) {
       receiver_type = arg_or->type;
     }
-    arg_ids.emplace_back(frame.Exprs().Add(*std::move(arg_or)));
+    actuals.values.emplace_back(frame.Exprs().Add(*std::move(arg_or)));
   }
 
   if (call.isSystemCall()) {
     return LowerSystemCall(
-        lowerer, frame, call, std::move(arg_ids), receiver_type, span);
+        lowerer, frame, call, std::move(actuals).WithNoDefault(), receiver_type,
+        span);
   }
-  return LowerSubroutineCall(lowerer, frame, call, std::move(arg_ids), span);
+  return LowerSubroutineCall(lowerer, frame, call, std::move(actuals), span);
 }
 
 template auto LowerCallExpr(

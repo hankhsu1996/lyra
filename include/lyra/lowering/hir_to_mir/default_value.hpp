@@ -4,6 +4,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/hir/type_definition.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -47,7 +48,8 @@ namespace lyra::lowering::hir_to_mir {
 // a structure answers its declared default with, and nothing else states it.
 [[nodiscard]] auto BuildDeclaredStructValue(
     const UnitLowerer& unit_lowerer, mir::Block& block,
-    const hir::UnpackedStructType& source, mir::TypeId structure) -> mir::Expr;
+    const hir::UnpackedStructDefinition& source, mir::TypeId structure)
+    -> mir::Expr;
 
 // Whether an assignment between the two types crosses from one array container
 // kind to another -- unpacked, dynamic, or queue. Two containers of one kind

@@ -19,6 +19,7 @@
 #include <slang/ast/Scope.h>
 #include <slang/ast/SemanticFacts.h>
 #include <slang/ast/Symbol.h>
+#include <slang/ast/TimingControl.h>
 #include <slang/ast/ValuePath.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
@@ -32,6 +33,7 @@
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
+#include <slang/ast/types/AllTypes.h>
 
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
@@ -43,15 +45,20 @@
 #include "lyra/hir/class_declaration.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/published_callable.hpp"
+#include "lyra/hir/published_clocking.hpp"
 #include "lyra/hir/published_modport.hpp"
 #include "lyra/hir/published_target.hpp"
+#include "lyra/hir/specialization_values.hpp"
 #include "lyra/hir/subroutine_prototype.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/type_definition.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/hir/type_import.hpp"
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/lowering/ast_to_hir/connected_interface.hpp"
+#include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
+#include "lyra/lowering/ast_to_hir/statement/timing.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
@@ -89,6 +96,30 @@ auto SelectCoordinate(const slang::ast::Expression& bound)
 auto HoldsCell(const slang::ast::Symbol& symbol) -> bool {
   return symbol.kind == slang::ast::SymbolKind::Variable ||
          symbol.kind == slang::ast::SymbolKind::Net;
+}
+
+// The members an expression of the scope reads, which is what a change of its
+// value is a change of: the call another unit evaluates it through shows
+// nothing to wait on. `member_of` answers the member a declaration the
+// expression names stands for.
+template <typename MemberOf>
+auto ObservedMembers(
+    const slang::ast::Expression& expression, MemberOf member_of)
+    -> diag::Result<std::vector<hir::PublishedMemberId>> {
+  std::vector<hir::PublishedMemberId> observes;
+  diag::Result<void> read_failure;
+  expression.visitSymbolReferences(
+      [&](const slang::ast::Expression&, const slang::ast::Symbol& symbol) {
+        if (!read_failure || !HoldsCell(symbol)) return;
+        diag::Result<hir::PublishedMemberId> id = member_of(symbol);
+        if (!id) {
+          read_failure = std::unexpected(std::move(id.error()));
+          return;
+        }
+        if (!std::ranges::contains(observes, *id)) observes.push_back(*id);
+      });
+  if (!read_failure) return std::unexpected(std::move(read_failure.error()));
+  return observes;
 }
 
 auto SelectRange(const slang::ast::RangeSelectExpression& select)
@@ -368,10 +399,12 @@ auto UnitLowerer::PublishedCallableOf(
     const ScopePublicationRecord::Callable& callable)
     -> diag::Result<hir::SubroutinePrototype> {
   // An expression another unit asks for the value of is evaluated in a
-  // function of this unit that takes nothing.
-  const auto evaluator = [&](std::string name, const slang::ast::Symbol& holder)
+  // function of this unit that takes nothing. It answers the type the
+  // declaration holding the expression gives it, and the expression's own
+  // where no declaration gives one, as for a clocking event's operand.
+  const auto evaluator = [&](std::string name,
+                             diag::Result<hir::TypeId> result_type)
       -> diag::Result<hir::SubroutinePrototype> {
-    auto result_type = InternDeclaredType(holder);
     if (!result_type) return std::unexpected(std::move(result_type.error()));
     return hir::SubroutinePrototype{
         .name = std::move(name),
@@ -400,18 +433,27 @@ auto UnitLowerer::PublishedCallableOf(
                 .result_type = *result_type};
           },
           [&](const ScopePublicationRecord::PortDefault& port) {
-            return evaluator(PortDefaultName(port.port->name), *port.port);
+            return evaluator(
+                PortDefaultName(port.port->name),
+                InternDeclaredType(*port.port));
           },
           [&](const ScopePublicationRecord::ViewRead& read) {
             return evaluator(
                 ModportReadName(read.modport->name, read.port->name),
-                *read.port);
+                InternDeclaredType(*read.port));
           },
           [&](const ScopePublicationRecord::ArgumentDefault& argument) {
             return evaluator(
                 ArgumentDefaultName(
                     argument.subroutine->name, argument.formal->name),
-                *argument.formal);
+                InternDeclaredType(*argument.formal));
+          },
+          [&](const ScopePublicationRecord::ClockingExpression& clocking) {
+            return evaluator(
+                clocking.name,
+                InternExpressionType(
+                    *clocking.expression,
+                    frontend::PointSpanOf(clocking.block->location)));
           }},
       callable);
 }
@@ -424,7 +466,12 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
   // object; a namespace unit publishes its declarations by name and roots
   // neither.
   const auto* body = scope_->asSymbol().as_if<slang::ast::InstanceBodySymbol>();
-  if (body == nullptr) return PublishNamespaceSubroutines();
+  if (body == nullptr) {
+    if (auto r = PublishNamespaceSubroutines(); !r) return r;
+    PublishTypeDefinitions();
+    PublishParameterValues();
+    return {};
+  }
 
   auto& element = signature_.unit.emplace<hir::PublishedDesignElement>(
       hir::PublishedDesignElement{
@@ -656,6 +703,8 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
       element.blocks.push_back(std::move(stated));
     }
   }
+  PublishTypeDefinitions();
+  PublishParameterValues();
   return {};
 }
 
@@ -670,7 +719,8 @@ auto UnitLowerer::PublishScopeClass(
       .loops = {},
       .choices = {},
       .disable_targets = {},
-      .modports = {}};
+      .modports = {},
+      .clocking_blocks = {}};
 
   // A declaration holding storage, published as the declaration states it.
   const auto cell =
@@ -939,12 +989,7 @@ auto UnitLowerer::PublishScopeClass(
     const slang::ast::ModportPortSymbol& port =
         *std::visit([](const auto& defined) { return defined.port; }, name);
     const auto span = frontend::PointSpanOf(port.location);
-    const auto* connection = port.getConnectionExpr();
-    if (connection == nullptr) {
-      throw InternalError(
-          "PublishSignature: a name the view defines is the expression it "
-          "was written with");
-    }
+    const slang::ast::Expression* connection = &ViewExpressionOf(port);
     return std::visit(
         Overloaded{
             [&](const ScopePublicationRecord::ViewPlace&)
@@ -973,28 +1018,17 @@ auto UnitLowerer::PublishScopeClass(
                     "PublishSignature: a name a view offers only for reading "
                     "is evaluated by a callable its scope publishes");
               }
-              std::vector<hir::PublishedMemberId> observes;
-              diag::Result<void> read_failure;
-              connection->visitSymbolReferences(
-                  [&](const slang::ast::Expression&,
-                      const slang::ast::Symbol& symbol) {
-                    if (!read_failure || !HoldsCell(symbol)) return;
-                    auto id = viewed_member(symbol, span);
-                    if (!id) {
-                      read_failure = std::unexpected(std::move(id.error()));
-                      return;
-                    }
-                    if (!std::ranges::contains(observes, *id)) {
-                      observes.push_back(*id);
-                    }
+              auto observes = ObservedMembers(
+                  *connection, [&](const slang::ast::Symbol& symbol) {
+                    return viewed_member(symbol, span);
                   });
-              if (!read_failure) {
-                return std::unexpected(std::move(read_failure.error()));
+              if (!observes) {
+                return std::unexpected(std::move(observes.error()));
               }
               return hir::PublishedModportPort{
                   .name = std::string{port.name},
                   .meaning = hir::ViewComputedValue{
-                      .evaluate = *evaluate, .observes = std::move(observes)}};
+                      .evaluate = *evaluate, .observes = *std::move(observes)}};
             }},
         name);
   };
@@ -1008,6 +1042,53 @@ auto UnitLowerer::PublishScopeClass(
       modport.ports.push_back(*std::move(port));
     }
     cls.modports.push_back(std::move(modport));
+  }
+
+  // A clocking block's events name declarations of this scope, so each crosses
+  // as the callables evaluating its operand and qualifier and the members the
+  // operand reads, as a view's computed name does.
+  for (const ScopePublicationRecord::Clocking& clocking : published.clockings) {
+    const auto span = frontend::PointSpanOf(clocking.block->location);
+    hir::PublishedClockingBlock block{
+        .name = std::string{clocking.block->name}, .events = {}};
+    for (const ScopePublicationRecord::ClockingEntry& event : clocking.events) {
+      // An operand that is an event waits for a trigger of it (LRM 15.5.2),
+      // and any other for a change of its value, which is a change of a member
+      // it reads.
+      if (event.event->expr.type->isEvent()) {
+        block.events.push_back(
+            hir::PublishedClockingEntry{
+                .evaluate = event.operand,
+                .occurrence = hir::PublishedClockingTrigger{},
+                .condition = event.condition});
+        continue;
+      }
+      auto observes = ObservedMembers(
+          event.event->expr,
+          [&](const slang::ast::Symbol& symbol)
+              -> diag::Result<hir::PublishedMemberId> {
+            const std::optional<hir::PublishedMemberId> id =
+                published.MemberOf(symbol);
+            if (!id.has_value()) {
+              return diag::Fail(
+                  span, diag::DiagCode::kUnsupportedStructuralMember,
+                  "a clocking event reading '{}', which the scope declaring "
+                  "the block does not declare, is not yet supported",
+                  symbol.name);
+            }
+            return *id;
+          });
+      if (!observes) return std::unexpected(std::move(observes.error()));
+      block.events.push_back(
+          hir::PublishedClockingEntry{
+              .evaluate = event.operand,
+              .occurrence =
+                  hir::PublishedClockingChange{
+                      .edge = LowerEventEdge(event.event->edge),
+                      .observes = *std::move(observes)},
+              .condition = event.condition});
+    }
+    cls.clocking_blocks.push_back(std::move(block));
   }
   return cls;
 }
@@ -1031,8 +1112,10 @@ auto UnitLowerer::ImportSignatureType(
 
 auto UnitLowerer::PublishingImporter(hir::TypeImportMemo& memo)
     -> hir::TypeImporter {
-  return hir::TypeImporter(
-      unit_.types, signature_.types, memo,
+  return {
+      unit_.types,
+      signature_.types,
+      memo,
       [this](hir::ClassId id) {
         return signature_.ClassIdOf(unit_.classes.KeyOf(id));
       },
@@ -1041,7 +1124,7 @@ auto UnitLowerer::PublishingImporter(hir::TypeImportMemo& memo)
       },
       [this](hir::ScopeClassId id) {
         return signature_.ScopeClassIdOf(unit_.scope_classes.KeyOf(id));
-      });
+      }};
 }
 
 auto UnitLowerer::ReadingImporter(const hir::UnitSignature& signature)
@@ -1131,6 +1214,110 @@ auto UnitLowerer::DeclarationOf(hir::ClassId cls)
     DeclarationOf(*declared.base);
   }
   return declared;
+}
+
+auto UnitLowerer::TypeDefinitionOf(const hir::TypeDeclarationRef& declaration)
+    -> const hir::TypeDefinition& {
+  if (const hir::TypeDefinition* known =
+          unit_.type_definitions.Find(declaration)) {
+    return *known;
+  }
+  if (unit_.IsItself(declaration.unit_name)) {
+    throw InternalError(
+        std::format(
+            "UnitLowerer::TypeDefinitionOf: '{}' declares '{}' and did not "
+            "define it where it named it -- please report this as a bug",
+            declaration.unit_name, support::DisplayOf(declaration.path)));
+  }
+  const hir::UnitSignature& signature = Signatures().Declaring(declaration);
+  hir::TypeImporter importer = ReadingImporter(signature);
+  unit_.type_definitions.Define(
+      declaration,
+      hir::ImportTypeDefinition(
+          importer, hir::PublishedTypeDefinition(signature, declaration)));
+  return *unit_.type_definitions.Find(declaration);
+}
+
+void UnitLowerer::ReadTypeDefinitions() {
+  hir::ForEachNamedDeclaration(
+      unit_.types, [&](const hir::TypeDeclarationRef& declaration) {
+        TypeDefinitionOf(declaration);
+      });
+}
+
+namespace {
+
+// The specialization `decl` is a declaration of: the one the instance holding
+// it is an application of, or, for a namespace or a class's specialization,
+// the unit itself, which is its only one.
+auto SpecializationHolding(
+    const slang::ast::Symbol& decl, const UnitNamingPolicy& naming)
+    -> std::string {
+  const slang::ast::Symbol& home = UnitHomeOf(decl);
+  if (const auto* body = home.as_if<slang::ast::InstanceBodySymbol>()) {
+    return naming.SpecializationNameOf(InstantiationOf(*body));
+  }
+  return CompilationUnitName(home, naming);
+}
+
+// The scope of its unit a parameter is published under.
+auto HolderOf(
+    const slang::ast::ParameterSymbol& param, const UnitNamingPolicy& naming)
+    -> support::DefPath {
+  return DefPathOf(param.getParentScope()->asSymbol(), naming);
+}
+
+}  // namespace
+
+auto UnitLowerer::ParameterValueOf(
+    const slang::ast::ParameterSymbol& param, diag::SourceSpan span)
+    -> diag::Result<hir::ConstantValue> {
+  const std::string holding = SpecializationHolding(param, Naming());
+  if (holding == specialization_) {
+    return MakeConstantValue(param.getValue(), span);
+  }
+  const hir::ConstantValue* published =
+      Signatures().ValuesOf(holding).FindParameter(
+          param.name, HolderOf(param, Naming()));
+  if (published == nullptr) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "a constant of this type is not yet supported");
+  }
+  return *published;
+}
+
+void UnitLowerer::PublishParameterValues() {
+  const auto publish = [&](const slang::ast::Symbol& member) {
+    const auto* param = member.as_if<slang::ast::ParameterSymbol>();
+    if (param == nullptr ||
+        ApplicationHolding(*param->getParentScope()) != scope_) {
+      return;
+    }
+    auto value = MakeConstantValue(
+        param->getValue(), frontend::PointSpanOf(param->location));
+    if (!value) return;
+    values_.parameters.push_back(
+        hir::PublishedParameter{
+            .name = std::string{param->name},
+            .holder = HolderOf(*param, Naming()),
+            .value = *std::move(value)});
+  };
+  WalkOwnDeclarations(publish);
+}
+
+auto UnitLowerer::TakeValues() -> hir::SpecializationValues {
+  return std::move(values_);
+}
+
+void UnitLowerer::PublishTypeDefinitions() {
+  hir::TypeImportMemo memo;
+  hir::TypeImporter importer = PublishingImporter(memo);
+  for (const auto& [declaration, definition] : unit_.type_definitions) {
+    if (!unit_.IsItself(declaration.unit_name)) continue;
+    signature_.type_definitions.Define(
+        declaration, hir::ImportTypeDefinition(importer, definition));
+  }
 }
 
 auto UnitLowerer::NamespaceCalleeInterface(

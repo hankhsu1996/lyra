@@ -7,7 +7,6 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/base/arena.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/interner.hpp"
 #include "lyra/hir/class_declaration.hpp"
@@ -16,7 +15,6 @@
 #include "lyra/hir/class_registry.hpp"
 #include "lyra/hir/covergroup.hpp"
 #include "lyra/hir/covergroup_ref.hpp"
-#include "lyra/hir/declared_method.hpp"
 #include "lyra/hir/port_direction.hpp"
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/published_covergroup.hpp"
@@ -27,6 +25,7 @@
 #include "lyra/hir/scope_class_id.hpp"
 #include "lyra/hir/subroutine_prototype.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/type_definition.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/hir/type_import.hpp"
 #include "lyra/support/def_path.hpp"
@@ -148,6 +147,10 @@ struct UnitSignature {
   // the publishing unit's pool: a signature is read where that unit's arenas
   // are not, so an identity on one has to index storage the signature carries.
   TypePool types;
+  // The definition of each enumeration, unpacked structure and unpacked union
+  // this unit declares, which a reader takes the first time it needs what one
+  // of them holds.
+  TypeDefinitions type_definitions;
   // Every class anything here names, under the pair every unit names it by. A
   // class named in here is named by its position in this list: an identity of
   // the publishing unit means nothing where the signature is read, so the
@@ -188,7 +191,7 @@ struct UnitSignature {
   }
 
   // The identity `key` has here, taken the first time it is named.
-  auto ScopeClassIdOf(const ScopeClassKey& key) -> ScopeClassId {
+  auto ScopeClassIdOf(const ScopeClassKey& key) const -> ScopeClassId {
     return scope_class_keys.Intern(key);
   }
 
@@ -199,7 +202,7 @@ struct UnitSignature {
   }
 
   // The identity `key` has here, taken the first time it is named.
-  auto CovergroupIdOf(const CovergroupKey& key) -> CovergroupId {
+  auto CovergroupIdOf(const CovergroupKey& key) const -> CovergroupId {
     return covergroup_keys.Intern(key);
   }
 
@@ -209,7 +212,7 @@ struct UnitSignature {
   }
 
   // The identity `key` has here, taken the first time it is named.
-  auto ClassIdOf(const ClassKey& key) -> ClassId {
+  auto ClassIdOf(const ClassKey& key) const -> ClassId {
     return class_keys.Intern(key);
   }
 
@@ -288,5 +291,16 @@ struct UnitSignature {
     -> DeclaredStaticProperties;
 [[nodiscard]] auto ImportMethods(
     TypeImporter& importer, const DeclaredMethods& methods) -> DeclaredMethods;
+
+// What a declared type declares, in the context `importer` takes it into: the
+// same definition with every type in it answered again there.
+[[nodiscard]] auto ImportTypeDefinition(
+    TypeImporter& importer, const TypeDefinition& definition) -> TypeDefinition;
+
+// What the declared type `declaration` declares, as `signature`, the signature
+// of the unit declaring it, published it.
+[[nodiscard]] auto PublishedTypeDefinition(
+    const UnitSignature& signature, const TypeDeclarationRef& declaration)
+    -> const TypeDefinition&;
 
 }  // namespace lyra::hir
