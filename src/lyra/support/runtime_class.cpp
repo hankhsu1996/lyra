@@ -24,20 +24,6 @@ auto RuntimeClassName(RuntimeClass klass) -> std::string_view {
   throw InternalError("RuntimeClassName: unknown runtime class");
 }
 
-auto IsObjectOfTheRoot(RuntimeClass klass) -> bool {
-  switch (klass) {
-    case RuntimeClass::kScope:
-    case RuntimeClass::kObject:
-    case RuntimeClass::kClassObject:
-    case RuntimeClass::kSynchronizationObject:
-    case RuntimeClass::kConstraintProblem:
-      return true;
-    case RuntimeClass::kProcess:
-      return false;
-  }
-  throw InternalError("IsObjectOfTheRoot: unknown runtime class");
-}
-
 auto LibraryCallbackName(LibraryCallback callback) -> std::string_view {
   switch (callback) {
     case LibraryCallback::kScopeResolve:

@@ -10,20 +10,55 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/runtime/cancellation.hpp"
+#include "lyra/runtime/class_definition.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/foreign_execution.hpp"
 #include "lyra/runtime/generated_call_scope.hpp"
+#include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/wait.hpp"
 
 namespace lyra::runtime {
 
+namespace {
+
+// What `randomize()` asks of a process (LRM 18.6): it declares no random
+// variable and states no constraint, and its hooks do nothing, as a class
+// extending nothing that declares none of them has (LRM 9.7, 18.6.2).
+constexpr ClassObjectInfo kProcessRandomization{};
+
+const ObjectDefinition kProcessDefinition{
+    .base = nullptr,
+    .scope = nullptr,
+    .class_object = &kProcessRandomization,
+    .end = &EndObjectOf<RuntimeProcess>,
+    .interfaces = {},
+    .methods = nullptr};
+
+}  // namespace
+
+auto RuntimeProcess::Create(
+    ExecutionContext context, Coroutine<void> coroutine, DrawRng generator)
+    -> std::shared_ptr<RuntimeProcess> {
+  std::unique_ptr<RuntimeProcess> created(
+      new RuntimeProcess(context, std::move(coroutine), generator));
+  // The process ends through the reference from here, which every holder of
+  // it shares.
+  return std::static_pointer_cast<RuntimeProcess>(
+      created.release()->TakeCreatorsShare());
+}
+
+auto RuntimeProcess::Shared() -> std::shared_ptr<RuntimeProcess> {
+  return std::static_pointer_cast<RuntimeProcess>(shared_from_this());
+}
+
 RuntimeProcess::RuntimeProcess(
-    ExecutionContext context, Coroutine<void> coroutine, DrawRng rng)
-    : context_(context),
+    ExecutionContext context, Coroutine<void> coroutine, DrawRng generator)
+    : ClassObject(kProcessDefinition, generator),
+      context_(context),
       coroutine_(std::move(coroutine)),
-      running_(rng),
+      running_(Generator()),
       // Before the body runs, the top frame is the active leaf (what the engine
       // schedules to start the process); a wait moves the leaf inward.
       current_leaf_(coroutine_.Token()) {
@@ -37,7 +72,6 @@ RuntimeProcess::~RuntimeProcess() {
   while (!foreign_calls_.empty()) {
     foreign_calls_.pop_back();
   }
-  HandOverExpiry(expiry_);
 }
 
 auto RuntimeProcess::TopActivation() const -> Activation* {
@@ -333,7 +367,7 @@ auto RuntimeProcess::Run(RuntimeEffects& effects, Activation* activation)
   // Taken before the resume, since `activation` may be an enabled task's frame
   // that is destroyed as control returns up the enable chain.
   const std::shared_ptr<RuntimeProcess> process =
-      activation->Process().shared_from_this();
+      activation->Process().Shared();
   if (!process->ResumeWith(effects, activation)) {
     return false;
   }
@@ -344,7 +378,7 @@ auto RuntimeProcess::Run(RuntimeEffects& effects, Activation* activation)
 void RuntimeProcess::RunUndispatched(
     RuntimeEffects& effects, Activation* activation) {
   const std::shared_ptr<RuntimeProcess> process =
-      activation->Process().shared_from_this();
+      activation->Process().Shared();
   if (!Run(effects, activation) ||
       process->TerminationCause() != ProcessTerminationCause::kKilled) {
     return;

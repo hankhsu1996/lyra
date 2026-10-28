@@ -43,9 +43,7 @@ namespace {
 // definition.
 auto IsObjectOfTheRoot(const mir::TypePool& types, mir::TypeId type) -> bool {
   const mir::Type& t = types.Get(type);
-  const auto* library = t.As<mir::RuntimeClassType>();
-  return t.Is<mir::ObjectType>() ||
-         (library != nullptr && support::IsObjectOfTheRoot(library->which));
+  return t.Is<mir::ObjectType>() || t.Is<mir::RuntimeClassType>();
 }
 
 auto RuntimeClassCppType(support::RuntimeClass klass) -> std::string_view {

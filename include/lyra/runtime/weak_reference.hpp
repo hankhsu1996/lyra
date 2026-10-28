@@ -34,11 +34,7 @@ class WeakObjectRef {
 // The object `weak` refers to while it has not expired, and null after. An
 // evaluation a wait makes (LRM 8.30.3) is handed `report`, and is told to watch
 // the object's expiry, which changes this answer; null where no wait asks.
-// `UpgradeProcess` is the same for a weak reference to a process (LRM 9.7),
-// which is an object of its own kind.
 [[nodiscard]] auto Upgrade(const WeakObjectRef& weak, ReadReport* report)
-    -> value::ObjectRef;
-[[nodiscard]] auto UpgradeProcess(const WeakObjectRef& weak, ReadReport* report)
     -> value::ObjectRef;
 
 // Whether `weak` refers to the object `strong` names: both to none, or both to

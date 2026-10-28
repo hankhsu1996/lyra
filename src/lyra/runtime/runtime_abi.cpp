@@ -2065,12 +2065,9 @@ using lyra::runtime::OwnedLaidOutCopy;
 using lyra::runtime::ParkAt;
 using lyra::runtime::PositionNamedAt;
 using lyra::runtime::ProcessAwait;
-using lyra::runtime::ProcessGetRandstate;
 using lyra::runtime::ProcessKill;
 using lyra::runtime::ProcessResume;
 using lyra::runtime::ProcessSelf;
-using lyra::runtime::ProcessSetRandstate;
-using lyra::runtime::ProcessSrandom;
 using lyra::runtime::ProcessStatus;
 using lyra::runtime::ProcessSuspend;
 using lyra::runtime::ProgramLifetime;
@@ -2476,22 +2473,6 @@ void lyra_rt_process_resume(const void* self, void* runtime) {
   ProcessResume(Read<ObjectRef>(self), *static_cast<RuntimeEffects*>(runtime));
 }
 
-void lyra_rt_process_srandom(
-    const void* self, const void* seed, std::int64_t seed_width,
-    bool seed_is_signed, bool seed_is_four_state) {
-  ProcessSrandom(
-      Read<ObjectRef>(self),
-      NumberAt(seed, seed_width, seed_is_signed, seed_is_four_state).View());
-}
-
-auto lyra_rt_process_get_randstate(const void* self, void* out) -> void* {
-  return Emplace(out, ProcessGetRandstate(Read<ObjectRef>(self)));
-}
-
-void lyra_rt_process_set_randstate(const void* self, const void* state) {
-  ProcessSetRandstate(Read<ObjectRef>(self), Read<String>(state));
-}
-
 void lyra_rt_object_srandom(
     void* object, const void* seed, std::int64_t seed_width,
     bool seed_is_signed, bool seed_is_four_state) {
@@ -2536,14 +2517,6 @@ auto lyra_rt_weak_upgrade(const void* weak, void* evaluation, void* out)
   return Emplace(
       out,
       lyra::runtime::Upgrade(
-          Read<WeakObjectRef>(weak), static_cast<ReadReport*>(evaluation)));
-}
-
-auto lyra_rt_weak_upgrade_process(const void* weak, void* evaluation, void* out)
-    -> void* {
-  return Emplace(
-      out,
-      lyra::runtime::UpgradeProcess(
           Read<WeakObjectRef>(weak), static_cast<ReadReport*>(evaluation)));
 }
 

@@ -6,7 +6,6 @@
 #include "lyra/runtime/wait.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/object_ref.hpp"
-#include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
 
@@ -72,25 +71,5 @@ void ProcessSuspend(const value::ObjectRef& self, RuntimeEffects& runtime);
 // happened -- which is the whole of the clause, because a process that was
 // runnable when it was stopped is one whose wait was already satisfied.
 void ProcessResume(const value::ObjectRef& self, RuntimeEffects& runtime);
-
-// LRM 18.13.3 -- 18.13.5, reached through a process handle (LRM 9.7): the
-// generator these act on is the one the process draws from (LRM 18.14.2),
-// whichever process makes the call, so a thread seeded or restored through its
-// handle draws from what was set the next time it draws.
-void ProcessSrandom(
-    const value::ObjectRef& self, const value::ConstIntegralView& seed);
-
-template <value::IntegralValue T>
-void ProcessSrandom(const value::ObjectRef& self, const T& seed) {
-  ProcessSrandom(self, seed.AsWords().View());
-}
-
-auto ProcessGetRandstate(const value::ObjectRef& self) -> value::String;
-
-// A state no `get_randstate` answered is undefined (LRM 18.13.5), and it is a
-// value the design computed, so setting one is the design's error and leaves
-// the generator as it was.
-void ProcessSetRandstate(
-    const value::ObjectRef& self, const value::String& state);
 
 }  // namespace lyra::runtime

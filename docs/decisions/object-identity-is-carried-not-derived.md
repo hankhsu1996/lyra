@@ -10,10 +10,15 @@ Accepted. Settles how a source-rendering backend projects an object reference, u
 `../architecture/object_model.md` invariant 4's split between an object's identity and a reference's
 static view. Reverses nothing; it replaces a realization that predates that invariant.
 
-D5 is superseded (2026-10-02). The library's root class now has a virtual destructor, so it is the
-primary base of every object and sits at the object's own address on both backends (C++ ABI 2.4),
-whatever the source declares. A reference recovered from that part therefore names the object
-itself, and the object records nothing.
+D5 is superseded (2026-10-02). The library's root class is the primary base of every object and sits
+at the object's own address on both backends, whatever the source declares. A reference recovered
+from that part therefore names the object itself, and the object records nothing. This paragraph
+said the root had a virtual destructor; re-read on 2026-10-28, it has none, and its first word is
+the object's class definition, through which an object is ended.
+
+The second fact below no longer holds (2026-10-28): the object a process handle names starts with
+the part every class object starts with, so every object a source reference names is an object of
+the library's root.
 
 ## Why this decision matters
 
@@ -158,7 +163,11 @@ the pair for every reference-typed member against the chance that someone does.
 
 **Give the identity a common emitted base so it can be a typed pointer.** Rejected by the second
 measurement: two of the objects a reference can name are not emitted classes at all, so the base
-would have to be retrofitted onto the runtime library for the sake of a spelling.
+would have to be retrofitted onto the runtime library for the sake of a spelling. Re-derived on
+2026-10-28: the root is now that base for every object a reference names, a process's included, for
+reasons of its own -- an object is ended and randomized through its class's definition. The
+rejection still stands on D3's ground, not this one: a static view may name a contract the class
+conforms to, which a pointer to the root does not carry.
 
 ## Revisit condition
 

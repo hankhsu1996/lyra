@@ -11,12 +11,12 @@
 namespace lyra::runtime {
 
 auto Urandom(RuntimeEffects& runtime) -> value::IntUnsigned {
-  return value::IntUnsigned::FromInt(runtime.Running().rng.NextValue());
+  return value::IntUnsigned::FromInt(runtime.Running().generator->NextValue());
 }
 
 auto UrandomSeeded(RuntimeEffects& runtime, std::int64_t seed)
     -> value::IntUnsigned {
-  DrawRng& rng = runtime.Running().rng;
+  DrawRng& rng = *runtime.Running().generator;
   rng.Reseed(RandomSeed{static_cast<std::uint32_t>(seed)});
   return value::IntUnsigned::FromInt(rng.NextValue());
 }
@@ -31,7 +31,7 @@ auto UrandomRange(
   const std::uint64_t span = std::uint64_t{upper} - lower + 1;
   return value::IntUnsigned::FromInt(
       static_cast<std::uint32_t>(
-          lower + DrawBelow(runtime.Running().rng, span)));
+          lower + DrawBelow(*runtime.Running().generator, span)));
 }
 
 auto Random(RuntimeEffects& runtime) -> value::Int {

@@ -67,9 +67,12 @@ Done when:
       interface class handle, `rand_mode()` and `constraint_mode()` are refused by the front end, as
       LRM 8.26.9 requires.
 
-- [ ] The same methods on a `process` (LRM 9.7, 18.6 -- 18.9): `randomize()`, the hooks and the mode
-      methods are refused as not yet supported; only the generator's three methods are carried out
-      on it.
+- [x] The same methods on a `process` (LRM 9.7, 18.6 -- 18.9): it declares no random variable and no
+      constraint, so `randomize()` answers 1, and with an inline constraint answers whether it holds
+      over the state it reads, `status()` included, leaving that state as it was; its hooks and mode
+      methods change nothing, and its generator is the one the process draws from. A `rand` handle
+      to a process is randomized with the object holding it. Randomizing a process draws nothing
+      from its generator, a choice the standard leaves to the tool.
 
 - [x] The probabilistic distribution functions -- `$dist_uniform`, `$dist_normal`,
       `$dist_exponential`, `$dist_poisson`, `$dist_chi_square`, `$dist_t`, `$dist_erlang` (LRM
@@ -130,22 +133,24 @@ Done when:
       first and whose answer is read as a value.
 
 - [x] The `randomize()` method and the object RNG (LRM 18.6, 18.15). Each object owns a generator
-      split from whatever made it, used only by its own `randomize()`. `pre_randomize` and
-      `post_randomize` run around each call, on the object and on every object a random handle
-      reaches; a call that finds no answer returns 0, runs no `post_randomize` and leaves every
-      variable as it was. A call the source writes naming a hook of a class that declares none, by
-      `super`, by its name, through `this` or through a handle, runs the one the nearest class above
-      declares, or nothing where none does (LRM 18.6.2). `randomize()` of a class extending a class
-      of another unit runs the hooks that class declares, as it does for a class of its own unit.
+      split from whatever made it, which its own `randomize()` draws from; a process's is the one
+      its thread draws from. `pre_randomize` and `post_randomize` run around each call, on the
+      object and on every object a random handle reaches; a call that finds no answer returns 0,
+      runs no `post_randomize` and leaves every variable as it was. A call the source writes naming
+      a hook of a class that declares none, by `super`, by its name, through `this` or through a
+      handle, runs the one the nearest class above declares, or nothing where none does (LRM
+      18.6.2). `randomize()` of a class extending a class of another unit runs the hooks that class
+      declares, as it does for a class of its own unit.
 
 - [x] `randomize()`, `srandom`, `get_randstate`, `set_randstate` and the hooks called through an
       interface class handle (LRM 8.26.9) act on the object the handle refers to, and a hook called
       that way runs the one the object's own class runs, since an interface class's hooks are
       virtual.
 
-- [x] Inline constraints added at the call site, a call listing the variables it chooses, an array
-      among them standing for its elements and its size, every handle it does not list held, and the
-      checker form `randomize(null)` (LRM 18.7, 18.11).
+- [x] Inline constraints added at the call site, a name in them -- a method's included -- looked up
+      in the randomized object's class first and then where the call is written, a call listing the
+      variables it chooses, an array among them standing for its elements and its size, every handle
+      it does not list held, and the checker form `randomize(null)` (LRM 18.7, 18.11).
 
 - [ ] A call listing a random handle: refused where it is compiled, since the object it reaches
       would choose its variables by its own modes while the call's listing governs the rest.

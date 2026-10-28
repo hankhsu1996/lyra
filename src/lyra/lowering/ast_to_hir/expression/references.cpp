@@ -428,23 +428,6 @@ auto IsLineageOf(
   return false;
 }
 
-// The upgrade of a weak handle to an object of the kind `handle` names: a class
-// object or a process, two kinds of object a handle may name.
-auto UpgradeOf(const hir::Type& handle) -> support::BuiltinFn {
-  if (handle.Is<hir::ClassHandleType>()) {
-    return support::BuiltinFn::kWeakUpgrade;
-  }
-  if (const auto* imported = handle.As<hir::ImportedClassHandleType>()) {
-    switch (imported->klass) {
-      case support::ImportedRuntimeClass::kProcess:
-        return support::BuiltinFn::kWeakUpgradeProcess;
-    }
-  }
-  throw InternalError(
-      "a weak reference refers to an object of a kind it has no upgrade for "
-      "-- please report this as a bug");
-}
-
 // A read of a property Lyra's definitions hold weakly (LRM 8.30.3): the object
 // the weak handle refers to, or null, as the property's declared type sees it.
 auto LowerReadWeaklyHeld(
@@ -459,8 +442,7 @@ auto LowerReadWeaklyHeld(
           hir::CallExpr{
               .callee =
                   hir::BuiltinMethodRef{
-                      .method =
-                          UpgradeOf(unit_lowerer.Unit().types.Get(read_as)),
+                      .method = support::BuiltinFn::kWeakUpgrade,
                       .receiver = frame.Exprs().Add(*std::move(stored))},
               .arguments = {}},
       .span = span};
@@ -513,19 +495,15 @@ auto MakeClassPropertyRefExpr(
                 .target = *std::move(target)},
         .span = span};
   }
-  // In the constraints a `randomize() with` call writes, a name of a property
-  // of the object's class reaches that object (LRM 18.7).
-  if (frame.randomized_class != nullptr &&
-      IsLineageOf(*frame.randomized_class, owner_class)) {
-    auto object_type = unit_lowerer.InternType(*frame.randomized_class, span);
-    if (!object_type) return std::unexpected(std::move(object_type.error()));
-    const hir::ExprId object = frame.Exprs().Add(
-        hir::MakeRefExpr(hir::RandomizedObject{}, *object_type, span));
+  auto randomized =
+      RandomizedObjectReaching(unit_lowerer, frame, owner_class, span);
+  if (!randomized) return std::unexpected(std::move(randomized.error()));
+  if (randomized->has_value()) {
     return hir::Expr{
         .type = *type_id,
         .data =
             hir::ClassPropertyAccessExpr{
-                .base_value = object, .target = *std::move(target)},
+                .base_value = **randomized, .target = *std::move(target)},
         .span = span};
   }
   return hir::MakeRefExpr(
@@ -584,6 +562,20 @@ auto LowerValueRef(
 auto NamesCurrentInstance(const slang::ast::Expression& expr) -> bool {
   const auto* named = expr.as_if<slang::ast::NamedValueExpression>();
   return named != nullptr && IsCurrentInstanceHandle(named->symbol);
+}
+
+auto RandomizedObjectReaching(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    const slang::ast::ClassType& owner, diag::SourceSpan span)
+    -> diag::Result<std::optional<hir::ExprId>> {
+  if (frame.randomized_class == nullptr ||
+      !IsLineageOf(*frame.randomized_class, owner)) {
+    return std::nullopt;
+  }
+  auto object_type = unit_lowerer.InternType(*frame.randomized_class, span);
+  if (!object_type) return std::unexpected(std::move(object_type.error()));
+  return frame.Exprs().Add(
+      hir::MakeRefExpr(hir::RandomizedObject{}, *object_type, span));
 }
 
 auto LowerCurrentInstanceMember(

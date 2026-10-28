@@ -19,12 +19,16 @@ namespace {
 // The generator of an object made now (LRM 18.14.1): the next split of
 // whatever is running, a process or a static initialization.
 auto SplitFromRunning() -> DrawRng {
-  return current_runtime().Running().rng.Split();
+  return current_runtime().Running().generator->Split();
 }
 
 }  // namespace
 
 ClassObject::ClassObject() : generator_(SplitFromRunning()) {
+}
+
+ClassObject::ClassObject(const ObjectDefinition& definition, DrawRng generator)
+    : GcObject(definition), generator_(generator) {
 }
 
 ClassObject::~ClassObject() = default;
@@ -56,8 +60,8 @@ void EnterRandomization(
   const ClassObjectInfo* info = object.definition->class_object;
   if (info == nullptr) {
     throw InternalError(
-        "ClassObject: an object of a source class has a definition that "
-        "states nothing of its randomization -- please report this as a bug");
+        "ClassObject: a class object has a definition that states "
+        "nothing of its randomization -- please report this as a bug");
   }
   if (const auto body = info->*entry; body != nullptr) {
     body(&object, args...);

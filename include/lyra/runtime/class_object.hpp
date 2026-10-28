@@ -1,10 +1,7 @@
 #pragma once
 
-#include <memory>
-
 #include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
-#include "lyra/runtime/randomization.hpp"
 #include "lyra/runtime/rng.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -12,13 +9,13 @@
 
 namespace lyra::runtime {
 
-// The part every object of a source class starts with (LRM 8.3): what the
-// language gives every class object whatever its class declares, which is its
-// own generator (LRM 18.14.1, 18.14.3). An object's generator is split from
-// whatever is running where `new` makes it -- a process, or a static
-// initialization, whose generator its container's initialization RNG gave --
-// so an object's draws follow from where it was made and from nothing else.
-// `randomize()` draws from it and nothing else does (LRM 18.15).
+// The part every object of a class starts with (LRM 8.3), whether the source
+// or this library defines the class: what the language gives every class
+// object whatever its class declares, which is its own generator (LRM 18.14.1,
+// 18.14.3). An object `new` makes has its generator split from whatever is
+// running there -- a process, or a static initialization, whose generator its
+// container's initialization RNG gave -- so its draws follow from where it was
+// made and from nothing else. `randomize()` draws from it (LRM 18.15).
 //
 // A copy made by `new` (LRM 8.12) is a new object, so it is seeded as any new
 // object is rather than continuing the stream of the one it copies.
@@ -31,6 +28,9 @@ namespace lyra::runtime {
 class ClassObject : public GcObject {
  public:
   ClassObject();
+  // An object of a class of this library, which states its own definition and
+  // is handed the generator it starts with rather than splitting one.
+  ClassObject(const ObjectDefinition& definition, DrawRng generator);
   ~ClassObject();
   ClassObject(const ClassObject& other);
   auto operator=(const ClassObject& other) -> ClassObject&;

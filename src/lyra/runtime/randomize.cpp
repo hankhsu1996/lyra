@@ -107,7 +107,7 @@ auto RandomizeObjectListed(ClassObject* object, RuntimeEffects& runtime)
 
 auto RandomizeScope(RuntimeEffects& runtime) -> value::ObjectRef {
   auto made = std::make_unique<ConstraintProblem>(
-      runtime, runtime.Running().rng, value::ObjectRef{}, true);
+      runtime, *runtime.Running().generator, value::ObjectRef{}, true);
   return AdoptObject(made.release());
 }
 

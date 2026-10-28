@@ -61,7 +61,9 @@ namespace {
 // elements of an array of them, so what is random of it is the objects they
 // reach (LRM 18.4) rather than a value of its own.
 auto HoldsHandles(const hir::TypePool& types, hir::TypeId type) -> bool {
-  return types.Get(ChosenValueType(types, type)).Is<hir::ClassHandleType>();
+  const hir::Type& chosen = types.Get(ChosenValueType(types, type));
+  return chosen.Is<hir::ClassHandleType>() ||
+         chosen.Is<hir::ImportedClassHandleType>();
 }
 
 // One of what `randomize()` asks of a class, as its body is written: handed
