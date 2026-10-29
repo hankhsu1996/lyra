@@ -1,8 +1,10 @@
 // A real is a C double and a shortreal a C float, both represented as IEEE Std
-// 754 describes, so a real value assigned to a shortreal is rounded to the
-// narrower format. A value the narrower format can hold exactly survives the
-// round trip unchanged, while one that needs more precision comes back
-// changed, by no more than half a step of the narrower format (LRM 6.12).
+// 754 describes, so a real value assigned to a shortreal becomes a value of
+// the narrower format (LRM 6.12). A value the narrower format can hold exactly
+// survives the round trip unchanged, while one that needs more precision comes
+// back as one of the two values of the narrower format either side of it;
+// which of the two, the standard leaves to C, which leaves it to the
+// implementation.
 module Top;
   real exact_source = 2.5;
   real near_one = 1.0 + 1.0 / 1073741824.0;
@@ -31,13 +33,15 @@ module Top;
   final begin
     if (exact_back != 2.5)
       $fatal(1, "exact_back was %g, expected 2.5", exact_back);
-    if (near_one_back != 1.0)
-      $fatal(1, "near_one_back was %.12f, expected 1.0", near_one_back);
+    if (near_one_back != 1.0 && near_one_back != 1.0 + 1.0 / 8388608.0)
+      $fatal(1, "near_one_back was %.12f, expected 1.0 or the value after it",
+             near_one_back);
     if (pi_error <= 0.0)
       $fatal(1, "pi_error was %g, expected a nonzero rounding error",
              pi_error);
-    if (pi_error > 0.0000002)
-      $fatal(1, "pi_error was %g, expected at most 0.0000002", pi_error);
+    // One step of the narrower format between 2 and 4 is 2 to the -22.
+    if (pi_error >= 4.0 / 16777216.0)
+      $fatal(1, "pi_error was %g, expected less than one step", pi_error);
     $display("All checks passed");
   end
 endmodule

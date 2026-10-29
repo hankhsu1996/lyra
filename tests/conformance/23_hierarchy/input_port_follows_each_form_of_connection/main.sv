@@ -2,8 +2,9 @@
 // from what it is connected to, whatever that is: a variable of the port's own
 // type, an expression, a part of a variable, a variable reached by a
 // hierarchical name, or an input of the instantiating module handed on (LRM
-// 23.3.3, 23.3.3.2). Left unconnected it holds its data type's default initial
-// value, and omitted it takes the default the port declares (LRM 23.2.2.4).
+// 23.3.3, 23.3.3.2). A variable port left unconnected holds its data type's
+// default initial value, and omitted it takes the default the port declares
+// (LRM 23.2.2.4).
 // The data type may be any that crosses a port: an unpacked structure, a vector
 // wider than a machine word, an unpacked array. A change to the source is a
 // change to the port, which an event control on the port sees once. What a
@@ -28,9 +29,9 @@ module Forms (
     input logic [7:0] computed,
     input logic [3:0] part,
     input logic [7:0] elsewhere,
-    input logic [7:0] open,
-    input int         open_int,
-    input int         defaulted = 17
+    input var logic [7:0] open,
+    input var int         open_int,
+    input var int         defaulted = 17
 );
 endmodule
 
@@ -42,7 +43,7 @@ typedef struct {
 module Shapes (
     input record_t          record,
     input logic    [99:0]   wide,
-    input int               list  [3]
+    input var int               list  [3]
 );
 endmodule
 

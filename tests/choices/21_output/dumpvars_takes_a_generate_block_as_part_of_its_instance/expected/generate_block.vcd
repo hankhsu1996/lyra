@@ -1,0 +1,15 @@
+$timescale 1ns $end
+$scope module Top $end
+$scope module u $end
+$var reg 1 M m $end
+$scope begin gen $end
+$var reg 1 G g $end
+$upscope $end
+$upscope $end
+$upscope $end
+$enddefinitions $end
+#0
+$dumpvars
+0M
+1G
+$end

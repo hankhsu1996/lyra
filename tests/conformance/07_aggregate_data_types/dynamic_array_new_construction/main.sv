@@ -10,10 +10,12 @@
 // assignment as well as of a procedural one, and a declaration's initializer
 // runs at time zero, so an array sized that way is already its declared size
 // when the first procedure reads it (LRM 7.5, 7.5.1, 7.5.2, 10.5, Table 7-1).
+// What a declaration copies from is a constant, since initializers run in no
+// order among themselves (LRM 6.8).
 module Top;
+  localparam int DeclaredOver [3] = '{4, 5, 6};
   int declared [] = new [3];
-  int declared_over [3] = '{4, 5, 6};
-  int declared_copy [] = new [2] (declared_over);
+  int declared_copy [] = new [2] (DeclaredOver);
 
   int size_declared = 77;
   int declared2 = 77;

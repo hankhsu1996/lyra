@@ -16,7 +16,7 @@ package lib;
   endclass
 endpackage
 
-module Holder (input int seed);
+module Holder (input var int seed);
   int sum[3];
   int lineage = -1;
   int passed = -1;

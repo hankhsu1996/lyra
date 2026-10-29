@@ -20,14 +20,14 @@ module Top;
     failure = $system("exit 1");
     command = "exit 0";
     computed = $system(command);
-    processor = $system;
+    processor = $system();
 
     progress = 1;
     $system("exit 0");
     progress = 2;
     $system("exit 1");
     progress = 3;
-    $system;
+    $system();
     progress = 4;
   end
 

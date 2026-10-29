@@ -2,7 +2,7 @@
 
 Date: 2026-09-01. Status: accepted. Revised 2026-10-27: a claim names the kind of report and what
 the standard fixes of it, never its wording, and an absence is of a kind of report rather than of
-all output.
+all output. Revised 2026-10-28: a case asks for at most one report the run may end at (E8).
 
 ## Why this decision matters
 
@@ -101,6 +101,11 @@ E7. A verdict is about the tool, and the case's own validity is a separate quest
     its sentinel. Where a case's mistake cannot show in a run that takes one of the paths the
     standard allows -- readiness printed after a report the tool went on past -- it is found by a
     tool taking another of those paths, not by the judge.
+
+E8. A case asks for at most one report the tool may end the run at. A run ended at the first of
+    two leaves the second unresolved (E7), so a case asking for several is decided only on a
+    tool that goes on past them; it is split into one case per report, and a case whose subject
+    is something besides such a report issues none, so that its claim is decided on every tool.
 ```
 
 ## What the revision found

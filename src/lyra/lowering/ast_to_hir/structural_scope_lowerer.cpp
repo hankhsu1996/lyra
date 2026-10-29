@@ -66,6 +66,50 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
+// What a variable of `declared` type is recorded as in a value dump, by the
+// type mapping (LRM 21.7.5, Table 21-11): an int and an enumeration are
+// integers, an enumeration whose base type is stated is recorded as that type,
+// and every other integral type is a reg.
+auto DumpedKindOfVariableType(const slang::ast::Type& declared)
+    -> std::optional<support::DumpVarKind> {
+  const slang::ast::Type& type = declared.getCanonicalType();
+  if (type.isEvent()) {
+    return support::DumpVarKind::kEvent;
+  }
+  if (const auto* floating = type.as_if<slang::ast::FloatingType>()) {
+    switch (floating->floatKind) {
+      case slang::ast::FloatingType::Real:
+      case slang::ast::FloatingType::ShortReal:
+        return support::DumpVarKind::kReal;
+      case slang::ast::FloatingType::RealTime:
+        return support::DumpVarKind::kRealtime;
+    }
+    return std::nullopt;
+  }
+  if (const auto* enumeration = type.as_if<slang::ast::EnumType>()) {
+    return DumpedKindOfVariableType(enumeration->baseType);
+  }
+  if (const auto* predefined =
+          type.as_if<slang::ast::PredefinedIntegerType>()) {
+    switch (predefined->integerKind) {
+      case slang::ast::PredefinedIntegerType::Integer:
+      case slang::ast::PredefinedIntegerType::Int:
+        return support::DumpVarKind::kInteger;
+      case slang::ast::PredefinedIntegerType::Time:
+        return support::DumpVarKind::kTime;
+      case slang::ast::PredefinedIntegerType::ShortInt:
+      case slang::ast::PredefinedIntegerType::LongInt:
+      case slang::ast::PredefinedIntegerType::Byte:
+        return support::DumpVarKind::kReg;
+    }
+    return std::nullopt;
+  }
+  if (type.isIntegral()) {
+    return support::DumpVarKind::kReg;
+  }
+  return std::nullopt;
+}
+
 // What a net or a variable is recorded as in a value dump (LRM 21.7.2.1
 // `var_type`), none for one a dump records nothing of: a variable holding no
 // integral value, real or event -- an unpacked array or structure, a string, a
@@ -115,39 +159,7 @@ auto DumpedKindOf(const slang::ast::ValueSymbol& value)
       variable->lifetime != slang::ast::VariableLifetime::Static) {
     return std::nullopt;
   }
-  const slang::ast::Type& type = value.getType().getCanonicalType();
-  if (type.isEvent()) {
-    return support::DumpVarKind::kEvent;
-  }
-  if (const auto* floating = type.as_if<slang::ast::FloatingType>()) {
-    switch (floating->floatKind) {
-      case slang::ast::FloatingType::Real:
-      case slang::ast::FloatingType::ShortReal:
-        return support::DumpVarKind::kReal;
-      case slang::ast::FloatingType::RealTime:
-        return support::DumpVarKind::kRealtime;
-    }
-    return std::nullopt;
-  }
-  if (const auto* predefined =
-          type.as_if<slang::ast::PredefinedIntegerType>()) {
-    switch (predefined->integerKind) {
-      case slang::ast::PredefinedIntegerType::Integer:
-        return support::DumpVarKind::kInteger;
-      case slang::ast::PredefinedIntegerType::Time:
-        return support::DumpVarKind::kTime;
-      case slang::ast::PredefinedIntegerType::ShortInt:
-      case slang::ast::PredefinedIntegerType::Int:
-      case slang::ast::PredefinedIntegerType::LongInt:
-      case slang::ast::PredefinedIntegerType::Byte:
-        return support::DumpVarKind::kReg;
-    }
-    return std::nullopt;
-  }
-  if (type.isIntegral()) {
-    return support::DumpVarKind::kReg;
-  }
-  return std::nullopt;
+  return DumpedKindOfVariableType(value.getType());
 }
 
 // How many bits a dump declares a thing of `kind` and type `type` with: an

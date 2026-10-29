@@ -322,6 +322,13 @@ this list is what remembers.
       does. The handle reaches the property and names the object that hears the write, and both read
       one evaluation of it. A write standing in a loop's condition or step evaluates the handle once
       each time that condition or step is evaluated.
+- [ ] `this` in a property's initializer is an error (LRM 8.11 allows it only as `type(this)` and in
+      non-static methods, constraints, inlined constraints and embedded covergroups). The front end
+      accepts it and the program runs, reading the object being constructed. A case holds it.
+- [ ] `return new;` is an error: a constructor call is admitted only as the right-hand side of a
+      declaration or a blocking assignment (LRM A.2.4, A.6.2), and a return statement takes an
+      expression (LRM A.6.5). The front end accepts it and the function returns a new object of its
+      return type. A case holds it.
 
 ## Open Questions and Deferred Choices
 

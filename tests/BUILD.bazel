@@ -810,11 +810,14 @@ CONFORMANCE_DATA = [
         "choices/**/*.c",
         "choices/**/*.cpp",
         "choices/**/*.sv",
+        "choices/**/expected/*",
         "choices/**/lib.map",
         "conformance/**/*.sv",
         "conformance/**/*.c",
         "conformance/**/*.cpp",
+        "conformance/**/expected/*",
         "conformance/**/lib.map",
+        "harness/*.sv",
         "paths/*.yaml",
     ],
     allow_empty = True,
@@ -899,7 +902,9 @@ cc_binary(
             "conformance/**/*.sv",
             "conformance/**/*.c",
             "conformance/**/*.cpp",
+            "conformance/**/expected/*",
             "conformance/**/lib.map",
+            "harness/*.sv",
         ],
         allow_empty = True,
     ),
@@ -933,6 +938,23 @@ cc_test(
         "@bazel_tools//tools/cpp/runfiles",
         "@fmt",
         "@googletest//:gtest",
+        "@slang",
+    ],
+)
+
+# Whether a case leans on the order static initializers run in, which the
+# standard leaves open: a check on the corpus, read off the front end.
+cc_test(
+    name = "static_initializer_order_test",
+    srcs = ["static_initializer_order_test.cpp"],
+    copts = LYRA_COPTS,
+    data = CONFORMANCE_DATA,
+    deps = [
+        ":framework",
+        "//:compiler",
+        "@bazel_tools//tools/cpp/runfiles",
+        "@fmt",
+        "@googletest//:gtest_main",
         "@slang",
     ],
 )

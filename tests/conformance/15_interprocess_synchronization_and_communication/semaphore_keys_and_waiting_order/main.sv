@@ -2,8 +2,9 @@
 // zero (15.3.1), put() returns keys and lets a waiter that now has enough go on
 // (15.3.2), get() takes keys or waits for them, and its waiters are served in
 // the order they arrived (15.3.3), so one asking for more at the head holds back
-// a later one asking for fewer. try_get() takes keys only where get() would not
-// have to wait (15.3.4). It is a class, so another class can extend it (15.2).
+// a later one asking for fewer. try_get() takes keys where as many are
+// available and answers 0 where they are not (15.3.4). It is a class, so
+// another class can extend it (15.2).
 class Pool extends semaphore;
   int handed_out;
   function new(int keys);
@@ -23,7 +24,6 @@ module Top;
   time small_got = 0;
   int got_order[$];
   int try_first = -1;
-  int try_queued = -1;
   int try_after = -1;
   int debt_try = -1;
   time debt_got = 0;
@@ -47,7 +47,6 @@ module Top;
       end
       begin
         #2 s.put(1);
-        try_queued = s.try_get(1);
         #1 s.put(2);
         #1 try_after = s.try_get(1);
       end
@@ -69,8 +68,6 @@ module Top;
   final begin
     if (try_first !== 0)
       $fatal(1, "try_get on an empty bucket answered %0d, expected 0", try_first);
-    if (try_queued !== 0)
-      $fatal(1, "try_get past a waiter answered %0d, expected 0", try_queued);
     if (big_got !== 3)
       $fatal(1, "the first waiter got its keys at %0t, expected 3", big_got);
     if (small_got !== 3)

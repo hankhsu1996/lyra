@@ -1,9 +1,12 @@
+// @includes: assignment_pattern.sv
+//
 // The compilation-unit scope holds any item a package may hold and has no
 // instance either (LRM 3.12.1, 26.2), so a subroutine declared there reaches
 // the readings a type's own declaration decides for the same reason a package
 // subroutine does: an enumeration's declared name and its neighbour in the
 // declared order (LRM 6.19.5), and the assignment pattern %p prints an
-// aggregate as (LRM 21.2.1.6).
+// aggregate as (LRM 21.2.1.6). That pattern's spelling is the tool's, so the
+// text is held to being one of the legal spellings of the value.
 typedef enum {IDLE, RUN, STOP} unit_state_t;
 typedef struct {
   int count;
@@ -37,7 +40,7 @@ module Top;
     if (run_name !== "RUN") $fatal(1, "run_name was '%s', expected RUN", run_name);
     if (next_state !== STOP)
       $fatal(1, "unit_after(RUN) was '%s', expected STOP", next_state.name());
-    if (entry_text !== "'{count:4, state:IDLE}")
+    if (!assignment_pattern::Spells(entry_text, "'{count:4, state:IDLE}"))
       $fatal(1, "entry_text was %s, expected '{count:4, state:IDLE}",
              entry_text);
     $display("All checks passed");

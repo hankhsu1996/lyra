@@ -16,7 +16,7 @@ module Sub #(parameter int ID = 0);
   initial id = ID;
 endmodule
 
-module Held (input int seed);
+module Held (input var int seed);
   export "DPI-C" function read_id;
   function int read_id();
     return seed;
@@ -34,7 +34,7 @@ endmodule
 // Two instances of this module are alike in everything but where they stand
 // and what they are connected to, so the export and the import inside each are
 // told apart only by its scope.
-module Pair (input int seed);
+module Pair (input var int seed);
   for (genvar i = 0; i < 1; i++) begin : slot
     Held held (.seed);
   end

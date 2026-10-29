@@ -1,11 +1,17 @@
+// @includes: assignment_pattern.sv
+//
 // %p prints each singular element an aggregate is traversed down to as that
 // element would print standing alone, so an element of an enumeration gives the
 // name its type declares for the value, and the base type's rendering for a
 // value the type declares no name for -- the same rule an operand written as
 // one enumeration answers to (LRM 21.2.1.6). The traversal reaches an element
 // through every kind of aggregate, including a packed one, where the element is
-// a run of bits rather than storage of its own.
+// a run of bits rather than storage of its own. The spelling of the pattern is
+// the tool's, so each text is held to being one of the legal spellings of the
+// value written here in full.
 module Top;
+  import assignment_pattern::Spells;
+
   typedef enum {ON, OFF} switch_e;
 
   typedef struct {
@@ -42,15 +48,15 @@ module Top;
   end
 
   final begin
-    if (settings_text != "'{ON, OFF}")
+    if (!Spells(settings_text, "'{ON, OFF}"))
       $fatal(1, "declared enumeration elements printed as '%s'", settings_text);
-    if (outside_text != "'{7}")
+    if (!Spells(outside_text, "'{7}"))
       $fatal(1, "an element outside the enumeration printed as '%s'",
              outside_text);
-    if (nested_text != "'{sw:OFF, count:3}")
+    if (!Spells(nested_text, "'{sw:OFF, count:3}"))
       $fatal(1, "an enumeration member of a structure printed as '%s'",
              nested_text);
-    if (packed_nested_text != "'{sw:ON, pad:5}")
+    if (!Spells(packed_nested_text, "'{sw:ON, pad:5}"))
       $fatal(1, "an enumeration member of a packed structure printed as '%s'",
              packed_nested_text);
     $display("All checks passed");

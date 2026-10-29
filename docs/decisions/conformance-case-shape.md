@@ -3,6 +3,9 @@
 Date: 2026-08-26. Status: accepted. Revised 2026-10-27: a run is read by a reader per tool and
 judged once for every tool (D10), a case names nothing of any tool (D3, D5), what Lyra chose where
 the standard is silent lives apart (D11), and parking is a record rather than a file name (D12).
+Revised 2026-10-28: a case claims only what every tool owes, with a forbidden text covered by its
+refusal (D2), a dump compared as the standard reads one (D6), a harness of the corpus's own (D13),
+limits the caller sets (D14), and a disputed reading kept to what both readings require (D15).
 
 ## Why this decision matters
 
@@ -44,7 +47,9 @@ D1. A case is one SystemVerilog file that checks itself. It computes, compares i
 
 D2. The expected value is written by a human, in the case, and is never a value a tool computed.
     This is what makes the comparison an independent oracle rather than a tautology. Where the
-    standard allows several results, the case accepts every one of them.
+    standard allows several results, the case accepts every one of them. The program is one the
+    standard allows: a forbidden text is covered by a case claiming its refusal, never by being
+    used, since a case built on one claims nothing of a tool that rightly refuses it.
 
 D3. A case names no tool: no path, no backend, no command, no option, no file a tool generates,
     and no wording of a tool's message. It would be valid if Lyra had one path or twenty, and it
@@ -65,9 +70,11 @@ D5. There is no per-case manifest file. Metadata that a case genuinely needs is 
     the directory. Prose describing the claim is an ordinary comment and is never parsed.
 
 D6. Golden output is a sibling file, and exists only where the output channel is itself the subject
-    (LRM 21: what $display writes, how stdout and stderr divide, the order output interleaves).
-    Format-string behavior is checked in-language through $sformatf, which returns the formatted
-    text as a value.
+    (LRM 21: what $display writes, how stdout and stderr divide, the order output interleaves, the
+    dump files of LRM 21.7). A dump is compared as the standard reads one -- its declarations and
+    its values at each time, in the time unit it states -- so what the standard leaves to the
+    tool decides nothing. Format-string behavior is checked in-language through $sformatf, which
+    returns the formatted text as a value, and only for what the standard fixes of that text.
 
 D7. What a path cannot do is recorded once per path, not once per case, as a list of case paths and
     the refusal each currently produces. A case that unexpectedly passes fails the run just as an
@@ -102,6 +109,19 @@ D11. What Lyra chose where the standard leaves the answer to the tool is held in
 
 D12. A case Lyra cannot run without harm is parked by a record naming it and why, and is held only
     to elaborating. The case is left as it is, so every other tool runs it.
+
+D13. Where checking in the language would mean writing one recognizer in many cases -- the
+    spellings LRM 21.2.1.6 allows of a `%p` text -- the corpus keeps it once, as SystemVerilog a
+    case names by directive, and holds it to a case of its own that every tool runs, so a tool
+    failing that case shows the harness wrong rather than the tool.
+
+D14. How wide a run goes and how much memory and time each program may take are the caller's to
+    set, since they are facts of the machine and not of the corpus. A program stopped at one is
+    unresolved, never a failure, and a run states what it ran under.
+
+D15. Where two clauses give one text different meanings, the case keeps what both readings
+    require. The dispute is a ruling in `../architecture/language_conformance.md`, and Lyra's
+    reading is held by a case of D11's corpus.
 ```
 
 ## Rejected alternatives
@@ -154,6 +174,25 @@ missing optional one, which "does not mean violating a web standard". SystemVeri
 feature set, so the second distinction has no row here, and a use model the standard mandates that a
 tool lacks is a nonconformance.
 
+## Where D13 to D15 came from
+
+Run under Verilator, the whole corpus showed cases whose claims went past the standard: an exact
+`%p` text where LRM 21.2.1.6 leaves spacing, index labels and defaults to the tool, a dump compared
+line by line where LRM 21.7.2 calls the format free, an order among static initializers LRM 6.8 does
+not fix, a program written in a form the standard forbids, and a reading of one clause where another
+says otherwise. Each failed a tool that was not wrong.
+
+The field keeps what a recognizer needs once and small. test262 puts shared code in harness files a
+test includes by name, used sparingly, and does not admit a test that restricts a valid
+implementation; LLVM's FileCheck canonicalizes white space and lets one pattern accept several
+spellings; Verilator's own regression suite compares two dumps by their contents rather than their
+text. A recognizer written in the language under test keeps the foundation the same language, and
+holding it to a case of its own is what keeps it from being a second, unchecked oracle.
+
+A program with no limit can take the memory of the machine it shares, so every run needs one; a
+limit is then a reading of the run and not a verdict about the tool, and it is the caller's, since
+the corpus does not know the machine it runs on.
+
 ## Where D8a came from
 
 The first cut of this decision gave a wrong answer no home at all: it failed, and stayed failing
@@ -175,7 +214,8 @@ the thing the strict rule was for: a defect that cannot be quietly forgotten.
   renderer, and the SV-literal parser all leave with the mechanism they served.
 - A tool other than Lyra is held to the corpus by writing a reader for it, and nothing in a case
   changes for it.
-- A case is executable by any conforming simulator with no harness at all. A second simulator is a
+- A case is executable by any conforming simulator with no harness beyond the corpus's own
+  SystemVerilog, except that a dump it writes is compared outside the run. A second simulator is a
   second opinion on whether a case says only what the standard requires, never an oracle on what the
   standard requires: its answers are judged by the same claims.
 - Coverage becomes a question with an answer: which clauses hold cases, and which cases each path

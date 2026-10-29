@@ -3,7 +3,7 @@
 // listed instances only (LRM 23.11). The bound instantiation's names are read
 // from the target's point of view, so two binds of one instance name into two
 // targets, connected to different names, each connect their own.
-module Probe (input int seen, output int hit);
+module Probe (input var int seen, output int hit);
   int got = -1;
   initial #1 got = seen;
   assign hit = 1;

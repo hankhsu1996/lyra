@@ -2,12 +2,10 @@
 // the memory, beginning at the lowest numbered location unless a start address
 // says otherwise, and stops when the memory is full or the file is spent
 // unless a count says otherwise. Each word takes as many whole bytes as it
-// spans -- one for an 8-bit word, two for a 9-bit one -- and locations the
-// load does not reach keep the value they had (LRM 21.3.4.4). A word is any
-// integral type (LRM 6.11.1), so a memory of enumerations or of packed
-// structures loads exactly as one of vectors of the same width does. A start
-// address is an address in the memory, so where the memory is a slice it is
-// one of the indices the slice holds of the array it is taken from.
+// spans, read big endian, and locations the load does not reach keep the
+// value they had (LRM 21.3.4.4). A word is any integral type (LRM 6.11.1), so
+// a memory of enumerations or of packed structures loads exactly as one of
+// vectors of the same width does.
 module Top;
   typedef enum bit [31:0] {
     NONE = 32'h00000000,
@@ -33,9 +31,6 @@ module Top;
   bit [31:0] descending[20:17];
   int descending_count;
 
-  bit [8:0] nine_bit[0:2];
-  int nine_bit_count;
-
   bit [31:0] short_file[0:3];
   int short_file_count;
 
@@ -45,12 +40,6 @@ module Top;
   halves_t structured[0:1];
   int structured_count;
 
-  bit [31:0] sliced[0:7];
-  bit [31:0] sliced_expected[0:7] =
-      '{0, 0, 0, 0, 32'h01020304, 32'h05060708, 0, 0};
-  bit [31:0] dynamic_sliced[];
-  int dynamic_sliced_count;
-  int sliced_count;
 
   initial begin
     fd = $fopen("sixteen.bin", "wb");
@@ -75,13 +64,6 @@ module Top;
     descending_count = $fread(descending, fd, , 2);
     $fclose(fd);
 
-    fd = $fopen("nine.bin", "wb");
-    $fwrite(fd, "%c%c%c%c%c%c", 8'h80, 8'h00, 8'hC0, 8'h00, 8'h7F, 8'h80);
-    $fclose(fd);
-    fd = $fopen("nine.bin", "rb");
-    nine_bit_count = $fread(nine_bit, fd);
-    $fclose(fd);
-
     fd = $fopen("seven.bin", "wb");
     $fwrite(fd, "%c%c%c%c%c%c%c",
             8'hAA, 8'hBB, 8'hCC, 8'hDD, 8'hEE, 8'hFF, 8'h11);
@@ -96,15 +78,6 @@ module Top;
 
     fd = $fopen("sixteen.bin", "rb");
     structured_count = $fread(structured, fd);
-    $fclose(fd);
-
-    fd = $fopen("sixteen.bin", "rb");
-    sliced_count = $fread(sliced[2:5], fd, 4);
-    $fclose(fd);
-
-    dynamic_sliced = new[8];
-    fd = $fopen("sixteen.bin", "rb");
-    dynamic_sliced_count = $fread(dynamic_sliced[2:5], fd, 4);
     $fclose(fd);
   end
 
@@ -151,16 +124,6 @@ module Top;
       $fatal(1, "descending[19] was %h, expected the value it started with",
              descending[19]);
 
-    if (nine_bit_count !== 6)
-      $fatal(1, "filling three 9-bit words returned %0d, expected 6",
-             nine_bit_count);
-    if (nine_bit[0] !== 9'h100)
-      $fatal(1, "nine_bit[0] was %h, expected 100", nine_bit[0]);
-    if (nine_bit[1] !== 9'h180)
-      $fatal(1, "nine_bit[1] was %h, expected 180", nine_bit[1]);
-    if (nine_bit[2] !== 9'h0FF)
-      $fatal(1, "nine_bit[2] was %h, expected 0ff", nine_bit[2]);
-
     if (short_file_count !== 7)
       $fatal(1, "a seven-byte file returned %0d, expected 7",
              short_file_count);
@@ -193,18 +156,6 @@ module Top;
     if (structured[1].upper !== 16'h0506)
       $fatal(1, "structured[1].upper was %h, expected 0506",
              structured[1].upper);
-
-    if (sliced_count !== 8)
-      $fatal(1, "two words of a slice returned %0d, expected 8", sliced_count);
-    if (sliced !== sliced_expected)
-      $fatal(1, "a slice loaded from index 4 left %p, expected its words at 4 and 5",
-             sliced);
-    if (dynamic_sliced_count !== 8)
-      $fatal(1, "two words of a slice of a dynamic array returned %0d, expected 8",
-             dynamic_sliced_count);
-    if (dynamic_sliced[4] !== 32'h01020304 || dynamic_sliced[5] !== 32'h05060708 ||
-        dynamic_sliced[3] !== 32'h0 || dynamic_sliced[6] !== 32'h0)
-      $fatal(1, "a slice of a dynamic array loaded from index 4 left %p", dynamic_sliced);
     $display("All checks passed");
   end
 endmodule

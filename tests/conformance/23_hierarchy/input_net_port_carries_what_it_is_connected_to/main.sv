@@ -1,9 +1,10 @@
 // An input port declared with no data type is a net (LRM 23.2.2.3), driven by
 // the continuous assignment its connection implies (LRM 23.3.3). Connected to
 // the whole of a variable or of a net of its own type, it carries that object's
-// value, every change of which is a change of the port, and its first value at
-// time zero is a change from the high impedance of a net nothing has driven
-// yet (LRM 4.9.1, 9.4.2 Table 9-2). Handed on to another such port, the value
+// value, every change of which is a change of the port. Whether its first
+// value at time zero reaches a procedure already waiting on it depends on an
+// order the standard leaves open (LRM 4.7), so changes are counted from after
+// time zero. Handed on to another such port, the value
 // is the same at every level, and so it is where the port in between is
 // declared as a variable (LRM 23.3.3.2). A force on the port overrides the
 // port and whatever it is handed on to, never what drives it, and its release
@@ -23,11 +24,9 @@ module Leaf (
     input [3:0] in
 );
   int changes;
-  int rises;
   int star;
   logic [3:0] star_seen;
   always @(in) changes++;
-  always @(posedge in[0]) rises++;
   always @* begin
     star_seen = in;
     star++;
@@ -122,7 +121,7 @@ module Top;
 
   logic [3:0] typed_first, typed_forced, typed_released;
   logic [3:0] direct_first, chain_first, net_first;
-  int rises_first, changes_first;
+  int changes_first;
   logic [3:0] direct_moved, chain_moved;
   int changes_moved, changes_same;
   logic [3:0] forced_seen, source_under_force, forced_held, direct_under_force;
@@ -257,7 +256,6 @@ module Top;
     direct_first = direct.in;
     chain_first = chain.leaf.in;
     net_first = from_net.in;
-    rises_first = direct.rises;
     changes_first = direct.changes;
     member_seen = from_member.in;
     typed_first = typed_chain.leaf.in;
@@ -319,20 +317,18 @@ module Top;
       $fatal(1, "chain_first was %b, expected 0001", chain_first);
     if (net_first !== 4'b0110)
       $fatal(1, "net_first was %b, expected 0110", net_first);
-    if (rises_first !== 1)
-      $fatal(1, "rises_first was %0d, expected 1", rises_first);
-    if (changes_first !== 1)
-      $fatal(1, "changes_first was %0d, expected 1", changes_first);
     if (member_seen !== 4'h9)
       $fatal(1, "member_seen was %h, expected 9", member_seen);
     if (direct_moved !== 4'b0011)
       $fatal(1, "direct_moved was %b, expected 0011", direct_moved);
     if (chain_moved !== 4'b0011)
       $fatal(1, "chain_moved was %b, expected 0011", chain_moved);
-    if (changes_moved !== 2)
-      $fatal(1, "changes_moved was %0d, expected 2", changes_moved);
-    if (changes_same !== 2)
-      $fatal(1, "changes_same was %0d, expected 2", changes_same);
+    if (changes_moved !== changes_first + 1)
+      $fatal(1, "direct.changes moved from %0d to %0d, expected one more",
+             changes_first, changes_moved);
+    if (changes_same !== changes_moved)
+      $fatal(1, "direct.changes moved from %0d to %0d on an equal value",
+             changes_moved, changes_same);
     if (forced_seen !== 4'b1111)
       $fatal(1, "forced_seen was %b, expected 1111", forced_seen);
     if (source_under_force !== 4'b0011)

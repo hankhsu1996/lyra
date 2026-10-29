@@ -54,11 +54,6 @@ module Top;
     endtask
   endclass
 
-  class Initialized;
-    int base_value = 3;
-    int derived_value = this.base_value * 2;
-  endclass
-
   class Node;
     function Node itself();
       return this;
@@ -112,7 +107,6 @@ module Top;
   int after_suspending_task = -1;
   int inherited_through_this = -1;
   int derived_parameter = -1;
-  int initializer_through_this = -1;
   int static_through_this = -1;
   int type_of_this = -1;
   bit returned_this_is_same = 0;
@@ -125,7 +119,6 @@ module Top;
   initial begin
     Demo #(3) d;
     Derived e;
-    Initialized f;
     Node g;
     Node h;
     Conforming k;
@@ -155,9 +148,6 @@ module Top;
     e.raise();
     inherited_through_this = e.y;
     derived_parameter = e.param_value();
-
-    f = new();
-    initializer_through_this = f.derived_value;
 
     g = new();
     h = new();
@@ -192,9 +182,6 @@ module Top;
              inherited_through_this);
     if (derived_parameter !== 2)
       $fatal(1, "derived_parameter was %0d, expected 2", derived_parameter);
-    if (initializer_through_this !== 6)
-      $fatal(1, "initializer_through_this was %0d, expected 6",
-             initializer_through_this);
     if (static_through_this !== 4)
       $fatal(1, "static_through_this was %0d, expected 4", static_through_this);
     if (type_of_this !== 8)

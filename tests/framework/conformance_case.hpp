@@ -32,6 +32,12 @@ inline constexpr std::string_view kCaseEntrySource = "main.sv";
 // (LRM 33.3.1).
 inline constexpr std::string_view kCaseLibraryMap = "lib.map";
 
+// The directory beside a case's sources holding the files its run is held to.
+inline constexpr std::string_view kCaseExpectedOutputs = "expected";
+
+// The directory beside a corpus holding the helpers its cases may include.
+inline constexpr std::string_view kHarnessDirectory = "harness";
+
 // The kinds of report the standard names. A severity task's report carries the
 // severity it was called at (LRM 20.10), a failing assertion's default action
 // is a call of $error (LRM 16.14.1), and an operation's run-time error is a
@@ -113,6 +119,15 @@ enum class CompilationUnits : std::uint8_t {
 // is where a file sits rather than something a directive has to say; the
 // directives that remain state what the standard cannot be read from the
 // sources alone.
+// A file the program has the tool write -- a dump -- whose content the case
+// states by hand, compared as the standard reads that kind of file, since its
+// spelling is free where its meaning is not.
+struct ExpectedOutput {
+  // The name the program writes it under, in the directory it runs in.
+  std::string name;
+  std::string text;
+};
+
 struct ConformanceCase {
   // The case directory's path under the corpus root, which is its identity: the
   // outer directory is the LRM clause it tests and the inner one is the subject
@@ -136,6 +151,8 @@ struct ConformanceCase {
   // The simulated program's own arguments, where LRM 21.6 plusargs reach a
   // design.
   std::vector<std::string> program_args;
+  // The files the run is held to, from the case's `expected` directory.
+  std::vector<ExpectedOutput> expected_outputs;
   Claim claim;
   std::optional<CompilationUnits> compilation_units;
 };

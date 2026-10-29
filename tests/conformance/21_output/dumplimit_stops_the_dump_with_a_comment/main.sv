@@ -1,44 +1,40 @@
 // $dumplimit bounds the file at a number of bytes: once it reaches them the
 // dump stops and a comment says the limit was reached, so no later change is
-// recorded however long the simulation goes on (LRM 21.7.1.5).
+// recorded however long the simulation goes on (LRM 21.7.1.5). How much of the
+// bound the definitions take is the tool's, so no expected dump can say where
+// it stops; the bound here is far above any header and far below what the run
+// would write without it, and the file is read back one token at a time, which
+// is what a free-format dump allows (LRM 21.7.2, 21.3.4.3).
+`timescale 1ns / 1ns
 module Top;
   logic [7:0] count = 0;
 
-  int last_time;
-  bit commented;
-  int bytes;
-
   initial begin
     int fd;
-    string line;
+    string token;
     bit defined;
+    bit commented;
+    int changes_after_comment;
 
     $dumpfile("limited.vcd");
-    $dumplimit(400);
+    $dumplimit(4000);
     $dumpvars;
-    repeat (200) #1 count = count + 1;
+    repeat (2000) #1 count = count + 1;
     $dumpflush;
 
-    last_time = -1;
     fd = $fopen("limited.vcd", "r");
-    while ($fgets(line, fd) > 0) begin
-      bytes += line.len();
-      if (line.substr(0, 14) == "$enddefinitions") defined = 1;
-      else if (defined && line.substr(0, 7) == "$comment") commented = 1;
-      else if (line.len() > 1 && line[0] == "#")
-        last_time = line.substr(1, line.len() - 1).atoi();
+    while ($fscanf(fd, "%s", token) == 1) begin
+      if (token == "$enddefinitions") defined = 1;
+      else if (defined && token == "$comment") commented = 1;
+      else if (commented && token[0] == "#") changes_after_comment++;
     end
     $fclose(fd);
-  end
 
-  final begin
     if (!commented)
       $fatal(1, "no comment followed the definitions to say the limit was hit");
-    if (last_time < 0 || last_time >= 200)
-      $fatal(1, "changes were recorded up to time %0d, expected fewer",
-             last_time);
-    if (bytes > 1000)
-      $fatal(1, "the file held %0d bytes, expected it to stop near 400", bytes);
+    if (changes_after_comment != 0)
+      $fatal(1, "%0d times were recorded after the limit was hit",
+             changes_after_comment);
     $display("All checks passed");
   end
 endmodule

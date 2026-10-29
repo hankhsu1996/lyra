@@ -9,7 +9,9 @@
 // unit's variables are initialized once, before any procedure starts, so a
 // call in an initializer runs once (LRM 3.12.1, 6.8, 8.13, 8.16, 8.25, 26.2).
 package p;
-  int calls = 0;
+  // No initializer of its own, so the two that count into it are the only
+  // ones that give it a value, in whichever order they run.
+  int calls;
 
   function automatic int count_call();
     calls = calls + 1;
@@ -39,7 +41,7 @@ package p;
   endclass
 endpackage
 
-int unit_calls = 0;
+int unit_calls;
 
 function automatic int count_unit_call();
   unit_calls = unit_calls + 1;

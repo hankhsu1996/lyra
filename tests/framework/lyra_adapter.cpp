@@ -34,6 +34,12 @@ constexpr std::string_view kNotYetSupported = "is not yet supported";
 constexpr std::array<std::string_view, 2> kHostToolFailures = {
     "error: compiling ", "error: linking "};
 
+// How the compiler and a program it built each say they ran out of memory.
+constexpr std::array<std::string_view, 1> kCompilerOutOfMemory = {
+    "the compiler ran out of memory"};
+constexpr std::array<std::string_view, 1> kSimulationOutOfMemory = {
+    "the simulation ran out of memory"};
+
 // Why a build that ended without a program ended, where it was not the program
 // being refused.
 auto BuildFailure(std::string_view diagnostics) -> std::optional<ToolFailed> {
@@ -262,7 +268,7 @@ auto ObserveWithLyra(
   const ProcessOutcome built =
       RunChildProcess(tool.exe, build, kStuckAfter, directory);
   RecordCommand(seen, tool.exe, build, built);
-  const RunEnd build_end = EndOf(built);
+  const RunEnd build_end = EndOf(built, kCompilerOutOfMemory);
   const auto* build_ran = std::get_if<Ran>(&build_end);
   if (build_ran == nullptr) {
     seen.end = build_end;
@@ -280,7 +286,8 @@ auto ObserveWithLyra(
   const ProcessOutcome run =
       RunChildProcess(program, test_case.program_args, kStuckAfter, directory);
   RecordCommand(seen, program, test_case.program_args, run);
-  seen.end = EndOf(run);
+  seen.end = EndOf(run, kSimulationOutOfMemory);
+  ReadOutputs(test_case, directory, seen);
   ReadMarkers(run.stdout_text, seen);
   ReadLyraReports(run.stderr_text, seen);
   return seen;

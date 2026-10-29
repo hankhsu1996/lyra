@@ -8,7 +8,7 @@
 // 7.4.6), connected through ports, and passed to one subroutine by value and
 // by reference, which asks for equivalent types (LRM 13.5.2). That holds of an
 // array whose elements are structures and of one of many elements alike.
-module Holder(input int in[1:4], output int out[4]);
+module Holder(input var int in[1:4], output int out[4]);
   import row_pkg::*;
 
   int held[3:0];

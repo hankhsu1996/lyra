@@ -230,6 +230,9 @@ case holds it is one nothing watches.
       legal, and each element is assigned as a queue is, keeping only what the destination's bound
       admits (LRM 7.10.5). That is a conversion of every element, which no lowering states yet; a
       bounded queue assigned another queue directly is carried out. No case holds it.
+- [ ] A variable declared with an initializer in a static procedural block, a task or a function,
+      with neither `static` nor `automatic`, is an error (LRM 6.21 requires an explicit `static`
+      there). The front end accepts it and the program runs it as static. A case holds it.
 
 ## Chandle
 

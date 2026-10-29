@@ -7,9 +7,7 @@
 // The generator's state read by get_randstate and put back by set_randstate
 // replays the same way (LRM 18.13.4, 18.13.5), and a pre_randomize seeding the
 // object seeds the call that runs it, since the hook runs before the values are
-// chosen (LRM 18.6.2). An object a random handle reaches is randomized with
-// the one holding the handle (LRM 18.4), so seeding the holder replays both,
-// and a child two holders share is randomized by each in turn.
+// chosen (LRM 18.6.2).
 module Top;
   class Packet;
     rand int unsigned payload;
@@ -29,32 +27,15 @@ module Top;
     endfunction
   endclass
 
-  class Leaf;
-    rand bit [7:0] x;
-    constraint bounded { x < 100; }
-  endclass
-
-  class Holder;
-    rand Leaf leaf;
-    rand bit [7:0] y;
-    constraint above { y > leaf.x; }
-    function new(Leaf shared);
-      leaf = shared;
-    endfunction
-  endclass
-
   int unsigned first_payload, replayed_payload;
   bit [7:0] alone[8], interleaved[8];
   bit [7:0] window_low[4], restored_low[4];
   bit [15:0] seeded_first, seeded_again;
-  bit [7:0] leaf_first, y_first, leaf_again, y_again;
 
   initial begin
     Packet packet;
     Window window, other;
     Seeded seeded;
-    Leaf shared;
-    Holder left, right;
     string state;
 
     packet = new;
@@ -98,24 +79,6 @@ module Top;
     seeded_first = seeded.value;
     if (seeded.randomize() != 1) $fatal(1, "a seeded randomize() failed");
     seeded_again = seeded.value;
-
-    shared = new;
-    left = new(shared);
-    right = new(shared);
-    left.srandom(5);
-    if (left.randomize() != 1) $fatal(1, "the left holder's randomize() failed");
-    if (!(left.y > shared.x && shared.x < 100))
-      $fatal(1, "the left holder's values break its constraints");
-    leaf_first = shared.x;
-    y_first = left.y;
-    if (right.randomize() != 1)
-      $fatal(1, "the right holder's randomize() failed");
-    if (!(right.y > shared.x && shared.x < 100))
-      $fatal(1, "the right holder's values break its constraints");
-    left.srandom(5);
-    if (left.randomize() != 1) $fatal(1, "the left holder's randomize() failed");
-    leaf_again = shared.x;
-    y_again = left.y;
   end
 
   final begin
@@ -133,9 +96,6 @@ module Top;
     if (seeded_first !== seeded_again)
       $fatal(1, "a pre_randomize seeding gave %0h then %0h", seeded_first,
              seeded_again);
-    if (leaf_first !== leaf_again || y_first !== y_again)
-      $fatal(1, "a reseeded holder gave x=%0d y=%0d then x=%0d y=%0d",
-             leaf_first, y_first, leaf_again, y_again);
     $display("All checks passed");
   end
 endmodule

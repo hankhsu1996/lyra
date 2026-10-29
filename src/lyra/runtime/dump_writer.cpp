@@ -354,8 +354,9 @@ class ExtendedVcdWriter final : public VcdCommandWriter {
  public:
   using VcdCommandWriter::VcdCommandWriter;
 
-  // LRM 21.7.4.2: the size is 1 for a single bit and the index range for a
-  // bus.
+  // LRM 21.7.4.2: the size is the index range the declaration states, and
+  // where it states none -- a single bit, a real, an int -- the port is
+  // written as scalar, 1.
   void Var(DumpCode code, const DumpEntry& entry) override {
     const std::optional<DumpEntry::Connection> port = entry.Port();
     if (!port.has_value()) {
@@ -369,8 +370,6 @@ class ExtendedVcdWriter final : public VcdCommandWriter {
     std::string size = "1";
     if (const auto range = entry.Range()) {
       size = std::format("[{}:{}]", range->left, range->right);
-    } else if (entry.width != 1) {
-      size = std::format("[{}:0]", entry.width - 1);
     }
     File().Put(
         std::format(

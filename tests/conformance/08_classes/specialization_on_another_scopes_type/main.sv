@@ -26,8 +26,10 @@ package generic_pkg;
     static int made = 0;
 
     static function T make();
+      T built;
       made = made + 1;
-      return new;
+      built = new;
+      return built;
     endfunction
   endclass
 

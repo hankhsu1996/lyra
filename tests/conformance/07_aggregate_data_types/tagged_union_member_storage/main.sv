@@ -124,7 +124,9 @@ module Top;
 
     held = tagged entries '{4, 5, 6};
     entries_size = held.entries.size();
+    // A locator finds in an unspecified order (LRM 7.12.1).
     entries_found = held.entries.find(x) with (x > 4);
+    entries_found.sort();
     held.entries.push_back(7);
     entries_size_after_push = held.entries.size();
     held = tagged text "lyra";

@@ -1,0 +1,31 @@
+$timescale 1ns $end
+$scope module Top.u $end
+$var port 1 <0 clk $end
+$var port [3:0] <1 d $end
+$var port [3:0] <2 q $end
+$var port 1 <3 level $end
+$var port [99:0] <4 wide $end
+$var port 1 <5 t $end
+$var port 1 <6 io $end
+$upscope $end
+$enddefinitions $end
+#0
+$dumpports
+pD 6 0 <0
+pDUDU 6 6 <1
+pXXXX 6 6 <2
+r1.5 <3
+pLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLHLH 6 6 <4
+pT 0 0 <5
+pF 0 0 <6
+$end
+#1
+pU 0 6 <0
+pLHLH 6 6 <2
+#2
+pD 6 0 <0
+pUDUD 6 6 <1
+pLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLHLHL 6 6 <4
+#3
+pU 0 6 <0
+pHLHL 6 6 <2

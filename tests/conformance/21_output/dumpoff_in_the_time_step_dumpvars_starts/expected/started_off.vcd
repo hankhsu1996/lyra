@@ -1,0 +1,12 @@
+$timescale 1ns $end
+$scope module Top $end
+$var reg 4 A a $end
+$upscope $end
+$enddefinitions $end
+#0
+$dumpvars
+b0110 A
+$end
+$dumpoff
+bxxxx A
+$end

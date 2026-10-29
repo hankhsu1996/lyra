@@ -30,7 +30,7 @@ endclass
 module Holder #(
     parameter int W = 4
 ) (
-    input int fed
+    input var int fed
 );
   logic [W-1:0] shared = '1;
   wire [W-1:0] mirrored = shared;

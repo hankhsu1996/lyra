@@ -4,15 +4,20 @@
 
 #include "tests/framework/conformance_verdict.hpp"
 
+#include <array>
+#include <csignal>
 #include <cstdint>
 #include <gtest/gtest.h>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <variant>
 
 #include "tests/framework/conformance_case.hpp"
 #include "tests/framework/conformance_observation.hpp"
 #include "tests/framework/lyra_adapter.hpp"
+#include "tests/framework/process.hpp"
+#include "tests/framework/value_change_dump.hpp"
 #include "tests/framework/verilator_adapter.hpp"
 
 namespace lyra::test {
@@ -389,8 +394,264 @@ TEST(ConformanceVerdictTest, AUseModelIsAskedForAndNeverAssumed) {
   EXPECT_TRUE(Is<DoesNotConform>(Judge(RunsToItsChecks{}, lacking)));
 
   Observation stuck;
-  stuck.end = DidNotFinish{};
+  stuck.end = StoppedAtALimit{"the time it was given"};
   EXPECT_TRUE(Is<Unresolved>(Judge(RunsToItsChecks{}, stuck)));
+}
+
+// A limit the caller set -- time, memory, or the machine's own -- says nothing
+// of the program, so a run stopped at one is never a failure of the tool,
+// while one the tool's own fault ended is.
+TEST(ConformanceVerdictTest, ARunStoppedAtALimitIsUnresolvedAndACrashIsNot) {
+  const ProcessOutcome timed_out{
+      .end = TimedOut{}, .stdout_text = {}, .stderr_text = {}};
+  const ProcessOutcome killed{
+      .end = Signalled{.signal = SIGKILL},
+      .stdout_text = {},
+      .stderr_text = {}};
+  const ProcessOutcome crashed{
+      .end = Signalled{.signal = SIGSEGV},
+      .stdout_text = {},
+      .stderr_text = {}};
+  const ProcessOutcome exhausted{
+      .end = Signalled{.signal = SIGABRT},
+      .stdout_text = {},
+      .stderr_text =
+          "terminate called after throwing an instance of "
+          "'std::bad_alloc'\n"};
+  const ProcessOutcome said_so{
+      .end = Exited{.code = 1},
+      .stdout_text = {},
+      .stderr_text = "error: the simulation ran out of memory\n"};
+  constexpr std::array<std::string_view, 1> kNoWords = {"no tool writes this"};
+  constexpr std::array<std::string_view, 1> kAbort = {"std::bad_alloc"};
+  constexpr std::array<std::string_view, 1> kSaid = {"ran out of memory"};
+
+  EXPECT_TRUE(
+      std::holds_alternative<StoppedAtALimit>(EndOf(timed_out, kNoWords)));
+  EXPECT_TRUE(std::holds_alternative<StoppedAtALimit>(EndOf(killed, kNoWords)));
+  EXPECT_TRUE(std::holds_alternative<ToolFailed>(EndOf(crashed, kNoWords)));
+  EXPECT_TRUE(std::holds_alternative<ToolFailed>(EndOf(exhausted, kNoWords)));
+  EXPECT_TRUE(
+      std::holds_alternative<StoppedAtALimit>(EndOf(exhausted, kAbort)));
+  EXPECT_TRUE(std::holds_alternative<Ran>(EndOf(said_so, kNoWords)));
+  EXPECT_TRUE(std::holds_alternative<StoppedAtALimit>(EndOf(said_so, kSaid)));
+
+  Observation stopped;
+  stopped.end = EndOf(killed, kNoWords);
+  EXPECT_TRUE(Is<Unresolved>(Judge(RunsToItsChecks{}, stopped)));
+}
+
+// A dump is free format, its identifier codes and the text of its header are
+// the tool's, and a vector may be written shortened to the bits that do not
+// extend to the left (LRM 21.7.2, 21.7.2.2); none of that is a difference.
+// What each name is declared as, in which scope, and the value it holds at
+// each simulated time are, the time read in the unit the dump states.
+TEST(ConformanceVerdictTest, DumpsAreComparedAsTheStandardReadsThem) {
+  constexpr std::string_view kExpected =
+      "$timescale 1ns $end\n"
+      "$scope module Top $end\n"
+      "$var reg 4 A a [3:0] $end\n"
+      "$var real 64 B r $end\n"
+      "$var event 1 C e $end\n"
+      "$scope task bump $end\n"
+      "$var reg 1 D d $end\n"
+      "$upscope $end\n"
+      "$upscope $end\n"
+      "$enddefinitions $end\n"
+      "#0\n"
+      "$dumpvars b1 A r1.5 B 0D $end\n"
+      "#2\n"
+      "$dumpoff bxxxx A $end\n"
+      "#4\n"
+      "1C\n";
+  constexpr std::string_view kSameOtherwiseSpelled =
+      "$date today $end $version some tool $end $timescale 1 ns $end\n"
+      "$scope module Top $end $var reg 4 ! a $end\n"
+      "$var real 64 \" r $end $var event 1 # e $end\n"
+      "$scope task bump $end $var reg 1 $ d $end $upscope $end\n"
+      "$upscope $end $enddefinitions $end\n"
+      "#0 $dumpvars b0001 ! r1.50 \" 0$ $end #2 $dumpoff bx ! $end\n"
+      "#4 1#\n";
+  EXPECT_EQ(DumpDifference(kExpected, kSameOtherwiseSpelled), std::nullopt);
+
+  const auto replaced = [&](std::string_view from, std::string_view to) {
+    std::string text{kSameOtherwiseSpelled};
+    return text.replace(text.find(from), from.size(), to);
+  };
+  // The same times in a finer unit are the same simulated times; the same
+  // numbers in another unit are not.
+  EXPECT_EQ(
+      DumpDifference(
+          kExpected,
+          "$timescale 100 ps $end\n"
+          "$scope module Top $end $var reg 4 ! a $end\n"
+          "$var real 64 \" r $end $var event 1 # e $end\n"
+          "$scope task bump $end $var reg 1 $ d $end $upscope $end\n"
+          "$upscope $end $enddefinitions $end\n"
+          "#0 $dumpvars b0001 ! r1.5 \" 0$ $end #20 $dumpoff bx ! $end\n"
+          "#40 1#\n"),
+      std::nullopt);
+  EXPECT_NE(DumpDifference(kExpected, replaced("1 ns", "1 ps")), std::nullopt);
+  EXPECT_NE(
+      DumpDifference(kExpected, replaced("$timescale 1 ns $end", "")),
+      std::nullopt);
+
+  EXPECT_NE(
+      DumpDifference(kExpected, replaced("b0001", "b0011")), std::nullopt);
+  EXPECT_NE(
+      DumpDifference(kExpected, replaced("$dumpoff", "$dumpall")),
+      std::nullopt);
+  EXPECT_NE(DumpDifference(kExpected, replaced("#4", "#5")), std::nullopt);
+  EXPECT_NE(
+      DumpDifference(kExpected, replaced("task", "function")), std::nullopt);
+  EXPECT_NE(
+      DumpDifference(
+          kExpected, replaced(
+                         "$upscope $end $enddefinitions",
+                         "$var reg 1 % extra $end $upscope $end "
+                         "$enddefinitions")),
+      std::nullopt);
+  // A trigger the expected dump records is one the run owes.
+  EXPECT_NE(DumpDifference(kExpected, replaced("#4 1#", "")), std::nullopt);
+  // A command whose content is the tool's is still held to its grammar.
+  EXPECT_NE(
+      DumpDifference(
+          kExpected, replaced("$version some tool $end", "$version some tool")),
+      std::nullopt);
+  EXPECT_NE(
+      DumpDifference(kExpected, replaced("reg 4 !", "reg four !")),
+      std::nullopt);
+  EXPECT_NE(DumpDifference(kExpected, "not a dump at all"), std::nullopt);
+}
+
+// The sections a time opens are told apart by what each records, not by the
+// order they stand in, which nothing fixes. An event holds no value for a
+// section to list, so what a section records of one is no difference, while
+// its triggering is. A scope declaring nothing says nothing, so whether one is
+// written is too.
+TEST(ConformanceVerdictTest, ADumpIsReadForWhatItSaysAndNothingElse) {
+  constexpr std::string_view kExpected =
+      "$timescale 1ns $end\n"
+      "$scope module Top $end $var reg 1 A a $end $var event 1 E e $end\n"
+      "$upscope $end $enddefinitions $end\n"
+      "#0 $dumpvars 1A $end $dumpoff xA $end #3 1E\n";
+  constexpr std::string_view kHeader =
+      "$timescale 1ns $end\n"
+      "$scope module Top $end $var reg 1 ! a $end $var event 1 \" e $end\n";
+  EXPECT_EQ(
+      DumpDifference(
+          kExpected, std::string{kHeader} +
+                         "$scope module empty $end $upscope $end\n"
+                         "$upscope $end $enddefinitions $end\n"
+                         "#0 $dumpvars 1! 1\" $end $dumpoff x! $end #3 1\"\n"),
+      std::nullopt);
+  EXPECT_EQ(
+      DumpDifference(
+          kExpected, std::string{kHeader} +
+                         "$upscope $end $enddefinitions $end\n"
+                         "#0 $dumpoff x! $end $dumpvars 1! $end #3 1\"\n"),
+      std::nullopt);
+  EXPECT_NE(
+      DumpDifference(
+          kExpected, std::string{kHeader} +
+                         "$upscope $end $enddefinitions $end\n"
+                         "#0 $dumpvars x! $end $dumpoff 1! $end #3 1\"\n"),
+      std::nullopt);
+  EXPECT_NE(
+      DumpDifference(
+          kExpected, std::string{kHeader} +
+                         "$upscope $end $enddefinitions $end\n"
+                         "#0 $dumpvars 1! $end $dumpoff x! $end\n"),
+      std::nullopt);
+}
+
+// A declaration's size counts its bits, which a real and an event do not have,
+// so their size is the tool's while a vector's is not.
+TEST(ConformanceVerdictTest, OnlyAVariableWithBitsIsHeldToItsSize) {
+  constexpr std::string_view kExpected =
+      "$timescale 1ns $end "
+      "$scope module Top $end $var real 64 R r $end $var reg 4 A a $end\n"
+      "$upscope $end $enddefinitions $end #0 $dumpvars r1 R b1 A $end\n";
+  EXPECT_EQ(
+      DumpDifference(
+          kExpected,
+          "$timescale 1ns $end "
+          "$scope module Top $end $var real 1 R r $end $var reg 4 A a $end\n"
+          "$upscope $end $enddefinitions $end #0 $dumpvars r1 R b1 A $end\n"),
+      std::nullopt);
+  EXPECT_NE(
+      DumpDifference(
+          kExpected,
+          "$timescale 1ns $end "
+          "$scope module Top $end $var real 64 R r $end $var reg 8 A a $end\n"
+          "$upscope $end $enddefinitions $end #0 $dumpvars r1 R b1 A $end\n"),
+      std::nullopt);
+}
+
+// An extended dump's port value is its state characters and two strengths,
+// each told by itself (LRM 21.7.4.3).
+TEST(ConformanceVerdictTest, ExtendedDumpPortsAreComparedByStateAndStrength) {
+  constexpr std::string_view kExpected =
+      "$timescale 1ns $end "
+      "$scope module Top.u $end\n"
+      "$var port [3:0] <0 d $end\n"
+      "$upscope $end\n"
+      "$enddefinitions $end\n"
+      "#0 $dumpports pDUDU 6 6 <0 $end\n";
+  EXPECT_EQ(
+      DumpDifference(
+          kExpected,
+          "$timescale 1ns $end "
+          "$scope module Top.u $end $var port   [3:0]   <0   d $end\n"
+          "$upscope $end $enddefinitions $end #0\n$dumpports\npDUDU  6 6 <0\n"
+          "$end\n"),
+      std::nullopt);
+  EXPECT_NE(
+      DumpDifference(
+          kExpected,
+          "$timescale 1ns $end "
+          "$scope module Top.u $end $var port [3:0] <0 d $end $upscope $end\n"
+          "$enddefinitions $end #0 $dumpports pDUDU 6 0 <0 $end\n"),
+      std::nullopt);
+}
+
+// A case is held to every file it expects as well as to its claim: one the run
+// did not write, or wrote otherwise, does not conform, and the claim's own
+// verdict stands where it is not a conforming one.
+TEST(ConformanceVerdictTest, ACaseIsHeldToTheFilesItExpects) {
+  ConformanceCase c;
+  c.claim = RunsToItsChecks{};
+  c.expected_outputs.push_back(
+      ExpectedOutput{
+          .name = "wave.vcd",
+          .text = "$timescale 1ns $end "
+                  "$scope module Top $end $var reg 1 ! a $end $upscope $end "
+                  "$enddefinitions $end #0 $dumpvars 1! $end"});
+
+  Observation wrote = RanToItsSentinel();
+  wrote.outputs.push_back(
+      WrittenOutput{
+          .name = "wave.vcd",
+          .text = "$timescale 1ns $end "
+                  "$scope module Top $end $var reg 1 % a $end $upscope $end "
+                  "$enddefinitions $end #0 $dumpvars 1% $end"});
+  EXPECT_TRUE(Is<Conforms>(JudgeCase(c, wrote)));
+
+  Observation wrote_otherwise = wrote;
+  wrote_otherwise.outputs.front().text =
+      "$timescale 1ns $end "
+      "$scope module Top $end $var reg 1 % a $end $upscope $end "
+      "$enddefinitions $end #0 $dumpvars 0% $end";
+  EXPECT_TRUE(Is<DoesNotConform>(JudgeCase(c, wrote_otherwise)));
+
+  Observation wrote_nothing = RanToItsSentinel();
+  wrote_nothing.outputs.push_back(
+      WrittenOutput{.name = "wave.vcd", .text = std::nullopt});
+  EXPECT_TRUE(Is<DoesNotConform>(JudgeCase(c, wrote_nothing)));
+
+  Observation stopped = wrote;
+  stopped.end = StoppedAtALimit{"the time it was given"};
+  EXPECT_TRUE(Is<Unresolved>(JudgeCase(c, stopped)));
 }
 
 TEST(ConformanceVerdictTest, ACaseNamedByARelativePathIsNotHandedToATool) {
@@ -445,14 +706,29 @@ TEST(ConformanceReaderTest, VerilatorReportsAreReadAmongTheProgramsOutput) {
       "%Error: /abs/main.sv:18: Verilog $stop\n"
       "Aborting...\n"
       "[37] -Info: main.sv:21: Top.probe: a probe report\n"
+      "[40] %Error: main.sv:16: Assertion failed in Top.unnamedblk1: priority "
+      "case, but non-match found for '3'h5'\n"
+      "[40] %Error: main.sv:18: Assertion failed in Top.unnamedblk1: unique0 "
+      "case, but multiple matches found for '3'h3'\n"
+      "[41] %Error: main.sv:30: Assertion failed in Top: a priority case, but "
+      "the program's own\n"
       "- S i m u l a t i o n   R e p o r t: Verilator 5.045 devel\n"
       "- Verilator: end at 37ps; walltime 0.000 s; speed 1.013 us/s\n"
       "%Error: no place given\n",
       seen);
-  ASSERT_EQ(seen.reports.size(), 3U);
+  ASSERT_EQ(seen.reports.size(), 6U);
   EXPECT_EQ(seen.reports[0].kind, ReportKind::kViolation);
   EXPECT_EQ(seen.reports[0].message, std::nullopt);
   EXPECT_EQ(seen.reports[0].scope, "Top.unnamedblk1");
+  // A case statement's violation report names the statement and what it
+  // found, and a program's message that only begins with such words is the
+  // program's.
+  EXPECT_EQ(seen.reports[3].kind, ReportKind::kViolation);
+  EXPECT_EQ(seen.reports[3].message, std::nullopt);
+  EXPECT_EQ(seen.reports[3].line, 16U);
+  EXPECT_EQ(seen.reports[4].kind, ReportKind::kViolation);
+  EXPECT_EQ(seen.reports[5].kind, ReportKind::kError);
+  EXPECT_EQ(seen.reports[5].message, "a priority case, but the program's own");
   EXPECT_EQ(seen.reports[0].line, 18U);
   EXPECT_EQ(seen.reports[0].time, 0U);
   EXPECT_EQ(seen.reports[1].kind, ReportKind::kStop);

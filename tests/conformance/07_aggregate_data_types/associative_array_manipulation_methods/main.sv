@@ -5,9 +5,11 @@
 // take the match nearest the index first() and last() would return. The
 // iterator's index method likewise yields the index type, so a reduction can
 // combine the keys themselves. map returns an array over the same set of
-// indices with each element replaced by its with expression. The queue unique
-// returns holds one entry per distinct value, in an order unrelated to the
-// receiver's (LRM 7.12.1, 7.12.3, 7.12.4, 7.12.5).
+// indices with each element replaced by its with expression. A locator
+// traverses the receiver in an unspecified order, and the queue unique returns
+// holds one entry per distinct value in an order unrelated to the receiver's,
+// so each such queue is sorted before it is read (LRM 7.12.1, 7.12.3, 7.12.4,
+// 7.12.5).
 module Top;
   int by_text [string] = '{"a": 3, "b": 7, "c": 5};
   int by_number [int] = '{10: 5, 20: 7, 30: 9};
@@ -46,6 +48,8 @@ module Top;
 
     found_values = by_text.find with (item > 3);
     found_keys = by_text.find_index with (item > 3);
+    found_values.sort();
+    found_keys.sort();
     lowest_found = by_text.find_first with (item > 3);
     lowest_found_key = by_text.find_first_index with (item > 3);
     highest_found = by_text.find_last with (item > 3);
@@ -56,6 +60,7 @@ module Top;
     distinct.sort();
 
     found_number_keys = by_number.find_index with (item > 5);
+    found_number_keys.sort();
     key_total = by_number.sum with (item.index);
 
     shifted = by_text.map with (item + 10);
@@ -76,10 +81,10 @@ module Top;
     if (found_values.size() !== 2)
       $fatal(1, "found_values.size() was %0d, expected 2",
              found_values.size());
-    if (found_values[0] !== 7)
-      $fatal(1, "found_values[0] was %0d, expected 7", found_values[0]);
-    if (found_values[1] !== 5)
-      $fatal(1, "found_values[1] was %0d, expected 5", found_values[1]);
+    if (found_values[0] !== 5)
+      $fatal(1, "found_values[0] was %0d, expected 5", found_values[0]);
+    if (found_values[1] !== 7)
+      $fatal(1, "found_values[1] was %0d, expected 7", found_values[1]);
     if (found_keys.size() !== 2)
       $fatal(1, "found_keys.size() was %0d, expected 2", found_keys.size());
     if (found_keys[0] !== "b")

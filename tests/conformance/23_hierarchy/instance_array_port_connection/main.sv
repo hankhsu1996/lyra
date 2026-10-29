@@ -6,7 +6,7 @@
 // array left index to left index. Either way what each element receives is the
 // continuous assignment a scalar instance would get, in both directions and
 // for an array of more than one dimension.
-module Adder(input int a, output int b);
+module Adder(input var int a, output int b);
   always_comb b = a + 1;
 endmodule
 

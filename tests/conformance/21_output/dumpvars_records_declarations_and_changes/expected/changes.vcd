@@ -1,0 +1,30 @@
+$timescale 1ns $end
+$scope module Top $end
+$var reg 4 A a $end
+$var wire 4 W w $end
+$var real 64 R r $end
+$var integer 32 N n $end
+$var event 1 E e $end
+$var event 1 M moved $end
+$var event 1 T target $end
+$var event 1 L left_behind $end
+$upscope $end
+$enddefinitions $end
+#0
+$dumpvars
+b0011 A
+b0011 W
+r1.5 R
+b111 N
+$end
+#5
+b0101 A
+b0101 W
+r2.25 R
+b11111111111111111111111111111110 N
+1E
+#6
+1T
+1M
+#7
+1L

@@ -3,9 +3,9 @@
 // a generate block's that overrides it inside the block, and none in an
 // instance, which the declaration does not reach. A disable condition the
 // assertion or its property states wins, and `disable iff (1'b0)` is how one
-// cancels the default. `$inferred_disable` names the default in force where the
-// assertion stands, however deep the instance whose formal it defaults, or
-// false where none is (LRM 16.14.7).
+// cancels the default. `$inferred_disable` in a property declared and asserted
+// in one scope names that scope's default, or false where none is (LRM
+// 16.14.7).
 //
 // Every assertion here fails at every tick it is not disabled at, so what each
 // counts is how many ticks its disable condition left it.
@@ -38,12 +38,6 @@ module Top;
     @(posedge clk) disable iff (r) 1'b0;
   endproperty
 
-  // However deep the instance holding it, `$inferred_disable` is the default in
-  // force where the assertion stands.
-  property never_nested;
-    never_inferred;
-  endproperty
-
   int by_default = 0;
   int by_own = 0;
   int by_cancel = 0;
@@ -70,9 +64,7 @@ module Top;
   if (1) begin : overrides
     default disable iff block_rst;
     int fails = 0;
-    int nested_fails = 0;
     assert property (@(posedge clk) 1'b0) else fails++;
-    assert property (never_nested) else nested_fails++;
   end
 
   Sub sub (clk);
@@ -101,9 +93,6 @@ module Top;
     if (overrides.fails !== 3)
       $fatal(1, "a generate block's own default left %0d ticks, expected 3",
              overrides.fails);
-    if (overrides.nested_fails !== 3)
-      $fatal(1, "'$inferred_disable' in a nested instance left %0d ticks, expected 3",
-             overrides.nested_fails);
     if (sub.fails !== 10)
       $fatal(1, "an instance the default does not reach left %0d ticks, expected 10",
              sub.fails);

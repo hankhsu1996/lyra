@@ -464,10 +464,10 @@ Unlocks `refs/hierarchical_refs`, `refs/upward_refs`, and `instantiation/hierarc
       declared default is a constant expression whose names resolve in the module that declares the
       port, not the instantiating scope; like a default argument at a call site, its value is
       materialized into the connection wherever the port is omitted. Omitting a port inserts its
-      default; an explicit empty connection (`.port()`) suppresses the default and leaves the port
-      at the data type's default initial value (LRM 23.3.2.2 / 23.3.3.2), as does an unconnected
-      port with no default; an explicit expression overrides. Defaults are permitted only on input
-      ports (LRM 23.2.2.4), which the frontend enforces.
+      default; an explicit empty connection (`.port()`) suppresses the default and leaves a variable
+      port at the data type's default initial value (LRM 23.3.2.2 / 23.3.3.2), as does an
+      unconnected variable port with no default; an explicit expression overrides. Defaults are
+      permitted only on input ports (LRM 23.2.2.4), which the frontend enforces.
 - [x] E9 -- A port connection on an instance array drives each element's own cell (LRM 23.3.3.5).
       The connection is distributed per element -- replicated to every element when its size matches
       a single port, or mapped element to element when it matches the array dimensions -- and each
@@ -488,6 +488,11 @@ Unlocks `refs/hierarchical_refs`, `refs/upward_refs`, and `instantiation/hierarc
       the same way, the explicit form of an ANSI header included (`output .lo(r[3:0])`), which
       declares nothing of its own. A `ref` port naming a part is rejected with a clean diagnostic,
       since such a port seals to the whole of the connected variable's cell (LRM 23.3.3.2).
+- [ ] E12 -- An input or inout port declared with no port kind is a net of the default net type (LRM
+      23.2.2.3), so `input logic` is `input wire logic`: left unconnected it floats at z (LRM 6.6),
+      and one whose data type is no net type, such as `input int`, is an error (LRM 6.7.1). The
+      front end takes every such port as a variable, so an unconnected one reads its data type's
+      default and `input int` runs. A case holds each.
 
 Unlocks the port-connection surface.
 

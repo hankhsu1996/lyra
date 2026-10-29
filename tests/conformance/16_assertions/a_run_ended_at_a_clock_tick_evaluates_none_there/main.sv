@@ -27,7 +27,9 @@ module Top;
     else
       starts_fails++;
   // The attempt at 15 would read `b` at 25, where it is low, and is instead
-  // still waiting when the run ends, where a weak sequence holds.
+  // still waiting when the run ends, where a weak sequence holds (Annex
+  // F.5.3.1); whether its pass action runs then the standard does not say, but
+  // it never fails.
   a_waits: assert property (@(posedge clk) a |=> b)
       waits_passes++;
     else
@@ -37,8 +39,8 @@ module Top;
     if (starts_passes !== 1 || starts_fails !== 1)
       $fatal(1, "a_starts held %0d and failed %0d times, expected 1 and 1",
              starts_passes, starts_fails);
-    if (waits_passes !== 2 || waits_fails !== 0)
-      $fatal(1, "a_waits held %0d and failed %0d times, expected 2 and 0",
+    if (!(waits_passes inside {1, 2}) || waits_fails !== 0)
+      $fatal(1, "a_waits held %0d and failed %0d times, expected 1 or 2 and 0",
              waits_passes, waits_fails);
     $display("All checks passed");
   end

@@ -7,10 +7,7 @@
 // the killed process had left running.
 //
 // A killed process has terminated, which is what a `join` waits for of each of
-// its branches (LRM 9.3.2), so killing a branch lets its parent go on. And the
-// delays the killed processes were waiting out are gone with them: time moves
-// on only to a time slot something is still waiting in (LRM 4.5), so the run
-// ends where the last kill left it.
+// its branches (LRM 9.3.2), so killing a branch lets its parent go on.
 module Top;
   int target_waiting_before, target_killed, kill_time;
   int target_after, descendant_after;
@@ -68,8 +65,6 @@ module Top;
     if (joined_time !== 2)
       $fatal(1, "a join with its branch killed went on at %0d, expected 2",
              joined_time);
-    if ($time !== 2)
-      $fatal(1, "the run ended at %0t, expected 2", $time);
     $display("All checks passed");
   end
 endmodule

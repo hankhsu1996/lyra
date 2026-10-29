@@ -1,0 +1,38 @@
+$timescale 1ns $end
+$scope module Top $end
+$var reg 100 W wide $end
+$var wire 100 N wide_net $end
+$scope module u $end
+$var wire 100 I in $end
+$upscope $end
+$scope task bump $end
+$var reg 4 C count $end
+$upscope $end
+$scope function twice $end
+$var integer 32 K calls $end
+$upscope $end
+$scope begin body $end
+$var reg 4 H held $end
+$scope fork side $end
+$var reg 1 F forked $end
+$upscope $end
+$upscope $end
+$upscope $end
+$enddefinitions $end
+#0
+$dumpvars
+b1 W
+b1 N
+b1 I
+b0000 C
+b0 K
+b1001 H
+1F
+$end
+#1
+b1010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000101 W
+b1010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000101 N
+b1010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000101 I
+b0001 C
+b1 K
+b0110 H

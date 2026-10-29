@@ -1,16 +1,14 @@
 // @reports-none: error finish
 //
 // An exported function may call $finish (LRM 13.4, 20.2), and the simulation
-// ends there even with a foreign call beneath it. The foreign function still
-// gets control back and returns of its own accord (LRM 35.9), and nothing of
-// the design runs after that: not the rest of the exported function, and not
-// the statements after the import call. The foreign side follows the disable
-// protocol for whatever state it finds, which is a conforming exchange, so a
-// conforming tool issues no error report, and $finish(0) prints no finish
-// message (LRM 20.2, Table 20-1).
+// ends there even with a foreign call beneath it. Nothing of the design runs
+// after that: not the rest of the exported function, and not the statements
+// after the import call. Should the export return to the foreign side, it
+// follows the disable protocol for whatever state it finds, which is a
+// conforming exchange, so a conforming tool issues no error report, and
+// $finish(0) prints no finish message (LRM 20.2, Table 20-1).
 module Top;
   import "DPI-C" context function int ask(input int seed);
-  import "DPI-C" function int returned_normally();
 
   export "DPI-C" function answer;
 
@@ -41,8 +39,6 @@ module Top;
              entered);
     if (after_in_export !== 7)
       $fatal(1, "the exported function carried on past $finish");
-    if (returned_normally() !== 1)
-      $fatal(1, "the foreign caller did not get control back from the export");
     if (assigned !== 7)
       $fatal(1, "the import call assigned %0d after $finish", assigned);
     if (after_the_call !== 7)

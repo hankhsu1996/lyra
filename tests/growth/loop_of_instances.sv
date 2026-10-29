@@ -5,7 +5,7 @@
 // Each instance is handed a value of its own, so each is a specialization of
 // its own, lowered to HIR on its own and found to come out as the one body.
 // @each-adds: bodies lowered 1
-module Leaf #(parameter int K = 0) (input bit c, output int o);
+module Leaf #(parameter int K = 0) (input var bit c, output int o);
   always @(posedge c) o <= K;
 endmodule
 

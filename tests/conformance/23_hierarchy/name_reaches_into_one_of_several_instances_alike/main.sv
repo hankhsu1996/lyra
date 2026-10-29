@@ -3,7 +3,7 @@
 // written alike (LRM 23.3). A hierarchical name reaches one of them by its
 // path and reads that one's variable (LRM 23.6).
 module Leaf (
-    input int d,
+    input var int d,
     output int q
 );
   int held = -1;
@@ -13,7 +13,7 @@ module Leaf (
 endmodule
 
 module Mid (
-    input int d,
+    input var int d,
     output int q
 );
   int between;

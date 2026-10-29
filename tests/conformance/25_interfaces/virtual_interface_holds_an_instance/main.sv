@@ -98,7 +98,7 @@ module Top;
     if (held_is_first !== 1'b1) $fatal(1, "held did not compare equal to first");
     if (held_is_second !== 1'b0) $fatal(1, "held compared equal to second");
     if (same_after_copy !== 1'b1) $fatal(1, "a copied virtual interface compared unequal");
-    if (held !== null) $fatal(1, "held was not null after being assigned null");
+    if (held != null) $fatal(1, "held was not null after being assigned null");
     if (seen !== 8'h11) $fatal(1, "seen through the view was %h, expected 11", seen);
     // Written 11 through held, 44 by Poke, then 50 through pick[0].
     if (first.data !== 8'h50) $fatal(1, "first.data was %h, expected 50", first.data);

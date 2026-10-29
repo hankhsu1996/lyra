@@ -1,13 +1,11 @@
 // @reports-none: error
 //
 // A mailbox declared with no type carries messages of any type, each keeping
-// the type it was put with (LRM 15.4.5, 15.4.9). A message is taken or copied
-// only into a variable of an equivalent type (LRM 6.22.2): an integral of the
-// same width, signedness and states however its range or members are written,
-// a fixed-size array of as many equivalent elements however its range is
-// written, a queue of an equivalent element whatever bound either was declared
-// with (LRM 7.10.5), and an enumeration, a structure or a class only into
-// itself.
+// the type it was put with (LRM 15.4.5, 15.4.9). A message is a singular
+// expression (LRM 15.4.3), and it is taken or copied only into a variable of
+// an equivalent type (LRM 6.22.2): an integral of the same width, signedness
+// and states however its range or members are written, and an enumeration or
+// a class only into itself.
 // Where the variable's type is not equivalent, try_get and try_peek answer
 // below zero and the message stays. A class may extend it (LRM 15.2).
 class Packet;
@@ -27,7 +25,6 @@ endclass
 
 module Top;
   typedef struct packed { bit [3:0] hi; bit [3:0] lo; } nibbles_t;
-  typedef struct { int a; string b; } pair_t;
   typedef enum { RED, GREEN } color_t;
 
   mailbox box;
@@ -39,14 +36,6 @@ module Top;
   Packet packet_in;
   bit [8:1] byte_out = 0;
   nibbles_t nibbles_out = '{4'h0, 4'h0};
-  int fixed_in [1:2] = '{3, 4};
-  int fixed_out [2] = '{0, 0};
-  int queue_in [$:4] = '{5, 6};
-  int queue_out [$] = '{0};
-  int unbounded_in [$] = '{8};
-  int bounded_out [$:2] = '{0, 0};
-  pair_t pair_in = '{7, "seven"};
-  pair_t pair_out = '{0, ""};
   color_t color_out = RED;
   real real_out = 0.0;
   string text_out = "";
@@ -54,7 +43,6 @@ module Top;
   int int_out = 0;
   logic [31:0] logic_out = 0;
   int wrong_int = 99;
-  string wrong_text = "unchanged";
   int mismatch_get = 9;
   int mismatch_peek = 9;
   int waited = 0;
@@ -65,10 +53,6 @@ module Top;
     box = new;
     box.put(byte_in);
     box.put(byte_in);
-    box.put(fixed_in);
-    box.put(queue_in);
-    box.put(unbounded_in);
-    box.put(pair_in);
     box.put(GREEN);
     box.put(2.5);
     box.put(text_in);
@@ -79,10 +63,6 @@ module Top;
 
     box.get(byte_out);
     box.get(nibbles_out);
-    box.get(fixed_out);
-    box.get(queue_out);
-    box.get(bounded_out);
-    box.get(pair_out);
     box.get(color_out);
     box.get(real_out);
     // A string is not equivalent to an int, so the message stays.
@@ -114,14 +94,6 @@ module Top;
   final begin
     if (byte_out !== 8'hA5) $fatal(1, "bit [8:1] got %h", byte_out);
     if (nibbles_out !== 8'hA5) $fatal(1, "a packed structure got %h", nibbles_out);
-    if (fixed_out[0] !== 3 || fixed_out[1] !== 4)
-      $fatal(1, "a fixed-size array got %p", fixed_out);
-    if (queue_out.size() !== 2 || queue_out[0] !== 5 || queue_out[1] !== 6)
-      $fatal(1, "a queue got %p", queue_out);
-    if (bounded_out.size() !== 1 || bounded_out[0] !== 8)
-      $fatal(1, "a bounded queue got %p", bounded_out);
-    if (pair_out.a !== 7 || pair_out.b != "seven")
-      $fatal(1, "a structure got %p", pair_out);
     if (color_out !== GREEN) $fatal(1, "an enumeration got %s", color_out.name());
     if (real_out != 2.5) $fatal(1, "a real got %f", real_out);
     if (mismatch_peek >= 0 || mismatch_get >= 0)

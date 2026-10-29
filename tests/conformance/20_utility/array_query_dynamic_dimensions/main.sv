@@ -4,9 +4,9 @@
 // dimension takes its index space from its index type -- $left 0 and $right
 // that type's highest value -- while $low and $high are the smallest and
 // largest indices currently allocated, and read as x when none is (LRM 20.7).
-// A dimension below the top whose size varies per outer element has no single
-// extent to report (LRM 20.7.1), so a dimension the query cannot answer reads
-// as x the same way one out of range does.
+// Below a dimension whose size varies, a fixed dimension is still answered,
+// while a query naming a variable-sized dimension below the top is an error
+// (LRM 20.7.1), so none is made here.
 module Top;
   int elements[];
   int items[$];
@@ -51,7 +51,6 @@ module Top;
   integer rows_out_of_range;
 
   integer nested_outer;
-  integer nested_varying;
   integer nested_inner;
   integer nested_element;
 
@@ -111,8 +110,6 @@ module Top;
 
     dimension = 1;
     nested_outer = $size(nested, dimension);
-    dimension = 2;
-    nested_varying = $size(nested, dimension);
     dimension = 3;
     nested_inner = $size(nested, dimension);
     dimension = 4;
@@ -179,9 +176,6 @@ module Top;
 
     if (nested_outer !== 3)
       $fatal(1, "nested_outer was %0d, expected 3", nested_outer);
-    if (nested_varying !== 32'bx)
-      $fatal(1, "a dimension varying per outer element was %b, expected x",
-             nested_varying);
     if (nested_inner !== 5)
       $fatal(1, "nested_inner was %0d, expected 5", nested_inner);
     if (nested_element !== 32)
