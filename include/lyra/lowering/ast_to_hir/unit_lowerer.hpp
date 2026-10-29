@@ -42,6 +42,7 @@
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/lowering/ast_to_hir/built_as.hpp"
 #include "lyra/lowering/ast_to_hir/climb.hpp"
 #include "lyra/lowering/ast_to_hir/coverage_library.hpp"
 #include "lyra/lowering/ast_to_hir/declaration_scopes.hpp"
@@ -714,15 +715,15 @@ class UnitLowerer {
   [[nodiscard]] auto TakeValues() -> hir::SpecializationValues;
 
   // The body phase: everything this unit executes, resolved against what the
-  // design's units published. Which of those publications this unit ends up
-  // depending on is the set it reads, so nothing decides that set in advance.
-  // The unit's own scope is lowered from the instance its specialization is
-  // named for, and comes back as the implementation it is, named as
-  // `implementations` names it, beside how that specialization's objects are
-  // built.
+  // design's units published and what `built_as` says each instance is built
+  // as. Which of those publications this unit ends up depending on is the set
+  // it reads, so nothing decides that set in advance. The unit's own scope is
+  // lowered from the instance it is named for, and comes back as the
+  // implementation it is, named as `implementations` names it, beside how its
+  // objects are built.
   auto LowerBodies(
-      const hir::UnitSignatures& signatures, Implementations& implementations)
-      -> diag::Result<hir::Specialization>;
+      const hir::UnitSignatures& signatures, const BuiltAsQuery& built_as,
+      Implementations& implementations) -> diag::Result<hir::Specialization>;
 
   // Read access to the in-progress unit. Handlers reach the unit's type vocab
   // and builtins through this accessor; downstream consumers post-Run use the
@@ -788,10 +789,10 @@ class UnitLowerer {
   }
 
   // The value the value parameter `param` holds where a name reaching it is
-  // folded: this specialization's own, as the front end evaluated it, and
-  // another specialization's, as that one published it.
-  auto ParameterValueOf(
-      const slang::ast::ParameterSymbol& param, diag::SourceSpan span)
+  // folded: one this unit declares, as the front end evaluated it, and
+  // another unit's, as that one published it.
+  [[nodiscard]] auto ParameterValueOf(
+      const slang::ast::ParameterSymbol& param, diag::SourceSpan span) const
       -> diag::Result<hir::ConstantValue>;
 
   // The type of `expr`, which is the one way an expression's type is interned.
@@ -1163,6 +1164,18 @@ class UnitLowerer {
 
   [[nodiscard]] auto Naming() const -> const UnitNamingPolicy& {
     return facts_.Naming();
+  }
+
+  // What each instance is built as, which a body's construction and its reads
+  // of another unit's values ask. Reachable only once bodies lower, as the
+  // classes it is worked out over are not known while units are compared.
+  [[nodiscard]] auto BuiltAs() const -> const BuiltAsQuery& {
+    if (built_as_ == nullptr) {
+      throw InternalError(
+          "UnitLowerer::BuiltAs: what an instance is built as is reachable "
+          "only while bodies lower");
+    }
+    return *built_as_;
   }
 
   // Where the value of a parameter this unit's scopes declare comes from, for
@@ -1992,6 +2005,7 @@ class UnitLowerer {
   // phase has none, which is what makes "a declaration reads only its own unit"
   // a property of the code rather than a discipline.
   const hir::UnitSignatures* signatures_ = nullptr;
+  const BuiltAsQuery* built_as_ = nullptr;
   // What each signature this unit has read out of became in this unit's pool,
   // one entry per signature, so a type published once is taken once however
   // many connections name it.

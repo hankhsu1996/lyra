@@ -343,8 +343,8 @@ auto MakeEnumValueExpr(
 }
 
 // A parameter read here is folded to the value one elaboration gave it, as the
-// specialization declaring it holds it: this one's own, or another's as that
-// one published it. That holds where the value varies only with the
+// unit declaring it holds it: this unit's own, or another's as that one
+// published it. That holds where the value varies only with the
 // parameterization of the unit, package or class declaring it, since a
 // parameterization is an artifact of its own. Some parameters vary with
 // something else, and a name reaching one resolves to its declaration instead:

@@ -679,10 +679,10 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
     if (published_by.classes != named.classes) {
       throw InternalError(
           std::format(
-              "UnitLowerer::PublishSignature: '{}' is an application of "
-              "specialization '{}' and publishes other classes than '{}' does, "
-              "so a value the specialization's name does not hold reached what "
-              "it publishes -- please report this as a bug",
+              "UnitLowerer::PublishSignature: '{}' is built as '{}' and "
+              "publishes other classes than '{}' does, so a value the name it "
+              "is built as does not hold reached what it publishes -- please "
+              "report this as a bug",
               application->asSymbol().getHierarchicalPath(), specialization_,
               scope_->asSymbol().getHierarchicalPath()));
     }
@@ -1247,38 +1247,38 @@ void UnitLowerer::ReadTypeDefinitions() {
 
 namespace {
 
-// The specialization `decl` is a declaration of: the one the instance holding
-// it is an application of, or, for a namespace or a class's specialization,
-// the unit itself, which is its only one.
-auto SpecializationHolding(
-    const slang::ast::Symbol& decl, const UnitNamingPolicy& naming)
-    -> std::string {
+// What the objects holding `decl` are built as: those of the instance holding
+// it, or, for a namespace or a class's specialization, the unit itself, which
+// is built one way only.
+auto BuiltAsHolding(
+    const slang::ast::Symbol& decl, const UnitNamingPolicy& naming,
+    const BuiltAsQuery& built_as) -> std::string {
   const slang::ast::Symbol& home = UnitHomeOf(decl);
   if (const auto* body = home.as_if<slang::ast::InstanceBodySymbol>()) {
-    return naming.Keys().SpecializationNameOf(InstantiationOf(*body));
+    return built_as.NameOf(InstantiationOf(*body));
   }
   return CompilationUnitName(home, naming);
 }
 
-// The scope of its unit a parameter is published under.
+// The scope of its unit a parameter is published under, each block by where
+// it stands: blocks of one class may each settle a constant of their own (LRM
+// 27.4), so the place is what tells their values apart.
 auto HolderOf(
-    const slang::ast::ParameterSymbol& param, const UnitNamingPolicy& naming)
+    const slang::ast::ParameterSymbol& param, const Specializations& keys)
     -> support::DefPath {
-  return DefPathOf(param.getParentScope()->asSymbol(), naming);
+  return DefPathOf(param.getParentScope()->asSymbol(), keys.Names());
 }
 
 }  // namespace
 
 auto UnitLowerer::ParameterValueOf(
-    const slang::ast::ParameterSymbol& param, diag::SourceSpan span)
+    const slang::ast::ParameterSymbol& param, diag::SourceSpan span) const
     -> diag::Result<hir::ConstantValue> {
-  const std::string holding = SpecializationHolding(param, Naming());
-  if (holding == specialization_) {
-    return MakeConstantValue(param.getValue(), span);
-  }
+  if (Owns(param)) return MakeConstantValue(param.getValue(), span);
+  const std::string holding = BuiltAsHolding(param, Naming(), BuiltAs());
   const hir::ConstantValue* published =
       Signatures().ValuesOf(holding).FindParameter(
-          param.name, HolderOf(param, Naming()));
+          param.name, HolderOf(param, Naming().Keys()));
   if (published == nullptr) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
@@ -1300,7 +1300,7 @@ void UnitLowerer::PublishParameterValues() {
     values_.parameters.push_back(
         hir::PublishedParameter{
             .name = std::string{param->name},
-            .holder = HolderOf(*param, Naming()),
+            .holder = HolderOf(*param, Naming().Keys()),
             .value = *std::move(value)});
   };
   WalkOwnDeclarations(publish);

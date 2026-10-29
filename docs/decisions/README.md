@@ -1308,12 +1308,12 @@ the detail lives in the entry itself.
   every value its instances are handed, and specializations whose code comes out alike are one body,
   found by comparing their HIR whole after a digest narrows it, named for the first of them in the
   design's order. Read it for why a parameter read as a value reads the object's own, why the design
-  root states a table per specialization, why each body is a compilation of its own that states the
-  published classes alike and the link keeps one, why a scope declaring a class has one body per
-  value its code relies on, and why a value handed to a child's construction is no part of the
-  building scope's code. Naming a body before it lowers, a name holding the constants settled at
-  each place, naming a body by a digest, trusting a digest alone, a unit of its own for what is
-  published, and every body in one compilation are rejected.
+  root states a table per thing its specializations are built as, why each body is a compilation of
+  its own that states the published classes alike and the link keeps one, why a scope declaring a
+  class has one body per value its code relies on, and why a value handed to a child's construction
+  is no part of the building scope's code. Naming a body before it lowers, a name holding the
+  constants settled at each place, naming a body by a digest, trusting a digest alone, a unit of its
+  own for what is published, and every body in one compilation are rejected.
 - [a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md)
   -- which generate blocks an instance built is part of its unit's name, as the branch an
   `if constexpr` keeps is part of a C++ instantiation: an alternative not selected is not
@@ -1334,8 +1334,9 @@ the detail lives in the entry itself.
   class and named for the first in design order, and a parameter the code reads as a value is a
   field. Read it for why a design element declaring a class is still a class per specialization (its
   methods are named by its class), why a loop's blocks building different alternatives are a class
-  per alternative, and why every specialization of a class is declared again and held to it.
-  Predicting what a declaration relies on, a class per application, one class holding every
+  per alternative, why every specialization of a class is declared again and held to it, and why
+  specializations differing only in where their names land are lowered once for what they are built
+  as. Predicting what a declaration relies on, a class per application, one class holding every
   alternative, a body named by its least key, and supplying a local parameter through construction
   data are rejected. **Revises the three entries above and
   [a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md) D4 and D7.**

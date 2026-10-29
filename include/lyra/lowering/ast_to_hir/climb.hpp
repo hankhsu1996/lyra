@@ -2,6 +2,7 @@
 
 #include <optional>
 #include <span>
+#include <string>
 #include <variant>
 #include <vector>
 
@@ -26,10 +27,16 @@ namespace lyra::lowering::ast_to_hir {
 // classes the name passes through belong to (LRM 6.22) -- the class of each
 // handle its path holds, and the class of each member it names -- since what
 // the name spells below its landing is how the reader reaches them.
+//
+// `reads` is the value the name reads where it names a constant -- a parameter
+// or an enumeration's member -- which the reader's code is compiled with, so
+// two instances landing in scopes of one class whose constants differ there
+// compile differently.
 struct ClimbAnchor {
   const slang::ast::Scope* scope = nullptr;
   const slang::ast::InstanceBodySymbol* instance = nullptr;
   std::vector<const slang::ast::Scope*> carries;
+  std::optional<std::string> reads;
 };
 
 // Where a name written in `reader` lands once it leaves `reader`, or nothing

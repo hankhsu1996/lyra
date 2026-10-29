@@ -59,7 +59,7 @@ class ClassNames final : public UnitNamingPolicy {
       std::unordered_map<std::string, std::string> unit_of,
       std::map<std::pair<std::string, support::DefPath>, std::uint64_t>
           block_class_of)
-      : UnitNamingPolicy(keys),
+      : UnitNamingPolicy(keys, nullptr),
         unit_of_(std::move(unit_of)),
         block_class_of_(std::move(block_class_of)) {
   }

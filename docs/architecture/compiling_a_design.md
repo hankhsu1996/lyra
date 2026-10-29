@@ -28,19 +28,19 @@ class LeafBody final : public Leaf_odd {
   }
 };
 
-// The design root, per specialization: which body it is and which body each
-// child and block it builds is; K is handed by the parent's code.
+// The design root, by what each instance is built as: which body it is and which body
+// each child and block it builds is; K is handed by the parent's code.
 u0: { make: LeafBody, blocks: { odd: LeafBody::create_block_0 } }
 u1: { make: LeafBody, blocks: { odd: LeafBody::create_block_0 } }
 ```
 
 Three kinds of thing, and nothing else:
 
-| Kind              | What it is                                                                                      | Count follows                                                     |
-| ----------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Signature         | what referrers compile against: what the element declares                                       | distinct published structures, the generate blocks built included |
-| Body              | the code: processes, subroutines, how to build its children                                     | distinct code its specializations come out as                     |
-| Construction data | per specialization: which body each child and generate block is, and the table it is built with | specializations and the blocks they build (data, never code)      |
+| Kind              | What it is                                                                                                         | Count follows                                                                   |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| Signature         | what referrers compile against: what the element declares                                                          | distinct published structures, the generate blocks built included               |
+| Body              | the code: processes, subroutines, how to build its children                                                        | distinct code its specializations come out as                                   |
+| Construction data | per what specializations are built as: which body each child and generate block is, and the table it is built with | what specializations are built as, and the blocks they build (data, never code) |
 
 A value only statements use names a specialization and leaves the signature alone, because a child
 instance is a member of its parent's signature -- a hierarchical name reaches into it -- so a value
@@ -79,13 +79,14 @@ part of what an instance is, as the branch an `if constexpr` keeps is part of a 
 How many blocks a loop counts out is not part of it.
 
 **A body is found by comparing what each specialization came out as.** Every value an instance is
-handed names its specialization, whose objects are all built alike. Lowering a specialization to HIR
-is cheap beside everything after it, so each is lowered, and specializations of one unit whose HIR
-is equal are one body -- a digest narrows the comparison, which is whole, as a linker folds
-identical sections. The body is named for the first specialization in the design's order that came
-out as it, and only that one is compiled further. Every generate block is lowered on its own and is
-a body of its own, shared with every block of the same body that comes out alike; which body stands
-at each place is the object's construction.
+handed names its specialization. Specializations that differ only in where their names land, at
+blocks of one class reading the same constants, are built as one thing. Lowering to HIR is cheap
+beside everything after it, so each such thing is lowered, and those of one unit whose HIR is equal
+are one body -- a digest narrows the comparison, which is whole, as a linker folds identical
+sections. The body is named for the first specialization in the design's order that came out as it,
+and only that one is compiled further. Every generate block is lowered on its own and is a body of
+its own, shared with every block of the same body that comes out alike; which body stands at each
+place is the object's construction.
 
 **The constructor runs the source's generate.** Its conditions and loops are constructor code, run
 against the values the object was handed, as a C++ constructor runs its own; each block it builds is

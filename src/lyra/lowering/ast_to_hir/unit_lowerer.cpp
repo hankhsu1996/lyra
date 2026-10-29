@@ -234,17 +234,19 @@ auto UnitLowerer::TakeSignature() -> hir::UnitSignature {
 }
 
 auto UnitLowerer::LowerBodies(
-    const hir::UnitSignatures& signatures, Implementations& implementations)
-    -> diag::Result<hir::Specialization> {
+    const hir::UnitSignatures& signatures, const BuiltAsQuery& built_as,
+    Implementations& implementations) -> diag::Result<hir::Specialization> {
   signatures_ = &signatures;
+  built_as_ = &built_as;
   const auto in_unit = diag::FailureContext::InUnit(unit_.name);
   auto own = LowerScopeOf(*scope_);
   if (!own) return std::unexpected(std::move(own.error()));
   unit_.root_scope = std::move(own->scope);
-  // Every application holds what the specialization's name holds, which
-  // includes every value it is handed, and the lowering reads a value only
-  // through that name or as one the object is built with, so every one of them
-  // lowers to the same scope and builds the same children.
+  // Every application holds what the name it is built as holds, which includes
+  // every value it is handed and every constant its names read where they
+  // land, and the lowering reads a value only through that name or as one the
+  // object is built with, so every one of them lowers to the same scope and
+  // builds the same children.
   for (const slang::ast::Scope* application : applications_) {
     if (application == scope_) continue;
     auto built = LowerScopeOf(*application);
@@ -253,10 +255,10 @@ auto UnitLowerer::LowerBodies(
         built->construction != own->construction) {
       throw InternalError(
           std::format(
-              "UnitLowerer::LowerBodies: '{}' is an application of "
-              "specialization '{}' and lowers to something else than '{}' "
-              "does, so the lowering read a value the specialization's name "
-              "does not hold -- please report this as a bug",
+              "UnitLowerer::LowerBodies: '{}' is built as '{}' and lowers to "
+              "something else than '{}' does, so the lowering read a value "
+              "the name it is built as does not hold -- please report this "
+              "as a bug",
               application->asSymbol().getHierarchicalPath(), specialization_,
               scope_->asSymbol().getHierarchicalPath()));
     }

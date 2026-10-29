@@ -28,12 +28,10 @@
 #include <slang/ast/types/Type.h>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/overloaded.hpp"
 #include "lyra/hir/structure_bytes.hpp"
 #include "lyra/lowering/ast_to_hir/connected_interface.hpp"
 #include "lyra/lowering/ast_to_hir/instance_context.hpp"
 #include "lyra/lowering/ast_to_hir/library_cell.hpp"
-#include "lyra/stable_hash/fingerprint.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -169,7 +167,7 @@ class GroupingNames final : public UnitNamingPolicy {
       const Specializations& keys, Grouping& grouping,
       const slang::ast::InstanceSymbol& described,
       const std::vector<const slang::ast::InstanceSymbol*>& reached)
-      : UnitNamingPolicy(keys),
+      : UnitNamingPolicy(keys, nullptr),
         grouping_(&grouping),
         described_(&described),
         own_(keys.SpecializationNameOf(described)),
@@ -283,11 +281,11 @@ class Grouping {
       support::DefPath prefix;
       std::size_t from = 0;
       if (writing != nullptr) {
-        const auto common = static_cast<std::size_t>(
-            std::ranges::mismatch(writing->data, path.data).in1 -
-            writing->data.begin());
+        const auto apart = std::ranges::mismatch(writing->data, path.data);
+        const auto common =
+            static_cast<std::size_t>(apart.in1 - writing->data.begin());
         out += std::format("up{};", writing->data.size() - common);
-        prefix.data.assign(path.data.begin(), path.data.begin() + common);
+        prefix.data.assign(path.data.begin(), apart.in2);
         from = common;
       }
       for (const support::DefPathData& step :

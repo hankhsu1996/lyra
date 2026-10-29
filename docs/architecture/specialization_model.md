@@ -204,9 +204,11 @@ what the frontend happened to do.
    elaboration, and what is left of a parameter is a read the object answers from what it was built
    with. So a value that only steers what the code computes -- an initial value, a count, a flag --
    forks neither the unit nor the code.
-5. **Each set of arguments names a specialization, whose objects are built alike** -- the same
-   blocks, the same children -- and whose construction table says so, while the code it comes out as
-   is shared with every specialization that comes out alike.
+5. **Each set of arguments names a specialization, and specializations that differ only in where
+   their names land are built as one thing** -- once the classes are known, a landing is written by
+   the class of each block on its way and the constants it reads there -- which is lowered once,
+   builds the same blocks and the same children, and is what a construction table is stated by. The
+   code it comes out as is shared with everything else that comes out alike.
 6. **One unit compiles once per distinct body.** A unit is the class its instances' declarations
    settle, and each distinct code its specializations come out as is a body of it, found by
    comparing what they state and compiled once, shared by every specialization and instance it
@@ -248,8 +250,8 @@ what the frontend happened to do.
   refine a compilation unit into specializations.
 - `incremental_build.md` uses unit and specialization names as cache keys. The rules in this doc are
   upstream of incremental reuse.
-- HIR is per specialization and every layer after it per body, never per instance. See the
-  individual IR docs for how each manifests in HIR, MIR, and LIR.
+- HIR is per what specializations are built as and every layer after it per body, never per
+  instance. See the individual IR docs for how each manifests in HIR, MIR, and LIR.
 
 ## Forbidden Shapes
 

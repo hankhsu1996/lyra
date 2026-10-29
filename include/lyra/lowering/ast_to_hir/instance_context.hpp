@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -32,12 +33,14 @@ namespace lyra::lowering::ast_to_hir {
 // A hierarchical name an instance below writes that leaves this one too:
 // `path` leads from this instance to its writer, `written` is which of the
 // writer's names it is, in the order the writer's body writes those that
-// leave it, and it lands in `scope`, which stands in `instance`.
+// leave it, and it lands in `scope`, which stands in `instance`, reading there
+// the constant `reads` holds where it reads one.
 struct NameLandingBelow {
   std::string path;
   std::uint32_t written = 0;
   const slang::ast::Scope* scope = nullptr;
   const slang::ast::InstanceBodySymbol* instance = nullptr;
+  std::optional<std::string> reads;
 };
 
 // Something written elsewhere about an instance below this one, or below a

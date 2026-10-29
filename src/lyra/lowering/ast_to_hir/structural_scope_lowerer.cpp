@@ -288,22 +288,21 @@ struct ArgumentSource {
   std::variant<WrittenAtInstantiation, GivenElsewhere, LeftToDefault> from;
 };
 
-// How one instance is built: the specialization it is an application of, and
-// where each parameter it takes at construction gets its value, in the unit's
-// own order.
+// How one instance is built: what it is built as, and where each parameter it
+// takes at construction gets its value, in the unit's own order.
 struct InstanceConstruction {
   hir::SpecializationRef made;
   std::vector<ArgumentSource> arguments;
 };
 
 auto ConstructionOf(
-    const slang::ast::InstanceSymbol& instance, const UnitNamingPolicy& policy)
-    -> InstanceConstruction {
+    const slang::ast::InstanceSymbol& instance, const UnitNamingPolicy& policy,
+    const BuiltAsQuery& built_as) -> InstanceConstruction {
   InstanceConstruction built{
       .made =
           hir::SpecializationRef{
               .unit = policy.NameOf(instance),
-              .specialization = policy.Keys().SpecializationNameOf(instance)},
+              .specialization = built_as.NameOf(instance)},
       .arguments = {}};
   for (const slang::ast::ParameterSymbol* param :
        policy.Keys().SuppliedParametersOf(instance)) {
@@ -422,7 +421,8 @@ auto StructuralScopeLowerer::BuildInstanceMember(
   member.taken.reserve(elements.size());
   std::vector<InstanceConstruction> distinct;
   for (const slang::ast::InstanceSymbol* element : elements) {
-    InstanceConstruction built = ConstructionOf(*element, owner_->Naming());
+    InstanceConstruction built =
+        ConstructionOf(*element, owner_->Naming(), owner_->BuiltAs());
     built_member.made.push_back(built.made);
     const auto known =
         std::ranges::find_if(distinct, [&](const InstanceConstruction& other) {

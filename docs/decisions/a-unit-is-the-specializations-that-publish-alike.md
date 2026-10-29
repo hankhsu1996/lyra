@@ -112,14 +112,38 @@ written from such a value is worked out when the object is built, and every such
 what the front end settled it to. A parameter a class declares, one a nested definition reads, and
 one the code of a scope declaring a class reads hold the value this elaboration settled.
 
-**D8. Every specialization of a class is declared again under the class's naming and must publish
-exactly what the class does.** Where it does not, grouping compared less than a signature holds,
-which is this compiler's defect, reported as one.
+**D8. Every specialization lowered, and in a compile that checks itself every specialization, is
+declared again under the class's naming and must publish exactly what the class does.** Where it
+does not, grouping compared less than a signature holds, which is this compiler's defect, reported
+as one.
+
+**D9. A specialization is lowered once for what its objects are built as: its key worked out again
+once the classes are known, every other instance in it named by what that one is built as, and every
+block by its class.** A key names a block by where it stands, so a name an instance writes that
+lands in a block of a loop around it makes each place a specialization of its own, and each would be
+lowered alone into the same code. What the lowering reads through such a name is the class of the
+scope it lands in, what that class publishes, and any constant it reads there, so the constant is a
+part of the key too, taken from the declaration the name resolves to. Two specializations built as
+one thing differ only in where their names land, at blocks of one class reading the same constants,
+so they lower to the same code and build the same children. A construction names each child by what
+it is built as, and the same holds of the children in turn: a name of a child's leaving the parent
+is a part of the parent's key, and one landing inside the parent names the parent by what it is
+built as. The design root's tables are stated by the same name, and hold a placement for every
+instance. What each instance is built as is worked out after grouping, by a query of its own that
+keeps its answers and its chain of keys in progress apart from the specializations', and a
+specialization read through its own body rather than the one the front end shared must come out the
+same, so no answer depends on which was asked first. A compile that checks itself declares and
+lowers every specialization and holds it to what its class publishes and to the lowering of what it
+is built as.
 
 ## Limits, each with its cause
 
 - A design element declaring a class compiles a class per specialization, and a loop's blocks
   declaring one a class per index (D5). Cause: a method is named by its class (fact 5).
+- A specialization handed a value its code only reads is lowered alone, and found to be one body
+  with the others only by comparing what they lowered to (D6, D9). Cause: a value handed in is still
+  folded wherever the front end folds it -- a width, a type query, a range -- and which of those
+  positions the code holds is known only by lowering it.
 - A body is renamed when the first specialization of it in the design's order changes (D6). Cause:
   no naming state outlives a build, and a digest of the code costs the common edit more.
 - A reference into an outside instance's generate blocks, or from one block to a sibling of it, is
@@ -131,7 +155,6 @@ which is this compiler's defect, reported as one.
   local's initializer depends on is read off the initializer as written, not off what it calls.
 - Which specializations on a cycle are found to be on it follows the order the walk meets them.
   Cause: the cycle is found by the walk, not by a pass over the whole graph.
-- Every specialization is lowered to HIR before bodies are compared, as before this record.
 
 ## Survey
 
@@ -148,6 +171,11 @@ which is this compiler's defect, reported as one.
   afterwards.
 - **Folding equal code.** lld's identical code folding and LLVM's `MergeFunctions` compare whole
   after a hash narrows them, as D6 does.
+- **A nested entity's enclosing context.** A rustc closure is identified by its definition and its
+  parent's generic arguments, the enclosing context stated outright; CIRCT keeps hierarchical paths
+  apart from the module definitions it deduplicates and rewrites them after. D9 states the enclosing
+  context the same way, by the class of each scope a name passes, and keeps the place where an
+  object stands to the construction.
 
 ## Rejected
 
@@ -164,6 +192,13 @@ which is this compiler's defect, reported as one.
 - **A local parameter supplied with the front end's value through each specialization's construction
   data.** It would make every block a loop builds carry an entry of its own, for an answer the
   object already works out from what it is handed.
+- **Lowering once for a key with every handed value left out** (D9's alternative). A handed value is
+  still folded into a width, a type query or a range wherever the front end folds it, so two
+  specializations of that key can lower to different code, and knowing which positions the code
+  holds is lowering it.
+- **Sharing the lowering but rebuilding each specialization's children in its construction.** It
+  needs a second walk finding the child at each place of the construction, for children that are
+  built as one thing in every specialization lowered together anyway.
 
 ## Revises
 

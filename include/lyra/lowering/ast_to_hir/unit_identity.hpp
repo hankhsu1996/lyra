@@ -134,10 +134,12 @@ struct FixedInterface {
 // the specialization holding it and the scope's path there. The name resolves
 // per instance (LRM 23.8), and what it reaches from there are that scope's
 // declarations, so two instances whose names land in different scopes
-// elaborate differently.
+// elaborate differently. `reads` is the constant the name reads there, where
+// it reads one.
 struct LandsIn {
   std::string specialization;
   support::DefPath scope;
+  std::optional<std::string> reads;
 
   auto operator==(const LandsIn&) const -> bool = default;
 };
@@ -151,6 +153,7 @@ struct LandsIn {
 struct LandsBack {
   std::uint32_t levels = 0;
   support::DefPath blocks;
+  std::optional<std::string> reads;
 
   auto operator==(const LandsBack&) const -> bool = default;
 };
@@ -204,21 +207,90 @@ struct UnitKey {
 };
 
 class Specializations;
+class UnitNamingPolicy;
+
+// The keys worked out in one naming, each kept for its instance, and each name
+// kept held against the key it was folded from: two keys reaching one name
+// would silently make two into one.
+//
+// Working out one key can ask for another's -- where a name it writes lands
+// (LRM 23.6), where a type it is fixed to is declared (LRM 6.22), where its own
+// definition is nested (LRM 23.4) -- and the answer may be an instance whose
+// key in this naming is still being worked out, the one asking included. So the
+// table holds the chain of instances being worked out in its naming, and such
+// an instance is told by how far out on the chain it is rather than by a key
+// nobody has yet. A key asked in another naming meanwhile is worked out on that
+// naming's chain and is no part of this one.
+class KeyTable {
+ public:
+  explicit KeyTable(const UnitNamingPolicy& naming) : naming_(&naming) {
+  }
+
+  // The name `inst` goes by in this table's naming: its key, every other
+  // instance and every block in it named as that naming names them, worked out
+  // and kept where it can be.
+  [[nodiscard]] auto NameOf(const slang::ast::InstanceSymbol& inst)
+      -> std::string;
+
+  // The key the name `name` was folded from.
+  [[nodiscard]] auto KeyNamed(const std::string& name) const -> const UnitKey&;
+
+  // Drops what was kept of `inst`, so it is worked out again when next asked.
+  void Forget(const slang::ast::InstanceSymbol& inst);
+
+  // How far out on this table's chain `body` stands, or nothing where it is not
+  // on it.
+  [[nodiscard]] auto LevelsOutTo(const slang::ast::InstanceBodySymbol& body)
+      -> std::optional<std::uint32_t>;
+
+ private:
+  struct KeptKey {
+    UnitKey key;
+    std::string name;
+    // The instances it looked for among those being worked out and did not
+    // find.
+    std::unordered_set<const slang::ast::InstanceBodySymbol*> depends_on;
+  };
+
+  struct KeyInProgress {
+    // How long the chain was when this key was asked for, so a landing on an
+    // earlier entry is one outside it.
+    std::size_t chain_at_start = 0;
+    bool met_nothing_outside = true;
+    std::unordered_set<const slang::ast::InstanceBodySymbol*> depends_on;
+  };
+
+  // Whether `kept` still answers: none of the instances it looked for and did
+  // not find is being worked out.
+  [[nodiscard]] auto AnswersNow(const KeptKey& kept) const -> bool;
+
+  const UnitNamingPolicy* naming_;
+  std::unordered_map<const slang::ast::InstanceSymbol*, KeptKey> kept_;
+  std::unordered_map<std::string, UnitKey> folded_;
+  std::vector<const slang::ast::InstanceBodySymbol*> chain_;
+  std::vector<KeyInProgress> in_progress_;
+};
 
 // How one stage of the compile names what it names: the instance a reference
 // reaches, and a generate block on the way to a declaration. Declaring a unit
 // and lowering its bodies state another instance's class and a block's class
 // in the stage's own terms -- the specialization it is while keys are worked
-// out, what it reaches while specializations are compared, and the class
-// grouping found for it once they have been -- and every other answer is the
-// specializations' own, the same in every stage.
+// out, what it reaches while specializations are compared, the class grouping
+// found for it once they have been, and what it is built as while that is
+// worked out -- and every other answer is the specializations' own, the same
+// in every stage.
 //
 // Every party in one stage reads the same naming, so a parent and the child it
 // names agree.
+//
+// A naming keys are worked out in is made with the table they are kept in,
+// whose chain says which of them are still being worked out; a naming no key
+// is worked out in has none.
 class UnitNamingPolicy {
  public:
-  explicit UnitNamingPolicy(const Specializations& specializations)
-      : specializations_(&specializations) {
+  UnitNamingPolicy(
+      const Specializations& specializations, KeyTable* keys_worked_out)
+      : specializations_(&specializations), keys_worked_out_(keys_worked_out) {
   }
   UnitNamingPolicy(const UnitNamingPolicy&) = delete;
   auto operator=(const UnitNamingPolicy&) -> UnitNamingPolicy& = delete;
@@ -238,6 +310,14 @@ class UnitNamingPolicy {
       const slang::ast::GenerateBlockSymbol& block) const
       -> support::GenerateBlockStep = 0;
 
+  // How far out on the chain of keys being worked out in this naming `body`
+  // stands, or nothing where it is not on it.
+  [[nodiscard]] auto LevelsOutTo(const slang::ast::InstanceBodySymbol& body)
+      const -> std::optional<std::uint32_t> {
+    if (keys_worked_out_ == nullptr) return std::nullopt;
+    return keys_worked_out_->LevelsOutTo(body);
+  }
+
   // The specializations every stage names the instances of.
   [[nodiscard]] auto Keys() const -> const Specializations& {
     return *specializations_;
@@ -245,6 +325,7 @@ class UnitNamingPolicy {
 
  private:
   const Specializations* specializations_;
+  KeyTable* keys_worked_out_;
 };
 
 // The naming of the stage that works the keys out: another instance by the
@@ -272,7 +353,7 @@ class Specializations {
  public:
   explicit Specializations(
       support::BodiesRead bodies_read = support::BodiesRead::kOnePerName)
-      : bodies_read_(bodies_read), names_(*this) {
+      : bodies_read_(bodies_read), names_(*this, &keys_), keys_(names_) {
   }
   Specializations(const Specializations&) = delete;
   auto operator=(const Specializations&) -> Specializations& = delete;
@@ -293,10 +374,9 @@ class Specializations {
   // 23.8), and everything written elsewhere that reaches an instance below it
   // -- a parameter a defparam or a configuration sets (LRM 23.10.1, 33.4.3), an
   // instantiation a bind inserts (LRM 23.11), a cell a configuration binds (LRM
-  // 33.4.1.6) -- each under its path from `inst`. Instances of one
-  // specialization are built alike -- the same blocks, the same children -- so
-  // it is what the design's construction tables are stated by, and what a value
-  // one of them publishes is found under.
+  // 33.4.1.6) -- each under its path from `inst` -- and the constant each such
+  // name reads where it lands. Instances of one specialization are built
+  // alike.
   //
   // Every part is read off `inst` and what elaborated below it, which is where
   // a parent naming a child already stands. An instance the front end left
@@ -325,8 +405,9 @@ class Specializations {
       const slang::ast::InstanceSymbol& inst) const -> bool;
 
   // Has `inst` read through its own body from here on, which makes the front
-  // end elaborate it. Whatever was worked out of it from where it is written is
-  // dropped, so a key asked for afterwards is the one its body gives it.
+  // end elaborate it. Whatever was worked out of it through the shared body is
+  // dropped and worked out again from its own, and its specialization must come
+  // out the same.
   void ReadBodyOf(const slang::ast::InstanceSymbol& inst) const;
 
   // The parameters `inst` is handed when it is built, in the order its body
@@ -346,34 +427,7 @@ class Specializations {
   [[nodiscard]] auto ContextOf(const slang::ast::InstanceSymbol& inst) const
       -> const InstanceContext&;
 
-  // Working out one key can ask for another's -- where a name it writes lands
-  // (LRM 23.6), where a type it is fixed to is declared (LRM 6.22), where its
-  // own definition is nested (LRM 23.4) -- and the answer may be an instance
-  // whose key is still being worked out, the one asking included. These record
-  // the chain of instances being worked out, so such an instance is told by how
-  // far out on the chain it is rather than by a key nobody has yet.
-  void EnterKey(const slang::ast::InstanceBodySymbol& body) const;
-  void LeaveKey() const;
-  [[nodiscard]] auto LevelsOutTo(const slang::ast::InstanceBodySymbol& body)
-      const -> std::optional<std::uint32_t>;
-
  private:
-  struct KeptKey {
-    UnitKey key;
-    std::string name;
-    // The instances it looked for among those being worked out and did not
-    // find.
-    std::unordered_set<const slang::ast::InstanceBodySymbol*> depends_on;
-  };
-
-  struct KeyInProgress {
-    // How long the chain was when this key was asked for, so a landing on an
-    // earlier entry is one outside it.
-    std::size_t chain_at_start = 0;
-    bool met_nothing_outside = true;
-    std::unordered_set<const slang::ast::InstanceBodySymbol*> depends_on;
-  };
-
   // Where each value parameter of an instance's body takes its value from, and
   // those its objects are handed, in the order the body declares them.
   struct ParametersOfInstance {
@@ -382,13 +436,9 @@ class Specializations {
         sources;
   };
 
-  // The name of `inst`'s specialization, its key worked out and kept where it
-  // can be.
-  auto Worked(const slang::ast::InstanceSymbol& inst) const -> std::string;
   [[nodiscard]] auto ParametersOf(const slang::ast::InstanceSymbol& inst) const
       -> const ParametersOfInstance&;
   [[nodiscard]] auto ReadThroughItsOwnBody() const -> HasBodyOfItsOwnFn;
-  [[nodiscard]] auto AnswersNow(const KeptKey& kept) const -> bool;
 
   support::BodiesRead bodies_read_;
   SpecializationNames names_;
@@ -397,12 +447,7 @@ class Specializations {
       const slang::ast::InstanceSymbol*, ParametersOfInstance>
       per_instance_;
   mutable InstanceContexts context_;
-  mutable std::vector<const slang::ast::InstanceBodySymbol*> chain_;
-  mutable std::unordered_map<const slang::ast::InstanceSymbol*, KeptKey> keys_;
-  mutable std::vector<KeyInProgress> keys_in_progress_;
-  // Two keys reaching one name would silently make two specializations into
-  // one, so a name kept is held against the key it was folded from.
-  mutable std::unordered_map<std::string, UnitKey> folded_;
+  mutable KeyTable keys_;
 };
 
 // The key of a SystemVerilog class specialization (LRM 8.25). Two
