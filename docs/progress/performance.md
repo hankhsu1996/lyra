@@ -466,8 +466,9 @@ distinct unit specializations, not with instance count.
       such blocks is where a design stops building. The growth record names what follows the block
       count on each path.
 
-- [x] A block reaching its neighbour by a name indexed from its own index no longer compiles to text
-      that grows with the number of blocks.
+- [ ] A block reaching its neighbour by a name indexed from its own index compiles to emitted C++
+      that grows with the number of blocks, held in that path's growth record; the execution path no
+      longer does.
 
 - [ ] What remains of the instance array on that same axis. The member and the construction
       statement no longer scale: `Child c[0:N-1]` is one member whose type carries the multiplicity
