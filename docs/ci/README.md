@@ -208,31 +208,55 @@ or a class it includes gains a member it never reads.
 
 Every test above asks whether something is right, and a change can pass all of them while every
 program Lyra builds does a tenth more work. What says so is a count: `instruction-count.yml` builds
-the compiler at a change and at the revision before it, and has the benchmark runner count, under
-callgrind, how many instructions one unit of each case's work costs each of them on each backend --
-and, for a case whose subject is the build, how many Lyra itself executes building it. Two counts at
-an amount and at twice it are differenced, so what a run does once, starting and constructing the
-design, cancels exactly.
+the compiler at a change and at the revision before it, and counts under callgrind how many
+instructions each of them costs on two kinds of measurement, split the way rustc-perf splits its
+benchmarks.
+
+The real designs `tests/benchmark/designs.txt` lists come first, because they are what someone
+building a design waits on: cases of Verilator's benchmark suite, each declared as
+`external_design_tests` declares it, and counted whole on the execution backend -- the instructions
+Lyra executes building it as an edit loop builds, and those its program executes running the suite's
+quick check, built as a long run ships it. Counting runs a program about fifty times slower than
+running it, so the list holds the designs whose count of both compilers fits about half an hour, and
+each is a job of its own. The corpus cases come second: each is one cost family, counted on both
+backends, and what it says is which path a real design's move came from. Two counts at an amount and
+at twice it are differenced, so what a run does once, starting and constructing the design, cancels
+exactly.
 
 A count is the same however loaded the machine is, which is why it can say what a timing cannot: a
 change of a few percent stands out on a runner whose wall clock moves by half from one night to the
 next. It is not the same on every machine, though -- the C library picks its copy routines by
 processor, and the runner image moves its compiler and standard library on its own schedule -- so
-both counts are taken in the one job, on one machine, and none is stored for another day to compare
-against. What compares across days is the nightly benchmark's ratio to Verilator.
+the two counts of each measurement are taken in one job, on one machine, and none is stored for
+another day to compare against. What compares across days is the nightly benchmark's ratio to
+Verilator.
+
+A measurement is marked where it moved by two percent or more, or where the parent counted it and
+the change could not. Two counts of one compiler agree to a few hundredths of a percent of the
+count, which is far under two percent of a total. A corpus case reports a difference instead, and
+what a build does before any of the design can be nearly all of each count, so the same few
+hundredths can be most of the work counted. So each corpus case is counted twice at its lower
+amount, and the disagreement, as a share of the work, is the case's resolution. A case whose
+resolution is past a third of two percent fails, since a number it reports moves by itself as far as
+any change would move it.
 
 It is not on the path a change takes to merge, since the question is not one a merge waits for. A
 merge to `main` is counted against its parent, so each count belongs to exactly one pull request,
-and where any case moved by two percent or more either way the table goes on that pull request as a
-comment. A branch expected to move a case is counted before it merges by dispatching the workflow on
-it, and the same dispatch compares any revision with another, its parent by default.
+and where any measurement was marked the table goes on that pull request as a comment: the real
+designs whole, and of the corpus the cases marked, with every case below them, collapsed. A branch
+expected to move one is counted before it merges by dispatching the workflow on it, and the same
+dispatch compares any revision with another, its parent by default. The jobs take four runners at
+most, so a pull request's own checks never wait on them.
 
-The job goes red where a case that built and ran at the parent no longer does, and where one got
-worse by two percent or more. A duration is never failed on, because it reports on the machine; a
-count does not, so a count that rose is a statement about the change. Being red holds up nothing,
-since the job is not one a merge waits for: it marks the commit that did it, and the next merge,
-counted against that commit, starts clean. Two counts of one compiler agree to a few hundredths of a
-percent, so what two percent leaves unmarked is a change too small to be worth marking, not noise.
+The job goes red where the change has no count of a measurement -- one the parent counted, or one
+that cannot be counted at all, such as a case whose resolution fails it -- and where one got worse
+by two percent or more. A case that can never be counted is red on every merge until someone fixes
+it or takes it out, which is the point: which cases stand is decided by a person, and the red is
+what puts the question in front of one. It is not marked, though, and so posts no comment of its
+own, because nothing about it changed. A duration is never failed on, because it reports on the
+machine; a count does not, so a count that rose is a statement about the change. Being red holds up
+nothing, since the job is not one a merge waits for: it marks the commit that did it, and the next
+merge, counted against that commit, starts clean of whatever that commit moved.
 
 The host compiler a build starts is not counted: tracing it would cost fifty times a compile that is
 most of a build, and what Lyra hands it -- how many files, their size and how deep they nest -- is

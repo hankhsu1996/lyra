@@ -648,7 +648,26 @@ cc_test(
         ":framework",
         "@bazel_tools//tools/cpp/runfiles",
         "@googletest//:gtest_main",
-        "@yaml-cpp//:yaml-cpp",
+    ],
+)
+
+# One of those designs written out as Lyra is told of it, for the per-merge
+# instruction count, which builds and runs it under callgrind. It reads the same
+# suite and the same record, so a design counted is one the test above holds.
+cc_binary(
+    name = "declare_external_design",
+    srcs = ["declare_external_design.cpp"],
+    copts = LYRA_COPTS,
+    data = [
+        "external_design_options.yaml",
+        "paths/llvm.external_designs.yaml",
+        "@rtlmeter//:suite",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":framework",
+        "@bazel_tools//tools/cpp/runfiles",
+        "@nlohmann_json//:json",
     ],
 )
 

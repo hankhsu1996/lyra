@@ -51,6 +51,11 @@ refresh_compile_commands(
         # in the command, which the refresher cannot read; turning the feature
         # off for this run leaves the ordinary compile actions it does read.
         "//...": "--features=-parse_headers",
+        # Tagged manual, so `//...` leaves them out, and an editor would have
+        # no command to analyze their sources by. Naming them fetches the
+        # suite they read.
+        "//tests:declare_external_design": "--features=-parse_headers",
+        "//tests:external_design_tests": "--features=-parse_headers",
     },
 )
 

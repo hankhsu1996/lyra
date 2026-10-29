@@ -1590,6 +1590,11 @@ the detail lives in the entry itself.
 
 ### Measurement
 
+- [a-change-is-counted-on-real-designs-first](a-change-is-counted-on-real-designs-first.md) -- each
+  merge is counted on real designs first, whole, building each and running its quick check, and on
+  the corpus's cost families second, to say which path moved; a row is marked at a change of two
+  percent, a corpus case whose own variation swamps such a change fails, and which rows stand is
+  decided by a person while a row that cannot be counted stays red.
 - [benchmark-case-shape](benchmark-case-shape.md) -- a case fixes the shape of its work and takes
   the amount as a runtime argument, so the harness picks the amount and reports a rate; no iteration
   count is written down anywhere.

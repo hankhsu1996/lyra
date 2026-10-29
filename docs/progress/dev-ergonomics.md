@@ -248,17 +248,19 @@ layer directly.
       next, so that half was taken out of the test. The costs it had found and recorded then stand
       unwatched: lowering a scope and a unit to HIR over many ports and many task outputs, and
       LLVM's optimization and code generation over long concatenations, many ports and many scan
-      outputs. The host compiler's cost for what the C++ backend hands it is unwatched too: the
-      text's size and depth are held, but a template instantiated recursively over a design-sized
-      pack is linear in both and not in what it costs to compile. How a compile's time and memory
-      should be watched is open, and wants a design pass that answers three questions. What quantity
-      stands for a stage's cost and is the same on every run of one tree -- a count of what the
-      stage visits, or the instructions it retires, which rustc's and LLVM's own compile-time
-      tracking compare rather than time -- and does the gate hold it against the size? Where are
-      wall time and peak memory still measured, since a user waits on time and not on a count, and
-      how does a rise in either reach someone without deciding a merge -- a scheduled report, as the
-      instruction count of each merge is? And what happens to the costs recorded above until then?
-      Not blocked.
+      outputs. Whether compiling a packed value costs more as it grows wider is unwatched as well:
+      the growth tests hold what such a build leaves, and the per-merge count, whose difference of
+      two widths could not be told from a build's own variation, no longer asks. The host compiler's
+      cost for what the C++ backend hands it is unwatched too: the text's size and depth are held,
+      but a template instantiated recursively over a design-sized pack is linear in both and not in
+      what it costs to compile. How a compile's time and memory should be watched is open, and wants
+      a design pass that answers three questions. What quantity stands for a stage's cost and is the
+      same on every run of one tree -- a count of what the stage visits, or the instructions it
+      retires, which rustc's and LLVM's own compile-time tracking compare rather than time -- and
+      does the gate hold it against the size? Where are wall time and peak memory still measured,
+      since a user waits on time and not on a count, and how does a rise in either reach someone
+      without deciding a merge -- a scheduled report, as the instruction count of each merge is? And
+      what happens to the costs recorded above until then? Not blocked.
 - [x] D22 -- The address sanitizer run reaches the cases it was added to watch. It had built since
       D19 and still reported nothing: the runtime library a built program links was instrumented
       along with the compiler, so every case stopped where its program was linked, and each printed

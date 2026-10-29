@@ -1,0 +1,14 @@
+# The real designs every merge is counted on, by the name Verilator's benchmark
+# suite gives each case: design, configuration and test. Each is one the
+# external design record says builds, runs and passes its check, and the count
+# fails where one no longer does.
+#
+# They stand for what users build, beside the corpus cases, which each stand for
+# one cost family. Counting one under callgrind costs about fifty times what it
+# costs natively, so the list holds the designs whose count, of both compilers,
+# fits a job of about half an hour, cheapest first; with a counter that does not
+# slow the program, it would be every design that gets all the way.
+VeeR-EH1:default:hello
+HammerBlade:2x1:hello
+VeeR-EL2:default:hello
+XuanTie-E902:default:hello
