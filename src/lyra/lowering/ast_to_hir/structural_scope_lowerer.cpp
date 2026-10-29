@@ -288,25 +288,24 @@ struct ArgumentSource {
   std::variant<WrittenAtInstantiation, GivenElsewhere, LeftToDefault> from;
 };
 
-// How one instance is built: the specialization it is an application of, and
-// where each parameter it takes at construction gets its value, in the unit's
-// own order.
+// How one instance is built: what it is built as, and where each parameter it
+// takes at construction gets its value, in the unit's own order.
 struct InstanceConstruction {
   hir::SpecializationRef made;
   std::vector<ArgumentSource> arguments;
 };
 
 auto ConstructionOf(
-    const slang::ast::InstanceSymbol& instance, const UnitNamingPolicy& policy)
-    -> InstanceConstruction {
+    const slang::ast::InstanceSymbol& instance, const UnitNamingPolicy& policy,
+    const BuiltAsQuery& built_as) -> InstanceConstruction {
   InstanceConstruction built{
       .made =
           hir::SpecializationRef{
               .unit = policy.NameOf(instance),
-              .specialization = policy.SpecializationNameOf(instance)},
+              .specialization = built_as.NameOf(instance)},
       .arguments = {}};
   for (const slang::ast::ParameterSymbol* param :
-       policy.SuppliedParametersOf(instance)) {
+       policy.Keys().SuppliedParametersOf(instance)) {
     ArgumentSource source{.parameter = param, .from = LeftToDefault{}};
     if (ValueWrittenAtInstantiation(instance, *param) != nullptr) {
       source.from = WrittenAtInstantiation{};
@@ -422,7 +421,8 @@ auto StructuralScopeLowerer::BuildInstanceMember(
   member.taken.reserve(elements.size());
   std::vector<InstanceConstruction> distinct;
   for (const slang::ast::InstanceSymbol* element : elements) {
-    InstanceConstruction built = ConstructionOf(*element, owner_->Naming());
+    InstanceConstruction built =
+        ConstructionOf(*element, owner_->Naming(), owner_->BuiltAs());
     built_member.made.push_back(built.made);
     const auto known =
         std::ranges::find_if(distinct, [&](const InstanceConstruction& other) {
@@ -535,11 +535,11 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
 
 // The parameters of this scope whose values differ between the objects built
 // from it, each a declaration of the scope. One supplied at construction -- a
-// unit's overridden parameter, or the index a loop's block was built at -- is a
-// value the construction fills, and the scope declares them in the order a
-// construction supplies them. One computed from those holds the expression the
-// source wrote for it. Every other parameter's value is fixed by the scope's
-// unit, so reading that value costs no second artifact.
+// parameter the code reads and an instantiation may assign, or the index a
+// loop's block was built at -- is a value the construction fills, and the scope
+// declares them in the order a construction supplies them. One computed from
+// those holds the expression the source wrote for it. Every other parameter is
+// read as the constant this specialization settled it to.
 //
 // An expression naming the index resolves to the declaration the construction
 // fills, so every block a loop counts out states the same thing whatever index
@@ -550,7 +550,7 @@ auto StructuralScopeLowerer::DeclareDifferingParameters(
     const auto* parameter = member.as_if<slang::ast::ParameterSymbol>();
     if (parameter == nullptr) continue;
     switch (owner_->ValueSourceOf(*parameter)) {
-      case ParameterValueSource::kFixedByUnit:
+      case ParameterValueSource::kSettledAtElaboration:
         break;
       case ParameterValueSource::kSuppliedAtConstruction: {
         auto kind = SuppliedDeclarationOf(*parameter, frame);

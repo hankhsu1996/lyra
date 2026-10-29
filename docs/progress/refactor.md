@@ -3259,26 +3259,15 @@ source, or not yet tried.
       rustc builds drop glue and clone shims per type, and the code generator only translates them;
       the C++ backend keeps the host compiler's own rule, which is the same rule. Not blocked.
 
-- [ ] R260 -- A unit's name answers two questions at once: which declaration and specialization it
-      is, and what another unit may compile against. What another unit compiles against is decided
-      before any body lowers by predicting, from the front end's record of which parameters a type
-      or a required constant read, which values enter the name, while which bodies share code is
-      found afterwards by comparing what they came out as. The prediction errs toward more units and
-      every compile checks that the specializations of one unit publish one signature, so it is
-      sound where it runs, but it needs a record of our own in the front end, and naming a unit by
-      what it declares instead was tried and missed three things a signature holds (a structure
-      member's default, an explicit port expression's window, a nested module's type reading the
-      outer parameter). Beside it, a block's body is lowered inside the first body publishing the
-      class around its own, where layout and public field identity should come from the signature.
-      One name depends on another in a cycle where an instance inside a generate block writes a name
-      landing back in that block: the block is named by what it declares, the instance among it, and
-      the instance by where its names land, the block among them. Naming in one pass cuts the cycle
-      wherever it was entered, so the names it keeps can follow which was asked first; such a design
-      runs, but the cycle wants naming as a group. Target: one stage producing the public contract,
-      sharing its representation with what lowers the published class; a stable identity apart from
-      a fingerprint of the contract; references that name declaration identity, so naming need not
-      finish a child before its parent; the front end's record and the prediction removed last. Not
-      blocked.
+- [ ] R260 -- A unit's name answered two questions at once: which declaration and specialization it
+      is, and what another unit may compile against. A specialization is now its definition and
+      everything the design fixed for it, and a unit is the specializations whose published
+      structure reads alike, found by comparing what each publishes once every specialization has
+      declared and before any body lowers; the front end's record of which parameters each constant
+      evaluation read, the prediction it fed and the throwing comparison it was checked by are gone.
+      What is left: a block's body is still lowered inside the first body publishing the class
+      around its own, which is sound because every scope publishing one class publishes alike, where
+      layout and public field identity should come from the signature. Not blocked.
 
 - [ ] R261 -- A class the lowering builds for its own use -- what realizes a scope of the design
       hierarchy, and a node of a procedural block's storage -- is named by its place among those of
@@ -3319,6 +3308,18 @@ source, or not yet tried.
       and call, and a check refuses a declaration the render writes that no IR declaration states.
       The semantic IR keeps stating only which method answers which behavior, and the entry-point
       type of a behavior with no body is stated there once. Not blocked.
+
+- [ ] R266 -- A class declared inside a design element or one of its generate blocks has its methods
+      compiled into the element's code and named by the element's class, so two specializations of
+      the element that publish alike but compile to different code would give one method two
+      definitions. So such an element is a class of its own for each specialization, and such a
+      block one for each place it stands, though their layout is one. Target: a method's
+      implementation belongs to the body that compiled it and is named by that body; a call states
+      which method it calls (a non-virtual call still selects statically, LRM 8.14) and finds the
+      implementation through what the object, or for a static method and a construction the
+      declaring instance, is bound to; and both rules above go, so these scopes group by what they
+      publish as every other scope does. Its acceptance cases are one published class with two
+      bodies, and one class and one body standing for two SV types. Not blocked.
 
 - [x] R265 -- `process` is a class (LRM 9.7) and has the methods every class has -- `randomize()`
       with or without an inline constraint, the two hooks, the mode methods and the generator's

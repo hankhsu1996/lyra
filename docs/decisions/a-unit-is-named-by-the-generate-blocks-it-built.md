@@ -28,6 +28,12 @@ of its own -- every name a block reads in its module crossing units -- is answer
 class, as a Java inner class reaches its outer object through a reference it is handed (JLS 15.9.2).
 D1, D3 and D4 stand: the blocks an instance built are still part of its unit's name.
 
+D1 and D4 revised 2026-10-28 by
+[a-unit-is-the-specializations-that-publish-alike](a-unit-is-the-specializations-that-publish-alike.md):
+which blocks an instance built is part of what it publishes, which is what decides its class, not an
+input to a name worked out before it is declared; a value deciding what a child builds names nothing
+of the scope handing it.
+
 ## Requirement
 
 A compiled body is a function of its name. Two instances of one name compile to the same artifact,

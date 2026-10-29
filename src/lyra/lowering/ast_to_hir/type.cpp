@@ -591,7 +591,8 @@ auto TranslateType(
       return hir::Type{*std::move(u)};
     }
     // LRM 25.9: the type names the interface together with the parameters it
-    // was given, which is exactly what names the unit an instance of it is.
+    // was given, and code holding one compiles against what that interface
+    // publishes, so it names the interface's unit.
     case slang::ast::SymbolKind::VirtualInterfaceType:
       return hir::Type{hir::VirtualInterfaceType{
           .unit_name = unit_lowerer.Naming().NameOf(

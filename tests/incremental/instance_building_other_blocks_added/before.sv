@@ -1,4 +1,4 @@
-// @remakes: $root Leaf__16838c6b79aa9556__6d025dd515179a46 Top
+// @remakes: $root Leaf__6d025dd515179a46 Top
 //
 // One module builds one alternative of a conditional generate for the value it
 // is handed (LRM 27.5), and is instantiated once, in a module of its own. A

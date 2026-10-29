@@ -141,8 +141,8 @@ auto BuildDesignRootHir(
                       .alternatives = {hir::InstanceAlternative{
                           .scope_class = scope_class, .assignments = {}}},
                       .taken = {0}});
-    lowered.construction.instances.push_back(
-        {hir::SpecializationRef::Sole(top.unit_name)});
+    lowered.construction.instances.push_back({hir::SpecializationRef{
+        .unit = top.unit_name, .specialization = top.specialization}});
     LeaveInputsUnconnected(root, signature, scope_class, instance);
     const std::array kind{hir::UnitObjectType{.scope_class = scope_class}};
     published.members.Add(

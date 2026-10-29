@@ -18,6 +18,11 @@ that record reads which blocks an instance built off its elaboration, and says w
 evaluation of the instance's own generate scheme and not the instance graph Decision 2 forbids as
 authority.
 
+Its premise, that a parameter is either code-shape-affecting or a constructor input, was retired
+2026-10-28 by
+[a-unit-is-the-specializations-that-publish-alike](a-unit-is-the-specializations-that-publish-alike.md):
+nothing classifies a parameter in advance; a class is what specializations publish alike.
+
 ## Why this decision matters
 
 `specialization_model.md` classifies every parameter into one of two axes: a **code-shape-affecting

@@ -548,7 +548,7 @@ auto UnitLowerer::ReaderInstance() const -> std::optional<ReaderClimbs> {
   if (body == nullptr) return std::nullopt;
   return ReaderClimbs{
       .body = body,
-      .climbs = Naming().ContextOf(InstantiationOf(*body)).climbs};
+      .climbs = Naming().Keys().ContextOf(InstantiationOf(*body)).climbs};
 }
 
 auto NamesOwnDeclaration(const RouteOrigin& origin) -> bool {
@@ -1304,8 +1304,8 @@ auto UnitLowerer::ReadsParameterFromCell(
   }
   const slang::ast::Scope* holder = param.getParentScope();
   return holder != nullptr && holder->getContainingInstance() != nullptr &&
-         Naming().ValueSourceOf(InstanceHolding(*holder), param) !=
-             ParameterValueSource::kFixedByUnit;
+         Naming().Keys().ValueSourceOf(InstanceHolding(*holder), param) !=
+             ParameterValueSource::kSettledAtElaboration;
 }
 
 auto UnitLowerer::ResolveValueTarget(

@@ -36,6 +36,7 @@
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/specialization_ref.hpp"
 #include "lyra/hir/unit_signatures.hpp"
+#include "lyra/lowering/ast_to_hir/built_as.hpp"
 #include "lyra/lowering/ast_to_hir/coverage_library.hpp"
 #include "lyra/lowering/ast_to_hir/declaration_scopes.hpp"
 #include "lyra/lowering/ast_to_hir/implementations.hpp"
@@ -43,6 +44,7 @@
 #include "lyra/lowering/ast_to_hir/name_in_a_path.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/std_classes.hpp"
+#include "lyra/lowering/ast_to_hir/unit_grouping.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
@@ -64,15 +66,14 @@ auto RoleOf(const slang::ast::InstanceBodySymbol& body) -> hir::UnitRole {
 }
 
 // An instance read through a body of its own: what the front end elaborated
-// for it, the unit it is an object of, and the specialization of that unit it
-// is an application of. What was elaborated belongs to an instance the names
-// were computed from, so what the unit compiles against and what it was named
-// for are one application of a definition. A body the frontend elaborated for a
-// different definition's application states different types at the same
-// positions, which is a unit nothing in the design asked for.
+// for it, and the specialization it is an application of. What was elaborated
+// belongs to an instance the names were computed from, so what the unit
+// compiles against and what it was named for are one application of a
+// definition. A body the frontend elaborated for a different definition's
+// application states different types at the same positions, which is a unit
+// nothing in the design asked for.
 struct CollectedUnit {
-  const slang::ast::InstanceBodySymbol* elaborated;
-  std::string unit;
+  const slang::ast::InstanceSymbol* instance;
   std::string specialization;
 };
 
@@ -82,9 +83,8 @@ struct CollectedUnit {
 // left sharing another's body is not among them.
 //
 // A repeat is one specialization with an instance found before it: the
-// specialization's name holds everything that changes what is compiled and
-// how its objects are built, so it builds what that instance does and is read
-// only to check the compile against itself.
+// specialization's name holds everything the design fixed for it, so it builds
+// what that instance does and is read only to check the compile against itself.
 struct Collected {
   std::vector<CollectedUnit> units;
   std::vector<CollectedUnit> repeats;
@@ -97,13 +97,12 @@ struct Collected {
 // code knowing the container taxonomy.
 //
 // Two instances are one specialization exactly when they agree on its name,
-// because the name stands for what identifies it: a definition, everything
-// fixed for it that the unit declares, and every value it is handed. Two
-// instances agreeing on it are one specialization however many bodies the
-// frontend chose to elaborate -- it declines to share one when a name inside
-// reaches outward, since the resolution differs per instance, but that
-// resolution is settled per instance at construction and never inside the unit,
-// so how its objects are built is the same.
+// because the name stands for what identifies it: a definition and everything
+// the design fixed for it. Two instances agreeing on it are one specialization
+// however many bodies the frontend chose to elaborate -- it declines to share
+// one when a name inside reaches outward, since the resolution differs per
+// instance, but that resolution is settled per instance at construction and
+// never inside the unit, so how its objects are built is the same.
 //
 // Descending reaches an occurrence's own body, so a child is collected under
 // what its own parent fixed for it. An occurrence whose body is one already
@@ -118,10 +117,10 @@ struct Collected {
 // interface a declared type names is collected as an instantiated one is. Only
 // declarations are read for it, which is what the walk reaches anyway.
 struct UnitCollector : slang::ast::ASTVisitor<UnitCollector> {
-  explicit UnitCollector(const UnitNamingPolicy& policy) : policy(&policy) {
+  explicit UnitCollector(const Specializations& keys) : keys(&keys) {
   }
 
-  const UnitNamingPolicy* policy;
+  const Specializations* keys;
   // An interface every virtual interface of one type names is one instance
   // however many declarations name it, and is collected once.
   std::unordered_set<const slang::ast::InstanceSymbol*> met;
@@ -161,33 +160,31 @@ struct UnitCollector : slang::ast::ASTVisitor<UnitCollector> {
 
   void handle(const slang::ast::InstanceSymbol& inst) {
     if (!met.insert(&inst).second) return;
-    std::string specialization = policy->SpecializationNameOf(inst);
-    if (!policy->HasBodyOfItsOwn(inst)) {
+    std::string specialization = keys->SpecializationNameOf(inst);
+    if (!keys->HasBodyOfItsOwn(inst)) {
       // One specialization with an instance already found: nothing of it is
       // read, not its body and so nothing below it either.
       if (named.contains(specialization)) return;
       // The first instance its specialization is met through is read through
-      // its own body after all, and named by what that body says.
-      policy->ReadBodyOf(inst);
-      specialization = policy->SpecializationNameOf(inst);
+      // its own body after all, which states the same specialization.
+      keys->ReadBodyOf(inst);
     }
     const bool fresh = named.insert(specialization).second;
-    if (!fresh && !policy->ChecksItself()) return;
+    if (!fresh && !keys->ChecksItself()) return;
     (fresh ? found.units : found.repeats)
         .push_back(
             CollectedUnit{
-                .elaborated = &inst.body,
-                .unit = policy->NameOf(inst),
+                .instance = &inst,
                 .specialization = std::move(specialization)});
     visitDefault(inst);
   }
 };
 
 auto CollectUnits(
-    const LowerCompilationFacts& facts, const UnitNamingPolicy& policy)
+    const LowerCompilationFacts& facts, const Specializations& keys)
     -> Collected {
   const auto& root = facts.Compilation().getRoot();
-  UnitCollector collector(policy);
+  UnitCollector collector(keys);
   for (const auto* top : root.topInstances) {
     top->visit(collector);
   }
@@ -311,7 +308,7 @@ auto BindEveryBody(
   BindsEveryExpression binder;
   for (const auto* bodies : {&collected.units, &collected.repeats}) {
     for (const CollectedUnit& unit : *bodies) {
-      unit.elaborated->visit(binder);
+      unit.instance->body.visit(binder);
     }
   }
   for (const slang::ast::PackageSymbol* package : CollectPackages(facts)) {
@@ -456,16 +453,11 @@ auto WhyItMustBeConnected(PortConnectionRule rule) -> base::DiagMessage {
       "state");
 }
 
-// The design's tops. A top is where the design begins, so nothing instantiates
-// it and its ports are connected to nothing, which two kinds of port may not
-// be.
-auto TopLevelUnits(
-    const LowerCompilationFacts& facts, const UnitNamingPolicy& policy)
-    -> diag::Result<std::vector<TopLevelUnit>> {
-  const auto& root = facts.Compilation().getRoot();
-  std::vector<TopLevelUnit> tops;
-  tops.reserve(root.topInstances.size());
-  for (const auto* inst : root.topInstances) {
+// Why the design's tops cannot stand where they are, if they cannot. A top is
+// where the design begins, so nothing instantiates it and its ports are
+// connected to nothing, which two kinds of port may not be.
+auto TopsStandAlone(const LowerCompilationFacts& facts) -> diag::Result<void> {
+  for (const auto* inst : facts.Compilation().getRoot().topInstances) {
     if (const auto required = FindPortRequiringConnection(inst->body)) {
       return std::unexpected(
           diag::Make(
@@ -479,26 +471,79 @@ auto TopLevelUnits(
                   "and make that module the top",
                   inst->name));
     }
+  }
+  return {};
+}
+
+// The design's tops, each by the unit it is an object of.
+auto TopLevelUnits(
+    const LowerCompilationFacts& facts, const UnitNamingPolicy& naming,
+    const BuiltAsQuery& built_as) -> std::vector<TopLevelUnit> {
+  std::vector<TopLevelUnit> tops;
+  for (const auto* inst : facts.Compilation().getRoot().topInstances) {
     tops.emplace_back(
         TopLevelUnit{
             .instance_name = std::string{inst->name},
             .name_in_a_path = NameInAPath(*inst),
-            .unit_name = policy.NameOf(*inst)});
+            .unit_name = naming.NameOf(*inst),
+            .specialization = built_as.NameOf(*inst)});
   }
   return tops;
 }
 
-// The instances each specialization is checked against, by its name.
+// An instance to lower, by what its objects are built as.
+struct UnitToLower {
+  const slang::ast::InstanceSymbol* instance;
+  std::string built_as;
+};
+
+// What is lowered: the first instance of each thing instances are built as,
+// in the design's order, and, where the compile checks itself, every other
+// instance read through a body of its own, lowered only to hold it to the
+// first.
+struct UnitsToLower {
+  std::vector<UnitToLower> units;
+  std::vector<UnitToLower> repeats;
+};
+
+// The specializations collected, merged by what each is built as: the first
+// of each in the design's order is lowered, and where the compile checks
+// itself every other one, and every repeat, is lowered beside it and held to
+// it.
+auto MergedByBuiltAs(
+    const Collected& collected, const Specializations& keys,
+    const BuiltAsQuery& built_as) -> UnitsToLower {
+  UnitsToLower merged;
+  std::unordered_set<std::string> built;
+  const auto as_built = [&](const CollectedUnit& unit) {
+    return UnitToLower{
+        .instance = unit.instance, .built_as = built_as.NameOf(*unit.instance)};
+  };
+  for (const CollectedUnit& unit : collected.units) {
+    UnitToLower merging = as_built(unit);
+    if (built.insert(merging.built_as).second) {
+      merged.units.push_back(std::move(merging));
+    } else if (keys.ChecksItself()) {
+      merged.repeats.push_back(std::move(merging));
+    }
+  }
+  for (const CollectedUnit& repeat : collected.repeats) {
+    merged.repeats.push_back(as_built(repeat));
+  }
+  return merged;
+}
+
+// The instances lowered beside the first of each built-as name, by that name.
 using InstancesCheckedAgainst = std::unordered_map<
     std::string, std::vector<const slang::ast::InstanceBodySymbol*>>;
 
-// The instances each specialization is lowered from beside the one it is
-// named for, which come out the same as that one: every repeat, which is where
-// one that lowers to anything else is found.
-auto CheckedAgainstOf(const Collected& collected) -> InstancesCheckedAgainst {
+// The instances each built-as name is lowered from beside the one it is named
+// for, which come out the same as that one: every repeat, which is where one
+// that lowers to anything else is found.
+auto CheckedAgainstOf(const UnitsToLower& lowered) -> InstancesCheckedAgainst {
   InstancesCheckedAgainst checked;
-  for (const CollectedUnit& repeat : collected.repeats) {
-    checked[repeat.specialization].push_back(repeat.elaborated);
+  for (const UnitToLower& repeat : lowered.repeats) {
+    checked[repeat.built_as].push_back(&repeat.instance->body);
   }
   return checked;
 }
@@ -542,70 +587,94 @@ class Turns {
 // What the design's units hold between declaring and lowering their bodies.
 // Everything a unit reads is here and outlives the unit reading it: the AST is
 // declared first, so it is released after every lowerer pointing into it, and
-// the sensitivity analysis, the unit naming policy and where each
-// specialization is held are built beside the facts that point at them rather
-// than handed in.
+// the sensitivity analysis, the specializations, the classes they were grouped
+// into, what each instance is built as and where each specialization is held
+// are built beside the facts that point at them rather than handed in.
 struct DeclaredDesign::Units {
   std::unique_ptr<slang::ast::Compilation> front_end;
   SensitivityAnalyzer sensitivity;
-  UnitNamingPolicy naming;
+  support::AssertionPolicy assertion_policy;
+  Specializations keys;
   StdDefinitions std_classes;
   std::optional<CoverageLibrary> coverage;
   SpecializationHomes specialization_homes;
-  LoweringFacts facts;
+  std::unique_ptr<ClassNames> classes;
+  std::optional<BuiltAsQuery> built_as;
+  std::optional<LoweringFacts> facts;
   std::vector<TopLevelUnit> tops;
   std::vector<std::unique_ptr<UnitLowerer>> lowerers;
   hir::UnitSignatures signatures;
   // The front end is read in the design's order, one specialization at a
-  // time: it elaborates on first read, and which specialization of a unit is
-  // the first of its implementation follows the order they are read in.
+  // time: it elaborates on first read.
   Turns reading_front_end;
   // What the specializations of the unit being read came out as.
   Implementations implementations;
 
   Units(
       std::unique_ptr<slang::ast::Compilation> elaborated,
-      support::AssertionPolicy assertion_policy)
+      support::AssertionPolicy assertion_policy,
+      support::BodiesRead bodies_read)
       : front_end(std::move(elaborated)),
-        facts(
-            sensitivity, assertion_policy, naming, specialization_homes.placed,
-            std_classes, coverage) {
+        assertion_policy(assertion_policy),
+        keys(bodies_read) {
   }
 
-  // The lowerer of one specialization of a design element's unit, over the
-  // instance it is named for, checked against the others `checked_against`
+  // What the specialization `instance` is an application of publishes,
+  // declared in `naming`, or nothing where it fails to declare, which is
+  // reported to `sink`.
+  [[nodiscard]] auto DeclaredIn(
+      const slang::ast::InstanceSymbol& instance,
+      const UnitNamingPolicy& naming, diag::DiagnosticSink& sink)
+      -> std::optional<hir::UnitSignature> {
+    const LoweringFacts grouping(
+        sensitivity, assertion_policy, naming, specialization_homes.placed,
+        std_classes, coverage);
+    UnitLowerer lowerer(
+        grouping, instance.body,
+        hir::SpecializationRef{
+            .unit = naming.NameOf(instance),
+            .specialization = keys.SpecializationNameOf(instance)},
+        RoleOf(instance.body));
+    if (auto declared = lowerer.DescribeForGrouping(); !declared) {
+      sink.Report(std::move(declared.error()));
+      return std::nullopt;
+    }
+    return lowerer.TakeSignature();
+  }
+
+  // The lowerer of one thing a design element's instances are built as, over
+  // the instance it is named for, checked against the others `checked_against`
   // holds for it.
   [[nodiscard]] auto LowererOf(
-      const CollectedUnit& collected,
+      const UnitToLower& lowered,
       const InstancesCheckedAgainst& checked_against) const
       -> std::unique_ptr<UnitLowerer> {
-    const auto others = checked_against.find(collected.specialization);
+    const auto others = checked_against.find(lowered.built_as);
     return std::make_unique<UnitLowerer>(
-        facts, *collected.elaborated,
+        *facts, lowered.instance->body,
         hir::SpecializationRef{
-            .unit = collected.unit, .specialization = collected.specialization},
-        RoleOf(*collected.elaborated),
+            .unit = classes->NameOf(*lowered.instance),
+            .specialization = lowered.built_as},
+        RoleOf(lowered.instance->body),
         others == checked_against.end()
             ? std::span<const slang::ast::InstanceBodySymbol* const>{}
             : std::span<const slang::ast::InstanceBodySymbol* const>{
                   others->second});
   }
 
-  // Declares every unit the design has under the unit naming policy held
-  // here. Every specialization of a design element's unit declares what the
-  // unit publishes, from the instance it is named for: the unit's name holds
-  // everything the declarations depend on, the blocks its instances built
-  // included, so every specialization states it alike and the design keeps the
-  // first. One stating anything else is this compiler's defect, which every
-  // compile looks for. Whether any failed is the sink's answer.
+  // Declares every unit the design has in the classes grouping found. Every
+  // specialization of a class publishes what the class does, so the design
+  // keeps the first; one stating anything else means grouping compared less
+  // than a specialization publishes, which is this compiler's defect, and
+  // every compile looks for it. Whether any failed is the sink's answer.
   void DeclareEveryUnit(
-      const LowerCompilationFacts& front_end_facts, const Collected& collected,
+      const LowerCompilationFacts& front_end_facts, const UnitsToLower& lowered,
       const InstancesCheckedAgainst& checked_against,
       diag::DiagnosticSink& sink) {
     for (const auto* package : CollectPackages(front_end_facts)) {
       lowerers.push_back(
           std::make_unique<UnitLowerer>(
-              facts, *package, hir::SpecializationRef::Sole(package->name),
+              *facts, *package, hir::SpecializationRef::Sole(package->name),
               hir::UnitRole::kNamespace));
     }
     for (const auto* cu : CollectCompilationUnits(front_end_facts)) {
@@ -615,28 +684,32 @@ struct DeclaredDesign::Units {
       // separate kind.
       lowerers.push_back(
           std::make_unique<UnitLowerer>(
-              facts, *cu,
-              hir::SpecializationRef::Sole(CompilationUnitName(*cu, naming)),
+              *facts, *cu,
+              hir::SpecializationRef::Sole(CompilationUnitName(*cu, *classes)),
               hir::UnitRole::kNamespace));
     }
     for (const slang::ast::ClassType* spec : specialization_homes.own_units) {
       lowerers.push_back(
           std::make_unique<UnitLowerer>(
-              facts, *spec,
-              hir::SpecializationRef::Sole(CompilationUnitName(*spec, naming)),
+              *facts, *spec,
+              hir::SpecializationRef::Sole(
+                  CompilationUnitName(*spec, *classes)),
               hir::UnitRole::kNamespace));
     }
-    // The specializations of one unit stand side by side, so whatever holds
-    // what one of them came out as, to tell whether a later one came out the
-    // same, holds it only until the unit's last one has been lowered.
-    std::vector<const CollectedUnit*> by_unit;
-    by_unit.reserve(collected.units.size());
-    for (const CollectedUnit& found : collected.units) {
-      by_unit.push_back(&found);
+    // The specializations of one class stand side by side, in the design's
+    // order, so whatever holds what one of them came out as, to tell whether a
+    // later one came out the same, holds it only until the class's last one has
+    // been lowered, and the code they share is named for the first of them.
+    std::vector<std::unique_ptr<UnitLowerer>> of_design_elements;
+    of_design_elements.reserve(lowered.units.size());
+    for (const UnitToLower& found : lowered.units) {
+      of_design_elements.push_back(LowererOf(found, checked_against));
     }
-    std::ranges::stable_sort(by_unit, {}, &CollectedUnit::unit);
-    for (const CollectedUnit* found : by_unit) {
-      lowerers.push_back(LowererOf(*found, checked_against));
+    std::ranges::stable_sort(
+        of_design_elements, {},
+        [](const std::unique_ptr<UnitLowerer>& l) { return l->Unit().name; });
+    for (auto& lowerer : of_design_elements) {
+      lowerers.push_back(std::move(lowerer));
     }
 
     // Every unit declares before any unit lowers a body, because a body may
@@ -651,23 +724,32 @@ struct DeclaredDesign::Units {
       }
       signatures.PublishValues(
           lowerer->SpecializationName(), lowerer->TakeValues());
-      hir::UnitSignature signature = lowerer->TakeSignature();
-      const hir::UnitSignature* kept = signatures.Find(signature.unit_name);
-      if (kept == nullptr) {
-        signatures.Publish(std::move(signature));
-        continue;
+      PublishOrHold(lowerer->TakeSignature());
+    }
+    // A repeat is lowered only beside what it is built as, so it is declared
+    // here, where all of what it publishes is held to its class.
+    for (const UnitToLower& repeat : lowered.repeats) {
+      if (auto declared = DeclaredIn(*repeat.instance, *classes, sink)) {
+        PublishOrHold(*std::move(declared));
       }
-      // Every specialization of a unit is declared on its own, so the unit's
-      // name is held to what it promises -- everything its specializations
-      // publish -- on every compile.
-      if (*kept != signature) {
-        throw InternalError(
-            std::format(
-                "DeclaredDesign: two specializations of unit '{}' publish "
-                "different declarations, though its name holds everything they "
-                "depend on -- please report this as a bug",
-                signature.unit_name));
-      }
+    }
+  }
+
+  // Publishes `signature` for the first specialization of its unit, and holds
+  // every later one to what the first published.
+  void PublishOrHold(hir::UnitSignature signature) {
+    const hir::UnitSignature* kept = signatures.Find(signature.unit_name);
+    if (kept == nullptr) {
+      signatures.Publish(std::move(signature));
+      return;
+    }
+    if (*kept != signature) {
+      throw InternalError(
+          std::format(
+              "DeclaredDesign: two specializations grouped into unit '{}' "
+              "publish different declarations, so the grouping compared "
+              "less than they publish -- please report this as a bug",
+              signature.unit_name));
     }
   }
 };
@@ -678,28 +760,49 @@ auto DeclaredDesign::Declare(
     std::unique_ptr<slang::ast::Compilation> front_end,
     support::AssertionPolicy assertion_policy, support::BodiesRead bodies_read,
     diag::DiagnosticSink& sink) -> std::optional<DeclaredDesign> {
-  auto units = std::make_unique<Units>(std::move(front_end), assertion_policy);
+  auto units = std::make_unique<Units>(
+      std::move(front_end), assertion_policy, bodies_read);
   const LowerCompilationFacts facts(*units->front_end, assertion_policy);
 
-  units->naming = UnitNamingPolicy(bodies_read);
-  auto tops = TopLevelUnits(facts, units->naming);
-  if (!tops) {
-    sink.Report(std::move(tops.error()));
+  if (auto stand = TopsStandAlone(facts); !stand) {
+    sink.Report(std::move(stand.error()));
     return std::nullopt;
   }
-  const Collected collected = CollectUnits(facts, units->naming);
+  const Collected collected = CollectUnits(facts, units->keys);
   const std::vector<const slang::ast::CovergroupType*> covergroups =
       BindEveryBody(facts, collected);
   units->std_classes = DefineStdClasses(facts.Compilation());
   units->coverage = DefineCoverageClasses(facts.Compilation(), covergroups);
   BindEveryDefinition(units->std_classes, units->coverage);
   units->specialization_homes =
-      CollectSpecializationHomes(facts, units->naming);
-  units->DeclareEveryUnit(facts, collected, CheckedAgainstOf(collected), sink);
+      CollectSpecializationHomes(facts, units->keys.Names());
+
+  std::vector<const slang::ast::InstanceSymbol*> representatives;
+  representatives.reserve(collected.units.size());
+  for (const CollectedUnit& found : collected.units) {
+    representatives.push_back(found.instance);
+  }
+  const DeclareUnder declare = [&units, &sink](
+                                   const slang::ast::InstanceSymbol& instance,
+                                   const UnitNamingPolicy& naming) {
+    return units->DeclaredIn(instance, naming, sink);
+  };
+  units->classes = GroupSpecializations(units->keys, representatives, declare);
   if (sink.HasErrors()) {
     return std::nullopt;
   }
-  units->tops = *std::move(tops);
+  units->built_as.emplace(*units->classes);
+  units->facts.emplace(
+      units->sensitivity, assertion_policy, *units->classes,
+      units->specialization_homes.placed, units->std_classes, units->coverage);
+
+  const UnitsToLower merged =
+      MergedByBuiltAs(collected, units->keys, *units->built_as);
+  units->DeclareEveryUnit(facts, merged, CheckedAgainstOf(merged), sink);
+  if (sink.HasErrors()) {
+    return std::nullopt;
+  }
+  units->tops = TopLevelUnits(facts, *units->classes, *units->built_as);
   return DeclaredDesign(std::move(units));
 }
 
@@ -732,7 +835,8 @@ auto DeclaredDesign::LowerSpecialization(std::size_t index)
         "DeclaredDesign::LowerSpecialization: a specialization is lowered "
         "once, and this one has been");
   }
-  return lowerer->LowerBodies(units_->signatures, units_->implementations);
+  return lowerer->LowerBodies(
+      units_->signatures, *units_->built_as, units_->implementations);
 }
 
 auto DeclaredDesign::Signatures() const -> const hir::UnitSignatures& {

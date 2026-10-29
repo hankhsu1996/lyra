@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <optional>
 #include <span>
+#include <string>
 #include <vector>
 
 #include <slang/ast/HierarchicalReference.h>
@@ -10,7 +11,9 @@
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
+#include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
+#include <slang/ast/types/AllTypes.h>
 #include <slang/ast/types/Type.h>
 
 #include "lyra/base/internal_error.hpp"
@@ -174,6 +177,19 @@ auto LandingScope(
   return FoundAbove(head, reader);
 }
 
+// The value `found` stands for where it is a constant the reader reads (LRM
+// 6.19, 6.20), or nothing where it is storage or code of the scope it lands in.
+auto ConstantRead(const slang::ast::Symbol& found)
+    -> std::optional<std::string> {
+  if (const auto* param = found.as_if<slang::ast::ParameterSymbol>()) {
+    return ValueIdentity(param->getValue());
+  }
+  if (const auto* member = found.as_if<slang::ast::EnumValueSymbol>()) {
+    return ValueIdentity(member->getValue());
+  }
+  return std::nullopt;
+}
+
 }  // namespace
 
 auto ClimbOutOf(
@@ -192,7 +208,8 @@ auto ClimbOutOf(
   return ClimbAnchor{
       .scope = landed,
       .instance = instance,
-      .carries = ClassScopesAlong(found, written)};
+      .carries = ClassScopesAlong(found, written),
+      .reads = ConstantRead(found)};
 }
 
 auto StartOfReach(

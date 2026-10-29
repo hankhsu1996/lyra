@@ -196,7 +196,8 @@ auto InstanceContextOf(
               .path = held.path,
               .written = written,
               .scope = climb.scope,
-              .instance = climb.instance});
+              .instance = climb.instance,
+              .reads = climb.reads});
     }
     for (const NameLandingBelow& name : theirs.names_below) {
       if (name.instance == &inst.body) continue;
@@ -205,7 +206,8 @@ auto InstanceContextOf(
               .path = std::format("{}.{}", held.path, name.path),
               .written = name.written,
               .scope = name.scope,
-              .instance = name.instance});
+              .instance = name.instance,
+              .reads = name.reads});
     }
     AppendOverridesAtAndBelow(held, theirs, context.overridden_below);
   }

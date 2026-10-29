@@ -25,7 +25,7 @@
 
 namespace {
 
-using lyra::lowering::ast_to_hir::UnitNamingPolicy;
+using lyra::lowering::ast_to_hir::Specializations;
 
 // A design elaborated from source text. The front end's driver owns what the
 // elaboration points into, so the two are held together.
@@ -90,13 +90,13 @@ TEST(InstanceName, IsTheSameWhicheverInstanceIsAskedFirst) {
   const slang::ast::InstanceSymbol& a = design.TopNamed("A");
   const slang::ast::InstanceSymbol& b = design.TopNamed("B");
 
-  const UnitNamingPolicy a_first;
-  const std::string a_asked_first = a_first.NameOf(a);
-  const std::string b_asked_second = a_first.NameOf(b);
+  const Specializations a_first;
+  const std::string a_asked_first = a_first.SpecializationNameOf(a);
+  const std::string b_asked_second = a_first.SpecializationNameOf(b);
 
-  const UnitNamingPolicy b_first;
-  const std::string b_asked_first = b_first.NameOf(b);
-  const std::string a_asked_second = b_first.NameOf(a);
+  const Specializations b_first;
+  const std::string b_asked_first = b_first.SpecializationNameOf(b);
+  const std::string a_asked_second = b_first.SpecializationNameOf(a);
 
   EXPECT_FALSE(a_asked_first.empty());
   EXPECT_EQ(a_asked_first, a_asked_second);
@@ -140,23 +140,27 @@ TEST(InstanceName, FollowsWhereANameWrittenBelowLandsAndNotWhoWasAskedFirst) {
   const std::vector<const InstanceSymbol*> outermost_first{
       &board, &sensor, &main_logger, &backup, &spare, &spare_logger};
 
-  const UnitNamingPolicy from_the_top;
+  const Specializations from_the_top;
   std::vector<std::string> asked_from_the_top;
   for (const InstanceSymbol* inst : outermost_first) {
-    asked_from_the_top.push_back(from_the_top.NameOf(*inst));
+    asked_from_the_top.push_back(from_the_top.SpecializationNameOf(*inst));
   }
 
-  const UnitNamingPolicy from_the_leaves;
+  const Specializations from_the_leaves;
   std::vector<std::string> asked_from_the_leaves(outermost_first.size());
   for (std::size_t at = outermost_first.size(); at-- > 0;) {
-    asked_from_the_leaves[at] = from_the_leaves.NameOf(*outermost_first[at]);
+    asked_from_the_leaves[at] =
+        from_the_leaves.SpecializationNameOf(*outermost_first[at]);
   }
 
   EXPECT_EQ(asked_from_the_top, asked_from_the_leaves);
-  // The loggers compile apart, so what builds each does too.
+  // The loggers elaborate apart, so what builds each does too.
   EXPECT_NE(
-      from_the_top.NameOf(main_logger), from_the_top.NameOf(spare_logger));
-  EXPECT_NE(from_the_top.NameOf(sensor), from_the_top.NameOf(spare));
+      from_the_top.SpecializationNameOf(main_logger),
+      from_the_top.SpecializationNameOf(spare_logger));
+  EXPECT_NE(
+      from_the_top.SpecializationNameOf(sensor),
+      from_the_top.SpecializationNameOf(spare));
 }
 
 }  // namespace
