@@ -12,7 +12,10 @@
 // it (LRM 9.2.2.2.1), whatever form the write takes -- a part-select, a
 // compound assignment, an increment, a nonblocking assignment, a member of a
 // packed structure -- and however its bits fall across the vector's storage.
-module Leaf #(parameter int N = 0) (input bit [7:0] v, output int wakes);
+//
+// The leaf's input is declared `var`, since one with no port kind is a net
+// (LRM 23.2.2.3), which a 2-state type may not be (LRM 6.7.1).
+module Leaf #(parameter int N = 0) (input var bit [7:0] v, output int wakes);
   initial wakes = 0;
   always @(v[N]) wakes++;
 endmodule

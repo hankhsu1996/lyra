@@ -1,3 +1,5 @@
+// @includes: assignment_pattern.sv
+//
 // A subroutine a package declares runs with no enclosing instance, and the
 // readings a type's own declaration decides are available to it all the same.
 // An enumeration answers with the name it declares for a value and with its
@@ -8,7 +10,9 @@
 //
 // The enumeration reached inside an aggregate prints the name its own type
 // declares, which is the same reading `name()` asks for directly -- so a
-// package subroutine that never writes `name()` still needs it.
+// package subroutine that never writes `name()` still needs it. The pattern's
+// spelling is the tool's, so each text is held to being one of the legal
+// spellings of the value.
 package P;
   typedef enum {IDLE, RUN, STOP} state_t;
   typedef struct packed {
@@ -62,9 +66,9 @@ module Top;
       $fatal(1, "after(RUN) was '%s', expected STOP", next_state.name());
     if (prev_state !== P::IDLE)
       $fatal(1, "preceding(RUN) was '%s', expected IDLE", prev_state.name());
-    if (halves_text !== "'{high:10, low:5}")
+    if (!assignment_pattern::Spells(halves_text, "'{high:10, low:5}"))
       $fatal(1, "halves_text was %s, expected '{high:10, low:5}", halves_text);
-    if (entry_text !== "'{count:7, state:STOP}")
+    if (!assignment_pattern::Spells(entry_text, "'{count:7, state:STOP}"))
       $fatal(1, "entry_text was %s, expected '{count:7, state:STOP}",
              entry_text);
     $display("All checks passed");

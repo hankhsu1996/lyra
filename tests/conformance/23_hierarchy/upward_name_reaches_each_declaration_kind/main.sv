@@ -22,7 +22,7 @@ module Child;
 endmodule
 
 module Mid (
-    input int fed
+    input var int fed
 );
   Child c ();
 endmodule

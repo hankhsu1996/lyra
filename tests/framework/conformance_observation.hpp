@@ -53,14 +53,19 @@ struct ToolFailed {
   std::string how;
 };
 
-struct DidNotFinish {};
+// The run was stopped by a limit set around it rather than ending of its own:
+// the time it was given, the memory, or whatever the machine running it
+// allows. A limit is the caller's choice, so it says nothing of the program.
+struct StoppedAtALimit {
+  std::string limit;
+};
 
 struct Ran {
   int exit_code = 0;
 };
 
 using RunEnd = std::variant<
-    HarnessFailed, ToolLacks, Rejected, ToolFailed, DidNotFinish, Ran>;
+    HarnessFailed, ToolLacks, Rejected, ToolFailed, StoppedAtALimit, Ran>;
 
 // Why the files a case is made of cannot be handed to a tool, where they
 // cannot. A tool asked to read a file that is not there refuses the command,
@@ -70,9 +75,14 @@ auto MissingInput(const ConformanceCase& test_case)
     -> std::optional<HarnessFailed>;
 
 // How a command a tool's reader ran ended, before its output is read: a child
-// that never started is the harness's failure, one a signal or the time limit
-// ended is not the tool answering, and an exit is.
-auto EndOf(const ProcessOutcome& outcome) -> RunEnd;
+// that never started is the harness's failure, an exit is the tool answering,
+// and one the time limit or a kill from outside ended was stopped at a limit,
+// as was one that wrote any of its tool's own words for having run out of
+// memory, which only that tool's reader knows. Any other signal is the tool's
+// fault.
+auto EndOf(
+    const ProcessOutcome& outcome,
+    std::span<const std::string_view> out_of_memory) -> RunEnd;
 
 // What a run of one case on one tool showed, in terms no tool owns. Lines the
 // reader recognises as its tool's own report yet cannot place are kept apart
@@ -80,12 +90,20 @@ auto EndOf(const ProcessOutcome& outcome) -> RunEnd;
 // while one of them might be the report it asks about. What the tool and the
 // program wrote is kept apart from the commands that were run, which with it
 // are the evidence a verdict is read from without running the case again.
+// A file the case expects, as the run left it: its text, or nothing where the
+// run wrote no file of that name.
+struct WrittenOutput {
+  std::string name;
+  std::optional<std::string> text;
+};
+
 struct Observation {
   RunEnd end;
   bool checks_passed = false;
   bool ready_for_the_report = false;
   std::vector<ObservedReport> reports;
   std::vector<std::string> unplaced;
+  std::vector<WrittenOutput> outputs;
   std::string written;
   std::string evidence;
 };
@@ -94,6 +112,12 @@ struct Observation {
 void RecordCommand(
     Observation& seen, const std::filesystem::path& exe,
     std::span<const std::string> args, const ProcessOutcome& outcome);
+
+// The files the case expects, read from the directory the run was made in.
+// What they mean is the judgement's to say; a reader only hands them over.
+void ReadOutputs(
+    const ConformanceCase& test_case, const std::filesystem::path& directory,
+    Observation& seen);
 
 // Whether the program printed the case's two markers. They are text the case
 // itself writes to standard output, so no tool's reader reads them its own way.

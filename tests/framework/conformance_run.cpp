@@ -221,7 +221,7 @@ auto RunConformanceCase(
   const Observation seen = ObserveWithLyra(
       LyraTool{.exe = lyra_exe, .build_options = BuildOptions(path)},
       *built_against_header, *here);
-  const Verdict verdict = Judge(test_case.claim, seen);
+  const Verdict verdict = JudgeCase(test_case, seen);
   const auto report = [&](std::string_view what) {
     return std::format(
         "{}\n\ncase: {}\npath: {}\nverdict: {}\n\n{}", what, test_case.id,

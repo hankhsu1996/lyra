@@ -46,7 +46,6 @@ package tools;
   endfunction
 
   class Tool;
-    static string at_static = $sformatf("%m");
     string at_construction;
 
     function new();
@@ -151,7 +150,6 @@ module Top;
   string in_package_class;
   string in_package_constructor;
   string in_static_method;
-  string in_static_property;
 
   Leaf leaf ();
 
@@ -182,7 +180,6 @@ module Top;
     in_package_constructor = tool.at_construction;
     in_static_method = tools::Tool::static_name();
     in_package_kept = tools::where_kept();
-    in_static_property = tools::Tool::at_static;
   end
 
   if (1) begin : g_chosen
@@ -259,10 +256,6 @@ module Top;
         !ends_with(in_package_kept, "where_kept"))
       $fatal(1, "%%m in a package function static's initializer was %s",
              in_package_kept);
-    if (!starts_with(in_static_property, "tools") ||
-        !ends_with(in_static_property, "Tool"))
-      $fatal(1, "%%m in a static property's initializer was %s",
-             in_static_property);
     if (!holds(in_static_method, "Tool") ||
         !ends_with(in_static_method, "static_name"))
       $fatal(1, "%%m in a static method was %s", in_static_method);

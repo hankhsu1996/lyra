@@ -11,7 +11,7 @@ endmodule
 
 module High (
     output int o,
-    input int x
+    input var int x
 );
   assign o = 2 + x;
 endmodule

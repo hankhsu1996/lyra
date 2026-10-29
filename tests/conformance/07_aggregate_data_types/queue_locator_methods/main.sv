@@ -1,15 +1,17 @@
 // The find family selects the elements of an array, or their indices, that
 // satisfy a mandatory Boolean with expression and returns them in a queue -- of
 // the element type for a value locator and of int for an index locator on a
-// queue -- which has no elements when nothing matches. find_first and find_last
-// take the match nearest the lowest and the highest index. min, max and unique
-// take an optional with expression supplying the value each element is compared
-// by, defaulting to the element itself; min and max each return a queue holding
-// one element, and one holding none when the array has none. The queue unique
-// returns holds one entry per distinct compared value, and the queue
-// unique_index returns holds one index per distinct value -- for a value that
-// occurs more than once, the index of any one of its occurrences -- both in an
-// order unrelated to the array's (LRM 7.12.1).
+// queue -- which has no elements when nothing matches. It traverses the array
+// in an unspecified order, so what it returns is sorted before it is read.
+// find_first and find_last take the match nearest the lowest and the highest
+// index. min, max and unique take an optional with expression supplying the
+// value each element is compared by, defaulting to the element itself; min and
+// max each return a queue holding one element, and one holding none when the
+// array has none. The queue unique returns holds one entry per distinct
+// compared value, and the queue unique_index returns holds one index per
+// distinct value -- for a value that occurs more than once, the index of any
+// one of its occurrences -- both in an order unrelated to the array's
+// (LRM 7.12.1).
 module Top;
   int values [$] = '{5, 3, 8, 3, 1, 8};
   int nothing [$];
@@ -35,6 +37,8 @@ module Top;
   initial begin
     found_values = values.find with (item > 3);
     found_indices = values.find_index with (item > 3);
+    found_values.sort();
+    found_indices.sort();
     lowest_found = values.find_first with (item > 3);
     lowest_found_index = values.find_first_index with (item > 3);
     highest_found = values.find_last with (item > 3);

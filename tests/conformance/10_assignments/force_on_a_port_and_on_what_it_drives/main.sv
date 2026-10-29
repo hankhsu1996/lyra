@@ -18,6 +18,10 @@
 // what a force on the input gives it, and whoever waits on it is told; a force
 // through it, or through a `ref` port connected to it in turn, leaves the
 // input's source alone, however late in the hierarchy the input is bound.
+//
+// The input ports are declared `var`: one with no port kind is a net (LRM
+// 23.2.2.3), which no real or 2-state type may be (LRM 6.7.1), and whose
+// value with nothing connected is z rather than a variable's default.
 module RefOfInput (
     ref logic [7:0] x
 );
@@ -64,23 +68,23 @@ module RefMid (
 endmodule
 
 module Leaf (
-    input logic [7:0] in
+    input var logic [7:0] in
 );
 endmodule
 
 module Mid (
-    input logic [7:0] in
+    input var logic [7:0] in
 );
   Leaf leaf (.in(in));
 endmodule
 
 module WideLeaf (
-    input logic [99:0] in
+    input var logic [99:0] in
 );
 endmodule
 
 module RealLeaf (
-    input real in
+    input var real in
 );
 endmodule
 
@@ -102,12 +106,14 @@ module Top;
   RefOfRef chained (.x(late_leaf.in));
   InputLeaf late_leaf (.in(chain_src));
   int ref_wakes = 0;
+  int ref_wakes_before;
   always @(handed.leaf.x) ref_wakes++;
   logic [99:0] wide_shared = {4'hA, 96'd1};
   RefWide ref_wide (.w(wide_shared));
 
   initial begin
     #1;
+    ref_wakes_before = ref_wakes;
     force handed.in = 8'd7;
     #1;
     if (handed.leaf.x !== 8'd7)
@@ -120,14 +126,14 @@ module Top;
     if (input_src !== 8'd1 || handed.in !== 8'd9 || handed.leaf.x !== 8'd9)
       $fatal(1, "a force through a ref port to an input left %0d at the source and %0d at the input",
              input_src, handed.in);
-    release handed.leaf.x;
     input_src = 8'd2;
+    release handed.leaf.x;
     #1;
     if (handed.leaf.x !== 8'd2)
       $fatal(1, "a ref port connected to a released input showed %0d", handed.leaf.x);
-    if (ref_wakes != 4)
+    if (ref_wakes - ref_wakes_before != 4)
       $fatal(1, "a wait through a ref port following an input woke %0d times, expected 4",
-             ref_wakes);
+             ref_wakes - ref_wakes_before);
     force chained.inner.x = 8'd12;
     #1;
     if (chain_src !== 8'd1 || late_leaf.in !== 8'd12 || chained.x !== 8'd12)

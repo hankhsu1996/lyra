@@ -1,5 +1,6 @@
 #include "verilator_adapter.hpp"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -32,6 +33,11 @@ constexpr std::string_view kRefusalEnding = "%Error: Exiting due to";
 constexpr std::string_view kUnsupported = "%Error-UNSUPPORTED";
 constexpr std::string_view kInternalError = "Internal Error";
 
+// How Verilator, the host compiler its build runs, and a program it built say
+// they ran out of memory.
+constexpr std::array<std::string_view, 3> kOutOfMemory = {
+    "std::bad_alloc", "virtual memory exhausted", "out of memory allocating"};
+
 // How a build that produced no program ended, read off everything it wrote.
 auto BuildEnd(std::string_view written) -> RunEnd {
   if (written.find(kInternalError) != std::string_view::npos) {
@@ -59,6 +65,21 @@ constexpr std::array<std::pair<std::string_view, ReportKind>, 5> kTags = {{
     {"-Info: ", ReportKind::kInfo},
     {"- ", ReportKind::kInfo},
 }};
+
+// A qualified statement's violation report names the statement in the tool's
+// words alone (LRM 12.4.2.1, 12.5.3.1): an if's says it was violated, and a
+// case's opens with the statement and goes on to what it found.
+constexpr std::string_view kIfViolationEnding = "statement violated";
+constexpr std::array<std::string_view, 3> kCaseViolationOpenings = {
+    "unique case, but ", "unique0 case, but ", "priority case, but "};
+
+auto IsViolation(std::string_view said) -> bool {
+  return said.ends_with(kIfViolationEnding) ||
+         std::ranges::any_of(
+             kCaseViolationOpenings, [&](std::string_view opening) {
+               return said.starts_with(opening);
+             });
+}
 
 // The source line of where a report was made, written `file:line: `, and what
 // follows it.
@@ -138,19 +159,20 @@ void ReadLine(std::string_view line, Observation& seen) {
       if (scoped.starts_with(kFailedIn)) {
         scoped.remove_prefix(kFailedIn.size());
       }
-      // A qualified statement's violation report names the statement and says
-      // it was violated (LRM 12.4.2.1), in the tool's words alone.
-      const bool violation = rest.ends_with("statement violated");
-      if (violation) {
-        report.kind = ReportKind::kViolation;
-      }
       // The program's message follows the scope; where no scope is written,
       // nothing marks where the tool's words end and the message begins.
       const std::size_t scope_end = scoped.find(": ");
+      const std::string_view said = scope_end == std::string_view::npos
+                                        ? scoped
+                                        : scoped.substr(scope_end + 2);
+      const bool violation = IsViolation(said);
+      if (violation) {
+        report.kind = ReportKind::kViolation;
+      }
       if (scope_end != std::string_view::npos) {
         report.scope = std::string(scoped.substr(0, scope_end));
         if (!violation) {
-          report.message = std::string(scoped.substr(scope_end + 2));
+          report.message = std::string(said);
         }
       }
     }
@@ -187,7 +209,11 @@ auto ObserveWithVerilator(
     return seen;
   }
   const std::filesystem::path objects = directory / "obj";
-  std::vector<std::string> build{"--binary",       "--timing",   "-Wno-fatal",
+  // A case is the unit a caller runs side by side with others, so its own
+  // build compiles one file at a time rather than taking every core. Verilator
+  // carries out the dump tasks (LRM 21.7) only in a build asked for them.
+  std::vector<std::string> build{"--binary",       "--timing",   "--trace",
+                                 "--build-jobs",   "1",          "-Wno-fatal",
                                  "-Wno-lint",      "-Wno-style", "--Mdir",
                                  objects.string(), "-o",         "program"};
   if (test_case.tops.size() == 1) {
@@ -230,7 +256,7 @@ auto ObserveWithVerilator(
   const ProcessOutcome built =
       RunChildProcess(tool.exe, build, kStuckAfter, directory);
   RecordCommand(seen, tool.exe, build, built);
-  const RunEnd build_end = EndOf(built);
+  const RunEnd build_end = EndOf(built, kOutOfMemory);
   const auto* build_ran = std::get_if<Ran>(&build_end);
   if (build_ran == nullptr) {
     seen.end = build_end;
@@ -245,7 +271,8 @@ auto ObserveWithVerilator(
   const ProcessOutcome run =
       RunChildProcess(program, test_case.program_args, kStuckAfter, directory);
   RecordCommand(seen, program, test_case.program_args, run);
-  seen.end = EndOf(run);
+  seen.end = EndOf(run, kOutOfMemory);
+  ReadOutputs(test_case, directory, seen);
   ReadMarkers(run.stdout_text, seen);
   ReadVerilatorReports(run.stdout_text, seen);
   ReadVerilatorReports(run.stderr_text, seen);

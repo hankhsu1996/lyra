@@ -1,24 +1,16 @@
-/* An imported function whose call to a package's exported function ended the
-   simulation. The export returns to this frame rather than unwinding through
-   it, which is what the flag records. Whatever the disabled-state query
-   answers, the protocol is followed for it: acknowledged when it is set. */
+/* An imported function whose call to a package's exported function ends the
+   simulation. Should the export return to this frame, the disable protocol is
+   followed for whatever state it finds: acknowledged when it is set. */
 #include <svdpi.h>
 
 /* The exported subroutines called from here, declared as the design
    exports them (LRM 35.5.6, Annex H). */
 int32_t answer(int32_t);
 
-static int32_t returned = 0;
-
 int32_t ask(int32_t seed) {
   int32_t got = answer(seed);
-  returned = 1;
   if (svIsDisabledState() != 0) {
     svAckDisabledState();
   }
   return got;
-}
-
-int32_t returned_normally(void) {
-  return returned;
 }

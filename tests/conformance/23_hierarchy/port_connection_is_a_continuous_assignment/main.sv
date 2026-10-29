@@ -7,27 +7,27 @@
 // (LRM 23.3.2.1, 23.3.2.2) and may be any expression, including one that names
 // no variable at all, and a port of an enclosing module may itself serve as
 // the connection for a port one level further down.
-module Sink(input int a);
+module Sink(input var int a);
   int captured;
 
   always_comb captured = a;
 endmodule
 
-module Adder(input int a, output int b);
+module Adder(input var int a, output int b);
   always_comb b = a + 1;
 endmodule
 
-module Counter(input bit clk, output int count);
+module Counter(input var bit clk, output int count);
   always_ff @(posedge clk) count <= count + 1;
 endmodule
 
-module Inner(input int x);
+module Inner(input var int x);
   int doubled;
 
   always_comb doubled = x * 2;
 endmodule
 
-module Outer(input int a);
+module Outer(input var int a);
   Inner inner(.x(a));
 endmodule
 

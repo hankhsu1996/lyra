@@ -222,8 +222,10 @@ module Top;
     deep_en = 1'b1;
     #1;
     deep_from_leaf = deep;
-    child_en = 1'b1;
+    // The value is given before the enable, so the net moves once however the
+    // driver's evaluations interleave with these statements (LRM 4.7).
     child_d = 1'b1;
+    child_en = 1'b1;
     #1;
     driven_from_child = shared;
     changes_after = pad.changes;

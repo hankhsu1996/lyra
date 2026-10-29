@@ -8,7 +8,9 @@
 // instance through -- a static method, or a constructor still building its
 // object -- reaches it all the same, including from a process it forks
 // (LRM 9.3.2), which runs after the body that started it has returned.
-module Holder (input int seed);
+// The port is declared `var`: one with no port kind is a net (LRM 23.2.2.3),
+// which a 2-state type may not be (LRM 6.7.1).
+module Holder (input var int seed);
   int slot = -1;
   int read_back = -1;
   int doubled = -1;
@@ -47,9 +49,14 @@ module Holder (input int seed);
     endfunction
   endclass
 
+  // The port's connection gives seed its value at time zero, an active event
+  // in an order against this procedure the standard leaves open (LRM 4.7), so
+  // the procedure first yields to the inactive region, which runs only once
+  // the active one is empty (LRM 4.4.2.3).
   initial begin
-    Peeker p = new();
+    static Peeker p = new();
     Spawner s;
+    #0;
     p.poke(seed);
     read_back = p.peek();
     doubled = p.through_scope();
@@ -72,7 +79,7 @@ module Top;
     endclass
 
     initial begin
-      Toucher t = new();
+      static Toucher t = new();
       t.bump();
     end
   end

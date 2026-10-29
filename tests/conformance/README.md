@@ -38,14 +38,23 @@ ended, and -- for the cases that claim one -- the reports it issued. `$fatal` en
 error code (LRM 20.10) and a `final` procedure runs once at the end of simulation (LRM 9.2.3), so
 the sentinel and the end together separate "a check failed" from "the checks never ran".
 
-Five rules follow from that shape:
+Six rules follow from that shape:
 
 - **The expected value is written by hand and is never one a tool produced.** A comparison whose two
   sides both come from the implementation proves only that it agrees with itself.
 - **Every legal answer passes.** Where the standard allows more than one result -- an order it does
-  not fix, a value it leaves open within a set -- the case accepts each of them. A case that pins
-  one is testing a tool's choice, and that is not a case here (see
-  [Lyra's choices](#lyras-choices)).
+  not fix, a value it leaves open within a set -- the case accepts each of them: it sorts what a
+  locator returns before reading it, accepts either neighbour a narrower format rounds to, keeps
+  only checks that every order of its processes passes. A case that pins one is testing a tool's
+  choice, and that is not a case here (see [Lyra's choices](#lyras-choices)). Where two clauses give
+  one text different meanings, the case keeps what both require, and the dispute is a ruling in
+  `docs/architecture/language_conformance.md`.
+- **The program is one the standard allows.** A case built on a forbidden text claims nothing of a
+  tool that rightly refuses it, so a forbidden text is covered by a case that claims its refusal
+  (`@rejected:`), never by being used. Static initializers have no order among themselves (LRM 6.8),
+  so no initializer reads another's value unless every order gives the answer it checks; a check
+  over the whole corpus holds every case to that, and the few that pass every order are named in it
+  with why.
 - **Every target is set to something the check would reject before the case writes the value it
   checks.** Otherwise "the operation never ran" passes as "the operation answered correctly", and a
   whole class of requirements walks into this by construction: `.name()` of a non-member is the
@@ -91,6 +100,11 @@ directive has to say:
 - A `lib.map` is the case's library map (LRM 33.3.1), saying which library each companion belongs
   to. The standard leaves the file's name to the tool and writes its own examples against this one.
   A path in it is relative to the map, so it names a companion by its file name.
+- An `expected/` directory holds, under the name the case writes it by, each value change dump the
+  run is held to (LRM 21.7). A dump is compared as the standard reads one -- its declarations and
+  its values at each time, in the time unit it states -- and not as text, so what the standard
+  leaves to the tool, its identifier codes, its spacing, the order of changes within one time, does
+  not decide anything. The expected dump is written by hand like any expected value.
 
 Name a companion for what it is within its case (`width_pkg.sv`, `foreign.c`), not for the case --
 the directory already says which case it belongs to.
@@ -158,6 +172,18 @@ depends on it says which, and one whose meaning does not says nothing.
 //
 // Declarations in one file's compilation-unit scope are visible in another
 // when both are compiled as a single unit (LRM 3.12.1).
+```
+
+### `@includes`
+
+Files of the corpus's own harness, in `tests/harness/`, compiled before the case's sources. The
+harness is SystemVerilog a case leans on where checking in the language would otherwise mean writing
+the same recognizer in many cases: today, a recognizer of the assignment patterns `%p` writes, which
+takes every spelling LRM 21.2.1.6 allows of a value. It is held to its own case under `harness/`,
+which every tool runs, so a tool failing it shows the harness wrong, not the tool.
+
+```systemverilog
+// @includes: assignment_pattern.sv
 ```
 
 ### What the run is held to
@@ -259,9 +285,11 @@ if ($sformatf("%b", partial) != "10x1")
 ```
 
 That keeps the failure message specific, keeps the case one file, and keeps a change to how some
-value prints from failing every case that happens to print one. Recorded output is reserved for the
-cases whose subject is the output channel itself -- how stdout and stderr divide, and the order in
-which output interleaves.
+value prints from failing every case that happens to print one. Where the standard leaves the
+spelling open, the case checks only what it fixes: `%p` text goes through the harness's recognizer
+(`@includes`), which takes any spacing, index labels and defaults the clause allows. Recorded output
+is reserved for the cases whose subject is the output channel itself -- how stdout and stderr
+divide, the order in which output interleaves, and the dump files of LRM 21.7 (`expected/`).
 
 ## How a run is judged
 
@@ -275,10 +303,11 @@ and that reading into a verdict, the same for every tool:
 - **conforms** -- the run did what the claim says the standard requires;
 - **does not conform** -- it did something else: a wrong answer, a refusal of a legal program, a
   legal refusal not made, or no use model the standard requires every tool to offer;
-- **unresolved** -- what was read cannot decide the claim: the run did not end in its time; the
-  report the claim asks about could be among the lines the reader could not place, or is one that
-  lacks something the claim names; more reports of a kind asked for by kind alone were issued than
-  asked; or the run ended at a report before the rest the case asks for were observed;
+- **unresolved** -- what was read cannot decide the claim: the run was stopped at a limit -- the
+  time it was given, the memory it was given, or a kill whose cause is not known; the report the
+  claim asks about could be among the lines the reader could not place, or is one that lacks
+  something the claim names; more reports of a kind asked for by kind alone were issued than asked;
+  or the run ended at a report before the rest the case asks for were observed;
 - **not run** -- the case never reached the tool: the harness could not hand it the files. It says
   nothing of the tool.
 
@@ -288,6 +317,11 @@ to learn whether a case says only what the standard requires:
 ```bash
 bazel run //tests:verilator_conformance -- 09_processes/always_comb_combinational_value
 ```
+
+How wide it runs and how much memory each program it starts may take are the caller's to say
+(`--jobs`, `--address-limit`), since they are facts of the machine and not of the corpus; a whole
+run belongs inside one memory ceiling the caller sets, and its first line states what it ran under.
+A program stopped at one of those limits is unresolved, never a failure.
 
 Verilator is a second opinion here, never an oracle: what it answers is judged by the same claim.
 
@@ -357,7 +391,9 @@ one shape here that nothing watches.
 Where the standard leaves an answer to the tool and Lyra has chosen one, a case holding Lyra to that
 choice lives in `tests/choices/`, in the same shape and under the same clause, and only Lyra runs
 it. It is how a choice is kept from changing by accident, and it is never a statement of the
-standard.
+standard. Where two clauses disagree, the choices case holds the reading the ruling in
+`docs/architecture/language_conformance.md` gives, and the conformance case beside it keeps what
+both readings require.
 
 ### Running
 

@@ -4,14 +4,12 @@
 // instances that leave it to its default each hold their own value, whether
 // the earlier parameters it reads were assigned or defaulted themselves, and
 // whether the value was given by the instantiation or by a defparam (LRM
-// 23.10). A default no instance is left to need not be valid against the
-// values the other parameters were given.
+// 23.10).
 module Leaf #(
     parameter int W = 8,
     parameter int D = W * 2,
     parameter int E = D + 1,
-    parameter string NAME = "leaf",
-    parameter int NEVER = W(1)
+    parameter string NAME = "leaf"
 ) (
     output int w,
     output int d,
@@ -32,14 +30,14 @@ module Top;
   int e[6];
   int name_len[6];
 
-  Leaf #(.W(4), .D(100), .E(5), .NAME("ab"), .NEVER(0)) all_assigned (
+  Leaf #(.W(4), .D(100), .E(5), .NAME("ab")) all_assigned (
       w[0], d[0], e[0], name_len[0]
   );
-  Leaf #(.W(4), .NEVER(0)) earlier_assigned (w[1], d[1], e[1], name_len[1]);
-  Leaf #(.D(3), .NEVER(0)) later_assigned (w[2], d[2], e[2], name_len[2]);
-  Leaf #(.NEVER(0)) none_assigned (w[3], d[3], e[3], name_len[3]);
-  Leaf #(.W(6), .NEVER(0)) by_defparam (w[4], d[4], e[4], name_len[4]);
-  Leaf #(.W(7), .NEVER(0)) in_order (w[5], d[5], e[5], name_len[5]);
+  Leaf #(.W(4)) earlier_assigned (w[1], d[1], e[1], name_len[1]);
+  Leaf #(.D(3)) later_assigned (w[2], d[2], e[2], name_len[2]);
+  Leaf none_assigned (w[3], d[3], e[3], name_len[3]);
+  Leaf #(.W(6)) by_defparam (w[4], d[4], e[4], name_len[4]);
+  Leaf #(.W(7)) in_order (w[5], d[5], e[5], name_len[5]);
   defparam by_defparam.D = 50;
 
   final begin

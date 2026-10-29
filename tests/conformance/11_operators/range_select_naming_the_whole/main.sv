@@ -40,8 +40,10 @@ module Top;
   logic [31:0] read_matrix;
   logic [3:0] read_unknown;
   logic [3:0] unknown;
-  logic [7:0] initialized = 8'h5C;
-  logic [7:0] read_initialized = initialized[7:0];
+  // A constant, since nothing orders one variable's initializer before
+  // another's (LRM 6.8).
+  localparam logic [7:0] Initialized = 8'h5C;
+  logic [7:0] read_initialized = Initialized[7:0];
 
   logic [7:0] blocking_target;
   logic [7:0] nonblocking_target;

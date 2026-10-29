@@ -12,7 +12,7 @@ interface Bus;
 endinterface
 
 module Child (
-    input int taken
+    input var int taken
 );
   parameter int Scaled = 7;
   typedef enum int {ELow = 1, EHigh = 9} mode_t;

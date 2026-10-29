@@ -1,7 +1,9 @@
 // The unsized dimension of an open array may be the packed one, and then the
 // formal has no unpacked dimension at all: the actual supplies the width, and
 // the queries at dimension 0 describe the packed part (LRM 35.5.6.1, Annex
-// H.12.2). What they describe is not the range as written but the linearized,
+// H.12.2). How many dimensions svDimensions counts for such a formal is not
+// read here, since one clause numbers the packed part 0 and another gives the
+// queries the meaning of $dimensions, which counts it. What they describe is not the range as written but the linearized,
 // normalized one -- a packed array of range [L:R] is normalized to
 // [abs(L-R):0], so an actual declared in ascending order reports a descending
 // range of the same width (LRM Annex H.7.5, H.7.6).
@@ -28,9 +30,6 @@ module Top;
   end
 
   final begin
-    if (narrow_shape[0] !== 0)
-      $fatal(1, "a 12-bit actual reported %0d unpacked dimensions, expected 0",
-             narrow_shape[0]);
     if (narrow_shape[1] !== 11)
       $fatal(1, "the left bound of logic [11:0] was %0d, expected 11",
              narrow_shape[1]);

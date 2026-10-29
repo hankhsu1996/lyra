@@ -1,3 +1,5 @@
+// @includes: assignment_pattern.sv
+//
 // The assignment pattern conversion prints an associative array as its
 // entries, each under the index it is stored at (LRM 21.2.1.6). An array
 // declared with a wildcard index type holds entries the same way, and the
@@ -8,8 +10,12 @@
 //
 // A type reached through another is the same question, because a structure
 // prints each of its members under the name it declares for it, so a member
-// with no text leaves the structure with none.
+// with no text leaves the structure with none. The spelling of the pattern is
+// the tool's, so each text is held to being one of the legal spellings of the
+// value written here in full.
 module Top;
+  import assignment_pattern::Spells;
+
   typedef struct {
     int holds [*];
     int weight;
@@ -33,9 +39,9 @@ module Top;
   end
 
   final begin
-    if (bare_text != "'{5:100, 300:7}")
+    if (!Spells(bare_text, "'{5:100, 300:7}"))
       $fatal(1, "bare_text was %s, expected '{5:100, 300:7}", bare_text);
-    if (wrapped_text != "'{holds:'{1:10}, weight:2}")
+    if (!Spells(wrapped_text, "'{holds:'{1:10}, weight:2}"))
       $fatal(1, "wrapped_text was %s, expected '{holds:'{1:10}, weight:2}",
              wrapped_text);
     $display("All checks passed");

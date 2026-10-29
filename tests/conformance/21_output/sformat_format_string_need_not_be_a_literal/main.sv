@@ -6,11 +6,6 @@
 // (LRM 21.3.3). An argument is an expression the call evaluates once, whatever
 // the format turns out to ask of it.
 module Top;
-  typedef struct {
-    int a;
-    int b;
-  } pair_t;
-
   string format_text;
   byte format_bytes[0:3];
   int count;
@@ -24,9 +19,9 @@ module Top;
   string with_surplus_arguments;
   string from_a_called_argument;
 
-  function automatic pair_t Counted();
+  function automatic int Counted();
     evaluations = evaluations + 1;
-    Counted = '{a: evaluations, b: 0};
+    return evaluations;
   endfunction
 
   initial begin
@@ -50,7 +45,7 @@ module Top;
     format_text = "only=%0d";
     $sformat(with_surplus_arguments, format_text, count, count);
 
-    format_text = "%p";
+    format_text = "%0d";
     $sformat(from_a_called_argument, format_text, Counted());
   end
 
@@ -72,8 +67,8 @@ module Top;
              with_surplus_arguments);
     if (evaluations != 1)
       $fatal(1, "an argument was evaluated %0d times, expected 1", evaluations);
-    if (from_a_called_argument != "'{a:1, b:0}")
-      $fatal(1, "a called argument gave '%s', expected '{a:1, b:0}",
+    if (from_a_called_argument != "1")
+      $fatal(1, "a called argument gave '%s', expected 1",
              from_a_called_argument);
     $display("All checks passed");
   end

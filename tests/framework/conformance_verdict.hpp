@@ -31,6 +31,12 @@ using Verdict = std::variant<Conforms, DoesNotConform, Unresolved, NotRun>;
 // The verdict a claim and an observation give, the same for every tool.
 auto Judge(const Claim& claim, const Observation& observation) -> Verdict;
 
+// The verdict a whole case gets: its claim's, and where that conforms, each
+// file the case expects compared with the one the run left, as the standard
+// reads that kind of file. A file the run did not write does not conform.
+auto JudgeCase(const ConformanceCase& test_case, const Observation& observation)
+    -> Verdict;
+
 // The verdict in words: "conforms", "does not conform: ...".
 auto Describe(const Verdict& verdict) -> std::string;
 

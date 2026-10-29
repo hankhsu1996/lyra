@@ -1,3 +1,5 @@
+// @includes: assignment_pattern.sv
+//
 // A chandle holds a pointer passed through the DPI and is always initialized
 // to null. Its legal uses are few: equality and inequality against another
 // chandle or against null, case equality and case inequality with the same
@@ -5,10 +7,10 @@
 // assignment from another chandle or from null, passing to and returning from
 // a subroutine, insertion into an associative array, and the assignment-pattern
 // conversion, under which a chandle naming nothing prints the word null and one
-// naming something prints in a format the tool chooses (LRM 21.2.1.6). Two
-// distinct pointers therefore stay distinct through every one of those, and the
-// relative ordering of associative array entries keyed by a chandle is not
-// fixed, so nothing here depends on it (LRM 6.14).
+// naming something prints in a format the tool chooses (LRM 21.2.1.6), so only
+// the null text is checked. Two distinct pointers stay distinct through every
+// other use, and the relative ordering of associative array entries keyed by a
+// chandle is not fixed, so nothing here depends on it (LRM 6.14).
 module Top;
   import "DPI-C" function chandle allocate_cell(input int seed);
   import "DPI-C" function int read_cell(input chandle handle);
@@ -44,9 +46,6 @@ module Top;
   int tally [chandle];
 
   string null_text;
-  string first_text;
-  string copy_text;
-  string second_text;
 
   function automatic chandle pass_through(chandle handle);
     return handle;
@@ -63,9 +62,6 @@ module Top;
     tally_of_second = -1;
     tally_entries = -1;
     null_text = "unset";
-    first_text = "unset";
-    copy_text = "unset";
-    second_text = "unset";
 
     not_of_handle = 1'b1;
 
@@ -97,10 +93,6 @@ module Top;
     read_from_source = read_cell(first);
     read_from_copy = read_cell(copy);
     read_from_returned = read_cell(returned);
-
-    first_text = $sformatf("%p", first);
-    copy_text = $sformatf("%p", copy);
-    second_text = $sformatf("%p", second);
 
     tally[first] = 3;
     tally[second] = 4;
@@ -179,14 +171,8 @@ module Top;
       $fatal(1, "two distinct handles made %0d entries, expected 2",
              tally_entries);
 
-    if (null_text != "null")
+    if (!assignment_pattern::Spells(null_text, "null"))
       $fatal(1, "a null chandle printed as %s, expected null", null_text);
-    if (first_text == "null")
-      $fatal(1, "a non-null chandle printed as null");
-    if (first_text != copy_text)
-      $fatal(1, "one pointer printed as %s and as %s", first_text, copy_text);
-    if (first_text == second_text)
-      $fatal(1, "two distinct pointers both printed as %s", first_text);
     $display("All checks passed");
   end
 endmodule

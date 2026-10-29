@@ -12,12 +12,12 @@
 // value assigned to the port does. The module's own names stay its own, whatever
 // they are spelled as.
 module Child (
-    input int din = 171, input int ein, input int cin, output int dout);
+    input var int din = 171, input var int ein, input var int cin, output int dout);
   assign dout = din + ein + cin;
 endmodule
 
 module Scaled #(parameter int K = 0) (
-    input int scaled = K * 3,
+    input var int scaled = K * 3,
     input logic [7:0] narrow = K * 100,
     output int got_scaled,
     output int got_narrow

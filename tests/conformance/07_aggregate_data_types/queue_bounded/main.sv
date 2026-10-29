@@ -6,7 +6,8 @@
 // The bound belongs to the variable rather than to the value written, so it
 // applies alike to a declaration initializer, a push, an unpacked array
 // concatenation, a whole-queue assignment, an assignment from a fixed-size or a
-// dynamic array, and the queue a locator method answers, and it still applies
+// dynamic array, and the queue a locator method answers, whose order is
+// unspecified so that which of its elements stay is too, and it still applies
 // to every later write (LRM 7.6, 7.10.5, 7.12.1, 10.10). A slice of a bounded
 // queue is a queue (LRM 7.10.1) and no variable, so it carries no bound into a
 // queue of no bound it is joined into (LRM 7.10.5).
@@ -123,8 +124,10 @@ module Top;
 
     if (located.size() !== 2)
       $fatal(1, "located.size() was %0d, expected 2", located.size());
-    if (located[0] !== 6 || located[1] !== 7)
-      $fatal(1, "located held %0d %0d, expected 6 7", located[0], located[1]);
+    if (!(located[0] inside {[6:9]}) || !(located[1] inside {[6:9]}) ||
+        located[0] == located[1])
+      $fatal(1, "located held %0d %0d, expected two of 6 to 9", located[0],
+             located[1]);
 
     if (cleared.size() !== 0)
       $fatal(1, "cleared.size() was %0d, expected 0", cleared.size());

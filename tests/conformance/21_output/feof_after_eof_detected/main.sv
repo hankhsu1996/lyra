@@ -2,9 +2,9 @@
 // descriptor, and zero otherwise. Reading the last byte a file holds does not
 // detect it; the read that finds nothing left does (LRM 21.3.8, 21.3.4.1).
 //
-// A seek that cannot reposition the file leaves it where it was (LRM 21.3.5),
-// end of file included; one that does sets the position of the next read, so
-// nothing has been detected there yet.
+// A seek to a position before the file's start cannot reposition it and
+// answers -1; one that does reposition it sets the position of the next read,
+// so nothing has been detected there yet (LRM 21.3.5).
 module Top;
   int fd;
   int at_open;
@@ -13,7 +13,6 @@ module Top;
   int past_the_end;
   int after_eof;
   int failed_seek;
-  int after_failed_seek;
   int after_seek;
 
   initial begin
@@ -28,7 +27,6 @@ module Top;
     past_the_end = $fgetc(fd);
     after_eof = $feof(fd);
     failed_seek = $fseek(fd, -1, 0);
-    after_failed_seek = $feof(fd);
     void'($fseek(fd, 0, 0));
     after_seek = $feof(fd);
     $fclose(fd);
@@ -49,8 +47,6 @@ module Top;
     if (failed_seek !== -1)
       $fatal(1, "$fseek before the file start returned %0d, expected -1",
              failed_seek);
-    if (after_failed_seek === 0)
-      $fatal(1, "$feof after a seek that failed was 0, expected a nonzero value");
     if (after_seek !== 0)
       $fatal(1, "$feof after a seek to the start was %0d, expected 0",
              after_seek);

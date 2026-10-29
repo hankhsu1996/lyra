@@ -15,8 +15,9 @@
 #include <system_error>
 #include <unordered_set>
 #include <utility>
-#include <variant>
 #include <vector>
+
+#include "value_change_dump.hpp"
 
 namespace lyra::test {
 namespace {
@@ -156,7 +157,7 @@ auto ReadReportPattern(std::string_view text) -> std::optional<ReadPattern> {
       if (key == "count") {
         read.count = *value_read;
       } else {
-        (key == "line" ? pattern.line : pattern.time) = *value_read;
+        (key == "line" ? pattern.line : pattern.time) = value_read;
       }
     } else if (key == "scope") {
       pattern.scope = std::string(value);
@@ -227,6 +228,33 @@ void CollectCompanions(
   }
   std::ranges::sort(c.supporting_sources);
   std::ranges::sort(c.link_sources);
+
+  // A dump is the one kind of file a run is held to, since it is the one a
+  // tool writes by itself of what the program did (LRM 21.7).
+  const std::filesystem::path expected = directory / kCaseExpectedOutputs;
+  if (!std::filesystem::is_directory(expected)) {
+    return;
+  }
+  for (const auto& entry : std::filesystem::directory_iterator(expected)) {
+    const std::filesystem::path& path = entry.path();
+    const std::string extension = path.extension().string();
+    if (!entry.is_regular_file() ||
+        (extension != ".vcd" && extension != ".evcd")) {
+      throw std::runtime_error(
+          std::format(
+              "{}: a case's expected file is a dump, named .vcd or .evcd",
+              path.string()));
+    }
+    std::string text = ReadFile(path);
+    if (const std::optional<std::string> unreadable = DumpUnreadable(text)) {
+      throw std::runtime_error(
+          std::format("{}: not a dump: {}", path.string(), *unreadable));
+    }
+    c.expected_outputs.push_back(
+        ExpectedOutput{
+            .name = path.filename().string(), .text = std::move(text)});
+  }
+  std::ranges::sort(c.expected_outputs, {}, &ExpectedOutput::name);
 }
 
 auto ParseCase(
@@ -324,6 +352,24 @@ auto ParseCase(
       }
       reported.reports.insert(
           reported.reports.end(), pattern->count, pattern->pattern);
+    } else if (d.key == "includes") {
+      // The corpus's own helpers a case is written against, compiled ahead of
+      // everything the case holds, as test262's harness includes are.
+      std::vector<std::filesystem::path> included;
+      for (const std::string& name : SplitOnWhitespace(d.value)) {
+        const std::filesystem::path helper =
+            corpus_root.parent_path() / kHarnessDirectory / name;
+        if (!std::filesystem::exists(helper)) {
+          throw std::runtime_error(
+              std::format(
+                  "{}: '@includes' names '{}', which the corpus's harness "
+                  "does not hold",
+                  entry.string(), name));
+        }
+        included.push_back(helper);
+      }
+      c.supporting_sources.insert(
+          c.supporting_sources.begin(), included.begin(), included.end());
     } else if (d.key == "top") {
       c.tops = SplitOnWhitespace(d.value);
     } else if (d.key == "argv") {

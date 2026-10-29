@@ -1,0 +1,15 @@
+$timescale 1ns $end
+$scope module Top.l $end
+$var port 1 <0 a $end
+$upscope $end
+$enddefinitions $end
+#0
+$dumpports
+pD 6 0 <0
+$end
+#1
+pU 0 6 <0
+#2
+pD 6 0 <0
+#3
+pU 0 6 <0

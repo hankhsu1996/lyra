@@ -304,6 +304,29 @@ The front end accepts it with no diagnostic and evaluates it as `==`, and Lyra k
 so `+0.0 === -0.0` is 1 and a NaN equals nothing. The choice changes what the program computes,
 since a bit-by-bit match (12.5) would answer both the other way. Write `==`.
 
+#### An input port of a 2-state or non-integral type with no port kind
+
+```systemverilog
+module leaf(input int count, input real level, input string name);
+endmodule
+```
+
+23.2.2.3: "If the port kind is omitted: For input and inout ports, the port shall default to a net
+of default net type." 6.7.1: "A valid data type for a net shall be one of the following: a) A
+4-state integral type ... b) A fixed-size unpacked array or unpacked structure or union, where each
+element has a valid data type for a net." `int` is 2-state and `real` and `string` are not integral,
+so each port above is a net of a type no net may have. Forbidden. The clause's own examples write
+the variable port `input var integer x`.
+
+The text is in common use, and the front end accepts it with no diagnostic and takes each such port
+as a variable, which is the only meaning it could have; Lyra keeps that. Write
+`input var int count`, which every reading takes as that variable.
+
+The front end takes `input logic` as a variable as well, which is not a forbidden text but an
+analysis that differs from the standard's: `input logic d` is `input wire logic d`, a net, so left
+unconnected it reads z (6.6) where a variable reads x. That is a defect of the analysis, recorded as
+a wrong answer of Lyra's.
+
 ### Not settled by the standard, so refused
 
 #### One module described twice
@@ -356,6 +379,57 @@ that difficulty as well; the standard says so of those positions and not of this
 member through an interface port, which is not a hierarchical name (see `$bits` of a member reached
 through an interface port, below), or give the width its own parameter. A design whose author reads
 it the other way is built with `--allow-hierarchical-const`.
+
+### Not settled by the standard, accepted by the front end
+
+Run as the front end analyzed it. A tool that refuses the text is not wrong either, so no case may
+claim either answer of every tool.
+
+#### An event control on a chandle
+
+```systemverilog
+chandle watched;
+initial @(watched) $display("changed");
+```
+
+6.14: "Chandles shall not be used as follows: ... In sensitivity lists or event expressions". 9.4.2:
+"If the event expression is a reference to a simple object handle or chandle variable, an event is
+created when a write to that variable is not equal to its previous value." One clause forbids the
+text and the other gives it a meaning, and nothing says which governs.
+
+The front end accepts it, and Lyra gives it the meaning 9.4.2 states: the wait ends at a write of a
+different pointer, null included, and not at a write of the pointer the variable already holds.
+
+#### A parameter default that no instance takes and that could not be evaluated
+
+```systemverilog
+module leaf #(parameter int W = 8, parameter int NEVER = W(1)) ();
+endmodule
+module top;
+  leaf #(.NEVER(0)) u ();
+endmodule
+```
+
+6.20.1 gives a parameter its default where the instantiation assigns none, and 23.10 has an
+assignment override it. `W(1)` calls a parameter as though it were a function, which is no constant
+expression. No clause says whether a default every instance overrides has to be valid all the same.
+
+The front end evaluates a default only for an instance left to it, and Lyra keeps that, so the text
+stops nothing while every instance assigns the parameter.
+
+#### An unpacked array or structure put into a mailbox
+
+```systemverilog
+mailbox box = new;
+int words [2] = '{3, 4};
+initial box.put(words);
+```
+
+15.4.3 to 15.4.8 each say "The message can be any singular expression", which an unpacked array or
+an unpacked structure is not (6.4), and none says whether another expression is an error.
+
+The front end accepts it, and Lyra carries the message as it does any value: it keeps its type, and
+it is taken only into a variable of an equivalent type (6.22.2).
 
 ### Given a meaning, but a tool may refuse it, so run with a warning
 
@@ -479,6 +553,122 @@ does not.
 
 The front end accepts the calls, and Lyra acts on the generator of the object the handle refers to,
 which is the only generator the call can reach.
+
+#### The default of an override called through a base class handle
+
+```systemverilog
+class Base;
+  virtual function int f(int x = 1); return x; endfunction
+endclass
+class Derived extends Base;
+  virtual function int f(int x = 2); return x; endfunction
+endclass
+// Base h; Derived d = new; h = d; h.f()   -- 1, or 2?
+```
+
+8.20: "It is not necessary to have matching default expressions, but the presence of a default shall
+match." 13.5.3 evaluates a default "in the scope containing the subroutine declaration" each time a
+call omits the argument. Neither says whose declaration a virtual call omitting an argument takes,
+the method the call names or the override that runs.
+
+Lyra takes the default of the method the call names, that of the handle's class, and runs the
+override's body with it, so `h.f()` is 1. A default is part of what the caller passes, and which
+method the call names is known where it is written, while the override that runs is known only from
+the object; C++ decides the same way for the same reason. Through `d`, both readings give 2.
+
+#### A `try_get` while a `get` is waiting for more keys
+
+```systemverilog
+semaphore s = new(0);
+initial s.get(2);
+initial #1 begin
+  s.put(1);
+  $display(s.try_get(1));   // 1, or 0?
+end
+```
+
+15.3.4: "If the specified number of required keys is less than or equal to the number of available
+keys, the number of available keys is reduced by the specified keyCount, the method returns a
+positive integer". 15.3.3: "The semaphore waiting queue is first-in first-out (FIFO). ... their
+arrival order shall be preserved by the semaphore." Read alone, the first has the `try_get` take the
+key; read with the second, the key is held for the process already waiting.
+
+Lyra serves the waiting queue first, so the `try_get` answers 0 and the waiter takes its keys once
+enough are returned. A `try_get` that took keys a waiter is owed would let a caller that never waits
+pass every caller that does, which is the order 15.3.3 says the semaphore preserves.
+
+#### Which bits `$fread` drops from a word that is not a whole number of bytes
+
+```systemverilog
+bit [8:0] nine [0:0];
+// the file holds 8'h80, 8'h00
+initial void'($fread(nine, fd));   // 9'h100, or 9'h000?
+```
+
+21.3.4.4: "a 9-bit wide memory is loaded using 2 bytes per memory word. The data are read from the
+file in a big endian manner; the first byte read is used to fill the most significant location in
+the memory element. If the memory width is not evenly divisible by 8 (8, 16, 24, 32), not all data
+in the file are loaded into memory because of truncation." It does not say which end of the bytes
+read the truncation drops.
+
+Lyra places the bytes from the top of the word, as the first byte read fills the most significant
+location, and drops the low bits of the last byte, so the word above is `9'h100`. A packed variable
+read with `$fread` is taken the same way.
+
+#### The end event of a block left by `return`, `break` or `continue`
+
+```systemverilog
+task automatic t(bit early);
+  begin : body
+    if (early) return;
+    $display("ran on");
+  end
+endtask
+covergroup cg @@(end t.body);
+  ...
+endgroup
+```
+
+19.3: an end block event "shall be triggered immediately after the corresponding block, task,
+function, or method executes its last statement", and is not triggered "if the block, task,
+function, or method is disabled". A `return`, a `break` or a `continue` that leaves the block is
+neither its textually last statement nor a `disable`, and the clause says nothing of it.
+
+Lyra takes the jump as the last statement the block executes, so the block ends there and the event
+samples. Only a `disable` is named as leaving a block without ending it, and a jump out of a block
+completes the block for every other purpose.
+
+#### What `svDimensions` counts for a formal whose only open dimension is packed
+
+```systemverilog
+import "DPI-C" function int dimensions_of(input logic [] v);
+// int dimensions_of(const svOpenArrayHandle h) { return svDimensions(h); }
+```
+
+Annex H.12.2: the query functions "use the same semantics" as the array queries (20.7), and "If the
+dimension is 0, then the query refers to the packed part (which is one-dimensional) of an array, and
+dimensions > 0 refer to the unpacked part". `$dimensions` counts every dimension, packed and
+unpacked, which is 1 here; numbered as the functions number them, the formal has no unpacked
+dimension, which is 0.
+
+Lyra answers the number of unpacked dimensions, 0 here, so that `svDimensions` is the highest
+dimension the other functions take for that handle.
+
+#### When the right-hand side of an intra-assignment delay is read
+
+```systemverilog
+int a = 5;
+function automatic int delay(); a = 99; return 2; endfunction
+initial b = #(delay()) a;   // 5, or 99?
+```
+
+9.4.5: the right-hand side is evaluated "before the delay". Whether that means before the delay
+expression is evaluated or only before the time it names elapses the standard does not say, and
+Table 9-3 shows only constant delays.
+
+Lyra reads the right-hand side first, and for a nonblocking assignment the left-hand side's index as
+well, then evaluates the delay expression, so a delay expression that writes what the statement
+reads reaches neither; `b` above is 5.
 
 ### Allowed
 

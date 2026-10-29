@@ -2,8 +2,9 @@
 // operators are defined for the element type, and the method then behaves as if
 // with (item) had been written. They are defined for string, where they order
 // their operands lexicographically, so min, max and unique work on a queue of
-// strings without one, and a find predicate may compare strings directly
-// (LRM 7.12.1, 6.16, Table 6-9).
+// strings without one, and a find predicate may compare strings directly. What
+// a locator returns comes in an unspecified order, so it is sorted before it
+// is read (LRM 7.12.1, 6.16, Table 6-9).
 module Top;
   string names [$] = '{"banana", "apple", "cherry", "apple"};
 
@@ -20,6 +21,7 @@ module Top;
     distinct = names.unique;
     distinct.sort();
     after_b = names.find with (item > "b");
+    after_b.sort();
   end
 
   final begin

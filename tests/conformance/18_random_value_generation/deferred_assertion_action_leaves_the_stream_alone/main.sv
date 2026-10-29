@@ -1,10 +1,12 @@
 // Random stability is the property that a thread's or an initializer's
 // sequence of random values depends only on its own seed and on the order of
-// its own draws and thread creations (LRM 18.14, 18.14.1). A deferred
-// assertion's action is no thread the code reaching it creates: it is a
-// subroutine call scheduled in a later region (LRM 16.4). So whether the
-// assertion fails, and its action runs and draws, does not move the stream of
-// the static initializer or the procedure that reached it.
+// its own draws and thread creations (LRM 18.14, 18.14.1). Reaching a deferred
+// assertion draws nothing: its action is a subroutine call placed in a queue
+// and executed in the Reactive region (LRM 16.4.1). So whether the assertion
+// fails does not move the stream of the static initializer or the procedure
+// that reached it, in what they draw before the action runs. Which stream the
+// action itself draws from the standard does not say, so nothing here is drawn
+// after it.
 //
 // Two instances of one module start from the same seed (LRM 18.14.1) and
 // differ only in whether their assertion fails, so what each draws outside the
@@ -42,7 +44,7 @@ module FromProcedure #(
     int unsigned first;
     assert #0 (Holds) else draw_in_action();
     first = $urandom;
-    #1 drew = first ^ $urandom;
+    drew = first ^ $urandom;
   end
 endmodule
 

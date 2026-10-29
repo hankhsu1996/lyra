@@ -30,9 +30,11 @@ module Top;
     endfunction
   endclass
 
+  // A tool may limit how wide a randc variable is, to no fewer than 8 bits
+  // (LRM 18.4.2), so the wide range is the widest every tool takes.
   class Narrow;
-    randc bit [31:0] v;
-    constraint few { v inside {[32'hFFFF_FF00 : 32'hFFFF_FF0F]}; }
+    randc bit [7:0] v;
+    constraint few { v inside {[8'hF0 : 8'hFF]}; }
   endclass
 
   class Windowed;

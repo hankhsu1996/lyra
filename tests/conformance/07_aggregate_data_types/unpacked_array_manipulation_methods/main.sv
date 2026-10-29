@@ -1,7 +1,8 @@
 // The array manipulation methods operate on any unpacked array, so a
 // fixed-size one is a receiver for them like a queue or an associative array
 // is. A locator returns a queue -- of the element type for a value locator
-// and of int for an index locator -- a reduction returns one value, and an
+// and of int for an index locator -- of what it finds in an unspecified order,
+// so each is sorted before it is read. A reduction returns one value, and an
 // ordering method reorders the receiver in place, which for a fixed-size
 // array rearranges the elements it has without changing how many that is
 // (LRM 7.12, 7.12.1, 7.12.2, 7.12.3).
@@ -19,6 +20,8 @@ module Top;
   initial begin
     found = values.find with (item > 3);
     found_indices = values.find_index with (item > 3);
+    found.sort();
+    found_indices.sort();
     smallest = values.min;
     largest = values.max;
     total = values.sum;

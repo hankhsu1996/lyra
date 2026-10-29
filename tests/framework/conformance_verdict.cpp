@@ -14,6 +14,7 @@
 #include "conformance_case.hpp"
 #include "conformance_observation.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "value_change_dump.hpp"
 
 namespace lyra::test {
 namespace {
@@ -389,13 +390,36 @@ auto Judge(const Claim& claim, const Observation& observation) -> Verdict {
           [](const ToolFailed& failed) -> Verdict {
             return DoesNotConform{failed.how};
           },
-          [](const DidNotFinish&) -> Verdict {
-            return Unresolved{"the run did not end in the time it was given"};
+          [](const StoppedAtALimit& stopped) -> Verdict {
+            return Unresolved{std::format(
+                "the run was stopped at {} before it ended", stopped.limit)};
           },
           [&](const Ran& ran) -> Verdict {
             return JudgeRun(claim, ran, observation);
           }},
       observation.end);
+}
+
+auto JudgeCase(const ConformanceCase& test_case, const Observation& observation)
+    -> Verdict {
+  Verdict verdict = Judge(test_case.claim, observation);
+  if (!std::holds_alternative<Conforms>(verdict)) {
+    return verdict;
+  }
+  for (const ExpectedOutput& expected : test_case.expected_outputs) {
+    const auto written = std::ranges::find(
+        observation.outputs, expected.name, &WrittenOutput::name);
+    if (written == observation.outputs.end() || !written->text) {
+      return DoesNotConform{
+          std::format("the run wrote no '{}'", expected.name)};
+    }
+    if (const std::optional<std::string> difference =
+            DumpDifference(expected.text, *written->text)) {
+      return DoesNotConform{
+          std::format("'{}' differs: {}", expected.name, *difference)};
+    }
+  }
+  return verdict;
 }
 
 auto Describe(const Verdict& verdict) -> std::string {

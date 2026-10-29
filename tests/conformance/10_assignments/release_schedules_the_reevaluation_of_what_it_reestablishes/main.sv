@@ -1,10 +1,11 @@
 // LRM 10.6.2: releasing a variable a continuous assignment drives
 // reestablishes that assignment and schedules a reevaluation in its region, so
-// the variable does not change at the release: the same process reads the
-// forced value right after it, and the driver's value once the reevaluation has
-// run. A force made before that reevaluation runs is in effect when it does, and
-// is not undone by it. A variable nothing drives keeps the forced value until
-// the next procedural assignment.
+// the variable holds the driver's value once the reevaluation has run. Whether
+// the releasing process reads it before that is open, since a process may be
+// suspended between any two statements (LRM 4.7). A force made before that
+// reevaluation runs is in effect when it does, and is not undone by it. A
+// variable nothing drives keeps the forced value until the next procedural
+// assignment.
 module Top;
   logic [7:0] d = 8'h01;
   logic [7:0] v;
@@ -19,7 +20,6 @@ module Top;
     d = 8'h02;
     #1;
     release v;
-    if (v !== 8'hff) $fatal(1, "v read %h right after its release, expected ff", v);
     #0;
     if (v !== 8'h02)
       $fatal(1, "v read %h once reevaluated, expected the driver's 02", v);

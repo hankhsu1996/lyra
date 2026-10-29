@@ -306,6 +306,9 @@ does, so a call on either is resolved where the caller compiles and nothing sepa
       declared as a class property, held in an array or a structure, and initialized from a
       constructor argument, which is what lets one transactor drive any instance conforming to the
       interface (LRM 25.9). It is never a port, an interface item, or a union member.
+- [ ] E5 -- Case equality and case inequality (`===`, `!==`) on a virtual interface are not among
+      the operations LRM 25.9 allows, so a program using one is an error. The front end accepts it
+      and the program runs, comparing as equality does. A case holds it.
 
 ## Open questions
 

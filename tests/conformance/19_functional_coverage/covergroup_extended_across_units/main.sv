@@ -73,7 +73,8 @@ module Top;
 
   initial begin
     static Derived d = new;
-    static Base as_base = d;
+    Base as_base;
+    as_base = d;
     d.a = 1; d.cg.sample();
     // A handle of the base class samples the same, derived, instance.
     as_base.a = 0; as_base.cg.sample();

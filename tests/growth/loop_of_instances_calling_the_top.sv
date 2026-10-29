@@ -1,7 +1,7 @@
 // One module instantiated once per block of a generate loop, each instance
 // calling a function of the top-level module by a hierarchical name (LRM
 // 23.6). N is how many instances there are.
-module Leaf (input bit c, input int d, output int q);
+module Leaf (input var bit c, input var int d, output int q);
   always @(posedge c) q <= Top.bump(d);
 endmodule
 

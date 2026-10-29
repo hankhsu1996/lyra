@@ -2,14 +2,13 @@
 // values and repetitions included: consecutive `[*]`, goto `[->]` and
 // nonconsecutive `[=]` (LRM 19.5.2); a `default sequence` bin catches every
 // other sequence and counts toward no coverage. A repetition written with one
-// count repeats exactly that many times, the count evaluated once.
+// count repeats exactly that many times, the count given by a function as a
+// covergroup expression may be, which has no side effects (LRM 19.5).
 module Top;
   bit [4:1] v_a;
   int v;
-  int counted = 0;
 
   function automatic int three();
-    counted++;
     return 3;
   endfunction
 
@@ -59,8 +58,6 @@ module Top;
   final begin
     if (g_covered !== 4 || g_total !== 11)
       $fatal(1, "%0d of %0d transition bins covered, expected 4 of 11", g_covered, g_total);
-    if (counted !== 1)
-      $fatal(1, "the repetition's count was evaluated %0d times, expected once", counted);
     if (s_covered !== 5 || s_total !== 5)
       $fatal(1, "%0d of %0d repetition bins covered, expected 5 of 5", s_covered, s_total);
     $display("All checks passed");

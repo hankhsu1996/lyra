@@ -4,14 +4,20 @@
 // reaches such a declaration by its simple name, and the name denotes one
 // object: a write through it is seen by a later read, a function declared there
 // reads it, a task declared there writes it, and a variable's initializer calls
-// it, every one of those being a body of the same scope.
+// one, every one of those being a body of the same scope. The function the
+// initializer calls reads only its argument, since initializers run in no
+// order among themselves (LRM 6.8) and cnt has one of its own.
 int cnt = 5;
 
 function automatic int doubled();
   return cnt * 2;
 endfunction
 
-int start = doubled();
+function automatic int tripled(int v);
+  return v * 3;
+endfunction
+
+int start = tripled(4);
 
 task automatic set_cnt(int v);
   #1;
@@ -38,8 +44,8 @@ module Top;
   final begin
     if (var_read !== 5) $fatal(1, "var_read was %0d, expected 5", var_read);
     if (fn_read !== 10) $fatal(1, "fn_read was %0d, expected 10", fn_read);
-    if (initializer_read !== 10)
-      $fatal(1, "initializer_read was %0d, expected 10", initializer_read);
+    if (initializer_read !== 12)
+      $fatal(1, "initializer_read was %0d, expected 12", initializer_read);
     if (after_write !== 8)
       $fatal(1, "after_write was %0d, expected 8", after_write);
     if (after_task !== 20)

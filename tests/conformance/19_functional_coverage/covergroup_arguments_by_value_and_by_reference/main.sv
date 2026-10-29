@@ -1,6 +1,8 @@
 // A covergroup's input argument is the value it was given when it was made,
 // and a `ref` argument names a variable whose value each sample reads and
-// whose change the clocking event watches (LRM 19.3).
+// whose change the clocking event watches (LRM 19.3). The instance is made in
+// a procedure, so the value lo holds when it is made is the one the procedure
+// gave it, whatever order initializers run in (LRM 6.8).
 module Top;
   bit clk;
   bit [1:0] v;
@@ -10,10 +12,11 @@ module Top;
     cp: coverpoint x { bins b[] = {[low:3]}; }
   endgroup
 
-  cg g = new(clk, v, lo);
+  cg g;
   real cov;
 
   initial begin
+    g = new(clk, v, lo);
     lo = 0;
     v = 1; #1 clk = 1; #1 clk = 0;
     v = 3; #1 clk = 1; #1 clk = 0;

@@ -3,10 +3,11 @@
 // call passes it (LRM 13.5.3). So whatever the call is made from -- another
 // instance, an interface port, a virtual interface, a package, an object --
 // a default naming a variable reads the callee's own, as it stands when the
-// call is made. A method's default is the one of the method the call names,
-// whichever body the object's class runs (LRM 8.20). What a default reads is
-// part of what the call reads, so a procedure whose list the call joins follows
-// the callee's variable (LRM 9.2.2.2.1).
+// call is made. Called through a handle of the class it is declared in, a
+// method takes its own default; which default an override called through a
+// base class handle takes the standard does not say (LRM 8.20). What a default
+// reads is part of what the call reads, so a procedure whose list the call
+// joins follows the callee's variable (LRM 9.2.2.2.1).
 package P;
   int base = 7;
   function automatic int f(int x = base);
@@ -112,10 +113,6 @@ module Top;
     if (handle_reads !== 1)
       $fatal(1, "the handle was computed %0d times, expected 1",
              handle_reads);
-    h = d;
-    if (h.f() !== 21)
-      $fatal(1, "an override through a base handle gave %0d, expected 21",
-             h.f());
     if (d.f() !== 1021)
       $fatal(1, "an override through its own handle gave %0d, expected 1021",
              d.f());

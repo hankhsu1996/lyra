@@ -17,7 +17,7 @@ typedef struct packed {
 } pair_t;
 
 module Child(
-    input string label, output string echo, input int din [2],
+    input var string label, output string echo, input var int din [2],
     output int dsum, input state_e mode, output state_e echoed_mode,
     input pair_t pin, output logic [3:0] psum);
   always_comb echo = label;

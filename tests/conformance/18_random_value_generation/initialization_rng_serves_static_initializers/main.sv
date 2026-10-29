@@ -36,7 +36,7 @@ module Top;
   endfunction
 
   initial begin
-    int unsigned declared = $urandom_range(1, 10);
+    static int unsigned declared = $urandom_range(1, 10);
     block_level   = declared;
     function_level = Kept();
   end

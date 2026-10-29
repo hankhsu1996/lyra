@@ -4,7 +4,8 @@
 // iterator's index querying method, which returns that element's index and is
 // index when not given. Both are ordinary names within the with expression, so
 // a with clause written inside another still reaches the outer iterator and
-// the outer iterator's index (LRM 7.12, 7.12.4).
+// the outer iterator's index. A locator traverses in an unspecified order, so
+// what it found is sorted before it is read (LRM 7.12, 7.12.1, 7.12.4).
 module Top;
   int outer_values [2] = '{1, 2};
   int inner_values [2] = '{10, 20};
@@ -40,6 +41,9 @@ module Top;
     default_index = positions.find_index with (item == item.index * 2);
     explicit_iterator_index = positions.find_index(v) with (v == v.index * 2);
     renamed_index = positions.find_index(v, at) with (v == v.at * 2);
+    default_index.sort();
+    explicit_iterator_index.sort();
+    renamed_index.sort();
   end
 
   final begin
