@@ -114,11 +114,6 @@ enum class CompilationUnits : std::uint8_t {
   kSeparate,
 };
 
-// One conformance case: a SystemVerilog program stating what IEEE 1800 requires
-// and checking itself against it. A case is a directory, so what belongs to it
-// is where a file sits rather than something a directive has to say; the
-// directives that remain state what the standard cannot be read from the
-// sources alone.
 // A file the program has the tool write -- a dump -- whose content the case
 // states by hand, compared as the standard reads that kind of file, since its
 // spelling is free where its meaning is not.
@@ -128,6 +123,11 @@ struct ExpectedOutput {
   std::string text;
 };
 
+// One conformance case: a SystemVerilog program stating what IEEE 1800 requires
+// and checking itself against it. A case is a directory, so what belongs to it
+// is where a file sits rather than something a directive has to say; the
+// directives that remain state what the standard cannot be read from the
+// sources alone.
 struct ConformanceCase {
   // The case directory's path under the corpus root, which is its identity: the
   // outer directory is the LRM clause it tests and the inner one is the subject
