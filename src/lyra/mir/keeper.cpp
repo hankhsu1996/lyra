@@ -45,6 +45,7 @@ auto KeeperEntriesOf(const TypePool& types, TypeId keeper)
     case RuntimeLibraryKind::kDpiLogicChunk:
     case RuntimeLibraryKind::kDpiOpenArray:
     case RuntimeLibraryKind::kDpiOpenArrayHandle:
+    case RuntimeLibraryKind::kWatchedPlace:
     case RuntimeLibraryKind::kCancellationTarget:
     case RuntimeLibraryKind::kControlEffect:
     case RuntimeLibraryKind::kTimer:

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <span>
 #include <string>
 #include <string_view>
@@ -32,13 +33,18 @@ struct PassOverride {
   bool runs;
 };
 
+// When the unit is checked, as LLVM's `opt` names the same choice: once, as
+// it leaves the last rewrite; as lowered, after every optional rewrite and on
+// reaching each phase; or not at all, which only a command showing the unit to
+// a person asks for.
+enum class VerifierKind : std::uint8_t { kNone, kOutput, kEachStep };
+
 // What a build asks of the rewrites beyond running them as the pipeline states:
-// optional ones run or skipped, the last word on each winning, and the unit
-// checked as lowered, after every optional rewrite and on reaching each phase
-// rather than once, as it leaves the last.
+// optional ones run or skipped, the last word on each winning, and when the
+// unit is checked.
 struct PassOptions {
   std::vector<PassOverride> overrides;
-  bool verify_each = false;
+  VerifierKind verifier = VerifierKind::kOutput;
 };
 
 }  // namespace lyra::mir_transform

@@ -155,9 +155,11 @@ what the construct means.
   and a write of an element different outcomes, and the dereference of what it answers is the place.
   Bits of a packed value are no node either: they are read by the value's `slice` and written
   through the reference to them its `slice_mut` answers, as a C++ library's `bitset::operator[]`
-  answers a reference to a bit. The set is closed under what a generic programming-language AST
-  needs to express; it does not grow to model a particular backend's storage realization or runtime
-  library shape.
+  answers a reference to a bit. A node's operands run in the order it lists them, an assignment's
+  value before its target and a call's arguments before its callee and the object it is entered on,
+  and a read takes what its storage holds when it runs. The set is closed under what a generic
+  programming-language AST needs to express; it does not grow to model a particular backend's
+  storage realization or runtime library shape.
 - Which values are held through a uniquely owning pointer because a value of their type is too large
   for a frame -- a local, a parameter taken by value wherever its signature is stated, a made value
   and a capture -- or because the values a body keeps before them already take what a frame may keep
@@ -353,17 +355,18 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
 - Rewritten into MIR before anything reads it below. Between HIR-to-MIR and every consumer, a unit
   passes through rewrites, each of which keeps what the program does and says what it changes in
   MIR's own vocabulary. The unit is in one of two phases, which it records: built, as HIR-to-MIR
-  states it, and legalized, with the order an evaluation needs explicit and no frame holding a value
-  too large for one or more than a frame keeps together, which is the only phase a consumer takes. A
-  conversion -- the rewrites that bring the unit from one phase into the next -- is what a correct
-  program needs, so no build skips one; every other rewrite runs inside a phase, leaves the same
-  program at another cost, and a build may skip it. The verification asks of a unit what its phase
-  requires; it is verified once, as it leaves the rewrites, since that is the form every consumer
-  reads, and on reaching each phase and after each optional rewrite where a build asks. A rewrite
-  builds a node through the same builders as the lowering, folding included. A consumer cannot tell
-  a node a rewrite built from one the lowering built, so a cost the program's meaning does not
-  decide -- how a process that stops only at the head of its loop is compiled -- is taken out once
-  for both backends, and HIR-to-MIR still states the meaning one way.
+  states it, and legalized, with no node leaving two of its operands a target could run in the other
+  order to another answer and no frame holding a value too large for one or more than a frame keeps
+  together, which is the only phase a consumer takes. A conversion -- the rewrites that bring the
+  unit from one phase into the next -- is what a correct program needs, so no build skips one; every
+  other rewrite runs inside a phase, leaves the same program at another cost, and a build may skip
+  it. The verification asks of a unit what its phase requires; it is verified once, as it leaves the
+  rewrites, since that is the form every consumer reads, and on reaching each phase and after each
+  optional rewrite where a build asks; a dump, which a person reads rather than a consumer, shows it
+  unchecked. A rewrite builds a node through the same builders as the lowering, folding included. A
+  consumer cannot tell a node a rewrite built from one the lowering built, so a cost the program's
+  meaning does not decide -- how a process that stops only at the head of its loop is compiled -- is
+  taken out once for both backends, and HIR-to-MIR still states the meaning one way.
 - `binding_and_capture.md` owns the lexical reference contract MIR's value references obey: a
   reference names a binding materialized in its own callable body, and a binding crosses a closure
   boundary only as a captured environment field. MIR carries no navigation distance to a

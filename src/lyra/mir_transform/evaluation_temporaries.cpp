@@ -12,10 +12,10 @@
 
 #include "lyra/base/arena.hpp"
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/overloaded.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/evaluation_order.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/frame_size.hpp"
 #include "lyra/mir/local.hpp"
@@ -53,8 +53,7 @@ enum class TakenAs : std::uint8_t {
   kAsItIs,
   // The call a suspension waits on, which stands under the suspension as it
   // is, since a suspension stands at the top of its statement and none falls
-  // among a block expression's steps, so each of its arguments is an
-  // evaluation of its own, before the call.
+  // among a block expression's steps.
   kSuspendedOn,
   // An arm of a choice, which begins an evaluation of its own.
   kApart,
@@ -66,9 +65,12 @@ enum class TakenAs : std::uint8_t {
   kReferredTo,
 };
 
-// Every operand read before a later one may change what it read is given a
-// temporary of its own, whatever its size.
-struct ForReadsBeforeChange {};
+// Every operand a target could run in the other order to another answer is
+// taken ahead of what follows it, whatever its size.
+struct ForEvaluationOrder {
+  // What the order of the body's evaluations asks of its nodes.
+  mir::EvaluationOrder* order;
+};
 
 // Every value a frame keeps apart that an expression makes and another node
 // reads is given one, which is then held through a box; the plan names each
@@ -79,7 +81,14 @@ struct ForValuesKeptApart {
 
 // Which operands a rewrite gives a temporary of its own, beside the ones every
 // rewrite gives to keep the order its steps take.
-using TemporaryFor = std::variant<ForReadsBeforeChange, ForValuesKeptApart>;
+using TemporaryFor = std::variant<ForEvaluationOrder, ForValuesKeptApart>;
+
+// Where a value made here that a node is entered on is made: where the node
+// uses it, or materialized first in a temporary of the evaluation, as clang
+// materializes a prvalue a reference binds to, which a node held in a
+// temporary itself asks for so that a view it answers into the value lasts as
+// long as the node's own temporary does.
+enum class InPlaceOperand : std::uint8_t { kFormedWhereUsed, kMaterialized };
 
 // Where a temporary's value is kept: in the frame, or apart from it, in
 // storage of its own a box holds.
@@ -136,125 +145,55 @@ auto OperandsOf(const mir::CompilationUnit& unit, const mir::Expr& node)
   return operands;
 }
 
-// Whether evaluating a node of a block may change or end storage a value was
-// read from, asked once per node: a call, a write, a construction, a
-// suspension or a move may, and a run of steps is taken to. Anything else only
-// reads, so it may only through its operands.
-class StorageChanges {
- public:
-  auto May(const mir::Block& block, mir::ExprId id) -> bool {
-    const std::pair<const mir::Block*, mir::ExprId> key{&block, id};
-    if (const auto known = may_.find(key); known != may_.end()) {
-      return known->second;
-    }
-    const bool may = Asked(block, id);
-    may_.emplace(key, may);
-    return may;
+// Whether a temporary can stand in for a value of movability `movability`.
+auto IsMovable(mir::Movability movability) -> bool {
+  switch (movability) {
+    case mir::Movability::kCopyable:
+    case mir::Movability::kMovable:
+      return true;
+    case mir::Movability::kImmovable:
+      return false;
   }
-
- private:
-  auto Asked(const mir::Block& block, mir::ExprId id) -> bool {
-    const mir::ExprData& data = block.exprs.Get(id).data;
-    const auto through_operands = [&] {
-      bool may = false;
-      mir::ForEachOperand(data, [&](mir::ExprId operand, mir::OperandUse) {
-        may = may || May(block, operand);
-      });
-      return may;
-    };
-    return std::visit(
-        Overloaded{
-            [](const mir::CallExpr&) { return true; },
-            [](const mir::AssignExpr&) { return true; },
-            [](const mir::NewExpr&) { return true; },
-            [](const mir::AwaitExpr&) { return true; },
-            [](const mir::WaitExpr&) { return true; },
-            [](const mir::MoveExpr&) { return true; },
-            [](const mir::BlockExpr&) { return true; },
-            [&](const mir::UnaryExpr&) { return through_operands(); },
-            [&](const mir::BinaryExpr&) { return through_operands(); },
-            [&](const mir::CastExpr&) { return through_operands(); },
-            [&](const mir::ConditionalExpr&) { return through_operands(); },
-            [&](const mir::CompositeExpr&) { return through_operands(); },
-            [&](const mir::UnionExpr&) { return through_operands(); },
-            [&](const mir::ClosureExpr&) { return through_operands(); },
-            [&](const mir::VectorGetExpr&) { return through_operands(); },
-            [&](const mir::DerefExpr&) { return through_operands(); },
-            [&](const mir::AddressOfExpr&) { return through_operands(); },
-            [&](const mir::BorrowExpr&) { return through_operands(); },
-            [&](const mir::CopyExpr&) { return through_operands(); },
-            [&](const mir::DiscriminantExpr&) { return through_operands(); },
-            [&](const mir::FieldAccessExpr&) { return through_operands(); },
-            [](const mir::StringLiteral&) { return false; },
-            [](const mir::NullLiteral&) { return false; },
-            [](const mir::MachineBoolLiteral&) { return false; },
-            [](const mir::MachineIntLiteral&) { return false; },
-            [](const mir::MachineFloatLiteral&) { return false; },
-            [](const mir::ReferenceExpr&) { return false; },
-        },
-        data);
-  }
-
-  std::map<std::pair<const mir::Block*, mir::ExprId>, bool> may_;
-};
-
-// The nodes from the place `place` of `block` down to the read of the handle
-// whose object it lies in, the nearest one: through field steps and references
-// a call answers into its receiver, to the first dereference of a handle read
-// where it lies. Empty where no such handle is reached.
-auto HandleReachedThrough(
-    const mir::CompilationUnit& unit, const mir::Block& block,
-    mir::ExprId place) -> std::vector<mir::ExprId> {
-  std::vector<mir::ExprId> chain;
-  mir::ExprId at = place;
-  while (true) {
-    chain.push_back(at);
-    const mir::ExprData& data = block.exprs.Get(at).data;
-    if (const auto* field = std::get_if<mir::FieldAccessExpr>(&data)) {
-      at = field->receiver;
-      continue;
-    }
-    const auto* deref = std::get_if<mir::DerefExpr>(&data);
-    if (deref == nullptr) {
-      return {};
-    }
-    const mir::Expr& pointer = block.exprs.Get(deref->pointer);
-    if (std::holds_alternative<mir::CopyExpr>(pointer.data) &&
-        unit.types.Get(pointer.type).Is<mir::ManagedRefType>()) {
-      chain.push_back(deref->pointer);
-      return chain;
-    }
-    const auto* into = std::get_if<mir::CallExpr>(&pointer.data);
-    if (into == nullptr || !mir::AnswersReferenceIntoReceiver(*into)) {
-      return {};
-    }
-    chain.push_back(deref->pointer);
-    at = *mir::CalleeReceiver(into->callee);
-  }
+  throw InternalError("mir_transform: unknown movability");
 }
 
-// Whether `operand`, a node of `block` taken as `taken`, is read out of
-// storage a later operand's evaluation could change or end under it, and so
-// is taken into a temporary of its own before that operand runs, as rustc's
-// `as_operand` takes a place into a temporary "so that we capture the value of
-// `x` at this time": a value the runtime holds rather than plain bits -- a
-// handle, a string, a container, a structure -- read where it lies, and the
-// handle the object an operation is entered on lies in. A value of plain bits
-// is read whole where it stands, and nothing a later step does can end it.
-auto IsReadBeforeChange(
+// Whether a value of movability `movability` is read out of its temporary as
+// a copy.
+auto IsCopyable(mir::Movability movability) -> bool {
+  switch (movability) {
+    case mir::Movability::kCopyable:
+      return true;
+    case mir::Movability::kMovable:
+    case mir::Movability::kImmovable:
+      return false;
+  }
+  throw InternalError("mir_transform: unknown movability");
+}
+
+// Whether the operand `operand` of a node of `block`, taken as `taken`, is
+// taken whole into a temporary where it has to run before a later operand: a
+// value made here that a copy holds entire, which an operation entered on it
+// is entered on where the temporary holds it, and a value a borrow refers to
+// that the evaluation makes. Any other is formed where its node is, and what
+// of it has to run first is taken out of it instead.
+auto CanBeTakenWhole(
     const mir::CompilationUnit& unit, const mir::Block& block,
     mir::ExprId operand, TakenAs taken) -> bool {
   const mir::Expr& expr = block.exprs.Get(operand);
+  const mir::Type& type = unit.types.Get(expr.type);
   switch (taken) {
     case TakenAs::kValue:
     case TakenAs::kHandedOver:
-      return unit.types.Get(expr.type).IsRuntimeStoredValue() &&
-             std::holds_alternative<mir::CopyExpr>(expr.data) &&
-             mir::ValueLiesInStorage(unit, block, operand);
     case TakenAs::kInPlace:
-      return !HandleReachedThrough(unit, block, operand).empty();
-    case TakenAs::kReferredTo:
+      return !mir::IsPlace(expr.data) && IsMovable(type.ValueMovability());
+    // A pointer a dereference opens is read out of the temporary, never moved
+    // out of it, since the dereference reaches what it points to in place.
     case TakenAs::kAsItIs:
+      return !mir::IsPlace(expr.data) && IsCopyable(type.ValueMovability());
+    // What a borrow refers to that the evaluation makes is made in a temporary
+    // the borrow then refers to, as rustc makes a borrowed value a local.
+    case TakenAs::kReferredTo:
+      return !mir::WholeLiesInStorage(unit, block, operand);
     case TakenAs::kSuspendedOn:
     case TakenAs::kApart:
       return false;
@@ -262,45 +201,55 @@ auto IsReadBeforeChange(
   throw InternalError("mir_transform: an operand is taken in no known way");
 }
 
-// Which of `operands`, the operands of one node of `block` in the order it
-// evaluates them, are read before a later one may change what they read, and
-// are given a temporary for it by a rewrite giving `given`.
-auto ReadsBeforeChange(
-    const mir::CompilationUnit& unit, const mir::Block& block,
+// What the order of a node's evaluation asks of each of `operands`, the
+// operands of the node `node` of `block` in the order it evaluates them, under
+// a rewrite giving `given`, with `after` running after the node: whether it
+// needs a temporary, which one a target could run in the other order to
+// another answer does -- C++ leaves an operator's operands unordered and a
+// call's arguments in an order of its own ([intro.execution], [expr.call]) --
+// as rustc's builder takes each operand into a temporary in the order it
+// runs, so the order the node states is the one every target runs.
+auto OperandOrders(
+    const mir::Block& block, const mir::Expr& node,
     const std::vector<std::pair<mir::ExprId, TakenAs>>& operands,
-    StorageChanges& changes, const TemporaryFor& given) -> std::vector<bool> {
-  std::vector<bool> read_before(operands.size(), false);
-  if (!std::holds_alternative<ForReadsBeforeChange>(given)) {
-    return read_before;
+    const mir::OperandEffects& after, const TemporaryFor& given)
+    -> std::vector<mir::OperandOrder> {
+  const auto* ordering = std::get_if<ForEvaluationOrder>(&given);
+  if (ordering == nullptr) {
+    return std::vector<mir::OperandOrder>(operands.size());
   }
-  bool changed_after = false;
-  for (std::size_t at = operands.size(); at-- > 0;) {
-    const auto& [operand, taken] = operands[at];
-    read_before[at] =
-        changed_after && IsReadBeforeChange(unit, block, operand, taken);
-    changed_after = changed_after || changes.May(block, operand);
+  std::vector<mir::ExprId> ids;
+  ids.reserve(operands.size());
+  for (const auto& entry : operands) {
+    ids.push_back(entry.first);
   }
-  return read_before;
+  return ordering->order->OperandsNeedingTemporaries(
+      block, node.data, ids, after);
 }
 
-auto AnyOf(const std::vector<bool>& flags) -> bool {
-  return std::ranges::any_of(flags, [](bool flag) { return flag; });
-}
-
-// Whether any node of `block`, or of a block nested in it, reads an operand a
-// later one may change.
-auto ReadsBeforeAChange(
+// Whether a rewrite giving `given` gives an operand of `node`, a node of
+// `block`, a temporary.
+auto NeedsATemporary(
     const mir::CompilationUnit& unit, const mir::Block& block,
-    StorageChanges& changes) -> bool {
+    const mir::Expr& node, const TemporaryFor& given) -> bool {
+  return std::ranges::any_of(
+      OperandOrders(block, node, OperandsOf(unit, node), {}, given),
+      &mir::OperandOrder::needs_temporary);
+}
+
+// Whether any node of `block`, or of a block nested in it, gives an operand a
+// temporary.
+auto HasOrderToMakeExplicit(
+    const mir::CompilationUnit& unit, const mir::Block& block,
+    mir::EvaluationOrder& order) -> bool {
   return std::ranges::any_of(
              block.exprs,
              [&](const mir::Expr& expr) {
-               return AnyOf(ReadsBeforeChange(
-                   unit, block, OperandsOf(unit, expr), changes,
-                   ForReadsBeforeChange{}));
+               return NeedsATemporary(
+                   unit, block, expr, ForEvaluationOrder{.order = &order});
              }) ||
          std::ranges::any_of(block.child_scopes, [&](const mir::Block& child) {
-           return ReadsBeforeAChange(unit, child, changes);
+           return HasOrderToMakeExplicit(unit, child, order);
          });
 }
 
@@ -318,18 +267,46 @@ auto MakesALargeValue(const mir::CompilationUnit& unit, const mir::Block& block)
          });
 }
 
+// The call a suspension standing at the top of `stmt`, a statement of `block`,
+// waits on, where one stands there.
+auto CallWaitedOnAtTop(const mir::Block& block, const mir::Stmt& stmt)
+    -> std::optional<mir::ExprId> {
+  std::optional<mir::ExprId> top;
+  if (const auto* evaluated = std::get_if<mir::ExprStmt>(&stmt.data)) {
+    top = evaluated->expr;
+  } else if (
+      const auto* declared = std::get_if<mir::LocalDeclStmt>(&stmt.data)) {
+    top = declared->init;
+  } else if (const auto* returned = std::get_if<mir::ReturnStmt>(&stmt.data)) {
+    top = returned->value;
+  }
+  if (!top.has_value()) {
+    return std::nullopt;
+  }
+  const mir::ExprData& data = block.exprs.Get(*top).data;
+  std::optional<mir::ExprId> waited_on;
+  if (const auto* await = std::get_if<mir::AwaitExpr>(&data)) {
+    waited_on = await->execution;
+  } else if (const auto* wait = std::get_if<mir::WaitExpr>(&data)) {
+    waited_on = wait->park;
+  }
+  if (!waited_on.has_value() || !std::holds_alternative<mir::CallExpr>(
+                                    block.exprs.Get(*waited_on).data)) {
+    return std::nullopt;
+  }
+  return waited_on;
+}
+
 // The rewrite of one body. It holds what it learns of the body once, and has a
 // step for each kind of operand and statement, each handed the block it
 // builds.
 class BodyTemporaries {
  public:
-  // `changes` is what was already asked of the body's nodes.
   BodyTemporaries(
       const mir::CompilationUnit& unit, const mir::CallableCode& code,
-      StorageChanges changes, TemporaryFor given)
+      TemporaryFor given)
       : unit_(&unit),
         code_(&code),
-        changes_(std::move(changes)),
         given_(given),
         completes_(unit.types.Get(code.result_type).Is<mir::CoroutineType>()),
         locals_(code.locals),
@@ -445,10 +422,10 @@ class BodyTemporaries {
         known != operands_take_a_step_.end()) {
       return known->second;
     }
+    const mir::Expr& node = block.exprs.Get(id);
     const std::vector<std::pair<mir::ExprId, TakenAs>> operands =
-        OperandsOf(*unit_, block.exprs.Get(id));
-    bool takes =
-        AnyOf(ReadsBeforeChange(*unit_, block, operands, changes_, given_));
+        OperandsOf(*unit_, node);
+    bool takes = NeedsATemporary(*unit_, block, node, given_);
     for (const auto& [operand, taken] : operands) {
       takes = takes || TakesAStep(block, taken, operand);
     }
@@ -523,7 +500,7 @@ class BodyTemporaries {
   auto Temporary(
       BlockRebuild& rebuild, mir::TypeId type, mir::ExprId value,
       KeptBy kept = KeptBy::kTheFrame) -> mir::ExprId {
-    if (evaluations_.empty() || evaluations_.back().in != &rebuild) {
+    if (!IsEvaluating(rebuild)) {
       throw InternalError(
           "mir_transform: a temporary was made outside the evaluation it "
           "belongs to");
@@ -630,8 +607,7 @@ class BodyTemporaries {
       // keeps its own operands there, and the object a call is entered on may
       // be a reference to part of a value, which exists only where it is
       // taken -- so only a value made for it that the rewrite holds is held
-      // in a temporary here; the handle its object is reached through, where a
-      // later operand may change it, is taken before this is asked.
+      // in a temporary here.
       case TakenAs::kInPlace:
         return Held(rebuild, operand);
       case TakenAs::kReferredTo:
@@ -646,65 +622,70 @@ class BodyTemporaries {
     throw InternalError("mir_transform: an operand is taken in no known way");
   }
 
-  // `operand`, read out of storage a later operand may change, kept by `keep`
-  // -- answered a node of `rebuild` holding what a read of the block rebuilt
-  // from read -- before that operand runs: the value read, or the handle the
-  // object it lies in is reached through, which then reaches it.
-  auto TakenBeforeChange(
-      BlockRebuild& rebuild, mir::ExprId operand, const auto& keep)
-      -> mir::ExprId {
-    const std::vector<mir::ExprId> chain =
-        HandleReachedThrough(*unit_, rebuild.From(), operand);
-    if (chain.empty()) {
-      return keep(rebuild, operand);
-    }
-    return ReachedThrough(rebuild, chain, keep(rebuild, chain.back()));
-  }
-
-  // The place `chain` begins at, rebuilt with the handle read it ends at
-  // replaced by `handle`, a node of `rebuild`.
-  auto ReachedThrough(
-      BlockRebuild& rebuild, std::span<const mir::ExprId> chain,
-      mir::ExprId handle) -> mir::ExprId {
-    if (chain.size() == 1) {
-      return handle;
-    }
-    const mir::Expr& node = rebuild.From().exprs.Get(chain.front());
-    return rebuild.Add(
-        mir::Expr{
-            .data = rebuild.WithOperandsTaken(
-                node.data,
-                [&](mir::ExprId operand) {
-                  return operand == chain[1]
-                             ? ReachedThrough(rebuild, chain.subspan(1), handle)
-                             : rebuild.Expr(operand);
-                }),
-            .type = node.type});
-  }
-
-  // What `read`, a node of the block `rebuild` builds from, reads, held in a
-  // temporary the evaluation in progress declares.
+  // What `read`, a node of the block `rebuild` builds from, makes, held in a
+  // temporary the evaluation in progress declares and read out of it, as a
+  // copy where a copy holds the whole of it and moved out of it otherwise. A
+  // value made here that `read` is entered on is held first, in its turn among
+  // `read`'s operands, so a view `read` answers into it -- the C string of a
+  // string -- lasts as long as the evaluation's temporaries do, as a C++
+  // temporary lasts to the end of its full-expression.
   auto KeptInTemporary(BlockRebuild& rebuild, mir::ExprId read) -> mir::ExprId {
     const mir::TypeId type = rebuild.From().exprs.Get(read).type;
+    const mir::Expr& node = rebuild.From().exprs.Get(read);
+    std::optional<mir::Expr> made =
+        Node(rebuild, node, {}, InPlaceOperand::kMaterialized);
+    const mir::ExprId kept = Temporary(
+        rebuild, type,
+        made.has_value() ? rebuild.Add(*std::move(made)) : rebuild.Expr(read));
+    if (IsCopyable(unit_->types.Get(type).ValueMovability())) {
+      return rebuild.Add(mir::MakeCopyExpr(kept, type));
+    }
     return rebuild.Add(
-        mir::MakeCopyExpr(Temporary(rebuild, type, rebuild.Expr(read)), type));
+        mir::Expr{.data = mir::MoveExpr{.operand = kept}, .type = type});
   }
 
-  // The same, in an evaluation of its own whose value is what it read: a
-  // suspension stands at the top of its statement, so nothing evaluated
-  // before it can declare a temporary its operand reads.
-  auto KeptInEvaluation(BlockRebuild& rebuild, mir::ExprId read)
-      -> mir::ExprId {
-    mir::ExprId value{};
-    const mir::BlockId scope = InEvaluation(
-        rebuild, [&](BlockRebuild& in) -> std::optional<mir::StmtId> {
-          value = KeptInTemporary(in, read);
-          return std::nullopt;
-        });
-    return rebuild.Add(
-        mir::Expr{
-            .data = mir::BlockExpr{.scope = scope, .value = value},
-            .type = rebuild.From().exprs.Get(read).type});
+  // `operand`, a node of the block `rebuild` builds from taken as `taken`,
+  // hoisted ahead of `after`, what runs after it, as LLVM's LICM hoists an
+  // instruction ahead of a loop. One taken whole is held in a temporary the
+  // evaluation in progress declares -- a value read out of it, or, for a value
+  // an operation is entered on, the temporary itself. Any other is formed
+  // where its node is, as a closure is made where its captures' references
+  // were handed out and a write in progress stands for storage, so its own
+  // operands are taken ahead of what runs after it instead. What is left of it
+  // still stands beside what runs after it, so whether it is in the form the
+  // order needs is what the verification of the unit asks. A conditional and
+  // a block expression are left to the rebuild, which begins an evaluation at
+  // each arm and at the block's value.
+  auto Hoisted(
+      BlockRebuild& rebuild, mir::ExprId operand, TakenAs taken,
+      const mir::OperandEffects& after) -> mir::ExprId {
+    const mir::Expr& node = rebuild.From().exprs.Get(operand);
+    if (!CanBeTakenWhole(*unit_, rebuild.From(), operand, taken)) {
+      std::optional<mir::Expr> formed = Node(rebuild, node, after);
+      return formed.has_value() ? rebuild.Add(*std::move(formed))
+                                : rebuild.Expr(operand);
+    }
+    switch (taken) {
+      case TakenAs::kInPlace:
+        return Temporary(rebuild, node.type, rebuild.Expr(operand));
+      case TakenAs::kReferredTo:
+        return Referred(rebuild, operand);
+      case TakenAs::kValue:
+      case TakenAs::kHandedOver:
+      case TakenAs::kAsItIs:
+        return KeptInTemporary(rebuild, operand);
+      // Neither is ever taken whole.
+      case TakenAs::kSuspendedOn:
+      case TakenAs::kApart:
+        break;
+    }
+    throw InternalError("mir_transform: an operand is taken in no known way");
+  }
+
+  // Whether an evaluation is being built over the block `rebuild` builds, so a
+  // temporary can be declared by one of its steps.
+  [[nodiscard]] auto IsEvaluating(const BlockRebuild& rebuild) const -> bool {
+    return !evaluations_.empty() && evaluations_.back().in == &rebuild;
   }
 
   // `expr`, a node of the block `rebuild` builds from, with each operand
@@ -729,24 +710,23 @@ class BodyTemporaries {
         .type = expr.type};
   }
 
-  // `call`, the call a suspension waits on, carried over with each argument
-  // an evaluation of its own, which ends before the call is made. What a
-  // suspension waits on that is no call evaluates nothing to take a step for.
+  // `call`, the call a suspension waits on, carried over. A suspension stands
+  // at the top of its statement and none falls among a block expression's
+  // steps, so where an argument has to be taken before a later one runs, the
+  // statement is put in an evaluation of its own and the call's operands are
+  // taken as any node's are; otherwise each argument is an evaluation of its
+  // own, which ends before the call is made. What a suspension waits on that is
+  // no call evaluates nothing to take a step for.
   auto SuspendedOn(BlockRebuild& rebuild, mir::ExprId call) -> mir::ExprId {
     const mir::Expr& expr = rebuild.From().exprs.Get(call);
     if (!std::holds_alternative<mir::CallExpr>(expr.data)) {
       return rebuild.Expr(call);
     }
-    const std::vector<bool> read_before = ReadsBeforeChange(
-        *unit_, rebuild.From(), OperandsOf(*unit_, expr), changes_, given_);
+    if (IsEvaluating(rebuild)) {
+      return rebuild.Add(*Node(rebuild, expr));
+    }
     return rebuild.Add(WithOperands(
-        rebuild, expr, [&](std::size_t at, mir::ExprId operand, TakenAs taken) {
-          if (read_before[at]) {
-            return TakenBeforeChange(
-                rebuild, operand, [this](BlockRebuild& in, mir::ExprId read) {
-                  return KeptInEvaluation(in, read);
-                });
-          }
+        rebuild, expr, [&](std::size_t, mir::ExprId operand, TakenAs taken) {
           switch (taken) {
             case TakenAs::kValue:
             case TakenAs::kHandedOver:
@@ -770,34 +750,65 @@ class BodyTemporaries {
   // an evaluation at each arm and at the block's value: the arm a conditional
   // chooses is made where the conditional's value is, as clang evaluates each
   // arm of an aggregate conditional into its destination, and only once it is
-  // chosen.
-  auto Node(BlockRebuild& rebuild, const mir::Expr& expr)
+  // chosen. `after` is what runs after the node, where the node is what is
+  // left of an operand that is not taken whole.
+  auto Node(
+      BlockRebuild& rebuild, const mir::Expr& expr,
+      const mir::OperandEffects& after = {},
+      InPlaceOperand in_place = InPlaceOperand::kFormedWhereUsed)
       -> std::optional<mir::Expr> {
     if (std::holds_alternative<mir::BlockExpr>(expr.data) ||
         std::holds_alternative<mir::ConditionalExpr>(expr.data)) {
       return std::nullopt;
     }
     // One past the last operand taking a step: every operand before it is
-    // taken before that step. An operand read before a later one may change
-    // what it read is taken into a temporary, which is a step of its own.
+    // taken before that step. An operand a target could run in the other
+    // order to another answer is taken ahead, which is a step of its own, and
+    // so is a value made here that the node is entered on where it is held
+    // first.
     std::size_t steps_until = 0;
     const std::vector<std::pair<mir::ExprId, TakenAs>> operands =
         OperandsOf(*unit_, expr);
-    const std::vector<bool> read_before =
-        ReadsBeforeChange(*unit_, rebuild.From(), operands, changes_, given_);
+    const std::vector<mir::OperandOrder> orders =
+        OperandOrders(rebuild.From(), expr, operands, after, given_);
+    // Whether the operand at `at` is a value made here that the node is
+    // entered on, materialized in a temporary of its own in its turn.
+    const auto materialized = [&](std::size_t at) {
+      switch (in_place) {
+        case InPlaceOperand::kFormedWhereUsed:
+          return false;
+        case InPlaceOperand::kMaterialized:
+          break;
+      }
+      const auto& [operand, taken] = operands[at];
+      switch (taken) {
+        case TakenAs::kInPlace:
+          return CanBeTakenWhole(*unit_, rebuild.From(), operand, taken);
+        case TakenAs::kValue:
+        case TakenAs::kHandedOver:
+        case TakenAs::kAsItIs:
+        case TakenAs::kReferredTo:
+        case TakenAs::kSuspendedOn:
+        case TakenAs::kApart:
+          return false;
+      }
+      throw InternalError("mir_transform: an operand is taken in no known way");
+    };
     for (std::size_t at = 0; at < operands.size(); ++at) {
-      if (read_before[at] ||
+      if (orders[at].needs_temporary || materialized(at) ||
           TakesAStep(rebuild.From(), operands[at].second, operands[at].first)) {
         steps_until = at + 1;
       }
     }
     return WithOperands(
         rebuild, expr, [&](std::size_t at, mir::ExprId operand, TakenAs taken) {
-          if (read_before[at]) {
-            return TakenBeforeChange(
-                rebuild, operand, [this](BlockRebuild& in, mir::ExprId read) {
-                  return KeptInTemporary(in, read);
-                });
+          if (orders[at].needs_temporary) {
+            return Hoisted(rebuild, operand, taken, orders[at].after);
+          }
+          if (materialized(at)) {
+            return Temporary(
+                rebuild, rebuild.From().exprs.Get(operand).type,
+                rebuild.Expr(operand));
           }
           return Operand(rebuild, taken, operand, at + 1 < steps_until);
         });
@@ -823,10 +834,37 @@ class BodyTemporaries {
         mir::MakeNewExpr(evaluated, mir::BoxOf(unit_->types, type)));
   }
 
-  // An execution's return, whose answer is read into its completion. Every
-  // other statement's expressions begin evaluations the rebuild asks for.
+  // A statement a suspension stands at the top of, whose call takes an
+  // operand into a temporary before a later one runs, in an evaluation of its
+  // own: the temporaries are declared by its steps and the statement runs
+  // after them. An execution's return, whose answer is read into its
+  // completion. Every other statement's expressions begin evaluations the
+  // rebuild asks for.
   auto Statement(BlockRebuild& rebuild, const mir::Stmt& stmt)
       -> std::optional<mir::StmtData> {
+    if (const std::optional<mir::ExprId> call =
+            CallWaitedOnAtTop(rebuild.From(), stmt);
+        call.has_value() &&
+        NeedsATemporary(
+            *unit_, rebuild.From(), rebuild.From().exprs.Get(*call), given_)) {
+      // A declaration names its local for the rest of its block, so a block
+      // around it would end the name with it: its steps run just before it,
+      // in its own block, and its temporaries last as long as that block.
+      if (std::holds_alternative<mir::LocalDeclStmt>(stmt.data)) {
+        evaluations_.push_back(Evaluation{.in = &rebuild, .steps = {}});
+        mir::StmtData declared = rebuild.WithOperandsCarried(stmt.data);
+        for (const mir::StmtId step : evaluations_.back().steps) {
+          rebuild.Precede(step);
+        }
+        evaluations_.pop_back();
+        return declared;
+      }
+      return mir::BlockStmt{
+          .scope = InEvaluation(
+              rebuild, [&](BlockRebuild& in) -> std::optional<mir::StmtId> {
+                return in.Add(in.WithOperandsCarried(stmt.data));
+              })};
+    }
     const auto* returned = std::get_if<mir::ReturnStmt>(&stmt.data);
     if (!completes_ || returned == nullptr || !returned->value.has_value()) {
       return std::nullopt;
@@ -836,8 +874,6 @@ class BodyTemporaries {
 
   const mir::CompilationUnit* unit_;
   const mir::CallableCode* code_;
-  // Whether a node may change storage, asked once per node of a block.
-  StorageChanges changes_;
   // Which operands the rewrite gives a temporary.
   TemporaryFor given_;
   // Whether the body is an execution, which answers through its completion.
@@ -864,12 +900,12 @@ auto OrderEvaluation(mir::CompilationUnit unit) -> mir::CompilationUnit {
         if (mir::IsEnteredForeign(unit, at) || !code.body.has_value()) {
           return std::nullopt;
         }
-        StorageChanges changes;
-        if (!ReadsBeforeAChange(unit, *code.body, changes)) {
+        mir::EvaluationOrder order(unit.types, *code.body);
+        if (!HasOrderToMakeExplicit(unit, *code.body, order)) {
           return std::nullopt;
         }
         BodyTemporaries temporaries(
-            unit, code, std::move(changes), ForReadsBeforeChange{});
+            unit, code, ForEvaluationOrder{.order = &order});
         return temporaries.Rewritten();
       });
 }
@@ -881,8 +917,7 @@ auto GiveTemporariesToValuesKeptApart(
       (plan.values_apart.empty() && !MakesALargeValue(unit, *code.body))) {
     return std::nullopt;
   }
-  BodyTemporaries temporaries(
-      unit, code, StorageChanges{}, ForValuesKeptApart{.plan = &plan});
+  BodyTemporaries temporaries(unit, code, ForValuesKeptApart{.plan = &plan});
   return temporaries.Rewritten();
 }
 

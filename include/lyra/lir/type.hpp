@@ -61,6 +61,7 @@ enum class RuntimeLibraryKind : std::uint8_t {
   kDpiLogicChunk,
   kDpiOpenArray,
   kDpiOpenArrayHandle,
+  kWatchedPlace,
   kTrigger,
   kObservation,
   kReadReport,

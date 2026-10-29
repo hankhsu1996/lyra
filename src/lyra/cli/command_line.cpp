@@ -146,6 +146,11 @@ struct CommandSpec {
   std::string_view object;
   CommandKind kind;
   bool requires_out;
+  // When MIR is checked. A dump of it is not, as LLVM prints a module after a
+  // pass whatever its verifier would say, since a person reads it, and a unit
+  // the check refuses is the one a person most needs to see.
+  mir_transform::VerifierKind mir_verifier =
+      mir_transform::VerifierKind::kOutput;
   SaysStatus status;
   OptionSet takes;
 };
@@ -175,6 +180,7 @@ constexpr auto kCommands = std::to_array<CommandSpec>(
       .object = "mir",
       .kind = CommandKind::kDumpMir,
       .requires_out = false,
+      .mir_verifier = mir_transform::VerifierKind::kNone,
       .status = SaysStatus::kNever,
       .takes = kRewritesMir},
      {.verb = "dump",
@@ -1139,7 +1145,9 @@ auto ResolveCliOptions(
     }
     out.mir_passes.overrides = *std::move(overrides);
   }
-  out.mir_passes.verify_each = opts.mir_verify_each.value_or(false);
+  out.mir_passes.verifier = opts.mir_verify_each.value_or(false)
+                                ? mir_transform::VerifierKind::kEachStep
+                                : FindCommand(cmd).mir_verifier;
 
   if (RequiresOut(cmd) && !out.out) {
     return diag::Fail(

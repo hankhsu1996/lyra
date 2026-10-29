@@ -40,9 +40,15 @@ template <typename Data, typename T>
 using AsConstAs = std::conditional_t<std::is_const_v<Data>, const T, T>;
 
 // Calls `reach` with each node `data` takes a value from, and how it takes
-// it. Every one is named in the block holding `data` but a block expression's
-// value, which is named in the block of its steps and is reached from there.
-// Handed a node being rebuilt, `reach` is handed each operand to replace.
+// it, in the order an evaluation of `data` runs them: first to last, an
+// assignment's value before its target, as Rust evaluates an assignment and as
+// a write with an intra-assignment timing control evaluates its value before
+// its target (LRM 10.4.1), and a call's arguments before its callee and the
+// object it is entered on, which often stands for storage that ends with the
+// full-expression and so runs where it is used. Every one is named in the
+// block holding `data` but a block expression's value, which is named in the
+// block of its steps and is reached from there. Handed a node being rebuilt,
+// `reach` is handed each operand to replace.
 template <typename Data>
   requires std::same_as<std::remove_const_t<Data>, ExprData>
 void ForEachOperand(Data& data, const auto& reach) {
@@ -69,10 +75,13 @@ void ForEachOperand(Data& data, const auto& reach) {
           },
           [](AsConstAs<Data, BlockExpr>&) {},
           [&](AsConstAs<Data, AssignExpr>& e) {
-            reach(e.target, OperandUse::kStorage);
             value(e.value);
+            reach(e.target, OperandUse::kStorage);
           },
           [&](AsConstAs<Data, CallExpr>& e) {
+            for (Id& argument : e.arguments) {
+              value(argument);
+            }
             std::visit(
                 Overloaded{
                     [&](AsConstAs<Data, Direct>& callee) {
@@ -88,9 +97,6 @@ void ForEachOperand(Data& data, const auto& reach) {
                       reach(callee.receiver, OperandUse::kObject);
                     }},
                 e.callee);
-            for (Id& argument : e.arguments) {
-              value(argument);
-            }
           },
           // A placement's arguments are evaluated before the storage is asked
           // for, and that before the initializer ([expr.new]).

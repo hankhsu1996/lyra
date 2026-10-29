@@ -174,7 +174,7 @@ auto ReferenceReportsTo(
                       mir::Direct{
                           .target = support::BuiltinFn::kReferenceReportsTo},
                   .arguments = {block.AsValue(unit.types, reference)}},
-          .type = mir::ErasedPointer(unit.types)});
+          .type = mir::WatchedPlace(unit.types)});
 }
 
 }  // namespace lyra::lowering::hir_to_mir

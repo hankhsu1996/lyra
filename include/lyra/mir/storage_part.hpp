@@ -21,6 +21,11 @@ auto SelectionOf(const CallExpr& call) -> std::optional<support::PartSelection>;
 // storage it is taken on, whose dereference is part of that storage.
 auto AnswersReferenceIntoReceiver(const CallExpr& call) -> bool;
 
+// Whether a call names a library entry answering with a reference through
+// which the storage it is taken on can be written, so a write through the
+// answer changes that storage.
+auto AnswersMutableReferenceIntoReceiver(const CallExpr& call) -> bool;
+
 // Whether `call`, answering `type`, binds a reference variable to the storage
 // its one argument names rather than building a value of it, as a C++
 // reference parameter binds an lvalue. One built over nothing binds nothing,

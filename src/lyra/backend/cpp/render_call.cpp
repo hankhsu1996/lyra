@@ -16,6 +16,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/closure_signature.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
 

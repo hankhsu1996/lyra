@@ -34,6 +34,7 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/profiling/time_trace.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -962,6 +963,26 @@ auto FunctionLowerer::OwedEndAt(const lir::Operand& value) const
   for (std::size_t i = 0; i < scopes_.size(); ++i) {
     const auto* end = std::get_if<ValueEnd>(&scopes_[i].kind);
     if (end != nullptr && end->value == use->value) {
+      return i;
+    }
+  }
+  return std::nullopt;
+}
+
+auto FunctionLowerer::OwedEndOfLocal(const mir::Block& block, mir::ExprId place)
+    const -> std::optional<std::size_t> {
+  const std::optional<mir::LocalId> local =
+      mir::ReferencedLocal(block.exprs.Get(place).data);
+  if (!local.has_value() || !locals_[local->value].has_value()) {
+    return std::nullopt;
+  }
+  const auto* binding = std::get_if<PlaceBinding>(&*locals_[local->value]);
+  if (binding == nullptr) {
+    return std::nullopt;
+  }
+  for (std::size_t i = 0; i < scopes_.size(); ++i) {
+    const auto* end = std::get_if<SlotEnd>(&scopes_[i].kind);
+    if (end != nullptr && end->slot == binding->slot) {
       return i;
     }
   }
@@ -3467,11 +3488,23 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             return LowerBlockExpr(block.child_scopes.Get(be.scope), be.value);
           },
           [&](const mir::MoveExpr& m) -> Lowered {
-            // A move is a last-use transfer marker placed at HIR-to-MIR; it
-            // changes neither the value nor its type, so it reads its operand
-            // as a copy does, and what takes the value decides whether it is
-            // moved.
-            return LowerRead(block, m.operand);
+            // A move is a last use; it changes neither the value nor its type,
+            // so it reads its operand as a copy does, and what takes the value
+            // decides whether it is moved. A value with no copy moved out of a
+            // local's slot takes the local's end with it, as rustc's drop
+            // elaboration leaves a place moved out of with nothing to drop.
+            auto value = LowerRead(block, m.operand);
+            if (!value || !unit_->Types()
+                               .Get(lir::OperandType(fn_, *value))
+                               .IsMoveOnly()) {
+              return value;
+            }
+            if (const std::optional<std::size_t> owed =
+                    OwedEndOfLocal(block, m.operand)) {
+              PassEndAt(*owed);
+              OpenScope(ValueEnd{.value = std::get<lir::Use>(*value).value});
+            }
+            return value;
           },
           [&](const mir::CopyExpr& c) -> Lowered {
             return LowerRead(block, c.place);

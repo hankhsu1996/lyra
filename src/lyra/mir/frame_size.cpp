@@ -83,6 +83,7 @@ auto LayoutOfLibraryObject(RuntimeLibraryKind kind) -> support::Layout {
     case RuntimeLibraryKind::kDpiBitChunk:
     case RuntimeLibraryKind::kDpiLogicChunk:
     case RuntimeLibraryKind::kDpiOpenArrayHandle:
+    case RuntimeLibraryKind::kWatchedPlace:
     case RuntimeLibraryKind::kCancellationTarget:
     case RuntimeLibraryKind::kControlEffect:
     case RuntimeLibraryKind::kObjectDefinition:

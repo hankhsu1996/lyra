@@ -92,6 +92,11 @@ auto ErasedPointer(const TypePool& types) -> TypeId {
           .ownership = PointerOwnership::kBorrowed}});
 }
 
+auto WatchedPlace(const TypePool& types) -> TypeId {
+  return types.Intern(
+      Type{RuntimeLibraryType{.kind = RuntimeLibraryKind::kWatchedPlace}});
+}
+
 auto BoxOf(const TypePool& types, TypeId value) -> TypeId {
   return types.Intern(
       Type{PointerType{

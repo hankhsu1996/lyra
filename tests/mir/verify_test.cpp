@@ -31,6 +31,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/value_operation.hpp"
@@ -205,18 +206,46 @@ auto AddSum(const CompilationUnit& unit, Block& block, ExprId lhs, ExprId rhs)
           .type = unit.builtins.int_type});
 }
 
+// A node that computes without running code, so the order of two places
+// reaching it is not what a check of it asks about.
+auto AddComputation(const CompilationUnit& unit, Block& block) -> ExprId {
+  return block.exprs.Add(
+      Expr{
+          .data =
+              UnaryExpr{
+                  .op = UnaryOp::kMinus,
+                  .operand = block.exprs.Add(
+                      Expr{
+                          .data = NullLiteral{},
+                          .type = unit.builtins.int_type})},
+          .type = unit.builtins.int_type});
+}
+
+// Whether verifying `unit` refuses it with a message holding `reason`.
+auto RefusedFor(const CompilationUnit& unit, std::string_view reason) -> bool {
+  try {
+    Verify(unit);
+  } catch (const InternalError& error) {
+    return std::string_view(error.what()).find(reason) !=
+           std::string_view::npos;
+  }
+  return false;
+}
+
 // A node that computes is evaluated at every place reaching it, so a body that
 // reaches one at two places a run takes both of is refused, and the refusal
-// names the body and what stands at the two places.
+// names the body and what stands at the two places. The computation runs no
+// code, so nothing about the order of the two places is what is refused.
 TEST(MirVerifyTest, AComputationOneRunReachesTwiceIsRefused) {
   const CompilationUnit unit =
       UnitWithBody([](const CompilationUnit& u, Block& body) {
-        const ExprId call = AddCall(u, body);
-        body.AppendStmt(ExprStmt{.expr = AddSum(u, body, call, call)});
+        const ExprId computed = AddComputation(u, body);
+        body.AppendStmt(ExprStmt{.expr = AddSum(u, body, computed, computed)});
       });
   try {
     Verify(unit);
-    FAIL() << "a call reached as both operands of one operation was accepted";
+    FAIL() << "a computation reached as both operands of one operation was "
+              "accepted";
   } catch (const InternalError& error) {
     const std::string message = error.what();
     EXPECT_NE(message.find("'f' of unit 'U'"), std::string::npos) << message;
@@ -258,10 +287,10 @@ TEST(MirVerifyTest, AComputationUnderDifferentArmsIsNotReachedTwice) {
             ExprStmt{.expr = conditional(body, flag(u, body), call, inner)});
       })));
 
-  EXPECT_THROW(
-      Verify(UnitWithBody([&](const CompilationUnit& u, Block& body) {
-        const ExprId call = AddCall(u, body);
-        const ExprId sum = AddSum(u, body, call, call);
+  EXPECT_TRUE(RefusedFor(
+      UnitWithBody([&](const CompilationUnit& u, Block& body) {
+        const ExprId computed = AddComputation(u, body);
+        const ExprId sum = AddSum(u, body, computed, computed);
         body.AppendStmt(
             ExprStmt{
                 .expr = conditional(
@@ -270,8 +299,8 @@ TEST(MirVerifyTest, AComputationUnderDifferentArmsIsNotReachedTwice) {
                         Expr{
                             .data = NullLiteral{},
                             .type = body.exprs.Get(sum).type}))});
-      })),
-      InternalError);
+      }),
+      "one run evaluates it at two of them"));
 
   EXPECT_THROW(
       Verify(UnitWithBody([&](const CompilationUnit& u, Block& body) {
@@ -320,12 +349,34 @@ TEST(MirVerifyTest, ANodeThatComputesNothingMayStandAtSeveralPlaces) {
         const ExprId read = body.Read(place_over(u, body, null));
         body.AppendStmt(ExprStmt{.expr = AddSum(u, body, read, read)});
       })));
-  EXPECT_THROW(
-      Verify(UnitWithBody([&](const CompilationUnit& u, Block& body) {
-        const ExprId read = body.Read(place_over(u, body, AddCall(u, body)));
+  EXPECT_TRUE(RefusedFor(
+      UnitWithBody([&](const CompilationUnit& u, Block& body) {
+        const ExprId read =
+            body.Read(place_over(u, body, AddComputation(u, body)));
         body.AppendStmt(ExprStmt{.expr = AddSum(u, body, read, read)});
-      })),
-      InternalError);
+      }),
+      "one run evaluates it at two of them"));
+}
+
+// Two operands that each run code can be run in the other order to another
+// answer, so a legalized unit keeping both under one node is refused, and the
+// refusal names the node and the operand that has to run first; two without
+// side effects stay where they are.
+TEST(MirVerifyTest, TwoOperandsATargetCouldReorderAreRefused) {
+  EXPECT_TRUE(RefusedFor(
+      UnitWithBody([](const CompilationUnit& u, Block& body) {
+        body.AppendStmt(
+            ExprStmt{
+                .expr = AddSum(u, body, AddCall(u, body), AddCall(u, body))});
+      }),
+      "an operand a target could run in the other order to another answer"));
+  EXPECT_NO_THROW(Verify(UnitWithBody([](const CompilationUnit& u,
+                                         Block& body) {
+    body.AppendStmt(
+        ExprStmt{
+            .expr = AddSum(
+                u, body, AddComputation(u, body), AddComputation(u, body))});
+  })));
 }
 
 // A place stands where a value is wanted only under a read, a read reads a

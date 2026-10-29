@@ -49,6 +49,24 @@ auto AnswersReferenceIntoReceiver(const CallExpr& call) -> bool {
   throw InternalError("mir: unknown entry answer");
 }
 
+auto AnswersMutableReferenceIntoReceiver(const CallExpr& call) -> bool {
+  const std::optional<support::BuiltinFn> fn = DirectBuiltinFn(call);
+  if (!fn.has_value()) {
+    return false;
+  }
+  switch (support::RuntimeEntryOf(*fn).answer) {
+    case support::EntryAnswer::kMutableReferenceIntoTheReceiver:
+      return true;
+    case support::EntryAnswer::kReadOnlyReferenceIntoTheReceiver:
+    case support::EntryAnswer::kNewValue:
+    case support::EntryAnswer::kReferenceToContents:
+    case support::EntryAnswer::kReferenceToSampledContents:
+    case support::EntryAnswer::kExecution:
+      return false;
+  }
+  throw InternalError("mir: unknown entry answer");
+}
+
 auto BindsReference(const TypePool& types, const CallExpr& call, TypeId type)
     -> bool {
   return std::holds_alternative<Construct>(call.callee) &&

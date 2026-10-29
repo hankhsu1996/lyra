@@ -78,9 +78,9 @@ auto EventOccurrences(const value::ObjectRef& event, ReadReport* report)
   return object == nullptr ? 0 : object->Occurrences();
 }
 
-auto EventReportsTo(const value::ObjectRef& event) -> Observable* {
+auto EventReportsTo(const value::ObjectRef& event) -> WatchedPlace {
   SynchronizationObject* const object = event.Get<SynchronizationObject>();
-  return object == nullptr ? nullptr : &object->EventSource();
+  return WatchedPlace{object == nullptr ? nullptr : &object->EventSource()};
 }
 
 }  // namespace lyra::runtime

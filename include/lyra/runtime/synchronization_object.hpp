@@ -5,6 +5,7 @@
 
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/object_ref.hpp"
+#include "lyra/runtime/trigger.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/object_ref.hpp"
 
@@ -84,6 +85,7 @@ void EventTrigger(const value::ObjectRef& event, RuntimeEffects& runtime);
 // What a wait on `event` is put on: the object's own event source, or none for
 // an event that names no object, where the wait is put on nothing and so waits
 // for as long as the run lasts -- one of the outcomes LRM 15.5.5.2 leaves open.
-[[nodiscard]] auto EventReportsTo(const value::ObjectRef& event) -> Observable*;
+[[nodiscard]] auto EventReportsTo(const value::ObjectRef& event)
+    -> WatchedPlace;
 
 }  // namespace lyra::runtime

@@ -64,6 +64,10 @@ auto IsErasedFunction(const TypePool& types, TypeId id) -> bool;
 // that says what was assumed.
 auto ErasedPointer(const TypePool& types) -> TypeId;
 
+// What a wait watches at a place, as the runtime answers where it is asked
+// what a write there is told to.
+auto WatchedPlace(const TypePool& types) -> TypeId;
+
 // A box of `value`: a pointer uniquely owning storage of dynamic duration
 // holding one, as Rust's `Box` is.
 auto BoxOf(const TypePool& types, TypeId value) -> TypeId;

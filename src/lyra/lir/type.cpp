@@ -85,6 +85,8 @@ auto RuntimeLibraryKindName(RuntimeLibraryKind kind) -> const char* {
       return "DPI open array";
     case RuntimeLibraryKind::kDpiOpenArrayHandle:
       return "DPI open array handle";
+    case RuntimeLibraryKind::kWatchedPlace:
+      return "watched place";
     case RuntimeLibraryKind::kTrigger:
       return "trigger";
     case RuntimeLibraryKind::kObservation:
@@ -485,6 +487,7 @@ auto Type::IsAddressOnly() const -> bool {
       case RuntimeLibraryKind::kDpiLogicChunk:
       case RuntimeLibraryKind::kDpiOpenArray:
       case RuntimeLibraryKind::kDpiOpenArrayHandle:
+      case RuntimeLibraryKind::kWatchedPlace:
       case RuntimeLibraryKind::kTrigger:
       case RuntimeLibraryKind::kObservation:
       case RuntimeLibraryKind::kReadReport:
@@ -640,6 +643,7 @@ auto Type::HeldAs() const -> std::optional<Holding> {
               case RuntimeLibraryKind::kDpiBitChunk:
               case RuntimeLibraryKind::kDpiLogicChunk:
               case RuntimeLibraryKind::kDpiOpenArrayHandle:
+              case RuntimeLibraryKind::kWatchedPlace:
               case RuntimeLibraryKind::kCancellationTarget:
               case RuntimeLibraryKind::kTimer:
               case RuntimeLibraryKind::kDeferredEffects:

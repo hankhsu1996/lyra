@@ -291,20 +291,29 @@ auto MarshalCarrierToSv(
 
 // The chunk-pointer builtin for a canonical-vector carrier: 4-state and 2-state
 // are separate buffer types, reached through separate C pointer types (Annex
-// H.10.2).
+// H.10.1.2).
 [[nodiscard]] auto VectorDataBuiltin(const support::VectorCarrier& v)
     -> support::BuiltinFn {
   return v.four_state ? support::BuiltinFn::kDpiLogicBufferData
                       : support::BuiltinFn::kDpiBitBufferData;
 }
 
-// The writable canonical chunk pointer of a boundary buffer. It feeds both the
-// foreign call (which writes through it) and the copy-back read, and is only
-// ever handed on as an argument.
+// The canonical chunk a vector carrier's buffer holds (LRM Annex H.10.1.2): a
+// value-plane word for 2-state, a value and a control word for 4-state.
+auto ChunkType(
+    mir::CompilationUnit& unit, const support::VectorCarrier& carrier)
+    -> mir::TypeId {
+  return unit.types.Intern(
+      mir::Type{mir::RuntimeLibraryType{
+          .kind = carrier.four_state ? mir::RuntimeLibraryKind::kDpiLogicChunk
+                                     : mir::RuntimeLibraryKind::kDpiBitChunk}});
+}
+
+// The writable canonical chunk pointer of a boundary buffer, which feeds both
+// the foreign call (which writes through it) and the copy-back read.
 auto BuildBufferDataCall(
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId buffer_ref,
-    mir::TypeId carrier_type, const support::VectorCarrier& carrier)
-    -> mir::ExprId {
+    const support::VectorCarrier& carrier) -> mir::ExprId {
   return block.exprs.Add(
       mir::Expr{
           .data =
@@ -316,7 +325,7 @@ auto BuildBufferDataCall(
                   .arguments = {}},
           .type = unit.types.Intern(
               mir::Type{mir::PointerType{
-                  .pointee = carrier_type,
+                  .pointee = ChunkType(unit, carrier),
                   .ownership = mir::PointerOwnership::kBorrowed}})});
 }
 
@@ -474,8 +483,7 @@ auto BuildBoundaryArgument(
                             .ownership = mir::PointerOwnership::kBorrowed}})));
           },
           [&](const support::VectorCarrier& vector) {
-            return BuildBufferDataCall(
-                unit, block, object, carrier_type, vector);
+            return BuildBufferDataCall(unit, block, object, vector);
           },
           [&](const support::OpenArrayCarrier&) {
             return block.exprs.Add(
@@ -508,8 +516,8 @@ auto BuildBoundaryArgument(
 // states.
 auto BuildBoundaryReadback(
     UnitLowerer& unit_lowerer, WalkFrame frame,
-    const support::DpiCarrier& carrier, mir::ExprId object,
-    mir::TypeId carrier_type, mir::TypeId sv_type) -> mir::ExprId {
+    const support::DpiCarrier& carrier, mir::ExprId object, mir::TypeId sv_type)
+    -> mir::ExprId {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& block = *frame.current_block;
   // A canonical chunk buffer is read by an entry over two operands, while an
@@ -536,8 +544,7 @@ auto BuildBoundaryReadback(
                 mir::Direct{
                     .target = VectorReadBuiltin(vector),
                     .type_arguments = {sv_type}},
-                {BuildBufferDataCall(
-                    unit, block, object, carrier_type, vector)});
+                {BuildBufferDataCall(unit, block, object, vector)});
           },
           [&](const support::OpenArrayCarrier&) {
             return read(
@@ -758,8 +765,7 @@ auto PopulateForeignImportBoundary(
     const mir::ExprId temp_ref = body.LocalPlace(wb.temp, wb.carrier_type);
 
     const mir::ExprId rhs_id = BuildBoundaryReadback(
-        unit_lowerer, cframe, wb.carrier, temp_ref, wb.carrier_type,
-        wb.sv_type);
+        unit_lowerer, cframe, wb.carrier, temp_ref, wb.sv_type);
     auto stored = AppendStores(unit_lowerer, cframe, wb.actual, rhs_id);
     if (!stored) return std::unexpected(std::move(stored.error()));
   }
@@ -990,10 +996,7 @@ auto ForeignBoundaryType(
             .kind = mir::RuntimeLibraryKind::kDpiOpenArrayHandle}});
   }
   if (const auto* vec = std::get_if<support::VectorCarrier>(&carrier)) {
-    const mir::TypeId chunk = unit.types.Intern(
-        mir::Type{mir::RuntimeLibraryType{
-            .kind = vec->four_state ? mir::RuntimeLibraryKind::kDpiLogicChunk
-                                    : mir::RuntimeLibraryKind::kDpiBitChunk}});
+    const mir::TypeId chunk = ChunkType(unit, *vec);
     const mir::Mutability mutability =
         direction == support::DpiDirection::kInput ? mir::Mutability::kReadOnly
                                                    : mir::Mutability::kMutable;

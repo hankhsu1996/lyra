@@ -209,6 +209,11 @@ class FunctionLowerer {
   // that end, and nothing otherwise.
   [[nodiscard]] auto OwedEndAt(const lir::Operand& value) const
       -> std::optional<std::size_t>;
+  // The scope owing the end of the value held by the local that `place`, a
+  // node of `block`, names, where the local's frame slot holds a value whose
+  // end is still owed, and nothing otherwise.
+  [[nodiscard]] auto OwedEndOfLocal(const mir::Block& block, mir::ExprId place)
+      const -> std::optional<std::size_t>;
   // Whether `value` is one this body was only lent and can copy: owned by its
   // type, with a copy, and with no end owed for it here.
   [[nodiscard]] auto IsLentCopyable(const lir::Operand& value) const -> bool;
