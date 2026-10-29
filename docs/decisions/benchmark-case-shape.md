@@ -1,6 +1,12 @@
 # A benchmark case fixes what work is done and lets the harness choose how much
 
-Date: 2026-08-31; D13 added 2026-10-17. Status: accepted.
+Date: 2026-08-31; D13 added 2026-10-17, revised 2026-10-28. Status: accepted.
+
+D13 said the build sizes were "large enough that the units between the two add far more than a
+build's fixed part varies by between runs". For the case that grew a signal's width it was not: two
+counts of one compiler at 64 bits disagreed by 25 thousand instructions, while the work between 64
+and 128 bits was 130 thousand, so its number moved by up to 172% on changes that touched nothing it
+measured. The resolution is now measured for each case, and that case is gone (Consequences).
 
 ## Why this decision matters
 
@@ -42,8 +48,8 @@ That distinction generates every decision below.
 
 A case times either running a design or building one, and which it is decides how its amount of work
 reaches it. A simulation's amount is a runtime argument, so one build serves every amount. A build's
-amount **is** the design -- more modules, wider signals -- so it has to be fixed before the build
-starts, which makes it a compile-time constant of necessity rather than by choice.
+amount **is** the design -- more modules, more generate blocks -- so it has to be fixed before the
+build starts, which makes it a compile-time constant of necessity rather than by choice.
 
 That has a consequence the simulation does not share. Repeating a simulation's work costs in
 proportion to the repeats, by construction, so its amount divides out exactly. A design twice the
@@ -133,13 +139,15 @@ D13. A case can also be counted rather than timed: the instructions one unit of 
      size and twice it, the same for every case and backend: how what a build leaves grows with
      its design is what the growth tests hold, and a search for a duration follows a cost that barely
      grows out to a design that takes minutes to build under callgrind -- on one backend sooner than
-     the other, so the two would not count the same design. The size is large enough that the units
-     between the two add far more than a build's fixed part varies by between runs, and small
-     enough that they add little to what counting the build costs. A count is Lyra's alone --
-     a reference simulator is compared by rate (D6) -- and it is what tells two revisions of Lyra
-     apart, because it does not move with the load on the machine that took it. It does move from
-     one machine to another, so a count is compared only with one taken beside it, and what is read
-     across days is the rate.
+     the other, so the two would not count the same design. The size is small enough that it adds
+     little to what counting the build costs. Whether the units between the two sizes add far more
+     than a build's fixed part varies by is not assumed: the lower amount is counted twice, and
+     what the two disagree by, as a share of the work counted, is the case's resolution. A case
+     whose resolution is too coarse to tell a change worth marking from its own variation fails,
+     with what it measured. A count is Lyra's alone -- a reference simulator is compared by rate
+     (D6) -- and it is what tells two revisions of Lyra apart, because it does not move with the
+     load on the machine that took it. It does move from one machine to another, so a count is
+     compared only with one taken beside it, and what is read across days is the rate.
 ```
 
 ## Rejected alternatives
@@ -208,10 +216,15 @@ it better, which is why it is the decision the others hang from.
   two units and reports what they give. The suite therefore has no notion of a case being too slow
   to measure, only of one being slow.
 - A case whose work is dwarfed by what it has to do before any of it can still report the wrong
-  thing, and the suite cannot tell. Separating a fixed part from a marginal one needs the marginal
-  part to be above the noise between two readings, and where it is not -- an array that has to be
-  filled by the very path that is slow -- the whole duration is charged to the work. Such a rate is
-  a lower bound, and the case becomes truthful again when the path underneath it does.
+  thing. Separating a fixed part from a marginal one needs the marginal part to be above the noise
+  between two readings. A timing cannot tell when it is not -- an array that has to be filled by the
+  very path that is slow charges the whole duration to the work, and such a rate is a lower bound
+  that becomes truthful again when the path underneath it does. A count can tell, by counting one
+  amount twice (D13), and it fails the case rather than report its noise.
+- A case whose subject is that a cost does not grow -- what a wider signal costs to compile -- has
+  an ideal marginal cost of zero, and a relative change of a quantity near zero says nothing at any
+  amount. Whether a cost stays flat is a question of growth against a bound, which the growth tests
+  ask of what a build leaves; it is not a case here.
 - Comparing two revisions is a separate program that reads two count runs' result files (D13).
   Nothing in the runner knows what "before" was; the one thing it takes from an earlier run is the
   amount each case was counted at, which is what makes the two counts of the same work.

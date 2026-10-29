@@ -1,0 +1,73 @@
+name: Build compared compilers
+description: >
+  Build Lyra optimized at two revisions and keep each with its runfiles, for a
+  job that counts both on its own runner. A count does not move with the
+  machine's load but does move from one machine to another, so the two a job
+  compares are built and counted on the one runner it has. The tree is left at
+  head, whose runner and corpus count both: the same cases, done the same way.
+
+inputs:
+  base:
+    description: The revision compared against.
+    required: true
+  head:
+    description: The revision measured.
+    required: true
+  buildbuddy-api-key:
+    description: The key remote execution runs under; empty to build here.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Bazel
+      uses: bazel-contrib/setup-bazel@0.18.0
+      with:
+        bazelisk-cache: true
+        disk-cache: instruction-count-${{ hashFiles('MODULE.bazel') }}
+        repository-cache: true
+
+    - name: Setup Clang
+      uses: ./.github/actions/setup-clang
+
+    - name: Install valgrind
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y valgrind
+
+    # The compilers are run here, so their outputs have to come back; the
+    # flags go in the untracked rc layer so that both checkouts below read
+    # them.
+    - name: Configure remote execution
+      shell: bash
+      env:
+        BUILDBUDDY_API_KEY: ${{ inputs.buildbuddy-api-key }}
+      run: |
+        if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
+          echo "build --config=rbe --remote_download_toplevel" >> .bazelrc.user
+          echo "build --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY" >> .bazelrc.user
+        fi
+
+    # Each compiler is kept with its runfiles, where it finds the runtime it
+    # links a program against, and with every link resolved, since the next
+    # build moves what they point at. The manifest is not kept: it names each
+    # file by its absolute place in that build's output tree, and without it
+    # the files are looked up inside the kept directory instead.
+    - name: Build both compilers
+      shell: bash
+      env:
+        BASE: ${{ inputs.base }}
+        HEAD: ${{ inputs.head }}
+      run: |
+        for side in base head; do
+          if [[ "$side" == base ]]; then rev=$BASE; else rev=$HEAD; fi
+          git checkout --quiet --detach "$rev"
+          bazel build -c opt //:lyra
+          kept="$RUNNER_TEMP/compilers/$side"
+          mkdir -p "$kept"
+          cp -L bazel-bin/lyra "$kept/lyra"
+          cp -rL bazel-bin/lyra.runfiles "$kept/lyra.runfiles"
+          rm -f "$kept/lyra.runfiles/MANIFEST"
+        done

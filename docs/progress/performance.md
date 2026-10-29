@@ -31,7 +31,8 @@ Runtime performance is tracked by the benchmark over the corpus under `tests/ben
 builds every case under Lyra, on each backend, and under Verilator and puts the rates side by side.
 It runs nightly and gates its own run on a case building, running, and finishing inside a time limit
 -- never on a rate itself, which would be a claim about the machine that ran it. Whether one change
-made a case do more work is a count instead, taken on every merge against its parent.
+made Lyra do more work is a count instead, taken on every merge against its parent: on a few real
+designs first, building each and running its quick check, and then on every corpus case.
 
 What a case reports is a **rate**, and no amount of work is written down anywhere: the harness
 raises the amount until a measurement reaches a target duration, separately for each tool, and

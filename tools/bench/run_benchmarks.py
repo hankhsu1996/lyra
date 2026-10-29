@@ -12,6 +12,13 @@ small the difference; it can move from one machine to another, so it is compared
 only with a count taken beside it, and a rate is what compares Lyra with the
 reference simulator.
 
+With --count and --design it counts real designs instead of the corpus: each a
+directory `declare_external_design` wrote a case of Verilator's benchmark suite
+into, counted whole -- the instructions Lyra executes building it, and the
+instructions its program executes running the suite's quick check. The corpus
+cases are each one cost family, which says which path a change moved; a real
+design is what says whether it moved for someone who builds one.
+
 A case that cannot be measured costs only itself: the run goes on, the report
 carries every number that was obtained, and the case is named there with the
 step that failed and how it ended. The exit status is 0 when every case was
@@ -21,12 +28,14 @@ Usage:
     python3 tools/bench/run_benchmarks.py [--json PATH] [--filter SUBSTRING]
                                           [--seconds N] [--lyra PATH]
                                           [--backend llvm|cpp ...]
-                                          [--count [--amounts PATH] [-j N]]
+                                          [--count [--amounts PATH] [-j N]
+                                                   [--design DIR ...]]
                                           [--revision TEXT]
 """
 
 import argparse
 import concurrent.futures
+import contextlib
 import json
 import math
 import os
@@ -78,17 +87,34 @@ COUNT_RUN_TARGET_SECONDS = 0.02
 
 # A build is counted at one design size and twice it, the same for every case
 # and backend, whatever a duration would choose. A search for a duration
-# follows a cost that barely grows -- a wider signal -- out to designs that
-# take minutes to build under callgrind, and stops sooner on one backend than
-# the other, so the two would not count the same design; how a build's cost
-# grows with its size is the growth tests' subject. The size is what makes the
-# difference of the two counts the design's: what a build does before any of
-# it is billions of instructions and varies between runs by some hundreds of
-# thousands, so the units between the two sizes have to add far more than
-# that, while adding little to what each build costs to count.
+# follows a cost that barely grows out to designs that take minutes to build
+# under callgrind, and stops sooner on one backend than the other, so the two
+# would not count the same design; how a build's cost grows with its size is
+# the growth tests' subject. What a build does before any of the design is
+# hundreds of millions of instructions and moves between runs, so whether the
+# units between the two sizes add enough to be told from that is measured for
+# each case, as its resolution.
 COUNT_BUILD_AMOUNT = 64
 
+# The least change of a count worth marking, in percent. A count can say this
+# only where two counts of one compiler disagree by well under it, so a corpus
+# case is counted twice at its lower amount and the disagreement is reported as
+# the case's resolution; a case whose resolution is past a third of this cannot
+# say it, and fails, since a number it reports would be noise however it moved.
+MARK_PERCENT = 2.0
+RESOLVABLE_PERCENT = MARK_PERCENT / 3
+
 TIMEOUT_SECONDS = 900
+
+# What a step of a real design may take under callgrind, which runs a program
+# about fifty times slower than it runs natively: a design that builds in tens
+# of seconds is counted in tens of minutes.
+DESIGN_TIMEOUT_SECONDS = 2400
+
+# What preparing a run's store may take: the C++ backend compiles the runtime
+# library a program links, optimized, into the first store it builds in, and on
+# a small machine that is longer than any one case's build is given.
+PREPARE_TIMEOUT_SECONDS = 3600
 
 # How much of what a failed step printed is kept. The reason is nearly always
 # at the end, and a host compiler that fails prints thousands of lines first.
@@ -136,10 +162,18 @@ METRIC_INSTRUCTIONS = "instructions"
 
 # The version of the result file's shape, raised whenever a field is removed or
 # changes type.
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 MEASURE_BUILD = "build"
 MEASURE_RUN = "run"
+
+# The family a real design's rows are reported under. A design is what a user
+# builds, where every other family is one cost, there to say which path a
+# change moved.
+DESIGN_FAMILY = "designs"
+
+# What `declare_external_design` writes beside a design's declaration.
+DESIGN_DESCRIPTION = "case.json"
 
 _DIRECTIVES = {"measure", "work", "work-max"}
 
@@ -171,6 +205,9 @@ class Result:
     seconds: float = 0.0
     rate: float = 0.0
     instructions_per_unit: float = 0.0
+    # How far two counts of the same work disagreed, as a percent of the work
+    # counted; None where the count was taken once.
+    resolution_percent: float | None = None
     build_s: float = 0.0
     binary_kb: int = 0
     readings: tuple[tuple[int, float], ...] = ()
@@ -184,6 +221,11 @@ def measured_name(tool: str, backend: str) -> str:
     return f"{tool}-{backend}" if backend else tool
 
 
+def result_name(r: "Result") -> str:
+    """One measurement, as a report names it: a real design has two."""
+    return f"{r.case}/{r.measure}/{measured_name(r.tool, r.backend)}"
+
+
 @dataclass
 class ProcessRun:
     """One subprocess and what running it cost."""
@@ -192,6 +234,7 @@ class ProcessRun:
     stdout: str
     stderr: str
     timed_out: bool
+    timeout_s: int
 
 
 # Every process group a step has started and not yet seen end, so that a run
@@ -221,14 +264,23 @@ def stop_every_step() -> None:
 
 def run_process(
     cmd: list[str], cwd: str | None = None, env: dict | None = None,
+    timeout_s: int = TIMEOUT_SECONDS, output_path: Path | None = None,
 ) -> ProcessRun:
-    """Run one command to completion and time it."""
+    """Run one command to completion and time it.
+
+    Where `output_path` is given, everything the command prints goes there,
+    both streams in the order it printed them, and is kept in the result as
+    what it printed to standard output.
+    """
     # What a step printed is only ever shown to a reader, and a program that
     # faults may have printed bytes that are no text at all.
-    with (
-        tempfile.TemporaryFile(mode="w+", errors="backslashreplace") as out,
-        tempfile.TemporaryFile(mode="w+", errors="backslashreplace") as err,
-    ):
+    with contextlib.ExitStack() as files:
+        out = files.enter_context(
+            open(output_path, "w+", errors="backslashreplace")
+            if output_path is not None else
+            tempfile.TemporaryFile(mode="w+", errors="backslashreplace"))
+        err = out if output_path is not None else files.enter_context(
+            tempfile.TemporaryFile(mode="w+", errors="backslashreplace"))
         start = time.monotonic()
         # The command leads a process group of its own, so that stopping it
         # stops the host compiler it started too. One left running would be
@@ -247,7 +299,7 @@ def run_process(
             killed.append(True)
             kill_group(proc.pid)
 
-        watchdog = threading.Timer(TIMEOUT_SECONDS, on_timeout)
+        watchdog = threading.Timer(timeout_s, on_timeout)
         watchdog.start()
         try:
             proc.wait()
@@ -261,13 +313,15 @@ def run_process(
                 _live_groups.discard(proc.pid)
 
         out.seek(0)
+        stdout = out.read()
         err.seek(0)
         return ProcessRun(
             elapsed_s=elapsed,
             returncode=proc.returncode,
-            stdout=out.read(),
-            stderr=err.read(),
+            stdout=stdout,
+            stderr="" if err is out else err.read(),
             timed_out=bool(killed),
+            timeout_s=timeout_s,
         )
 
 
@@ -619,17 +673,21 @@ def measure_build_case(
 
 def count_instructions(
     cmd: list[str], cwd: str, env: dict | None = None,
+    timeout_s: int = TIMEOUT_SECONDS, output_path: Path | None = None,
 ) -> tuple[int, ProcessRun]:
     """Run one command under callgrind; return the instructions it executed.
 
     Only the command's own process is counted. A build starts the host
     compiler, which runs natively and uncounted: it is not Lyra, and what Lyra
     hands it is held by the growth tests, which count what a build leaves.
+    What callgrind itself says goes to a file of its own, so what the command
+    printed is the command's alone.
     """
     out = Path(cwd) / "callgrind.out"
     run = run_process(
-        ["valgrind", "--tool=callgrind", f"--callgrind-out-file={out}", *cmd],
-        cwd=cwd, env=env)
+        ["valgrind", "--tool=callgrind", f"--callgrind-out-file={out}",
+         f"--log-file={Path(cwd) / 'callgrind.log'}", *cmd],
+        cwd=cwd, env=env, timeout_s=timeout_s, output_path=output_path)
     if run.timed_out or run.returncode != 0:
         return 0, run
     match = (
@@ -641,18 +699,40 @@ def count_instructions(
 
 
 def record_count(
-    result: Result, readings: list[tuple[int, int]],
+    result: Result, readings: list[tuple[int, int]], repeated: int,
 ) -> None:
     """Record instructions per unit from counts taken at two amounts.
 
     Their difference is the work alone: what a run executes once -- the
     process starting, a design being constructed, a compiler reading its
     prelude -- is in both and cancels exactly, as no two timings can.
+
+    `repeated` is a second count at the lower amount. What it disagrees with the
+    first by is what a count of this case cannot tell from a change, and it is
+    measured against the work counted rather than against either count: what a
+    run does once can be nearly all of a count, and its smallest variation is
+    then most of the difference. A case whose disagreement is past what a mark
+    needs is recorded as failed, with what it measured.
     """
     (low, low_count), (high, high_count) = readings
     result.work = low
     result.readings = tuple(readings)
-    result.instructions_per_unit = (high_count - low_count) / (high - low)
+    work = high_count - low_count
+    if work <= 0:
+        result.status = STATUS_ERROR
+        result.detail = (
+            f"its work did not show: {high} {result.work_unit} counted no "
+            f"more than {low}")
+        return
+    result.instructions_per_unit = work / (high - low)
+    result.resolution_percent = abs(repeated - low_count) / work * 100.0
+    if result.resolution_percent > RESOLVABLE_PERCENT:
+        result.status = STATUS_ERROR
+        result.detail = (
+            f"its work is below what a count resolves: two counts at "
+            f"{low} {result.work_unit} differ by "
+            f"{result.resolution_percent:.2g}% of the work counted, and a "
+            f"change of {MARK_PERCENT:g}% needs under {RESOLVABLE_PERCENT:.2g}%")
 
 
 def count_run_case(
@@ -673,14 +753,15 @@ def count_run_case(
     # hold.
     amount = max(1, min(amount, case.work_max // 2))
 
-    readings: list[tuple[int, int]] = []
-    for n in (amount, 2 * amount):
+    counts: list[int] = []
+    for n in (amount, 2 * amount, amount):
         count, run = count_instructions(
             [str(binary), f"+work={n}"], str(binary.parent))
         if record_failure(result, f"counted run at +work={n}", run):
             return result
-        readings.append((n, count))
-    record_count(result, readings)
+        counts.append(count)
+    record_count(
+        result, [(amount, counts[0]), (2 * amount, counts[1])], counts[2])
     return result
 
 
@@ -689,28 +770,170 @@ def count_build_case(
 ) -> Result:
     """Count what Lyra executes building the design at a size and twice it."""
     amount = COUNT_BUILD_AMOUNT
-    readings: list[tuple[int, int]] = []
-    for n in (amount, 2 * amount):
-        work = os.path.join(root, f"build-{n}")
+    counts: list[int] = []
+    for index, n in enumerate((amount, 2 * amount, amount)):
+        work = os.path.join(root, f"build-{index}")
         os.makedirs(work, exist_ok=True)
         count, run = count_instructions(
             tool.build(case, work, n), work, tool.env)
         if record_failure(result, f"counted build at {WORK_PARAM}={n}", run):
             return result
-        readings.append((n, count))
-    if not prove_built(
-            tool, result, os.path.join(root, f"build-{2 * amount}"),
-            2 * amount):
+        counts.append(count)
+    if not prove_built(tool, result, os.path.join(root, "build-1"), 2 * amount):
         return result
 
-    record_count(result, readings)
+    record_count(
+        result, [(amount, counts[0]), (2 * amount, counts[1])], counts[2])
     return result
+
+
+@dataclass(frozen=True)
+class Design:
+    """A case of Verilator's benchmark suite, as `declare_external_design`
+    wrote it: a directory holding its declaration and the directory its run
+    starts in."""
+    name: str
+    declared: Path
+    # Where the run starts, relative to the declaration.
+    run: str
+    options: tuple[str, ...]
+    arguments: tuple[str, ...]
+    check: Path | None
+
+
+def read_design(declared: Path) -> Design:
+    with open(declared / DESIGN_DESCRIPTION) as f:
+        described = json.load(f)
+    return Design(
+        name=described["name"],
+        declared=declared,
+        run=described["run"],
+        options=tuple(described["options"]),
+        arguments=tuple(described["arguments"]),
+        check=Path(described["check"]) if described["check"] else None,
+    )
+
+
+def count_design(
+    design: Design, lyra: str, backend: str, run_store: str, tmpdir: str,
+    unprepared: Callable[[str], str | None],
+) -> list[Result]:
+    """Count a real design whole: building it, and running its quick check.
+
+    The build is counted as an edit loop builds, as a corpus case's is, and
+    the run is counted on the program a long run would ship, optimized together
+    with the runtime, as a corpus case's is. Each is one total rather than a
+    difference of two: the suite fixes how much its quick check does, and what
+    a run does once -- the design being constructed -- is part of what a user
+    waits for. A total's disagreement between two counts is the small one a
+    build's fixed part has, so a total is counted once. The run is then held to
+    the suite's own check, since a count of a run that went wrong is of other
+    work.
+    """
+    results = [
+        Result(
+            case=design.name, family=DESIGN_FAMILY, measure=measure,
+            work_unit=measure, tool=LYRA, backend=backend, work=1)
+        for measure in (MEASURE_BUILD, MEASURE_RUN)
+    ]
+    if (why := unprepared(backend)) is not None:
+        for r in results:
+            r.status = STATUS_ERROR
+            r.detail = why
+        return results
+    print(f"  {design.name}/{backend} ...", file=sys.stderr, flush=True)
+    # A step the operating system would not start is this design's failure
+    # like any other.
+    try:
+        count_design_into(design, lyra, backend, run_store, tmpdir, *results)
+    except OSError as e:
+        for r in results:
+            if r.status == STATUS_OK and r.instructions_per_unit == 0.0:
+                r.status = STATUS_ERROR
+                r.detail = f"a step could not be carried out ({e})"
+    return results
+
+
+def count_design_into(
+    design: Design, lyra: str, backend: str, run_store: str, tmpdir: str,
+    built: Result, ran: Result,
+) -> None:
+    root = Path(tmpdir) / f"{design.name.replace(':', '-')}-{backend}"
+    shutil.copytree(design.declared, root, symlinks=True)
+
+    # A design of this size draws warnings by the thousand, and what stops it
+    # is an error, so only errors are asked for. One unit is lowered at a time:
+    # a count of threads waiting on one another would count the waiting.
+    build = [
+        lyra, "build", "--backend", backend, "--progress=none", "-Wnone",
+        "-j", "1", *design.options]
+    count, run = count_instructions(
+        [*build, "--rebuild", "--cache-dir", str(root / "store"), "-o",
+         str(root / "sim")],
+        str(root), timeout_s=DESIGN_TIMEOUT_SECONDS)
+    if record_failure(built, "counted build", run):
+        ran.status = STATUS_ERROR
+        ran.detail = "not run, since the design did not build"
+        return
+    built.instructions_per_unit = float(count)
+
+    run = run_process(
+        [*build, "-O2", "--lto", "--cache-dir", run_store, "-o",
+         str(root / BINARY_NAME)],
+        cwd=str(root), timeout_s=DESIGN_TIMEOUT_SECONDS)
+    if record_failure(ran, "optimized build", run):
+        return
+
+    # The suite's check reads what the run printed from where the suite keeps
+    # it.
+    here = root / design.run
+    count, run = count_instructions(
+        [str(root / BINARY_NAME), *design.arguments], str(here),
+        timeout_s=DESIGN_TIMEOUT_SECONDS,
+        output_path=here / "_execute" / "stdout.log")
+    if record_failure(ran, "counted run", run):
+        return
+    if design.check is not None:
+        run = run_process([str(design.check)], cwd=str(here))
+        if record_failure(ran, "the suite's check of the counted run", run):
+            return
+    ran.instructions_per_unit = float(count)
+
+
+def prepare_store(
+    lyra: str, backend: str, run_store: str, tmpdir: str,
+) -> str | None:
+    """Build an empty design into the run's store, or say why it did not build.
+
+    What every simulation case's build shares -- the runtime library the C++
+    backend compiles, optimized, the first time a store is built into -- is
+    built here once, before any case, under a limit of its own: it is no
+    case's work, every case waits on the store while it is built, and on a
+    small machine it takes longer than a case's build is given.
+    """
+    root = Path(tmpdir) / f"prepare-{backend}"
+    root.mkdir()
+    source = root / CASE_ENTRY
+    source.write_text(f"module {CASE_TOP};\nendmodule\n")
+    empty = Case(
+        family="", name="prepare", measure=MEASURE_RUN, work_unit="",
+        work_max=MAX_AMOUNT, sources=(source,))
+    run = run_process(
+        lyra_build_command(lyra, backend, empty, str(root), None, run_store),
+        cwd=str(root), timeout_s=PREPARE_TIMEOUT_SECONDS)
+    if run.timed_out or run.returncode != 0:
+        # Said once here; every measurement it stops names only the step.
+        print(
+            f"error: preparing the {backend} store {how_it_ended(run)}\n"
+            f"{last_lines(run)}", file=sys.stderr, flush=True)
+        return f"preparing the {backend} store {how_it_ended(run)}"
+    return None
 
 
 def how_it_ended(run: ProcessRun) -> str:
     """How a step that did not succeed ended, as the rest of a sentence."""
     if run.timed_out:
-        return f"was stopped after {TIMEOUT_SECONDS}s"
+        return f"was stopped after {run.timeout_s}s"
     if run.returncode < 0:
         number = -run.returncode
         try:
@@ -779,8 +1002,13 @@ def verilator_tool(verilator: str) -> Tool:
 def measure(
     case: Case, tool: Tool, tmpdir: str,
     step: Callable[[Case, Tool, Result, str], Result],
+    unprepared: Callable[[str], str | None],
 ) -> Result:
-    """Make one measurement of one case with one tool, by the step given."""
+    """Make one measurement of one case with one tool, by the step given.
+
+    `unprepared` says, once a backend's store is ready, why it could not be
+    made ready, or None where it is.
+    """
     result = Result(
         case=case.name,
         family=case.family,
@@ -792,6 +1020,13 @@ def measure(
     name = measured_name(tool.name, tool.backend)
     root = os.path.join(tmpdir, f"{case.name}-{name}")
     os.makedirs(root, exist_ok=True)
+    # A simulation case is built into the run's store, which a build case is
+    # not.
+    why = unprepared(tool.backend) if case.measure == MEASURE_RUN else None
+    if why is not None:
+        result.status = STATUS_ERROR
+        result.detail = why
+        return result
     # Said as it starts, so a run that hangs names the measurement it hung in.
     print(f"  {case.path}/{name} ...", file=sys.stderr, flush=True)
 
@@ -885,7 +1120,7 @@ def print_absences(
     print("### Not measured")
     print()
     for r in failed:
-        print(f"- **{r.case}/{measured_name(r.tool, r.backend)}**: {r.detail}")
+        print(f"- **{result_name(r)}**: {r.detail}")
         if r.output:
             print()
             print("  ```")
@@ -1000,10 +1235,11 @@ def print_report(
 
 
 def print_count_report(
-    cases: list[Case], tools: list[Tool], backends: list[str],
-    results: list[Result], revision: str,
+    cases: list[Case], designs: list[Design], tools: list[Tool],
+    backends: list[str], results: list[Result], revision: str,
 ) -> None:
-    """Print instructions per unit of work for every case on every backend."""
+    """Print instructions per unit of work for every case on every backend,
+    and each real design's totals."""
     reached = by_measurement(results)
     not_reached = unreached_measurements(cases, tools, results)
 
@@ -1014,6 +1250,19 @@ def print_count_report(
         f"> git: `{revision}` | instructions per unit of work, "
         f"under callgrind")
     print_absence_count(results, len(not_reached), "count")
+    if designs:
+        print()
+        print(f"## {DESIGN_FAMILY}")
+        print()
+        print("| Design | Backend | Measure | Instructions |")
+        print("|--------|---------|---------|-------------:|")
+        for r in results:
+            if r.family != DESIGN_FAMILY:
+                continue
+            count = f"{r.instructions_per_unit:,.0f}"
+            print(
+                f"| {r.case} | {r.backend} | {r.measure} "
+                f"| {fmt_cell(r, count)} |")
     for family, members in families_of(cases).items():
         print()
         print(f"## {family}")
@@ -1047,6 +1296,7 @@ def result_to_dict(r: Result) -> dict:
         "seconds": r.seconds,
         "rate": r.rate,
         "instructions_per_unit": r.instructions_per_unit,
+        "resolution_percent": r.resolution_percent,
         "build_s": r.build_s,
         "binary_kb": r.binary_kb,
         "readings": [list(reading) for reading in r.readings],
@@ -1126,6 +1376,10 @@ def main() -> None:
         "-j", "--jobs", type=int, default=os.cpu_count() or 1,
         help="With --count, how many cases are counted at once")
     parser.add_argument(
+        "--design", action="append", default=None,
+        help="With --count, count this directory declare_external_design "
+             "wrote instead of the corpus; may be given more than once")
+    parser.add_argument(
         "--revision", default=None,
         help="What the measured compiler was built from, as the report and "
              "the result file name it; this checkout's HEAD if not given")
@@ -1135,9 +1389,10 @@ def main() -> None:
     if not os.path.isfile(lyra):
         print(f"error: lyra binary not found at {lyra}", file=sys.stderr)
         sys.exit(1)
-    if args.amounts and not args.count:
-        print("error: --amounts is read only with --count", file=sys.stderr)
-        sys.exit(1)
+    for given, name in ((args.amounts, "--amounts"), (args.design, "--design")):
+        if given and not args.count:
+            print(f"error: {name} is read only with --count", file=sys.stderr)
+            sys.exit(1)
     if args.count and not shutil.which("valgrind"):
         print("error: --count needs valgrind on PATH", file=sys.stderr)
         sys.exit(1)
@@ -1150,13 +1405,15 @@ def main() -> None:
         sys.exit(1)
 
     try:
-        cases = discover_cases(CORPUS_ROOT)
-    except ValueError as e:
+        designs = [read_design(Path(d)) for d in args.design or []]
+        cases = [] if designs else discover_cases(CORPUS_ROOT)
+    except (OSError, ValueError, KeyError) as e:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
     if args.filter:
         cases = [c for c in cases if args.filter in c.name]
-    if not cases:
+        designs = [d for d in designs if args.filter in d.name]
+    if not cases and not designs:
         print("error: no cases found", file=sys.stderr)
         sys.exit(1)
 
@@ -1185,7 +1442,7 @@ def main() -> None:
         else:
             print("note: verilator not on PATH; Lyra only", file=sys.stderr)
 
-    print(f"Running {len(cases)} cases", file=sys.stderr)
+    print(f"Running {len(cases) + len(designs)} cases", file=sys.stderr)
 
     # A step runs in a process group of its own, so a signal sent to this one
     # does not reach it. Being told to stop stops every step in flight, and is
@@ -1205,7 +1462,7 @@ def main() -> None:
 
     def done(r: Result) -> None:
         results.append(r)
-        name = f"{r.family}/{r.case}/{measured_name(r.tool, r.backend)}"
+        name = f"{r.family}/{result_name(r)}"
         if r.status != STATUS_OK:
             print(f"  {name} -> {r.status}: {r.detail}", file=sys.stderr)
         elif metric == METRIC_INSTRUCTIONS:
@@ -1224,13 +1481,35 @@ def main() -> None:
         with tempfile.TemporaryDirectory(prefix="lyra-bench-") as tmpdir:
             pool = concurrent.futures.ThreadPoolExecutor(max_workers=jobs)
             try:
+                # Each backend's store is prepared first in the queue, so a
+                # timing run, one step at a time, has every store ready before
+                # it times anything, and a count run counts what needs no store
+                # beside the preparing. A measurement on a backend waits for
+                # that backend's store and is failed by it alone.
+                prepared = {
+                    backend: pool.submit(
+                        prepare_store, lyra, backend, run_store, tmpdir)
+                    for backend in backends
+                }
+
+                def unprepared(backend: str) -> str | None:
+                    return (
+                        prepared[backend].result() if backend in prepared
+                        else None)
+
                 pending = [
-                    pool.submit(measure, case, tool, tmpdir, step)
-                    for case in cases
-                    for tool in tools
+                    *(pool.submit(
+                        lambda c=case, t=tool: [
+                            measure(c, t, tmpdir, step, unprepared)])
+                      for case in cases for tool in tools),
+                    *(pool.submit(
+                        count_design, design, lyra, backend, run_store, tmpdir,
+                        unprepared)
+                      for design in designs for backend in backends),
                 ]
                 for future in concurrent.futures.as_completed(pending):
-                    done(future.result())
+                    for r in future.result():
+                        done(r)
             finally:
                 # Reached early only when the run is stopping: what has not
                 # started never does, and what is in flight is stopped rather
@@ -1240,9 +1519,11 @@ def main() -> None:
                 pool.shutdown(wait=True)
     finally:
         shutil.rmtree(run_store, ignore_errors=True)
-        results.sort(key=lambda r: (r.family, r.case, r.tool, r.backend))
+        results.sort(
+            key=lambda r: (r.family, r.case, r.tool, r.backend, r.measure))
         if metric == METRIC_INSTRUCTIONS:
-            print_count_report(cases, tools, backends, results, revision)
+            print_count_report(
+                cases, designs, tools, backends, results, revision)
         else:
             print_report(cases, tools, backends, results, revision, target)
 

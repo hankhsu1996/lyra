@@ -1,20 +1,27 @@
 name: Instruction Count
 
-# How much more or less work a change makes Lyra do: instructions per unit of
-# each benchmark case's work, counted under callgrind, on both backends, for a
-# compiler built at the change and one built just before it. A count does not
-# move with the machine's load, so the two are told apart however small the
-# difference; both are counted in this one job, because what the C library and
-# the runner image pick does move from one machine to another, and a count kept
-# from another day would carry that into the comparison.
+# How much more or less work a change makes Lyra do, counted under callgrind
+# for a compiler built at the change and one built just before it. A count
+# does not move with the machine's load, so the two are told apart however
+# small the difference; both are counted on one runner, because what the C
+# library and the runner image pick does move from one machine to another, and
+# a count kept from another day would carry that into the comparison.
+#
+# Two kinds of measurement, the way rustc-perf splits its benchmarks. The real
+# designs listed in `tests/benchmark/designs.txt` are what a user builds: each
+# is counted whole, building it and running its quick check, on the execution
+# backend. The corpus cases are each one cost family, on both backends, and say
+# which path a move came from. Each design is a job of its own, since one is
+# minutes under callgrind, and the jobs are capped so that a pull request's own
+# checks always find runners free.
 #
 # It is never on the path a change takes to merge. Every merge to main is
-# counted against its parent, and where a case moved the table goes on the
-# pull request the merge came from. A branch can be counted before it merges,
-# or any revision against another, by dispatching this workflow. It goes red
-# where a case that built and ran at base no longer does, or where one got
-# worse by the threshold or more; since it is not a required check, that marks
-# the change that did it and holds up nothing.
+# counted against its parent, and where a measurement moved the table goes on
+# the pull request the merge came from. A branch can be counted before it
+# merges, or any revision against another, by dispatching this workflow. It
+# goes red where head has no count of a measurement, or where one got worse by
+# two percent or more; since it is not a required check, that marks the change
+# that did it and holds up nothing.
 on:
   push:
     branches: [main]
@@ -32,10 +39,13 @@ permissions:
   pull-requests: write
 
 jobs:
-  count:
-    name: Count
+  plan:
+    name: Choose what is counted
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    outputs:
+      base: ${{ steps.revisions.outputs.base }}
+      head: ${{ steps.revisions.outputs.head }}
+      designs: ${{ steps.designs.outputs.designs }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -54,81 +64,182 @@ jobs:
           echo "base=$base" >> "$GITHUB_OUTPUT"
           echo "head=$head" >> "$GITHUB_OUTPUT"
 
-      - name: Setup Bazel
-        uses: bazel-contrib/setup-bazel@0.18.0
-        with:
-          bazelisk-cache: true
-          disk-cache: ${{ github.workflow }}-${{ hashFiles('MODULE.bazel') }}
-          repository-cache: true
-
-      - name: Setup Clang
-        uses: ./.github/actions/setup-clang
-
-      - name: Install valgrind
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y valgrind
-
-      # The compilers are run here, so their outputs have to come back; the
-      # flags go in the untracked rc layer so that both checkouts below read
-      # them.
-      - name: Configure remote execution
+      # The list is read at head, which is the change being judged. A revision
+      # from before there was one is counted on the corpus alone.
+      - name: List the designs
+        id: designs
         env:
-          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
-        run: |
-          if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
-            echo "build --config=rbe --remote_download_toplevel" >> .bazelrc.user
-            echo "build --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY" >> .bazelrc.user
-          fi
-
-      # Each compiler is kept with its runfiles, where it finds the runtime it
-      # links a program against, and with every link resolved, since the next
-      # build moves what they point at. The manifest is not kept: it names each
-      # file by its absolute place in that build's output tree, and without it
-      # the files are looked up inside the kept directory instead. The tree is
-      # left at head, whose runner and corpus count both: the same cases, done
-      # the same way.
-      - name: Build both compilers
-        env:
-          BASE: ${{ steps.revisions.outputs.base }}
           HEAD: ${{ steps.revisions.outputs.head }}
         run: |
-          for side in base head; do
-            if [[ "$side" == base ]]; then rev=$BASE; else rev=$HEAD; fi
-            git checkout --quiet --detach "$rev"
-            bazel build -c opt //:lyra
-            kept="$RUNNER_TEMP/compilers/$side"
-            mkdir -p "$kept"
-            cp -L bazel-bin/lyra "$kept/lyra"
-            cp -rL bazel-bin/lyra.runfiles "$kept/lyra.runfiles"
-            rm -f "$kept/lyra.runfiles/MANIFEST"
-          done
+          designs=$( (git show "$HEAD:tests/benchmark/designs.txt" 2>/dev/null || true) \
+            | (grep -v -e '^#' -e '^$' || true) | jq -R . | jq -sc .)
+          echo "designs=$designs" >> "$GITHUB_OUTPUT"
+
+  corpus:
+    name: Count the corpus
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Build both compilers
+        uses: ./.github/actions/build-compared-compilers
+        with:
+          base: ${{ needs.plan.outputs.base }}
+          head: ${{ needs.plan.outputs.head }}
+          buildbuddy-api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
 
       # Base chooses the amount each simulation is counted at, and head is
-      # counted at the same amounts. A case base cannot count is a gap in the
-      # table, not a failure of this change.
+      # counted at the same amounts. A case base cannot count and head can is
+      # a gap in the table, not a failure of this change.
       - name: Count base
         continue-on-error: true
         env:
-          BASE: ${{ steps.revisions.outputs.base }}
+          BASE: ${{ needs.plan.outputs.base }}
         run: |
+          mkdir -p counts/base counts/head
           python3 tools/bench/run_benchmarks.py --count \
             --lyra "$RUNNER_TEMP/compilers/base/lyra" \
-            --revision "${BASE:0:8}" --json base.json
+            --revision "${BASE:0:8}" --json counts/base/corpus.json
 
       - name: Count head
         continue-on-error: true
         env:
-          HEAD: ${{ steps.revisions.outputs.head }}
+          HEAD: ${{ needs.plan.outputs.head }}
         run: |
           python3 tools/bench/run_benchmarks.py --count \
             --lyra "$RUNNER_TEMP/compilers/head/lyra" \
-            --revision "${HEAD:0:8}" --amounts base.json --json head.json
+            --revision "${HEAD:0:8}" --amounts counts/base/corpus.json \
+            --json counts/head/corpus.json
+
+      - name: Upload counts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: counts-corpus
+          path: counts/
+          if-no-files-found: ignore
+
+  design:
+    name: Count ${{ matrix.design }}
+    needs: plan
+    if: needs.plan.outputs.designs != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      # Every design reports, and with the corpus job beside them these take
+      # four runners at most, so a pull request's checks never wait on them.
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        design: ${{ fromJson(needs.plan.outputs.designs) }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Build both compilers
+        uses: ./.github/actions/build-compared-compilers
+        with:
+          base: ${{ needs.plan.outputs.base }}
+          head: ${{ needs.plan.outputs.head }}
+          buildbuddy-api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
+
+      # Written from head's suite pin and record, which a design counted has
+      # to be one of: a design the record says stops has no work to count.
+      - name: Declare the design
+        env:
+          DESIGN: ${{ matrix.design }}
+        run: |
+          bazel run -c opt //tests:declare_external_design -- \
+            "$DESIGN" "$RUNNER_TEMP/design"
+
+      # A count runs on one processor, so the two compilers are counted side
+      # by side: a design's count is most of this job, and one after the other
+      # it would be twice that. Neither depends on the other, since a design's
+      # quick check fixes how much work its run does. Each side may address
+      # half of what the external design test grants one step, so the two
+      # together stay inside the runner's memory; one that asks for more stops
+      # there, which is a finding about it.
+      - name: Count base and head
+        continue-on-error: true
+        env:
+          BASE: ${{ needs.plan.outputs.base }}
+          HEAD: ${{ needs.plan.outputs.head }}
+        run: |
+          mkdir -p counts/base counts/head
+          for side in base head; do
+            if [[ "$side" == base ]]; then rev=$BASE; else rev=$HEAD; fi
+            (ulimit -v $((6 << 20))
+             exec python3 tools/bench/run_benchmarks.py --count --backend llvm \
+               --lyra "$RUNNER_TEMP/compilers/$side/lyra" \
+               --design "$RUNNER_TEMP/design" \
+               --revision "${rev:0:8}" --json "counts/$side/design.json") \
+              > "counts/$side.log" 2>&1 &
+          done
+          status=0
+          wait -n || status=1
+          wait -n || status=1
+          cat counts/base.log counts/head.log
+          exit "$status"
+
+      # An artifact's name may not hold the colons a design's name does.
+      - name: Name the counts
+        id: name
+        env:
+          DESIGN: ${{ matrix.design }}
+        run: echo "name=counts-${DESIGN//:/-}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload counts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.name.outputs.name }}
+          path: counts/
+          if-no-files-found: ignore
+
+  report:
+    name: Compare
+    needs: [plan, corpus, design]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.plan.outputs.head }}
+
+      # Each job's counts arrive under a directory named for its artifact, and
+      # each result file takes that name as it joins its side's directory, so
+      # that the files of two jobs never collide.
+      - name: Download counts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: counts-*
+          path: gathered
+
+      - name: Gather the sides
+        run: |
+          mkdir -p counts/base counts/head
+          for job in gathered/*/; do
+            name=$(basename "$job")
+            for side in base head; do
+              for file in "$job$side"/*.json; do
+                [[ -e "$file" ]] || continue
+                cp "$file" "counts/$side/$name-$(basename "$file")"
+              done
+            done
+          done
 
       - name: Compare
         id: compare
         run: |
-          python3 tools/bench/compare_counts.py base.json head.json \
+          python3 tools/bench/compare_counts.py counts/base counts/head \
             --github-output "$GITHUB_OUTPUT" > report.md
           cat report.md >> "$GITHUB_STEP_SUMMARY"
 
@@ -137,25 +248,26 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          HEAD: ${{ steps.revisions.outputs.head }}
+          HEAD: ${{ needs.plan.outputs.head }}
         run: |
           pr=$(gh api "repos/$REPO/commits/$HEAD/pulls" --jq '.[0].number // empty')
           if [[ -n "$pr" ]]; then
             gh pr comment "$pr" --repo "$REPO" --body-file report.md
           fi
 
-      - name: Upload counts
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: instruction-counts
-          path: |
-            base.json
-            head.json
-          if-no-files-found: ignore
-
-      - name: Fail where head lost a case or made one worse
+      - name: Fail where head lost a measurement or made one worse
         if: steps.compare.outputs.lost == 'true' || steps.compare.outputs.worse == 'true'
         run: |
-          echo "A case stopped building or running, or got worse; the summary names it."
+          echo "A measurement stopped building or running, or got worse; the summary names it."
+          exit 1
+
+      # A job that could not count at all -- a compiler that did not build, a
+      # listed design the record says stops -- leaves no row on either side,
+      # which the comparison cannot see.
+      - name: Fail where a job counted nothing
+        if: >-
+          needs.corpus.result != 'success'
+          || (needs.design.result != 'success' && needs.design.result != 'skipped')
+        run: |
+          echo "A counting job failed before it counted; its log names the step."
           exit 1
