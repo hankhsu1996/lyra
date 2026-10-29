@@ -143,9 +143,19 @@ auto UnitLowerer::Owns(const slang::ast::Symbol& decl) const -> bool {
 }
 
 auto UnitLowerer::Declare() -> diag::Result<void> {
-  const auto in_unit = diag::FailureContext::InUnit(unit_.name);
   const profiling::TimeTraceScope span(
       "declare unit", [&] { return unit_.name; });
+  return DeclareOwn();
+}
+
+auto UnitLowerer::DescribeForGrouping() -> diag::Result<void> {
+  const profiling::TimeTraceScope span(
+      "describe specialization", [&] { return specialization_; });
+  return DeclareOwn();
+}
+
+auto UnitLowerer::DeclareOwn() -> diag::Result<void> {
+  const auto in_unit = diag::FailureContext::InUnit(unit_.name);
   {
     const profiling::TimeTraceScope step("declare structural identities");
     for (const slang::ast::Scope* application : applications_) {
@@ -462,7 +472,7 @@ void UnitLowerer::DeclareMemberIdentities(
     // A parameter whose value differs between the objects built from this
     // scope is held by each of them, so a hierarchical name reaches it there
     // as it reaches a variable (LRM 23.6). One the specialization fixes is a
-    // constant of the unit, which a name reaching it reads as one.
+    // constant of the specialization, which a name reaching it reads as one.
     case SymbolKind::Parameter: {
       const auto& param = member.as<slang::ast::ParameterSymbol>();
       if (!DiffersPerObject(param)) return;
@@ -850,14 +860,14 @@ auto UnitLowerer::ValueSourceOf(const slang::ast::ParameterSymbol& param) const
   const auto* body = ApplicationDeclaring(param)
                          .asSymbol()
                          .as_if<slang::ast::InstanceBodySymbol>();
-  if (body == nullptr) return ParameterValueSource::kFixedByUnit;
-  return Naming().ValueSourceOf(InstantiationOf(*body), param);
+  if (body == nullptr) return ParameterValueSource::kSettledAtElaboration;
+  return Naming().Keys().ValueSourceOf(InstantiationOf(*body), param);
 }
 
 auto UnitLowerer::DiffersPerObject(
     const slang::ast::ParameterSymbol& param) const -> bool {
   switch (ValueSourceOf(param)) {
-    case ParameterValueSource::kFixedByUnit:
+    case ParameterValueSource::kSettledAtElaboration:
       return false;
     case ParameterValueSource::kSuppliedAtConstruction:
     case ParameterValueSource::kComputedAtConstruction:
@@ -914,7 +924,7 @@ auto UnitLowerer::DeclaringScopeChain(const slang::ast::Scope& scope) const
 
 auto UnitLowerer::InReadingOrder(std::vector<const slang::ast::Scope*> built)
     const -> std::vector<const slang::ast::Scope*> {
-  if (Naming().ChecksItself()) std::ranges::reverse(built);
+  if (Naming().Keys().ChecksItself()) std::ranges::reverse(built);
   return built;
 }
 

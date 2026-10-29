@@ -54,9 +54,10 @@ struct TopLevelUnit {
   // That identifier as a hierarchical name writes it (LRM 23.6), which is what
   // the top reports as its own name.
   std::string name_in_a_path;
-  // The compiled unit it is an instance of, which names its class and its
-  // specialization.
+  // The compiled unit it is an instance of, which names its class.
   std::string unit_name;
+  // The specialization it is an application of, which says how it is built.
+  std::string specialization;
 };
 
 // The design once every unit has declared itself and before any unit's bodies

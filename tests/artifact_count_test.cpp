@@ -390,13 +390,11 @@ endmodule
       4U);
 }
 
-// A loop whose blocks take different arms of one conditional. The blocks do
-// not agree, and what they disagree about is which alternative of a construct
-// that selects at most one of them stood (LRM 27.5) -- which is decided by an
-// expression reading the index, and so by a value each construction is handed.
-// So the loop is one body, and each alternative of the conditional inside it
-// is a body of its own, which a block builds at that alternative's place where
-// its index selected it.
+// A loop whose blocks take different arms of one conditional. Which
+// alternative a block built is part of what it declares, since one it did not
+// select is not elaborated (LRM 27.5), so the blocks are one class per
+// alternative they built -- however many indices built each -- and each
+// alternative is a body of its own.
 constexpr std::string_view kOneSpecialIndex = R"(
 module Top;
   int sink [8];
@@ -410,8 +408,8 @@ module Top;
 endmodule
 )";
 
-TEST(ArtifactCount, ALoopWhoseBlocksChooseIsCompiledOnce) {
-  EXPECT_EQ(CompiledBodiesOfGenerate(kOneSpecialIndex, 0), 1U);
+TEST(ArtifactCount, ALoopWhoseBlocksChooseIsCompiledPerAlternativeBuilt) {
+  EXPECT_EQ(CompiledBodiesOfGenerate(kOneSpecialIndex, 0), 2U);
 }
 
 TEST(ArtifactCount, EachAlternativeOfTheChoiceIsABodyOfItsOwn) {
@@ -419,9 +417,8 @@ TEST(ArtifactCount, EachAlternativeOfTheChoiceIsABodyOfItsOwn) {
 }
 
 // An `if ... else if ... else` chain, which the standard treats as one
-// construct with three alternatives rather than nested ones (LRM 27.5). Every
-// alternative's condition is stated where the construct is, so the blocks
-// agree on everything but which alternative each of them selected.
+// construct with three alternatives rather than nested ones (LRM 27.5), so
+// the blocks are one class per alternative each of them selected.
 constexpr std::string_view kChain = R"(
 module Top;
   int sink [6];
@@ -437,8 +434,8 @@ module Top;
 endmodule
 )";
 
-TEST(ArtifactCount, ALoopWhoseBlocksChooseAlongAChainIsCompiledOnce) {
-  EXPECT_EQ(CompiledBodiesOfGenerate(kChain, 0), 1U);
+TEST(ArtifactCount, ALoopWhoseBlocksChooseAlongAChainIsCompiledPerArm) {
+  EXPECT_EQ(CompiledBodiesOfGenerate(kChain, 0), 3U);
 }
 
 TEST(ArtifactCount, EachAlternativeOfTheChainIsABodyOfItsOwn) {
@@ -467,17 +464,17 @@ module Top;
 endmodule
 )";
 
-TEST(ArtifactCount, ALoopWhoseBlocksChooseByCaseIsCompiledOnce) {
-  EXPECT_EQ(CompiledBodiesOfGenerate(kCase, 0), 1U);
+TEST(ArtifactCount, ALoopWhoseBlocksChooseByCaseIsCompiledPerItem) {
+  EXPECT_EQ(CompiledBodiesOfGenerate(kCase, 0), 3U);
 }
 
 TEST(ArtifactCount, EachAlternativeOfTheCaseIsABodyOfItsOwn) {
   EXPECT_EQ(CompiledBodiesOfGenerate(kCase, 1), 3U);
 }
 
-// A conditional whose condition fails contributes nothing at that index, and
-// the construct is still the same construct there: what a block states is the
-// alternatives the source wrote, never the one this index happened to get.
+// A conditional whose condition fails builds nothing at that index, so a block
+// building nothing and one building the alternative declare different things
+// and are two classes.
 constexpr std::string_view kNoElse = R"(
 module Top;
   int sink [6];
@@ -489,14 +486,13 @@ module Top;
 endmodule
 )";
 
-TEST(ArtifactCount, ALoopWhoseConditionalContributesNothingIsCompiledOnce) {
-  EXPECT_EQ(CompiledBodiesOfGenerate(kNoElse, 0), 1U);
+TEST(ArtifactCount, ALoopWhoseConditionalBuildsNothingSomewhereIsTwoClasses) {
+  EXPECT_EQ(CompiledBodiesOfGenerate(kNoElse, 0), 2U);
 }
 
 // A conditional the source wrote inside another's selected side belongs to the
-// outer construct (LRM 27.5), so one construct holds all three alternatives.
-// What selects each of the inner two is the outer condition and its own label,
-// and the blocks agree on that at every index.
+// outer construct (LRM 27.5), so one construct holds all three alternatives,
+// and the blocks are one class per alternative built.
 constexpr std::string_view kNestedInSelectedSide = R"(
 module Top;
   int sink [6];
@@ -517,8 +513,8 @@ module Top;
 endmodule
 )";
 
-TEST(ArtifactCount, ALoopWhoseConditionalsNestIsCompiledOnce) {
-  EXPECT_EQ(CompiledBodiesOfGenerate(kNestedInSelectedSide, 0), 1U);
+TEST(ArtifactCount, ALoopWhoseConditionalsNestIsCompiledPerAlternative) {
+  EXPECT_EQ(CompiledBodiesOfGenerate(kNestedInSelectedSide, 0), 3U);
 }
 
 TEST(ArtifactCount, EachAlternativeOfANestedConditionalIsABodyOfItsOwn) {
@@ -526,9 +522,10 @@ TEST(ArtifactCount, EachAlternativeOfANestedConditionalIsABodyOfItsOwn) {
 }
 
 // A conditional on the outer index, written inside an inner loop. Every inner
-// block of one outer block selects the same alternative, and which one is that
-// block's construction rather than its code, so both loops are one body each
-// and each alternative is a body of its own.
+// block of one outer block selects the same alternative, so the inner blocks
+// are one class per alternative, the outer ones one class per kind of inner
+// block they hold -- two of each, whatever the counts -- and each alternative
+// is a body of its own.
 constexpr std::string_view kChoiceUnderAnInnerLoop = R"(
 module Top;
   int sink [8][4];
@@ -544,12 +541,12 @@ module Top;
 endmodule
 )";
 
-TEST(ArtifactCount, ALoopWhoseInnerLoopChoosesByTheOuterIndexIsCompiledOnce) {
-  EXPECT_EQ(CompiledBodiesOfGenerate(kChoiceUnderAnInnerLoop, 0), 1U);
+TEST(ArtifactCount, ALoopWhoseInnerLoopChoosesByTheOuterIndexIsTwoClasses) {
+  EXPECT_EQ(CompiledBodiesOfGenerate(kChoiceUnderAnInnerLoop, 0), 2U);
 }
 
-TEST(ArtifactCount, TheInnerLoopOfSuchALoopIsCompiledOnce) {
-  EXPECT_EQ(CompiledBodiesOfGenerate(kChoiceUnderAnInnerLoop, 1), 1U);
+TEST(ArtifactCount, TheInnerLoopOfSuchALoopIsTwoClasses) {
+  EXPECT_EQ(CompiledBodiesOfGenerate(kChoiceUnderAnInnerLoop, 1), 2U);
 }
 
 TEST(ArtifactCount, EachAlternativeUnderAnInnerLoopIsABodyOfItsOwn) {
@@ -557,10 +554,9 @@ TEST(ArtifactCount, EachAlternativeUnderAnInnerLoopIsABodyOfItsOwn) {
 }
 
 // The same conditional, inside an inner loop whose own blocks are compiled
-// apart because each declares a width its index fixes. Which inner blocks an
-// outer block builds, and which alternative stands in each, is that block's
-// construction, so the outer loop is one body around an inner loop that is
-// not.
+// apart because each declares a width its index fixes. The outer blocks are
+// one class per alternative their inner blocks built, and the inner blocks one
+// per width and alternative.
 constexpr std::string_view kChoiceUnderAnInnerLoopCompiledApart = R"(
 module Top;
   for (genvar g = 0; g < 4; g += 1) begin : gg
@@ -576,21 +572,20 @@ module Top;
 endmodule
 )";
 
-TEST(ArtifactCount, ALoopAroundBlocksCompiledApartThatChooseIsCompiledOnce) {
+TEST(ArtifactCount, ALoopAroundBlocksCompiledApartThatChooseIsTwoClasses) {
   EXPECT_EQ(
-      CompiledBodiesOfGenerate(kChoiceUnderAnInnerLoopCompiledApart, 0), 1U);
+      CompiledBodiesOfGenerate(kChoiceUnderAnInnerLoopCompiledApart, 0), 2U);
 }
 
 TEST(ArtifactCount, TheBlocksCompiledApartStayApart) {
   EXPECT_EQ(
-      CompiledBodiesOfGenerate(kChoiceUnderAnInnerLoopCompiledApart, 1), 3U);
+      CompiledBodiesOfGenerate(kChoiceUnderAnInnerLoopCompiledApart, 1), 6U);
 }
 
 // Each outer block's inner loop builds blocks declaring a width the outer
 // index fixes, so the inner blocks differ in a type, which no construction
-// supplies, and are compiled apart. Which of them an outer block builds is
-// that block's construction, so the outer blocks are one body whatever their
-// inner ones are.
+// supplies, and are compiled apart, and the outer blocks holding them differ
+// in what they hold.
 constexpr std::string_view kInnerLoopsDeclareDifferently = R"(
 module Top;
   for (genvar g = 1; g < 5; g += 1) begin : gg
@@ -602,8 +597,8 @@ module Top;
 endmodule
 )";
 
-TEST(ArtifactCount, ALoopAroundInnerLoopsThatDeclareDifferentlyIsCompiledOnce) {
-  EXPECT_EQ(CompiledBodiesOfGenerate(kInnerLoopsDeclareDifferently, 0), 1U);
+TEST(ArtifactCount, ALoopAroundInnerLoopsThatDeclareDifferentlyFollowsThem) {
+  EXPECT_EQ(CompiledBodiesOfGenerate(kInnerLoopsDeclareDifferently, 0), 4U);
   EXPECT_EQ(CompiledBodiesOfGenerate(kInnerLoopsDeclareDifferently, 1), 4U);
 }
 
@@ -718,12 +713,14 @@ endmodule
 
 TEST(ArtifactCount, AValueThatDecidesTheChildIsCompiledPerValue) {
   // Each child is handed a value that decides what it is, in a different way:
-  // a width at the scope or inside a procedural body, which settles a type; a
+  // a width at the scope, which settles the type of what it publishes; a
   // parameter with no type, whose type is the value's (LRM 6.20.2); and a value
   // handed on to a grandchild that sizes a declaration with it, which decides
-  // which grandchild is built. A read through the module's own hierarchical
-  // name decides nothing: it reaches the value the object was built with, as
-  // the plain name does (LRM 23.6).
+  // which grandchild is built. A width inside a procedural body settles a type
+  // no other unit sees, so the child is one class compiled to a body per value.
+  // A read through the module's own hierarchical name decides nothing: it
+  // reaches the value the object was built with, as the plain name does (LRM
+  // 23.6).
   const auto design = LowerDesign(R"(
 module ScopeWidth #(parameter int W = 1);
   logic [W-1:0] w;
@@ -769,9 +766,11 @@ endmodule
 )");
   ASSERT_TRUE(design.has_value());
   for (const std::string_view definition :
-       {"ScopeWidth", "ProcessWidth", "NoType", "HandedOn", "Sized"}) {
+       {"ScopeWidth", "NoType", "HandedOn", "Sized"}) {
     EXPECT_EQ(UnitsOf(*design, definition), 2U) << definition;
   }
+  EXPECT_EQ(UnitsOf(*design, "ProcessWidth"), 1U);
+  EXPECT_EQ(BodiesOf(*design, "ProcessWidth"), 2U);
   EXPECT_EQ(UnitsOf(*design, "OwnName"), 1U);
 }
 
@@ -780,9 +779,10 @@ TEST(ArtifactCount, AValueInATypeASiteWritesIsSeenWhereItIsWritten) {
   // type the front end settles on the spot, where no reference to it is left
   // in what the type became: the operand a type is taken from (LRM 6.23), the
   // type a cast or an assignment pattern names, and the path a defparam names
-  // its target through (LRM 23.10.1). The parameter decides the unit there,
-  // and that is seen where it is written, so no instance is compiled only to
-  // find out.
+  // its target through (LRM 23.10.1). Where the type is that of a declaration
+  // of the scope, the parameter decides the class; where it is a type of the
+  // code alone, it decides the body; and the defparam decides which child is
+  // handed what, which is how the child is built and no part of either.
   const auto design = LowerDesign(R"(
 package p;
   class C #(parameter int W = 1);
@@ -841,11 +841,16 @@ module Top;
 endmodule
 )");
   ASSERT_TRUE(design.has_value());
+  EXPECT_EQ(UnitsOf(*design, "TypeOf"), 2U);
   for (const std::string_view definition :
-       {"TypeOf", "CastToType", "CastToTypeOf", "PatternOfType",
-        "DefparamPath"}) {
-    EXPECT_EQ(UnitsOf(*design, definition), 2U) << definition;
+       {"CastToType", "CastToTypeOf", "PatternOfType"}) {
+    EXPECT_EQ(UnitsOf(*design, definition), 1U) << definition;
+    EXPECT_EQ(BodiesOf(*design, definition), 2U) << definition;
   }
+  // The defparam hands one block's child a value, which that block's code
+  // passes as a constant, so the code follows which block it reaches.
+  EXPECT_EQ(UnitsOf(*design, "DefparamPath"), 1U);
+  EXPECT_EQ(BodiesOf(*design, "DefparamPath"), 2U);
 }
 
 TEST(ArtifactCount, AValueWorkedOutFromASuppliedOneIsCompiledOnce) {
@@ -875,8 +880,9 @@ endmodule
 
 TEST(ArtifactCount, ARangeTheFrontEndFoldsIsSeenAndCompiledPerValue) {
   // Each module sizes something with its parameter at a place the front end
-  // evaluates while binding. The parameter decides the module, so each value is
-  // its own unit, read off what the front end recorded where it is written.
+  // evaluates while binding. Where that is a declaration of the scope, the
+  // parameter decides the class; where it is an operand of the code, it decides
+  // the body.
   constexpr std::string_view kFolded = R"(
 package p;
   typedef logic [3:0] nib_t;
@@ -940,10 +946,12 @@ endmodule
   const auto design = LowerDesign(kFolded);
   ASSERT_TRUE(design.has_value());
   for (const std::string_view definition :
-       {"NamedType", "StructMember", "EnumBase", "InstanceArray", "TypeOperand",
+       {"NamedType", "StructMember", "EnumBase", "InstanceArray",
         "AssociativeIndex", "PortArray"}) {
     EXPECT_EQ(UnitsOf(*design, definition), 2U) << definition;
   }
+  EXPECT_EQ(UnitsOf(*design, "TypeOperand"), 1U);
+  EXPECT_EQ(BodiesOf(*design, "TypeOperand"), 2U);
 }
 
 TEST(
@@ -951,9 +959,9 @@ TEST(
     AValueHandedToASharedSpecializationIsSeenAndCompiledPerValue) {
   // Each module hands its parameter to a class specialization at a different
   // kind of site, or to the interface a virtual interface type names (LRM
-  // 25.9). Either is shared by every site handing it the same value, so what
-  // decides the module is the value this site wrote, read off what the front
-  // end recorded there.
+  // 25.9). Either is shared by every site handing it the same value, so the
+  // value this site wrote decides the module: its class where a declaration of
+  // the scope names the specialization, and its body where only the code does.
   constexpr std::string_view kSpecialized = R"(
 interface bus_if #(parameter int W = 1);
   logic [W-1:0] data;
@@ -1019,9 +1027,12 @@ endmodule
   const auto design = LowerDesign(kSpecialized);
   ASSERT_TRUE(design.has_value());
   for (const std::string_view definition :
-       {"DeclaredType", "StaticValue", "StaticCall", "ScopedNew", "Extends",
-        "VirtualHandle"}) {
+       {"DeclaredType", "ScopedNew", "Extends", "VirtualHandle"}) {
     EXPECT_EQ(UnitsOf(*design, definition), 2U) << definition;
+  }
+  for (const std::string_view definition : {"StaticValue", "StaticCall"}) {
+    EXPECT_EQ(UnitsOf(*design, definition), 1U) << definition;
+    EXPECT_EQ(BodiesOf(*design, definition), 2U) << definition;
   }
 }
 
@@ -1052,11 +1063,12 @@ endmodule
   EXPECT_EQ(UnitsOf(*design, "Inner"), 1U);
 }
 
-TEST(ArtifactCount, RealValuesDifferingOnlyInSignAreTwoUnits) {
-  // 0.0 and -0.0 are equal as numbers and still two values: dividing by each
-  // gives infinities of opposite sign (LRM 6.12, IEEE 754). A parameter written
-  // with no type takes the type of its value (LRM 6.20.2), so the value is part
-  // of what the unit is, and the two units are told apart by it bit for bit.
+TEST(ArtifactCount, RealValuesDifferingOnlyInSignAreOneClassAndOneBody) {
+  // 0.0 and -0.0 are equal as numbers and still two values (LRM 6.12, IEEE
+  // 754). A parameter written with no type takes the type of its value (LRM
+  // 6.20.2), which is `real` for both, and the code reads the value the object
+  // was built with, so the two instances are one class and one body handed two
+  // values.
   const auto design = LowerDesign(
       R"(
 module Leaf #(parameter Q = 1.0) (output real seen);
@@ -1070,19 +1082,21 @@ module Top;
 endmodule
 )");
   ASSERT_TRUE(design.has_value());
-  EXPECT_EQ(UnitsOf(*design, "Leaf"), 2U);
+  EXPECT_EQ(UnitsOf(*design, "Leaf"), 1U);
+  EXPECT_EQ(BodiesOf(*design, "Leaf"), 1U);
 }
 
 TEST(ArtifactCount, AValueWorkedOutInsideTheBodyIsFollowedToWhatItDecides) {
   // A parameter the body declares is written from the module's parameter.
-  // Where it sizes a declaration -- declared in a block, in a subroutine, or
-  // with no type and a width that follows the value (LRM 6.20.2) -- the
-  // module's parameter decides the unit through it, and that is seen where it
-  // is written. Where it is only read as a value, even with no type of its own,
-  // it varies with the instance and the unit is shared -- declared in a
-  // subroutine, a sequential block or a parallel one too, where each instance's
-  // value is read rather than folded. The parallel block stands directly inside
-  // a `begin` that declares nothing, which opens no scope of its own.
+  // Where it sizes a declaration of the scope -- declared in a block, or with
+  // no type and a width that follows the value (LRM 6.20.2) -- the module's
+  // parameter decides the class through it; where it sizes a declaration of a
+  // subroutine, only the code, so the body. Where it is only read as a value,
+  // even with no type of its own, it varies with the instance and the unit is
+  // shared -- declared in a subroutine, a sequential block or a parallel one
+  // too, where each instance's value is read rather than folded. The parallel
+  // block stands directly inside a `begin` that declares nothing, which opens
+  // no scope of its own.
   const auto design = LowerDesign(R"(
 module InBlock #(parameter int N = 1) (output int o);
   if (1) begin : g
@@ -1154,10 +1168,11 @@ module Top;
 endmodule
 )");
   ASSERT_TRUE(design.has_value());
-  for (const std::string_view definition :
-       {"InBlock", "InSubroutine", "WidthFromValue"}) {
+  for (const std::string_view definition : {"InBlock", "WidthFromValue"}) {
     EXPECT_EQ(UnitsOf(*design, definition), 2U) << definition;
   }
+  EXPECT_EQ(UnitsOf(*design, "InSubroutine"), 1U);
+  EXPECT_EQ(BodiesOf(*design, "InSubroutine"), 2U);
   for (const std::string_view definition :
        {"UntypedRead", "UntypedReadInBlock", "ReadInSubroutine",
         "ReadInProcedure"}) {
@@ -1254,12 +1269,13 @@ TEST(ArtifactCount, AClassAModuleHoldsIsOneClassOfItsUnit) {
   // A class a module holds -- one it declares, one a generate block of it
   // declares, or a specialization of a generic placed in it because it is
   // specialized on a type of the module -- is a type of each instance's own
-  // (LRM 8.25), and the same text in every one. So it does not tell instances
-  // apart: those handed different values that build the same blocks are one
-  // unit holding one class, as they are when they hold none. A class each
+  // (LRM 8.25), and the same text in every one. A specialization placed in it
+  // does not tell instances apart. One it declares does: its methods are the
+  // module's code, named by the module's class, so each specialization of a
+  // module declaring a class is a class of its own. A class each
   // block of a loop declares is a type of that block alone (LRM 27.4), and
-  // this compiler names a unit by the classes of the blocks its instances
-  // built, so instances counting out different numbers of such blocks are
+  // which blocks an instance built is part of what it
+  // publishes, so instances counting out different numbers of such blocks are
   // different units.
   const auto design = LowerDesign(R"(
 package p;
@@ -1314,7 +1330,7 @@ module Top;
 endmodule
 )");
   ASSERT_TRUE(design.has_value());
-  EXPECT_EQ(UnitsOf(*design, "Declares"), 1U);
+  EXPECT_EQ(UnitsOf(*design, "Declares"), 2U);
   EXPECT_EQ(UnitsOf(*design, "Placed"), 1U);
   EXPECT_EQ(UnitsOf(*design, "Counted"), 2U);
 }
@@ -1394,11 +1410,11 @@ endmodule
 
 TEST(ArtifactCount, AValueFixingOnlyCodeIsOneUnitCompiledPerBody) {
   // A value only a process's code relies on leaves the unit one class, and a
-  // value a declaration relies on names the unit by the value, as a template
-  // argument does. Which body a unit is compiled to is found from what its code
-  // came out as: `Code` is one unit compiled to a body per value, `Folded`,
-  // whose two values settle one constant, one unit compiled to one body, and
-  // `Declared` a unit per value.
+  // value a declaration relies on decides the class by what the declaration
+  // came out as. Which body a unit is compiled to is found from what its code
+  // came out as: `Code` is one unit compiled to a body per value, and
+  // `Folded` and `Declared`, whose two values each settle one constant, one
+  // unit compiled to one body.
   const auto design = LowerDesign(R"(
 module Code #(parameter int P = 1) (input logic [7:0] in, output logic [7:0] out);
   always_comb out = 8'(in[P:0]);
@@ -1427,14 +1443,14 @@ endmodule
   EXPECT_EQ(BodiesOf(*design, "Code"), 2U);
   EXPECT_EQ(UnitsOf(*design, "Folded"), 1U);
   EXPECT_EQ(BodiesOf(*design, "Folded"), 1U);
-  EXPECT_EQ(UnitsOf(*design, "Declared"), 2U);
-  EXPECT_EQ(BodiesOf(*design, "Declared"), 2U);
+  EXPECT_EQ(UnitsOf(*design, "Declared"), 1U);
+  EXPECT_EQ(BodiesOf(*design, "Declared"), 1U);
 }
 
-TEST(ArtifactCount, AValueFixingTheCodeOfAUnitDeclaringAClassNamesTheUnit) {
-  // A class a unit declares reaches the unit's object as its body compiled it,
-  // and is one class of the unit, so a unit declaring one is compiled to one
-  // body: a value fixing only its code names the unit instead.
+TEST(ArtifactCount, AUnitDeclaringAClassIsAClassPerSpecialization) {
+  // A class a unit declares has its methods compiled into the unit's code and
+  // named by the unit's class, so a unit declaring one is a class per
+  // specialization, even where only its code differs.
   const auto design = LowerDesign(R"(
 module Holds #(parameter int P = 1) (input logic [7:0] in, output logic [7:0] out);
   class Probe;

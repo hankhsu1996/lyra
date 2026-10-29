@@ -484,7 +484,7 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
   // What an instance is handed is the parameters its instantiation may assign
   // that the unit's name does not hold, the list a parent hands them in.
   for (const slang::ast::ParameterSymbol* handed :
-       Naming().SuppliedParametersOf(InstantiationOf(*body))) {
+       Naming().Keys().SuppliedParametersOf(InstantiationOf(*body))) {
     auto type =
         InternType(handed->getType(), frontend::PointSpanOf(handed->location));
     if (!type) return std::unexpected(std::move(type.error()));
@@ -1255,7 +1255,7 @@ auto SpecializationHolding(
     -> std::string {
   const slang::ast::Symbol& home = UnitHomeOf(decl);
   if (const auto* body = home.as_if<slang::ast::InstanceBodySymbol>()) {
-    return naming.SpecializationNameOf(InstantiationOf(*body));
+    return naming.Keys().SpecializationNameOf(InstantiationOf(*body));
   }
   return CompilationUnitName(home, naming);
 }

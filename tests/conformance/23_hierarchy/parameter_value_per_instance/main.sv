@@ -4,7 +4,9 @@
 // sequential block or a parallel block -- another parameter's default, which
 // way a procedural choice goes, a child's own parameter, a declared width (LRM
 // 6.20.2), and which generate alternative stands (LRM 27.5). Instances of one
-// module differing only in a value each see their own.
+// module differing only in a value each see their own, bit for bit: 0.0 and
+// -0.0 are two values, whose reciprocals are infinities of opposite sign (LRM
+// 6.12).
 //
 // Some positions take a constant the front end settles while binding, so the
 // value decides what that position means: a size cast's width (LRM 6.24.1),
@@ -74,6 +76,33 @@ module Sized #(parameter int K = 0, parameter int W = 4) (output int width);
   initial width = $bits(w) + K;
 endmodule
 
+// Constants written from the instance's own parameter by a constant function
+// (LRM 13.4.3), into a signed type, and into a four-state value (LRM 6.20.4):
+// each instance reads what its own declaration settled to, sign and unknown
+// bits included.
+module Derived #(parameter int K = 0) (
+    output int via_function,
+    output int signed_value,
+    output logic [3:0] four_state
+);
+  function automatic int Square(int v);
+    return v * v;
+  endfunction
+  localparam int SQ = Square(K);
+  localparam logic signed [7:0] NEG = -K;
+  localparam logic [3:0] XS = K[0] ? 4'b10x1 : 4'bz01x;
+  initial begin
+    via_function = SQ;
+    signed_value = NEG;
+    four_state = XS;
+  end
+endmodule
+
+// A parameter with no type, so of the type of its value (LRM 6.20.2).
+module Reciprocal #(parameter Q = 1.0) (output real seen);
+  initial seen = 1.0 / Q;
+endmodule
+
 // A value wider than any machine word, deciding which alternative stands. Two
 // instances whose values differ only in their lowest bits are two
 // applications, however long the values are.
@@ -137,6 +166,10 @@ module Top;
   int wide_width;
   int odd_picked;
   int even_picked;
+  real from_positive_zero;
+  real from_negative_zero;
+  int squared3, squared4, negated3, negated4;
+  logic [3:0] four_state3, four_state4;
 
   for (genvar i = 1; i <= 4; i++) begin : g
     Leaf #(
@@ -160,6 +193,10 @@ module Top;
 
   Sized #(.K(7), .W(2)) narrow (.width(narrow_width));
   Sized #(.K(7), .W(16)) wide (.width(wide_width));
+  Derived #(.K(3)) derived3 (squared3, negated3, four_state3);
+  Derived #(.K(4)) derived4 (squared4, negated4, four_state4);
+  Reciprocal #(.Q(0.0)) positive (.seen(from_positive_zero));
+  Reciprocal #(.Q(-0.0)) negative (.seen(from_negative_zero));
   Wide #(.P({1'b1, 199'd1})) odd (.picked(odd_picked));
   Wide #(.P({1'b1, 199'd2})) even (.picked(even_picked));
 
@@ -219,6 +256,15 @@ module Top;
     end
     if (narrow_width !== 9) $fatal(1, "narrow answered %0d", narrow_width);
     if (wide_width !== 23) $fatal(1, "wide answered %0d", wide_width);
+    if (squared3 !== 9 || squared4 !== 16)
+      $fatal(1, "constant functions gave %0d and %0d", squared3, squared4);
+    if (negated3 !== -3 || negated4 !== -4)
+      $fatal(1, "signed constants read %0d and %0d", negated3, negated4);
+    if (four_state3 !== 4'b10x1 || four_state4 !== 4'bz01x)
+      $fatal(1, "four-state constants read %b and %b", four_state3, four_state4);
+    if (!(from_positive_zero > 0.0) || !(from_negative_zero < 0.0))
+      $fatal(1, "reciprocals of 0.0 and -0.0 were %f and %f",
+             from_positive_zero, from_negative_zero);
     if (odd_picked !== 1) $fatal(1, "odd picked %0d", odd_picked);
     if (even_picked !== 2) $fatal(1, "even picked %0d", even_picked);
     // 1000 is 'h3E8; a size cast keeps the operand's signedness, so its low 4

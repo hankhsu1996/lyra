@@ -1,19 +1,18 @@
 #pragma once
 
-// How a compilation unit is identified and what it is called. A unit's identity
-// is its definition together with everything the design fixed that changes what
-// gets compiled; a name is derived from that identity where a bounded
+// How an application of a definition is identified and what it is called. A
+// specialization's identity is its definition together with everything the
+// design fixed for it; a name is derived from that identity where a bounded
 // identifier is needed. The two are separate on purpose -- an identity has to
 // distinguish and may drop nothing, a name has to fit in an identifier -- so
 // nothing here treats one as the other.
 //
-// Both are computed from the frontend and from a policy every party reads the
-// same, because the unit naming itself and every unit naming it must reach the
-// same answer with no shared table.
+// Both are computed from the frontend and from a naming every party in one
+// stage reads the same, because the unit naming itself and every unit naming
+// it must reach the same answer with no shared table.
 
 #include <cstddef>
 #include <cstdint>
-#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -47,15 +46,14 @@ class Type;
 namespace lyra::lowering::ast_to_hir {
 
 // Where a value parameter's value comes from, for the objects built from one
-// compiled scope. Fixed by the unit: it is part of what is compiled, and the
-// unit's name holds it, so every object of the scope holds the one value.
-// Supplied at construction: whoever builds the object passes it -- an
-// instance's overridden parameter (LRM 23.10.2), or the index a loop's block
-// was built at (LRM 27.4). Computed at construction: its own declaration writes
-// it from a supplied value, directly or through another such, so each object
-// computes it when built.
+// compiled scope. Settled at elaboration: the code reads it as the constant
+// this specialization settled it to. Supplied at construction: whoever builds
+// the object passes it -- an instance's parameter its code reads (LRM 23.10.2),
+// or the index a loop's block was built at (LRM 27.4). Computed at
+// construction: its own declaration writes it from a supplied value, directly
+// or through another such, so each object computes it when built.
 enum class ParameterValueSource {
-  kFixedByUnit,
+  kSettledAtElaboration,
   kSuppliedAtConstruction,
   kComputedAtConstruction,
 };
@@ -77,6 +75,20 @@ enum class ParameterValueSource {
 // alone. A child instance's body is the child's, so it is not reached.
 [[nodiscard]] auto DeclaresAClass(const slang::ast::Scope& scope) -> bool;
 
+// The digest a name carries of `bytes`: the first 64 bits of their stable
+// fingerprint, so producer and consumer agree on the name across separately
+// compiled units and across sessions. Whoever names by it holds the name
+// against what it was folded from, which is where two folding to one digest is
+// caught.
+[[nodiscard]] auto NameDigest(std::string_view bytes) -> std::uint64_t;
+
+// A declaration's path in its unit as an identity: each step as its kind and
+// then the length of its name and the name, or the position it stands at and a
+// terminator, and after a name whatever else tells the step from its siblings,
+// each behind a mark no kind is written with. So two paths that differ anywhere
+// never answer alike whatever characters a name holds (LRM 5.6.1).
+[[nodiscard]] auto DefPathIdentity(const support::DefPath& path) -> std::string;
+
 // A value as an identity: every bit of it, unknowns included, so two values
 // that differ anywhere never answer alike. The front end's own rendering is
 // for reading -- it shortens a value wider than it cares to print and folds
@@ -84,13 +96,13 @@ enum class ParameterValueSource {
 [[nodiscard]] auto ValueIdentity(const slang::ConstantValue& value)
     -> std::string;
 
-// What one input to a unit's key was fixed to. A value and a type are the two a
-// parameter takes (LRM 6.20.2, 6.20.3); an interface is what an interface port
-// carries (LRM 25.3), which no parameter declares and the language gives no way
-// to write, so the connection is where it is fixed. Each holds the identity of
-// what it was fixed to -- a constant's value, a data type's identity, a unit's
-// name -- because that is what decides whether two instantiations compile
-// alike.
+// What one input to a specialization's key was fixed to. A value and a type
+// are the two a parameter takes (LRM 6.20.2, 6.20.3); an interface is what an
+// interface port carries (LRM 25.3), which no parameter declares and the
+// language gives no way to write, so the connection is where it is fixed. Each
+// holds the identity of what it was fixed to -- a constant's value, a data
+// type's identity, a specialization's name -- because that is what decides
+// whether two instantiations elaborate alike.
 struct FixedValue {
   std::string value;
 
@@ -103,20 +115,12 @@ struct FixedType {
   auto operator==(const FixedType&) const -> bool = default;
 };
 
-// What a generate block declares under one name, as the front end resolved
-// it: what every name reaching the block compiles against (LRM 23.6, 27.4).
-struct DeclaredAs {
-  std::string declaration;
-
-  auto operator==(const DeclaredAs&) const -> bool = default;
-};
-
-// The interface instances an interface port is bound to, as the units they
-// are: the distinct ones, in the order the positions first meet them, and
-// which of them each position takes, in row-major order (LRM 25.3). A port
-// standing for one instance is the set of one.
+// The interface instances an interface port is bound to, as the
+// specializations they are: the distinct ones, in the order the positions
+// first meet them, and which of them each position takes, in row-major order
+// (LRM 25.3). A port standing for one instance is the set of one.
 struct FixedInterface {
-  std::vector<std::string> units;
+  std::vector<std::string> specializations;
   std::vector<std::uint32_t> taken;
   // The modport the port is restricted to (LRM 25.5), which narrows the members
   // it reaches and their directions. Empty when the port reaches the whole
@@ -126,33 +130,24 @@ struct FixedInterface {
   auto operator==(const FixedInterface&) const -> bool = default;
 };
 
-// A parameter the parent overrode with a value the instance is handed when it
-// is built. The value is not part of what is compiled, but that the parent
-// supplies one is: an instance that is handed a value and one that works its
-// default out from the declaration are built by different constructions.
-struct SuppliedAtConstruction {
-  auto operator==(const SuppliedAtConstruction&) const -> bool = default;
-};
-
-// The scope a hierarchical name lands in once it leaves the instance, named
-// the way the class of that scope is: by the unit holding it and the class's
-// path there. The name resolves per instance (LRM 23.8), and what it reaches
-// from there are that scope's declarations, so two instances whose names land
-// in different scopes compile differently.
+// The scope a hierarchical name lands in once it leaves the instance, named by
+// the specialization holding it and the scope's path there. The name resolves
+// per instance (LRM 23.8), and what it reaches from there are that scope's
+// declarations, so two instances whose names land in different scopes
+// elaborate differently.
 struct LandsIn {
-  std::string unit;
+  std::string specialization;
   support::DefPath scope;
 
   auto operator==(const LandsIn&) const -> bool = default;
 };
 
-// The same, where the name lands in an instance whose own name is still being
-// worked out -- the instance writing it, or one whose name asked for this
-// one's. `levels` counts how far out on that chain it is, the instance itself
-// being none, and `blocks` names the generate blocks below it the name lands
-// in, each as the application of its definition it is. Stated so, the scope is
-// named by where it stands relative to the instance being named, which is all
-// two instances could differ in there.
+// The same, where the name lands in an instance whose own key is still being
+// worked out -- the instance writing it, or one whose key asked for this one's.
+// `levels` counts how far out on that chain it is, the instance itself being
+// none, and `blocks` names the generate blocks below it the name lands in.
+// Stated so, the scope is named by where it stands relative to the instance
+// being named, which is all two instances could differ in there.
 struct LandsBack {
   std::uint32_t levels = 0;
   support::DefPath blocks;
@@ -180,25 +175,9 @@ struct BoundToCell {
   auto operator==(const BoundToCell&) const -> bool = default;
 };
 
-// The generate blocks the instance built (LRM 27), each named by the steps
-// from the instance down to it, in order. A conditional builds the alternative
-// its condition selects, and an alternative it did not select is not
-// elaborated and need not be valid for these values (LRM 27.5), so what was
-// built is part of what is compiled -- the way the branch an `if constexpr`
-// selects is part of a C++ template instantiation, which compiles no other.
-// A loop's blocks enter as the kinds of block it built, not as how many,
-// since the construction counts them out (LRM 27.4); where one loop built
-// blocks of several kinds, which kind stands at each index enters as well,
-// because the construction chooses by it.
-struct BlocksBuilt {
-  std::vector<std::string> blocks;
-
-  auto operator==(const BlocksBuilt&) const -> bool = default;
-};
-
 using UnitKeyInputKind = std::variant<
-    FixedValue, FixedType, DeclaredAs, FixedInterface, SuppliedAtConstruction,
-    LandsIn, LandsBack, BindInstantiation, BoundToCell, BlocksBuilt>;
+    FixedValue, FixedType, FixedInterface, LandsIn, LandsBack,
+    BindInstantiation, BoundToCell>;
 
 // One thing the design fixed for an instance: what it named, and what it fixed
 // that to. Every input is named -- a parameter by its own name, an interface
@@ -212,11 +191,11 @@ struct UnitKeyInput {
   auto operator==(const UnitKeyInput&) const -> bool = default;
 };
 
-// Which compiled artifact an instance belongs to: the definition it is built
-// from, and everything the design fixed that changes what gets compiled. Two
-// instances with equal keys compile alike and share one artifact; instance
-// count never affects how many keys exist. Equality is structural, so two keys
-// agree or differ on their parts and never on a rendering of them.
+// What an application of a definition is: the definition, and everything the
+// design fixed for it. Two instances with equal keys elaborate alike and lower
+// alike, whatever their code turns out to share with another. Equality is
+// structural, so two keys agree or differ on their parts and never on a
+// rendering of them.
 struct UnitKey {
   std::string definition;
   std::vector<UnitKeyInput> inputs;
@@ -224,49 +203,120 @@ struct UnitKey {
   auto operator==(const UnitKey&) const -> bool = default;
 };
 
-// The value parameters that what a body declares or builds relies on, in two
-// sets. Those its signature uses -- what the body declares -- enter the unit's
-// name by their values, as template arguments do in C++. Those that decide
-// which generate blocks the body builds (LRM 27.4, 27.5) enter no unit's name
-// by value, since which classes the blocks built are part of the name itself;
-// but a scope building an instance of this body names which unit it is, so a
-// value it hands one of these is one its own signature uses. Every other value
-// an instance is handed names its specialization, whose objects are built
-// alike.
-struct UsedParameters {
-  std::unordered_set<const slang::ast::ParameterSymbol*> in_signature;
-  std::unordered_set<const slang::ast::ParameterSymbol*> deciding_what_is_built;
-};
+class Specializations;
 
-// Which value parameters of each instance reach its unit when the instance is
-// built rather than as part of what is compiled, and which what the unit
-// declares uses. A parameter's value is fixed before the run (LRM 23.10), and
-// nothing requires the compiled unit to hold it: one read as the source wrote
-// it makes every value one unit, and the instance is handed it when it is
-// built. Where a construction reads it to decide which blocks it builds (LRM
-// 27.4, 27.5), the blocks built name the unit and the value still does not.
-// One whose value what the unit declares relies on -- a constant the language
-// requires, a type -- is used instead, and its value names the unit. Every
-// value an instance is handed names its specialization, which is what says how
-// its objects are built; which body its code is, is found once it is lowered.
+// How one stage of the compile names what it names: the instance a reference
+// reaches, and a generate block on the way to a declaration. Declaring a unit
+// and lowering its bodies state another instance's class and a block's class
+// in the stage's own terms -- the specialization it is while keys are worked
+// out, what it reaches while specializations are compared, and the class
+// grouping found for it once they have been -- and every other answer is the
+// specializations' own, the same in every stage.
 //
-// Every party naming a unit reads the same policy, so a parent and the child
-// it names agree.
-//
-// The answer is worked out from the source once per instance and kept, which
-// is why the lookup is const and the table is not: naming asks it many times
-// per instance. Working out one instance's answer asks for its children's,
-// since whether what a child is handed is only read as a value is the child's
-// answer.
+// Every party in one stage reads the same naming, so a parent and the child it
+// names agree.
 class UnitNamingPolicy {
  public:
-  explicit UnitNamingPolicy(
-      support::BodiesRead bodies_read = support::BodiesRead::kOnePerName)
-      : bodies_read_(bodies_read) {
+  explicit UnitNamingPolicy(const Specializations& specializations)
+      : specializations_(&specializations) {
+  }
+  UnitNamingPolicy(const UnitNamingPolicy&) = delete;
+  auto operator=(const UnitNamingPolicy&) -> UnitNamingPolicy& = delete;
+  UnitNamingPolicy(UnitNamingPolicy&&) = delete;
+  auto operator=(UnitNamingPolicy&&) -> UnitNamingPolicy& = delete;
+  virtual ~UnitNamingPolicy() = default;
+
+  // What `inst` is named by in this stage.
+  [[nodiscard]] virtual auto NameOf(
+      const slang::ast::InstanceSymbol& inst) const -> std::string = 0;
+
+  // The step the block instance `block` is in the scope holding it: its label,
+  // which one it is among the blocks of that scope sharing the label (LRM
+  // 27.5), and what tells it from the other block instances of its construct in
+  // this stage.
+  [[nodiscard]] virtual auto BlockStepOf(
+      const slang::ast::GenerateBlockSymbol& block) const
+      -> support::GenerateBlockStep = 0;
+
+  // The specializations every stage names the instances of.
+  [[nodiscard]] auto Keys() const -> const Specializations& {
+    return *specializations_;
   }
 
+ private:
+  const Specializations* specializations_;
+};
+
+// The naming of the stage that works the keys out: another instance by the
+// specialization it is, and a block by where it stands -- its label, and in a
+// loop the value its index stood at (LRM 27.4).
+class SpecializationNames final : public UnitNamingPolicy {
+ public:
+  using UnitNamingPolicy::UnitNamingPolicy;
+
+  [[nodiscard]] auto NameOf(const slang::ast::InstanceSymbol& inst) const
+      -> std::string override;
+  [[nodiscard]] auto BlockStepOf(const slang::ast::GenerateBlockSymbol& block)
+      const -> support::GenerateBlockStep override;
+};
+
+// The specializations of the design, each by its key, and what follows of each
+// instance from its body alone. A key holds every value the instance is handed
+// and every fact written elsewhere that reaches it: which specializations
+// publish alike, and which come out as the same code, is found by comparing
+// what they publish and what they lower to.
+//
+// Each answer is worked out from the source once and kept, which is why the
+// lookups are const and the tables are not.
+class Specializations {
+ public:
+  explicit Specializations(
+      support::BodiesRead bodies_read = support::BodiesRead::kOnePerName)
+      : bodies_read_(bodies_read), names_(*this) {
+  }
+  Specializations(const Specializations&) = delete;
+  auto operator=(const Specializations&) -> Specializations& = delete;
+  Specializations(Specializations&&) = delete;
+  auto operator=(Specializations&&) -> Specializations& = delete;
+  ~Specializations() = default;
+
+  // The naming the keys are worked out in.
+  [[nodiscard]] auto Names() const -> const UnitNamingPolicy& {
+    return names_;
+  }
+
+  // The name of the specialization `inst` is an application of: its
+  // definition, with the digest of everything the design fixed for it, where it
+  // fixed anything -- each parameter's value or type (LRM 6.20, 23.10), the
+  // interface each interface port is connected to (LRM 25.3), the scope each
+  // name written in it or below it lands in once it leaves the instance (LRM
+  // 23.8), and everything written elsewhere that reaches an instance below it
+  // -- a parameter a defparam or a configuration sets (LRM 23.10.1, 33.4.3), an
+  // instantiation a bind inserts (LRM 23.11), a cell a configuration binds (LRM
+  // 33.4.1.6) -- each under its path from `inst`. Instances of one
+  // specialization are built alike -- the same blocks, the same children -- so
+  // it is what the design's construction tables are stated by, and what a value
+  // one of them publishes is found under.
+  //
+  // Every part is read off `inst` and what elaborated below it, which is where
+  // a parent naming a child already stands. An instance the front end left
+  // sharing another's body is read off that body, which states the same for
+  // both.
+  [[nodiscard]] auto SpecializationNameOf(
+      const slang::ast::InstanceSymbol& inst) const -> std::string;
+
+  // Whether the design fixed nothing for `inst`, so that its definition alone
+  // says what it is.
+  [[nodiscard]] auto FixesNothing(const slang::ast::InstanceSymbol& inst) const
+      -> bool;
+
+  // The definition `inst` is an application of, as its key names it.
+  [[nodiscard]] auto DefinitionOf(const slang::ast::InstanceSymbol& inst) const
+      -> std::string;
+
   // Whether this compile reads every instance's body and holds each to the
-  // body it is named for, which is how a compile is checked against itself.
+  // body of the instance it repeats, which is how a compile is checked against
+  // itself.
   [[nodiscard]] auto ChecksItself() const -> bool;
 
   // Whether `inst` is read through a body of its own: one the front end
@@ -275,8 +325,8 @@ class UnitNamingPolicy {
       const slang::ast::InstanceSymbol& inst) const -> bool;
 
   // Has `inst` read through its own body from here on, which makes the front
-  // end elaborate it. Whatever was worked out of it from where it is written
-  // is dropped, so a name asked for afterwards is the one its body gives it.
+  // end elaborate it. Whatever was worked out of it from where it is written is
+  // dropped, so a key asked for afterwards is the one its body gives it.
   void ReadBodyOf(const slang::ast::InstanceSymbol& inst) const;
 
   // The parameters `inst` is handed when it is built, in the order its body
@@ -287,9 +337,7 @@ class UnitNamingPolicy {
       -> std::span<const slang::ast::ParameterSymbol* const>;
 
   // Where the value of `param`, declared anywhere in `inst`'s body, comes from
-  // for the objects built from the compiled scope declaring it. A generate
-  // block is built once per object of its scope, so every parameter it declares
-  // differs between them: its index is supplied, and each other one computed.
+  // for the objects built from the compiled scope declaring it.
   [[nodiscard]] auto ValueSourceOf(
       const slang::ast::InstanceSymbol& inst,
       const slang::ast::ParameterSymbol& param) const -> ParameterValueSource;
@@ -298,153 +346,63 @@ class UnitNamingPolicy {
   [[nodiscard]] auto ContextOf(const slang::ast::InstanceSymbol& inst) const
       -> const InstanceContext&;
 
-  // The step the block instance `block` is in the scope holding it: its label,
-  // which one it is among the blocks of that scope sharing the label (LRM
-  // 27.5), and which application of its definition it is. A generate block is a
-  // definition nested in the scope holding it, and each block instance built
-  // from it applies it to arguments, the way an instance applies a design
-  // element (LRM 27.3): what it declares as the front end resolved it, or,
-  // where it declares a class or a covergroup, where it stands -- its label
-  // and, in a loop, its index (LRM 27.4) -- and what is written elsewhere about
-  // an instance it holds (LRM 23.10.1, 23.11, 33.4). An index only read as a
-  // value is handed over when the block is built, so blocks that declare alike
-  // are one application.
-  //
-  // The definition is named by the label the source gave it, and what was
-  // fixed is stated beside the label as a digest, absent where nothing was.
-  [[nodiscard]] auto BlockStepOf(const slang::ast::GenerateBlockSymbol& block)
-      const -> support::GenerateBlockStep;
-
-  // The name of the specialization `inst` is an application of: the name of
-  // its unit, with the digest of every value it is handed at construction,
-  // where it is handed any. Instances of one specialization are built alike --
-  // the same blocks, the same children -- so it is what the design's
-  // construction tables are stated by. It reads every block the instance
-  // built, so it is worked out once and kept, as the unit's name is.
-  [[nodiscard]] auto SpecializationNameOf(
-      const slang::ast::InstanceSymbol& inst) const -> std::string;
-
-  // Whether `param`, a value parameter `inst`'s body declares, decides which
-  // generate blocks the body builds (LRM 27.4, 27.5). The blocks built are part
-  // of the unit's name and the value is not, but a scope building `inst` names
-  // its unit, so a value it hands `param` is one its own signature uses.
-  [[nodiscard]] auto DecidesWhatIsBuilt(
-      const slang::ast::InstanceSymbol& inst,
-      const slang::ast::ParameterSymbol& param) const -> bool;
-
-  // The name of the unit `inst` is an object of, folded from what the design
-  // fixed for it: its parameters (LRM 6.20, 23.10), the interface each of its
-  // interface ports is connected to (LRM 25.3), the scope each name written in
-  // it or below it lands in once it leaves the instance (LRM 23.8), and
-  // everything written elsewhere that reaches an instance below it -- a
-  // parameter a defparam or a configuration sets (LRM 23.10.1, 33.4.3), an
-  // instantiation a bind inserts (LRM 23.11), a cell a configuration binds (LRM
-  // 33.4.1.6) -- each under its path from `inst`. A parameter fixed by the unit
-  // -- one its signature uses -- enters with its value; one supplied at
-  // construction enters as being supplied, and one computed at construction not
-  // at all, so instances supplied different values are one unit wherever they
-  // built the same generate blocks, which enter as well (LRM 27.5).
-  //
-  // Every part is read off `inst` and what elaborated below it, which is where
-  // the parent naming a child already stands. An instance the front end left
-  // sharing another's body is read off that body, which states the same for
-  // both.
-  //
-  // The name is worked out once and kept. What is fixed for an instance states
-  // everything below it, and every scope the instance holds and every unit
-  // naming it asks, so working it out per asking costs the instance each time.
-  // A name asked while another is being worked out can differ from the one the
-  // instance has alone, where a name it writes lands in an instance still being
-  // named. So a name is kept only when nothing it met lay outside itself,
-  // together with the instances it looked for among those being named and did
-  // not find, and it answers a later asking only while none of those is being
-  // named. An asking made on its own passes both, so no answer depends on who
-  // asked first.
-  [[nodiscard]] auto NameOf(const slang::ast::InstanceSymbol& inst) const
-      -> std::string;
-
-  // Naming one instance can ask which unit another is -- where a name it writes
-  // lands (LRM 23.6), where a type it is fixed to is declared (LRM 6.22), where
-  // its own definition is nested (LRM 23.4) -- and the answer may be an
-  // instance whose name is still being worked out, the one asking included.
-  // These record the chain of instances being named, so such an instance is
-  // told by how far out on the chain it is rather than by a name nobody has
-  // yet.
-  void EnterNaming(const slang::ast::InstanceBodySymbol& body) const;
-  void LeaveNaming() const;
+  // Working out one key can ask for another's -- where a name it writes lands
+  // (LRM 23.6), where a type it is fixed to is declared (LRM 6.22), where its
+  // own definition is nested (LRM 23.4) -- and the answer may be an instance
+  // whose key is still being worked out, the one asking included. These record
+  // the chain of instances being worked out, so such an instance is told by how
+  // far out on the chain it is rather than by a key nobody has yet.
+  void EnterKey(const slang::ast::InstanceBodySymbol& body) const;
+  void LeaveKey() const;
   [[nodiscard]] auto LevelsOutTo(const slang::ast::InstanceBodySymbol& body)
       const -> std::optional<std::uint32_t>;
 
  private:
-  struct PerInstance {
-    std::vector<const slang::ast::ParameterSymbol*> supplied;
-    std::unordered_set<const slang::ast::ParameterSymbol*> varying;
-    UsedParameters used;
-  };
-
-  using InstanceBodies =
-      std::unordered_set<const slang::ast::InstanceBodySymbol*>;
-
-  struct KeptName {
+  struct KeptKey {
+    UnitKey key;
     std::string name;
-    // The instances it looked for among those being named and did not find.
-    InstanceBodies depends_on;
+    // The instances it looked for among those being worked out and did not
+    // find.
+    std::unordered_set<const slang::ast::InstanceBodySymbol*> depends_on;
   };
 
-  struct NameInProgress {
-    // How long the chain was when this name was asked for, so a landing on an
+  struct KeyInProgress {
+    // How long the chain was when this key was asked for, so a landing on an
     // earlier entry is one outside it.
     std::size_t chain_at_start = 0;
     bool met_nothing_outside = true;
-    InstanceBodies depends_on;
+    std::unordered_set<const slang::ast::InstanceBodySymbol*> depends_on;
   };
 
-  using ParameterSet = std::unordered_set<const slang::ast::ParameterSymbol*>;
-
-  // What a body's own text says of its value parameters, whichever instance
-  // it is read for: which parameters each one's declaration is written into,
-  // and which the body uses and how.
-  struct PerBody {
-    ParameterSet own;
-    std::unordered_map<const slang::ast::ParameterSymbol*, ParameterSet>
-        written_into;
-    UsedParameters used;
+  // Where each value parameter of an instance's body takes its value from, and
+  // those its objects are handed, in the order the body declares them.
+  struct ParametersOfInstance {
+    std::vector<const slang::ast::ParameterSymbol*> supplied;
+    std::unordered_map<const slang::ast::ParameterSymbol*, ParameterValueSource>
+        sources;
   };
 
-  auto Of(const slang::ast::InstanceSymbol& inst) const -> const PerInstance&;
-
-  // The digest of the values `inst` is handed at construction, absent where it
-  // is handed none: which specialization of its unit it is.
-  [[nodiscard]] auto SuppliedValuesOf(const slang::ast::InstanceSymbol& inst)
-      const -> std::optional<std::uint64_t>;
-  auto Classify(const slang::ast::InstanceSymbol& inst) const -> PerInstance;
-  auto OfBody(const slang::ast::InstanceBodySymbol& body) const
-      -> const PerBody&;
-  auto ReadThroughItsOwnBody() const -> HasBodyOfItsOwnFn;
-  auto AnswersNow(const KeptName& kept) const -> bool;
+  // The name of `inst`'s specialization, its key worked out and kept where it
+  // can be.
+  auto Worked(const slang::ast::InstanceSymbol& inst) const -> std::string;
+  [[nodiscard]] auto ParametersOf(const slang::ast::InstanceSymbol& inst) const
+      -> const ParametersOfInstance&;
+  [[nodiscard]] auto ReadThroughItsOwnBody() const -> HasBodyOfItsOwnFn;
+  [[nodiscard]] auto AnswersNow(const KeptKey& kept) const -> bool;
 
   support::BodiesRead bodies_read_;
+  SpecializationNames names_;
   mutable std::unordered_set<const slang::ast::InstanceSymbol*> read_anyway_;
-  mutable std::unordered_map<const slang::ast::InstanceBodySymbol*, PerBody>
-      per_body_;
-  mutable std::unordered_map<const slang::ast::InstanceSymbol*, PerInstance>
+  mutable std::unordered_map<
+      const slang::ast::InstanceSymbol*, ParametersOfInstance>
       per_instance_;
   mutable InstanceContexts context_;
-  mutable std::vector<const slang::ast::InstanceBodySymbol*> naming_;
-  mutable std::unordered_map<const slang::ast::InstanceSymbol*, KeptName>
-      names_;
-  mutable std::vector<NameInProgress> names_in_progress_;
-  mutable std::unordered_map<const slang::ast::InstanceSymbol*, std::string>
-      specialization_names_;
-  // Two keys reaching one name would silently make two units into one, so a
-  // name kept is held against the key it was folded from.
+  mutable std::vector<const slang::ast::InstanceBodySymbol*> chain_;
+  mutable std::unordered_map<const slang::ast::InstanceSymbol*, KeptKey> keys_;
+  mutable std::vector<KeyInProgress> keys_in_progress_;
+  // Two keys reaching one name would silently make two specializations into
+  // one, so a name kept is held against the key it was folded from.
   mutable std::unordered_map<std::string, UnitKey> folded_;
-  mutable std::unordered_map<
-      const slang::ast::GenerateBlockSymbol*, support::GenerateBlockStep>
-      block_steps_;
-  mutable std::map<support::GenerateBlockStep, UnitKey> folded_blocks_;
-  mutable std::unordered_set<const slang::ast::GenerateBlockSymbol*>
-      blocks_in_progress_;
 };
 
 // The key of a SystemVerilog class specialization (LRM 8.25). Two

@@ -25,6 +25,12 @@ nested blocks inside it; measured, the second split a loop whose blocks select d
 alternatives into a body per alternative, and the first was a prediction that every value its code
 reads changes the code.
 
+D4 and D7 revised 2026-10-28 by
+[a-unit-is-the-specializations-that-publish-alike](a-unit-is-the-specializations-that-publish-alike.md):
+a block's class is what it publishes, found by comparing, not what its declarations spell; a block
+declaring a class is one per place because its methods are named by its class, not because it is
+named by its index.
+
 ## Requirement
 
 A design element compiles to a class written in files that carry its name. What the source declares

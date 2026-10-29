@@ -537,5 +537,5 @@ distinct unit specializations, not with instance count.
   C++ backend a width or size parameter does not change generated code and could be a constructor
   input. A width-templated backend (the future LLVM `iN` lowering) does specialize on width. Whether
   per-width specialization is a key axis or a backend-internal monomorphization downstream of one
-  width-generic artifact is unresolved, and it conflicts with `specialization_model.md` invariant 3
-  as written (which lists packed width as code-shape-affecting). Resolve before keying on width.
+  width-generic artifact is unresolved. Today a width enters a unit through what it makes the unit
+  publish, which a packed width always changes. Resolve before keying on width.

@@ -1324,6 +1324,21 @@ the detail lives in the entry itself.
   why a value deciding what a child builds names the scope handing it, as `Leaf<i>` does, and for
   why reading what an instance built off its elaboration evaluates the instance's own generate
   scheme rather than taking the instance graph as authority.
+- [a-unit-is-the-specializations-that-publish-alike](a-unit-is-the-specializations-that-publish-alike.md)
+  -- a specialization is its definition and everything the design fixed for it, nothing predicted,
+  and a class is the specializations whose published structure reads alike once each reference to
+  another instance is written by what it reaches: one it holds by what that one publishes, one
+  outside it that its key reaches by its place, with that instance's class added afterwards, and any
+  other by its class. A class is named by its definition and the digest of what it publishes, a
+  generate block's class is found the same way inside its unit, a body by comparing HIR within one
+  class and named for the first in design order, and a parameter the code reads as a value is a
+  field. Read it for why a design element declaring a class is still a class per specialization (its
+  methods are named by its class), why a loop's blocks building different alternatives are a class
+  per alternative, and why every specialization of a class is declared again and held to it.
+  Predicting what a declaration relies on, a class per application, one class holding every
+  alternative, a body named by its least key, and supplying a local parameter through construction
+  data are rejected. **Revises the three entries above and
+  [a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md) D4 and D7.**
 - [a-part-is-the-select-the-source-wrote](a-part-is-the-select-the-source-wrote.md) -- a part of a
   vector a genvar or a parameter selects -- the bits a wait watches, a part-select's type, the
   positions a connection joins -- is stated as the select the source wrote, so constructions

@@ -27,6 +27,14 @@ of a specialization is cheap beside everything after it. So every value an insta
 its specialization, as a template argument names an instance in C++ (fact 2 stands), and
 specializations whose code comes out alike are one body, as a linker folds identical code.
 
+D1, D4 and D5 revised 2026-10-28 by
+[a-unit-is-the-specializations-that-publish-alike](a-unit-is-the-specializations-that-publish-alike.md):
+a unit is the specializations whose published structure reads alike, found by comparing what each
+publishes, so no parameter's value is predicted to name it; a design element declaring a class is a
+class per specialization, for the reason that record's D5 gives; and a value handed to a child names
+nothing of the scope handing it, whose published member already names the child's class. D2, D3 and
+D6 stand.
+
 ## Requirement
 
 A unit is compiled as one class every referrer compiles against, named by the values of the

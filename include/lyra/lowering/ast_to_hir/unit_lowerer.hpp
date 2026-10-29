@@ -697,6 +697,10 @@ class UnitLowerer {
   // references one cannot observe whether it had been declared yet.
   auto Declare() -> diag::Result<void>;
 
+  // The same declaration, made to compare what one specialization publishes
+  // with what another does before any unit is named, which declares no unit.
+  auto DescribeForGrouping() -> diag::Result<void>;
+
   // What this unit publishes, moved out once its declaration phase has run.
   // The design collects these before any body lowers and hands each unit the
   // ones it may read.
@@ -1723,6 +1727,9 @@ class UnitLowerer {
       -> std::optional<PublishedDescent>;
 
  private:
+  // What `Declare` and `DescribeForGrouping` both do.
+  auto DeclareOwn() -> diag::Result<void>;
+
   // The instance this unit lowers and where each name it writes lands once it
   // leaves that instance, or nothing for a namespace unit, which has no
   // instance for a name to leave.

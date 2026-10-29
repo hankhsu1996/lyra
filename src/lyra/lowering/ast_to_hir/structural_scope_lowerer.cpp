@@ -303,10 +303,10 @@ auto ConstructionOf(
       .made =
           hir::SpecializationRef{
               .unit = policy.NameOf(instance),
-              .specialization = policy.SpecializationNameOf(instance)},
+              .specialization = policy.Keys().SpecializationNameOf(instance)},
       .arguments = {}};
   for (const slang::ast::ParameterSymbol* param :
-       policy.SuppliedParametersOf(instance)) {
+       policy.Keys().SuppliedParametersOf(instance)) {
     ArgumentSource source{.parameter = param, .from = LeftToDefault{}};
     if (ValueWrittenAtInstantiation(instance, *param) != nullptr) {
       source.from = WrittenAtInstantiation{};
@@ -535,11 +535,11 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
 
 // The parameters of this scope whose values differ between the objects built
 // from it, each a declaration of the scope. One supplied at construction -- a
-// unit's overridden parameter, or the index a loop's block was built at -- is a
-// value the construction fills, and the scope declares them in the order a
-// construction supplies them. One computed from those holds the expression the
-// source wrote for it. Every other parameter's value is fixed by the scope's
-// unit, so reading that value costs no second artifact.
+// parameter the code reads and an instantiation may assign, or the index a
+// loop's block was built at -- is a value the construction fills, and the scope
+// declares them in the order a construction supplies them. One computed from
+// those holds the expression the source wrote for it. Every other parameter is
+// read as the constant this specialization settled it to.
 //
 // An expression naming the index resolves to the declaration the construction
 // fills, so every block a loop counts out states the same thing whatever index
@@ -550,7 +550,7 @@ auto StructuralScopeLowerer::DeclareDifferingParameters(
     const auto* parameter = member.as_if<slang::ast::ParameterSymbol>();
     if (parameter == nullptr) continue;
     switch (owner_->ValueSourceOf(*parameter)) {
-      case ParameterValueSource::kFixedByUnit:
+      case ParameterValueSource::kSettledAtElaboration:
         break;
       case ParameterValueSource::kSuppliedAtConstruction: {
         auto kind = SuppliedDeclarationOf(*parameter, frame);

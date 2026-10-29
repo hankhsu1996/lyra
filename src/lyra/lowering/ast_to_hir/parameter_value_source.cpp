@@ -1,46 +1,28 @@
-// Which of an instance's value parameters are arguments of what is compiled,
-// which are supplied at construction, and which its declarations compute from
-// those.
+// Where each value parameter of an instance's body takes its value from for
+// the objects built from it.
 //
-// A parameter read where the source wrote an expression is lowered as that
-// expression, and the object reads the value it was built with: it is a
-// constructor argument. One whose value what the scope declares relies on -- a
-// range, a width, a count, a type, a value a class specialization is handed --
-// is an argument of the unit instead, as a template argument is in C++, and
-// enters its name by its value. One only the statements of its code rely on is
-// handed at construction like any other, and which body that code is, is found
-// once it is lowered. Which parameters something compiled relies on is the
-// front end's own record, kept as it evaluates a constant the language requires
-// and as it reads a type as a fact, so no position of the language is listed
-// here and none can be missed. Two kinds of reads are passed over: what a
-// construction evaluates to decide what it builds -- a generate's selection, a
-// loop's count (LRM 27.4, 27.5) -- which the front end marks; and the few
-// positions this compiler lowers as the source wrote them, which it lists
-// itself.
+// A parameter the code reads as a value is a value the object is built with,
+// so specializations handed different values can come out as the same code. A
+// parameter the code never reads holds nothing at run time: where the language
+// requires a constant -- a range, a width, a type -- the front end has already
+// settled it, and that is what every declaration reads. So which parameters an
+// object is handed is read off what the body's text reads, as it was bound.
 
-#include <algorithm>
 #include <cstddef>
 #include <span>
-#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
 #include <slang/ast/ASTVisitor.h>
-#include <slang/ast/Compilation.h>
 #include <slang/ast/Expression.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/expressions/MiscExpressions.h>
-#include <slang/ast/expressions/SelectExpressions.h>
 #include <slang/ast/symbols/BlockSymbols.h>
+#include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
-#include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
-#include <slang/ast/symbols/PortSymbols.h>
-#include <slang/ast/symbols/SubroutineSymbols.h>
-#include <slang/ast/types/DeclaredType.h>
-#include <slang/syntax/AllSyntax.h>
 
 #include "lyra/lowering/ast_to_hir/hierarchy_override.hpp"
 #include "lyra/lowering/ast_to_hir/library_cell.hpp"
@@ -68,200 +50,6 @@ auto ValueParametersOf(const slang::ast::Scope& scope) -> ParameterSet {
   return out;
 }
 
-// What the body builds, and the parameters of it that decide what is compiled
-// without the front end's record of what it evaluated saying so: those a
-// design element declared inside this one reads. A child instance's body names
-// its own parameters, so what is collected of a child is what it is handed,
-// which is an expression of this body.
-struct EveryReference
-    : slang::ast::ASTVisitor<EveryReference, slang::ast::VisitFlags::AllGood> {
-  explicit EveryReference(const ParameterSet& own) : own(&own) {
-  }
-
-  const ParameterSet* own;
-  ParameterSet read_in_a_nested_element;
-  // The instances this body builds, whose parameters are written from it.
-  std::vector<const slang::ast::InstanceSymbol*> children;
-  // The bodies of the design elements declared inside this one, wherever they
-  // are built, whose evaluations read this body's parameters by name.
-  std::vector<const slang::ast::InstanceBodySymbol*> nested_bodies;
-  bool in_a_nested_element = false;
-
-  void Note(const slang::ast::ValueExpressionBase& e) {
-    const auto* param = e.symbol.as_if<slang::ast::ParameterSymbol>();
-    if (param == nullptr || !own->contains(param)) return;
-    if (in_a_nested_element) read_in_a_nested_element.insert(param);
-  }
-
-  void handle(const slang::ast::NamedValueExpression& e) {
-    Note(e);
-    visitDefault(e);
-  }
-
-  void handle(const slang::ast::HierarchicalValueExpression& e) {
-    Note(e);
-    visitDefault(e);
-  }
-
-  // A design element declared inside another reads the enclosing one's
-  // parameters by name (LRM 23.4, 23.9), and its instance is handed none of
-  // them when it is built, so what its body reads of them is the value this
-  // elaboration gave.
-  void handle(const slang::ast::InstanceSymbol& child) {
-    child.visitExprs(*this);
-    if (!in_a_nested_element) children.push_back(&child);
-    if (!IsLibraryCell(child.getDefinition())) {
-      nested_bodies.push_back(&child.body);
-      const bool outer = in_a_nested_element;
-      in_a_nested_element = true;
-      child.body.visit(*this);
-      in_a_nested_element = outer;
-    }
-  }
-};
-
-// Every expression a visited piece of code holds.
-struct EveryExpression
-    : slang::ast::ASTVisitor<EveryExpression, slang::ast::VisitFlags::AllGood> {
-  std::unordered_set<const slang::ast::Expression*> held;
-
-  template <typename T>
-    requires std::is_base_of_v<slang::ast::Expression, T>
-  void handle(const T& e) {
-    held.insert(&e);
-    visitDefault(e);
-  }
-};
-
-// Collects into `code` every expression a statement holds in the code of a
-// process, a continuous assignment or a subroutine `scope` holds: what that
-// code runs, which is no part of what the scope declares. A subroutine's
-// signature and a process's static variables are declarations, the storage of
-// the object and what a caller sees (LRM 6.21, 13.4), so only statements are
-// reached. A class's methods are part of the class, which the scope declares,
-// and a child instance's body is none of this body's code; neither is reached.
-void CollectCodeOf(const slang::ast::Scope& scope, EveryExpression& code) {
-  for (const auto& member : scope.members()) {
-    if (const auto* process =
-            member.as_if<slang::ast::ProceduralBlockSymbol>()) {
-      process->getBody().visit(code);
-    } else if (
-        const auto* assign =
-            member.as_if<slang::ast::ContinuousAssignSymbol>()) {
-      assign->getAssignment().visit(code);
-    } else if (
-        const auto* subroutine = member.as_if<slang::ast::SubroutineSymbol>()) {
-      subroutine->getBody().visit(code);
-    } else if (
-        member.kind == slang::ast::SymbolKind::GenerateBlock ||
-        member.kind == slang::ast::SymbolKind::GenerateBlockArray) {
-      CollectCodeOf(member.as<slang::ast::Scope>(), code);
-    }
-  }
-}
-
-// The expressions the lowering states as they are written although the
-// language requires each to be a constant: the index of an element select and
-// the base of an indexed part select, which name a position rather than a
-// shape (LRM 11.5.1, 11.5.3), and an input port's default, which each object
-// it is left unconnected in evaluates (LRM 23.2.2.4). What the front end
-// settled any of them to is held by nothing compiled. A child instance's body
-// is the child's, so only what this body writes for it is reached.
-//
-// A select the front end found out of bounds is the exception: it reaches
-// nothing (LRM 11.5.1), which is what is compiled, so its position is no
-// position stated as written.
-struct StatedAsWritten
-    : slang::ast::ASTVisitor<StatedAsWritten, slang::ast::VisitFlags::AllGood> {
-  std::unordered_set<const slang::ast::Expression*> held;
-
-  void handle(const slang::ast::ElementSelectExpression& e) {
-    if (!e.isOutOfBounds()) held.insert(&e.selector());
-    visitDefault(e);
-  }
-
-  void handle(const slang::ast::RangeSelectExpression& e) {
-    if (e.getSelectionKind() != slang::ast::RangeSelectionKind::Simple &&
-        !e.isOutOfBounds()) {
-      held.insert(&e.left());
-    }
-    visitDefault(e);
-  }
-
-  void handle(const slang::ast::PortSymbol& port) {
-    held.insert(port.getInitializer());
-    visitDefault(port);
-  }
-
-  void handle(const slang::ast::InstanceSymbol& child) {
-    child.visitExprs(*this);
-  }
-};
-
-// The parameters of `own` that `param`'s own value was evaluated from.
-auto DependenciesOf(
-    const slang::ast::ParameterSymbol& param, const ParameterSet& own)
-    -> ParameterSet {
-  ParameterSet out;
-  if (param.getParentScope()->isUninstantiated()) return out;
-  param.getValue();
-  const slang::ast::Compilation& compilation =
-      param.getParentScope()->getCompilation();
-  for (const slang::ast::ParameterSymbol* source :
-       compilation.getParameterValueSources(param)) {
-    if (own.contains(source)) out.insert(source);
-  }
-  return out;
-}
-
-// A parameter written with neither a type nor a range takes the type of the
-// value it is given (LRM 6.20.2). One an instantiation may override can be
-// given a value of any type, so its value decides a type wherever it is read.
-// A local one is given only its own initializer, whose type follows from the
-// places that expression reads, and those are read where it stands.
-auto TypeFollowsValue(const slang::ast::ParameterSymbol& param) -> bool {
-  if (param.isLocalParam()) {
-    return false;
-  }
-  const slang::syntax::DataTypeSyntax* syntax =
-      param.getDeclaredType()->getTypeSyntax();
-  if (syntax == nullptr ||
-      syntax->kind != slang::syntax::SyntaxKind::ImplicitType) {
-    return false;
-  }
-  return syntax->as<slang::syntax::ImplicitTypeSyntax>().dimensions.empty();
-}
-
-// Each of a unit's parameters mapped to others of its parameters: the ones its
-// declaration is written from, or the other way round. Every parameter of the
-// unit has an entry, so a walk along it never meets a missing one.
-using ParameterEdges =
-    std::unordered_map<const slang::ast::ParameterSymbol*, ParameterSet>;
-
-// `from`, and every parameter reached from it along `edges` through ones
-// `admits` accepts.
-template <typename Admits>
-auto Reached(ParameterSet from, const ParameterEdges& edges, Admits admits)
-    -> ParameterSet {
-  std::vector<const slang::ast::ParameterSymbol*> pending(
-      from.begin(), from.end());
-  while (!pending.empty()) {
-    const slang::ast::ParameterSymbol* param = pending.back();
-    pending.pop_back();
-    for (const slang::ast::ParameterSymbol* next : edges.at(param)) {
-      if (admits(*next) && from.insert(next).second) pending.push_back(next);
-    }
-  }
-  return from;
-}
-
-auto DeclaredByAGenerateBlock(const slang::ast::ParameterSymbol& param)
-    -> bool {
-  const slang::ast::Scope* declaring = param.getParentScope();
-  return declaring != nullptr &&
-         declaring->asSymbol().kind == slang::ast::SymbolKind::GenerateBlock;
-}
-
 // Whether `param` is declared in a class or in one of its methods. A class's
 // code is no body of the unit's objects, so it holds the parameter's value as
 // the constant this elaboration settled rather than one an object is built
@@ -276,221 +64,163 @@ auto DeclaredInAClass(const slang::ast::ParameterSymbol& param) -> bool {
   return false;
 }
 
+// The parameters of `own` the body's text reads as values: every name of one
+// an expression of the body holds, and every one a generate construct's
+// scheme reads, since the construction runs the scheme as written (LRM 27.4,
+// 27.5). A parameter's own initializer is read only where that parameter is,
+// so it is left to the walk along initializers. A design element declared
+// inside this one reads this body's parameters by name and is handed none of
+// them (LRM 23.4, 23.9), so what it reads is collected apart.
+struct ReadsOfParameters
+    : slang::ast::ASTVisitor<
+          ReadsOfParameters, slang::ast::VisitFlags::AllGood> {
+  explicit ReadsOfParameters(const ParameterSet& own) : own(&own) {
+  }
+
+  const ParameterSet* own;
+  ParameterSet read;
+  // Of `read`, those read somewhere other than a generate construct's scheme.
+  ParameterSet read_outside_schemes;
+  ParameterSet read_in_a_nested_element;
+  bool in_a_nested_element = false;
+  bool in_an_initializer = false;
+  bool in_a_scheme = false;
+
+  void Note(const slang::ast::ValueExpressionBase& e) {
+    const auto* param = e.symbol.as_if<slang::ast::ParameterSymbol>();
+    if (param == nullptr || !own->contains(param)) return;
+    if (in_an_initializer && !in_a_nested_element) return;
+    if (in_a_nested_element) {
+      read_in_a_nested_element.insert(param);
+      return;
+    }
+    read.insert(param);
+    if (!in_a_scheme) read_outside_schemes.insert(param);
+  }
+
+  void handle(const slang::ast::NamedValueExpression& e) {
+    Note(e);
+    visitDefault(e);
+  }
+
+  void handle(const slang::ast::HierarchicalValueExpression& e) {
+    Note(e);
+    visitDefault(e);
+  }
+
+  // A parameter a class declares is the class's code, so what its initializer
+  // reads is read there.
+  void handle(const slang::ast::ParameterSymbol& param) {
+    const bool outer = in_an_initializer;
+    in_an_initializer = !DeclaredInAClass(param);
+    visitDefault(param);
+    in_an_initializer = outer;
+  }
+
+  void handle(const slang::ast::GenerateBlockArraySymbol& loop) {
+    in_a_scheme = true;
+    for (const slang::ast::Expression* scheme :
+         {loop.initialExpression, loop.stopExpression, loop.iterExpression}) {
+      if (scheme != nullptr) scheme->visit(*this);
+    }
+    in_a_scheme = false;
+    visitDefault(loop);
+  }
+
+  void handle(const slang::ast::GenerateBlockSymbol& block) {
+    in_a_scheme = true;
+    for (const slang::ast::GenerateSelection& selection : block.selectionPath) {
+      if (selection.condition != nullptr) selection.condition->visit(*this);
+      for (const slang::ast::Expression* item : selection.caseItems) {
+        item->visit(*this);
+      }
+    }
+    in_a_scheme = false;
+    visitDefault(block);
+  }
+
+  // What the instantiation writes for a child is this body's expression, the
+  // values it assigns the child's parameters included (LRM 23.10.2). The
+  // child's body is the child's own, unless its definition is declared inside
+  // this one, whose names it then reads.
+  void handle(const slang::ast::InstanceSymbol& child) {
+    child.visitExprs(*this);
+    for (const slang::ast::ParameterSymbolBase* base :
+         child.body.getParameters()) {
+      const auto* param = base->symbol.as_if<slang::ast::ParameterSymbol>();
+      if (param == nullptr) continue;
+      if (const slang::ast::Expression* written =
+              ValueWrittenAtInstantiation(child, *param)) {
+        written->visit(*this);
+      }
+    }
+    if (!DeclaredInside(child.getDefinition())) return;
+    const bool outer = in_a_nested_element;
+    in_a_nested_element = true;
+    child.body.visit(*this);
+    in_a_nested_element = outer;
+  }
+
+  // Whether `definition` is declared inside a design element (LRM 23.4).
+  static auto DeclaredInside(const slang::ast::DefinitionSymbol& definition)
+      -> bool {
+    if (IsLibraryCell(definition)) return false;
+    const slang::ast::Scope* declaring = definition.getParentScope();
+    return declaring != nullptr &&
+           declaring->asSymbol().kind == slang::ast::SymbolKind::InstanceBody;
+  }
+};
+
+// The parameters of `own` the initializer of `param` names.
+auto InitializerReads(
+    const slang::ast::ParameterSymbol& param, const ParameterSet& own)
+    -> ParameterSet {
+  ReadsOfParameters reads(own);
+  if (const slang::ast::Expression* initializer = param.getInitializer()) {
+    initializer->visit(reads);
+  }
+  return std::move(reads.read);
+}
+
+auto DeclaredByAGenerateBlock(const slang::ast::ParameterSymbol& param)
+    -> bool {
+  const slang::ast::Scope* declaring = param.getParentScope();
+  return declaring != nullptr &&
+         declaring->asSymbol().kind == slang::ast::SymbolKind::GenerateBlock;
+}
+
 // Whether an object built from the scope declaring `param` may be handed its
-// value: a parameter its instantiation may assign (LRM 23.10), or the index a
-// loop's block is built at (LRM 27.4). Every other parameter's value follows
-// from these and its own declaration.
+// value: a parameter its instantiation may assign (LRM 23.10). The index a
+// loop's block is built at is handed by the loop instead (LRM 27.4).
 auto CanBeSupplied(const slang::ast::ParameterSymbol& param) -> bool {
-  if (param.isFromGenvar()) return true;
   return !param.isLocalParam() && !DeclaredByAGenerateBlock(param) &&
          !DeclaredInAClass(param);
 }
 
-// The parameters an object could be handed that `param` was computed from,
-// `param` among them where it is one.
-auto SuppliedParametersItDependsOn(
-    const slang::ast::ParameterSymbol& param,
-    const ParameterEdges& written_from) -> ParameterSet {
-  ParameterSet sources;
-  for (const slang::ast::ParameterSymbol* source : Reached(
-           ParameterSet{&param}, written_from,
-           [](const auto&) { return true; })) {
-    if (CanBeSupplied(*source)) sources.insert(source);
-  }
-  return sources;
+// Whether the code of a scope declaring a class reads `param` as the
+// constant this elaboration settled: the class's methods are code of that
+// scope, compiled once for the specialization holding it, and reach the scope
+// as that code was compiled. What only decides which blocks the scope builds
+// is still handed when it is built.
+auto FixesTheCodeOfAClass(
+    const slang::ast::ParameterSymbol& param, const ReadsOfParameters& reads)
+    -> bool {
+  return DeclaresAClass(*param.getParentScope()) &&
+         reads.read_outside_schemes.contains(&param);
 }
 
-// Marks what `param` was computed from as used in the signature.
-void MarkUsedInSignature(
-    UsedParameters& used, const slang::ast::ParameterSymbol& param,
-    const ParameterEdges& written_from) {
-  used.in_signature.merge(SuppliedParametersItDependsOn(param, written_from));
-}
-
-// Marks what `param` was computed from as used in the code of the scope it is
-// supplied to, where that scope declares a class. A class reaches the object of
-// the scope declaring it as that scope's code was compiled, and is one class
-// however that code came out, so the parameter is used in such a scope's
-// signature. Elsewhere a value read in code is handed at construction, and
-// what the code then is, is found once it is lowered.
-void MarkUsedInCode(
-    UsedParameters& used, const slang::ast::ParameterSymbol& param,
-    const ParameterEdges& written_from) {
-  for (const slang::ast::ParameterSymbol* source :
-       SuppliedParametersItDependsOn(param, written_from)) {
-    if (DeclaresAClass(*source->getParentScope())) {
-      used.in_signature.insert(source);
-    }
-  }
-}
-
-// Marks the parameters the front end recorded as read by a constant it
-// evaluated where the language requires one, or by a type it read as a fact. A
-// design element declared inside this one is handed none of this body's
-// parameters, so what its own evaluations read of them counts here too. Passed
-// over are what only decides which blocks a construction builds and what the
-// lowering states as written; a read in what a process, a continuous
-// assignment or a subroutine runs is a use in the body, any other one in the
-// signature.
-void MarkUsedInConstantsAndTypes(
-    UsedParameters& used, const slang::ast::InstanceBodySymbol& body,
-    const ParameterSet& own, const ParameterEdges& written_from,
-    std::span<const slang::ast::InstanceBodySymbol* const> nested_bodies) {
-  EveryExpression code;
-  CollectCodeOf(body, code);
-  StatedAsWritten as_written;
-  body.visit(as_written);
-
-  std::vector<const slang::ast::InstanceBodySymbol*> evaluated_in{&body};
-  evaluated_in.insert(
-      evaluated_in.end(), nested_bodies.begin(), nested_bodies.end());
-  for (const slang::ast::InstanceBodySymbol* in : evaluated_in) {
-    for (const slang::ast::ParameterRead& read :
-         body.getCompilation().getParameterReads(*in)) {
-      if (!own.contains(read.parameter)) continue;
-      // A generate scheme runs at construction as written, so what it reads
-      // is handed there; which blocks it built names the unit instead.
-      if (read.decidesGenerateBlocks) {
-        used.deciding_what_is_built.merge(
-            SuppliedParametersItDependsOn(*read.parameter, written_from));
-        continue;
-      }
-      if (as_written.held.contains(read.root)) continue;
-      if (code.held.contains(read.root)) {
-        MarkUsedInCode(used, *read.parameter, written_from);
-      } else {
-        MarkUsedInSignature(used, *read.parameter, written_from);
-      }
-    }
-  }
-}
-
-// Marks the parameters of this body read into the value of a parameter that is
-// not this body's own, as rustc's `visit_child_body` marks the arguments a
-// nested body uses. A parameter of a child this body builds is handed when the
-// child is built, which makes it part of how this body's objects are built and
-// nothing this body's code reads; where the child does not take it at
-// construction, which is where the child's signature uses it, or where it
-// decides which blocks the child builds, which is part of the child's unit's
-// name, this body uses it in its signature, which names the child's unit as a
-// member's type. Any other parameter it is read
-// into -- a class specialization's, which picks a type, a virtual interface's
-// -- is a use in the signature. Asking for a child's value is what has the
-// front end evaluate it, which is what records what it was evaluated from.
-void MarkUsedByChildArgs(
-    UsedParameters& used, const ParameterSet& own,
-    const ParameterEdges& written_from,
-    std::span<const slang::ast::InstanceSymbol* const> children,
-    const UnitNamingPolicy& policy) {
-  std::unordered_map<
-      const slang::ast::ParameterSymbol*, const slang::ast::InstanceSymbol*>
-      child_of;
-  for (const slang::ast::InstanceSymbol* child : children) {
-    for (const auto* base : child->body.getParameters()) {
-      if (const auto* param =
-              base->symbol.as_if<slang::ast::ParameterSymbol>()) {
-        param->getValue();
-        child_of.emplace(param, child);
-      }
-    }
-  }
-
-  for (const slang::ast::ParameterSymbol* source : own) {
-    for (const slang::ast::ParameterSymbol* reader :
-         source->getParentScope()->getCompilation().getParameterValueReaders(
-             *source)) {
-      if (own.contains(reader)) continue;
-      const auto child = child_of.find(reader);
-      if (child == child_of.end()) {
-        MarkUsedInSignature(used, *source, written_from);
-        continue;
-      }
-      const slang::ast::InstanceSymbol& built = *child->second;
-      if (!std::ranges::contains(policy.SuppliedParametersOf(built), reader) ||
-          policy.DecidesWhatIsBuilt(built, *reader)) {
-        MarkUsedInSignature(used, *source, written_from);
-      }
-    }
-  }
-}
-
-// Marks the parameters used whatever the body does, as rustc's
-// `mark_used_by_default_parameters` does: one a design element declared inside
-// this one reads, since its instance is handed none of them; one whose type is
-// its value's (LRM 6.20.2); one a class declares, since a class's code is no
-// body of the unit's objects.
-void MarkUsedByDefaultParameters(
-    UsedParameters& used, const ParameterSet& own,
-    const ParameterEdges& written_from,
-    const ParameterSet& read_in_a_nested_element) {
-  for (const slang::ast::ParameterSymbol* param : own) {
-    if (read_in_a_nested_element.contains(param) || TypeFollowsValue(*param) ||
-        DeclaredInAClass(*param)) {
-      MarkUsedInSignature(used, *param, written_from);
-    }
-  }
-}
-
-// The parameters what the specialization `body` is read through compiles to
-// uses: every one an object could be handed whose value something compiled
-// relies on, together with every such parameter that one was computed from.
-//
-// So what selects an alternative of a conditional generate, or counts a loop
-// generate's blocks out, is no argument: the blocks it built name the unit
-// instead (LRM 27.4, 27.5), and how many blocks of one kind a loop counted is
-// no part of what its object is an object of.
-auto UsedParametersOf(
-    const slang::ast::InstanceBodySymbol& body, const ParameterSet& own,
-    const ParameterEdges& written_from, const UnitNamingPolicy& policy)
-    -> UsedParameters {
-  EveryReference every(own);
-  body.visit(every);
-
-  UsedParameters used;
-  MarkUsedInConstantsAndTypes(
-      used, body, own, written_from, every.nested_bodies);
-  MarkUsedByChildArgs(used, own, written_from, every.children, policy);
-  MarkUsedByDefaultParameters(
-      used, own, written_from, every.read_in_a_nested_element);
-  return used;
+// Whether `param` must hold the value this elaboration settled, whatever the
+// code reads: a class's own, one a design element declared inside this one
+// reads, since that one is handed none, and one fixing the code of a class.
+auto HeldAsSettled(
+    const slang::ast::ParameterSymbol& param, const ReadsOfParameters& reads)
+    -> bool {
+  return DeclaredInAClass(param) ||
+         reads.read_in_a_nested_element.contains(&param) ||
+         FixesTheCodeOfAClass(param, reads);
 }
 
 }  // namespace
-
-auto UnitNamingPolicy::SuppliedParametersOf(
-    const slang::ast::InstanceSymbol& inst) const
-    -> std::span<const slang::ast::ParameterSymbol* const> {
-  return Of(inst).supplied;
-}
-
-auto UnitNamingPolicy::Of(const slang::ast::InstanceSymbol& inst) const
-    -> const PerInstance& {
-  auto cached = per_instance_.find(&inst);
-  if (cached == per_instance_.end()) {
-    cached = per_instance_.emplace(&inst, Classify(inst)).first;
-  }
-  return cached->second;
-}
-
-auto UnitNamingPolicy::OfBody(const slang::ast::InstanceBodySymbol& body) const
-    -> const PerBody& {
-  if (const auto kept = per_body_.find(&body); kept != per_body_.end()) {
-    return kept->second;
-  }
-  PerBody out{.own = ValueParametersOf(body), .written_into = {}, .used = {}};
-  ParameterEdges written_from;
-  for (const slang::ast::ParameterSymbol* param : out.own) {
-    written_from.emplace(param, DependenciesOf(*param, out.own));
-    out.written_into.emplace(param, ParameterSet{});
-  }
-  for (const auto& [param, sources] : written_from) {
-    for (const slang::ast::ParameterSymbol* source : sources) {
-      out.written_into.at(source).insert(param);
-    }
-  }
-  out.used = UsedParametersOf(body, out.own, written_from, *this);
-  return per_body_.emplace(&body, std::move(out)).first->second;
-}
 
 // What a body's text says of its parameters is one answer for every instance
 // that body serves; what an instance adds is which of them it was given a
@@ -498,11 +228,17 @@ auto UnitNamingPolicy::OfBody(const slang::ast::InstanceBodySymbol& body) const
 // the instance is read through, and the rest of the instance itself, a
 // parameter of the one standing for the parameter of the other declared at the
 // same place.
-auto UnitNamingPolicy::Classify(const slang::ast::InstanceSymbol& inst) const
-    -> PerInstance {
+auto Specializations::ParametersOf(const slang::ast::InstanceSymbol& inst) const
+    -> const ParametersOfInstance& {
+  if (const auto kept = per_instance_.find(&inst);
+      kept != per_instance_.end()) {
+    return kept->second;
+  }
   const slang::ast::InstanceBodySymbol& read_through =
       HasBodyOfItsOwn(inst) ? inst.body : *inst.getCanonicalBody();
-  const PerBody& text = OfBody(read_through);
+  const ParameterSet own = ValueParametersOf(read_through);
+  ReadsOfParameters reads(own);
+  read_through.visit(reads);
 
   const auto declared = read_through.getParameters();
   const auto handed = inst.body.getParameters();
@@ -516,89 +252,100 @@ auto UnitNamingPolicy::Classify(const slang::ast::InstanceSymbol& inst) const
     of_instance.emplace(
         value, &handed[at]->symbol.as<slang::ast::ParameterSymbol>());
   }
-  // A value given anywhere is one value the instance is handed. A parameter a
-  // block or a subroutine declares is the read body's own.
+  const auto as_handed = [&](const slang::ast::ParameterSymbol& param) {
+    const auto its = of_instance.find(&param);
+    return its == of_instance.end() ? &param : its->second;
+  };
+  // A value given anywhere is one value the instance is handed rather than one
+  // its declaration writes.
   const auto given_a_value = [&](const slang::ast::ParameterSymbol& param) {
     const auto its = of_instance.find(&param);
     return its == of_instance.end() ? GivenAValue(read_through, param)
                                     : GivenAValue(inst.body, *its->second);
   };
 
-  // A header parameter of the read body stands for the instance's own.
-  const auto as_handed = [&](const slang::ast::ParameterSymbol* param) {
-    const auto its = of_instance.find(param);
-    return its == of_instance.end() ? param : its->second;
-  };
-  const auto all_as_handed = [&](const ParameterSet& of_body) {
-    ParameterSet mapped;
-    for (const slang::ast::ParameterSymbol* param : of_body) {
-      mapped.insert(as_handed(param));
+  // What the code reads, and what each such parameter's own declaration reads
+  // in turn where the object works its value out.
+  ParameterSet needed;
+  std::vector<const slang::ast::ParameterSymbol*> pending(
+      reads.read.begin(), reads.read.end());
+  while (!pending.empty()) {
+    const slang::ast::ParameterSymbol* param = pending.back();
+    pending.pop_back();
+    if (!needed.insert(param).second) continue;
+    if (CanBeSupplied(*param) || param->isFromGenvar() ||
+        given_a_value(*param)) {
+      continue;
     }
-    return mapped;
-  };
-  PerInstance out{
-      .supplied = {},
-      .varying = {},
-      .used = UsedParameters{
-          .in_signature = all_as_handed(text.used.in_signature),
-          .deciding_what_is_built =
-              all_as_handed(text.used.deciding_what_is_built)}};
-  // A top-level instance is built by the design root, which hands nothing, and
-  // is the only instance of its unit, so a value it is given is compiled in.
-  // Every other instance is handed, in the order its body declares them, each
-  // parameter an instantiation may assign that its signature does not use --
-  // assigned or left to its default, which the instantiation says and the unit
-  // evaluates, so whether a value was written does not tell instances apart
-  // (LRM 6.20.1, 23.10). One its body uses names the body as well, and a read
-  // of it is of the value the object was built with.
-  ParameterSet roots;
-  if (!inst.isTopLevel()) {
-    for (const slang::ast::ParameterSymbolBase* base : declared) {
-      const auto* param = base->symbol.as_if<slang::ast::ParameterSymbol>();
-      if (param == nullptr || param->isLocalParam() ||
-          text.used.in_signature.contains(param)) {
-        continue;
-      }
-      out.supplied.push_back(of_instance.at(param));
-      roots.insert(param);
+    for (const slang::ast::ParameterSymbol* read :
+         InitializerReads(*param, own)) {
+      pending.push_back(read);
     }
   }
 
-  // What varies to begin with is what the unit is handed and what a generate
-  // block declares, since a block is built with its own. What a declaration
-  // writes from a value that varies varies with it, and so on; one whose value
-  // comes from elsewhere is not written by its declaration.
-  for (const slang::ast::ParameterSymbol* param : text.own) {
-    if (DeclaredByAGenerateBlock(*param)) roots.insert(param);
+  // A top-level instance is built by the design root, which hands nothing, and
+  // is the only instance of its specialization, so a value it is given is
+  // compiled in.
+  ParametersOfInstance out;
+  const auto supplied_here = [&](const slang::ast::ParameterSymbol& param) {
+    return param.isFromGenvar() ||
+           (CanBeSupplied(param) && !inst.isTopLevel() &&
+            needed.contains(&param) && !HeldAsSettled(param, reads));
+  };
+  for (const slang::ast::ParameterSymbolBase* base : declared) {
+    const auto* param = base->symbol.as_if<slang::ast::ParameterSymbol>();
+    if (param != nullptr && !param->isFromGenvar() && supplied_here(*param)) {
+      out.supplied.push_back(as_handed(*param));
+    }
   }
-  for (const slang::ast::ParameterSymbol* param : Reached(
-           std::move(roots), text.written_into,
-           [&](const slang::ast::ParameterSymbol& param) {
-             return !given_a_value(param);
-           })) {
-    const auto its = of_instance.find(param);
-    out.varying.insert(its == of_instance.end() ? param : its->second);
+  // A parameter whose declaration writes it from a value an object is handed
+  // is worked out by each object, and one written from no such value is the
+  // constant it was settled to. Asked in an order that settles what a
+  // declaration reads before the declaration, by asking on demand.
+  std::unordered_map<const slang::ast::ParameterSymbol*, bool> varies;
+  const auto varying = [&](this const auto& self,
+                           const slang::ast::ParameterSymbol& param) -> bool {
+    if (const auto known = varies.find(&param); known != varies.end()) {
+      return known->second;
+    }
+    varies.emplace(&param, false);
+    bool answer = supplied_here(param);
+    if (!answer && !CanBeSupplied(param) && !given_a_value(param) &&
+        !HeldAsSettled(param, reads)) {
+      for (const slang::ast::ParameterSymbol* read :
+           InitializerReads(param, own)) {
+        if (self(*read)) answer = true;
+      }
+    }
+    varies[&param] = answer;
+    return answer;
+  };
+  for (const slang::ast::ParameterSymbol* param : own) {
+    ParameterValueSource source = ParameterValueSource::kSettledAtElaboration;
+    if (supplied_here(*param)) {
+      source = ParameterValueSource::kSuppliedAtConstruction;
+    } else if (needed.contains(param) && varying(*param)) {
+      source = ParameterValueSource::kComputedAtConstruction;
+    }
+    out.sources.emplace(as_handed(*param), source);
   }
-  return out;
+
+  return per_instance_.emplace(&inst, std::move(out)).first->second;
 }
 
-auto UnitNamingPolicy::ValueSourceOf(
+auto Specializations::SuppliedParametersOf(
+    const slang::ast::InstanceSymbol& inst) const
+    -> std::span<const slang::ast::ParameterSymbol* const> {
+  return ParametersOf(inst).supplied;
+}
+
+auto Specializations::ValueSourceOf(
     const slang::ast::InstanceSymbol& inst,
     const slang::ast::ParameterSymbol& param) const -> ParameterValueSource {
-  const PerInstance& known = Of(inst);
-  if (!known.varying.contains(&param)) {
-    return ParameterValueSource::kFixedByUnit;
-  }
-  if (param.isFromGenvar() || std::ranges::contains(known.supplied, &param)) {
-    return ParameterValueSource::kSuppliedAtConstruction;
-  }
-  return ParameterValueSource::kComputedAtConstruction;
-}
-
-auto UnitNamingPolicy::DecidesWhatIsBuilt(
-    const slang::ast::InstanceSymbol& inst,
-    const slang::ast::ParameterSymbol& param) const -> bool {
-  return Of(inst).used.deciding_what_is_built.contains(&param);
+  const ParametersOfInstance& known = ParametersOf(inst);
+  const auto it = known.sources.find(&param);
+  return it == known.sources.end() ? ParameterValueSource::kSettledAtElaboration
+                                   : it->second;
 }
 
 }  // namespace lyra::lowering::ast_to_hir

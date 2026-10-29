@@ -8,7 +8,11 @@ a unit holds the generate blocks its own instances built, which are part of its 
 instance is lowered into another's unit; and D1 revised 2026-10-25 by
 [a-unit-is-compiled-to-one-body-per-distinct-code](a-unit-is-compiled-to-one-body-per-distinct-code.md):
 every value an instance is handed names its specialization, and which body that is, is found from
-what its code came out as rather than from which values the code reads
+what its code came out as rather than from which values the code reads; and D1 revised 2026-10-28 by
+[a-unit-is-the-specializations-that-publish-alike](a-unit-is-the-specializations-that-publish-alike.md):
+no parameter is an argument of a unit's name, which parameters an object is handed is read off what
+its code reads, and the front end's record of which parameters each constant evaluation read is
+gone; D2 holds of a specialization, whose instances lower alike
 
 ## Context
 

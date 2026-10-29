@@ -11,10 +11,10 @@ rather than per instance.
 This doc defines what a specialization is, when a new one is created, and what stays shared across
 instances that match one. Specialization is also the compile-time **sharing optimization**: the
 correctness baseline is concrete elaboration -- every distinct parameter binding resolved to its own
-concrete artifact -- and a shared specialization is admitted only when distinct concrete forms are
-proven to behave identically under one artifact. Parameter classification is the **eligibility
-filter** for that sharing, never a correctness requirement; where sharing cannot be proven, concrete
-artifacts are retained, which is a correct outcome (an optimization miss, not a failure).
+concrete artifact -- and a shared artifact is admitted only where distinct concrete forms are shown
+alike: a class where they publish alike, a body where their code is equal. Where they cannot be
+shown alike, concrete artifacts are retained, which is a correct outcome (an optimization miss, not
+a failure).
 
 ## The two questions
 
@@ -71,10 +71,10 @@ section.
 
 ## What counts as an argument
 
-An argument of the unit is anything the parent fixes at the instantiation site that changes the
-compiled code. That is the whole test; every other value the parent hands is an argument of the
-specialization alone, which says how the object is built. It is **not** "what was written as a
-parameter", and the difference is not a corner case:
+Everything the parent fixes at the instantiation site is an argument of the specialization. Which of
+them make the unit another class is not decided from the arguments: it is whatever makes what the
+specialization publishes differ, which is found by comparing. An argument is **not** only "what was
+written as a parameter", and the difference is not a corner case:
 
 ```systemverilog
 interface Bus #(parameter int W = 8);
@@ -169,15 +169,13 @@ what the frontend happened to do.
 
 ## Owns
 
-- The definition of a specialization: a compilation unit together with every value its instances are
-  handed; the inputs that change compiled code shape name the unit, and the rest only the
-  specialization within it.
+- The definition of a specialization: a definition together with everything the design fixed for its
+  instances.
 - The correspondence between this model and the frontend's symbol graph, including which of its
   records are inputs here and which are not.
-- The classification of parameters into code-shape-affecting inputs and constructor/config inputs.
-- The rule that specializations whose code comes out alike share one compile-time artifact, shared
-  by every instance of them.
-- The rule for what may vary within one unit vs what forces a new unit.
+- The rule that specializations publishing alike are one unit, and those whose code comes out alike
+  one body, shared by every instance of them.
+- The rule for which parameter reads are fields of the object and which constants.
 
 ## Does Not Own
 
@@ -192,27 +190,23 @@ what the frontend happened to do.
    program has a correct concrete lowering in which each distinct parameter binding is its own
    artifact. A specialization that shares one artifact across distinct bindings is admitted only
    when proven behavior-preserving; absent that proof, the concrete artifacts are retained.
-   Correctness never depends on classification or on proving sharing.
-2. **Specialization is driven by code-shape differences, not by instance count.** A new unit is
-   created only when compiled code shape actually differs between two potential instances. The
-   number of instances that match a specialization does not affect how many specializations exist.
-3. **Parameters are classified as a sharing-eligibility filter.** Every parameter is either a
-   **code-shape-affecting input** (enters the unit's name) or a **constructor/config input** (flows
-   in at runtime construction and names only the specialization). The classification is explicit and
-   stable, and it widens what may share one artifact; it is never a precondition for lowering a
-   program correctly.
-4. **Code-shape-affecting inputs are exactly those that change generated code.** Packed bit widths
-   used in types, type substitutions for `parameter type`, structural decisions that change the set
-   of emitted instructions, and the class each upward hierarchical name's search lands on (LRM 23.8
-   resolves one per instance, so two instances may reach classes of different types) are
-   code-shape-affecting. Nothing else -- in particular not where the instance sits, which is the
-   path or length of the climb rather than the class it lands on.
-5. **Constructor/config inputs do not fork what is compiled.** Initial values, counts that only
-   steer runtime state, enable/disable flags that do not change generated code, and values consumed
-   only by the runtime constructor flow through as inputs. Each set of them names a specialization
-   of the unit, whose objects are built alike -- the same blocks, the same children -- and whose
-   construction table says so, but they produce no additional compiled code: the code they come out
-   as is shared.
+   Correctness never depends on proving sharing.
+2. **Artifacts are driven by what is published and what is compiled, not by instance count.** A new
+   unit is created only where what two specializations publish differs, and a new body only where
+   their code does. The number of instances that match a specialization does not affect how many
+   artifacts exist.
+3. **Nothing classifies a parameter in advance.** A specialization holds every argument; which
+   arguments change the unit is what comparing what specializations publish finds, and which change
+   the code is what comparing their code finds. Neither is a precondition for lowering a program
+   correctly.
+4. **A parameter the code reads as a value is a field of the object.** Where the language requires a
+   constant -- a width, a type, a generate condition -- the front end has settled it in each
+   elaboration, and what is left of a parameter is a read the object answers from what it was built
+   with. So a value that only steers what the code computes -- an initial value, a count, a flag --
+   forks neither the unit nor the code.
+5. **Each set of arguments names a specialization, whose objects are built alike** -- the same
+   blocks, the same children -- and whose construction table says so, while the code it comes out as
+   is shared with every specialization that comes out alike.
 6. **One unit compiles once per distinct body.** A unit is the class its instances' declarations
    settle, and each distinct code its specializations come out as is a body of it, found by
    comparing what they state and compiled once, shared by every specialization and instance it
@@ -239,12 +233,14 @@ what the frontend happened to do.
    loop. The frontend's record that two bodies duplicate each other decides neither half: an
    occurrence it marks is still the specialization its own arguments say, read off the body it
    duplicates only where those arguments make the two one application.
-9. **Producer and consumer derive the identity independently and agree.** A unit's own identity and
-   the identity a parent means when it instantiates that unit are computed from the same inputs by
-   the same function, with no table between them -- which is what lets units compile in any order
-   and in isolation. A name is how that identity crosses the boundary; the identity is what decides
-   whether two applications are the same, and a name that no longer tells two of them apart is a
-   defect in the naming, not a second definition of identity.
+9. **Producer and consumer derive the identity independently and agree.** A specialization's
+   identity and the one a parent means when it instantiates it are computed from the same inputs by
+   the same function, with no table between them, and a unit's is a function of what every
+   specialization publishes, all of which exists before any unit's later stages run -- which is what
+   lets units compile in any order and in isolation after that point. A name is how that identity
+   crosses the boundary; the identity is what decides whether two applications are the same, and a
+   name that no longer tells two of them apart is a defect in the naming, not a second definition of
+   identity.
 
 ## Boundary to Adjacent Layers
 
@@ -257,12 +253,10 @@ what the frontend happened to do.
 
 ## Forbidden Shapes
 
-- A unit keyed on a parameter that does not change compiled code shape.
-- In the optimized steady state, leaving every distinct parameter binding as its own specialization
-  without checking whether the values change code shape. The concrete baseline of invariant 1 does
-  exactly this and is correct; the sharing optimization must not stop there.
-- Using runtime-only state (counter initial values, enable flags, sizes that the runtime constructor
-  handles) as part of the unit's name.
+- A unit keyed on a parameter's value where the value changes nothing the unit publishes.
+- In the optimized steady state, leaving every distinct parameter binding as its own unit without
+  comparing what the bindings publish. The concrete baseline of invariant 1 does exactly this and is
+  correct; the sharing optimization must not stop there.
 - Unit or specialization names derived from instance path, instance ordinal, or instance
   enumeration.
 - Deriving a specialization, or which artifact an occurrence belongs to, from the frontend's record
@@ -276,32 +270,28 @@ what the frontend happened to do.
 - A shared table, registry, or ordinal that both a unit and its instantiator consult to agree on
   which specialization is meant. Agreement comes from computing the same function, never from
   reading the same place.
-- Silently reclassifying a constructor input as a code-shape input to simplify codegen.
-- An input that appears on both axes (code-shape and constructor) simultaneously. Each input has
-  exactly one classification.
 - Forking a specialization per instance, or allowing instance count to drive the number of
   specializations.
-- Rejecting a program because a parameter cannot be classified. The correct fallback is concrete
-  specialization, never rejection.
+- Rejecting a program because two specializations cannot be shown alike. The correct fallback is
+  concrete artifacts, never rejection.
 
 ## Notes / Examples
 
-`parameter int W = 8` used as `logic [W-1:0] data`: W changes the packed width of generated code. W
-is code-shape-affecting. Instances with different W values belong to different units.
+`parameter int W = 8` used as `logic [W-1:0] data`: W changes the packed width of what the unit
+publishes. Instances with different W values belong to different units.
 
-`parameter int INIT = 0` used only as the initial value of a register: INIT does not change
-generated code. INIT is a constructor input. Instances with different INIT values are one unit and
-one body, two specializations of it differing only in constructor inputs.
+`parameter int INIT = 0` used only as the initial value of a register: INIT changes neither what is
+published nor the code. Instances with different INIT values are one unit and one body, two
+specializations of it handed different values.
 
 `parameter int N` controlling a `generate for` that instantiates N children: the compiled
-constructor loops N times, producing N child objects. The compilation unit's compiled code does not
-depend on N. N is a constructor input; the unit compiles once for any N that builds blocks of the
-same kinds.
+constructor loops N times, producing N child objects. Neither what the unit publishes nor its code
+depends on N, so the unit compiles once for any N that builds blocks of the same kinds.
 
-`parameter type T = int` substituting a type parameter: T changes emitted types and operations. T is
-code-shape-affecting. Distinct types produce distinct specializations. "Distinct" follows the
-language: a built-in type, or one built out of others, is told apart by its form, and a type the
-source declares -- a class, an enumeration, a structure or a union, packed or not -- by its
-declaration (LRM 6.22.1, 8.3), so two declared alike are two. Which instance of a design element a
-declaration was elaborated for is no part of it: every instance of a module handing a child a type
-the module declares shares that child's specialization.
+`parameter type T = int` substituting a type parameter: T changes emitted types and operations.
+Distinct types produce distinct units. "Distinct" follows the language: a built-in type, or one
+built out of others, is told apart by its form, and a type the source declares -- a class, an
+enumeration, a structure or a union, packed or not -- by its declaration (LRM 6.22.1, 8.3), so two
+declared alike are two. Which instance of a design element a declaration was elaborated for is no
+part of it: every instance of a module handing a child a type the module declares shares that
+child's specialization.
