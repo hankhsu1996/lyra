@@ -208,7 +208,7 @@ auto BuildObservablePtrExpr(
                   .callee =
                       mir::Direct{.target = support::BuiltinFn::kNetReportsTo},
                   .arguments = {net}},
-          .type = mir::ErasedPointer(unit.types)});
+          .type = mir::WatchedPlace(unit.types)});
 }
 
 // Which part of a place a leaf watches, as a wait's trigger and a report take
@@ -316,7 +316,7 @@ auto BuildEventTriggerExpr(
           mir::Direct{
               .target = support::BuiltinFn::kEventReportsTo,
               .receiver = block.LocalPlace(event.handle, unit.builtins.event)},
-          {}, mir::ErasedPointer(unit.types)));
+          {}, mir::WatchedPlace(unit.types)));
   const LeafPart whole = WholePlace(unit, block);
   return block.exprs.Add(
       mir::Expr{

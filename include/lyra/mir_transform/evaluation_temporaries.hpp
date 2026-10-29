@@ -19,13 +19,16 @@ namespace lyra::mir_transform {
 // value a borrow refers to that the evaluation makes is made in one, since a
 // step ends what it makes and the reference may be read after.
 
-// Makes the evaluation order explicit, whatever size any value is: an operand
-// read out of storage that a later operand of the same node may change or end
-// -- a value the runtime holds rather than plain bits, or the handle the
-// object an operation is entered on is reached through -- is taken into a
-// temporary before that operand runs, so the node is handed what was read
-// rather than what is there by the time it runs (LRM 8.29 reclaims only an
-// object "no longer being used").
+// Makes the evaluation order explicit, whatever size any value is, so no node
+// keeps two operands a target could run in the other order to another answer
+// and every target runs the order the node lists them in. An operand whose
+// value what runs after it could change, or whose side effects could change
+// what a later one evaluates to, is taken ahead of what follows it: into a
+// temporary, copied or moved in as its type allows, and otherwise by what
+// inside it has to run first. A value read out of storage a later operand may
+// change or end is one such, so the node is handed what was read rather than
+// what is there by the time it runs (LRM 8.29 reclaims only an object "no
+// longer being used").
 auto OrderEvaluation(mir::CompilationUnit unit) -> mir::CompilationUnit;
 
 // Which values of one body its frame keeps apart, each held through a box:

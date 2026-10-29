@@ -69,6 +69,31 @@ auto Timed(const Pass& pass, mir::CompilationUnit unit)
   return pass.run(std::move(unit));
 }
 
+// Whether the unit is checked as lowered, after every optional rewrite and on
+// reaching each phase.
+auto VerifiesEachStep(VerifierKind verifier) -> bool {
+  switch (verifier) {
+    case VerifierKind::kEachStep:
+      return true;
+    case VerifierKind::kOutput:
+    case VerifierKind::kNone:
+      return false;
+  }
+  throw InternalError("mir_transform: unknown verifier kind");
+}
+
+// Whether the unit is checked once, as it leaves the last rewrite.
+auto VerifiesOutput(VerifierKind verifier) -> bool {
+  switch (verifier) {
+    case VerifierKind::kOutput:
+      return true;
+    case VerifierKind::kEachStep:
+    case VerifierKind::kNone:
+      return false;
+  }
+  throw InternalError("mir_transform: unknown verifier kind");
+}
+
 }  // namespace
 
 auto OptionalPasses() -> std::vector<std::string> {
@@ -85,7 +110,7 @@ auto Transform(mir::CompilationUnit unit, const PassOptions& options)
     -> mir::CompilationUnit {
   const profiling::TimeTraceScope span(
       "transform MIR", [&] { return unit.name; });
-  if (options.verify_each) {
+  if (VerifiesEachStep(options.verifier)) {
     mir::Verify(unit, "as lowered");
   }
   for (const Step& step : kPipeline) {
@@ -96,7 +121,7 @@ auto Transform(mir::CompilationUnit unit, const PassOptions& options)
                 unit = Timed(pass, std::move(unit));
               }
               unit.phase = conversion.into;
-              if (options.verify_each) {
+              if (VerifiesEachStep(options.verifier)) {
                 mir::Verify(
                     unit,
                     std::format("on reaching {}", PhaseName(conversion.into)));
@@ -107,13 +132,13 @@ auto Transform(mir::CompilationUnit unit, const PassOptions& options)
                 return;
               }
               unit = Timed(optional, std::move(unit));
-              if (options.verify_each) {
+              if (VerifiesEachStep(options.verifier)) {
                 mir::Verify(unit, std::format("after {}", optional.name));
               }
             }},
         step);
   }
-  if (!options.verify_each) {
+  if (VerifiesOutput(options.verifier)) {
     mir::Verify(unit, "as it leaves its rewrites");
   }
   return unit;

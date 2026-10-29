@@ -1009,6 +1009,7 @@ auto MemberStorageKindOf(
               case lir::RuntimeLibraryKind::kDpiLogicChunk:
               case lir::RuntimeLibraryKind::kDpiOpenArray:
               case lir::RuntimeLibraryKind::kDpiOpenArrayHandle:
+              case lir::RuntimeLibraryKind::kWatchedPlace:
               case lir::RuntimeLibraryKind::kTrigger:
               case lir::RuntimeLibraryKind::kObservation:
               case lir::RuntimeLibraryKind::kReadReport:

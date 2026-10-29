@@ -364,6 +364,8 @@ auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
       return mirror(lir::RuntimeLibraryKind::kDpiOpenArray);
     case mir::RuntimeLibraryKind::kDpiOpenArrayHandle:
       return mirror(lir::RuntimeLibraryKind::kDpiOpenArrayHandle);
+    case mir::RuntimeLibraryKind::kWatchedPlace:
+      return mirror(lir::RuntimeLibraryKind::kWatchedPlace);
     case mir::RuntimeLibraryKind::kTrigger:
       return mirror(lir::RuntimeLibraryKind::kTrigger);
     case mir::RuntimeLibraryKind::kObservation:

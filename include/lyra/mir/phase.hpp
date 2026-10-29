@@ -12,8 +12,9 @@ namespace lyra::mir {
 enum class Phase : std::uint8_t {
   // As HIR-to-MIR states it.
   kBuilt,
-  // Every construct is one the backends accept: the order an evaluation needs
-  // is explicit, and no frame holds a value too large for one.
+  // Every construct is one the backends accept: no node keeps two operands a
+  // target could run in the other order to another answer, and no frame holds
+  // a value too large for one.
   kLegalized,
 };
 

@@ -17,6 +17,7 @@
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
 #include "lyra/value/enumeration.hpp"
@@ -146,6 +147,8 @@ auto RuntimeLibraryCppType(mir::RuntimeLibraryKind kind) -> std::string_view {
       return "lyra::value::DpiOpenArray";
     case mir::RuntimeLibraryKind::kDpiOpenArrayHandle:
       return "const svOpenArrayHandle";
+    case mir::RuntimeLibraryKind::kWatchedPlace:
+      return "lyra::runtime::WatchedPlace";
   }
   throw InternalError("backend::cpp: unknown RuntimeLibraryKind");
 }

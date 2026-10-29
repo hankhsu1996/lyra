@@ -55,17 +55,15 @@ before, which a target compiler bounds. An evaluation is a statement's expressio
 choice, or the value a block expression ends with, and its steps run in the order the evaluation
 reads its operands: an operand read or handed to a body before one that takes a step, and that
 computes something, is taken into a temporary of its own first, so holding a value off the stack
-moves no value read ahead of another. So is an operand read out of storage before one that may
-change or end that storage -- a call, a write, a construction, a suspension, a move, a run of steps
--- where what it read is a value the runtime holds rather than plain bits (a handle, a string, a
-container, a structure), and the nearest handle the object an operation is entered on is reached
-through, which keeps the part it lies in. A suspension stands at the top of its statement, so a task
-enable's operand is kept in an evaluation of its own whose value it is. rustc's `as_operand` takes
-every place into a temporary "so that we capture the value of `x` at this time"
-(`builder/expr/as_operand.rs`), leaving one out only for the operand converted last
-(`NeedsTemporary::No`); a value of plain bits is left where it is here, since it is read whole where
-it stands and no later step can end it. A step is a statement, and ends what it makes, so a value a
-borrow refers to that the evaluation makes is made in a temporary of the evaluation as well,
+moves no value read ahead of another. So is an operand read out of storage before one with side
+effects -- a call running code, a write, a suspension -- unless nothing after it can change what it
+read. A suspension stands at the top of its statement, so where a task enable's operand is taken
+into a temporary the statement runs after the steps declaring it: in a block of its own, or, for a
+declaration, just before it in its own block. rustc's `as_operand` takes every place into a
+temporary "so that we capture the value of `x` at this time" (`builder/expr/as_operand.rs`), leaving
+one out only for the operand converted last (`NeedsTemporary::No`); here an operand is left where it
+is unless what runs after it could change it. A step is a statement, and ends what it makes, so a
+value a borrow refers to that the evaluation makes is made in a temporary of the evaluation as well,
 whatever its size -- a place inside such a value held as the value read from it -- since the
 reference may be carried into a temporary a step declares and read after: rustc makes a borrowed
 value a local living to the end of its statement (`builder/expr/as_temp.rs`), and clang keeps one to
@@ -77,33 +75,36 @@ run before it, an order the standard does not fix: it states none for an operato
 it requires only to be evaluated (LRM 11.3.5), and leaves a call's arguments' undefined (LRM 13.5).
 That holds of where the value lies and not of whether it still exists: the object a call is entered
 on is in use until the call takes it, and the standard reclaims only an object "no longer being
-used" (LRM 8.29), which is why the handle reaching it is taken first. The steps run in a block
-expression whose value is made where the evaluation's value is; an execution's answer has no such
-place, being read and stored into its completion, so its steps run in a scope around the return,
-which reads the temporary where it lies. The call a suspension waits on stands under it as it is, so
-each of its arguments is an evaluation of its own. A box handed to a body is built where it is
-handed, since the body owns it from there and nothing reads it here.
+used" (LRM 8.29), which is why it runs last, after the arguments that could end it. The steps run in
+a block expression whose value is made where the evaluation's value is; an execution's answer has no
+such place, being read and stored into its completion, so its steps run in a scope around the
+return, which reads the temporary where it lies. The call a suspension waits on stands under it as
+it is, so where none of its arguments is taken ahead, each is an evaluation of its own. A box handed
+to a body is built where it is handed, since the body owns it from there and nothing reads it here.
 
 **D3. The box is written by two rewrites of the MIR-to-MIR stage, one job each**, after HIR-to-MIR
 has stated every value plainly, and both backends read the rewritten unit. The first makes the
-evaluation order explicit through temporaries -- every operand read before a later one may change
-it, and what a borrow refers to -- and asks no value's size, so a change to one type's size moves
-only where values of it lie. The second decides where every value lies: it plans the frame (D7),
-gives each value it keeps apart that an expression makes and then reads a temporary, in the order
-the first left, and holds every value kept apart -- the temporaries among them, and a value a
-statement discards, made in a box the statement discards with it -- and every large parameter,
-capture and argument handed to a body through a box. Placing a temporary keeps the order through the
-same rule the first rewrite follows -- an operand that computes something and is evaluated before
-one taking a step is taken first -- so the second knows no evaluation order of its own. Both are
-required. Go's compiler divides the work the same way: one pass states evaluation order through
-temporaries (`cmd/compile/internal/walk/order.go`), and a later one decides which variables leave
-the frame. The second asks a type how large a value of it is by one query over MIR types, as rustc's
-passes ask `layout_of`; no MIR node carries a size. As rustc's query and clang's record layout are,
-the answer is worked out once per type and kept with the unit, because a structure's size is worked
-out from every member and is asked at every value of it. A closure is sized by its captures as it
-holds them, as D2 says, so the rewrite that boxes a capture changes no closure's size, and the kept
-answers hold for the unit's whole life. The unit's verification refuses a body that leaves a value
-too large for a frame outside a box.
+evaluation order explicit through temporaries -- every operand a later one could change, and what a
+borrow refers to -- and asks no value's size, so a change to one type's size moves only where values
+of it lie. The second decides where every value lies: it plans the frame (D7), gives each value it
+keeps apart that an expression makes and then reads a temporary, in the order the first left, and
+holds every value kept apart -- the temporaries among them, and a value a statement discards, made
+in a box the statement discards with it -- and every large parameter, capture and argument handed to
+a body through a box. Placing a temporary keeps the order through the same rule the first rewrite
+follows -- an operand that computes something and is evaluated before one taking a step is taken
+first -- so the second knows no evaluation order of its own. That is an obligation of the second
+rewrite and not something a check after it can establish: it keeps how many times each operand runs,
+under which conditions, in which order, when each value is taken, who owns it, where a closure was
+made and when each value ends, and the check of the legalized form proves only that no order is left
+to a target. Both are required. Go's compiler divides the work the same way: one pass states
+evaluation order through temporaries (`cmd/compile/internal/walk/order.go`), and a later one decides
+which variables leave the frame. The second asks a type how large a value of it is by one query over
+MIR types, as rustc's passes ask `layout_of`; no MIR node carries a size. As rustc's query and
+clang's record layout are, the answer is worked out once per type and kept with the unit, because a
+structure's size is worked out from every member and is asked at every value of it. A closure is
+sized by its captures as it holds them, as D2 says, so the rewrite that boxes a capture changes no
+closure's size, and the kept answers hold for the unit's whole life. The unit's verification refuses
+a body that leaves a value too large for a frame outside a box.
 
 **D4. A large value is made in its box, and no body answers a box.** An expression of a large type
 is evaluated into the storage its new-expression allocates, never into storage of its own first.

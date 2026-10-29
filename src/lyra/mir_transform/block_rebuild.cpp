@@ -8,6 +8,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/block_id.hpp"
 #include "lyra/mir/callable_code.hpp"
@@ -74,9 +75,16 @@ auto BlockRebuild::Stmts(std::span<const mir::StmtId> old)
   std::vector<mir::StmtId> ids;
   ids.reserve(old.size());
   for (const mir::StmtId id : old) {
-    ids.push_back(Stmt(id));
+    const mir::StmtId carried = Stmt(id);
+    ids.insert(ids.end(), preceding_.begin(), preceding_.end());
+    preceding_.clear();
+    ids.push_back(carried);
   }
   return ids;
+}
+
+void BlockRebuild::Precede(mir::StmtId stmt) {
+  preceding_.push_back(stmt);
 }
 
 auto BlockRebuild::Add(mir::Expr expr) -> mir::ExprId {
@@ -102,6 +110,11 @@ auto BlockRebuild::To() const -> const mir::Block& {
 
 auto BlockRebuild::Finish(
     std::vector<mir::StmtId> root_stmts) && -> mir::Block {
+  if (!preceding_.empty()) {
+    throw InternalError(
+        "mir_transform: a statement was built to run before one the block "
+        "never placed");
+  }
   to_.root_stmts = std::move(root_stmts);
   return std::move(to_);
 }

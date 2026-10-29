@@ -29,6 +29,7 @@
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/dump.hpp"
+#include "lyra/mir/evaluation_order.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/field.hpp"
@@ -1870,6 +1871,62 @@ auto MadeValueFrameBytes(const CompilationUnit& unit, const Block& block)
   return kept;
 }
 
+// The node `id` of `block` as a report names it, with what it is made of to
+// `depth` levels, so the report says which construct left it.
+auto DescribeWithOperands(const Block& block, ExprId id, int depth)
+    -> std::string {
+  const ExprData& data = block.exprs.Get(id).data;
+  std::string described = Describe(data);
+  if (depth == 0) {
+    return described;
+  }
+  std::vector<std::string> parts;
+  ForEachOperand(data, [&](ExprId operand, OperandUse) {
+    parts.push_back(DescribeWithOperands(block, operand, depth - 1));
+  });
+  if (parts.empty()) {
+    return described;
+  }
+  described += " of (";
+  for (std::size_t at = 0; at < parts.size(); ++at) {
+    described += (at == 0 ? "" : ", ") + parts[at];
+  }
+  return described + ")";
+}
+
+// No node of `block`, or of a block nested in it, keeps an operand a target
+// could run in the other order to another answer, beside what runs after it,
+// so the order every target runs is the one the node states, whatever its own
+// language leaves unordered.
+void VerifyOrderIsExplicit(
+    const Block& block, EvaluationOrder& order, const auto& describe) {
+  for (const ExprId id : block.exprs.Ids()) {
+    const ExprData& data = block.exprs.Get(id).data;
+    std::vector<ExprId> operands;
+    ForEachOperand(
+        data, [&](ExprId operand, OperandUse) { operands.push_back(operand); });
+    const std::vector<OperandOrder> orders =
+        order.OperandsNeedingTemporaries(block, data, operands, {});
+    const auto unordered =
+        std::ranges::find_if(orders, &OperandOrder::needs_temporary);
+    if (unordered == orders.end()) {
+      continue;
+    }
+    const ExprId operand = operands[static_cast<std::size_t>(
+        std::distance(orders.begin(), unordered))];
+    throw InternalError(
+        std::format(
+            "mir verify: {} leaves {} (expression {}) an operand a target "
+            "could run in the other order to another answer, {} -- please "
+            "report this as a bug",
+            describe(), Describe(data), id.value,
+            DescribeWithOperands(block, operand, 3)));
+  }
+  for (const Block& child : block.child_scopes) {
+    VerifyOrderIsExplicit(child, order, describe);
+  }
+}
+
 // No body keeps a value too large for a frame in one, nor values together
 // larger than a frame may keep of them -- the locals it declares and what its
 // expressions make and read: every such value is held through a box.
@@ -2009,6 +2066,10 @@ void VerifyCode(
       break;
     case Phase::kLegalized:
       VerifyFramesHoldNoLargeValue(unit, code, describe);
+      if (code.body.has_value()) {
+        EvaluationOrder order(unit.types, *code.body);
+        VerifyOrderIsExplicit(*code.body, order, describe);
+      }
       break;
   }
   if (!code.body.has_value()) {

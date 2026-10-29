@@ -92,6 +92,7 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
               case mir::RuntimeLibraryKind::kChannelCancellation:
               case mir::RuntimeLibraryKind::kTimeFormat:
               case mir::RuntimeLibraryKind::kTrigger:
+              case mir::RuntimeLibraryKind::kWatchedPlace:
               case mir::RuntimeLibraryKind::kObservation:
               case mir::RuntimeLibraryKind::kReadReport:
               case mir::RuntimeLibraryKind::kWait:

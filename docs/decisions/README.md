@@ -1443,6 +1443,17 @@ the detail lives in the entry itself.
   builders, and a value handed to something of a type it states is of that type. Each rewrite
   walking the unit itself, optional rewrites only in an optimized build, and checking every rewrite
   in every build are rejected.
+- [an-evaluation-runs-its-operands-first-to-last](an-evaluation-runs-its-operands-first-to-last.md)
+  -- a node's operands run as MIR lists them, a write's value before its target and a call's
+  arguments before the object it is entered on, and the legalized phase leaves no two operands a
+  target could run in the other order to another answer -- one whose value what runs after it could
+  change, or whose side effects could change a later one, is taken ahead, whole or by what inside it
+  has to run first -- which the verification checks, so every target runs one order whatever its
+  language leaves open; the test is the shape of the evaluation, every call is taken to run code,
+  and no fact about a library entry decides an order. Each backend ordering for itself, any order
+  the standard allows, stating on each entry what it reads and changes, asking whether two operands
+  conflict, taking every operand into a temporary, leaving an operand that cannot be held where it
+  stands, the receiver first and a write's target first are rejected.
 - [activation-disposition](activation-disposition.md) -- an activation has one authoritative
   disposition (Executing / Runnable / Blocked / Suspended(saved) / Terminal); a wait is a retainable
   pending capability distinct from where the activation is parked, supplied uniformly by each

@@ -13,7 +13,6 @@
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/record_id.hpp"
-#include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/runtime_class.hpp"
@@ -391,6 +390,12 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // reference to that image, and the only one of the two a prototype names.
   kDpiOpenArray,
   kDpiOpenArrayHandle,
+  // LRM 9.4.2 a place a wait watches: `lyra::runtime::WatchedPlace`, where
+  // occurrences there are reported, or the member a reference was bound into
+  // where the place was reached through one, so a wait follows the member as a
+  // force rebinds it (LRM 10.6.2). One word, crossing to the library as that
+  // word.
+  kWatchedPlace,
   // LRM 9.6.2 `disable`, in the three parts it takes: the per-instance
   // `lyra::runtime::CancellationTarget` a scope is named through, carrying the
   // generation an execution captures on entry and `disable` advances; and
@@ -782,6 +787,20 @@ struct ObjectWriteType {
   auto operator==(const ObjectWriteType&) const -> bool = default;
 };
 
+// Whether a value an evaluation made can be held in a temporary that then
+// stands in its place, and how it leaves that temporary.
+enum class Movability : std::uint8_t {
+  // A copy holds the whole of it, so it is read out of the temporary.
+  kCopyable,
+  // It is moved into the temporary and moved out where it is used, since a
+  // copy would be a second owner, or nothing holds one.
+  kMovable,
+  // No temporary stands in for it: it is formed where it is used, and what
+  // inside it has to run first is taken ahead instead, as rustc calls a
+  // value that may not be moved once made immovable.
+  kImmovable,
+};
+
 // A type one MIR compilation unit names, and the vocabulary for asking what it
 // is. The alternatives are a closed set, consumed by visiting them: a visitor
 // that names each one rather than defaulting is what makes an alternative added
@@ -866,6 +885,12 @@ class Type {
   // chandle also is: its value is the pointer it carries, and the pointer is in
   // the holder's own hands.
   [[nodiscard]] auto IsRuntimeStoredValue() const -> bool;
+
+  // Whether a temporary can hold a value of this type and stand in its place,
+  // and whether it is then read out as a copy or moved out, as rustc's builder
+  // consumes a place by `Operand::Copy` where its type is `Copy` and by
+  // `Operand::Move` otherwise.
+  [[nodiscard]] auto ValueMovability() const -> Movability;
 
   // True for a value whose bits lie contiguously (LRM 7.4.1), so a write into
   // some of them lands on those bits where they lie, at the cost of those bits,

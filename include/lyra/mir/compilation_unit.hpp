@@ -33,6 +33,7 @@
 #include "lyra/mir/record_id.hpp"
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/layout.hpp"

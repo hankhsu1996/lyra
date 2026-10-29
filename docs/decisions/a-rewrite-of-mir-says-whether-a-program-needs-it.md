@@ -54,10 +54,10 @@ function's `Legalized` and `Selected` properties: built, as HIR-to-MIR states it
 the order an evaluation needs explicit and no frame holding a value too large for one or more than a
 frame keeps together, which is the form every backend reads. Only the pipeline moves a unit from one
 to the next, and every backend refuses a unit that is not legalized. The unit is checked once as it
-leaves the stage, and, where a build asks, as it arrives, after every optional rewrite and on
-reaching each phase, so a defect is reported against what made it; between the rewrites of one
-conversion a unit is in neither phase, as rustc validates at a phase change and Swift commits a SIL
-stage only once its pipeline is done.
+leaves the stage, unless the command only shows it to a person, and, where a build asks, as it
+arrives, after every optional rewrite and on reaching each phase, so a defect is reported against
+what made it; between the rewrites of one conversion a unit is in neither phase, as rustc validates
+at a phase change and Swift commits a SIL stage only once its pipeline is done.
 
 **D4. Which code a unit holds is stated once, beside the unit.** Every code -- a constructor with
 the nodes it enters its base's constructor with, a class's and the unit's callables, a record's
@@ -169,6 +169,7 @@ conversion that reaches it instead.
 - `a-process-stopping-only-at-its-loop-head-is-called.md` -- the stage and its first rewrite.
 - `a-value-too-large-for-a-frame-is-held-through-a-box.md` -- the two rewrites of the conversion
   into the legalized phase.
+- `an-evaluation-runs-its-operands-first-to-last.md` -- the order the first of them makes explicit.
 - `an-operation-over-many-types-is-built-by-the-lowering.md` -- why every body MIR holds is
   concrete, so no conversion makes one so.
 - `a-select-names-a-position.md` -- what a deferred write restates rather than freezes.

@@ -36,6 +36,13 @@ class BlockRebuild {
   auto Stmt(mir::StmtId old) -> mir::StmtId;
   auto Stmts(std::span<const mir::StmtId> old) -> std::vector<mir::StmtId>;
 
+  // `stmt`, built by the statement rule while it answers a statement of the
+  // block rebuilt from, to run just before that statement in the same block,
+  // so what it declares the statement can name, as rustc places a
+  // temporary's `StorageLive` among the statements of the block whose
+  // statement uses it.
+  void Precede(mir::StmtId stmt);
+
   // A node the rewrite builds, which the block it is built in names.
   auto Add(mir::Expr expr) -> mir::ExprId;
   auto Add(mir::StmtData data) -> mir::StmtId;
@@ -48,6 +55,11 @@ class BlockRebuild {
   auto WithOperandsTaken(
       const mir::ExprData& data,
       const std::function<mir::ExprId(mir::ExprId)>& take) -> mir::ExprData;
+  // `data`, a statement of the block rebuilt from, with its expressions and
+  // blocks carried over as the rules answer them, the statement rule aside, so
+  // a rule building something around a statement can carry the statement
+  // inside it.
+  auto WithOperandsCarried(const mir::StmtData& data) -> mir::StmtData;
 
   [[nodiscard]] auto From() const -> const mir::Block&;
   // The block being built, which names every node added so far, so a builder
@@ -63,13 +75,14 @@ class BlockRebuild {
   auto BlockExprSteps(mir::BlockId old, mir::ExprId value)
       -> std::pair<mir::BlockId, mir::ExprId>;
   auto WithOperandsCarried(const mir::ExprData& data) -> mir::ExprData;
-  auto WithOperandsCarried(const mir::StmtData& data) -> mir::StmtData;
 
   const mir::Block* from_;
   const RebuildRules* rules_;
   mir::Block to_;
   std::vector<std::optional<mir::ExprId>> carried_exprs_;
   std::vector<std::optional<mir::StmtId>> carried_stmts_;
+  // What runs before the statement being answered, placed when it is.
+  std::vector<mir::StmtId> preceding_;
 };
 
 // What a rewrite says about the nodes of a block being rebuilt. Each is asked

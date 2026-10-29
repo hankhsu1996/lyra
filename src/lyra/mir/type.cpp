@@ -259,6 +259,7 @@ auto IsReachedByAddress(RuntimeLibraryKind kind) -> bool {
     case RuntimeLibraryKind::kDpiBitChunk:
     case RuntimeLibraryKind::kDpiLogicChunk:
     case RuntimeLibraryKind::kDpiOpenArrayHandle:
+    case RuntimeLibraryKind::kWatchedPlace:
     case RuntimeLibraryKind::kControlEffect:
     case RuntimeLibraryKind::kObjectDefinition:
     case RuntimeLibraryKind::kScopeInfo:
@@ -306,6 +307,7 @@ auto IsLibraryValue(RuntimeLibraryKind kind) -> bool {
     case RuntimeLibraryKind::kDpiBitChunk:
     case RuntimeLibraryKind::kDpiLogicChunk:
     case RuntimeLibraryKind::kDpiOpenArrayHandle:
+    case RuntimeLibraryKind::kWatchedPlace:
     case RuntimeLibraryKind::kControlEffect:
     case RuntimeLibraryKind::kObjectDefinition:
     case RuntimeLibraryKind::kScopeInfo:
@@ -318,6 +320,60 @@ auto IsLibraryValue(RuntimeLibraryKind kind) -> bool {
     case RuntimeLibraryKind::kDumpEntry:
     case RuntimeLibraryKind::kDumpBlock:
       return false;
+  }
+  throw InternalError("mir: unknown runtime library kind");
+}
+
+// The movability of a value of the library of `kind`. A run
+// of bits is a value and a watched place one word, and a reference a call
+// binds is copied together with the lease keeping what it names, which a local
+// of the frame keeps as the binding would (LRM 13.5.2). A payload built for the
+// call that reads it is moved into the temporary and out of it. A kind the
+// runtime keeps where it was made -- a cancellation target, a timer, the
+// deferred effects of a region, the keeper of violation reports -- is never
+// moved, and is formed where it is used.
+auto LibraryValueMovability(RuntimeLibraryKind kind) -> Movability {
+  switch (kind) {
+    case RuntimeLibraryKind::kBitVec:
+    case RuntimeLibraryKind::kLeasedReference:
+    case RuntimeLibraryKind::kWatchedPlace:
+      return Movability::kCopyable;
+    case RuntimeLibraryKind::kEnumeration:
+    case RuntimeLibraryKind::kPrintItem:
+    case RuntimeLibraryKind::kPrintLiteralItem:
+    case RuntimeLibraryKind::kPrintValueItem:
+    case RuntimeLibraryKind::kFormatSpec:
+    case RuntimeLibraryKind::kFormatArg:
+    case RuntimeLibraryKind::kChannelCancellation:
+    case RuntimeLibraryKind::kTimeFormat:
+    case RuntimeLibraryKind::kTrigger:
+    case RuntimeLibraryKind::kObservation:
+    case RuntimeLibraryKind::kReadReport:
+    case RuntimeLibraryKind::kWait:
+    case RuntimeLibraryKind::kHierarchySegment:
+    case RuntimeLibraryKind::kDpiBitBuffer:
+    case RuntimeLibraryKind::kDpiLogicBuffer:
+    case RuntimeLibraryKind::kDpiBitChunk:
+    case RuntimeLibraryKind::kDpiLogicChunk:
+    case RuntimeLibraryKind::kDpiOpenArray:
+    case RuntimeLibraryKind::kDpiOpenArrayHandle:
+    case RuntimeLibraryKind::kControlEffect:
+    case RuntimeLibraryKind::kObjectDefinition:
+    case RuntimeLibraryKind::kScopeInfo:
+    case RuntimeLibraryKind::kScopeCallable:
+    case RuntimeLibraryKind::kClassObjectInfo:
+    case RuntimeLibraryKind::kInterfaceRow:
+    case RuntimeLibraryKind::kConstructionTable:
+    case RuntimeLibraryKind::kInstantiation:
+    case RuntimeLibraryKind::kGeneratePlaces:
+    case RuntimeLibraryKind::kDumpEntry:
+    case RuntimeLibraryKind::kDumpBlock:
+      return Movability::kMovable;
+    case RuntimeLibraryKind::kCancellationTarget:
+    case RuntimeLibraryKind::kTimer:
+    case RuntimeLibraryKind::kDeferredEffects:
+    case RuntimeLibraryKind::kViolationReportKeeper:
+      return Movability::kImmovable;
   }
   throw InternalError("mir: unknown runtime library kind");
 }
@@ -515,6 +571,92 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           [](const WildcardIndexType&) { return false; },
           [](const EmptyType&) { return false; },
           [](const VoidType&) { return false; }});
+}
+
+auto Type::ValueMovability() const -> Movability {
+  // One arm per MIR type and no catch-all, so a type added later fails to
+  // compile here until it says how a temporary can stand in its place.
+  return Visit(
+      Overloaded{
+          // A value of the program, whoever holds it holding the whole of it.
+          [](const IntegralType&) { return Movability::kCopyable; },
+          [](const EnumType&) { return Movability::kCopyable; },
+          [](const UnpackedArrayType&) { return Movability::kCopyable; },
+          [](const DynamicArrayType&) { return Movability::kCopyable; },
+          [](const QueueType&) { return Movability::kCopyable; },
+          [](const AssociativeArrayType&) { return Movability::kCopyable; },
+          [](const TupleType&) { return Movability::kCopyable; },
+          [](const RecordType&) { return Movability::kCopyable; },
+          [](const StringType&) { return Movability::kCopyable; },
+          [](const AnyType&) { return Movability::kCopyable; },
+          [](const RealType&) { return Movability::kCopyable; },
+          [](const ShortRealType&) { return Movability::kCopyable; },
+          [](const ManagedRefType&) { return Movability::kCopyable; },
+          [](const WeakManagedRefType&) { return Movability::kCopyable; },
+          [](const ChandleType&) { return Movability::kCopyable; },
+          [](const MachineBoolType&) { return Movability::kCopyable; },
+          [](const MachineIntType&) { return Movability::kCopyable; },
+          [](const MachineFloatType&) { return Movability::kCopyable; },
+          [](const MachineFunctionType&) { return Movability::kCopyable; },
+          // The address of a string's characters, which lasts as long as the
+          // string does.
+          [](const MachineCStringType&) { return Movability::kCopyable; },
+          [](const RuntimeLibraryType& t) {
+            return LibraryValueMovability(t.kind);
+          },
+
+          // A reference is the address of what it refers to, whether a
+          // frame's, one the library reads and writes through, or one to a
+          // facility the runtime holds for the whole run, and so is a pointer
+          // that owns nothing or shares what it points to. One that owns is
+          // moved, since a copy would be a second owner.
+          [](const ReferenceType&) { return Movability::kCopyable; },
+          [](const VariableRefType&) { return Movability::kCopyable; },
+          [](const RuntimeEffectsType&) { return Movability::kCopyable; },
+          [](const FilesType&) { return Movability::kCopyable; },
+          [](const DiagnosticType&) { return Movability::kCopyable; },
+          [](const PointerType& t) {
+            switch (t.ownership) {
+              case PointerOwnership::kShared:
+              case PointerOwnership::kBorrowed:
+                return Movability::kCopyable;
+              case PointerOwnership::kUnique:
+                return Movability::kMovable;
+            }
+            throw InternalError("mir: unknown pointer ownership");
+          },
+
+          // A value made only to be handed on, which nothing holds a second
+          // copy of.
+          [](const ErasedValueType&) { return Movability::kMovable; },
+          [](const ErasedCallableType&) { return Movability::kMovable; },
+
+          // A value no temporary stands in for: one whose identity is where it
+          // was made -- a closure, whose captures' references were handed out
+          // there, an object -- one standing for storage elsewhere, a write in
+          // progress or what designates part of one, and a hold of the
+          // runtime's.
+          // A sequence of machine values is built where it is kept.
+          [](const MachineArrayType&) { return Movability::kImmovable; },
+          [](const ReferenceWrapperType&) { return Movability::kImmovable; },
+          [](const VectorType&) { return Movability::kImmovable; },
+          [](const DriverType&) { return Movability::kImmovable; },
+          [](const CoroutineType&) { return Movability::kImmovable; },
+          [](const ObjectType&) { return Movability::kImmovable; },
+          [](const RuntimeClassType&) { return Movability::kImmovable; },
+          [](const ClosureType&) { return Movability::kImmovable; },
+          [](const ObservableType&) { return Movability::kImmovable; },
+          [](const ResolvedType&) { return Movability::kImmovable; },
+          [](const OpenWriteType&) { return Movability::kImmovable; },
+          [](const DesignationType&) { return Movability::kImmovable; },
+          [](const BitsReferenceType&) { return Movability::kImmovable; },
+          [](const ObjectWriteType&) { return Movability::kImmovable; },
+          [](const SampledHistoryType&) { return Movability::kImmovable; },
+          [](const EvaluationAttemptsType&) { return Movability::kImmovable; },
+          [](const LoopBlocksType&) { return Movability::kImmovable; },
+          [](const WildcardIndexType&) { return Movability::kImmovable; },
+          [](const EmptyType&) { return Movability::kImmovable; },
+          [](const VoidType&) { return Movability::kImmovable; }});
 }
 
 auto Type::BitsAreWrittenInPlace() const -> bool {

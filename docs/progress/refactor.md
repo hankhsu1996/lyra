@@ -3147,17 +3147,13 @@ source, or not yet tried.
       unit is a class of its own per value where a realization would do. Target: the front end
       records, with each evaluation, the declaration it was made for.
 
-- [ ] R246 -- The two backends can run one program's operands in different orders. MIR states the
-      operands of an operator and the arguments of a call in a list, and the execution backend runs
-      them first to last, while the C++ backend writes them as one C++ expression, whose operands
-      C++ leaves unsequenced, so the host compiler picks: a sum of two function calls each recording
-      that it ran, and a call of two such arguments, record first-then-second on the execution
-      backend and on the C++ backend built by clang, and second-then-first on the C++ backend built
-      by GCC. The standard fixes neither order (LRM 11.3.5 requires only that each operand is
-      evaluated, and 13.5 leaves an argument list's order undefined), so neither answer is wrong;
-      what is wrong is one MIR meaning two programs. Target: MIR states the order its operands run
-      in, and the C++ backend writes what C++ would leave unsequenced in a form that runs it in that
-      order. Not blocked.
+- [x] R246 -- One program runs its operands in one order on every target: first to last, a write's
+      value before its target, a call's arguments before the object it is entered on, a read taking
+      what its storage holds when it runs. The rewrite making the evaluation order explicit leaves
+      no node with two operands a target could run in the other order to another answer, and the
+      check of the form every backend reads refuses one that does, so neither backend, nor the
+      compiler building the C++ one, chooses an order. Every call is taken to run code, so no fact
+      about a library entry decides an order.
 
 - [ ] R249 -- On the execution backend a local the compiler makes, holding a value the library keeps
       -- a string, a queue, the run of bits a streaming operator joins -- is given the storage a

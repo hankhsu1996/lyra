@@ -1,12 +1,12 @@
 #include "lyra/runtime/simulation_entry.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <memory>
-#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -81,8 +81,8 @@ auto RunSimulation(Runtime& runtime) -> int {
 
 constexpr std::string_view kOutOfStack =
     "error: the simulation ran out of stack\n"
-    "note: a subroutine of the design calls itself, or others, more deeply "
-    "than the stack this program was started with allows\n";
+    "note: what the design was running needed more stack than the program "
+    "was started with; start it with a larger one\n";
 
 constexpr std::string_view kLicensesOption = "lyra+licenses";
 

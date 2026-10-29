@@ -3266,7 +3266,7 @@ auto lyra_rt_event_occurrences(const void* event, void* evaluation)
 }
 
 auto lyra_rt_event_reports_to(const void* event) -> void* {
-  return lyra::runtime::EventReportsTo(Read<ObjectRef>(event));
+  return lyra::runtime::EventReportsTo(Read<ObjectRef>(event)).Word();
 }
 
 auto lyra_rt_receive_departure() -> void* {

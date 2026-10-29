@@ -186,19 +186,21 @@ auto FreezeTarget(
 }
 
 // What a deferred update writes, and where it writes it, once both are frozen
-// into a closure's environment: the navigation to the place's owner is
-// evaluated where the statement is reached and captured as a reference, the
-// descent above it is restated over that capture with its coordinates
-// snapshotted, and the value is snapshotted. LRM 10.4.2 settles both there,
-// however much later the update runs.
+// into a closure's environment: the value is snapshotted, then the navigation
+// to the place's owner is evaluated where the statement is reached and
+// captured as a reference, and the descent above it is restated over that
+// capture with its coordinates snapshotted. LRM 10.4.2 settles both there,
+// however much later the update runs, in an order it leaves open, and the
+// value runs first as it does for every other write.
 auto FreezeShareInto(
     UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
     ClosureBuilder& closure, const Share& share_in_outer) -> Share {
+  const mir::ExprId value = SnapshotValueIntoClosure(
+      unit_lowerer, outer_frame, closure, share_in_outer.value);
   return Share{
       .place = FreezeTarget(
           unit_lowerer, outer_frame, closure, share_in_outer.place),
-      .value = SnapshotValueIntoClosure(
-          unit_lowerer, outer_frame, closure, share_in_outer.value)};
+      .value = value};
 }
 
 // The update runs after the stretch that reached the statement returns, and it

@@ -803,6 +803,7 @@ auto CallArranger::ConstructionOf(
               case lir::RuntimeLibraryKind::kDpiBitChunk:
               case lir::RuntimeLibraryKind::kDpiLogicChunk:
               case lir::RuntimeLibraryKind::kDpiOpenArrayHandle:
+              case lir::RuntimeLibraryKind::kWatchedPlace:
               case lir::RuntimeLibraryKind::kControlEffect:
               case lir::RuntimeLibraryKind::kObservation:
               case lir::RuntimeLibraryKind::kReadReport:
