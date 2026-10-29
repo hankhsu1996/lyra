@@ -300,31 +300,39 @@ auto Specializations::ParametersOf(const slang::ast::InstanceSymbol& inst) const
   }
   // A parameter whose declaration writes it from a value an object is handed
   // is worked out by each object, and one written from no such value is the
-  // constant it was settled to. Asked in an order that settles what a
-  // declaration reads before the declaration, by asking on demand.
-  std::unordered_map<const slang::ast::ParameterSymbol*, bool> varies;
-  const auto varying = [&](this const auto& self,
-                           const slang::ast::ParameterSymbol& param) -> bool {
-    if (const auto known = varies.find(&param); known != varies.end()) {
-      return known->second;
+  // constant it was settled to. Found by spreading from each handed value to
+  // the declarations reading it, and from those to the ones reading them.
+  std::unordered_map<
+      const slang::ast::ParameterSymbol*,
+      std::vector<const slang::ast::ParameterSymbol*>>
+      read_by;
+  std::vector<const slang::ast::ParameterSymbol*> spreading;
+  for (const slang::ast::ParameterSymbol* param : own) {
+    if (supplied_here(*param)) spreading.push_back(param);
+    if (CanBeSupplied(*param) || given_a_value(*param) ||
+        HeldAsSettled(*param, reads)) {
+      continue;
     }
-    varies.emplace(&param, false);
-    bool answer = supplied_here(param);
-    if (!answer && !CanBeSupplied(param) && !given_a_value(param) &&
-        !HeldAsSettled(param, reads)) {
-      for (const slang::ast::ParameterSymbol* read :
-           InitializerReads(param, own)) {
-        if (self(*read)) answer = true;
-      }
+    for (const slang::ast::ParameterSymbol* read :
+         InitializerReads(*param, own)) {
+      read_by[read].push_back(param);
     }
-    varies[&param] = answer;
-    return answer;
-  };
+  }
+  ParameterSet varying;
+  while (!spreading.empty()) {
+    const slang::ast::ParameterSymbol* param = spreading.back();
+    spreading.pop_back();
+    if (!varying.insert(param).second) continue;
+    if (const auto readers = read_by.find(param); readers != read_by.end()) {
+      spreading.insert(
+          spreading.end(), readers->second.begin(), readers->second.end());
+    }
+  }
   for (const slang::ast::ParameterSymbol* param : own) {
     ParameterValueSource source = ParameterValueSource::kSettledAtElaboration;
     if (supplied_here(*param)) {
       source = ParameterValueSource::kSuppliedAtConstruction;
-    } else if (needed.contains(param) && varying(*param)) {
+    } else if (needed.contains(param) && varying.contains(param)) {
       source = ParameterValueSource::kComputedAtConstruction;
     }
     out.sources.emplace(as_handed(*param), source);
