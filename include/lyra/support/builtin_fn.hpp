@@ -167,6 +167,13 @@ enum class BuiltinFn : std::uint16_t {
   // an index holding no entry yields the value stated, which is what a
   // literal's `default:` asks for.
   kAssocWithDefault,
+  // LRM 7.9.11: whether the array acted on was given a value its absent indexes
+  // read, as a machine boolean, and the value they read, which is the element
+  // type's default where none was given (LRM 7.8.6). An array built out of
+  // another's entries carries that value with them, as an assignment of the
+  // whole array does.
+  kAssocHasStatedDefault,
+  kAssocAbsentValue,
   // The accesses and the removal above as an associative array takes them (LRM
   // 7.8, 7.9.3): by the key the source wrote, a value of the type it was
   // written in, where every other container is reached by a position. A key
@@ -306,6 +313,16 @@ enum class BuiltinFn : std::uint16_t {
   // first member's; an array's each element's. A type with operations of its
   // own answers it with its own body, and no value the library holds does.
   kDeclaredDefault,
+  // A value of a type holding a bounded queue below its outermost dimension, as
+  // a value
+  // of the same type with no queue in it bounded, and back (LRM 6.22.2 e, 7.6,
+  // 7.10.5). Every type equivalent to it has that unbounded form, so a value is
+  // assigned across types that differ only in their queues' bounds by taking it
+  // into that form and out of it again. Into it nothing is lost; out of it each
+  // queue keeps what its own bound admits. The first is asked of a value and
+  // answers its unbounded form; the second is asked of the type it builds.
+  kToBoundFree,
+  kFromBoundFree,
   // LRM 20.8.1. ceil(log2) of the operand read as unsigned; $clog2(0) is 0.
   // A constant argument is folded downstream, never in lowering.
   kClog2,
@@ -1319,20 +1336,16 @@ enum class BuiltinFn : std::uint16_t {
   // array has is the type the call answers with.
   kByteArrayFromString,
   kByteArrayFromBits,
-  // LRM 7.6: one unpacked array kind taking another's elements, one entry per
-  // destination kind. Each takes the source alone: what the destination's
-  // declaration states -- a fixed-size array's count, a queue's bound (LRM
-  // 7.10.5) -- is the type the call answers at. The elements themselves cross
-  // unchanged, because the clause admits the assignment only where the element
-  // types are equivalent.
+  // LRM 7.6: an unpacked array taking another array's elements, one entry per
+  // destination kind, the source of any of the three kinds -- a queue among
+  // them, which is how a queue takes another of a different bound. Each takes
+  // the source alone: what the destination's declaration states -- a
+  // fixed-size array's count, a queue's bound (LRM 7.10.5) -- is the type the
+  // call answers at. The elements cross as they are, so the call answers at a
+  // type whose element type is the source's.
   kDynamicArrayFromArray,
   kUnpackedArrayFromArray,
   kQueueFromArray,
-  // A queue holding what another queue holds, as far as the bound the type it
-  // answers at declares admits (LRM 7.10.5): the store boundary brings a
-  // differently-bounded source to the destination's. A factory on the queue
-  // type it builds, since that type is what states the bound.
-  kConformBound,
   // A dynamic array sized at run time: `new[N]` and `new[N](src)` (LRM 7.5.1).
   // Each is named because the argument list does not tell them apart -- a
   // `new` copying a source and an element list both carry two operands -- so a

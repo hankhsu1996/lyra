@@ -109,6 +109,17 @@ class BasicAssociativeArray {
     return stated_default_ != nullptr ? stated_default_ : elem_.Default();
   }
 
+  // Whether a `default:` clause gave the array its own value for an absent key
+  // (LRM 7.9.11), rather than leaving it the element type's.
+  [[nodiscard]] auto HasStatedDefault() const -> bool {
+    return stated_default_ != nullptr;
+  }
+
+  // A copy of what a read of an absent key answers with, built in `out`.
+  void AbsentValue(void* out) const {
+    elem_.Copy(Miss(), out);
+  }
+
   // LRM 7.9.11: this array's entries in one whose absent keys read a copy of
   // `stated_default`, and whose entries a later write allocates start as one
   // (LRM 7.8.7), as a literal's `default:` clause states.

@@ -16,6 +16,7 @@
 #include "lyra/hir/real_bits.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_definition.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/real_literal.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -51,9 +52,14 @@ namespace {
 auto BuildElementList(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId array_type,
     std::vector<mir::ExprId> elements) -> mir::ExprId {
-  const mir::TypeId list_type = mir::MachineArrayOf(
-      unit.types, RequiredContainerElementType(unit, array_type),
-      elements.size());
+  const mir::TypeId element_type =
+      RequiredContainerElementType(unit, array_type);
+  // Each item is assigned to the element it lands in (LRM 10.8, 10.9.1).
+  for (mir::ExprId& element : elements) {
+    element = AtType(unit, block, element, element_type);
+  }
+  const mir::TypeId list_type =
+      mir::MachineArrayOf(unit.types, element_type, elements.size());
   return block.exprs.Add(
       mir::Expr{
           .data = mir::CompositeExpr{.parts = std::move(elements)},
@@ -463,29 +469,6 @@ auto BuildDefaultValueFromHir(
       unit_lowerer.Unit(), block, unit_lowerer.TranslateType(hir_type));
 }
 
-namespace {
-
-// The three containers that hold their elements as an ordered run, which is
-// what makes a value of one of them cross into another as it stands.
-auto IsArrayContainerType(const mir::Type& type) -> bool {
-  return type.Is<mir::UnpackedArrayType>() ||
-         type.Is<mir::DynamicArrayType>() || type.Is<mir::QueueType>();
-}
-
-}  // namespace
-
-auto CrossesArrayContainerKinds(
-    const mir::Type& source, const mir::Type& destination) -> bool {
-  const bool same_kind =
-      (source.Is<mir::UnpackedArrayType>() &&
-       destination.Is<mir::UnpackedArrayType>()) ||
-      (source.Is<mir::DynamicArrayType>() &&
-       destination.Is<mir::DynamicArrayType>()) ||
-      (source.Is<mir::QueueType>() && destination.Is<mir::QueueType>());
-  return IsArrayContainerType(source) && IsArrayContainerType(destination) &&
-         !same_kind;
-}
-
 auto RequiredContainerElementType(
     const mir::CompilationUnit& unit, mir::TypeId container) -> mir::TypeId {
   const std::optional<mir::TypeId> element =
@@ -575,10 +558,22 @@ auto BuildAssociativeConstructionCall(
       mir::Type{mir::TupleType{.elements = {key_type, element_type}}});
   std::vector<mir::ExprId> tuple_ids;
   tuple_ids.reserve(entries.size());
+  // Each index and each value is assigned to where it lands (LRM 7.9.11,
+  // 10.8), and so is a `default:`, which the front end leaves unconverted
+  // since LRM 10.8 leaves a default correspondence out. A wildcard index is
+  // kept at the type it was written in (LRM 7.8.1), so it lands as it is.
+  const bool index_kept_as_written =
+      unit.types.Get(key_type).Is<mir::WildcardIndexType>();
   for (const auto& [key_id, value_id] : entries) {
     tuple_ids.push_back(block.exprs.Add(
         mir::Expr{
-            .data = mir::CompositeExpr{.parts = {key_id, value_id}},
+            .data =
+                mir::CompositeExpr{
+                    .parts =
+                        {index_kept_as_written
+                             ? key_id
+                             : AtType(unit, block, key_id, key_type),
+                         AtType(unit, block, value_id, element_type)}},
             .type = tuple_type}));
   }
   const mir::TypeId entries_type =
@@ -602,7 +597,8 @@ auto BuildAssociativeConstructionCall(
                   mir::Direct{
                       .target = support::BuiltinFn::kAssocWithDefault,
                       .receiver = block.exprs.Add(std::move(built))},
-              .arguments = {*stated_default}},
+              .arguments = {ConvertToType(
+                  unit, block, *stated_default, element_type)}},
       .type = assoc_type};
 }
 

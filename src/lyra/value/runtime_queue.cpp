@@ -59,15 +59,6 @@ auto RuntimeQueue::ElementType() const -> const value::ElementType& {
   return Core().Element().ElementType();
 }
 
-auto RuntimeQueue::ConformBound(const QueueType& type) const -> RuntimeQueue {
-  std::vector<const void*> items;
-  items.reserve(Count());
-  for (std::size_t i = 0; i < Count(); ++i) {
-    items.push_back(ElementAt(i));
-  }
-  return FromElements(type, items);
-}
-
 auto RuntimeQueue::Count() const -> std::size_t {
   return core_.has_value() ? core_->Count() : 0;
 }

@@ -6299,10 +6299,12 @@ auto lyra_rt_queue_from_literal(
                lyra::runtime::ReplicateHandles(unit, count)));
 }
 
-auto lyra_rt_queue_conform_bound(
-    const void* queue, const void* answer_type, void* out) -> void* {
+auto lyra_rt_queue_queue_from_array(
+    const void* source, const void* answer_type, void* out) -> void* {
   return Emplace(
-      out, Read<RuntimeQueue>(queue).ConformBound(QueueTypeAt(answer_type)));
+      out, RuntimeQueue::FromElements(
+               QueueTypeAt(answer_type),
+               lyra::runtime::ElementHandles(Read<RuntimeQueue>(source))));
 }
 
 auto lyra_rt_laidout_queue_from_array(
@@ -6479,6 +6481,16 @@ auto lyra_rt_assocarray_assoc_with_default(
     const void* array, const void* stated_default, void* out) -> void* {
   return Emplace(
       out, Read<RuntimeAssociativeArray>(array).WithDefault(stated_default));
+}
+
+auto lyra_rt_assocarray_assoc_has_stated_default(const void* array) -> bool {
+  return Read<RuntimeAssociativeArray>(array).HasStatedDefault();
+}
+
+auto lyra_rt_assocarray_assoc_absent_value(const void* array, void* out)
+    -> void* {
+  Read<RuntimeAssociativeArray>(array).AbsentValue(out);
+  return out;
 }
 
 auto lyra_rt_assocarray_element(

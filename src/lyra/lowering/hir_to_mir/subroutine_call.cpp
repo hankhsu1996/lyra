@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <concepts>
 #include <cstddef>
-#include <cstdint>
 #include <optional>
 #include <span>
 #include <string>
@@ -718,9 +717,11 @@ auto EmitBoundActual(
       auto lowered = lowerer.LowerExpr(actual, frame);
       if (!lowered) return std::unexpected(std::move(lowered.error()));
       const mir::ExprId value = block.exprs.Add(*std::move(lowered));
+      // LRM 13.5.1, 10.8: an input passes its value into the formal as an
+      // assignment to it would.
       return TakenAsAny(lowerer.Owner(), type, actual.type)
                  ? MadeAny(lowerer.Owner(), block, actual.type, value, type)
-                 : value;
+                 : AtType(unit, block, value, type);
     }
     case hir::ParamDirection::kOutput:
     case hir::ParamDirection::kInOut:

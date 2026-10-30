@@ -1037,7 +1037,7 @@ void BindValueEntries(const auto& add) {
       &lyra_rt_queue_unpacked_array_from_array);
   add("lyra_rt_byte_array_from_string", &lyra_rt_byte_array_from_string);
   add("lyra_rt_queue_from_literal", &lyra_rt_queue_from_literal);
-  add("lyra_rt_queue_conform_bound", &lyra_rt_queue_conform_bound);
+  add("lyra_rt_queue_queue_from_array", &lyra_rt_queue_queue_from_array);
   add("lyra_rt_laidout_queue_from_array", &lyra_rt_laidout_queue_from_array);
   add("lyra_rt_dynarray_queue_from_array", &lyra_rt_dynarray_queue_from_array);
   add("lyra_rt_queue_element", &lyra_rt_queue_element);
@@ -1072,6 +1072,10 @@ void BindValueEntries(const auto& add) {
       &lyra_rt_assocarray_from_entries_wildcard);
   add("lyra_rt_assocarray_assoc_with_default",
       &lyra_rt_assocarray_assoc_with_default);
+  add("lyra_rt_assocarray_assoc_has_stated_default",
+      &lyra_rt_assocarray_assoc_has_stated_default);
+  add("lyra_rt_assocarray_assoc_absent_value",
+      &lyra_rt_assocarray_assoc_absent_value);
   add("lyra_rt_assocarray_element", &lyra_rt_assocarray_element);
   add("lyra_rt_assocarray_element_mut", &lyra_rt_assocarray_element_mut);
   add("lyra_rt_assocarray_exists", &lyra_rt_assocarray_exists);

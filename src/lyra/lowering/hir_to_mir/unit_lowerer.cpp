@@ -32,6 +32,7 @@
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_prototype.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
+#include "lyra/lowering/hir_to_mir/bound_free_conversion.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/class_code.hpp"
@@ -43,6 +44,7 @@
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
+#include "lyra/lowering/hir_to_mir/equivalence_identity.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/pattern_rendering.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -948,11 +950,18 @@ void UnitLowerer::PublishTypeOperations() {
   // step.
   for (std::uint32_t i = 0; i < unit_.types.size(); ++i) {
     const mir::TypeId type{.value = i};
-    if (!mir::OperationsAreStatedPerUnit(unit_.types.Get(type))) {
-      continue;
+    if (mir::OperationsAreStatedPerUnit(unit_.types.Get(type))) {
+      for (mir::TypeOperation& stated : ArrayOperationsOf(*this, type)) {
+        unit_.type_operations.push_back(std::move(stated));
+      }
     }
-    for (mir::TypeOperation& stated : ArrayOperationsOf(*this, type)) {
-      unit_.type_operations.push_back(std::move(stated));
+    // An array holding a bounded queue below its outermost dimension is
+    // assigned across the types equivalent to it through the form of it with
+    // no queue bounded, whatever its kind (LRM 7.6, 7.10.5).
+    if (HoldsBoundedQueueBelow(unit_.types, type)) {
+      for (mir::TypeOperation& stated : BoundFreeConversionsOf(*this, type)) {
+        unit_.type_operations.push_back(std::move(stated));
+      }
     }
   }
   // An element type whose operations the unit states has its default among

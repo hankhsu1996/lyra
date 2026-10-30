@@ -10,13 +10,16 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/lowering/hir_to_mir/equivalence_identity.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/integral_constant_folding.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/value_operation.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -178,14 +181,141 @@ auto MakeBytesFromTextCall(
       .type = destination};
 }
 
+// Whether `type` is an unpacked array of any of the four kinds.
+auto IsUnpackedArrayKind(const mir::Type& type) -> bool {
+  return type.Is<mir::UnpackedArrayType>() ||
+         type.Is<mir::DynamicArrayType>() || type.Is<mir::QueueType>() ||
+         type.Is<mir::AssociativeArrayType>();
+}
+
+// Whether the two arrays are of one kind at their outermost dimension.
+auto AreOneKind(const mir::Type& a, const mir::Type& b) -> bool {
+  return (a.Is<mir::UnpackedArrayType>() && b.Is<mir::UnpackedArrayType>()) ||
+         (a.Is<mir::DynamicArrayType>() && b.Is<mir::DynamicArrayType>()) ||
+         (a.Is<mir::QueueType>() && b.Is<mir::QueueType>()) ||
+         (a.Is<mir::AssociativeArrayType>() &&
+          b.Is<mir::AssociativeArrayType>());
+}
+
+// The type of the array kind `array` is -- its count, its bound, its index
+// type -- holding elements of `element`.
+auto WithElement(
+    const mir::TypePool& types, mir::TypeId array, mir::TypeId element)
+    -> mir::TypeId {
+  const mir::Type& held = types.Get(array);
+  if (const auto* fixed = held.As<mir::UnpackedArrayType>()) {
+    return types.Intern(
+        mir::Type{mir::UnpackedArrayType{
+            .element_type = element, .count = fixed->count}});
+  }
+  if (held.Is<mir::DynamicArrayType>()) {
+    return types.Intern(
+        mir::Type{mir::DynamicArrayType{.element_type = element}});
+  }
+  if (const auto* queue = held.As<mir::QueueType>()) {
+    return types.Intern(
+        mir::Type{mir::QueueType{
+            .element_type = element, .max_bound = queue->max_bound}});
+  }
+  RefuseConversion("an array of another element type");
+}
+
+// The entry that builds an array of `destination`'s kind out of another
+// array's elements as they are (LRM 7.6).
+auto FromArrayEntry(const mir::Type& destination) -> support::BuiltinFn {
+  if (destination.Is<mir::UnpackedArrayType>()) {
+    return support::BuiltinFn::kUnpackedArrayFromArray;
+  }
+  if (destination.Is<mir::DynamicArrayType>()) {
+    return support::BuiltinFn::kDynamicArrayFromArray;
+  }
+  if (destination.Is<mir::QueueType>()) {
+    return support::BuiltinFn::kQueueFromArray;
+  }
+  RefuseConversion("an array of another kind");
+}
+
+// The operation `type`'s body answers, asked of `operand`, as a value of
+// `result`: the body borrows what it is asked of.
+auto CallBoundFreeOperation(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    support::BuiltinFn operation, mir::TypeId type, mir::ExprId operand,
+    mir::TypeId result) -> mir::Expr {
+  const mir::ExprId borrowed = mir::Borrow(unit, block, operand);
+  const bool asked_of_the_value = support::ReachesAReceiver(operation);
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::Direct{
+                      .target =
+                          mir::TypeOperationTarget{
+                              .type = type, .answers = operation},
+                      .receiver = asked_of_the_value
+                                      ? std::optional<mir::ExprId>{borrowed}
+                                      : std::nullopt},
+              .arguments = asked_of_the_value ? std::vector<mir::ExprId>{}
+                                              : std::vector{borrowed}},
+      .type = result};
+}
+
+// LRM 7.6: an array assigned to an array of another type, which the front end
+// admits only where the two differ in kind at their outermost dimension or in
+// the bounds of the queues they hold, every element type below being
+// equivalent (LRM 6.22.2). The outermost kind changes first, the elements
+// crossing as they are, so what is left differs only in bounds. Then a queue
+// keeps what its own bound admits (LRM 7.10.5), and where queues below the
+// outermost dimension are bounded the value passes through the form with no
+// queue bounded, which every type equivalent to it shares, each element built
+// afresh on the way out.
+auto ToArrayOfAnotherType(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand,
+    mir::TypeId destination) -> mir::Expr {
+  const mir::TypeId source = block.exprs.Get(operand).type;
+  if (source == destination) {
+    return block.exprs.Get(operand);
+  }
+  const mir::Type& from = unit.types.Get(source);
+  const mir::Type& to = unit.types.Get(destination);
+  const mir::TypeId element = *from.ContainerElementType();
+  if (!AreOneKind(from, to)) {
+    const mir::TypeId reshaped = WithElement(unit.types, destination, element);
+    const mir::Expr built =
+        BuildArrayFromArrayCall(FromArrayEntry(to), operand, reshaped);
+    if (reshaped == destination) {
+      return built;
+    }
+    return ToArrayOfAnotherType(
+        unit, block, block.exprs.Add(built), destination);
+  }
+  if (element == *to.ContainerElementType()) {
+    return BuildArrayFromArrayCall(FromArrayEntry(to), operand, destination);
+  }
+  const mir::TypeId bound_free = WithoutQueueBounds(unit.types, source);
+  if (bound_free != WithoutQueueBounds(unit.types, destination)) {
+    RefuseConversion("an array of a type not equivalent to it");
+  }
+  const mir::ExprId freed = block.exprs.Add(
+      HoldsBoundedQueueBelow(unit.types, source)
+          ? CallBoundFreeOperation(
+                unit, block, support::BuiltinFn::kToBoundFree, source, operand,
+                bound_free)
+          : ToArrayOfAnotherType(unit, block, operand, bound_free));
+  if (!HoldsBoundedQueueBelow(unit.types, destination)) {
+    return ToArrayOfAnotherType(unit, block, freed, destination);
+  }
+  return CallBoundFreeOperation(
+      unit, block, support::BuiltinFn::kFromBoundFree, destination, freed,
+      destination);
+}
+
 auto ToFixedSizeArray(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand,
     mir::TypeId destination) -> mir::Expr {
   const mir::Type& source = unit.types.Get(block.exprs.Get(operand).type);
   const auto& array = unit.types.Get(destination).Get<mir::UnpackedArrayType>();
-  if (source.Is<mir::DynamicArrayType>() || source.Is<mir::QueueType>()) {
-    return BuildArrayFromArrayCall(
-        support::BuiltinFn::kUnpackedArrayFromArray, operand, destination);
+  if (IsUnpackedArrayKind(source)) {
+    return ToArrayOfAnotherType(unit, block, operand, destination);
   }
   if (IsArrayOfBytes(unit, array)) {
     if (source.Is<mir::StringType>()) {
@@ -203,34 +333,15 @@ auto ToFixedSizeArray(
   RefuseConversion("a fixed-size unpacked array");
 }
 
-auto ToDynamicArray(
+// A dynamic array, a queue or an associative array is assigned only another
+// array (LRM 7.6, 7.9.9).
+auto ToContainer(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand,
     mir::TypeId destination) -> mir::Expr {
-  const mir::Type& source = unit.types.Get(block.exprs.Get(operand).type);
-  if (source.Is<mir::UnpackedArrayType>() || source.Is<mir::QueueType>()) {
-    return BuildArrayFromArrayCall(
-        support::BuiltinFn::kDynamicArrayFromArray, operand, destination);
+  if (!IsUnpackedArrayKind(unit.types.Get(block.exprs.Get(operand).type))) {
+    RefuseConversion("an array");
   }
-  RefuseConversion("a dynamic array");
-}
-
-auto ToQueue(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand,
-    mir::TypeId destination) -> mir::Expr {
-  const mir::Type& source = unit.types.Get(block.exprs.Get(operand).type);
-  if (source.Is<mir::UnpackedArrayType>() ||
-      source.Is<mir::DynamicArrayType>()) {
-    return BuildArrayFromArrayCall(
-        support::BuiltinFn::kQueueFromArray, operand, destination);
-  }
-  // LRM 7.10.5: the bound is a declared property of the destination variable,
-  // so a queue assigned another's contents keeps only what its own bound
-  // admits.
-  if (source.Is<mir::QueueType>()) {
-    return BuildArrayFromArrayCall(
-        support::BuiltinFn::kConformBound, operand, destination);
-  }
-  RefuseConversion("a queue");
+  return ToArrayOfAnotherType(unit, block, operand, destination);
 }
 
 // LRM 8.14: an object of a subclass is also an object of its base class, so a
@@ -299,17 +410,17 @@ auto BuildValueConversion(
             return ToFixedSizeArray(unit, block, operand_id, dst_type);
           },
           [&](const mir::DynamicArrayType&) {
-            return ToDynamicArray(unit, block, operand_id, dst_type);
+            return ToContainer(unit, block, operand_id, dst_type);
           },
           [&](const mir::QueueType&) {
-            return ToQueue(unit, block, operand_id, dst_type);
+            return ToContainer(unit, block, operand_id, dst_type);
+          },
+          [&](const mir::AssociativeArrayType&) {
+            return ToContainer(unit, block, operand_id, dst_type);
           },
           [&](const mir::ManagedRefType&) {
             return ToClassHandle(unit, block, operand_id, dst_type);
           },
-          // LRM 7.9.9: an associative array is assigned only another of a
-          // compatible type and the same index type, which is its own type.
-          [&](const mir::AssociativeArrayType& t) { return none(t); },
           [&](const mir::WildcardIndexType& t) { return none(t); },
           [&](const mir::AnyType& t) { return none(t); },
           [&](const mir::WeakManagedRefType& t) { return none(t); },

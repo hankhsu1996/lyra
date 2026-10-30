@@ -1533,6 +1533,8 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kAssocMinIndex:
     case support::BuiltinFn::kAssocMaxIndex:
     case support::BuiltinFn::kAssocWithDefault:
+    case support::BuiltinFn::kAssocHasStatedDefault:
+    case support::BuiltinFn::kAssocAbsentValue:
       return NamedByValue{.realized = kForAssociativeArrays};
 
     // LRM 7.6 assignment between unpacked array kinds, one entry per
@@ -1541,6 +1543,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kUnpackedArrayFromArray:
       return NamedByValue{.realized = kForDynamicArraysAndQueues};
     case support::BuiltinFn::kQueueFromArray:
+      return NamedByValue{.realized = kForSequences};
     case support::BuiltinFn::kElementSlice:
     case support::BuiltinFn::kAssignElementSlice:
       return NamedByValue{.realized = kForArraysOfFixedExtent};
@@ -1568,7 +1571,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kPopBack:
     case support::BuiltinFn::kPushFront:
     case support::BuiltinFn::kPushBack:
-    case support::BuiltinFn::kConformBound:
     case support::BuiltinFn::kDeleteIndex:
       return NamedByValue{.realized = kForQueues};
 
@@ -1646,6 +1648,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kDominating:
     case support::BuiltinFn::kFilledLike:
     case support::BuiltinFn::kTakePositions:
+    // A value holding a bounded queue below its outermost dimension, taken
+    // into the form of its type with no queue bounded, which the unit's body
+    // for the type answers whatever the outer kind.
+    case support::BuiltinFn::kToBoundFree:
       return NamedByValue{.realized = {}};
     case support::BuiltinFn::kMergeConditional:
       return NamedByValue{.realized = kForSequences};
@@ -1653,6 +1659,9 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // generated body answers and nothing the library holds does.
     case support::BuiltinFn::kDeclaredDefault:
     case support::BuiltinFn::kPositionCount:
+    // A value built out of the form of its type with no queue bounded, which
+    // the unit's body for the type it builds answers.
+    case support::BuiltinFn::kFromBoundFree:
       return NamedByResult{.realized = {}};
 
     // The factories. Each builds a value out of operands that are the material

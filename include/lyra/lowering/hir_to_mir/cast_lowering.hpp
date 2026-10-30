@@ -13,7 +13,9 @@ namespace lyra::lowering::hir_to_mir {
 // cross-precision real reshape is a conversion into the destination type; the
 // real-integral bridge reads the source out as a machine integer and lands it
 // in the destination type; an integral value's bytes and an unpacked byte
-// array lift to a string; an operand whose representation already is the
+// array lift to a string; an array is taken into an array of another type
+// element by element (LRM 7.6), each queue in it keeping what its own bound
+// admits (LRM 7.10.5); an operand whose representation already is the
 // destination's is returned unchanged. The (source, destination) type pair
 // fully drives the choice; this helper is the one place that makes it, and a
 // pair the language defines no conversion for is an internal error.
@@ -41,7 +43,10 @@ namespace lyra::lowering::hir_to_mir {
 // `block`. This is the single entry every semantic store routes its right-hand
 // side through to reach the destination's full declared representation, for
 // every value family -- the store boundary never decides per type whether a
-// conversion applies.
+// conversion applies. Every other assignment-like context (LRM 10.8) routes
+// its value through it too, since the front end states no conversion between
+// two equivalent types, which may still differ in their queues' bounds (LRM
+// 6.22.2 e).
 [[nodiscard]] auto ConvertToType(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
     mir::TypeId dst_type) -> mir::ExprId;

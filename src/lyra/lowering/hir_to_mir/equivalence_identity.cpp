@@ -3,7 +3,6 @@
 #include <format>
 #include <optional>
 #include <string>
-#include <variant>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
@@ -33,10 +32,9 @@ auto EquivalenceIdentityOf(const UnitLowerer& unit_lowerer, hir::TypeId type)
   // written (LRM 6.22.2 c), which is what the type this unit translates it to
   // states and nothing more.
   const auto integral = [&] {
-    const mir::IntegralType& translated =
-        unit_lowerer.Unit()
-            .types.Get(unit_lowerer.TranslateType(type))
-            .Get<mir::IntegralType>();
+    const auto& translated = unit_lowerer.Unit()
+                                 .types.Get(unit_lowerer.TranslateType(type))
+                                 .Get<mir::IntegralType>();
     return std::format(
         "{}{} [{}:0]",
         translated.state_kind == mir::IntegralStateKind::kFourState ? "logic"
@@ -135,12 +133,12 @@ auto EquivalenceIdentityOf(const UnitLowerer& unit_lowerer, hir::TypeId type)
           [&](const hir::VoidType&) { return no_value("'void'"); }});
 }
 
-auto WithoutQueueBounds(mir::TypePool& types, mir::TypeId type) -> mir::TypeId {
+auto WithoutQueueBounds(const mir::TypePool& types, mir::TypeId type)
+    -> mir::TypeId {
   const auto element = [&](mir::TypeId of) {
     return WithoutQueueBounds(types, of);
   };
-  // Held by value, since interning the parts may move the pool.
-  const mir::Type held = types.Get(type);
+  const mir::Type& held = types.Get(type);
   if (const auto* array = held.As<mir::UnpackedArrayType>()) {
     return types.Intern(
         mir::Type{mir::UnpackedArrayType{
@@ -165,6 +163,13 @@ auto WithoutQueueBounds(mir::TypePool& types, mir::TypeId type) -> mir::TypeId {
             .key_type = element(array->key_type)}});
   }
   return type;
+}
+
+auto HoldsBoundedQueueBelow(const mir::TypePool& types, mir::TypeId type)
+    -> bool {
+  const std::optional<mir::TypeId> element =
+      types.Get(type).ContainerElementType();
+  return element.has_value() && *element != WithoutQueueBounds(types, *element);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -44,6 +44,13 @@ class UnitLowerer;
     UnitLowerer& lowerer, mir::RecordId record, mir::TypeId overlay,
     std::span<const mir::TypeId> members) -> std::vector<mir::RecordMethod>;
 
+// How a body answering an operation of a type takes each value it is asked
+// about, the value itself and every other operand: by a read-only reference,
+// as Rust's comparison operators borrow theirs, so a value is read where it
+// lies rather than copied in.
+[[nodiscard]] auto ReferenceTo(
+    const mir::CompilationUnit& unit, mir::TypeId type) -> mir::TypeId;
+
 // A body for every operation on a whole value the fixed-size unpacked array
 // `type` has (LRM 7.4.2), each element's in turn, which the unit naming the
 // type states as its own.

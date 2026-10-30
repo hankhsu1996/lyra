@@ -2932,8 +2932,10 @@ void VerifyDeclaredEntries(const CompilationUnit& unit, std::string_view when) {
 // Every element type of an array -- fixed-size, dynamic, associative or a
 // queue -- has its default stated, since the code holding the array asks for
 // it by the element type alone (LRM 7.4.5); a type whose operations are stated
-// per unit has its other operations stated, and no other type has any. A pair
-// stated twice leaves which body answers to chance.
+// per unit has its other operations stated; an array of any kind may have its
+// passage into and out of the form of it with no queue bounded stated (LRM
+// 7.6, 7.10.5); and no other type has any. A pair stated twice leaves which
+// body answers to chance.
 void VerifyTypeOperations(const CompilationUnit& unit, std::string_view when) {
   const auto refuse = [&](TypeId type, std::string_view defect) {
     throw InternalError(
@@ -2949,9 +2951,17 @@ void VerifyTypeOperations(const CompilationUnit& unit, std::string_view when) {
   for (const TypeId element : elements) {
     is_element[element.value] = true;
   }
+  const auto is_bound_free_passage = [&](const TypeOperation& stated) {
+    return unit.types.Get(stated.type).ContainerElementType().has_value() &&
+           (stated.answers ==
+                support::ValueOperation{support::BuiltinFn::kToBoundFree} ||
+            stated.answers ==
+                support::ValueOperation{support::BuiltinFn::kFromBoundFree});
+  };
   std::set<std::pair<TypeId, support::ValueOperation>> answered;
   for (const TypeOperation& stated : unit.type_operations) {
     if (!OperationsAreStatedPerUnit(unit.types.Get(stated.type)) &&
+        !is_bound_free_passage(stated) &&
         (stated.answers != default_value || !is_element[stated.type.value])) {
       refuse(
           stated.type,

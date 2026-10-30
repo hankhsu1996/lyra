@@ -660,13 +660,8 @@ TEST(RuntimeQueue, HoldsTheBoundItsTypeStates) {
   held.PushBack(&values[2]);
   EXPECT_EQ(held.Count(), 2U);
 
-  // A queue of another type keeps what that type's bound admits.
-  const RuntimeQueue all = RuntimeQueue::FromElements(unbounded, items);
-  EXPECT_EQ(all.Count(), 3U);
-  const RuntimeQueue conformed = all.ConformBound(bounded);
-  EXPECT_EQ(conformed.Count(), 2U);
-  EXPECT_EQ(static_cast<const Element*>(conformed.ElementAt(1))->ToInt64(), 2);
-  EXPECT_EQ(held.ConformBound(unbounded).Count(), 2U);
+  // A queue of a type with no bound keeps every element it is built over.
+  EXPECT_EQ(RuntimeQueue::FromElements(unbounded, items).Count(), 3U);
 }
 
 }  // namespace

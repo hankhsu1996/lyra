@@ -114,6 +114,11 @@ class RuntimeAssociativeArray {
   // (LRM 7.8.7), as a literal's `default:` clause states.
   [[nodiscard]] auto WithDefault(const void* stated_default) const
       -> RuntimeAssociativeArray;
+  // Whether the array was given a value of its own for an absent index, and a
+  // copy of the value such an index reads either way, built in `out` (LRM
+  // 7.8.6, 7.9.11).
+  [[nodiscard]] auto HasStatedDefault() const -> bool;
+  void AbsentValue(void* out) const;
 
   // LRM 7.9.1: the entry count, and as an SV `int`.
   [[nodiscard]] auto Count() const -> std::size_t;

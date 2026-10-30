@@ -197,17 +197,6 @@ auto CallOf(
           .type = result});
 }
 
-// How a body answering an operation of a type takes each value it is asked
-// about, the value itself and every other operand: by a read-only reference,
-// as Rust's comparison operators borrow theirs, so a value is read where it
-// lies rather than copied in.
-auto ReferenceTo(const mir::CompilationUnit& unit, mir::TypeId type)
-    -> mir::TypeId {
-  return unit.types.Intern(
-      mir::Type{mir::ReferenceType{
-          .referent = type, .mutability = mir::Mutability::kReadOnly}});
-}
-
 // A call of the body `target` names, borrowing what it is asked about.
 auto OwnOperationCall(
     const mir::CompilationUnit& unit, mir::Block& block,
@@ -2048,6 +2037,13 @@ auto OperationsHadByUnion(
 }
 
 }  // namespace
+
+auto ReferenceTo(const mir::CompilationUnit& unit, mir::TypeId type)
+    -> mir::TypeId {
+  return unit.types.Intern(
+      mir::Type{mir::ReferenceType{
+          .referent = type, .mutability = mir::Mutability::kReadOnly}});
+}
 
 auto BuildBitIdentity(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId lhs,

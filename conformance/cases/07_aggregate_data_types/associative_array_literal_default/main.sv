@@ -4,8 +4,10 @@
 // num(), and reading an index that has none yields it in place of the value
 // Table 7-1 would otherwise give. Allocating an entry for such an index, which
 // a read-modify-write does before it operates, starts it from that default.
-// Assigning one associative array to another clears the target of its entries
-// and then copies the source's (LRM 7.9.11, 7.8.7, 7.9.9).
+// The default is a value of the element type, so a string literal given as
+// the default of an array of strings is that string. Assigning one associative
+// array to another clears the target of its entries and then copies the
+// source's (LRM 7.9.11, 7.8.7, 7.9.9).
 module Top;
   int declared [string] = '{"k": 5, default: 77};
   int declared_present;
@@ -24,6 +26,9 @@ module Top;
   int counter_after_increment;
   int counter_missing;
   int counter_count;
+
+  string named [int];
+  string named_missing;
 
   int source [string];
   int target [string];
@@ -50,6 +55,9 @@ module Top;
     counter_after_increment = counters[5];
     counter_missing = counters[9];
     counter_count = counters.num();
+
+    named = '{default: "x"};
+    named_missing = named[4];
 
     source["p"] = 7;
     target["old"] = 1;
@@ -89,6 +97,9 @@ module Top;
       $fatal(1, "counter_missing was %0d, expected 1", counter_missing);
     if (counter_count !== 1)
       $fatal(1, "counter_count was %0d, expected 1", counter_count);
+
+    if (named_missing != "x")
+      $fatal(1, "named_missing was \"%s\", expected \"x\"", named_missing);
 
     if (exists_overwritten !== 0)
       $fatal(1, "exists_overwritten was %0d, expected 0", exists_overwritten);

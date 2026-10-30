@@ -17,6 +17,7 @@
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/concurrent_assertion.hpp"
 #include "lyra/lowering/hir_to_mir/covergroup_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
@@ -823,9 +824,15 @@ auto ProcessLowerer::BuildReturnPayload(
                 block.exprs.Add(LowerProceduralVarRefExpr(*this, frame, var)),
             .descent = {}});
   };
+  // LRM 13.4.1, 10.8: a returned value is assigned to the function's result.
   if (result_var_.has_value()) {
     components.push_back(
-        explicit_value.has_value() ? *explicit_value : read(*result_var_));
+        explicit_value.has_value()
+            ? ConvertToType(
+                  unit, block, *explicit_value,
+                  owner_->TranslateType(
+                      HirBody().procedural_vars.Get(*result_var_).type))
+            : read(*result_var_));
   }
   for (const hir::ProceduralVarId output : output_vars_) {
     components.push_back(read(output));
