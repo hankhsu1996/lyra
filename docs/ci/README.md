@@ -82,18 +82,18 @@ once, and a run on this machine reserves as many cores as it uses.
 
 Each moment answers a different question, and the answers are not interchangeable.
 
-| Moment     | Question                        | Command                                      |
-| ---------- | ------------------------------- | -------------------------------------------- |
-| edit loop  | did that edit do what I meant   | one case, or the binary on one file directly |
-| pre-commit | will this land green            | `bazel test //...`                           |
-| merge gate | is `main` still correct         | `bazel test //...`                           |
-| merge gate | does it still build optimized   | `bazel build -c opt //...`                   |
-| merge gate | does it still build under GCC   | `bazel build //... --config=gcc`             |
-| nightly    | is the C++ path still correct   | `bazel test //... --config=nightly`          |
-| nightly    | is any of it reading freed bits | `bazel test //... --config=asan`             |
-| nightly    | how far does a real design get  | `bazel test //tests:external_design_tests`   |
-| nightly    | does the suite stand alone      | `bazel run //conformance/runner:conformance` |
-| each merge | how much more work does it make | `instruction-count.yml`, base against head   |
+| Moment     | Question                            | Command                                      |
+| ---------- | ----------------------------------- | -------------------------------------------- |
+| edit loop  | did that edit do what I meant       | one case, or the binary on one file directly |
+| pre-commit | will this land green                | `bazel test //...`                           |
+| merge gate | is `main` still correct             | `bazel test //...`                           |
+| merge gate | does it still build optimized       | `bazel build -c opt //...`                   |
+| merge gate | does it still build under GCC       | `bazel build //... --config=gcc`             |
+| nightly    | is the C++ path still correct       | `bazel test //... --config=nightly`          |
+| nightly    | is any of it reading freed bits     | `bazel test //... --config=asan`             |
+| nightly    | how far does a real design get      | `bazel test //tests:external_design_tests`   |
+| nightly    | what does each configuration answer | `bazel run //conformance/runner:conformance` |
+| each merge | how much more work does it make     | `instruction-count.yml`, base against head   |
 
 Pre-commit and the merge gate run the same tests, and that is the whole point: a green run before
 committing means "this lands green" only while the two sets are identical. Any change that makes the
@@ -434,14 +434,14 @@ newly stops at its check is read against the standard before it is called either
 the suite's and was written for another simulator. The jobs are the cases the test itself lists, so
 a design the suite gains is run without this file changing.
 
-`conformance-verilator-nightly.yml` builds the conformance suite's runner with nothing of Lyra and
-holds the runner machine's own Verilator to a few cases, the suite's check of its own helper among
-them. It **gates its own run** on the harness alone: the runner exits non-zero only where it could
-not hand a case to the tool or write the run's results, so red means the suite no longer finds its
-cases, helpers or runfiles when it stands alone, never that Verilator gave a verdict. The run's
-results, as JSON, are kept as an artifact of the workflow run. It is a nightly and not a check on a
-pull request because how long it takes is Verilator's and the host compiler's, which no merge waits
-on.
+`conformance-nightly.yml` judges every case of the conformance suite on each configuration a record
+is published for: Lyra on its C++ path, Lyra on its LLVM path, and a pinned Verilator release, each
+a job of its own that writes the run as a JSON record and keeps it as an artifact. The Verilator job
+builds nothing of Lyra, so it also asks that the suite stands alone. It **gates its own run** on the
+harness alone: the runner exits non-zero only where it could not hand a case to the tool or write
+the run's results, so red means the suite or its harness failed on that configuration, never that a
+tool gave a verdict. It is a nightly and not a check on a pull request because how long it takes is
+the tools' and the host compiler's over the whole suite, which no merge waits on.
 
 `benchmark-nightly.yml` builds every case under `tests/benchmark/` on each backend and times it
 beside Verilator on the same sources, giving each tool the amount of work it needs to reach the same

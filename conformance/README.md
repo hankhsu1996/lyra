@@ -331,7 +331,12 @@ suite, named by `--tool`, with the tool's own binaries named or found on PATH:
 ```bash
 bazel run //conformance/runner:conformance -- --tool verilator 09_processes/always_comb_combinational_value
 bazel run //conformance/runner:conformance -- --tool lyra --lyra ./bazel-bin/lyra
+bazel run //conformance/runner:conformance -- --tool lyra --lyra ./bazel-bin/lyra --build-option --backend --build-option llvm
 ```
+
+`--build-option`, once per argument, is an option every case's build is given, as the tool's own
+command line takes it. A tool held under two such sets is two configurations, and each run's record
+names the options it was made under.
 
 It prints a verdict per case and the evidence for each that does not conform, and decides nothing
 else: whether a tool is known to give a verdict is that tool's own business, as Lyra's records are.

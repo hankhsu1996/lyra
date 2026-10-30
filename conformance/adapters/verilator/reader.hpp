@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "conformance/framework/case.hpp"
 #include "conformance/framework/execution.hpp"
@@ -22,6 +23,13 @@ struct Tool {
   // the standard header Verilator ships for it.
   std::filesystem::path c_compiler;
   std::filesystem::path standard_headers;
+  // The C++ compiler Verilator's own build compiles and links a program with,
+  // as its installed build file names it, or nothing where that file names
+  // none.
+  std::optional<std::filesystem::path> cxx;
+  // Options every case's build is given beyond what the reader asks for
+  // itself.
+  std::vector<std::string> build_options;
 };
 
 // Reads the reports in one stream of a program Verilator built. Verilator
@@ -32,12 +40,13 @@ void ReadReports(std::string_view stream, framework::Observation& seen);
 
 // Verilator and the C compiler named, or the ones on PATH where a name is not
 // given, with the directory of the standard header that Verilator says it
-// ships. They are the machine's own installs and never build inputs. Why it
-// could not be found where it could not.
+// ships and the C++ compiler its build file names, building every case with
+// `build_options`. They are the machine's own installs and never build inputs.
+// Why it could not be found where it could not.
 auto FindTool(
     std::optional<std::filesystem::path> exe,
-    std::optional<std::filesystem::path> c_compiler)
-    -> std::expected<Tool, std::string>;
+    std::optional<std::filesystem::path> c_compiler,
+    std::vector<std::string> build_options) -> std::expected<Tool, std::string>;
 
 // Builds a case's program with Verilator and runs it, reading both as an
 // observation.

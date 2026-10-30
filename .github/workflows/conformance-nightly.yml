@@ -1,0 +1,137 @@
+name: Conformance Suite (Nightly)
+
+# Every case of the conformance suite, judged on each configuration a record is
+# published for: Lyra on each of its two paths, and Verilator. Each job writes
+# the run as a JSON record and keeps it as an artifact of the workflow run, so
+# what each configuration answers can be read and compared without running it
+# again. A configuration is a tool and the options every case's build is
+# given, so Lyra's two paths are two records and never one pass rate.
+#
+# The runner prints a verdict per case and exits non-zero only where it could
+# not hand a case to the tool or could not write the run's results, so a red
+# job means the suite or its harness failed on that configuration, never that
+# the tool gave a verdict. The Verilator job builds nothing of Lyra, so it also
+# asks that the suite works standing alone.
+#
+# A record is written once every case has been judged, so a job is given the
+# six hours a hosted runner allows, well past what the suite takes, rather than
+# a budget a slow night would cut short with no record at all.
+#
+# It runs on a schedule and never on a pull request: how long it takes is the
+# tools' and the host compiler's, over the whole suite, which no pull request
+# should wait on.
+
+on:
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+jobs:
+  # Lyra is built from the commit being judged, so that commit is its revision
+  # as well as the suite's. Its programs are linked with the host C++ compiler,
+  # which is the one the setup below installs.
+  lyra:
+    name: Run the Suite on Lyra (${{ matrix.path }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      # Each configuration's record stands on its own, so one failing does not
+      # cost the others theirs.
+      fail-fast: false
+      matrix:
+        include:
+          - path: cpp
+            options: ''
+          - path: llvm
+            options: '--build-option --backend --build-option llvm'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.18.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-${{ github.job }}-${{ hashFiles('MODULE.bazel') }}
+          repository-cache: true
+
+      - name: Setup Clang
+        uses: ./.github/actions/setup-clang
+
+      # `dev` runs the actions remotely and brings the programs back, since
+      # they run here; a checkout with no key builds them on the runner.
+      # A case still going after five minutes is one that will not end, the
+      # limit the merge gate holds each case to, and it is stopped there. Each
+      # process may hold 4 GiB of address space, so four cases at once stay
+      # inside the runner's memory and one that grows past it is that case's
+      # failure rather than the end of the job and of its record.
+      - name: Run
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          REMOTE_FLAGS=""
+          if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
+            REMOTE_FLAGS="--config=dev --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+          fi
+          bazel build //:lyra //conformance/runner:conformance $REMOTE_FLAGS
+          bazel run //conformance/runner:conformance $REMOTE_FLAGS -- \
+            --tool lyra --lyra "$GITHUB_WORKSPACE/bazel-bin/lyra" \
+            ${{ matrix.options }} \
+            --jobs 4 --time-limit 300 --address-limit 4096 \
+            --output "$GITHUB_WORKSPACE/conformance-results.json" \
+            --suite-revision "$GITHUB_SHA" --tool-revision "$GITHUB_SHA"
+
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: conformance-results-lyra-${{ matrix.path }}
+          path: conformance-results.json
+          if-no-files-found: warn
+
+  # Verilator is a pinned release, so one night's record compares with the
+  # next on the same tool. The runner image's own package, 5.020, does not end
+  # a run once no event remains, which most cases rely on.
+  verilator:
+    name: Run the Suite on Verilator
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.18.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-${{ github.job }}-${{ hashFiles('MODULE.bazel') }}
+          repository-cache: true
+
+      - name: Setup Verilator
+        uses: veryl-lang/setup-verilator@v1
+        with:
+          version: '5.052'
+
+      # `dev` runs the actions remotely and brings the runner back, since it
+      # is run here; a checkout with no key builds it on the runner instead.
+      # The limits are the Lyra jobs', for the same reasons.
+      - name: Run
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          REMOTE_FLAGS=""
+          if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
+            REMOTE_FLAGS="--config=dev --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+          fi
+          bazel run //conformance/runner:conformance $REMOTE_FLAGS -- \
+            --tool verilator --jobs 4 --time-limit 300 --address-limit 4096 \
+            --output "$GITHUB_WORKSPACE/conformance-results.json" \
+            --suite-revision "$GITHUB_SHA"
+
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: conformance-results-verilator
+          path: conformance-results.json
+          if-no-files-found: warn

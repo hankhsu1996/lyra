@@ -52,8 +52,8 @@ constexpr std::string_view kUsage =
     "usage: {} --tool lyra --lyra <binary>\n"
     "       {} --tool verilator [--verilator <binary>] [--cc <compiler>]\n"
     "  common: [--jobs N] [--time-limit SECONDS] [--address-limit MiB]\n"
-    "          [--output FILE] [--suite-revision REV] [--tool-revision REV]\n"
-    "          [case id...]\n";
+    "          [--build-option ARG]... [--output FILE]\n"
+    "          [--suite-revision REV] [--tool-revision REV] [case id...]\n";
 
 // How the run is to go, from the command line. `--tool` names the tool, and
 // the options after it name where that tool's own binaries are. `--jobs N` (or
@@ -63,11 +63,14 @@ constexpr std::string_view kUsage =
 // process the run starts may hold, neither limited by default. Those numbers
 // are the caller's, since only the caller knows the machine; a limit is per
 // case and per process, so what one case may take does not depend on how many
-// run beside it. `--output FILE` is where the whole run is written as JSON. The
-// two revisions are what the caller knows of the suite's text and the tool's
-// build, which neither this program nor the tool can say of itself; each is
-// written as unknown where it is not given. The rest are the ids of the cases
-// to judge, every case where none is named.
+// run beside it. `--build-option ARG`, given once per argument, is an option
+// every case's build is given, as a tool's own command line takes it -- which
+// path Lyra takes, say -- so one tool held under two such sets is two
+// configurations, each with its own record. `--output FILE` is where the whole
+// run is written as JSON. The two revisions are what the caller knows of the
+// suite's text and the tool's build, which neither this program nor the tool
+// can say of itself; each is written as unknown where it is not given. The rest
+// are the ids of the cases to judge, every case where none is named.
 struct Request {
   std::string tool;
   std::optional<std::filesystem::path> lyra;
@@ -76,6 +79,7 @@ struct Request {
   int jobs = 1;
   std::optional<std::chrono::seconds> time_limit;
   std::optional<std::uint64_t> address_limit_mib;
+  std::vector<std::string> build_options;
   std::optional<std::filesystem::path> output;
   std::optional<std::string> suite_revision;
   std::optional<std::string> tool_revision;
@@ -115,8 +119,8 @@ auto ReadRequest(std::span<char* const> args) -> std::optional<Request> {
         arg == "--tool" || arg == "--lyra" || arg == "--verilator" ||
         arg == "--cc" || arg == "--jobs" || arg == "-j" ||
         arg == "--time-limit" || arg == "--address-limit" ||
-        arg == "--output" || arg == "--suite-revision" ||
-        arg == "--tool-revision";
+        arg == "--build-option" || arg == "--output" ||
+        arg == "--suite-revision" || arg == "--tool-revision";
     if (!takes_value) {
       request.ids.emplace_back(arg);
       continue;
@@ -133,6 +137,8 @@ auto ReadRequest(std::span<char* const> args) -> std::optional<Request> {
       request.verilator = ResolveCallerPath(value);
     } else if (arg == "--cc") {
       request.c_compiler = ResolveCallerPath(value);
+    } else if (arg == "--build-option") {
+      request.build_options.emplace_back(value);
     } else if (arg == "--output") {
       request.output = ResolveCallerPath(value);
     } else if (arg == "--suite-revision") {
@@ -167,11 +173,11 @@ auto ChooseTool(const Request& request)
     }
     return std::make_unique<conformance::adapters::lyra::Reader>(
         conformance::adapters::lyra::Tool{
-            .exe = *request.lyra, .build_options = {}});
+            .exe = *request.lyra, .build_options = request.build_options});
   }
   if (request.tool == "verilator") {
     auto found = conformance::adapters::verilator::FindTool(
-        request.verilator, request.c_compiler);
+        request.verilator, request.c_compiler, request.build_options);
     if (!found) {
       return std::unexpected(found.error());
     }
