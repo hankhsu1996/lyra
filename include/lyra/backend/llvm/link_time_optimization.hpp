@@ -22,8 +22,9 @@ struct LinkTimeInputs {
   // is. A member is part of the program where it defines a
   // symbol the program needs, as a linker takes an archive member.
   std::filesystem::path runtime_library;
-  // Objects the host link takes as machine code. Whatever they name stays
-  // defined, since no optimization here can see them use it.
+  // Files the host link takes as machine code -- objects, archives and shared
+  // libraries. Whatever they name stays defined, since no optimization here
+  // can see them use it.
   std::span<const std::filesystem::path> machine_code;
 };
 

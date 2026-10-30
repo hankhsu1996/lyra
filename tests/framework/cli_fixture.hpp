@@ -3,7 +3,6 @@
 #include <filesystem>
 #include <nlohmann/json.hpp>
 #include <optional>
-#include <string>
 #include <string_view>
 
 #include "conformance/framework/process.hpp"
@@ -37,6 +36,22 @@ auto FindClang() -> std::optional<std::filesystem::path>;
 // are about is what surrounds a design, so the design itself carries no weight
 // beyond proving the program ran.
 auto WriteTrivialSource(const std::filesystem::path& path) -> void;
+
+// A design whose four DPI-C imports are defined in foreign code handed over
+// compiled, each of which calls back the design's export: given 10, it prints
+// "foreign 21 22 23 24" when every import reached the function written for it.
+auto WriteForeignCodeDesign(const std::filesystem::path& path) -> void;
+
+// Compiles that foreign code into `dir` with the host's C compiler, in each
+// form a library is handed over in: `object.o`, `libarchive.a`, a shared
+// library `shared/libshared.so.1` declaring that soname with
+// `shared/libshared.so` a link to it, and `plain/libplain.so` declaring none,
+// which the bootstrap file `plain/libraries` lists (LRM J.4.1). Beside
+// `libshared.so.1` lies another `libplain.so`, defining its import otherwise,
+// so a program that loads a library of that name from anywhere but where it
+// was named prints another number.
+auto CompileForeignCodeInto(const std::filesystem::path& dir)
+    -> conformance::framework::ProcessOutcome;
 
 // A file a run wrote about itself, parsed. A file that is absent or is not
 // JSON answers with a discarded value, so the caller reports it as the run

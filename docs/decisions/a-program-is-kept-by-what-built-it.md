@@ -61,10 +61,11 @@ another reads.
 ### D2. An entry is named by what the expensive step reads, never by the SystemVerilog sources
 
 A program is named, on either path, from the bytes of the objects it links (D9), the runtime
-library, the foreign objects, and the host driver the link runs under. How many compiles run at once
-is in no name, because the objects are the same however many there were. The compiler's own build is
-part of an LLVM object's name and not of a C++ file's, because on the LLVM path the code generator
-is Lyra itself, while on the C++ path it is the host compiler, which is named already.
+library, the foreign code it links and where each shared library of it lies, and the host driver the
+link runs under. How many compiles run at once is in no name, because the objects are the same
+however many there were. The compiler's own build is part of an LLVM object's name and not of a C++
+file's, because on the LLVM path the code generator is Lyra itself, while on the C++ path it is the
+host compiler, which is named already.
 
 This makes the name complete by construction. Tracking what the front end read -- every file an
 `` `include `` reached, every define in effect -- is a second authority over the same question, and

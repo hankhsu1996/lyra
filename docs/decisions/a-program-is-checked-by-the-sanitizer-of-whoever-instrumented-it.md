@@ -72,6 +72,8 @@ intercepts it.
 On the C++ backend the host compiler instruments everything, so it compiles the runtime's own
 sources beside the design, as under `--lto`, and links its own sanitizer's runtime, and the user's
 foreign sources are instrumented with them. The shipped recipe of an emitted project does the same.
+Foreign code handed over already compiled was instrumented, or not, by whoever compiled it, on
+either backend.
 
 The release's symbolizer ships beside its sanitizer runtime, as clang ships it, and a program `run`
 starts for a checked build is told where it is, as a test runner tells the programs it starts,

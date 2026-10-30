@@ -195,7 +195,7 @@ a cell it names     searched for in its own library, then in each library it dec
                     it wrote them, and nowhere else
 a cell no file of   searched for by name in its own searchdir, read as its other text is, and in its
 its lists holds     library
-its dpi sources     linked into the program
+its dpi files       compiled where a source, and linked into the program
 ```
 
 Two things differ by where a library stands. The one being built is also read under what its
@@ -273,7 +273,7 @@ run makes it a record of somebody's last experiment.
 
 ```text
 D1. `lyra.toml` declares a library -- a named object whose parts are its sources, its search paths,
-    its defines, and the foreign sources its DPI-C imports resolve against -- and, apart from it,
+    its defines, and the foreign code its DPI-C imports resolve against -- and, apart from it,
     the design run of it: its roots, their parameter values, and the same kinds of part where only
     the roots need them. There is one way to run the compiler. A command line naming sources
     compiles an anonymous design, which stays the ordinary case; a manifest that is absent is

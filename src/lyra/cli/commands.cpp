@@ -1,5 +1,6 @@
 #include "lyra/cli/commands.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -9,6 +10,7 @@
 #include <filesystem>
 #include <functional>
 #include <iostream>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <string>
@@ -350,24 +352,24 @@ auto ScratchDir(const CommandContext& ctx)
   return *std::move(dir);
 }
 
-// The design's DPI-C sources, compiled beside the ABI header they compile
-// against into `dir`, as the objects the program links. A design declaring no
-// foreign source writes the header and compiles nothing.
-auto BuildDpiObjects(
+// The design's DPI-C link inputs as the program's link takes them: each source
+// compiled beside the ABI header it compiles against into `dir`, and the rest
+// as handed over. A design declaring no foreign input writes the header and
+// compiles nothing.
+auto BuildDpiLink(
     const CommandContext& ctx, std::span<const dpi::AbiFragment> fragments,
     const driver::RuntimeLocation& runtime, const driver::HostBuild& host,
     const std::filesystem::path& dir)
-    -> std::optional<std::vector<std::filesystem::path>> {
+    -> std::optional<std::vector<driver::DpiLinked>> {
   const profiling::StageScope stage("foreign sources");
   if (auto surface = driver::WriteDpiSurface(runtime, fragments, dir);
       !surface) {
     ctx.sink->Report(std::move(surface.error()));
     return std::nullopt;
   }
-  auto built = driver::CompileDpiObjects(
+  auto built = driver::CompileDpiLink(
       ctx.dpi_inputs, host.cxx, host.optimization, host.sanitizer,
-      host.compile_width, dir,
-      dir / driver::kObjectDir / driver::kDpiSourceDir);
+      host.compile_width, dir, dir / driver::kObjectDir / driver::kDpiInputDir);
   if (!built) {
     ctx.sink->Report(std::move(built.error()));
     return std::nullopt;
@@ -375,9 +377,42 @@ auto BuildDpiObjects(
   return *std::move(built);
 }
 
+// What the program's foreign code puts into the action that links it: the
+// bytes of every file the link reads, and where each shared library lies,
+// since the program loads it from there when it runs. Where anything else lies
+// is no input, so an object compiled in a directory of this invocation's own
+// leaves the program kept.
+void AddForeignInputs(
+    driver::Action& action, std::span<const driver::DpiLinked> foreign) {
+  for (const driver::DpiLinked& file : foreign) {
+    std::visit(
+        Overloaded{
+            [&](const driver::DpiCompiledCode& code) {
+              action.InputFile("foreign object", code.path);
+            },
+            [&](const driver::DpiSharedLibrary& library) {
+              action.InputFile("foreign shared library", library.path);
+              action.Input("loaded from", library.path.string());
+            }},
+        file);
+  }
+}
+
+// Every file the link reads of the program's foreign code.
+auto ForeignFiles(std::span<const driver::DpiLinked> foreign)
+    -> std::vector<std::filesystem::path> {
+  std::vector<std::filesystem::path> files;
+  files.reserve(foreign.size());
+  for (const driver::DpiLinked& file : foreign) {
+    files.push_back(
+        std::visit([](const auto& kind) { return kind.path; }, file));
+  }
+  return files;
+}
+
 // How a design's program is made from its objects: the link, an action reading
 // the bytes of the objects it links, the runtime they link against, the driver
-// that links them, and the foreign objects beside them -- so an object that
+// that links them, and the foreign code beside them -- so an object that
 // comes out the same however it was reached leaves the program kept -- and the
 // link itself, which runs only when the action has no kept result. How many
 // units were built at once changes none of the objects, so it is in no action.
@@ -388,15 +423,14 @@ struct ProgramRecipe {
 
 auto LinkRecipe(
     std::span<const driver::ActionResult> objects,
-    std::span<const std::filesystem::path> foreign,
+    std::span<const driver::DpiLinked> foreign,
     const driver::LinkedRuntime& runtime, const driver::HostBuild& host)
     -> ProgramRecipe {
   driver::Action action("link");
-  std::vector<std::filesystem::path> linked;
-  linked.reserve(objects.size() + foreign.size() + runtime.files.size());
+  std::vector<std::string> linked;
   for (const driver::ActionResult& object : objects) {
     action.InputDigest("object", object.digest);
-    linked.push_back(object.path);
+    linked.push_back(object.path.string());
   }
   for (const std::filesystem::path& file : runtime.files) {
     action.InputFile("runtime", file);
@@ -405,11 +439,12 @@ auto LinkRecipe(
     action.Input("runtime flag", flag);
   }
   action.InputExecutable("linker", host.cxx);
-  for (const std::filesystem::path& object : foreign) {
-    action.InputFile("foreign object", object);
-    linked.push_back(object);
+  AddForeignInputs(action, foreign);
+  std::ranges::move(
+      driver::DpiLinkArguments(foreign), std::back_inserter(linked));
+  for (const std::filesystem::path& file : runtime.files) {
+    linked.push_back(file.string());
   }
-  linked.insert(linked.end(), runtime.files.begin(), runtime.files.end());
   return ProgramRecipe{
       .action = std::move(action),
       .build = [linked = std::move(linked), flags = runtime.flags,
@@ -458,7 +493,7 @@ auto LinkTimeCacheDir(const CommandContext& ctx, driver::LinkTimeCache layout)
 // at the build's level, and linked with the runtime the build checks for.
 auto PlainCppRecipe(
     std::span<const driver::TranslationUnit> translation_units,
-    std::span<const std::filesystem::path> foreign,
+    std::span<const driver::DpiLinked> foreign,
     const std::filesystem::path& project,
     const driver::RuntimeLocation& runtime, const driver::HostBuild& host,
     driver::ActionCache& actions) -> diag::Result<ProgramRecipe> {
@@ -483,7 +518,7 @@ auto PlainCppRecipe(
 auto LinkTimeOptimizedCppRecipe(
     const CommandContext& ctx, const driver::LinkTimeForm& form,
     std::span<const driver::TranslationUnit> translation_units,
-    std::span<const std::filesystem::path> foreign,
+    std::span<const driver::DpiLinked> foreign,
     const std::filesystem::path& project,
     const driver::RuntimeLocation& runtime, const driver::HostBuild& host,
     driver::ActionCache& actions) -> diag::Result<ProgramRecipe> {
@@ -499,22 +534,21 @@ auto LinkTimeOptimizedCppRecipe(
     return std::unexpected(std::move(runtime_objects.error()));
   }
   driver::Action action("link, optimizing the whole program");
-  std::vector<std::filesystem::path> linked;
+  std::vector<std::string> linked;
   for (const driver::ActionResult& object : *design) {
     action.InputDigest("object", object.digest);
-    linked.push_back(object.path);
+    linked.push_back(object.path.string());
   }
   for (const driver::ActionResult& object : *runtime_objects) {
     action.InputDigest("runtime object", object.digest);
-    linked.push_back(object.path);
+    linked.push_back(object.path.string());
   }
   action.InputExecutable("linker", host.cxx);
   action.Input("flag", form.compile);
   action.Input("level", driver::OptimizationFlag(host.optimization));
-  for (const std::filesystem::path& object : foreign) {
-    action.InputFile("foreign object", object);
-    linked.push_back(object);
-  }
+  AddForeignInputs(action, foreign);
+  std::ranges::move(
+      driver::DpiLinkArguments(foreign), std::back_inserter(linked));
   std::vector<std::string> link_time = driver::LinkFlagsFor(
       form, host.optimization,
       form.cache ? LinkTimeCacheDir(ctx, form.cache->layout) : std::nullopt);
@@ -548,7 +582,7 @@ auto CppProgramRecipe(
     return std::nullopt;
   }
   auto foreign =
-      BuildDpiObjects(ctx, sources->dpi_fragments, runtime, host, project);
+      BuildDpiLink(ctx, sources->dpi_fragments, runtime, host, project);
   if (!foreign) {
     return std::nullopt;
   }
@@ -585,13 +619,13 @@ auto ThisCompiler(const CommandContext& ctx) -> std::filesystem::path {
 
 // The execution backend's program where the build optimizes at the link: the
 // design's modules and the runtime's bitcode optimized as one program at the
-// build's level, then linked by the host with the foreign objects and whatever
+// build's level, then linked by the host with the foreign code and whatever
 // of the runtime carries no bitcode. The optimization is this compiler's own
 // code generation, so the compiler is an input of the action as the host
 // linker is.
 auto LinkTimeOptimizedLlvmRecipe(
     const CommandContext& ctx, std::span<const driver::ActionResult> modules,
-    std::span<const std::filesystem::path> foreign,
+    std::span<const driver::DpiLinked> foreign,
     const driver::RuntimeLocation& runtime, const driver::HostBuild& host)
     -> ProgramRecipe {
   driver::Action action("link, optimizing the whole program");
@@ -614,18 +648,17 @@ auto LinkTimeOptimizedLlvmRecipe(
   action.InputExecutable("linker", host.cxx);
   action.InputExecutable("code generator", ThisCompiler(ctx));
   action.Input("level", driver::OptimizationFlag(host.optimization));
-  std::vector<std::filesystem::path> foreign_paths;
-  foreign_paths.reserve(foreign.size());
-  for (const std::filesystem::path& object : foreign) {
-    action.InputFile("foreign object", object);
-    foreign_paths.push_back(object);
-  }
+  AddForeignInputs(action, foreign);
+  std::vector<std::filesystem::path> foreign_files = ForeignFiles(foreign);
+  std::vector<std::string> foreign_arguments =
+      driver::DpiLinkArguments(foreign);
   std::optional<std::filesystem::path> cache =
       LinkTimeCacheDir(ctx, driver::LinkTimeCache::kLlvm);
   return ProgramRecipe{
       .action = std::move(action),
       .build = [module_paths = std::move(module_paths),
-                foreign_paths = std::move(foreign_paths), runtime_lib,
+                foreign_files = std::move(foreign_files),
+                foreign_arguments = std::move(foreign_arguments), runtime_lib,
                 linked_runtime = std::move(linked_runtime), cxx = host.cxx,
                 level = program::LlvmLevelOf(host.optimization),
                 width = host.compile_width, cache = std::move(cache)](
@@ -637,17 +670,21 @@ auto LinkTimeOptimizedLlvmRecipe(
           return backend::llvm_backend::OptimizeAtLink(
               {.modules = module_paths,
                .runtime_library = runtime_lib,
-               .machine_code = foreign_paths},
+               .machine_code = foreign_files},
               level, dir, width, cache);
         }();
         if (!optimized) {
           return std::unexpected(std::move(optimized.error()));
         }
-        std::vector<std::filesystem::path> linked = *std::move(optimized);
-        linked.insert(linked.end(), foreign_paths.begin(), foreign_paths.end());
+        std::vector<std::string> linked;
+        for (const std::filesystem::path& object : *optimized) {
+          linked.push_back(object.string());
+        }
         linked.insert(
-            linked.end(), linked_runtime.files.begin(),
-            linked_runtime.files.end());
+            linked.end(), foreign_arguments.begin(), foreign_arguments.end());
+        for (const std::filesystem::path& file : linked_runtime.files) {
+          linked.push_back(file.string());
+        }
         const profiling::StageScope stage("link");
         return driver::LinkProgram(linked, linked_runtime.flags, program, cxx);
       }};
@@ -692,7 +729,7 @@ auto LlvmProgramRecipe(
     return std::nullopt;
   }
   auto foreign =
-      BuildDpiObjects(ctx, built->dpi_fragments, runtime, host, scratch);
+      BuildDpiLink(ctx, built->dpi_fragments, runtime, host, scratch);
   if (!foreign) {
     return std::nullopt;
   }
@@ -939,7 +976,7 @@ auto ResolveRequest(const Invocation& invocation) -> std::optional<Request> {
   // Classified before compiling anything, so a mistyped path is reported
   // against the command line rather than after a full front end and lowering
   // pass.
-  auto dpi_inputs = driver::ValidateDpiLinkInputs(parsed->dpi_link_sources);
+  auto dpi_inputs = driver::ValidateDpiLinkInputs(parsed->dpi_link_inputs);
   if (!dpi_inputs) {
     report(std::move(dpi_inputs.error()));
     return std::nullopt;

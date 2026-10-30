@@ -166,9 +166,9 @@ class CppProjectSink {
 
 // Completes a self-contained C++ project in `dir` around sources a
 // `CppProjectSink` has already written: the design's DPI-C boundary surface
-// with a copy of each foreign source, a `build.sh` recipe, and a bundled copy
+// with a copy of each foreign input, a `build.sh` recipe, and a bundled copy
 // of `runtime`. The directory then builds with no external include or link
-// paths, and on a machine that has never seen the original foreign sources.
+// paths, and on a machine that has never seen the original foreign inputs.
 //
 // The compiler is baked into the recipe, so the project builds in a shell with
 // nothing configured -- which is what self-contained has to mean. Carried to a
@@ -245,14 +245,15 @@ auto CompileRuntimeSources(
     std::optional<std::string_view> link_time, ActionCache& actions)
     -> diag::Result<std::vector<ActionResult>>;
 
-// Links `inputs` -- objects and archives, whatever produced them -- into the
-// executable at `program`, telling the link `flags`; a non-zero linker exit
+// Links `inputs` -- objects, archives and shared libraries, whatever produced
+// them, and the words that say how the link takes each -- in their order into
+// the executable at `program`, telling the link `flags`; a non-zero linker exit
 // surfaces its stderr as a diagnostic. The host C++ compiler drives the link,
 // because the runtime library is C++ and that driver is what names the
 // libraries it needs.
 auto LinkProgram(
-    std::span<const std::filesystem::path> inputs,
-    std::span<const std::string> flags, const std::filesystem::path& program,
-    const std::filesystem::path& cxx) -> diag::Result<void>;
+    std::span<const std::string> inputs, std::span<const std::string> flags,
+    const std::filesystem::path& program, const std::filesystem::path& cxx)
+    -> diag::Result<void>;
 
 }  // namespace lyra::driver

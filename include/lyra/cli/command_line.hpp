@@ -13,6 +13,7 @@
 #include <slang/util/CommandLine.h>
 
 #include "lyra/cli/manifest.hpp"
+#include "lyra/cli/object_code_switches.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/driver/pch.hpp"
 #include "lyra/driver/project_layout.hpp"
@@ -72,10 +73,12 @@ struct ParsedArgs {
   // simulation argument never has to be told apart from a compiler one by its
   // spelling.
   std::vector<std::string> simulation_args;
-  // LRM 35 DPI-C link inputs: native source files (`.c` / `.cpp`) providing the
-  // foreign symbols an `import "DPI-C"` calls. Compiled and linked into the
-  // program alongside the design's own objects.
-  std::vector<std::string> dpi_link_sources;
+  // LRM 35 DPI-C link inputs, the foreign code an `import "DPI-C"` calls, in
+  // the order they are linked: what the declaration names, then what the
+  // command line does, the shared libraries the LRM Annex J switches name
+  // last. Each is a source compiled for the program or compiled code linked
+  // into it.
+  std::vector<std::string> dpi_link_inputs;
   // Which optional rewrites of MIR run, and whether the unit is checked after
   // each, where a compiler developer asked.
   mir_transform::PassOptions mir_passes;
@@ -101,6 +104,8 @@ struct CliOptions {
   std::optional<std::string> out;
   std::optional<std::string> backend;
   std::vector<std::string> dpi_link;
+  // Each `-sv_root`, `-sv_lib` and `-sv_liblist`, in the order given.
+  std::vector<ObjectCodeSwitch> object_code_switches;
   std::optional<std::string> time_trace;
   std::optional<std::int32_t> time_trace_granularity;
   std::optional<std::string> stats_file;

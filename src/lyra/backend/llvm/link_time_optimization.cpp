@@ -15,11 +15,14 @@
 #include <utility>
 #include <vector>
 
+#include <llvm/BinaryFormat/ELF.h>
 #include <llvm/IR/DiagnosticInfo.h>
 #include <llvm/IR/DiagnosticPrinter.h>
 #include <llvm/LTO/Config.h>
 #include <llvm/LTO/LTO.h>
 #include <llvm/Object/Archive.h>
+#include <llvm/Object/Binary.h>
+#include <llvm/Object/ELFObjectFile.h>
 #include <llvm/Object/IRObjectFile.h>
 #include <llvm/Object/ObjectFile.h>
 #include <llvm/Object/SymbolicFile.h>
@@ -58,31 +61,72 @@ auto MessageOf(llvm::Error error) -> std::string {
   return llvm::toString(std::move(error));
 }
 
-// The names an object of machine code leaves undefined: what it needs some
-// other input to define.
-auto UndefinedIn(llvm::MemoryBufferRef object, std::vector<std::string>& names)
+// The names a file of machine code leaves undefined: what it needs some other
+// input to define. An archive is read member by member, and of a shared
+// library what its dynamic symbols ask for, which is what the dynamic loader
+// binds against the program.
+auto UndefinedIn(llvm::MemoryBufferRef file, std::vector<std::string>& names)
     -> diag::Result<void> {
-  auto file = llvm::object::ObjectFile::createObjectFile(object);
-  if (!file) {
+  const auto unreadable = [&](llvm::Error error) {
     return diag::Fail(
-        diag::DiagCode::kHostIoError, "cannot read '{}' as an object ({})",
-        object.getBufferIdentifier().str(), MessageOf(file.takeError()));
+        diag::DiagCode::kHostIoError, "cannot read '{}' as machine code ({})",
+        file.getBufferIdentifier().str(), MessageOf(std::move(error)));
+  };
+  auto binary = llvm::object::createBinary(file);
+  if (!binary) {
+    return unreadable(binary.takeError());
   }
-  for (const llvm::object::SymbolRef& symbol : (*file)->symbols()) {
+  if (const auto* archive =
+          llvm::dyn_cast<llvm::object::Archive>(binary->get())) {
+    llvm::Error walk = llvm::Error::success();
+    for (const llvm::object::Archive::Child& child : archive->children(walk)) {
+      auto member = child.getMemoryBufferRef();
+      if (!member) {
+        llvm::consumeError(std::move(walk));
+        return unreadable(member.takeError());
+      }
+      if (auto undefined = UndefinedIn(*member, names); !undefined) {
+        llvm::consumeError(std::move(walk));
+        return undefined;
+      }
+    }
+    if (walk) {
+      return unreadable(std::move(walk));
+    }
+    return {};
+  }
+  const auto* object = llvm::dyn_cast<llvm::object::ObjectFile>(binary->get());
+  if (object == nullptr) {
+    return diag::Fail(
+        diag::DiagCode::kHostIoError, "cannot read '{}' as machine code",
+        file.getBufferIdentifier().str());
+  }
+  const auto take = [&](const llvm::object::SymbolRef& symbol) {
     auto flags = symbol.getFlags();
     if (!flags) {
       llvm::consumeError(flags.takeError());
-      continue;
+      return;
     }
     if ((*flags & llvm::object::SymbolRef::SF_Undefined) == 0) {
-      continue;
+      return;
     }
     auto name = symbol.getName();
     if (!name) {
       llvm::consumeError(name.takeError());
-      continue;
+      return;
     }
     names.emplace_back(*name);
+  };
+  const auto* elf = llvm::dyn_cast<llvm::object::ELFObjectFileBase>(object);
+  if (elf != nullptr && elf->getEType() == llvm::ELF::ET_DYN) {
+    for (const llvm::object::ELFSymbolRef symbol :
+         elf->getDynamicSymbolIterators()) {
+      take(symbol);
+    }
+    return {};
+  }
+  for (const llvm::object::SymbolRef& symbol : object->symbols()) {
+    take(symbol);
   }
   return {};
 }
@@ -266,7 +310,7 @@ auto OptimizeAtLink(
   }
 
   // What the machine code of the program names: the start-up code's entry,
-  // what each object handed in as machine code leaves undefined, and what the
+  // what each file handed in as machine code leaves undefined, and what the
   // runtime's members without bitcode do.
   std::vector<std::string> named_outside_list{std::string(kEntryPoint)};
   for (const std::filesystem::path& path : inputs.machine_code) {

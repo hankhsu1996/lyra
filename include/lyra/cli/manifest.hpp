@@ -16,7 +16,7 @@ namespace lyra::cli {
 
 // Source text and everything reading it needs: where an include is searched
 // for, what is defined before the first line, where a cell no file lists is
-// found by name, and the native sources its DPI-C imports resolve against
+// found by name, and the foreign code its DPI-C imports resolve against
 // (LRM 35).
 //
 // Every path here is absolute. A relative path in the file is resolved against

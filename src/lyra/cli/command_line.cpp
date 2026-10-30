@@ -15,9 +15,11 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <unistd.h>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <fmt/core.h>
@@ -26,6 +28,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/cli/manifest.hpp"
+#include "lyra/cli/object_code_switches.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/driver/action_cache.hpp"
@@ -60,6 +63,9 @@ enum class LyraOption : std::uint8_t {
   kOut,
   kBackend,
   kDpiLink,
+  kSvRoot,
+  kSvLib,
+  kSvLiblist,
   kTimeTrace,
   kTimeTraceGranularity,
   kStatsFile,
@@ -125,7 +131,9 @@ constexpr OptionSet kBuildsAProgram =
                              LyraOption::kSanitize,     LyraOption::kNoPch,
                              LyraOption::kCacheDir,     LyraOption::kRebuild,
                              LyraOption::kCxx,          LyraOption::kJobs,
-                             LyraOption::kBackend,      LyraOption::kDpiLink};
+                             LyraOption::kBackend,      LyraOption::kDpiLink,
+                             LyraOption::kSvRoot,       LyraOption::kSvLib,
+                             LyraOption::kSvLiblist};
 
 // Where a command shows what it is doing when nobody said. The error stream
 // carries it, so the answer follows from what else the command's streams are
@@ -203,11 +211,13 @@ constexpr auto kCommands = std::to_array<CommandSpec>(
       .kind = CommandKind::kEmitCpp,
       .requires_out = true,
       .status = SaysStatus::kAlways,
-      .takes = kRewritesMir |
-               OptionSet{
-                   LyraOption::kFormat, LyraOption::kOptimization,
-                   LyraOption::kLinkTime, LyraOption::kSanitize,
-                   LyraOption::kCxx, LyraOption::kOut, LyraOption::kDpiLink}},
+      .takes =
+          kRewritesMir |
+          OptionSet{
+              LyraOption::kFormat, LyraOption::kOptimization,
+              LyraOption::kLinkTime, LyraOption::kSanitize, LyraOption::kCxx,
+              LyraOption::kOut, LyraOption::kDpiLink, LyraOption::kSvRoot,
+              LyraOption::kSvLib, LyraOption::kSvLiblist}},
      {.verb = "build",
       .object = "",
       .kind = CommandKind::kBuild,
@@ -263,6 +273,12 @@ auto Spelling(LyraOption option) -> std::string_view {
       return "--backend";
     case LyraOption::kDpiLink:
       return "--dpi-link";
+    case LyraOption::kSvRoot:
+      return "-sv_root";
+    case LyraOption::kSvLib:
+      return "-sv_lib";
+    case LyraOption::kSvLiblist:
+      return "-sv_liblist";
     case LyraOption::kTimeTrace:
       return "--time-trace";
     case LyraOption::kTimeTraceGranularity:
@@ -279,6 +295,15 @@ auto Spelling(LyraOption option) -> std::string_view {
       return "--";
   }
   throw InternalError("an option has no spelling");
+}
+
+// Whether the caller gave any `Switch` of LRM Annex J.
+template <class Switch>
+auto GivesObjectCodeSwitch(const CliOptions& opts) -> bool {
+  return std::ranges::any_of(
+      opts.object_code_switches, [](const ObjectCodeSwitch& given) {
+        return std::holds_alternative<Switch>(given);
+      });
 }
 
 // Whether the caller gave the option.
@@ -318,6 +343,12 @@ auto IsGiven(
       return opts.backend.has_value();
     case LyraOption::kDpiLink:
       return !opts.dpi_link.empty();
+    case LyraOption::kSvRoot:
+      return GivesObjectCodeSwitch<SvRoot>(opts);
+    case LyraOption::kSvLib:
+      return GivesObjectCodeSwitch<SvLib>(opts);
+    case LyraOption::kSvLiblist:
+      return GivesObjectCodeSwitch<SvLiblist>(opts);
     case LyraOption::kTimeTrace:
       return opts.time_trace.has_value();
     case LyraOption::kTimeTraceGranularity:
@@ -641,8 +672,35 @@ void RegisterCliOptions(slang::CommandLine& cmd, CliOptions& opts) {
       "which backend turns the design into a program", "cpp|llvm");
   cmd.add(
       "--dpi-link", opts.dpi_link,
-      "native source (.c/.cpp) providing DPI-C foreign symbols to link",
+      "foreign code a DPI-C import is defined in: a C or C++ source, which is "
+      "compiled, or an object, archive or shared library, linked as it is",
       "<file>", slang::CommandLineFlags::FilePath);
+  // LRM Annex J spells these with one dash, which the parser also reads as
+  // the long name. A root applies only to the paths after it, so each
+  // occurrence is kept in the order given.
+  const auto keep = [&opts](auto make) {
+    return [&opts, make](std::string_view value) {
+      opts.object_code_switches.emplace_back(make(std::string(value)));
+      return std::string();
+    };
+  };
+  cmd.add(
+      "--sv_root",
+      keep([](std::string value) { return SvRoot{std::move(value)}; }),
+      "the directory each later relative '-sv_lib' and '-sv_liblist' path is "
+      "taken from; the working directory before any",
+      "<dir>");
+  cmd.add(
+      "--sv_lib",
+      keep([](std::string value) { return SvLib{std::move(value)}; }),
+      "a shared library of DPI-C foreign code, named without its '.so'",
+      "<path>");
+  cmd.add(
+      "--sv_liblist",
+      keep([](std::string value) { return SvLiblist{std::move(value)}; }),
+      "a bootstrap file naming shared libraries of DPI-C foreign code, one a "
+      "line after '#!SV_LIBRARIES'",
+      "<file>");
   cmd.add(
       "--time-trace", opts.time_trace,
       "write where this run's time went, per stage, unit, scope and function, "
@@ -1092,15 +1150,15 @@ auto ResolveCliOptions(
           : std::nullopt);
   out.rebuild = opts.rebuild.value_or(false);
 
-  // The declared foreign sources are the base, a library's before those of what
+  // The declared foreign inputs are the base, a library's before those of what
   // depends on it; the command line's are extras this invocation adds, so they
   // follow.
   if (declared != nullptr) {
     const Manifest& root = declared->root;
     out.library_name = root.library.name;
     const auto link = [&](const SourceSet& sources) {
-      out.dpi_link_sources.insert(
-          out.dpi_link_sources.end(), sources.dpi.begin(), sources.dpi.end());
+      out.dpi_link_inputs.insert(
+          out.dpi_link_inputs.end(), sources.dpi.begin(), sources.dpi.end());
     };
     for (const Manifest& reached : declared->dependencies) {
       link(reached.library.sources);
@@ -1113,8 +1171,14 @@ auto ResolveCliOptions(
       out.assertions = *root.assertions;
     }
   }
-  out.dpi_link_sources.insert(
-      out.dpi_link_sources.end(), opts.dpi_link.begin(), opts.dpi_link.end());
+  out.dpi_link_inputs.insert(
+      out.dpi_link_inputs.end(), opts.dpi_link.begin(), opts.dpi_link.end());
+  auto libraries = SharedLibrariesNamedBy(opts.object_code_switches);
+  if (!libraries) {
+    return std::unexpected(std::move(libraries.error()));
+  }
+  out.dpi_link_inputs.insert(
+      out.dpi_link_inputs.end(), libraries->begin(), libraries->end());
 
   if (opts.assertions) {
     auto policy = ParseAssertionPolicy(*opts.assertions);

@@ -3,8 +3,8 @@
 Date: 2026-09-14 Status: accepted
 
 The execution session this names is gone: the execution backend now links every design into a
-program with the system linker (`a-program-is-kept-by-what-built-it.md`), and a foreign source's
-object is one more input to that link. The decision holds unchanged -- the program still has one
+program with the system linker (`a-program-is-kept-by-what-built-it.md`), and a design's foreign
+code is one more input to that link. The decision holds unchanged -- the program still has one
 linker, and it is now the one Verilator's comparison below describes.
 
 ## Context
@@ -54,6 +54,50 @@ symbol and the user's C is compiled against it, so Julia's pointer handoff is un
 design's code does not exist until the session compiles it, so Verilator's system linker is
 unavailable. What is left is the session, and an object is what a linker takes.
 
+### Foreign code handed over compiled is linked as it is
+
+"All SystemVerilog applications shall support the integration of foreign language code in object
+code form" (LRM J.4), as a shared library, named by `-sv_lib` (a path the tool completes with the
+platform's extension), by a bootstrap file `-sv_liblist` names, or under a root `-sv_root` sets for
+the paths after it. The standard speaks of loading; under this decision a library is one more input
+of the program's one link, so it is linked against, and the dynamic loader binds it to the program
+in both directions when the program starts. An executable linked against a shared library publishes
+to it every symbol the library asks for, so an export it calls needs nothing more.
+
+- **Lyra decides only what the linker and the loader cannot decide for it.** A source is told by its
+  extension, as a compiler driver tells one (clang's driver takes a file whose extension names no
+  language as linker input, `Driver::BuildInputs`); anything else is read by its contents, so
+  `libfoo.so.1` is a shared library whatever it is called. Whether a file suits the machine, whether
+  the linker can read it and whether the loader finds what it needs are theirs to say, in the words
+  every C program meets. What Lyra refuses is only what would break a promise of its own: a file the
+  linker would read as a script, or a thin archive (whose members are paths, not contents), brings
+  files into the program that neither the kept program's key nor an emitted project's copies would
+  know of; and two inputs known by one name would stand for each other where they are gathered into
+  one directory.
+- **The program is linked against the very file it was handed.** A shared library is handed to the
+  link by its path, never found by a search across directories, where one input's directory could
+  shadow another input. One declaring no soname is then recorded by that path. One declaring a
+  soname is recorded by the soname, and its own directory goes on the program's run path, so the
+  loader looks there under its ordinary rules -- which a variable the person running the program
+  sets, or an earlier directory holding a file of that name, can override, as for any program. What
+  a library itself depends on is its provider's (LRM J.4).
+- **A library is kept as a dependency whether or not the link sees it referred to**, so which
+  libraries a program loads does not change with the host linker's default.
+- **The order is the standard's**: each bootstrap file's entries, then each `-sv_lib`, every file
+  once (LRM J.4). The loader loads a program's libraries in the order of its link, which is the
+  order a symbol several define is taken from; the order libraries' constructors run in is the
+  loader's, and the clause does not name it.
+- **A program is kept by every file its foreign code reads**, in order, and by where each shared
+  library lies, since that is what it loads when it runs. An emitted project, which has to build
+  where the originals are not, carries a copy of each input, a shared library under the file name
+  the loader looks for, and finds its shared libraries among those copies, beside wherever the
+  program is moved to; a library whose soname is a path, which the loader would look for there and
+  not among the copies, cannot be carried and is refused when the project is emitted.
+
+Linking at build time and not loading at start-up is the choice a program built ahead of time makes:
+a library opened when the program starts would need the program to publish every symbol and a second
+party resolving names, which is the state the decision above replaced.
+
 ### A scope publishes what it answers, per name space
 
 An exported subroutine is compiled once per specialization of the scope declaring it, while the
@@ -102,8 +146,8 @@ lives long enough.
 
 - One mechanism serves both directions of the boundary on this backend, and a design that crosses it
   runs in process.
-- The compiled foreign inputs are objects rather than one library. Nothing links them to each other;
-  the session is where they meet the design.
+- The foreign inputs are objects, archives and shared libraries, each a direct input of the
+  program's link; nothing links them to each other, and the program is where they meet the design.
 - A thread that blocked under a foreign call is resumed by driving the innermost foreign call it has
   entered, never its frame directly -- otherwise the scheduler resumes a frame whose continuation is
   buried under a native stack, and the foreign call is never returned to. A call that returns goes
@@ -124,3 +168,5 @@ lives long enough.
   why a per-stretch arena is not it)
 - LRM 35: 35.4 (the global name space), 35.5.1.1 (a task may consume time), 35.7 (exported
   functions), 35.8 (exported tasks)
+- LRM Annex J: J.3 (`-sv_root`), J.4 (object code inclusion, order, once), J.4.1 (the bootstrap
+  file)

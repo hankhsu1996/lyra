@@ -302,7 +302,8 @@ usage inflate the scope.
 - Both backends consume the same MIR for a foreign call and a marshal conversion; only the
   type-mapping of the ABI carrier and the realization of the foreign-linkage symbol differ.
 - Foreign-symbol linkage is resolved where every other name is, by the link that makes the program:
-  a foreign source's object is one more input to it, on either backend.
+  the foreign code, compiled by Lyra or handed over compiled, is one more input to it, on either
+  backend.
 - The export-context install composes into the one shared run entry, so it serves both backends from
   a single place.
 
