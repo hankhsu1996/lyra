@@ -3288,9 +3288,10 @@ auto WriteTwoUnitDesign(const std::filesystem::path& path) -> void {
 // time went: a span per stage, per unit within each stage a unit passes
 // through, and per scope a unit lowers. The statistics hold what a span
 // cannot: each stage's peak memory, what each unit left behind and whether
-// this run made it or took it from the store, and how long each tool the
-// build ran took. Building the same design again takes every object and the
-// program from the store, so no unit is made and nothing is spawned.
+// this run made it or took it from the store, how often each kind of work
+// ran, and how long each tool the build ran took. Building the same design
+// again takes every object and the program from the store, so no unit is made
+// and nothing is spawned.
 TEST(LyraBuild, ARunReportsWhereItsCostWent) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -3382,6 +3383,17 @@ TEST(LyraBuild, ARunReportsWhereItsCostWent) {
       EXPECT_GT(child.at("wall_us").get<std::uint64_t>(), 0U);
       EXPECT_GT(child.at("cpu_us").get<std::uint64_t>(), 0U);
     }
+
+    // A body lowered is counted where it is lowered, once for each time the
+    // trace times it.
+    const auto lowered = std::ranges::count_if(
+        trace.at("traceEvents"), [](const nlohmann::json& event) {
+          return event.value("name", "") == "lower to HIR";
+        });
+    EXPECT_GT(lowered, 0);
+    EXPECT_EQ(
+        stats.at("work").at("bodies lowered").get<std::int64_t>(), lowered);
+
     ASSERT_TRUE(spans.contains("lower scope"));
     EXPECT_TRUE(
         std::ranges::any_of(

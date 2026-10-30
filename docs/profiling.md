@@ -16,11 +16,11 @@ The compiler records its own run when asked:
 span names the stage, unit, scope or function it timed. Its `Total` rows sum each span name over the
 run, which is the quickest answer to which step took the time. `stats.json` holds what a span
 cannot: each stage's peak resident memory, every file each unit left behind and whether this run
-made it, how many of each kind of thing each unit holds in each form it passed through, and how long
-every tool the build ran took. What such a tool holds in memory is not in it: the system's figure
-for a spawned child starts at the compiler's own peak, so measure a host compile or a link from
-outside the run. Spans under 500 us are left out of the trace; `--time-trace-granularity 0` keeps
-all of them.
+made it, how many of each kind of thing each unit holds in each form it passed through, how many
+times each kind of work ran, and how long every tool the build ran took. What such a tool holds in
+memory is not in it: the system's figure for a spawned child starts at the compiler's own peak, so
+measure a host compile or a link from outside the run. Spans under 500 us are left out of the trace;
+`--time-trace-granularity 0` keeps all of them.
 
 ```bash
 python3 tools/trace/report.py summary --stats stats.json --trace trace.json

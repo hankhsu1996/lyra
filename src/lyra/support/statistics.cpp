@@ -64,6 +64,7 @@ struct Statistics {
   // threads took them, so the name is both what joins a unit's records and
   // what makes two runs of one design list their units alike.
   std::map<std::string, UnitRecord, std::less<>> units;
+  std::map<std::string, std::uint64_t, std::less<>> work;
   std::vector<ChildRecord> children;
   // The most memory a tool reaped since the running stage began held.
   std::uint64_t tools_peak_rss_bytes = 0;
@@ -212,6 +213,20 @@ void RecordNestingDepth(
       .depths.push_back(FormDepth{.form = std::string(form), .depth = depth});
 }
 
+void RecordWork(std::string_view kind) {
+  if (!RecordsStatistics()) {
+    return;
+  }
+  Statistics& statistics = TheStatistics();
+  const std::scoped_lock lock(statistics.lock);
+  const auto found = statistics.work.find(kind);
+  if (found != statistics.work.end()) {
+    ++found->second;
+  } else {
+    statistics.work.emplace(std::string(kind), 1);
+  }
+}
+
 void RecordChild(std::string command, ChildUsage usage) {
   if (!RecordsStatistics()) {
     return;
@@ -265,6 +280,10 @@ auto WriteStatistics(const std::filesystem::path& path)
          {"counts", std::move(counts)},
          {"nesting_depth", std::move(nesting_depth)}});
   }
+  nlohmann::ordered_json work = nlohmann::ordered_json::object();
+  for (const auto& [kind, count] : statistics.work) {
+    work[kind] = count;
+  }
   nlohmann::ordered_json children = nlohmann::ordered_json::array();
   for (const ChildRecord& child : statistics.children) {
     children.push_back(
@@ -276,6 +295,7 @@ auto WriteStatistics(const std::filesystem::path& path)
       {"width", statistics.width},
       {"stages", std::move(stages)},
       {"units", std::move(units)},
+      {"work", std::move(work)},
       {"children", std::move(children)}};
 
   std::ofstream out(path);

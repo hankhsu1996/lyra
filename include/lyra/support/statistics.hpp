@@ -15,8 +15,9 @@ namespace lyra::support {
 
 // The numbers a run records about itself when asked, for whoever compares two
 // runs or reads one: each stage's peak memory, what each unit holds and what it
-// left behind, and how long each tool the build ran took. Where the compiler's
-// own time went is the trace's to say, so none of it is here.
+// left behind, how often each kind of work ran, and how long each tool the
+// build ran took. Where the compiler's own time went is the trace's to say, so
+// none of it is here.
 //
 // Nothing is recorded unless the run enables it, and every recording call is
 // then a single check. Units are recorded from whichever thread worked on them.
@@ -89,6 +90,12 @@ void RecordCounts(
 // things held: two units together nest no deeper than the deeper of them.
 void RecordNestingDepth(
     std::string_view unit, std::string_view form, std::uint64_t depth);
+
+// One more of a kind of work the run did, counted where the work is done and
+// for the run as a whole, whichever unit it was done for, since one unit may
+// do it several times. A count says how often the work ran, which one tree
+// answers alike on every run, where its time does not.
+void RecordWork(std::string_view kind);
 
 // How long one tool the build ran took: on the clock, and of processor time as
 // the system charges it once the child has been reaped; and the most memory

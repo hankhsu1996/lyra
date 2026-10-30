@@ -62,6 +62,7 @@
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 #include "lyra/profiling/time_trace.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/statistics.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -279,6 +280,7 @@ auto UnitLowerer::LowerScopeOf(const slang::ast::Scope& application)
     -> diag::Result<BuiltScope> {
   const profiling::TimeTraceScope span(
       "lower to HIR", [&] { return unit_.name; });
+  support::RecordWork("bodies lowered");
   lowering_ = &application;
   WalkFrame frame;
   StructuralScopeLowerer root(*this, application);

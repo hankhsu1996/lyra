@@ -141,14 +141,14 @@ under test.
 The corpus cannot say what a compile costs: a compiler that writes a file per repetition, or
 declares a loop in the square of its count, passes every case and is fast on each. Nor can one
 compile, at any size. So `growth_tests` compiles each design under `tests/growth/` at one size and
-at twice that, on both backends, each run asked for its trace and its statistics, and holds the
-larger run to the smaller: what it left behind grown by what the design says its extra steps add.
+at twice that, on both backends, each run asked for its statistics, and holds the larger run to the
+smaller: what it left behind grown by what the design says its extra steps add.
 
 **What a compile spent -- a stage's time, its peak memory -- is not held**, though the runs report
 both. A test gives one answer for one tree, and those two are read off the machine running it as
 much as off the tree, so a busy executor moves them from one run of the same tree to the next. A
-stage whose time grows faster than its size is still a defect; finding it by counting what the stage
-does rather than by timing it is not yet built.
+stage whose time grows faster than its size is still a defect, and it is found only where the stage
+counts the work it does, which few stages do yet.
 
 A count the source text writes out -- the members of a structure or a union, the operands of a
 chain, the arguments of a call, the ports of an instance -- is no parameter the language can
@@ -162,19 +162,25 @@ Most say nothing, because a step of theirs repeats what is written once, and rep
 A design whose steps are unlike one another -- a width that follows the index, a child handed a
 different size -- carries a `// @each-adds:` line naming each kind of thing a step is worth, with
 how many where the source shows how many: one procedure written is one callable. What a compile left
-is read from the statistics as every kind of thing its units hold in each form they pass through, so
-the check names no kind itself. A kind the design does not name must not follow N, and one it names
-must follow N as named; a count is held exactly, and the difference of the two runs holds nothing
-that does not depend on the size. So a kind of thing the compiler begins to make once per step is
-held from the day it is reported, and a statement in a design cannot outlive what it speaks of. How
-deep the text a unit writes nests at the deepest is read off that text and held as one more such
-kind, which no design names: every compiler reading the text bounds its depth, and nothing bounds a
-count a design chooses.
+is read from the statistics as every kind of thing its units hold in each form they pass through,
+and what it did as every kind of work it counted, so the check names no kind itself. A kind the
+design does not name must not follow N, and one it names must follow N as named; a count is held
+exactly, and the difference of the two runs holds nothing that does not depend on the size. So a
+kind of thing the compiler begins to make once per step is held from the day it is reported, and a
+statement in a design cannot outlive what it speaks of. How deep the text a unit writes nests at the
+deepest is read off that text and held as one more such kind, which no design names: every compiler
+reading the text bounds its depth, and nothing bounds a count a design chooses.
 
-Bytes are the one size among the counts. A design that does not name them may leave a quarter more
-at twice the size, since a file can carry the size it was compiled at; one that names them must
-leave more, and how much more is not held, because what a body is made of follows how much the
-source wrote. What holds such a design is the counts.
+Bytes are the one size among the counts, and they are held, like every count, by what the larger run
+left beyond the smaller, so what both runs leave alike cancels however large it is. A design that
+does not name them may leave less than one byte more a step, or less than one bit where its size is
+a width, which its file says with `// @counted-in: bits`. The least a step can leave is a byte of
+one more thing or a bit of a wider value, and what a file spends carrying the size it was compiled
+at is a few bytes whatever the size, which the sizes are chosen to stay above. One that names them
+must leave more, and how much more is not held, because what a body is made of follows how much the
+source wrote. What holds such a design is the counts, and so a cost that grows faster than its size
+in bytes alone is not seen there. A report of a departure gives the numbers behind it, and for bytes
+how much a step and in which files, so a record line is read before it goes.
 
 Where a design departs from its statement today is recorded per path, in
 `tests/paths/<path>.growth.yaml`, beside that path's refusal and defect records and by the same

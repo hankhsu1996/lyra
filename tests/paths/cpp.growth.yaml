@@ -11,6 +11,8 @@
 format_items: [mir.types]
 instance_array: [bytes]
 listed_operands: [mir.types]
+loop_choosing_by_outer_index: [bytes]
+loop_counted_by_outer_index: [bytes]
 loop_of_children_sized_by_index:
   - mir.class constants
   - mir.classes

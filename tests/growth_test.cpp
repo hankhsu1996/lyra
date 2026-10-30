@@ -8,13 +8,18 @@
 // what its own statements are worth, which the design says kind by kind.
 //
 // What is held of what a compile leaves is every kind of thing the run reports
-// holding, whichever kinds those are: a kind the design does not name must not
-// follow its size, and one it names must follow it as named. So a kind of thing
-// the compiler starts to make per step is held from the day it is reported,
+// holding, and of what it did every kind of work it reports counting,
+// whichever kinds those are: a kind the design does not name must not follow
+// its size, and one it names must follow it as named. So a kind of thing the
+// compiler starts to make per step is held from the day it is reported,
 // without this file naming it. How deep the text a run writes nests is held the
 // same way, read off the text, since a compiler reading it bounds its depth and
 // no design is bounded by one, and so is how deep a unit's code nests, which
 // the run reports and every consumer walking that code pays for.
+//
+// Everything is held by what the larger run left beyond the smaller, so what
+// both leave alike -- a library every program compiles, however large --
+// cancels.
 //
 // Everything held here is a count the run reports or a property of the text it
 // wrote, so one tree gives one answer. What a run spent -- a stage's time, its
@@ -38,6 +43,7 @@
 #include <optional>
 #include <ostream>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -60,12 +66,6 @@ using lyra::test::LoadByName;
 using lyra::test::ReadJson;
 
 namespace {
-
-// A file may carry the size it was compiled at -- a bound, an index -- so the
-// bytes a run leaves are held to a fraction of themselves rather than to
-// equality. Bytes that follow the repetition double.
-constexpr std::uint64_t kBytesAllowedNumerator = 5;
-constexpr std::uint64_t kBytesAllowedDenominator = 4;
 
 // How a design is compiled: by the C++ backend as far as its emitted project,
 // or by the execution backend.
@@ -101,10 +101,23 @@ using Added = std::variant<ThisMany, SomeAmount>;
 // What one more step of a design's size adds, by kind.
 using Adds = std::map<std::string, Added>;
 
+// What a design's size counts: one more of what it repeats, or one more bit of
+// a width. The least a step can leave in a file is a byte of the first and a
+// bit of the second, and a file may also carry the size it was compiled at --
+// a bound, an index -- in a few bytes whatever the size is. So the bytes a run
+// leaves beyond the smaller run are held under one such least amount a step,
+// which a file carrying its size stays under and anything made per step does
+// not.
+enum class Counted : std::uint8_t {
+  kRepetitions,
+  kBits,
+};
+
 struct GrowthCase {
   std::string name;
   std::filesystem::path design;
   std::uint64_t size = 0;
+  Counted counted = Counted::kRepetitions;
   // What the design's own file says a step adds. A kind it does not name is
   // one a step adds none of.
   Adds each_adds;
@@ -117,19 +130,18 @@ struct GrowthCase {
 constexpr std::string_view kUnits = "units";
 constexpr std::string_view kFiles = "files";
 constexpr std::string_view kBytes = "bytes";
-// A unit's own body and every other instance's lowered into it beside.
-constexpr std::string_view kBodiesLowered = "bodies lowered";
 // How deep the text a run writes nests at the deepest, over every file, which
 // a compiler reading the text bounds and a design does not.
 constexpr std::string_view kDeepestNesting = "deepest nesting";
 // How deep one form of a unit nests at the deepest, over every unit.
 constexpr std::string_view kNestingDepth = "nesting depth";
 
-// What one compile left behind, as the run itself recorded it: how many of each
-// kind of thing its units left and hold, taken together. A unit's name carries
-// the size it was specialized on, so two runs name their units differently and
-// only the whole of each can be held to the other. A kind a unit holds in one
-// of its forms is named `form.kind`.
+// What one compile left behind and did, as the run itself recorded it: how
+// many of each kind of thing its units left and hold, taken together, and how
+// often each kind of work ran. A unit's name carries the size it was
+// specialized on, so two runs name their units differently and only the whole
+// of each can be held to the other. A kind a unit holds in one of its forms is
+// named `form.kind`.
 using Reading = std::map<std::string, std::uint64_t>;
 
 auto CommandFor(
@@ -155,10 +167,6 @@ auto CommandFor(
       "--top",
       "Top",
       std::format("-GN={}", size),
-      "--time-trace",
-      (dir / "trace.json").string(),
-      "--time-trace-granularity",
-      "0",
       "--stats-file",
       (dir / "stats.json").string(),
       design.string()};
@@ -232,8 +240,7 @@ auto Joined(const std::vector<std::string>& command) -> std::string {
 }
 
 // What one compile left behind: its reading, and the bytes of each file it
-// wrote, by the file's name, which the bytes of the reading are taken from once
-// both runs are in.
+// wrote, by the file's name, which a report shows to say where bytes went.
 struct Left {
   Reading reading;
   std::map<std::string, std::uint64_t> file_bytes;
@@ -252,8 +259,7 @@ auto Compile(
             ran.stderr_text));
   }
   const nlohmann::json stats = ReadJson(dir / "stats.json");
-  const nlohmann::json trace = ReadJson(dir / "trace.json");
-  if (stats.is_discarded() || trace.is_discarded()) {
+  if (stats.is_discarded()) {
     return std::unexpected(
         std::format("{} wrote no report of itself", Joined(command)));
   }
@@ -263,9 +269,10 @@ auto Compile(
   for (const nlohmann::json& unit : stats.at("units")) {
     reading[std::string(kUnits)] += 1;
     for (const nlohmann::json& artifact : unit.at("artifacts")) {
+      const auto bytes = artifact.at("bytes").get<std::uint64_t>();
       reading[std::string(kFiles)] += 1;
-      left.file_bytes[artifact.at("name").get<std::string>()] =
-          artifact.at("bytes").get<std::uint64_t>();
+      reading[std::string(kBytes)] += bytes;
+      left.file_bytes[artifact.at("name").get<std::string>()] = bytes;
       // What the unit wrote as text lies where the run wrote its project; a
       // path that writes none leaves nothing to read there.
       std::ifstream text_file(
@@ -294,32 +301,26 @@ auto Compile(
       deepest = std::max<std::uint64_t>(deepest, depth.get<std::uint64_t>());
     }
   }
-  // The span a body's lowering runs under, one event each.
-  constexpr std::string_view kBodyLowered = "lower to HIR";
-  for (const nlohmann::json& event : trace.at("traceEvents")) {
-    if (event.value("name", "") == kBodyLowered) {
-      reading[std::string(kBodiesLowered)] += 1;
-    }
+  for (const auto& [kind, count] : stats.at("work").items()) {
+    reading[kind] += count.get<std::uint64_t>();
   }
   return left;
 }
 
-// The bytes each run left in files the two runs did not write alike. A file
-// both write under one name and at one size -- a library every design compiles,
-// which no size reaches -- is no part of what the size adds, and counting it
-// holds the rest to a fraction of something fixed, so a departure hides behind
-// a library that grows.
-void TakeBytesTheSizeReached(Left& small, Left& large) {
-  for (const auto& [left, other] :
-       {std::pair{&small, &large}, std::pair{&large, &small}}) {
-    std::uint64_t& bytes = left->reading[std::string(kBytes)];
-    for (const auto& [name, size] : left->file_bytes) {
-      const auto found = other->file_bytes.find(name);
-      if (found == other->file_bytes.end() || found->second != size) {
-        bytes += size;
-      }
+// The files of `left` that `other` has none of at that name and size, with
+// their bytes. A unit's name carries the size, so a unit specialized on it
+// differs by name whether or not its bytes moved.
+auto FilesNotAlike(
+    const std::map<std::string, std::uint64_t>& left,
+    const std::map<std::string, std::uint64_t>& other) -> std::string {
+  std::string out;
+  for (const auto& [name, bytes] : left) {
+    const auto found = other.find(name);
+    if (found == other.end() || found->second != bytes) {
+      out += std::format(" {} {}", name, bytes);
     }
   }
+  return out;
 }
 
 // What departed, in the words a record names it by, each with the numbers that
@@ -332,6 +333,23 @@ auto FormOf(std::string_view kind) -> std::string_view {
   const std::size_t dot = kind.find('.');
   return dot == std::string_view::npos ? std::string_view{}
                                        : kind.substr(0, dot);
+}
+
+// The least one step can leave in a file: its name, and how many steps each
+// leaving it leave one byte between them.
+struct Least {
+  std::string_view name;
+  std::uint64_t steps_per_byte = 1;
+};
+
+auto LeastAStepLeaves(Counted counted) -> Least {
+  switch (counted) {
+    case Counted::kRepetitions:
+      return Least{.name = "byte", .steps_per_byte = 1};
+    case Counted::kBits:
+      return Least{.name = "bit", .steps_per_byte = 8};
+  }
+  std::unreachable();
 }
 
 auto LeftOf(const Reading& reading, const std::string& kind) -> std::uint64_t {
@@ -376,9 +394,13 @@ auto DepartedInWhatWasLeft(
     const std::uint64_t after = LeftOf(large, kind);
     const auto said = growth.each_adds.find(kind);
     if (said == growth.each_adds.end()) {
-      const bool followed = kind == kBytes ? after * kBytesAllowedDenominator >
-                                                 before * kBytesAllowedNumerator
-                                           : after > before;
+      const bool followed =
+          kind == kBytes
+              ? after > before &&
+                    (after - before) *
+                            LeastAStepLeaves(growth.counted).steps_per_byte >=
+                        growth.size
+              : after > before;
       if (followed) {
         departed[kind] = std::format("{} -> {}", before, after);
       }
@@ -431,12 +453,31 @@ auto CheckGrowth(
   if (!large.has_value()) {
     return large.error();
   }
-  TakeBytesTheSizeReached(*small, *large);
   const Departed departed =
       DepartedInWhatWasLeft(growth, small->reading, large->reading);
 
+  // The numbers behind a kind, so whoever edits the record reads what moved
+  // rather than a verdict; for bytes, how much a step against the least a step
+  // can leave, and the files that differ.
+  const auto numbers = [&](const std::string& kind,
+                           std::string out) -> std::string {
+    if (kind == kBytes) {
+      const std::uint64_t before = LeftOf(small->reading, kind);
+      const std::uint64_t after = LeftOf(large->reading, kind);
+      out += std::format(
+          ", {:.2f} bytes a step against less than one {} a step; files that "
+          "differ by name or size, at N:{}; at 2N:{}",
+          (static_cast<double>(after) - static_cast<double>(before)) /
+              static_cast<double>(growth.size),
+          LeastAStepLeaves(growth.counted).name,
+          FilesNotAlike(small->file_bytes, large->file_bytes),
+          FilesNotAlike(large->file_bytes, small->file_bytes));
+    }
+    return out;
+  };
+
   std::set<std::string> found;
-  for (const auto& [name, numbers] : departed) {
+  for (const auto& [name, shown] : departed) {
     found.insert(name);
   }
   const lyra::test::Departures against_record =
@@ -445,12 +486,24 @@ auto CheckGrowth(
   for (const std::string& name : against_record.not_recorded) {
     differs += std::format(
         "  does not follow its size as the design says: {} ({})\n", name,
-        departed.at(name));
+        numbers(name, departed.at(name)));
   }
+  // A kind neither run reports was not measured, which says nothing of
+  // whether it still departs.
   for (const std::string& name : against_record.no_longer_found) {
-    differs += std::format(
-        "  recorded as departing and no longer does, so its line goes: {}\n",
-        name);
+    differs +=
+        !small->reading.contains(name) && !large->reading.contains(name)
+            ? std::format(
+                  "  recorded as departing and neither run reports it: {}\n",
+                  name)
+            : std::format(
+                  "  recorded as departing and no longer does, so its line "
+                  "goes: {} ({})\n",
+                  name,
+                  numbers(
+                      name, std::format(
+                                "{} -> {}", LeftOf(small->reading, name),
+                                LeftOf(large->reading, name))));
   }
   if (differs.empty()) {
     return std::nullopt;
@@ -477,13 +530,11 @@ auto Trimmed(std::string_view text) -> std::string_view {
 // nothing. A line that names nothing is reported into `problems`, since it
 // would read as that.
 auto EachAddsOf(
-    const std::filesystem::path& design, std::vector<std::string>& problems)
-    -> Adds {
+    std::span<const std::string> lines, std::string_view design,
+    std::vector<std::string>& problems) -> Adds {
   constexpr std::string_view kKey = "// @each-adds:";
   Adds adds;
-  std::ifstream source(design);
-  std::string line;
-  while (std::getline(source, line)) {
+  for (const std::string& line : lines) {
     if (!line.starts_with(kKey)) {
       continue;
     }
@@ -514,18 +565,48 @@ auto EachAddsOf(
       rest = rest.substr(comma + 1);
     }
     if (!named) {
-      problems.push_back(
-          std::format(
-              "{} names no kind in '{}'", design.filename().string(), line));
+      problems.push_back(std::format("{} names no kind in '{}'", design, line));
     }
   }
   return adds;
 }
 
+// What a design's file says its size counts: bits where a `// @counted-in:
+// bits` line says so, and repetitions otherwise. A line naming anything else is
+// reported into `problems`, since it would read as repetitions.
+auto CountedOf(
+    std::span<const std::string> lines, std::string_view design,
+    std::vector<std::string>& problems) -> Counted {
+  constexpr std::string_view kKey = "// @counted-in:";
+  Counted counted = Counted::kRepetitions;
+  for (const std::string& line : lines) {
+    if (!line.starts_with(kKey)) {
+      continue;
+    }
+    if (Trimmed(std::string_view(line).substr(kKey.size())) == "bits") {
+      counted = Counted::kBits;
+    } else {
+      problems.push_back(
+          std::format(
+              "{} counts in something other than bits in '{}'", design, line));
+    }
+  }
+  return counted;
+}
+
+auto LinesOf(const std::filesystem::path& file) -> std::vector<std::string> {
+  std::vector<std::string> lines;
+  std::ifstream source(file);
+  for (std::string line; std::getline(source, line);) {
+    lines.push_back(std::move(line));
+  }
+  return lines;
+}
+
 // Every design under `designs_root`, at the size the file beside them gives
-// it, with what its own file says a step adds and how each path's record under
-// `paths_root` says it departs from that. A design given no size, and a size
-// or a record naming no design, are reported into `problems`.
+// it, with what its own file says the size counts and a step adds, and how each
+// path's record under `paths_root` says it departs from that. A design given no
+// size, and a size or a record naming no design, are reported into `problems`.
 auto LoadGrowthCases(
     const std::filesystem::path& designs_root,
     const std::filesystem::path& paths_root, std::vector<std::string>& problems)
@@ -534,11 +615,14 @@ auto LoadGrowthCases(
   for (const auto& entry : std::filesystem::directory_iterator(designs_root)) {
     if (entry.path().extension() == ".sv") {
       const std::string name = entry.path().stem().string();
+      const std::string file = entry.path().filename().string();
+      const std::vector<std::string> lines = LinesOf(entry.path());
       cases[name] = GrowthCase{
           .name = name,
           .design = entry.path(),
           .size = 0,
-          .each_adds = EachAddsOf(entry.path(), problems),
+          .counted = CountedOf(lines, file, problems),
+          .each_adds = EachAddsOf(lines, file, problems),
           .recorded = {{Path::kCpp, {}}, {Path::kLlvm, {}}}};
     }
   }
