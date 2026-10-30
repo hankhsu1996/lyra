@@ -32,16 +32,18 @@ namespace lyra::hir {
 // whether or not the reader declared anything.
 class UnitSignatures {
  public:
-  // Records what one unit publishes, under the name the signature states. The
-  // name cannot disagree with the signature it keys, because there is only one
-  // of them.
-  void Publish(UnitSignature signature) {
-    std::string name = signature.unit_name;
-    if (!by_name_.emplace(std::move(name), std::move(signature)).second) {
-      throw InternalError(
-          "UnitSignatures::Publish: two units of the design publish under one "
-          "name; a specialization name identifies exactly one unit");
+  // Records what one specialization of a unit publishes, under the unit's
+  // name. The first one the design declares publishes for the unit, and each
+  // later one adds the generate blocks its objects built that none before it
+  // did.
+  void PublishSpecialization(UnitSignature signature) {
+    const auto published = by_name_.find(signature.unit_name);
+    if (published == by_name_.end()) {
+      std::string name = signature.unit_name;
+      by_name_.emplace(std::move(name), std::move(signature));
+      return;
     }
+    PublishBlocksBuiltBy(published->second, signature);
   }
 
   // What the unit named `unit_name` publishes, or nullptr when the design

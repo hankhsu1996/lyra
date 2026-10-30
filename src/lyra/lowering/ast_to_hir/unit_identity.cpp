@@ -433,9 +433,10 @@ auto KeyBytes(const UnitKey& key) -> std::string {
 }
 
 // Where a name that left an instance lands, as one input to that instance's
-// key: the specialization holding the scope it lands in and the scope's path
-// there, or where that scope stands relative to an instance whose key is being
-// worked out, and the constant `reads` the name reads there.
+// key, or a block it passes below that: the specialization holding the scope
+// `scope` and the scope's path there, or where it stands relative to an
+// instance whose key is being worked out, and the constant `reads` the name
+// reads there.
 auto LandingOf(
     const slang::ast::Scope& scope, const std::optional<std::string>& reads,
     const UnitNamingPolicy& policy) -> UnitKeyInputKind {
@@ -566,20 +567,33 @@ auto SpecializationKeyOf(
   }
   const InstanceContext& context = keys.ContextOf(inst);
   // A name is no parameter and declares no name of its own, so it is told
-  // apart from its writer's other names by its place among them.
+  // apart from its writer's other names by its place among them, and each
+  // block it passes below where it lands by its place along the name.
+  const auto name_inputs =
+      [&](const std::string& name, const slang::ast::Scope& landed,
+          std::span<const slang::ast::Scope* const> blocks_passed,
+          const std::optional<std::string>& reads) {
+        key.inputs.push_back(
+            UnitKeyInput{
+                .name = name, .kind = LandingOf(landed, reads, names)});
+        for (std::size_t passed = 0; passed < blocks_passed.size(); ++passed) {
+          key.inputs.push_back(
+              UnitKeyInput{
+                  .name = std::format("{}>{}", name, passed),
+                  .kind =
+                      LandingOf(*blocks_passed[passed], std::nullopt, names)});
+        }
+      };
   for (std::size_t written = 0; written < context.climbs.size(); ++written) {
-    key.inputs.push_back(
-        UnitKeyInput{
-            .name = std::format("^{}", written),
-            .kind = LandingOf(
-                *context.climbs[written].scope, context.climbs[written].reads,
-                names)});
+    const ClimbAnchor& climb = context.climbs[written];
+    name_inputs(
+        std::format("^{}", written), *climb.scope, climb.blocks_passed,
+        climb.reads);
   }
   for (const NameLandingBelow& name : context.names_below) {
-    key.inputs.push_back(
-        UnitKeyInput{
-            .name = std::format("{}.^{}", name.path, name.written),
-            .kind = LandingOf(*name.scope, name.reads, names)});
+    name_inputs(
+        std::format("{}.^{}", name.path, name.written), *name.scope,
+        name.blocks_passed, name.reads);
   }
   for (const OverriddenBelow& overridden : context.overridden_below) {
     key.inputs.push_back(

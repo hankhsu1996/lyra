@@ -663,10 +663,11 @@ struct DeclaredDesign::Units {
   }
 
   // Declares every unit the design has in the classes grouping found. Every
-  // specialization of a class publishes what the class does, so the design
-  // keeps the first; one stating anything else means grouping compared less
-  // than a specialization publishes, which is this compiler's defect, and
-  // every compile looks for it. Whether any failed is the sink's answer.
+  // specialization of a class publishes what the class does, and the class
+  // takes in the class of each generate block only a later one built; one
+  // stating anything else means grouping compared less than a specialization
+  // publishes, which is this compiler's defect, and every compile looks for
+  // it. Whether any failed is the sink's answer.
   void DeclareEveryUnit(
       const LowerCompilationFacts& front_end_facts, const UnitsToLower& lowered,
       const InstancesCheckedAgainst& checked_against,
@@ -724,32 +725,14 @@ struct DeclaredDesign::Units {
       }
       signatures.PublishValues(
           lowerer->SpecializationName(), lowerer->TakeValues());
-      PublishOrHold(lowerer->TakeSignature());
+      signatures.PublishSpecialization(lowerer->TakeSignature());
     }
     // A repeat is lowered only beside what it is built as, so it is declared
     // here, where all of what it publishes is held to its class.
     for (const UnitToLower& repeat : lowered.repeats) {
       if (auto declared = DeclaredIn(*repeat.instance, *classes, sink)) {
-        PublishOrHold(*std::move(declared));
+        signatures.PublishSpecialization(*std::move(declared));
       }
-    }
-  }
-
-  // Publishes `signature` for the first specialization of its unit, and holds
-  // every later one to what the first published.
-  void PublishOrHold(hir::UnitSignature signature) {
-    const hir::UnitSignature* kept = signatures.Find(signature.unit_name);
-    if (kept == nullptr) {
-      signatures.Publish(std::move(signature));
-      return;
-    }
-    if (*kept != signature) {
-      throw InternalError(
-          std::format(
-              "DeclaredDesign: two specializations grouped into unit '{}' "
-              "publish different declarations, so the grouping compared "
-              "less than they publish -- please report this as a bug",
-              signature.unit_name));
     }
   }
 };

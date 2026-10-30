@@ -18,11 +18,11 @@ the design as a program that builds objects of it:
 
 ```cpp
 // The signature every referrer compiles against: one header per distinct thing the
-// element's specializations publish, the generate blocks they built included.
-class Leaf_odd : public Scope { public: Logic<8> in, out; int K; struct odd; Scope* g; };
+// element's specializations publish, with every generate block any of them built.
+class Leaf : public Scope { public: Logic<8> in, out; int K; struct odd; Scope* g; };
 
 // One body per distinct code its specializations come out as; compiled once, shared.
-class LeafBody final : public Leaf_odd {
+class LeafBody final : public Leaf {
   LeafBody(int K, const Table* t) : K(K) {   // runs the source's generate
     if (K % 2 == 1) g = t->block(0, 0)(this);
   }
@@ -38,7 +38,7 @@ Three kinds of thing, and nothing else:
 
 | Kind              | What it is                                                                                                         | Count follows                                                                   |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
-| Signature         | what referrers compile against: what the element declares                                                          | distinct published structures, the generate blocks built included               |
+| Signature         | what referrers compile against: what the element declares                                                          | distinct published structures                                                   |
 | Body              | the code: processes, subroutines, how to build its children                                                        | distinct code its specializations come out as                                   |
 | Construction data | per what specializations are built as: which body each child and generate block is, and the table it is built with | what specializations are built as, and the blocks they build (data, never code) |
 
@@ -49,12 +49,12 @@ the child by its signature, and the body the object is answers each call, as a v
 C++ and a call through `dyn Trait` does in Rust.
 
 A value parameter is part of the class only through what it makes the class publish -- a width, a
-type, a constant a declaration requires, the generate blocks it selects. Everywhere else it is a
-field the object is built with, read at run time, so a loop handing each child its index makes one
-class and, where the code comes out alike, one body, not one per index. Where an index decides which
-generate blocks the child builds, the child is one class per set of blocks built, however many
-indices select each set, and the loop's blocks holding those children are one class per kind of
-child they hold.
+type, a constant a declaration requires. Everywhere else, the generate blocks it selects included,
+it is a field the object is built with, read at run time, so a loop handing each child its index
+makes one class and, where the code comes out alike, one body, not one per index. Where an index
+decides which generate blocks the child builds, the child is still one class, publishing every block
+class any index built, and one body per set of blocks built, and the loop's blocks holding those
+children are one class.
 
 ## The decisions
 
@@ -72,11 +72,13 @@ already has, so units still compile in any order and in parallel after it, and n
 to is ever the identity a referrer reads. The class is named by its definition and the digest of
 what it publishes, so its name moves where what referrers compile against does.
 
-**Which generate blocks an instance built is part of what it publishes.** An alternative a
-conditional did not select is not elaborated and need not be valid for the instance's values (LRM
-27.5), so it cannot be compiled from an instance that did not select it. What was built is therefore
-part of what an instance is, as the branch an `if constexpr` keeps is part of a C++ instantiation.
-How many blocks a loop counts out is not part of it.
+**Which generate blocks an instance built is no part of what it publishes.** The alternative a
+conditional selects, how many blocks a loop counts out and which class each block is are chosen from
+values handed at construction, as a C++ constructor's `if` chooses, so an instance publishes each
+construct as the source wrote it and a unit publishes every block class any of its instances built.
+An alternative a conditional did not select is not elaborated and need not be valid for the
+instance's values (LRM 27.5), so it is compiled only from the instances that selected it, and a name
+reaching a block takes the block's class from the block the front end resolved it to.
 
 **A body is found by comparing what each specialization came out as.** Every value an instance is
 handed names its specialization. Specializations that differ only in where their names land, at
@@ -147,8 +149,8 @@ cannot be worked out until the front end has elaborated the instance.
    specializations declare, and of nothing produced by building them.
 2. A lowering reads of an instance only what its specialization's key holds, so every instance of
    one specialization lowers to the same code and builds the same children.
-3. Which generate blocks an instance built is part of what it publishes; how many blocks a loop
-   counted out is not, and a value read as a value reaches the object when it is built.
+3. Which generate blocks an instance built, and how many a loop counted out, is no part of what it
+   publishes, and a value read as a value reaches the object when it is built.
 4. The count of code artifacts follows distinct bodies; construction data follows specializations
    and the blocks they build; classes follow distinct published structures.
 5. Which body a specialization is, is found by comparing its HIR whole, a digest only narrowing the

@@ -1,14 +1,16 @@
-// @remakes: $root Leaf__6d025dd515179a46 Top
+// @remakes: $root Leaf__6d025dd515179a46 Leaf__c111be714ad7c4ed Top
 //
 // One module builds one alternative of a conditional generate for the value it
 // is handed (LRM 27.5), and is instantiated once, in a module of its own. A
 // second instance is added in the module holding that one, handed a value
-// that builds the other alternative. Which blocks an instance built is part of
-// its unit's name, so the new instance is a unit of its own, and its value
-// names its specialization; the first one keeps its name and what it was
-// compiled to, and so does the module holding it. The module the instance is
-// written in holds another child, and the design root states how an object of
-// the new unit is made.
+// that builds the other alternative. Which blocks an instance built is no part
+// of its unit, so the new instance is one more specialization of the same
+// unit, lowered to a body of its own because it built another block; the unit
+// now publishes that block's class too, so the first instance's body, which
+// states every class of its unit, is made again, while the unit's name, and so
+// the module holding the first instance, stay as they were. The module the
+// instance is written in holds another child, and the design root states how
+// an object of the new specialization is made.
 
 module Leaf #(parameter int K = 0) (output int o);
   if (K % 2 != 0) begin : parity

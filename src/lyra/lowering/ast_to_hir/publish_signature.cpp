@@ -57,7 +57,6 @@
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/lowering/ast_to_hir/connected_interface.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
-#include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/statement/timing.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
@@ -277,51 +276,6 @@ auto PublishPath(
             .range = *std::move(range), .projected_type = *projected});
   }
   return path;
-}
-
-// A loop as the class of the block standing at each index it counted out. A
-// loop whose blocks are all of one class says that class and nothing of where
-// they stand, since each construction counts its own (LRM 27.4); one that
-// counted none is the empty case of that.
-auto PublishedLoopOf(
-    std::string name, const std::map<std::int64_t, support::DefPath>& at)
-    -> hir::PublishedLoop {
-  std::vector<support::DefPath> classes;
-  std::vector<hir::PublishedLoopBlock> blocks;
-  for (const auto& [index, class_path] : at) {
-    const auto known = std::ranges::find(classes, class_path);
-    blocks.push_back(
-        hir::PublishedLoopBlock{
-            .index = index,
-            .class_at = static_cast<std::uint32_t>(known - classes.begin())});
-    if (known == classes.end()) classes.push_back(class_path);
-  }
-  if (classes.size() > 1) {
-    return hir::PublishedLoopByIndex{
-        .name = std::move(name),
-        .classes = std::move(classes),
-        .blocks = std::move(blocks)};
-  }
-  return hir::PublishedLoopOfOneClass{
-      .name = std::move(name),
-      .class_path = classes.empty()
-                        ? std::nullopt
-                        : std::optional{std::move(classes.front())}};
-}
-
-// The construct of kind `Construct` a scope's record holds under `id`. Every
-// elaboration of one text records its constructs under the ids the source
-// order gives them, so one id names the same construct in each.
-template <typename Construct>
-auto ConstructOf(const ScopePublicationRecord& record, hir::GenerateId id)
-    -> const Construct& {
-  for (const ScopePublicationRecord::Construct& construct : record.generates) {
-    const auto* found = std::get_if<Construct>(&construct);
-    if (found != nullptr && found->id == id) return *found;
-  }
-  throw InternalError(
-      "PublishSignature: every elaboration of one text records every generate "
-      "construct the text wrote");
 }
 
 }  // namespace
@@ -640,11 +594,10 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
   // the interface declares (LRM 25.3), so what a design element publishes is
   // every scope it holds -- its own and each generate block's (LRM 27). Within
   // one application the block instances of one class differ only in what their
-  // constructions built, and the class is published once, stating what any of
-  // them built. Every other application of the specialization built the same
-  // blocks, so it publishes the same classes. Each scope keeps the class in
-  // this unit's own types as well, which is what its own published class is
-  // laid out from.
+  // constructions built, and the class is published once. Every other
+  // application of the specialization built the same blocks, so it publishes
+  // the same classes. Each scope keeps the class in this unit's own types as
+  // well, which is what its own published class is laid out from.
   struct PublishedClasses {
     std::vector<std::vector<const slang::ast::Scope*>> scopes;
     std::vector<hir::ScopeClassSignature> classes;
@@ -668,7 +621,7 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
     PublishedClasses& published_by = by_application.at(application);
     for (const std::vector<const slang::ast::Scope*>& scopes :
          published_by.scopes) {
-      auto cls = PublishScopeClass(InReadingOrder(scopes));
+      auto cls = PublishScopeClass(*InReadingOrder(scopes).front());
       if (!cls) return std::unexpected(std::move(cls.error()));
       published_by.classes.push_back(*std::move(cls));
     }
@@ -708,10 +661,9 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
   return {};
 }
 
-auto UnitLowerer::PublishScopeClass(
-    std::span<const slang::ast::Scope* const> scopes)
+auto UnitLowerer::PublishScopeClass(const slang::ast::Scope& scope)
     -> diag::Result<hir::ScopeClassSignature> {
-  const ScopePublicationRecord& published = PublicationOf(*scopes.front());
+  const ScopePublicationRecord& published = PublicationOf(scope);
   hir::ScopeClassSignature cls{
       .class_path = published.class_path,
       .members = {},
@@ -871,46 +823,20 @@ auto UnitLowerer::PublishScopeClass(
     cls.callables.Add(*std::move(own));
   }
 
-  // What a construct built is each block any scope of the class built: a loop
-  // may count out a different number of blocks in each, and a conditional
-  // select a different alternative (LRM 27.4, 27.5).
+  // A construct is published as the source wrote it: how many blocks a loop
+  // counted out and which alternative a conditional selected are each
+  // object's construction (LRM 27.4, 27.5), and no part of its class.
   for (const ScopePublicationRecord::Construct& construct :
        published.generates) {
     std::visit(
         Overloaded{
             [&](const ScopePublicationRecord::Loop& loop) {
-              std::map<std::int64_t, support::DefPath> at;
-              for (const slang::ast::Scope* scope : scopes) {
-                const auto& counted = ConstructOf<ScopePublicationRecord::Loop>(
-                    PublicationOf(*scope), loop.id);
-                for (const auto* entry : counted.loop->entries) {
-                  at.try_emplace(
-                      LoopIndexOf(*entry), PublicationOf(*entry).class_path);
-                }
-              }
-              cls.loops.Add(PublishedLoopOf(std::string{loop.loop->name}, at));
+              cls.loops.Add(
+                  hir::PublishedLoop{.name = std::string{loop.loop->name}});
             },
             [&](const ScopePublicationRecord::Choice& choice) {
-              std::map<std::uint32_t, support::DefPath> built;
-              for (const slang::ast::Scope* scope : scopes) {
-                const auto& selected =
-                    ConstructOf<ScopePublicationRecord::Choice>(
-                        PublicationOf(*scope), choice.id);
-                for (const auto* alternative : selected.built) {
-                  built.try_emplace(
-                      AlternativePositionOf(*alternative),
-                      PublicationOf(*alternative).class_path);
-                }
-              }
-              hir::PublishedChoice chosen{
-                  .construct = choice.construct, .blocks = {}};
-              for (auto& [position, class_path] : built) {
-                chosen.blocks.push_back(
-                    hir::PublishedAlternative{
-                        .position = position,
-                        .class_path = std::move(class_path)});
-              }
-              cls.choices.Add(std::move(chosen));
+              cls.choices.Add(
+                  hir::PublishedChoice{.construct = choice.construct});
             }},
         construct);
   }
@@ -1180,6 +1106,17 @@ auto UnitLowerer::ScopeClassOf(
   unit_.scope_classes.Record(
       scope_class, hir::ImportScopeClass(importer, *published));
   return scope_class;
+}
+
+void UnitLowerer::RecordPublishedScopeClasses() {
+  const auto* element = std::get_if<hir::PublishedDesignElement>(
+      &Signatures().Find(unit_.name)->unit);
+  // A namespace publishes no scope.
+  if (element == nullptr) return;
+  ScopeClassOf(unit_.name, element->instance_class.class_path);
+  for (const hir::ScopeClassSignature& block : element->blocks) {
+    ScopeClassOf(unit_.name, block.class_path);
+  }
 }
 
 auto UnitLowerer::DeclarationOf(hir::ClassId cls)

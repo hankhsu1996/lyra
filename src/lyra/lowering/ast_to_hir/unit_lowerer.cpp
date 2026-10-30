@@ -240,6 +240,7 @@ auto UnitLowerer::LowerBodies(
   signatures_ = &signatures;
   built_as_ = &built_as;
   const auto in_unit = diag::FailureContext::InUnit(unit_.name);
+  RecordPublishedScopeClasses();
   auto own = LowerScopeOf(*scope_);
   if (!own) return std::unexpected(std::move(own.error()));
   unit_.root_scope = std::move(own->scope);
@@ -608,16 +609,15 @@ void UnitLowerer::DeclareConditionalGenerate(
     ScopePublicationRecord& published, ScopeFrameId frame) {
   if (!OpensItsConstruct(block)) return;
   const hir::GenerateId generate = decls.generates.Declare();
-  ScopePublicationRecord::Choice choice{
-      .id = generate, .construct = block.constructIndex, .built = {}};
   for (const auto* arm : AlternativesOfConstruct(block)) {
     MapOwnedChildBinding(
         *arm, frame, DeclaredGenerateBlock{.generate = generate});
     if (arm->isUninstantiated) continue;
-    choice.built.push_back(arm);
     DeclareBlockIdentities(*arm, published);
   }
-  published.generates.emplace_back(std::move(choice));
+  published.generates.emplace_back(
+      ScopePublicationRecord::Choice{
+          .id = generate, .construct = block.constructIndex});
 }
 
 // A loop generate elaborates each iteration into a block of its own

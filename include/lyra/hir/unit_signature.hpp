@@ -85,7 +85,7 @@ struct PortDecl {
 // What a design element (LRM 23.2.1) publishes beside its classes, which exists
 // to be instantiated and wired: its ports, what an instance is handed when it
 // is built, the object an instance of it is, and the class of every generate
-// block an instance holds.
+// block any of its instances built.
 struct PublishedDesignElement {
   // In declaration order, which is the order a positional connection counts
   // through (LRM 23.3.2.1). A consumer walking a unit's connections walks these
@@ -296,6 +296,17 @@ struct UnitSignature {
 // same definition with every type in it answered again there.
 [[nodiscard]] auto ImportTypeDefinition(
     TypeImporter& importer, const TypeDefinition& definition) -> TypeDefinition;
+
+// Takes into `unit`, what a unit published for its first specialization, what
+// `specialization`, a later one grouped into the unit, publishes besides: the
+// class of each generate block its objects built and no earlier one did, and
+// what is declared in that block. Which blocks a construction built is no part
+// of what a unit is (LRM 27.5), so specializations of one unit may each have
+// built blocks the others did not, and the unit publishes every one. What both
+// publish is one declaration, since grouping compared it, and anything else
+// is a fault in the grouping.
+void PublishBlocksBuiltBy(
+    UnitSignature& unit, const UnitSignature& specialization);
 
 // What the declared type `declaration` declares, as `signature`, the signature
 // of the unit declaring it, published it.

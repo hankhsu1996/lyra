@@ -31,6 +31,11 @@ a block's class is what it publishes, found by comparing, not what its declarati
 declaring a class is one per place because its methods are named by its class, not because it is
 named by its index.
 
+D2 and D4 revised 2026-10-29 by the same record: what a block built is no part of the class holding
+it or of its unit, so D4's "every alternative ... whether or not it was built" holds again, now for
+units too, and a loop publishes neither its blocks' classes nor where they stand; a name reaching a
+block takes its class from the block the front end resolved it to.
+
 ## Requirement
 
 A design element compiles to a class written in files that carry its name. What the source declares
@@ -106,8 +111,8 @@ over when the block is built, as a parameter read as a value is.
 are one application publishes that class and nothing of how many blocks there are or where they
 stand: each construction of the holding scope runs the loop, so that count is a value of the
 construction, and two objects of the holding class may count differently. A loop whose blocks are
-several applications publishes its distinct classes once each, and which of them stands at each
-index any object of the holding class counted out.
+several applications publishes nothing of which stands where: that too is each construction's, and a
+name reaching one of its blocks takes the block's class from the block the front end resolved it to.
 
 **D3. Which application a block instance is, is computed from the front end by the function that
 names a unit.** The declaring unit, a referrer stepping into the block, and a child whose name lands
@@ -130,13 +135,12 @@ template argument does": the index is no template argument -- D1 hands it over a
 and naming by it made one class per index where the declarations of many indices resolve alike.
 Three places decide nothing for an index. What a run evaluates. What selects an alternative of a
 conditional, since the construction chooses it and the class names every alternative the source
-wrote; the classes of the blocks it selected are part of the name of the instance holding the block
-([a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md)).
-And what counts a loop's blocks out -- where its index starts, whether a block stands at it, how it
-reaches the next -- since the construction runs the loop (LRM 27.4) and how many blocks an object
-holds is no part of its class. What the statements of a process, a continuous assignment or a
-subroutine run is no part of what the class declares; it is the body the class is realized by, found
-from what it came out as (D5).
+wrote; which of them it selected is no part of the instance holding the block either. And what
+counts a loop's blocks out -- where its index starts, whether a block stands at it, how it reaches
+the next -- since the construction runs the loop (LRM 27.4) and how many blocks an object holds is
+no part of its class. What the statements of a process, a continuous assignment or a subroutine run
+is no part of what the class declares; it is the body the class is realized by, found from what it
+came out as (D5).
 
 **D5. A block's body is what its code came out as, found by comparing it, and which body each block
 is, is its object's construction.** Each block is lowered from its own elaboration, its nested
