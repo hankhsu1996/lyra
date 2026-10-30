@@ -67,24 +67,25 @@ lyra::runtime::Var<lyra::value::PackedArray> a{};
 lyra::runtime::Var<lyra::value::PackedArray> b{};
 ```
 
-The C++ constructor body is a thin wrapper that delegates to a static helper:
+The C++ constructor is a member function entered on an object already created whole, and its first
+line binds the receiver, as every body's does:
 
 ```cpp
-Test(Scope* parent, std::string name, RuntimeServices& services)
-    : Scope(parent, std::move(name), definition) {
-  init(this);
-}
-static void init(Test* self) {
+auto Test::sv_construct() -> void {
+  Test* self = this;
   self->a.Set(self->Services(), PackedArray::Int(1));
   self->b.Set(self->Services(), self->a.Get() + PackedArray::Int(1));
 }
 ```
 
-Every other MIR callable body (process, method, closure) also renders as a static function whose
-first parameter is `Self* self`; the constructor's delegation to `init(this)` is the one place C++'s
-implicit `this` is mentioned. The body code emits `self->X` mechanically with no context-dependent
-receiver lookup. `RenderContext::in_class_member_init_` and `WithClassMemberInit` are removed in
-this decision.
+The body code emits `self->X` mechanically with no context-dependent receiver lookup. How a body is
+handed its object, `this` or a box taken as a parameter, is read from its receiver's type
+(`callable-receiver.md`).
+
+Revised on 2026-10-29. This section showed the C++ constructor delegating to a static
+`init(Test* self)`, and said every other body rendered as a static function over `Self* self`. Both
+now bind the receiver from `this` on their first line, as `callable-receiver.md` records.
+`RenderContext::in_class_member_init_` and `WithClassMemberInit` are removed in this decision.
 
 ### Runtime changes that make the shape possible
 
@@ -142,12 +143,13 @@ object (LRM 6.17, Table 6-7).
   re-lowers `.initializer` into a statement before generating code. The bookkeeping does not pay for
   itself outside of C++ specifically.
 
-- **Inline the C++ constructor body with a `Self* self = this;` preamble.** Invents a body statement
-  that no MIR node justifies. The render must add content the MIR did not produce, which is
-  precisely the smell the mechanical-translation rule was written to prevent.
+- **Inline the C++ constructor body with a `Self* self = this;` preamble.** Rejected while MIR
+  stated no receiver binding, since the render would have added a statement no MIR node justified.
+  Every body now states its receiver binding, and the preamble is that binding spelled in C++, so it
+  is what the render writes (`callable-receiver.md`).
 
 - **A `RenderContext` flag that maps `self`-reads to `this` inside the constructor body.** Adds
-  walker state at the moment R18 plans to remove `RenderContext` entirely. Render becomes
+  walker state to the `RenderContext` the render was removing entirely. Render becomes
   context-dependent on the very rule the mechanical-translation principle wants pure. Wrong
   direction.
 

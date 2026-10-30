@@ -72,13 +72,17 @@ allocates the shell; it is not the executor of elaboration semantics.
 
 ## Generate is not compile-time expansion
 
-A generate-for with 1024 iterations does not produce 1024 things at compile time. Compile-time
-produces one class definition with a `for` loop in its constructor. At runtime, the constructor runs
-that loop 1024 times to build 1024 children. Compile-time work scales with the number of distinct
-module specializations, not with the instance count or the generate iteration count.
+A generate-for with 1024 iterations whose blocks are alike does not produce 1024 things at compile
+time. Compile time produces one body for the block and a `for` loop in its constructor, and at run
+time the constructor runs that loop 1024 times to build 1024 children. The compile-time artifacts
+then follow the distinct unit specializations, not the instance count or the generate iteration
+count (`north_star.md` invariant 2, which bounds artifacts and not the front end's work).
 
-This is the central principle of the compiler. If you find compile-time work that scales with
-instance count, the design has been violated.
+Sharing that body is an optimization over a correct baseline, not what makes a lowering correct.
+Lowering each block concretely is always correct, and the shared body is what a program gets where
+its blocks are shown to be alike (`specialization_model.md` invariant 1). So artifacts that follow
+instance count are a defect where the blocks could be shown alike, and the baseline where they
+cannot.
 
 ## Structural code has no general assignment
 

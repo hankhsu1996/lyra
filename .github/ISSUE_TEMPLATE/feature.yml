@@ -1,0 +1,28 @@
+name: Feature request
+description: Lyra refuses legal SystemVerilog as not yet supported, or lacks an option you need.
+labels: ["type:feature"]
+projects: ["hankhsu1996/1"]
+body:
+  - type: textarea
+    id: want
+    attributes:
+      label: What you want Lyra to do
+      description: The construct to support or the option to have, and what you need it for.
+    validations:
+      required: true
+  - type: textarea
+    id: program
+    attributes:
+      label: Program
+      description: The smallest self-contained program that needs it, where there is one.
+      render: systemverilog
+  - type: textarea
+    id: today
+    attributes:
+      label: What Lyra does today
+      description: The command you ran and what Lyra printed, copied as it was.
+  - type: textarea
+    id: standard
+    attributes:
+      label: What IEEE 1800-2023 says
+      description: The clause that defines the construct, where it is one the standard defines.

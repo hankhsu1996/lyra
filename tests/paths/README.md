@@ -51,8 +51,8 @@ in every other.
 
 A case appears in at most one of the records -- refused and wrong are different outcomes and a case
 recorded twice leaves no saying which it is held to. No record is a place for a failure that is
-merely inconvenient. What goes in is a defect someone has diagnosed, with an entry in the matching
-progress doc saying what the standard requires.
+merely inconvenient. What goes in is a defect someone has diagnosed, with an issue saying what the
+standard requires.
 
 ## A case no path can run
 

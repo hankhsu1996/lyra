@@ -128,15 +128,14 @@ bit-patterns classify by identity, both required for "did the storage cell's bit
 `Var<T>` requires only `LyraValue`. Every type that can be wrapped as observable storage satisfies
 this concept, no more.
 
-MIR's `ObservableType{T_mir}` (R12) wraps an MIR value type to declare module-scope observable
-storage. HIR-to-MIR's wrap rule is structural -- a structural-var declaration whose value type is a
-"data storage" kind is wrapped; pointer / vector / object-handle / external-ref / event / chandle /
-void / scope / self types are not. The C++ emit then sees `ObservableType{T_mir}` and renders
-`Var<T_cpp>`. The C++ template instantiation `Var<T_cpp>` requires `LyraValue<T_cpp>`; a value type
-that forgot to implement the contract triggers a compile-time concept failure at the instantiation
-site. The MIR type system gates "this storage is observable"; the C++ concept system gates "this
-value type can fulfill the observable contract". Both gates compose without duplicating the
-predicate.
+MIR's `ObservableType{T_mir}` wraps an MIR value type to declare module-scope observable storage.
+HIR-to-MIR's wrap rule is structural -- a structural-var declaration whose value type is a "data
+storage" kind is wrapped; pointer / vector / object-handle / external-ref / event / chandle / void /
+scope / self types are not. The C++ emit then sees `ObservableType{T_mir}` and renders `Var<T_cpp>`.
+The C++ template instantiation `Var<T_cpp>` requires `LyraValue<T_cpp>`; a value type that forgot to
+implement the contract triggers a compile-time concept failure at the instantiation site. The MIR
+type system gates "this storage is observable"; the C++ concept system gates "this value type can
+fulfill the observable contract". Both gates compose without duplicating the predicate.
 
 The old backend predicate `IsObservableScalarType(mir::Type)` is removed.
 

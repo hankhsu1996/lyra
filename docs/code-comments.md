@@ -16,8 +16,8 @@ Comments fill what the language cannot express -- intent, context, the algorithm
 
 ## Hard bans
 
-1. **No project-documentation references.** No `docs/` path, no decision-doc / architecture-doc /
-   progress-doc name, no "invariant N", no "see the decision on X". The **LRM** (IEEE 1800
+1. **No project-documentation references.** No `docs/` path, no decision-doc / architecture-doc
+   name, no issue number, no "invariant N", no "see the decision on X". The **LRM** (IEEE 1800
    SystemVerilog spec) is the one exception -- it is the external spec the code implements, and
    `LRM 21.3.4.3`-style citations are required for any SV-grounded comment. Why: docs rename and
    move; back-references rot and lie.
@@ -32,8 +32,8 @@ Comments fill what the language cannot express -- intent, context, the algorithm
    Use blank lines.
 
 5. **No migration / progress narration.** `// Cut 1`, `// migrated in phase 3`,
-   `// later cuts will extend this`. Source comments are timeless; progress lives in
-   `docs/progress/`, in PRs, and in conversation.
+   `// later cuts will extend this`. Source comments are timeless; progress lives in issues, in PRs,
+   and in conversation.
 
 6. **No `/*param=*/value` at call sites.** IDE inlay hints do this.
 
@@ -54,8 +54,8 @@ Comments fill what the language cannot express -- intent, context, the algorithm
 
 Run per comment before keeping it:
 
-1. **Cite check** -- names any project doc, decision-doc, architecture-doc, progress-doc, or
-   "invariant N"? Cut. (LRM is the only exception.)
+1. **Cite check** -- names any project doc, decision-doc, architecture-doc, issue, or "invariant N"?
+   Cut. (LRM is the only exception.)
 2. **Rename check** -- would renaming any sister symbol named in this comment force an edit? Cut the
    name; rewrite to the stable contract.
 3. **Why/How check** -- is this Why, How, or LRM citation? If none, it is a What. Cut and rename the

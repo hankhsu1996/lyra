@@ -1,6 +1,7 @@
 # Callable receiver (explicit `self` first binding)
 
-Date: 2026-06-15 Status: accepted
+Date: 2026-06-15 Status: accepted. Revised 2026-10-29. How a body is handed its object is read from
+its receiver's type.
 
 ## Context
 
@@ -74,25 +75,38 @@ special-case wrapping.
 This holds for `mir::Process`, `mir::MethodDecl`, `mir::ClosureExpr`, and the constructor-body
 callable. The body shape is uniform; the supply mechanism differs.
 
-The C++ backend renders each form in its natural idiom:
+The C++ backend renders each form in its natural idiom. How a body is handed its object is one
+answer of the type mapping, read from the type of the body's receiver binding, for a class's method,
+a record's method, a constructor and a closure alike (`../architecture/backend_contract.md`):
 
-- **Method-form callable** -> static method on the enclosing class whose first formal is `M* self`.
-  The class still owns the storage; the method body lives on the class so it can name private
-  members. The body sees `self->X`, never implicit `this`.
+- **A receiver that borrows its object** is C++'s own `this`. The body is a member function of its
+  class, read-only exactly where the receiver is, and its first line binds the receiver from what
+  C++ hands it -- `C* self = this;` for an object pointed at, `const S& self = *this;` for one
+  referred to. The body then sees `self->X`, as every other body does.
+- **A receiver that takes over the box it was made in** is the first parameter of a static function,
+  so whatever the box holds lives for as long as the body runs.
 - **Closure** -> a struct whose members are the captures, built as
   `sv_closure_<n>{self, cap1, lyra::runtime::VariableRef<T>(<lvalue>)}` -- a by-reference capture
-  binds a `VariableRef<T>` rather than a snapshot. Its call operator is the invoke, which reads each
-  capture through the closure it runs against, the way the MIR invoke reads it through its receiver,
-  so the captured `self` is reached as `closure->self->X`, never through an implicit `this`. A
-  coroutine closure (a fork branch) is made in a box and started through a static function taking
-  the box over, so the execution owns its captures.
+  binds a `VariableRef<T>` rather than a snapshot. Its invoke reads each capture through the closure
+  it runs against, the way the MIR invoke reads it through its receiver, so the captured `self` is
+  reached as `closure->self->X`, never through an implicit `this`. A coroutine closure (a fork
+  branch) is made in a box, and its receiver takes that box over, so the execution owns its
+  captures.
 
-Every callable body lowers to a static function over the explicit receiver `self`. The callables an
-engine or the C++ language reaches through an instance entry -- the C++ constructor (instance
-creation requires a real constructor) and the post-construction lifecycle bodies -- keep that
-uniform static body and add a thin entry that forwards to it, supplying the receiver the entry was
-handed. C++'s implicit `this` appears only in those entries, as the argument to the static body,
-never inside a body. They are plumbing for reaching a body from outside, not SV-derived callables.
+A constructor is the one body it is. The object is created whole first, and the constructor is a
+member function entered on it that binds its receiver on its first line like every method, so a
+class has no second callable for it and no entry forwarding into one.
+
+Revised on 2026-10-29. This section used to render every method-form body as a static function over
+`M* self`, with the C++ constructor and the lifecycle hooks as thin instance entries forwarding to
+it, and the rejected alternatives below turned down a first-line `self = this` binding. Both were
+answers to a body whose receiver was only a parameter. Once every body states its receiver binding,
+binding it from `this` on the first line is that statement spelled in C++, with no node standing for
+the C++ keyword and no shell around the body. How a body is handed its object had meanwhile grown
+three answers -- a closure's from its kind, a member's binding from whether its receiver was a
+reference, its qualifier from a reference's mutability alone -- under which a read-only receiver
+held through a pointer would have lost its qualifier with nothing refusing it. So it is one answer,
+read from the receiver's type.
 
 ### Child-instance construction receiver triple
 
@@ -124,11 +138,11 @@ constant-propagation pass if the cost ever matters.
 
 ### Why MIR explicit, not "let render decide"
 
-The render today carries walker state for the receiver (`ctx.ReceiverObject()`,
-`ctx.MemberPrefix()`, `ctx.DeferredByValueCapture()`) and switches between four C++ mechanisms based
-on which kind of body it has entered. Every future backend faces the same dispatch. Every
-maintenance change risks the four-way switch going out of sync. MIR carrying the receiver as a real
-binding pushes the answer up to one place that every backend just reads.
+The render carried walker state for the receiver (`ctx.ReceiverObject()`, `ctx.MemberPrefix()`,
+`ctx.DeferredByValueCapture()`) and switched between four C++ mechanisms based on which kind of body
+it had entered. Every future backend faces the same dispatch. Every maintenance change risks the
+four-way switch going out of sync. MIR carrying the receiver as a real binding pushes the answer up
+to one place that every backend just reads.
 
 ## Rejected alternatives
 
@@ -141,13 +155,12 @@ binding pushes the answer up to one place that every backend just reads.
   whether each body transitively touches class state -- a cross-call analysis that becomes wrong the
   moment a helper is added or removed. Saves a parameter the C++ optimizer would often elide anyway.
 
-- **Body-local `auto self = this;` declaration as the first statement of every method body.** Looks
-  uniform from the body's vantage but adds an emit-side declaration the user did not write. The MIR
-  statement representing it would need a `ThisExpr` / `SelfScopeExpr` node that carries "give me the
-  C++ `this` keyword", and that node is the same implicit-context smell this decision exists to
-  remove (its meaning depends on the surrounding callable kind being "C++ instance method"). It also
-  adds an extra `M*` local at every callable's entry that no optimizer is guaranteed to remove in
-  debug builds.
+- **A MIR statement binding `self` to the C++ `this` keyword at the top of every method body.** It
+  would need a `ThisExpr` / `SelfScopeExpr` node that carries "give me the C++ `this` keyword", and
+  that node is the same implicit-context smell this decision exists to remove (its meaning depends
+  on the surrounding callable kind being "C++ instance method"). The C++ backend does write such a
+  binding today, but as its spelling of how C++ hands a body the object its receiver binding states,
+  read from the binding's type; MIR states only the binding.
 
 - **`SelfScopeExpr` / `ThisExpr` as a MIR expression node** carrying "the current receiver". Has
   been the existing shape for fork-branch / NBA / scan closure bodies and is what the current
@@ -158,13 +171,13 @@ binding pushes the answer up to one place that every backend just reads.
 - **A struct of free functions, no class membership at all.** Removes C++ implicit `this` entirely
   (process / method bodies become free functions friended into the class). Plausible but breaks the
   natural C++ class-membership model that scheduler / runtime already use to reach instance methods
-  through `Scope*` polymorphism. Static methods give the same explicit-receiver shape without losing
-  class membership. (This rejection's `Scope*`-polymorphism premise is revisited by
-  [generated-behavior-boundary](generated-behavior-boundary.md): the runtime reaches generated
-  behavior through a backend-neutral unit definition rather than `Scope*` virtual dispatch, so class
-  membership is not required for dispatch. The explicit-`self` static-body shape this decision fixes
-  is retained there; whether a body is emitted on the class is a backend-private realization
-  detail.)
+  through `Scope*` polymorphism. Member functions binding `self` on their first line give the same
+  explicit receiver without losing class membership. (This rejection's `Scope*`-polymorphism premise
+  is revisited by [generated-behavior-boundary](generated-behavior-boundary.md): the runtime reaches
+  generated behavior through a backend-neutral unit definition rather than `Scope*` virtual
+  dispatch, so class membership is not required for dispatch. The explicit `self` binding this
+  decision fixes is retained there; whether a body is emitted on the class is a backend-private
+  realization detail.)
 
 - **`self` as a closure parameter, supplied at invocation via `std::bind_front` at every deferred
   submit site.** The literal "every callable receives self the same way" path: closures get an
@@ -204,16 +217,13 @@ binding pushes the answer up to one place that every backend just reads.
   `ServicesRef()`, and `DeferredByValueCapture()` are removed. Receiver-related walker state on
   `RenderContext` is gone.
 
-- C++ emit shape changes: every callable body -- process, function / task, constructor, and the
-  resolve / initialize lifecycle hooks -- emits as
-  `static auto <name>(M* self, ...) -> ... { ... }`. An engine-dispatched entry adds a thin
-  non-static shim forwarding to the static body: the C++ constructor runs `init(this)`, a lifecycle
-  override runs `<name>(this)`. Closures emit as
-  `[self = <enclosing self expr>, cap1 = ..., cap2 = <reference value>](closure_params) -> R { ... }`
-  -- every capture is name-explicit and by-value; an alias capture binds a reference value, never a
-  C++ `[&]` reference (see `docs/architecture/callable.md` for why). The body that creates a scope's
-  processes registers each one over the receiver it was handed, the same way every other body
-  reaches its own.
+- C++ emit shape: a body whose receiver borrows its object emits as a member function whose first
+  line binds the receiver from `this` -- `auto C::<name>(params) -> R { C* self = this; ... }` --
+  and one taking over its box as `static auto <name>(Box self, params) -> R`. A closure emits as a
+  struct whose members are its captures, every one name-explicit and by value; an alias capture
+  binds a reference value, never a C++ `[&]` reference (see `docs/architecture/callable.md` for
+  why). The body that creates a scope's processes registers each one over the receiver it was
+  handed, the same way every other body reaches its own.
 
 - LIR / LLVM-IR lowering reads the `self` binding directly off MIR. No backend re-derives receiver
   semantics.

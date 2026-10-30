@@ -73,7 +73,7 @@ layer regardless, then never mentions status again.
 What rots is the other shape: one status clause buried in a bullet, in a section about something
 else. Nothing forces a reader past it, so it survives every refactor that falsifies it. A doc that
 needs more than its opening paragraph to describe what is unbuilt is describing progress, and
-progress has its own directory.
+progress is tracked in issues.
 
 The same placement rule covers mechanism. An architecture doc names file layouts, type spellings,
 and command names only under Notes / Examples, prefixed as the current implementation -- never in an
@@ -84,9 +84,9 @@ invariant or a forbidden shape, which must survive the next rename.
 `tools/policy/check_docs.py` settles the claims a machine can settle: a repo-rooted path cited in
 any doc exists, a relative link resolves, an index lists every document in its directory, no cadence
 vocabulary (`in this cut`, `a later cut`) appears in a timeless doc, no reader-facing README states
-a count, and no permanent doc cites the progress queue. It deliberately checks nothing about whether
-a contract is the right contract or a stated capability is real -- that needs a reader, and it is
-what a reader's attention is for.
+a count, and no permanent doc cites a work issue. It deliberately checks nothing about whether a
+contract is the right contract or a stated capability is real -- that needs a reader, and it is what
+a reader's attention is for.
 
 Its known gaps, all of the same kind: a bare filename (`test.yml`) is not repo-rooted, so no rule
 confirms it exists; the other words principle 5 bans ("currently", "transitional") carry legitimate
@@ -144,13 +144,14 @@ dependency between doc kinds is strictly one-way, from permanent to ephemeral:
 - `decisions/` records dated decisions with rationale. Entries may reference architecture docs and
   other decisions.
 - `glossary/` defines terminology used by architecture docs.
-- `progress/` tracks the delta between current code and the target. It is the most downstream doc
-  kind: it may reference architecture and decisions, never the reverse.
+- The delta between current code and the target is tracked in GitHub issues. It is the most
+  downstream kind: an issue may cite architecture and decisions, never the reverse.
 
 An architecture doc that cites a decision, a queue, or a working doc is a violation of this rule. A
-decision or glossary doc that cites a `progress/` file is the same violation: a permanent doc must
-not depend on an ephemeral queue. Because nothing permanent points at `progress/`, a completed
-progress file can be deleted with no dangling pointer left behind.
+decision or glossary doc that cites a work issue is the same violation: a permanent doc must not
+depend on an ephemeral queue. It states the permanent fact ("not yet implemented") instead. A merged
+pull request, or another project's issue, is history rather than a queue, and a record may cite one
+as the evidence it is.
 
 ### The README is the top of that stack
 
@@ -162,13 +163,12 @@ document least free to borrow. These belong to lower layers and never appear her
   its update, and publishing it as a measure of scope makes it a target, which collides directly
   with the rule that cases group by feature rather than by assertion. State that coverage is
   measured and point at where.
-- **An inventory of supported constructs.** `progress/README.md` already forbids this for progress
-  docs, on the grounds that `conformance/` and the code are the source of truth and a parallel
-  inventory rots. The same reasoning binds harder at the top: a capability table goes stale on every
-  feature merge.
+- **An inventory of supported constructs.** `conformance/` and the code are the source of truth for
+  what is supported, and a parallel inventory rots. A capability table at the top goes stale on
+  every feature merge.
 - **SystemVerilog at the syntax level.** Naming a specific keyword or net type in the README is a
   detail-layer fact in the highest-level document. Write about what the tool is and what it handles
-  in categories; leave the constructs to `progress/` and the corpus.
+  in categories; leave the constructs to the corpus.
 - **A description of what a directory contains, when that directory has its own README.** Link to it
   and say why a reader would go there. Listing its contents duplicates a document whose whole job is
   to describe itself, and the copy is the one that goes stale.

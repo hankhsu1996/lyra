@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Ask a question
+    url: https://github.com/hankhsu1996/lyra/discussions
+    about: How to use Lyra, or whether something is a bug, before filing one.
+  - name: Report a security vulnerability
+    url: https://github.com/hankhsu1996/lyra/security/advisories/new
+    about: Privately, as SECURITY.md says. Never in a public issue.

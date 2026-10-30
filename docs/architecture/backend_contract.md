@@ -51,7 +51,12 @@ two ways.
     that names a target-language runtime library type. It also answers every other question a target
     asks about a type or a pair of types -- how a value of one is constructed, and how a value of
     one is written as the other -- and where the target answers such a question with a library
-    function, the function's name is part of that answer.
+    function, the function's name is part of that answer. Among them is how a body is handed the
+    object its receiver binding states, for every kind of body alike: whether the target hands it as
+    its own implicit object or as a parameter, and whether the function is read-only, both read from
+    the receiver's type alone, since answering either from the kind of body lets a read-only
+    receiver lose its qualifier with nothing refusing it. Which object a call is entered on is the
+    call side of the same question, and place access answers it.
   - **Place access** -- one dispatch per MIR type variant returning how the storage behind a place
     of that type is named as an lvalue, which is what a by-reference binding and the owner of a
     descending write both compose onto. This is the only entry that names a runtime library's access

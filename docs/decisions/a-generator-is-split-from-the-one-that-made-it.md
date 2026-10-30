@@ -110,7 +110,19 @@ that question rather than of which generator is fastest.
   changing the generator changes every one of them. A seed a user has recorded names a run only for
   as long as this stands.
 - `$random` and the `$dist_` functions are not this generator's: LRM 20.14 makes their algorithm
-  part of the standard.
+  part of the standard. Annex N's `long` is read as 32 bits wide, because `$random`'s rescaling
+  branch stays within 32 signed bits only under that reading.
+- A `$random` call with no seed advances one seed the run keeps, starting at zero, by the algorithm
+  of Annex N. 20.14 states no start for that stream, and 18.14 does not list `$random` among what
+  random stability covers. A seed per process was not chosen: started alike, every process would
+  draw the same values, and started from the process's own generator, the values would be this
+  implementation's and no longer the standard's.
+- A port connection is a continuous assignment the instantiation creates (LRM 4.9.6), so its
+  generator is split from the instantiating instance's initialization RNG, and whether an output is
+  connected moves no draw of the child's.
+- The state `get_randstate` answers is this generator's four words as a string, and only a string
+  this implementation produced can be put back. Setting any other ends the run with an error, since
+  18.13.5 leaves it undefined and the string is one the design computed.
 
 ## Cross-references
 

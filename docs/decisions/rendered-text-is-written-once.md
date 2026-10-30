@@ -78,6 +78,13 @@ had the very shape this record removed from expressions, one string returned per
 recursive walk. Written into the destination as well, the emitted text is identical over the whole
 conformance corpus, 6,412 files.
 
+**The dumps of the intermediate forms keep the arrangement this record replaces, and that is
+deliberate.** Each is written only when someone asks for one and is read by a person, never by a
+build. Measured with an optimized build, the middle form of a 48-unit RISC-V core -- 45.8 MB --
+dumps in 0.36 s, and the copying this record removes is 5% of that; the rest is formatting and small
+allocations. No build waits on a dump, only the person who asked for it, so the rule covers what a
+build writes and stops there.
+
 **The rule is gated rather than written down.** Nothing in the backend composes text with a format
 call, so `tools/policy/check_architecture.py` refuses `std::format` anywhere in it. A rule that sees
 only spelling cannot tell a node's text from a name, and with names written too it no longer has to.

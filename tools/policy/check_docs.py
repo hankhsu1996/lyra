@@ -26,8 +26,9 @@ Rules:
                README.md, CLAUDE.md.
         An architecture contract states what holds, not when it started
         holding; "in this cut" has no referent once the cut is history.
-        Cadence belongs in docs/progress/, which exists to carry it, and
-        in docs/decisions/, which records a decision at a point in time.
+        Cadence belongs in the issues that track work, which exist to
+        carry it, and in docs/decisions/, which records a decision at a
+        point in time.
         Text inside code spans is exempt: a quoted counter-example is not
         an assertion.
 
@@ -47,28 +48,14 @@ Rules:
         a word (`C++23`) and a standard's designation (`IEEE 1800`),
         which counts nothing this repository contains.
 
-  D006  A permanent doc must not cite the progress queue.
+  D006  A permanent doc must not cite a work issue.
         Scope: docs/architecture/**, docs/decisions/**, docs/glossary/**.
         The dependency runs one way, from permanent to ephemeral. A
-        contract that points at a working queue cannot outlive it, and a
-        finished progress file cannot be deleted without stranding the
-        pointer. State the permanent fact instead.
-
-  D007  An entry that carries an id uses it once in the file that
-        defines it.
-        Scope: docs/progress/**.
-        Two branches open at the same time each append an entry to one
-        queue and each take what was the next free number. They edit
-        different lines, so the merge is clean and the collision is
-        silent -- an id is prose, which no build and no test reads. What
-        it costs is every pointer written afterwards: two notes citing
-        the same id name different entries, and neither is wrong.
-        Carrying one is optional and several progress docs carry none,
-        writing each entry as a sentence instead. That is not a gap this
-        rule should close: an id is a shorthand for referring to an entry
-        in conversation, not part of what the entry states. So what this
-        covers is the files that use the convention, and a file with no
-        ids is silently in scope and correctly reports nothing.
+        contract that points at a working queue cannot outlive it, and
+        the issue closes while the contract stands. State the permanent
+        fact instead. An issue is caught by its URL only: a bare `#N`
+        names a pull request as often, and a merged one is history a
+        record may cite.
 
   D008  A cross-reference spelled as a quoted path must resolve.
         Scope: every tracked markdown file.
@@ -133,8 +120,7 @@ TIMELESS_FILES = ("README.md", "CLAUDE.md")
 
 # Rule D004
 # (index file, indexed directory). An index not listed here makes no
-# completeness claim -- docs/progress/README.md deliberately lists nothing,
-# because its directory turns over every PR.
+# completeness claim.
 INDEXES = (
     ("docs/decisions/README.md", "docs/decisions"),
     ("docs/architecture/README.md", "docs/architecture"),
@@ -155,15 +141,11 @@ DESIGNATION_PATTERN = re.compile(r"\b(?:IEEE|LRM)\s+\d[\d.-]*")
 
 # Rule D006
 PERMANENT_DIRS = ("docs/architecture/", "docs/decisions/", "docs/glossary/")
-PROGRESS_REFERENCE_PATTERN = re.compile(r"progress/[A-Za-z0-9_.-]+\.md")
-
-# Rule D007
-# A progress entry opens with a checkbox and an id. A suffixed id (`R17a`) is
-# a sub-entry standing on its own, so it is a distinct id rather than a second
-# use of the one it extends.
-PROGRESS_DIR = "docs/progress/"
-PROGRESS_ENTRY_PATTERN = re.compile(
-    r"^- \[[ x]\] ([A-Z]+[0-9]+[a-z]*) --", re.MULTILINE
+# GitHub matches an owner and a repository by any case, and the project board
+# is the same queue seen whole.
+WORK_ISSUE_PATTERN = re.compile(
+    r"github\.com/(?:hankhsu1996/lyra/issues|users/hankhsu1996/projects)/\d+",
+    re.IGNORECASE,
 )
 
 # Rule D008
@@ -316,36 +298,10 @@ def check_d006(repo_root: Path) -> list[str]:
         if not rel.startswith(PERMANENT_DIRS):
             continue
         text = path.read_text()
-        for m in PROGRESS_REFERENCE_PATTERN.finditer(text):
+        for m in WORK_ISSUE_PATTERN.finditer(text):
             errors.append(
                 f"  {rel}:{line_of(text, m.start())}: D006 cites "
                 f"'{m.group(0)}'; state the permanent fact instead"
-            )
-    return errors
-
-
-def reused_ids(text: str) -> list[tuple[str, int, int]]:
-    first_seen: dict[str, int] = {}
-    reused = []
-    for m in PROGRESS_ENTRY_PATTERN.finditer(text):
-        entry_id = m.group(1)
-        line = line_of(text, m.start())
-        if entry_id in first_seen:
-            reused.append((entry_id, first_seen[entry_id], line))
-        else:
-            first_seen[entry_id] = line
-    return reused
-
-
-def check_d007(repo_root: Path) -> list[str]:
-    errors = []
-    for path, rel in iter_docs(repo_root):
-        if not rel.startswith(PROGRESS_DIR):
-            continue
-        for entry_id, first, again in reused_ids(path.read_text()):
-            errors.append(
-                f"  {rel}:{again}: D007 reuses id '{entry_id}', "
-                f"already taken at line {first}"
             )
     return errors
 
@@ -457,35 +413,30 @@ def run_self_tests() -> bool:
     ok &= expect(not BARE_COUNT_PATTERN.search("one of 5 things"),
                  "D005 ignores a single digit")
 
-    # D006 fires on a progress citation and leaves sibling tiers alone.
+    # D006 fires on a work issue and leaves history and other projects alone.
     ok &= expect(
-        PROGRESS_REFERENCE_PATTERN.search("see `../progress/object-model.md`)")
+        WORK_ISSUE_PATTERN.search(
+            "tracked in https://github.com/hankhsu1996/lyra/issues/1487")
         is not None,
-        "D006 detects a relative progress citation")
+        "D006 detects a work issue citation")
     ok &= expect(
-        PROGRESS_REFERENCE_PATTERN.search("tracked in docs/progress/nets.md")
+        WORK_ISSUE_PATTERN.search("github.com/HankHsu1996/Lyra/issues/12")
         is not None,
-        "D006 detects a repo-rooted progress citation")
+        "D006 detects a work issue spelled in another case")
     ok &= expect(
-        not PROGRESS_REFERENCE_PATTERN.search("see `../decisions/mir.md`"),
+        WORK_ISSUE_PATTERN.search("see https://github.com/users/hankhsu1996/projects/1")
+        is not None,
+        "D006 detects the project board")
+    ok &= expect(
+        not WORK_ISSUE_PATTERN.search("merged as #1485"),
+        "D006 false-pos: a pull request number is history")
+    ok &= expect(
+        not WORK_ISSUE_PATTERN.search(
+            "https://github.com/rust-lang/rust/issues/133883"),
+        "D006 false-pos: another project's issue is evidence")
+    ok &= expect(
+        not WORK_ISSUE_PATTERN.search("see `../decisions/mir.md`"),
         "D006 false-pos: a decisions citation is allowed")
-    ok &= expect(
-        not PROGRESS_REFERENCE_PATTERN.search("progress is tracked elsewhere"),
-        "D006 false-pos: the bare word is not a citation")
-
-    # D007 fires on a reused id and reports where each use is.
-    ok &= expect(
-        reused_ids("- [ ] R9 -- one\n- [x] R9 -- two\n") == [("R9", 1, 2)],
-        "D007 detects a reused id")
-    ok &= expect(
-        reused_ids("- [ ] R17 -- one\n- [x] R17a -- two\n") == [],
-        "D007 false-pos: a suffixed id is an id of its own")
-    ok &= expect(
-        reused_ids("- [ ] R9 -- one\n- [x] R10 -- two\n") == [],
-        "D007 false-pos: distinct ids in one file")
-    ok &= expect(
-        reused_ids("Cited twice in prose: R9 and R9 again.\n") == [],
-        "D007 false-pos: a citation in prose is not an entry")
 
     # D008 captures the two spellings D001 and D002 both miss.
     relative = "../architecture/lifetime.md"
@@ -513,8 +464,7 @@ CHECKS = [
     ("D003 cadence vocabulary in a timeless doc", check_d003),
     ("D004 index omits a document in its directory", check_d004),
     ("D005 reader-facing README states a count", check_d005),
-    ("D006 permanent doc cites the progress queue", check_d006),
-    ("D007 progress entry id is used twice", check_d007),
+    ("D006 permanent doc cites a work issue", check_d006),
     ("D008 quoted cross-reference does not resolve", check_d008),
 ]
 
@@ -524,7 +474,7 @@ DOCUMENTATION POLICY VIOLATION
 A doc claim a machine can check is a claim that should have been correct.
 The fix is to correct the claim, never to loosen the rule -- and if the
 claim keeps going stale, it is written at the wrong layer: mechanism
-belongs in a "current implementation" note or in progress docs, while an
+belongs in a "current implementation" note or in an issue, while an
 architecture contract states only what must hold.
 """
 

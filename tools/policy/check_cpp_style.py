@@ -53,7 +53,7 @@ Rules:
 
   S007  No project-documentation references in comments. A comment that names
         a `docs/` path, a project `.md` file (architecture / decision /
-        progress / glossary), or a numbered "invariant N" couples the code to
+        glossary), or a numbered "invariant N" couples the code to
         a document that renames and rots. The LRM (IEEE 1800 SystemVerilog
         spec) is the one allowed external citation, and it never appears as a
         `.md` file -- so seeing a `.md` reference is enough to know the comment
