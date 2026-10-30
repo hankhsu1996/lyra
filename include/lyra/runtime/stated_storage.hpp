@@ -80,10 +80,6 @@ static_assert(FitsStatedStorage<value::Any>(support::kAnyStorage));
 static_assert(FitsStatedStorage<value::Empty>(support::kEmptyStorage));
 static_assert(FitsStatedStorage<value::BitVec>(support::kBitVecStorage));
 static_assert(FitsStatedStorage<value::PrintItem>(support::kPrintItemStorage));
-static_assert(FitsStatedStorage<value::PrintLiteralItem>(
-    support::kPrintLiteralItemStorage));
-static_assert(
-    FitsStatedStorage<value::PrintValueItem>(support::kPrintValueItemStorage));
 static_assert(
     FitsStatedStorage<value::FormatSpec>(support::kFormatSpecStorage));
 static_assert(FitsStatedStorage<value::FormatArg>(support::kFormatArgStorage));

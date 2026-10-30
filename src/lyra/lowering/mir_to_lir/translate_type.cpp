@@ -336,10 +336,6 @@ auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
       return mirror(lir::RuntimeLibraryKind::kPrintItem);
     case mir::RuntimeLibraryKind::kEnumeration:
       return mirror(lir::RuntimeLibraryKind::kEnumeration);
-    case mir::RuntimeLibraryKind::kPrintLiteralItem:
-      return mirror(lir::RuntimeLibraryKind::kPrintLiteralItem);
-    case mir::RuntimeLibraryKind::kPrintValueItem:
-      return mirror(lir::RuntimeLibraryKind::kPrintValueItem);
     case mir::RuntimeLibraryKind::kFormatSpec:
       return mirror(lir::RuntimeLibraryKind::kFormatSpec);
     case mir::RuntimeLibraryKind::kFormatArg:

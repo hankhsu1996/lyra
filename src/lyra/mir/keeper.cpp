@@ -27,8 +27,6 @@ auto KeeperEntriesOf(const TypePool& types, TypeId keeper)
     case RuntimeLibraryKind::kBitVec:
     case RuntimeLibraryKind::kEnumeration:
     case RuntimeLibraryKind::kPrintItem:
-    case RuntimeLibraryKind::kPrintLiteralItem:
-    case RuntimeLibraryKind::kPrintValueItem:
     case RuntimeLibraryKind::kFormatSpec:
     case RuntimeLibraryKind::kFormatArg:
     case RuntimeLibraryKind::kChannelCancellation:

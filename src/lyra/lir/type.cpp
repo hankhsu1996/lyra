@@ -57,10 +57,6 @@ auto RuntimeLibraryKindName(RuntimeLibraryKind kind) -> const char* {
       return "enumeration";
     case RuntimeLibraryKind::kPrintItem:
       return "print item";
-    case RuntimeLibraryKind::kPrintLiteralItem:
-      return "print literal item";
-    case RuntimeLibraryKind::kPrintValueItem:
-      return "print value item";
     case RuntimeLibraryKind::kFormatSpec:
       return "format specification";
     case RuntimeLibraryKind::kFormatArg:
@@ -474,8 +470,6 @@ auto Type::IsAddressOnly() const -> bool {
       case RuntimeLibraryKind::kBitVec:
       case RuntimeLibraryKind::kEnumeration:
       case RuntimeLibraryKind::kPrintItem:
-      case RuntimeLibraryKind::kPrintLiteralItem:
-      case RuntimeLibraryKind::kPrintValueItem:
       case RuntimeLibraryKind::kFormatSpec:
       case RuntimeLibraryKind::kFormatArg:
       case RuntimeLibraryKind::kChannelCancellation:
@@ -595,8 +589,6 @@ auto Type::HeldAs() const -> std::optional<Holding> {
                 return ValueDomain::kBitVec;
               // Built for one use by the call that answers with one.
               case RuntimeLibraryKind::kPrintItem:
-              case RuntimeLibraryKind::kPrintLiteralItem:
-              case RuntimeLibraryKind::kPrintValueItem:
                 return LibraryObject::kPrintItem;
               case RuntimeLibraryKind::kFormatSpec:
                 return LibraryObject::kFormatSpec;

@@ -48,8 +48,6 @@ enum class RuntimeLibraryKind : std::uint8_t {
   kBitVec,
   kEnumeration,
   kPrintItem,
-  kPrintLiteralItem,
-  kPrintValueItem,
   kFormatSpec,
   kFormatArg,
   kChannelCancellation,

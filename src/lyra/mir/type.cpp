@@ -240,8 +240,6 @@ auto IsReachedByAddress(RuntimeLibraryKind kind) -> bool {
       return true;
     case RuntimeLibraryKind::kBitVec:
     case RuntimeLibraryKind::kPrintItem:
-    case RuntimeLibraryKind::kPrintLiteralItem:
-    case RuntimeLibraryKind::kPrintValueItem:
     case RuntimeLibraryKind::kFormatSpec:
     case RuntimeLibraryKind::kFormatArg:
     case RuntimeLibraryKind::kTimeFormat:
@@ -288,8 +286,6 @@ auto IsLibraryValue(RuntimeLibraryKind kind) -> bool {
     case RuntimeLibraryKind::kDeferredEffects:
     case RuntimeLibraryKind::kViolationReportKeeper:
     case RuntimeLibraryKind::kPrintItem:
-    case RuntimeLibraryKind::kPrintLiteralItem:
-    case RuntimeLibraryKind::kPrintValueItem:
     case RuntimeLibraryKind::kFormatSpec:
     case RuntimeLibraryKind::kFormatArg:
     case RuntimeLibraryKind::kTimeFormat:
@@ -340,8 +336,6 @@ auto LibraryValueMovability(RuntimeLibraryKind kind) -> Movability {
       return Movability::kCopyable;
     case RuntimeLibraryKind::kEnumeration:
     case RuntimeLibraryKind::kPrintItem:
-    case RuntimeLibraryKind::kPrintLiteralItem:
-    case RuntimeLibraryKind::kPrintValueItem:
     case RuntimeLibraryKind::kFormatSpec:
     case RuntimeLibraryKind::kFormatArg:
     case RuntimeLibraryKind::kChannelCancellation:
@@ -500,6 +494,9 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           [](const RecordType&) { return true; },
           [](const StringType&) { return true; },
           [](const AnyType&) { return true; },
+          // A wildcard index (LRM 7.8.1) is an integral value kept with the
+          // type it was written in, which the library holds as a copy of it.
+          [](const WildcardIndexType&) { return true; },
           [](const ErasedValueType&) { return false; },
           [](const RealType&) { return true; },
           [](const ShortRealType&) { return true; },
@@ -564,11 +561,8 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           [](const FilesType&) { return false; },
           [](const DiagnosticType&) { return false; },
 
-          // A wildcard index (LRM 7.8.1) is a rule about which indices an array
-          // admits rather than a type any value has, and `void` and a tagged
-          // union's empty payload (LRM 7.3.2) are values no declaration holds
-          // on its own.
-          [](const WildcardIndexType&) { return false; },
+          // `void` and a tagged union's empty payload (LRM 7.3.2) are values
+          // no declaration holds on its own.
           [](const EmptyType&) { return false; },
           [](const VoidType&) { return false; }});
 }

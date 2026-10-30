@@ -277,8 +277,6 @@ struct BuiltinMirTypes {
   TypeId enumeration;
   TypeId channel_cancellation;
   TypeId print_item;
-  TypeId print_literal_item;
-  TypeId print_value_item;
   TypeId format_spec;
   TypeId format_arg;
   TypeId time_format;
@@ -495,12 +493,6 @@ struct CompilationUnit {
             .print_item = types.Intern(
                 Type{RuntimeLibraryType{
                     .kind = RuntimeLibraryKind::kPrintItem}}),
-            .print_literal_item = types.Intern(
-                Type{RuntimeLibraryType{
-                    .kind = RuntimeLibraryKind::kPrintLiteralItem}}),
-            .print_value_item = types.Intern(
-                Type{RuntimeLibraryType{
-                    .kind = RuntimeLibraryKind::kPrintValueItem}}),
             .format_spec = types.Intern(
                 Type{RuntimeLibraryType{
                     .kind = RuntimeLibraryKind::kFormatSpec}}),

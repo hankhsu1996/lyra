@@ -85,8 +85,6 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
               case mir::RuntimeLibraryKind::kBitVec:
               case mir::RuntimeLibraryKind::kEnumeration:
               case mir::RuntimeLibraryKind::kPrintItem:
-              case mir::RuntimeLibraryKind::kPrintLiteralItem:
-              case mir::RuntimeLibraryKind::kPrintValueItem:
               case mir::RuntimeLibraryKind::kFormatSpec:
               case mir::RuntimeLibraryKind::kFormatArg:
               case mir::RuntimeLibraryKind::kChannelCancellation:

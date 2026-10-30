@@ -35,7 +35,6 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/integral_constant_folding.hpp"
-#include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
@@ -48,18 +47,9 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-auto ToMirFormatModifiers(const value::FormatModifiers& m)
-    -> mir::FormatModifiers {
-  return mir::FormatModifiers{
-      .width = m.width,
-      .precision = m.precision,
-      .zero_pad = m.zero_pad,
-      .left_align = m.left_align};
-}
-
 // What an empty argument contributes to the text (LRM 21.2.1).
-auto EmptyArgumentItem() -> mir::RuntimePrintItem {
-  return mir::RuntimePrintLiteral{.text = " "};
+auto EmptyArgumentItem() -> RuntimePrintItem {
+  return RuntimePrintLiteral{.text = " "};
 }
 
 // A format specification as the machine integers it is built from, in the
@@ -67,7 +57,7 @@ auto EmptyArgumentItem() -> mir::RuntimePrintItem {
 // directive that writes no modifiers states each at its default. A constant's
 // text and a run's text are the same text because both specifications are
 // built from this one list.
-auto FormatSpecFields(const mir::FormatSpec& spec, std::int64_t time_unit_power)
+auto FormatSpecFields(const FormatSpec& spec, std::int64_t time_unit_power)
     -> std::array<std::int64_t, 6> {
   return {
       static_cast<std::int64_t>(spec.kind),
@@ -128,8 +118,8 @@ auto LowerFormatOperand(Lowerer& lowerer, WalkFrame frame, hir::ExprId hir_arg)
 
 template <ExprLowerer Lowerer>
 auto BuildPrintValueItem(
-    Lowerer& lowerer, WalkFrame frame, hir::ExprId hir_arg,
-    mir::FormatSpec spec) -> diag::Result<mir::RuntimePrintItem> {
+    Lowerer& lowerer, WalkFrame frame, hir::ExprId hir_arg, FormatSpec spec)
+    -> diag::Result<RuntimePrintItem> {
   auto& block = *frame.current_block;
   auto lowered_or = LowerFormatOperand(lowerer, frame, hir_arg);
   if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
@@ -149,8 +139,7 @@ auto BuildPrintValueItem(
   // string the program computes reaches no directive here, so the runtime
   // formatter answers that one on its own.
   if (is_handle) {
-    spec =
-        mir::FormatSpec(value::FormatKind::kAssignmentPattern, spec.modifiers);
+    spec = FormatSpec(value::FormatKind::kAssignmentPattern, spec.modifiers);
   }
 
   // %s formats by operand type (LRM 21.2.1.7): a String and a packed value
@@ -166,18 +155,17 @@ auto BuildPrintValueItem(
 
   // A constant has one text under a conversion that reads nothing but its
   // operand, so it is stated here, by the formatter the run would have asked.
-  // A literal item is text as a string value holds it, which keeps no NUL (LRM
-  // 6.16), so a text with one stays the operand's to print.
+  // An item made from text holds it as a string value does, which keeps no NUL
+  // (LRM 6.16), so a text with one stays the operand's to print.
   if (is_integral && ReadsOnlyItsOperand(spec.kind)) {
     std::optional<std::string> text = mir::FoldFormattedText(
         lowerer.Owner().Unit(), lowered,
         std::make_from_tuple<value::FormatSpec>(FormatSpecFields(spec, 0)));
     if (text.has_value() && !text->contains('\0')) {
-      return mir::RuntimePrintLiteral{.text = *std::move(text)};
+      return RuntimePrintLiteral{.text = *std::move(text)};
     }
   }
 
-  const mir::TypeId type = lowered.type;
   const mir::ExprId value = block.exprs.Add(std::move(lowered));
 
   // A type that names how a value of it reads (LRM 21.2.1.6) is rendered where
@@ -189,17 +177,16 @@ auto BuildPrintValueItem(
         return RefuseAssignmentPatternText(lowerer, hir_arg);
       case PatternReading::kTheTypeNamesTheValue:
       case PatternReading::kTheTypeNamesItsMembers:
-        return mir::RuntimePrintValue(
+        return RuntimePrintValue(
             BuildAssignmentPatternText(
                 lowerer.Owner(), frame, value, source_type),
-            lowerer.Owner().Unit().builtins.string,
-            mir::FormatSpec(value::FormatKind::kString, spec.modifiers));
+            FormatSpec(value::FormatKind::kString, spec.modifiers));
       case PatternReading::kTheValueAnswers:
         break;
     }
   }
 
-  return mir::RuntimePrintValue(value, type, std::move(spec));
+  return RuntimePrintValue(value, spec);
 }
 
 // One operand of a format string the program computes (LRM 21.3.3). Such a
@@ -335,24 +322,22 @@ template <ExprLowerer Lowerer>
 auto LowerPrintItemForDirective(
     Lowerer& lowerer, WalkFrame frame, const value::FormatDirective& directive,
     std::span<const std::optional<hir::ExprId>> arguments,
-    std::size_t& next_argument) -> diag::Result<mir::RuntimePrintItem> {
+    std::size_t& next_argument) -> diag::Result<RuntimePrintItem> {
   switch (directive.role) {
     case value::FormatDirective::Role::kLiteral:
-      return mir::RuntimePrintLiteral{.text = directive.literal};
+      return RuntimePrintLiteral{.text = directive.literal};
 
     case value::FormatDirective::Role::kModulePath:
       // The directive takes no operand, so it leaves the operand cursor where
       // it found it, and it takes no modifier either.
-      return mir::RuntimePrintValue(
+      return RuntimePrintValue(
           BuildHierarchicalNameExpr(lowerer, frame),
-          lowerer.Owner().Unit().builtins.string,
-          mir::FormatSpec(value::FormatKind::kString, mir::FormatModifiers{}));
+          FormatSpec(value::FormatKind::kString, value::FormatModifiers{}));
 
     case value::FormatDirective::Role::kLibraryBinding:
-      return mir::RuntimePrintValue(
+      return RuntimePrintValue(
           BuildLibraryBindingExpr(lowerer, frame),
-          lowerer.Owner().Unit().builtins.string,
-          mir::FormatSpec(value::FormatKind::kString, mir::FormatModifiers{}));
+          FormatSpec(value::FormatKind::kString, value::FormatModifiers{}));
 
     case value::FormatDirective::Role::kValue: {
       if (next_argument >= arguments.size()) {
@@ -364,8 +349,7 @@ auto LowerPrintItemForDirective(
       if (!argument.has_value()) return EmptyArgumentItem();
       return BuildPrintValueItem(
           lowerer, frame, *argument,
-          mir::FormatSpec(
-              directive.kind, ToMirFormatModifiers(directive.modifiers)));
+          FormatSpec(directive.kind, directive.modifiers));
     }
   }
   throw InternalError("LowerPrintItemForDirective: unreachable directive role");
@@ -419,7 +403,7 @@ auto TryGetHirStringLiteral(
 // only at lowering -- so its power is materialized here as the spec's sixth
 // field rather than read from the directive like the others.
 auto BuildFormatSpecExpr(
-    mir::CompilationUnit& unit, mir::Block& block, const mir::FormatSpec& spec,
+    mir::CompilationUnit& unit, mir::Block& block, const FormatSpec& spec,
     std::int64_t time_unit_power) -> mir::Expr {
   const bool is_time = spec.kind == value::FormatKind::kTime;
   std::vector<mir::ExprId> args;
@@ -435,12 +419,11 @@ auto BuildFormatSpecExpr(
 }
 
 auto BuildPrintItemExpr(
-    mir::CompilationUnit& unit, mir::Block& block,
-    const mir::RuntimePrintItem& item, std::int64_t time_unit_power)
-    -> mir::Expr {
+    mir::CompilationUnit& unit, mir::Block& block, const RuntimePrintItem& item,
+    std::int64_t time_unit_power) -> mir::Expr {
   return std::visit(
       Overloaded{
-          [&](const mir::RuntimePrintLiteral& lit) -> mir::Expr {
+          [&](const RuntimePrintLiteral& lit) -> mir::Expr {
             const mir::ExprId text_lit = block.exprs.Add(
                 mir::Expr{
                     .data = mir::StringLiteral{.value = lit.text},
@@ -455,11 +438,14 @@ auto BuildPrintItemExpr(
             return mir::Expr{
                 .data =
                     mir::CallExpr{
-                        .callee = mir::Construct{},
+                        .callee =
+                            mir::Direct{
+                                .target =
+                                    support::BuiltinFn::kMakeTextPrintItem},
                         .arguments = {mir::Borrow(unit, block, text)}},
-                .type = unit.builtins.print_literal_item};
+                .type = unit.builtins.print_item};
           },
-          [&](const mir::RuntimePrintValue& v) -> mir::Expr {
+          [&](const RuntimePrintValue& v) -> mir::Expr {
             const mir::ExprId spec = block.exprs.Add(
                 BuildFormatSpecExpr(unit, block, v.spec, time_unit_power));
             return mir::Expr{
@@ -467,7 +453,7 @@ auto BuildPrintItemExpr(
                     mir::CallExpr{
                         .callee = mir::Construct{},
                         .arguments = {mir::Borrow(unit, block, v.value), spec}},
-                .type = unit.builtins.print_value_item};
+                .type = unit.builtins.print_item};
           }},
       item);
 }
@@ -494,9 +480,8 @@ template <ExprLowerer Lowerer>
 auto LowerFormatStringItems(
     Lowerer& lowerer, WalkFrame frame, const value::FormatParseResult& parsed,
     std::span<const std::optional<hir::ExprId>> arguments,
-    std::size_t& next_argument)
-    -> diag::Result<std::vector<mir::RuntimePrintItem>> {
-  std::vector<mir::RuntimePrintItem> items;
+    std::size_t& next_argument) -> diag::Result<std::vector<RuntimePrintItem>> {
+  std::vector<RuntimePrintItem> items;
   items.reserve(parsed.directives.size());
   for (const auto& directive : parsed.directives) {
     auto item_or = LowerPrintItemForDirective(
@@ -511,10 +496,10 @@ template <ExprLowerer Lowerer>
 auto BuildDisplayListPrintItems(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
     support::PrintRadix default_radix, std::size_t arg_offset)
-    -> diag::Result<std::vector<mir::RuntimePrintItem>> {
+    -> diag::Result<std::vector<RuntimePrintItem>> {
   const std::span<const std::optional<hir::ExprId>> arguments{call.arguments};
   const value::FormatKind default_kind = RadixToFormatKind(default_radix);
-  std::vector<mir::RuntimePrintItem> items;
+  std::vector<RuntimePrintItem> items;
   std::size_t next_argument = arg_offset;
   while (next_argument < arguments.size()) {
     const std::optional<hir::ExprId> argument = arguments[next_argument++];
@@ -526,7 +511,7 @@ auto BuildDisplayListPrintItems(
     if (!literal.has_value()) {
       auto item_or = BuildPrintValueItem(
           lowerer, frame, *argument,
-          mir::FormatSpec(default_kind, mir::FormatModifiers{}));
+          FormatSpec(default_kind, value::FormatModifiers{}));
       if (!item_or) return std::unexpected(std::move(item_or.error()));
       items.push_back(*std::move(item_or));
       continue;
@@ -637,11 +622,11 @@ auto BuildRuntimeFormatCallExpr(
 
 auto BuildPrintItemsArray(
     mir::CompilationUnit& unit, mir::Block& block,
-    const std::vector<mir::RuntimePrintItem>& items,
-    std::int64_t time_unit_power) -> mir::Expr {
+    const std::vector<RuntimePrintItem>& items, std::int64_t time_unit_power)
+    -> mir::Expr {
   std::vector<mir::ExprId> elements;
   elements.reserve(items.size());
-  for (const mir::RuntimePrintItem& item : items) {
+  for (const RuntimePrintItem& item : items) {
     elements.push_back(block.exprs.Add(
         BuildPrintItemExpr(unit, block, item, time_unit_power)));
   }
@@ -694,11 +679,11 @@ auto BuildFormatStringTextExpr(
 
 template auto BuildDisplayListPrintItems(
     ProcessLowerer&, WalkFrame, const hir::CallExpr&, support::PrintRadix,
-    std::size_t) -> diag::Result<std::vector<mir::RuntimePrintItem>>;
+    std::size_t) -> diag::Result<std::vector<RuntimePrintItem>>;
 template auto BuildDisplayListPrintItems(
     const StructuralScopeLowerer&, WalkFrame, const hir::CallExpr&,
     support::PrintRadix, std::size_t)
-    -> diag::Result<std::vector<mir::RuntimePrintItem>>;
+    -> diag::Result<std::vector<RuntimePrintItem>>;
 template auto BuildFormatStringTextExpr(
     ProcessLowerer&, WalkFrame, const hir::CallExpr&, std::size_t)
     -> diag::Result<mir::Expr>;

@@ -110,9 +110,6 @@ static_assert(Of<value::Any>() == support::kAnyStorage);
 static_assert(Of<value::Empty>() == support::kEmptyStorage);
 static_assert(Of<value::BitVec>() == support::kBitVecStorage);
 static_assert(Of<value::PrintItem>() == support::kPrintItemStorage);
-static_assert(
-    Of<value::PrintLiteralItem>() == support::kPrintLiteralItemStorage);
-static_assert(Of<value::PrintValueItem>() == support::kPrintValueItemStorage);
 static_assert(Of<value::FormatSpec>() == support::kFormatSpecStorage);
 static_assert(Of<value::FormatArg>() == support::kFormatArgStorage);
 static_assert(Of<value::TimeFormat>() == support::kTimeFormatStorage);

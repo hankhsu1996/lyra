@@ -27,7 +27,6 @@
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/local.hpp"
-#include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
@@ -70,7 +69,7 @@ auto KeywordOf(hir::UniquePriorityCheck check) -> std::string_view {
 // where the statement is written rather than by where the report matured.
 void AppendReportEmit(
     mir::CompilationUnit& unit, mir::Block& block,
-    std::vector<mir::RuntimePrintItem> items, std::string origin) {
+    std::vector<RuntimePrintItem> items, std::string origin) {
   // The text is fixed-format decimal, so no %t directive is possible and the
   // time-unit power is unread.
   const mir::ExprId items_array =
@@ -155,9 +154,9 @@ auto BuildUniquenessReportBody(
   }
 
   mir::Block report;
-  std::vector<mir::RuntimePrintItem> items;
+  std::vector<RuntimePrintItem> items;
   items.emplace_back(
-      mir::RuntimePrintLiteral{
+      RuntimePrintLiteral{
           .text = base::DiagMessage(
                       "'{}' violation; more than one of the {} {} matched",
                       KeywordOf(check), arms.size(), NounFor(arm_kind).many)
@@ -187,9 +186,9 @@ auto BuildTotalityReportScope(
   mir::Block scope;
   ClosureBuilder closure(
       unit_lowerer.Unit(), frame.WithBlock(&scope), support::ClosureKind::kFn);
-  std::vector<mir::RuntimePrintItem> items;
+  std::vector<RuntimePrintItem> items;
   items.emplace_back(
-      mir::RuntimePrintLiteral{
+      RuntimePrintLiteral{
           .text = base::DiagMessage(
                       "'{}' violation; no {} matched", KeywordOf(check),
                       NounFor(arm_kind).one)

@@ -47,10 +47,6 @@ auto LayoutOfLibraryObject(RuntimeLibraryKind kind) -> support::Layout {
       return support::kBitVecStorage.layout;
     case RuntimeLibraryKind::kPrintItem:
       return support::kPrintItemStorage.layout;
-    case RuntimeLibraryKind::kPrintLiteralItem:
-      return support::kPrintLiteralItemStorage.layout;
-    case RuntimeLibraryKind::kPrintValueItem:
-      return support::kPrintValueItemStorage.layout;
     case RuntimeLibraryKind::kFormatSpec:
       return support::kFormatSpecStorage.layout;
     case RuntimeLibraryKind::kFormatArg:

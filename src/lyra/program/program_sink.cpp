@@ -68,7 +68,7 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_file_flush", &lyra_rt_file_flush);
   add("lyra_rt_file_flush_all", &lyra_rt_file_flush_all);
   add("lyra_rt_string_make", &lyra_rt_string_make);
-  add("lyra_rt_make_print_literal_item", &lyra_rt_make_print_literal_item);
+  add("lyra_rt_make_text_print_item", &lyra_rt_make_text_print_item);
   add("lyra_rt_format", &lyra_rt_format);
   add("lyra_rt_writeln", &lyra_rt_writeln);
   add("lyra_rt_write", &lyra_rt_write);

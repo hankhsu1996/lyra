@@ -984,6 +984,9 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "make_patterned_format_arg",
           .declaration = StaticFactory{"Patterned"},
           .operands = {kNumber}};
+    case BuiltinFn::kMakeTextPrintItem:
+      return {
+          .name = "make_text_print_item", .declaration = StaticFactory{"Text"}};
     case BuiltinFn::kWrite:
       return {.name = "write", .declaration = Method{"Write"}};
     case BuiltinFn::kWriteln:

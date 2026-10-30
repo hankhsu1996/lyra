@@ -195,7 +195,6 @@ enum class RuntimeOp : std::uint8_t {
   kFromEntriesWildcard,
   kMakeSegment,
   kMakeTrigger,
-  kMakePrintLiteralItem,
   // A print item and a format argument over a value: one entry per domain of a
   // value the library holds as an object, and one serving every integral type,
   // which reads the value as a number (LRM 21.2.1).

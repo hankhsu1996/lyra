@@ -79,10 +79,6 @@ auto RuntimeLibraryCppType(mir::RuntimeLibraryKind kind) -> std::string_view {
       return "lyra::value::EnumerationMembers";
     case mir::RuntimeLibraryKind::kPrintItem:
       return "lyra::value::PrintItem";
-    case mir::RuntimeLibraryKind::kPrintLiteralItem:
-      return "lyra::value::PrintLiteralItem";
-    case mir::RuntimeLibraryKind::kPrintValueItem:
-      return "lyra::value::PrintValueItem";
     case mir::RuntimeLibraryKind::kCancellationTarget:
       return "lyra::runtime::CancellationTarget";
     case mir::RuntimeLibraryKind::kTimer:

@@ -2,15 +2,18 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
+#include <variant>
 #include <vector>
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/mir/runtime_print.hpp"
+#include "lyra/mir/expr_id.hpp"
 #include "lyra/support/system_subroutine.hpp"
 #include "lyra/value/format.hpp"
+#include "lyra/value/format_parse.hpp"
 
 namespace lyra::mir {
 struct CompilationUnit;
@@ -18,6 +21,31 @@ struct Block;
 }  // namespace lyra::mir
 
 namespace lyra::lowering::hir_to_mir {
+
+struct FormatSpec {
+  value::FormatKind kind;
+  value::FormatModifiers modifiers;
+
+  FormatSpec(value::FormatKind k, value::FormatModifiers m)
+      : kind(k), modifiers(m) {
+  }
+};
+
+struct RuntimePrintLiteral {
+  std::string text;
+};
+
+struct RuntimePrintValue {
+  mir::ExprId value;
+  FormatSpec spec;
+
+  RuntimePrintValue(mir::ExprId v, FormatSpec s) : value(v), spec(s) {
+  }
+};
+
+// One print item as the lowering works it out, before it is built: text, or a
+// value and the conversion that formats it (LRM 21.2.1).
+using RuntimePrintItem = std::variant<RuntimePrintLiteral, RuntimePrintValue>;
 
 // Maps a system subroutine's bare-argument default radix (LRM 21.2.1.1:
 // `$displayb` -> binary, `$displayh` -> hex, etc.) to the runtime
@@ -38,7 +66,7 @@ template <ExprLowerer Lowerer>
 auto BuildDisplayListPrintItems(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
     support::PrintRadix default_radix, std::size_t arg_offset)
-    -> diag::Result<std::vector<mir::RuntimePrintItem>>;
+    -> diag::Result<std::vector<RuntimePrintItem>>;
 
 // The text, an SV `string`, of a call that reads the argument at `arg_offset`,
 // and no other, as a format string (LRM 21.3.3), each argument after it
@@ -52,16 +80,14 @@ auto BuildFormatStringTextExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
     std::size_t arg_offset) -> diag::Result<mir::Expr>;
 
-// Materializes a runtime print-item list into MIR: each item is constructed as
-// its runtime-library type -- a literal item or a value item -- and the
-// sequence becomes an array literal of those. The element subtrees are
-// interned into `block`; the returned
-// array root is left for the caller to intern. `time_unit_power` scales a %t
-// directive (LRM 21.2.1.3) and is unread when no item carries a kTime spec.
-// The canonical item-array builder every print-item-bearing effect reuses.
+// The print items as MIR, an element list of print items each constructed
+// over a value and its specification or made from text. The elements are
+// interned into `block`, and the list is left for the caller to intern.
+// `time_unit_power` scales a %t directive (LRM 21.2.1.3) and is unread when no
+// item carries one.
 auto BuildPrintItemsArray(
     mir::CompilationUnit& unit, mir::Block& block,
-    const std::vector<mir::RuntimePrintItem>& items,
-    std::int64_t time_unit_power) -> mir::Expr;
+    const std::vector<RuntimePrintItem>& items, std::int64_t time_unit_power)
+    -> mir::Expr;
 
 }  // namespace lyra::lowering::hir_to_mir

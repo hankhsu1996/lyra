@@ -314,8 +314,6 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // against its members are answered from.
   kEnumeration,
   kPrintItem,
-  kPrintLiteralItem,
-  kPrintValueItem,
   kFormatSpec,
   // LRM 21.3.3 runtime-format operand: `lyra::value::FormatArg`, a type-erased
   // value carrying no conversion of its own. A format string known only at

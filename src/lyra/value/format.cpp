@@ -137,7 +137,7 @@ auto Format(std::span<const PrintItem> items, const TimeFormat& time_format)
               out.append(Format(v.spec, v.arg, ctx));
             },
         },
-        item);
+        item.Form());
   }
   return String(std::move(out));
 }
@@ -313,6 +313,10 @@ FormatSpec::FormatSpec(
 PrintLiteralItem::PrintLiteralItem(const String& text)
     : data(text.View().data()),
       size(static_cast<std::uint32_t>(text.View().size())) {
+}
+
+auto PrintItem::Text(const String& text) -> PrintItem {
+  return PrintItem(PrintLiteralItem(text));
 }
 
 }  // namespace lyra::value
