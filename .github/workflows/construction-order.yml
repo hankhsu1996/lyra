@@ -62,4 +62,4 @@ jobs:
 
       - name: Check the changed sources
         if: steps.changed.outputs.count != '0'
-        run: xargs python3 tools/policy/check_sequencing.py < changed.txt
+        run: xargs python3 tools/policy/check_sequencing.py --jobs "$(nproc)" < changed.txt
