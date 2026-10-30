@@ -1,0 +1,304 @@
+/* The marks a verdict carries. Conforming and not conforming are told apart by
+   blue and orange, a pair readers with any common colour-vision deficiency
+   still separate; every verdict also carries an icon and its words, and text
+   is never set in these colours. */
+:root {
+  --others-background: #fce4d2;
+  --others-text: #8a3f0b;
+  --verdict-conforms: #2a78d6;
+  --verdict-fails: #c75a14;
+  --verdict-other: #6b7079;
+  --meter-track: #cde2fb;
+}
+
+[data-mantine-color-scheme='dark'] {
+  --others-background: #4a2a12;
+  --others-text: #ffc9a0;
+  --verdict-conforms: #5b9df0;
+  --verdict-fails: #f0954f;
+  --verdict-other: #a0a6b0;
+  --meter-track: #1c3d66;
+}
+
+/* The scrollbar's room is kept whether or not a page needs one, so a page
+   does not shift sideways when another opens. */
+html {
+  scrollbar-gutter: stable;
+}
+
+main h1:focus {
+  outline: none;
+}
+
+.site-header {
+  border-bottom: 1px solid var(--mantine-color-default-border);
+}
+
+.site-name {
+  color: var(--mantine-color-text);
+  font-weight: 600;
+  font-size: var(--mantine-font-size-lg);
+  text-decoration: none;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A link in running text or a table is in the text colour and underlined
+   only under the pointer or focus, as a dashboard's are. */
+.quiet-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.quiet-link:hover,
+.quiet-link:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* The page's own navigation marks where the reader is; the current page is
+   bold, and taking the same width bold or not keeps the header still. */
+.nav-link {
+  color: var(--mantine-color-dimmed);
+  text-decoration: none;
+  font-size: var(--mantine-font-size-sm);
+  display: inline-grid;
+}
+
+.nav-link::after {
+  content: attr(data-text);
+  font-weight: 600;
+  height: 0;
+  visibility: hidden;
+  overflow: hidden;
+}
+
+.nav-link:hover {
+  color: var(--mantine-color-text);
+}
+
+.nav-link.active {
+  color: var(--mantine-color-text);
+  font-weight: 600;
+}
+
+.skip-link {
+  position: absolute;
+  left: -10000px;
+}
+
+.skip-link:focus {
+  left: 16px;
+  top: 8px;
+  z-index: 300;
+  padding: 8px 12px;
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-default-border);
+}
+
+/* A row that is one link. */
+.row-link {
+  cursor: pointer;
+}
+
+.row-link:hover {
+  background: var(--mantine-color-default-hover);
+}
+
+/* Every configuration's column is the same width, whatever the length of its
+   name, so the columns are evenly spaced; the rest of the width goes to the
+   column that names the row. */
+.configuration-column {
+  width: 11rem;
+}
+
+/* A cell of the by-clause table: the count that conforms, then a slot of one
+   width for how many do not, so counts and marks line up down the column
+   whatever their digits. */
+.cell-others {
+  display: inline-block;
+  width: 3.5rem;
+  text-align: left;
+  padding-left: 0.5rem;
+}
+
+.others-badge {
+  display: inline-block;
+  min-width: 1.75rem;
+  padding: 0 0.375rem;
+  border-radius: 999px;
+  text-align: center;
+  font-size: var(--mantine-font-size-xs);
+  line-height: 1.5;
+  font-weight: 600;
+  text-decoration: none;
+  background: var(--others-background);
+  color: var(--others-text);
+}
+
+.others-badge:hover {
+  text-decoration: underline;
+}
+
+.numbers {
+  font-variant-numeric: tabular-nums;
+}
+
+.meter {
+  display: inline-block;
+  width: 8rem;
+  height: 0.5rem;
+  border-radius: 0.25rem;
+  background: var(--meter-track);
+  overflow: hidden;
+}
+
+.meter > span {
+  display: block;
+  height: 100%;
+  background: var(--verdict-conforms);
+}
+
+.wrap-anywhere {
+  overflow-wrap: anywhere;
+}
+
+/* The page fills at least the window, so the footer, a band of its own
+   across the page, always sits at the bottom with room above it. */
+#root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+#main {
+  flex: 1 0 auto;
+  width: 100%;
+}
+
+.site-footer {
+  margin-top: 6rem;
+  border-top: 1px solid var(--mantine-color-default-border);
+  background: var(--mantine-color-gray-0);
+}
+
+[data-mantine-color-scheme='dark'] .site-footer {
+  background: var(--mantine-color-dark-8);
+}
+
+/* Changing theme fades the old page into the new one. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.2s;
+}
+
+.listing {
+  overflow: hidden;
+}
+
+.listing-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px 4px 14px;
+  border-bottom: 1px solid var(--mantine-color-default-border);
+  background: var(--mantine-color-default-hover);
+}
+
+.listing-body {
+  margin: 0;
+  padding: 12px 14px;
+  overflow: auto;
+  max-height: 32rem;
+  font-family: var(--mantine-font-family-monospace);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.listing-body .plain-numbered {
+  display: grid;
+}
+
+.listing-body .plain-numbered .line {
+  display: grid;
+  grid-template-columns: 3.5ch 1fr;
+  gap: 1.5ch;
+}
+
+.line-number {
+  text-align: right;
+  color: var(--mantine-color-dimmed);
+  user-select: none;
+}
+
+/* On a narrow screen a table's rows become blocks of labelled lines, so every
+   value is on the screen without scrolling sideways. */
+@media (max-width: 48em) {
+  table.reflow thead {
+    display: none;
+  }
+
+  table.reflow,
+  table.reflow tbody,
+  table.reflow tr,
+  table.reflow td,
+  table.reflow th {
+    display: block;
+    width: 100%;
+  }
+
+  table.reflow tr {
+    padding: 8px 0;
+  }
+
+  table.reflow td,
+  table.reflow th {
+    border: none !important;
+    padding: 2px 0 !important;
+    text-align: left !important;
+  }
+
+  table.reflow td[data-label]::before {
+    content: attr(data-label) ': ';
+    color: var(--mantine-color-dimmed);
+  }
+}
+
+/* A coloured source: Shiki writes each line as a span and both themes'
+   colours as variables, and the stylesheet numbers the lines and picks the
+   colours of the theme in force. */
+.listing-body.coloured pre {
+  margin: 0;
+  background: transparent !important;
+  font: inherit;
+}
+
+.listing-body.coloured code {
+  font: inherit;
+}
+
+.listing-body.coloured.numbered code {
+  counter-reset: line;
+}
+
+.listing-body.coloured.numbered .line::before {
+  counter-increment: line;
+  content: counter(line);
+  display: inline-block;
+  width: 3.5ch;
+  margin-right: 1.5ch;
+  text-align: right;
+  color: var(--mantine-color-dimmed);
+  user-select: none;
+}
+
+[data-mantine-color-scheme='light'] .listing-body.coloured span {
+  color: var(--shiki-light);
+}
+
+[data-mantine-color-scheme='dark'] .listing-body.coloured span {
+  color: var(--shiki-dark);
+}

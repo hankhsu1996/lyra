@@ -22,6 +22,30 @@
 
 namespace conformance::framework {
 
+namespace {
+
+// What a signal usually means for the program it ended, for the signals a
+// crash or a broken tool gives, so a reader need not know their numbers.
+auto SignalMeaning(int signal) -> std::string_view {
+  switch (signal) {
+    case SIGSEGV:
+    case SIGBUS:
+      return " (an invalid memory access)";
+    case SIGABRT:
+      return " (the program aborted)";
+    case SIGFPE:
+      return " (an arithmetic error)";
+    case SIGILL:
+      return " (an illegal instruction)";
+    case SIGPIPE:
+      return " (it wrote to a pipe nobody was reading)";
+    default:
+      return "";
+  }
+}
+
+}  // namespace
+
 auto MissingInput(const Case& test_case) -> std::optional<HarnessFailed> {
   std::vector<std::filesystem::path> inputs = test_case.supporting_sources;
   inputs.push_back(test_case.entry);
@@ -64,20 +88,21 @@ auto EndOf(
           [](const Signalled& signalled) -> RunEnd {
             if (signalled.signal == SIGKILL) {
               return StoppedAtALimit{
-                  "a kill from outside it, whose cause is not known"};
+                  "something outside it, for a reason that is not known"};
             }
-            return ToolFailed{
-                std::format("ended by signal {}", signalled.signal)};
+            return ToolFailed{std::format(
+                "a program the tool started was ended by signal {}{}",
+                signalled.signal, SignalMeaning(signalled.signal))};
           },
           [](const TimedOut&) -> RunEnd {
-            return StoppedAtALimit{"the time it was given"};
+            return StoppedAtALimit{"its time limit"};
           },
           [](const TestTimedOut&) -> RunEnd {
-            return StoppedAtALimit{"the time it was given"};
+            return StoppedAtALimit{"its time limit"};
           }},
       outcome.end);
   if (exhausted && !std::holds_alternative<HarnessFailed>(ended)) {
-    return StoppedAtALimit{"the memory it was given"};
+    return StoppedAtALimit{"its memory limit"};
   }
   return ended;
 }

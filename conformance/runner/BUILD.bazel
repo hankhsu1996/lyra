@@ -19,6 +19,7 @@ cc_binary(
         "//conformance/adapters/lyra:reader",
         "//conformance/adapters/verilator:reader",
         "//conformance/framework",
+        "//conformance/framework:process",
         "//conformance/framework:results",
         "@bazel_tools//tools/cpp/runfiles",
         "@fmt",

@@ -361,8 +361,11 @@ suite in which no case is found, are refused before anything runs. It holds:
 - `suite.revision` and `tool.revision`, which only the caller knows and states (`--suite-revision`,
   `--tool-revision`), and `suite.directory`, where the run read the suite from, under which a step's
   arguments name each case's files;
-- `tool`: its name, each program its reader runs with the path it was found at and the version it
-  says, and the options every case's build is given;
+- `configuration`, the name the caller gives the tool and its options together (`--configuration`),
+  by which runs of one configuration are matched and shown;
+- `tool`: its name, each program a case's build or run goes through -- the tool itself, then any it
+  leans on, a host compiler or a solver -- with the path it was found at and the version it says,
+  and the options every case's build is given;
 - `environment`: the variables every program's behaviour can follow and the ones the tool's reader
   says the tool reads, each as the run had it or `null` where unset. No other variable is written,
   so a credential in the environment never is;
@@ -381,3 +384,17 @@ directory is a scratch directory that no longer exists; it says where the comman
 run it again.
 
 Verilator is a second opinion here, never an oracle: what it answers is judged by the same claim.
+
+## Where the runs are published
+
+Each night the whole suite is run on each configuration published -- a tool and the options every
+case's build is given, under a name the run states with `--configuration` -- and the night is
+published at https://hankhsu1996.github.io/lyra/, whose pages read only what the publisher wrote and
+judge nothing. The publisher holds every record to the suite it was built from: it refuses one that
+is not a record, one that is not a run of the whole suite, one that names another revision of the
+suite, one whose cases are not exactly the suite's, one with a case not run, and a set holding two
+configurations of one name or one address, and then publishes nothing. A published night is the
+records as the runs wrote them, each case's evidence from every configuration beside it, and a
+summary of every verdict and how each run ended. The checks of the suite's own helpers are published
+as such and counted apart from the cases. `site/` is the page, and `npm run dev` there shows
+whatever the publisher wrote into its `public/` directory.

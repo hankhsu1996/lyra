@@ -443,6 +443,16 @@ the run's results, so red means the suite or its harness failed on that configur
 tool gave a verdict. It is a nightly and not a check on a pull request because how long it takes is
 the tools' and the host compiler's over the whole suite, which no merge waits on.
 
+Its last job publishes the night, and runs only where every configuration's job succeeded, so a
+night is published whole or not at all and the site keeps the last night that was. The publisher
+(`//conformance/publish:publish_records`) refuses a record that is not a run of the whole suite at
+the commit the workflow checked out, and refuses the set where two records are of one configuration;
+otherwise it writes the night into the site `conformance/site` builds, which is deployed to GitHub
+Pages. Pages is set to take its site from a workflow, so this job is the only thing that changes it.
+The site shows the latest night only: whether a change made Lyra regress is the merge gate's
+question, answered before the change lands, and a record of an earlier night stays an artifact of
+its own run.
+
 `benchmark-nightly.yml` builds every case under `tests/benchmark/` on each backend and times it
 beside Verilator on the same sources, giving each tool the amount of work it needs to reach the same
 duration. It gates its own run on a narrower claim than a timing: a case that fails to build, fails

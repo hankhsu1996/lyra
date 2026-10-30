@@ -12,8 +12,8 @@
 
 namespace conformance::framework {
 
-// A program a tool's reader runs, where it was found, and the version it says
-// it is, or nothing where it says none.
+// A program a case's build or run goes through, where it was found, and the
+// version it says it is, or nothing where it says none.
 struct Program {
   std::string role;
   std::filesystem::path path;

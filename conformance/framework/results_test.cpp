@@ -73,6 +73,7 @@ auto ARun() -> Results {
   Results results{
       .suite_revision = "0123abcd",
       .suite_directory = "/suite",
+      .configuration = "The tool, fast",
       .tool_revision = std::nullopt,
       .tool =
           ToolIdentity{
@@ -99,6 +100,13 @@ auto ARun() -> Results {
   results.cases.push_back(
       Judged("09_processes/a", std::move(built_then_ran), Conforms{}));
   return results;
+}
+
+TEST(Results, NameTheConfigurationAsTheCallerDoes) {
+  EXPECT_EQ(Json::parse(ToJson(ARun()))["configuration"], "The tool, fast");
+  Results unnamed = ARun();
+  unnamed.configuration = std::nullopt;
+  EXPECT_TRUE(Json::parse(ToJson(unnamed))["configuration"].is_null());
 }
 
 TEST(Results, ListEveryCaseOnceInIdOrder) {

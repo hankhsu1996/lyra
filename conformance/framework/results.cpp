@@ -207,6 +207,7 @@ auto ToJson(const Results& results) -> std::string {
        Json{
            {"revision", OrNull(results.suite_revision)},
            {"directory", results.suite_directory.string()}}},
+      {"configuration", OrNull(results.configuration)},
       {"tool", ToJson(results.tool, results.tool_revision)},
       {"environment", std::move(environment)},
       {"host", OrNull(results.host)},

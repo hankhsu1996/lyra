@@ -64,25 +64,6 @@ auto Times(std::size_t n) -> std::string {
   return n == 1 ? std::string("once") : std::format("{} times", n);
 }
 
-auto DescribePattern(const ReportPattern& pattern) -> std::string {
-  const std::string_view kind = SpellingOf(pattern.kind);
-  const bool vowel = kind.starts_with('i') || kind.starts_with('e');
-  std::string text = std::format("{} {} report", vowel ? "an" : "a", kind);
-  if (pattern.line) {
-    text += std::format(" from line {}", *pattern.line);
-  }
-  if (pattern.time) {
-    text += std::format(" at time {}", *pattern.time);
-  }
-  if (pattern.scope) {
-    text += std::format(" in '{}'", *pattern.scope);
-  }
-  if (pattern.message) {
-    text += std::format(" carrying '{}'", *pattern.message);
-  }
-  return text;
-}
-
 // The reports a claim asks for, each answered by a report of its own: a claim
 // of two violations is not met by one. What is left is the reports the run
 // issued that answered nothing asked.
@@ -162,8 +143,8 @@ auto Overreported(const IssuesReports& asked, const Observation& seen)
     const auto issued = std::ranges::count_if(seen.reports, from_the_line);
     if (issued > wanted + anywhere) {
       return std::format(
-          "the standard requires {} {} report{} from line {} here, and the "
-          "run issued {}",
+          "the standard allows {} {} report{} from line {}, and the run "
+          "issued {}",
           wanted, SpellingOf(p.kind), wanted == 1 ? "" : "s", *p.line, issued);
     }
   }
@@ -172,9 +153,15 @@ auto Overreported(const IssuesReports& asked, const Observation& seen)
 
 auto Unchecked(std::string_view marker) -> Verdict {
   return DoesNotConform{std::format(
-      "the program ended without printing '{}', so a check failed or the "
-      "checks did not all run",
+      "the program never printed '{}', so a check failed or not every "
+      "check ran",
       marker)};
+}
+
+auto ExitedNonZero(int exit_code) -> Verdict {
+  return DoesNotConform{std::format(
+      "every check passed, but the program exited with status {} instead of 0",
+      exit_code)};
 }
 
 // A program that ran is judged against what it claims. Every claim but a
@@ -187,8 +174,8 @@ auto JudgeRun(const Claim& claim, const Ran& ran, const Observation& seen)
   const Verdict unchecked = Unchecked(kAllChecksPassed);
   const auto unplaced = [&](std::string_view about) -> Verdict {
     return Unresolved{std::format(
-        "{}, and the run wrote lines that read as this tool's reports but "
-        "could not be placed: {}",
+        "{}. The run also wrote a line that looks like a report of this "
+        "tool, but it could not be matched to a statement: {}",
         about, seen.unplaced.front())};
   };
   return std::visit(
@@ -202,16 +189,14 @@ auto JudgeRun(const Claim& claim, const Ran& ran, const Observation& seen)
               return unchecked;
             }
             if (ran.exit_code != 0) {
-              return DoesNotConform{std::format(
-                  "the run passed its checks and ended with status {}",
-                  ran.exit_code)};
+              return ExitedNonZero(ran.exit_code);
             }
             return Conforms{};
           },
           [&](const RejectedBeforeRunning&) -> Verdict {
             return DoesNotConform{
-                "the standard requires this program to be rejected, and the "
-                "tool ran it"};
+                "the tool ran a program that the standard requires it to "
+                "refuse"};
           },
           // Where the run may end at a report, the case prints that it is
           // ready for it before the report, and its sentinel only once the run
@@ -248,9 +233,10 @@ auto JudgeRun(const Claim& claim, const Ran& ran, const Observation& seen)
                 [](const ReportPattern* p) { return MayEndTheRun(p->kind); });
             if (!marked && ending != answered.answered.end()) {
               return DoesNotConform{std::format(
-                  "the tool issued {} before the program reached the point "
-                  "the standard issues it after, and ended the run there",
-                  DescribePattern(**ending))};
+                  "the tool issued {} too early, before the program reached "
+                  "the statement that should issue it, and the run ended "
+                  "there",
+                  DescribeReport(**ending, 1))};
             }
             if (!marked) {
               return Unchecked(marker);
@@ -261,9 +247,7 @@ auto JudgeRun(const Claim& claim, const Ran& ran, const Observation& seen)
               return DoesNotConform{std::move(*over)};
             }
             if (!may_end && ran.exit_code != 0) {
-              return DoesNotConform{std::format(
-                  "the run passed its checks and ended with status {}",
-                  ran.exit_code)};
+              return ExitedNonZero(ran.exit_code);
             }
             if (answered.missing.empty()) {
               // A count is exact, so a report that may be one more of those
@@ -279,14 +263,12 @@ auto JudgeRun(const Claim& claim, const Ran& ran, const Observation& seen)
                   });
               if (more != answered.left.end()) {
                 return Unresolved{std::format(
-                    "every report the case asks for was read, and the run "
-                    "issued one that may be one more of them: {}",
+                    "every required report was found, but the run issued "
+                    "another that may also be one of them: {}",
                     (*more)->written)};
               }
               if (!seen.unplaced.empty()) {
-                return unplaced(
-                    "every report the case asks for was read, and one more "
-                    "may be among what was not");
+                return unplaced("every required report was found");
               }
               return Conforms{};
             }
@@ -298,13 +280,15 @@ auto JudgeRun(const Claim& claim, const Ran& ran, const Observation& seen)
             const std::string missing =
                 times == 1
                     ? std::format(
-                          "the standard requires {} here, and none was read",
-                          DescribePattern(first))
+                          "the standard requires {}, and the run did not issue "
+                          "it",
+                          DescribeReport(first, 1))
                     : std::format(
-                          "the standard requires {} here {}, and {} {} read",
-                          DescribePattern(first),
-                          Times(static_cast<std::size_t>(times)), read,
-                          read == 1 ? "was" : "were");
+                          "the standard requires {} {}, and the run issued it "
+                          "{}",
+                          DescribeReport(first, 1),
+                          Times(static_cast<std::size_t>(times)),
+                          Times(static_cast<std::size_t>(read)));
             // A run that ended at a report the standard lets it end at, short
             // of going on past them all, may have been ended there by the
             // tool, so that fails nothing; but a report it never reached was
@@ -312,8 +296,8 @@ auto JudgeRun(const Claim& claim, const Ran& ran, const Observation& seen)
             // issued.
             if (ending != answered.answered.end() && !seen.checks_passed) {
               return Unresolved{std::format(
-                  "{}; the run ended at a report the standard lets it end at, "
-                  "before the rest were observed",
+                  "{}. The run ended at an earlier report, as the standard "
+                  "allows, so the rest could not be checked",
                   missing)};
             }
             // A report missing something the claim names -- a line, a time, a
@@ -327,8 +311,8 @@ auto JudgeRun(const Claim& claim, const Ran& ran, const Observation& seen)
                 });
             if (unread != answered.left.end()) {
               return Unresolved{std::format(
-                  "{}; the run issued a report lacking something a claim "
-                  "names, which may be one of those not read: {}",
+                  "{}. The run issued a report without enough detail to tell "
+                  "whether it is the missing one: {}",
                   missing, (*unread)->written)};
             }
             if (!seen.unplaced.empty()) {
@@ -348,19 +332,15 @@ auto JudgeRun(const Claim& claim, const Ran& ran, const Observation& seen)
                 });
             if (issued != seen.reports.end()) {
               return DoesNotConform{std::format(
-                  "the standard allows no {} report here, and the run "
-                  "issued one: {}",
+                  "the standard allows no {} report, and the run issued one: "
+                  "{}",
                   SpellingOf(issued->kind), issued->written)};
             }
             if (ran.exit_code != 0) {
-              return DoesNotConform{std::format(
-                  "the run passed its checks and ended with status {}",
-                  ran.exit_code)};
+              return ExitedNonZero(ran.exit_code);
             }
             if (!seen.unplaced.empty()) {
-              return unplaced(
-                  "none of the reports the standard forbids here "
-                  "was read");
+              return unplaced("no report the standard forbids was found");
             }
             return Conforms{};
           }},
@@ -377,7 +357,7 @@ auto Judge(const Claim& claim, const Observation& observation) -> Verdict {
           },
           [](const ToolLacks& lacks) -> Verdict {
             return DoesNotConform{std::format(
-                "the tool offers no {}, which {} requires of every tool",
+                "the tool has no {}, which {} requires of every tool",
                 lacks.use_model, lacks.clause)};
           },
           [&](const Rejected&) -> Verdict {
@@ -385,14 +365,14 @@ auto Judge(const Claim& claim, const Observation& observation) -> Verdict {
               return Conforms{};
             }
             return DoesNotConform{
-                "the tool rejected a program the standard accepts"};
+                "the tool refused a program that the standard accepts"};
           },
           [](const ToolFailed& failed) -> Verdict {
             return DoesNotConform{failed.how};
           },
           [](const StoppedAtALimit& stopped) -> Verdict {
-            return Unresolved{std::format(
-                "the run was stopped at {} before it ended", stopped.limit)};
+            return Unresolved{
+                std::format("the run was stopped by {}", stopped.limit)};
           },
           [&](const Ran& ran) -> Verdict {
             return JudgeRun(claim, ran, observation);
@@ -411,7 +391,7 @@ auto JudgeCase(const Case& test_case, const Observation& observation)
         observation.outputs, expected.name, &WrittenOutput::name);
     if (written == observation.outputs.end() || !written->text) {
       return DoesNotConform{
-          std::format("the run wrote no '{}'", expected.name)};
+          std::format("the program did not write '{}'", expected.name)};
     }
     if (const std::optional<std::string> difference =
             DumpDifference(expected.text, *written->text)) {

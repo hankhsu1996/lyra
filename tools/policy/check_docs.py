@@ -74,7 +74,7 @@ import sys
 from pathlib import Path
 
 SKIP_PREFIXES = (
-    "external/", "bazel-", "node_modules/",
+    "external/", "bazel-",
     # Slash-command definitions for the coding assistant, not project docs.
     ".claude/",
     # Git-ignored scratch. A check that goes red over a working note nobody
@@ -84,6 +84,10 @@ SKIP_PREFIXES = (
 
 # Per-workspace scratch, git-ignored, and free to name anything.
 SKIP_SUFFIXES = (".local.md",)
+
+# A package manager's install directory holds other projects' docs, wherever
+# a package's own `package.json` puts it.
+SKIP_DIRECTORIES = frozenset({"node_modules"})
 
 # Git-ignored working directories a doc may legitimately name even though
 # a fresh clone has none of them.
@@ -168,6 +172,8 @@ def iter_docs(repo_root: Path):
     for path in sorted(repo_root.rglob("*.md")):
         rel = path.relative_to(repo_root).as_posix()
         if any(rel.startswith(p) for p in SKIP_PREFIXES):
+            continue
+        if SKIP_DIRECTORIES.intersection(path.relative_to(repo_root).parts):
             continue
         if any(rel.endswith(s) for s in SKIP_SUFFIXES):
             continue

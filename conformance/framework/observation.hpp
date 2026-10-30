@@ -54,9 +54,19 @@ struct ToolFailed {
   std::string how;
 };
 
-// The run was stopped by a limit set around it rather than ending of its own:
-// the time it was given, the memory, or whatever the machine running it
-// allows. A limit is the caller's choice, so it says nothing of the program.
+// How a tool's build failed, in the words every reader gives the three ways
+// it tells apart.
+inline constexpr std::string_view kToolInternalError =
+    "the tool reported an internal error";
+inline constexpr std::string_view kToolUnsupportedConstruct =
+    "the tool does not support a construct the program uses";
+inline constexpr std::string_view kToolGeneratedCodeDidNotBuild =
+    "the tool could not build a program from the code it generated";
+
+// The run was stopped by a limit set around it rather than ending of its own,
+// named as what stopped it: its time limit, its memory limit, or something
+// outside it the machine running it allows. A limit is the caller's choice, so
+// it says nothing of the program.
 struct StoppedAtALimit {
   std::string limit;
 };

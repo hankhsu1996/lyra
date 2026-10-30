@@ -4,6 +4,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <expected>
 #include <filesystem>
 #include <format>
@@ -69,6 +70,22 @@ auto BuildCompilerOf(const std::filesystem::path& root)
   return std::nullopt;
 }
 
+// The solver a program Verilator built starts to randomize: the command
+// `VERILATOR_SOLVER` names, or `z3` where it names none, found on PATH as the
+// program finds it.
+auto SolverOf() -> std::optional<std::filesystem::path> {
+  const char* named = std::getenv("VERILATOR_SOLVER");
+  std::string_view command = named == nullptr ? "" : named;
+  command = command.substr(0, command.find(' '));
+  if (command.empty()) {
+    command = "z3";
+  }
+  if (std::filesystem::path(command).is_absolute()) {
+    return std::filesystem::path(command);
+  }
+  return FindOnPath(command);
+}
+
 // What Verilator's guide documents it reads from the environment, among what a
 // build and run of a case can reach: where it is installed and which binary it
 // runs, the make it builds with and that make's flags, a wrapper put in front
@@ -99,15 +116,15 @@ constexpr std::array<std::string_view, 3> kOutOfMemory = {
 // How a build that produced no program ended, read off everything it wrote.
 auto BuildEnd(std::string_view written) -> RunEnd {
   if (written.find(kInternalError) != std::string_view::npos) {
-    return ToolFailed{"the tool reported a bug of its own"};
+    return ToolFailed{std::string(framework::kToolInternalError)};
   }
   if (written.find(kUnsupported) != std::string_view::npos) {
-    return ToolFailed{"the tool refused a construct it does not carry out"};
+    return ToolFailed{std::string(framework::kToolUnsupportedConstruct)};
   }
   if (written.find(kRefusalEnding) != std::string_view::npos) {
     return Rejected{};
   }
-  return ToolFailed{"the tool did not build a program from its output"};
+  return ToolFailed{std::string(framework::kToolGeneratedCodeDidNotBuild)};
 }
 
 // The run summary Verilator's program prints on every run, which is no report.
@@ -282,6 +299,7 @@ auto FindTool(
       .c_compiler = *c_compiler,
       .standard_headers = installed / "include" / "vltstd",
       .cxx = BuildCompilerOf(installed),
+      .solver = SolverOf(),
       .build_options = std::move(build_options)};
 }
 
@@ -305,6 +323,13 @@ auto Reader::Identity() const -> ToolIdentity {
             .path = *tool_.cxx,
             .version = VersionOf(*tool_.cxx)});
   }
+  if (tool_.solver) {
+    programs.push_back(
+        Program{
+            .role = "constraint solver",
+            .path = *tool_.solver,
+            .version = VersionOf(*tool_.solver)});
+  }
   return ToolIdentity{
       .name = "verilator",
       .programs = std::move(programs),
@@ -326,9 +351,8 @@ auto Reader::Observe(
   // has no use model in which each file is one of its own.
   if (test_case.compilation_units == CompilationUnits::kSeparate) {
     seen.end = ToolLacks{
-        .use_model =
-            "use model compiling each file as a separate compilation unit",
-        .clause = "LRM 3.12.1"};
+        .use_model = "way to compile each file as its own compilation unit",
+        .clause = "clause 3.12.1 of IEEE 1800-2023"};
     return seen;
   }
   const std::filesystem::path objects = directory / "obj";
