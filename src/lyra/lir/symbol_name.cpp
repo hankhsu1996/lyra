@@ -14,6 +14,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type.hpp"
+#include "lyra/lir/value_step.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
 #include "lyra/support/value_operation.hpp"
@@ -55,14 +56,14 @@ auto CategoryTag(SymbolCategory category) -> char {
       return 'i';
     case SymbolCategory::kTypeOperation:
       return 't';
+    case SymbolCategory::kValueStep:
+      return 's';
     case SymbolCategory::kBaseObjectCreation:
       return 'g';
     case SymbolCategory::kAllocatingCreation:
       return 'h';
     case SymbolCategory::kBaseObjectDestructor:
       return 'x';
-    case SymbolCategory::kCompleteObjectDestructor:
-      return 'z';
     case SymbolCategory::kDeletingDestructor:
       return 'k';
     case SymbolCategory::kClassConstant:
@@ -442,6 +443,14 @@ auto TypeOperationSymbol(
        SymbolPart::Name(support::ValueOperationName(operation))});
 }
 
+auto ValueStepSymbol(
+    std::string_view unit_name, SymbolPart type, ValueStep step)
+    -> std::string {
+  return SymbolName(
+      SymbolCategory::kValueStep, {SymbolPart::Name(unit_name), std::move(type),
+                                   SymbolPart::Name(ValueStepName(step))});
+}
+
 auto ClassDefinitionSymbol(std::string_view unit_name, SymbolPart cls)
     -> std::string {
   return SymbolName(
@@ -520,8 +529,6 @@ auto DestructorSymbol(std::string_view definition, Destructor which)
     switch (which) {
       case Destructor::kBaseObject:
         return SymbolCategory::kBaseObjectDestructor;
-      case Destructor::kCompleteObject:
-        return SymbolCategory::kCompleteObjectDestructor;
       case Destructor::kDeleting:
         return SymbolCategory::kDeletingDestructor;
     }

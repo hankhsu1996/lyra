@@ -18,6 +18,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type.hpp"
+#include "lyra/lir/value_step.hpp"
 #include "lyra/runtime/object_layout.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -249,8 +250,7 @@ auto CodeGenTypes::IntegralShapeOf(lir::TypeId type) const
 }
 
 auto CodeGenTypes::HasAggregateEvaluationKind(lir::TypeId type) const -> bool {
-  const lir::Type& ty = unit_->types.Get(type);
-  return ty.IsOwnedValue() && !ty.IsMoveOnly();
+  return unit_->types.Get(type).IsHeldInStorage();
 }
 
 auto CodeGenTypes::IsReadAsView(lir::TypeId type) const -> bool {
@@ -291,24 +291,23 @@ auto CodeGenTypes::LayoutOf(lir::TypeId type) -> support::ObjectLayout {
                 .layout =
                     {.size = shape.Bytes(),
                      .align = value::IntegralAlignFor(shape.width)},
-                .ends_with_nothing_to_do = true};
+                .ends_with_nothing_to_do = !lir::NeedsEnd(*unit_, type)};
           },
-          // A pointer owning what it points at is that address, and ending
-          // it ends what it points at.
-          [](const lir::OwnedStorageAddress&) -> support::ObjectLayout {
+          // A pointer owning what it points at is that address.
+          [&](const lir::OwnedStorageAddress&) -> support::ObjectLayout {
             return {
                 .layout = {.size = sizeof(void*), .align = alignof(void*)},
-                .ends_with_nothing_to_do = false};
+                .ends_with_nothing_to_do = !lir::NeedsEnd(*unit_, type)};
           },
           // A closure is as large as its captures are placed, which is the
-          // module's to say, and ending one ends what the library keeps in it.
+          // module's to say.
           [&](const lir::ClosureStorage&) -> support::ObjectLayout {
             return {
                 .layout = module_->ClosureLayout(type),
-                .ends_with_nothing_to_do = false};
+                .ends_with_nothing_to_do = !lir::NeedsEnd(*unit_, type)};
           },
           [&](support::ValueDomain domain) -> support::ObjectLayout {
-            if (!IsLaidOutByType(domain)) {
+            if (!support::IsLaidOutByItsType(domain)) {
               return runtime::LayoutOf(domain);
             }
             return std::visit(
@@ -402,7 +401,7 @@ auto CodeGenTypes::LayoutOfArray(lir::TypeId array) -> const ArrayLayout& {
               .stride = laid.stride,
               .storage =
                   {.layout = laid.whole,
-                   .ends_with_nothing_to_do = element.ends_with_nothing_to_do}})
+                   .ends_with_nothing_to_do = !lir::NeedsEnd(*unit_, array)}})
       .first->second;
 }
 
@@ -415,11 +414,6 @@ auto CodeGenTypes::LayoutOfUnion(lir::TypeId union_type) -> const UnionLayout& {
   if (!members.has_value()) {
     throw InternalError(
         "llvm codegen: a union layout asked of a type that is no union");
-  }
-  bool ends_with_nothing_to_do = true;
-  for (const lir::TypeId member : *members) {
-    ends_with_nothing_to_do =
-        ends_with_nothing_to_do && LayoutOf(member).ends_with_nothing_to_do;
   }
   const support::Layout overlay = OverlayOf(*members);
   std::optional<value::TagPlacement> tag;
@@ -438,7 +432,8 @@ auto CodeGenTypes::LayoutOfUnion(lir::TypeId union_type) -> const UnionLayout& {
               .tag = tag,
               .storage =
                   {.layout = whole,
-                   .ends_with_nothing_to_do = ends_with_nothing_to_do}})
+                   .ends_with_nothing_to_do =
+                       !lir::NeedsEnd(*unit_, union_type)}})
       .first->second;
 }
 
@@ -509,8 +504,7 @@ auto CodeGenTypes::LayoutOfProduct(lir::TypeId product)
       .offsets = std::move(laid.offsets),
       .storage = {
           .layout = laid.whole,
-          .ends_with_nothing_to_do = std::ranges::all_of(
-              held, &support::ObjectLayout::ends_with_nothing_to_do)}};
+          .ends_with_nothing_to_do = !lir::NeedsEnd(*unit_, product)}};
   return products_.emplace(product, std::move(layout)).first->second;
 }
 

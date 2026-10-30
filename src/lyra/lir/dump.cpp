@@ -300,6 +300,22 @@ class LirDumper {
                   "end variable {}[{}]", FormatOperand(ended.variables),
                   ended.position.value);
             },
+            [&](const BeginStorageInstr& begun) -> std::string {
+              return std::format("begin storage {}", FormatPlace(begun.place));
+            },
+            [&](const EndStorageInstr& ended) -> std::string {
+              return std::format("end storage {}", FormatPlace(ended.place));
+            },
+            [&](const EndAndReplaceInstr& replaced) -> std::string {
+              return std::format(
+                  "end and replace {} = {}", FormatPlace(replaced.place),
+                  FormatRvalue(replaced.value));
+            },
+            [&](const SetObjectClassInstr& set) -> std::string {
+              return std::format(
+                  "set class {} = {}", FormatOperand(set.object),
+                  FormatType(set.cls));
+            },
             [&](const StoreInstr& store) -> std::string {
               return std::format(
                   "store {} = {}", FormatPlace(store.place),
@@ -496,6 +512,7 @@ class LirDumper {
             },
             [](const EndValueTarget&) -> std::string { return "end"; },
             [](const CopyValueTarget&) -> std::string { return "copy"; },
+            [](const MoveValueTarget&) -> std::string { return "move"; },
             [](const DynamicStorageTarget& d) -> std::string {
               return std::string{DynamicStorageOpName(d.op)};
             },

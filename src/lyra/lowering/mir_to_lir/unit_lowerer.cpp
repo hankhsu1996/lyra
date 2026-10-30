@@ -356,6 +356,8 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     tables.Append(std::move(table));
   }
   out_.enum_tables = std::move(tables);
+  StateTypeSteps();
+  StateClassSteps();
   return std::move(out_);
 }
 

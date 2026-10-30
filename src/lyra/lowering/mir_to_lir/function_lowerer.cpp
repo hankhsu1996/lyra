@@ -26,6 +26,7 @@
 #include "lyra/lir/symbol_name.hpp"
 #include "lyra/lir/type_builders.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/lir/value_step.hpp"
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/class_ref.hpp"
@@ -913,8 +914,10 @@ void FunctionLowerer::EmitScopeDrop(const StorageRelease& release) {
 }
 
 auto FunctionLowerer::IsLentCopyable(const lir::Operand& value) const -> bool {
-  const lir::Type& type = unit_->Types().Get(lir::OperandType(fn_, value));
-  return type.IsOwnedValue() && !type.IsMoveOnly() &&
+  const lir::TypeId type = lir::OperandType(fn_, value);
+  return unit_->Types().Get(type).IsOwnedValue() &&
+         !std::holds_alternative<lir::NoSuchStep>(
+             lir::StepOf(unit_->Lir(), type, lir::ValueStep::kCopy)) &&
          !OwedEndAt(value).has_value();
 }
 

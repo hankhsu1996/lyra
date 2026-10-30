@@ -111,6 +111,7 @@ auto CallEndingOf(const CallTarget& target) -> support::CallEnding {
           },
           [](const EndValueTarget&) { return CallEnding::kReturns; },
           [](const CopyValueTarget&) { return CallEnding::kReturns; },
+          [](const MoveValueTarget&) { return CallEnding::kReturns; },
           [](const DynamicStorageTarget&) { return CallEnding::kReturns; },
           [](const BuildCellTarget&) { return CallEnding::kReturns; },
           [](const ControlEffectTarget& effect) {

@@ -45,11 +45,12 @@ through it.
   word, each component at the first offset its alignment allows after the one before. A component is
   reached at its offset wherever the tuple lies -- a frame slot, a variable's cell, a container
   element -- so a part of one is a place step and never a library call.
-- **It compiles each tuple type's lifecycle** -- copy, move, end, assign -- member by member,
-  calling the component domain's library entry or, for a nested tuple, that tuple's own step, the
-  way clang emits a class's implicit special members. The operations the language defines on the
-  whole value are methods the structure's declaration states in MIR, and the table's other slots
-  hold them.
+- **Each tuple type's lifecycle** -- copy, move, end, assign -- is taken member by member, calling
+  the component domain's library entry or, for a nested tuple, that tuple's own step; it is stated
+  in LIR by the lowering and the code generator translates it
+  ([a-types-steps-are-stated-in-lir](a-types-steps-are-stated-in-lir.md), revising who builds it).
+  The operations the language defines on the whole value are methods the structure's declaration
+  states in MIR, and the table's other slots hold them.
 - **A structure's table is its declaring unit's**, one in the program, whose operation slots hold
   the structure's methods; every other unit's values of the structure carry that table. A tuple a
   lowering composes has no operations, so a table of one holds the lifecycle alone and each module

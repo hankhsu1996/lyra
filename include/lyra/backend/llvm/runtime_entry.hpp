@@ -13,6 +13,7 @@
 #include "lyra/lir/operator.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/lir/value_step.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/integral_operation.hpp"
 #include "lyra/support/member_storage_kind.hpp"
@@ -40,13 +41,6 @@ inline constexpr std::string_view kRuntimeSymbolPrefix = "lyra_rt_";
 // here.
 auto HeldObjectOf(const lir::Type& type)
     -> std::optional<support::RuntimeObject>;
-
-// Whether a value of `type` is its bytes laid out by the type, which state
-// nothing of it: a tuple, a structure, a union, and a fixed-size unpacked
-// array.
-auto IsLaidOutByType(const lir::Type& type) -> bool;
-// The same of a value of `domain`.
-auto IsLaidOutByType(support::ValueDomain domain) -> bool;
 
 // The domain a LIR type is realized in, absent for a type whose values are not
 // values of the design. It is the type's held object where that object is a
@@ -248,20 +242,9 @@ enum class RuntimeOp : std::uint8_t {
   kAssign,
 };
 
-// One step of the life of a value some code holds, whatever its type: copying
-// it, moving it, ending it, and writing into one already there. They are what
-// clang calls a class's special members, and each type says how its own are
-// carried out.
-enum class LifecycleStep : std::uint8_t {
-  kCopy,
-  kMove,
-  kDestroy,
-  kAssign,
-};
-
 // The operation of the library's that carries out `step` on a value it
 // realizes.
-auto LifecycleOp(LifecycleStep step) -> RuntimeOp;
+auto RuntimeOpOf(lir::ValueStep step) -> RuntimeOp;
 
 // The symbol of the type of a value held in `domain`, which the library
 // defines once per kind of value it holds as an object of its own and

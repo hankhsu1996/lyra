@@ -23,7 +23,11 @@
 #include "lyra/backend/llvm/codegen_value_type.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/compilation_unit.hpp"
+#include "lyra/lir/place_query.hpp"
+#include "lyra/lir/type.hpp"
+#include "lyra/lir/value_step.hpp"
 #include "lyra/runtime/object_layout.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
@@ -256,25 +260,28 @@ auto CodeGenFunction::BuildInto(
 
 auto CodeGenFunction::EndValue(lir::TypeId type, llvm::Value* value)
     -> diag::Result<void> {
-  // A pointer owning what it points at is that address where it is an operand.
-  if (module_->Unit().types.Get(type).IsMoveOnly()) {
-    return module_->EndOwnedStorage(builder_, type, value);
-  }
-  if (module_->Types().LayoutOf(type).ends_with_nothing_to_do) {
-    return {};
-  }
-  const std::array<llvm::Value*, 1> args{value};
-  return module_->EmitLifecycle(builder_, type, LifecycleStep::kDestroy, args);
+  const std::array<llvm::Value*, 1> args{LocationOf(type, value)};
+  return module_->EmitStep(builder_, type, lir::ValueStep::kEnd, args);
 }
 
 auto CodeGenFunction::CopyValue(
     lir::TypeId type, llvm::Value* value, llvm::Value* out)
     -> diag::Result<llvm::Value*> {
   const std::array<llvm::Value*, 2> args{value, out};
-  auto copied =
-      module_->EmitLifecycle(builder_, type, LifecycleStep::kCopy, args);
+  auto copied = module_->EmitStep(builder_, type, lir::ValueStep::kCopy, args);
   if (!copied) {
     return std::unexpected(std::move(copied.error()));
+  }
+  return out;
+}
+
+auto CodeGenFunction::MoveValue(
+    lir::TypeId type, llvm::Value* value, llvm::Value* out)
+    -> diag::Result<llvm::Value*> {
+  const std::array<llvm::Value*, 2> args{value, out};
+  auto moved = module_->EmitStep(builder_, type, lir::ValueStep::kMove, args);
+  if (!moved) {
+    return std::unexpected(std::move(moved.error()));
   }
   return out;
 }
@@ -283,19 +290,30 @@ auto CodeGenFunction::AssignValue(
     lir::TypeId type, llvm::Value* value, llvm::Value* out)
     -> diag::Result<void> {
   const std::array<llvm::Value*, 2> args{out, value};
-  return module_->EmitLifecycle(builder_, type, LifecycleStep::kAssign, args);
+  return module_->EmitStep(builder_, type, lir::ValueStep::kAssign, args);
 }
 
 auto CodeGenFunction::RelocateValue(
     lir::TypeId type, llvm::Value* value, llvm::Value* out)
     -> diag::Result<void> {
-  const std::array<llvm::Value*, 2> args{value, out};
-  auto moved =
-      module_->EmitLifecycle(builder_, type, LifecycleStep::kMove, args);
+  auto moved = MoveValue(type, value, out);
   if (!moved) {
-    return moved;
+    return std::unexpected(std::move(moved.error()));
   }
   return EndValue(type, value);
+}
+
+// A value lying in storage of its own is named by that storage already; one
+// held as itself -- a pointer owning what it points at -- is put in a slot of
+// the frame, since a step takes where the value lies.
+auto CodeGenFunction::LocationOf(lir::TypeId type, llvm::Value* value)
+    -> llvm::Value* {
+  if (module_->Types().HasAggregateEvaluationKind(type)) {
+    return value;
+  }
+  llvm::Value* const slot = FrameStorage(value->getType());
+  builder_.CreateStore(value, slot);
+  return slot;
 }
 
 auto CodeGenFunction::ComponentAddress(
@@ -360,6 +378,96 @@ auto CodeGenFunction::LowerBeginVariable(const lir::BeginVariableInstr& begun)
   return builder_.CreateConstInBoundsGEP1_64(
       builder_.getInt8Ty(), *storage,
       (*placed)->offsets.at(begun.position.value));
+}
+
+// The storage a place names, as its type says: the part a class of the
+// library defines, the parts an object of a class is built of, or a member's
+// storage as the declaration it lies in gives a member of its type -- the
+// members a closure captures are copies it was built with -- which a variable's
+// cell reached by a dereference is too.
+auto CodeGenFunction::StorageAtPlace(const lir::Place& place)
+    -> diag::Result<NamedStorage> {
+  const lir::TypeId type = lir::PlaceType(module_->Unit(), *fn_, place);
+  auto address = ResolvePlaceAddress(place, Access::kRead);
+  if (!address) {
+    return std::unexpected(std::move(address.error()));
+  }
+  const lir::Type& stated = module_->Unit().types.Get(type);
+  if (stated.Is<lir::RuntimeClassType>() || stated.Is<lir::ObjectType>()) {
+    return NamedStorage{.type = type, .storage = std::nullopt, .at = *address};
+  }
+  MemberSlotRole role = MemberSlotRole::kVariable;
+  if (!place.chain.empty()) {
+    if (const auto* member =
+            std::get_if<lir::MemberProjection>(&place.chain.back())) {
+      const std::optional<lir::TypeDeclaration> declaration =
+          module_->Unit().types.Get(member->member.declared_by).Declaration();
+      if (declaration.has_value()) {
+        role = MemberSlotRoleOf(*declaration);
+      }
+    }
+  }
+  const std::optional<support::DeclaredMemberStorage> storage =
+      DeclaredStorageOf(module_->Unit(), type, role);
+  if (!storage) {
+    return diag::Fail(
+        diag::DiagCode::kUnsupportedTypeKind,
+        "storage of type '{}' is not yet supported with '--backend llvm'",
+        stated.KindName());
+  }
+  return NamedStorage{.type = type, .storage = *storage, .at = *address};
+}
+
+auto CodeGenFunction::LowerBeginStorage(const lir::BeginStorageInstr& begun)
+    -> diag::Result<llvm::Value*> {
+  auto named = StorageAtPlace(begun.place);
+  if (!named) {
+    return std::unexpected(std::move(named.error()));
+  }
+  if (!named->storage.has_value()) {
+    module_->BeginParts(builder_, named->type, named->at);
+    return nullptr;
+  }
+  if (auto built = module_->BeginStorageAt(
+          builder_, named->type, *named->storage, named->at);
+      !built) {
+    return std::unexpected(std::move(built.error()));
+  }
+  return nullptr;
+}
+
+auto CodeGenFunction::LowerEndStorage(const lir::EndStorageInstr& ended)
+    -> diag::Result<llvm::Value*> {
+  auto named = StorageAtPlace(ended.place);
+  if (!named) {
+    return std::unexpected(std::move(named.error()));
+  }
+  if (!named->storage.has_value()) {
+    module_->EndParts(builder_, named->type, named->at);
+    return nullptr;
+  }
+  if (auto ended = module_->EndStorageAt(
+          builder_, named->type, *named->storage, named->at);
+      !ended) {
+    return std::unexpected(std::move(ended.error()));
+  }
+  return nullptr;
+}
+
+// The class is kept as the object's definition, at its start, where the part
+// every object begins with keeps it.
+auto CodeGenFunction::LowerSetObjectClass(const lir::SetObjectClassInstr& set)
+    -> diag::Result<llvm::Value*> {
+  auto object = LowerOperand(set.object);
+  if (!object) {
+    return std::unexpected(std::move(object.error()));
+  }
+  auto definition = module_->DefinitionOf(set.cls);
+  if (!definition) {
+    return std::unexpected(std::move(definition.error()));
+  }
+  builder_.CreateStore(*definition, *object);
+  return nullptr;
 }
 
 auto CodeGenFunction::LowerEndVariable(const lir::EndVariableInstr& ended)

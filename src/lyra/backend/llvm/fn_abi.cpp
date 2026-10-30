@@ -219,7 +219,7 @@ auto ToldModeOf(
             return PassWithWidth{.type = of};
           },
           [&](const ToldLaidOutType&) -> Mode {
-            if (!IsLaidOutByType(pool.Get(own))) {
+            if (!lir::IsLaidOutByItsType(pool.Get(own))) {
               return std::nullopt;
             }
             // A value handed over with nothing of its type is one of the type
@@ -367,7 +367,7 @@ auto AnswerTypeArgs(
   switch (declared) {
     case support::AnswerTold::kNothing:
       if (std::holds_alternative<ReturnIndirect>(ret) &&
-          IsLaidOutByType(types.Get(answered)) &&
+          lir::IsLaidOutByItsType(types.Get(answered)) &&
           !TypeArgsOfTheRealization(realization).empty() &&
           answered != realization->of) {
         throw InternalError(
@@ -1114,6 +1114,7 @@ auto CallArranger::FnAbiOf(const lir::CallInstr& call, lir::TypeId result_type)
           },
           [&](const lir::EndValueTarget&) { return as_stated(); },
           [&](const lir::CopyValueTarget&) { return as_stated(); },
+          [&](const lir::MoveValueTarget&) { return as_stated(); },
           [&](const lir::DynamicStorageTarget&) { return as_stated(); },
           [&](const lir::BuildCellTarget&) { return as_stated(); },
           [&](const lir::ControlEffectTarget&) { return as_stated(); },

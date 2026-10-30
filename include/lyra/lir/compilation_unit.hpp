@@ -1,9 +1,11 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -22,6 +24,7 @@
 #include "lyra/lir/record_id.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/lir/value_step.hpp"
 #include "lyra/support/class_name.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/value_operation.hpp"
@@ -216,9 +219,9 @@ enum class RecordKind : std::uint8_t {
 // operation on a whole value with.
 //
 // The runtime asks the same questions of values it holds, and it was compiled
-// before the type existed, so a target hands it these methods along with what
-// it derives of the type itself: where the components lie, and how a value is
-// copied, moved and ended.
+// before the type existed, so a target hands it these methods along with the
+// functions the unit states for each step of a value's life, and where the
+// components lie, which the target lays out.
 struct RecordDecl {
   // The unit that defines the record, where it is another unit's. Such a
   // record is declared here as this unit read it, and its methods are that
@@ -282,6 +285,12 @@ struct CompilationUnit {
   // The functions answering the operations the unit states per type, one per
   // type and operation.
   std::vector<TypeOperation> type_operations;
+  // The function carrying out each step of a value's life the unit states for
+  // a type, by the type and the step: what copying, moving, writing over and
+  // ending a value of the type does, built from its parts. A step of a value
+  // calls it, and code compiled before the type existed reaches it through
+  // the type's table.
+  std::map<std::pair<TypeId, ValueStep>, FunctionId> type_steps;
   std::vector<StaticStorage> static_storage;
   // The read-only data the unit defines. What the runtime library reads of each
   // class -- its record of the class, under the class's linkage and definition

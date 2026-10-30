@@ -147,7 +147,9 @@ kind in
 
 **D9. Generated code copies and ends an array itself.** An array lying in place whose elements end
 with nothing to do is copied as its bytes and ended by nothing. Any other array is copied, moved,
-assigned and ended by a function generated for its type, each element in turn.
+assigned and ended by a function for its type, each element in turn, which the lowering to LIR
+states ([a-types-steps-are-stated-in-lir](a-types-steps-are-stated-in-lir.md), revising "a function
+generated" by the code generator).
 
 ## Rejected
 

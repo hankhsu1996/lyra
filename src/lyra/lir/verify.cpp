@@ -1,5 +1,6 @@
 #include "lyra/lir/verify.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <format>
 #include <optional>
@@ -145,7 +146,12 @@ auto AllocatedStorage(const Function& fn) -> std::vector<bool> {
 }
 
 // Whether `place` is storage holding no value until it is initialized: a frame
-// slot, or what storage just allocated holds.
+// slot, what storage just allocated holds, or a part -- a component, an element
+// -- of the body's return place, which holds nothing until the body makes its
+// answer there, part by part as rustc's clone shim builds its answer field by
+// field. A part of any other storage lies in a value that storage holds. This
+// admits the shapes a construction takes but does not prove each part is made
+// exactly once, which no check here tracks.
 auto HoldsNothingYet(
     const Function& fn, const std::vector<bool>& allocated, const Place& place)
     -> bool {
@@ -153,8 +159,23 @@ auto HoldsNothingYet(
     return IsPlaceLocal(fn, place.base);
   }
   const auto* base = std::get_if<Use>(&place.base);
-  return base != nullptr && allocated.at(base->value.value) &&
-         place.chain.size() == 1 &&
+  if (base == nullptr) {
+    return false;
+  }
+  if (fn.return_place == base->value) {
+    return std::ranges::all_of(place.chain, [](const Projection& step) {
+      return std::visit(
+          Overloaded{
+              [](const ComponentProjection&) { return true; },
+              [](const ElementProjection&) { return true; },
+              // Storage reached through what the answer holds is somebody
+              // else's, which holds a value of its own.
+              [](const DerefProjection&) { return false; },
+              [](const MemberProjection&) { return false; }},
+          step);
+    });
+  }
+  return allocated.at(base->value.value) && place.chain.size() == 1 &&
          std::holds_alternative<DerefProjection>(place.chain.front());
 }
 
@@ -268,6 +289,35 @@ void VerifyInstr(
           },
           [&](const EndVariableInstr& ended) {
             RequireStatedVariable(fn, ended.position);
+          },
+          [&](const BeginStorageInstr& begun) {
+            PlaceType(unit, fn, begun.place);
+          },
+          [&](const EndStorageInstr& ended) {
+            PlaceType(unit, fn, ended.place);
+          },
+          // Only an object has a class to be given.
+          [&](const SetObjectClassInstr& set) {
+            if (!unit.types.Get(set.cls).Is<ObjectType>()) {
+              throw InternalError(
+                  "lir verify: something other than an object is given a "
+                  "class");
+            }
+          },
+          // What replaces a value is made where it lies, so it has to be a
+          // value made, and of the type the storage holds.
+          [&](const EndAndReplaceInstr& replaced) {
+            const TypeId place_type = PlaceType(unit, fn, replaced.place);
+            if (unit.types.Get(place_type).IsAddressOnly()) {
+              throw InternalError(
+                  "lir verify: a value is ended and replaced in storage that "
+                  "is only addressable");
+            }
+            if (!MakesValue(replaced.value)) {
+              throw InternalError(
+                  "lir verify: a value is replaced by nothing made");
+            }
+            VerifyRvalue(unit, fn, replaced.value, place_type);
           },
           [](const BeginHandlingInstr&) {}, [](const EndHandlingInstr&) {}},
       instr.data);

@@ -9,6 +9,7 @@
 #include "lyra/lir/closure_id.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/lir/value_step.hpp"
 #include "lyra/support/class_name.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
@@ -36,10 +37,10 @@ enum class SymbolCategory : std::uint8_t {
   kStaticProperty,
   kClosureInvoke,
   kTypeOperation,
+  kValueStep,
   kBaseObjectCreation,
   kAllocatingCreation,
   kBaseObjectDestructor,
-  kCompleteObjectDestructor,
   kDeletingDestructor,
   kClassConstant,
   kDispatchTable,
@@ -170,6 +171,11 @@ auto TypeOperationSymbol(
     std::string_view unit_name, SymbolPart type,
     support::ValueOperation operation) -> std::string;
 
+// A function carrying out a step of a value's life at a type is named the same
+// way, by the type and the step.
+auto ValueStepSymbol(
+    std::string_view unit_name, SymbolPart type, ValueStep step) -> std::string;
+
 // The name the class `name` of `unit` is qualified by: the unit's own for a
 // class another unit names, which every body of the unit states alike; the
 // body's for a class built for one body's own use, which no other body states
@@ -204,16 +210,11 @@ enum class Creation : std::uint8_t { kBaseObject, kAllocating };
 auto CreationSymbol(std::string_view definition, Creation which) -> std::string;
 
 // The ends a C++ compiler gives a destructor: the base object destructor ends
-// what the declaration declares and then what it extends; the complete object
-// destructor ends a whole value; the deleting destructor also gives the
-// value's storage back, which is how a class's definition says its objects
-// end. A declaration extending one of another unit names its base's base
-// object destructor this way.
-enum class Destructor : std::uint8_t {
-  kBaseObject,
-  kCompleteObject,
-  kDeleting
-};
+// what the declaration declares and then what it extends; the deleting
+// destructor ends a whole value and gives its storage back, which is how a
+// class's definition says its objects end. A declaration extending one of
+// another unit names its base's base object destructor this way.
+enum class Destructor : std::uint8_t { kBaseObject, kDeleting };
 
 auto DestructorSymbol(std::string_view definition, Destructor which)
     -> std::string;

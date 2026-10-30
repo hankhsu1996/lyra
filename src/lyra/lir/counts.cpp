@@ -14,7 +14,7 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
   // Every member of the unit is taken apart by name, so a member added to it
   // does not compile here until it is said what kind of thing it is, or that
   // it is none.
-  const auto& [name, body_name, types, classes, closures, records, functions, type_operations, static_storage, constants, enum_tables, integral_constants, root] =
+  const auto& [name, body_name, types, classes, closures, records, functions, type_operations, type_steps, static_storage, constants, enum_tables, integral_constants, root] =
       unit;
 
   std::uint64_t declared = 0;
@@ -49,6 +49,7 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
       {.kind = "captures", .held = captures},
       {.kind = "records", .held = records.size()},
       {.kind = "type operations", .held = type_operations.size()},
+      {.kind = "type steps", .held = type_steps.size()},
       {.kind = "static storage", .held = static_storage.size()},
       {.kind = "constants", .held = constants.size()},
       {.kind = "integral constants", .held = integral_constants.size()},

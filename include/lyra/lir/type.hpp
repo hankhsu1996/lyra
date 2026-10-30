@@ -528,6 +528,12 @@ class Type {
   // it, as Rust moves a value that is not `Copy`.
   [[nodiscard]] auto IsMoveOnly() const -> bool;
 
+  // True for an owned value that lies in storage of its own, which an operand
+  // of it names by where it lies and a step of it is taken at: every owned
+  // value but a pointer owning what it points at, which is that address
+  // itself, as a Rust `Box` is.
+  [[nodiscard]] auto IsHeldInStorage() const -> bool;
+
   // The type of the elements this one holds a sequence of, or nothing where it
   // holds none: the unpacked array (LRM 7.4), the dynamic array (7.5), the
   // associative array (7.8) and the queue (7.10). Narrower than holding values:

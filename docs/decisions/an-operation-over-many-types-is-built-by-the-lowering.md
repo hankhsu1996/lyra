@@ -34,9 +34,12 @@ in the builder; what repeats at each site is the builder's output, as a C++ comp
 code of an implicitly defined member wherever it is used.
 
 **D3. An operation that reads a type's structure is built per type by one rule** -- a structure's
-equality, copying or ending a value, or one that computes a type from its parameters, such as an
-array's stream, as wide as its count times its element's width -- as clang defines a class's
-implicit special members per class and rustc builds drop glue and clone shims per type.
+equality, or one that computes a type from its parameters, such as an array's stream, as wide as its
+count times its element's width -- as clang defines a class's implicit special members per class and
+rustc builds drop glue and clone shims per type. Copying and ending a value were listed here too,
+and are not MIR's: MIR states only who owns a value until when, the C++ backend takes each copy and
+end from the host language, and the lowering to LIR builds them per type
+([a-types-steps-are-stated-in-lir](a-types-steps-are-stated-in-lir.md), revised 2026-10-30).
 
 **D4. A generic function comes back to MIR only for an operation per-site or per-type building
 cannot state as plainly**: one whose definition, checked against its bounds where it is defined,

@@ -711,6 +711,10 @@ auto Type::IsOwnedValue() const -> bool {
   return HeldAs().has_value();
 }
 
+auto Type::IsHeldInStorage() const -> bool {
+  return IsOwnedValue() && !IsMoveOnly();
+}
+
 auto Type::IsMoveOnly() const -> bool {
   const std::optional<Holding> held = HeldAs();
   return held.has_value() && std::holds_alternative<OwnedStorageAddress>(*held);

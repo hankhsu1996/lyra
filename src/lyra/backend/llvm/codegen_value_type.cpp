@@ -35,6 +35,7 @@
 #include "lyra/lir/record_id.hpp"
 #include "lyra/lir/symbol_name.hpp"
 #include "lyra/lir/type.hpp"
+#include "lyra/lir/value_step.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
@@ -118,7 +119,7 @@ struct EitherStreamForm {
 };
 
 using WitnessFilling = std::variant<
-    LifecycleStep, OwnOperationWitness, EitherStreamForm, NeverAsked,
+    lir::ValueStep, OwnOperationWitness, EitherStreamForm, NeverAsked,
     BuiltAsItsDefault>;
 
 // One witness of a type's table: the storage's own lifecycle, the operations
@@ -176,11 +177,10 @@ auto Witnesses() {
   using support::BuiltinFn;
   using value::ValueWitnessTable;
   return std::to_array<Witness>({
-      WitnessOf("copy", &ValueWitnessTable::copy, LifecycleStep::kCopy),
-      WitnessOf("move", &ValueWitnessTable::move, LifecycleStep::kMove),
-      WitnessOf(
-          "destroy", &ValueWitnessTable::destroy, LifecycleStep::kDestroy),
-      WitnessOf("assign", &ValueWitnessTable::assign, LifecycleStep::kAssign),
+      WitnessOf("copy", &ValueWitnessTable::copy, lir::ValueStep::kCopy),
+      WitnessOf("move", &ValueWitnessTable::move, lir::ValueStep::kMove),
+      WitnessOf("destroy", &ValueWitnessTable::destroy, lir::ValueStep::kEnd),
+      WitnessOf("assign", &ValueWitnessTable::assign, lir::ValueStep::kAssign),
       WitnessOf(
           "equal", &ValueWitnessTable::equal,
           OwnOperationWitness{
@@ -270,20 +270,6 @@ void PlaceValueType(
   out.PlaceInteger(ValueType::KindStatedAt(), std::to_underlying(kind));
 }
 
-auto StepName(LifecycleStep step) -> std::string_view {
-  switch (step) {
-    case LifecycleStep::kCopy:
-      return "copy";
-    case LifecycleStep::kMove:
-      return "move";
-    case LifecycleStep::kDestroy:
-      return "destroy";
-    case LifecycleStep::kAssign:
-      return "assign";
-  }
-  throw InternalError("llvm codegen: unknown lifecycle step");
-}
-
 }  // namespace
 
 CodeGenValueTypes::CodeGenValueTypes(
@@ -298,37 +284,6 @@ auto CodeGenValueTypes::KeyOf(lir::TypeId type) -> const std::string& {
   }
   return keys_.emplace(type, lir::SymbolPartOf(*unit_, type).encoded)
       .first->second;
-}
-
-auto CodeGenValueTypes::Function(lir::TypeId type, LifecycleStep step)
-    -> llvm::Function* {
-  const std::string& key = KeyOf(type);
-  if (const auto found = functions_.find({key, step});
-      found != functions_.end()) {
-    return found->second;
-  }
-  llvm::Module& module = owner_->Module();
-  llvm::Type* ptr = types_->Ptr();
-  llvm::Type* void_ty = llvm::Type::getVoidTy(module.getContext());
-  // Ending a value takes it alone; every other step takes a second address,
-  // the storage it builds in or the value it writes.
-  llvm::FunctionType* signature = nullptr;
-  switch (step) {
-    case LifecycleStep::kDestroy:
-      signature = llvm::FunctionType::get(void_ty, {ptr}, false);
-      break;
-    case LifecycleStep::kCopy:
-    case LifecycleStep::kMove:
-    case LifecycleStep::kAssign:
-      signature = llvm::FunctionType::get(void_ty, {ptr, ptr}, false);
-      break;
-  }
-  llvm::Function* fn = llvm::Function::Create(
-      signature, llvm::GlobalValue::InternalLinkage,
-      std::format("lyra.type{}.{}", key, StepName(step)), module);
-  functions_.emplace(std::pair{key, step}, fn);
-  Emit(type, step, fn);
-  return fn;
 }
 
 auto CodeGenValueTypes::DeclareBody(
@@ -872,10 +827,11 @@ auto CodeGenValueTypes::GetAddrOfLaidOutType(lir::TypeId type)
         witness.offset,
         std::visit(
             Overloaded{
-                [&](LifecycleStep step) -> llvm::Constant* {
+                [&](lir::ValueStep step) -> llvm::Constant* {
                   return Body(
                       type, witness.name, witness.stands_in_for,
-                      Function(type, step));
+                      owner_->UnitFunction(
+                          lir::StepFunctionOf(*unit_, type, step)));
                 },
                 [&](const OwnOperationWitness& own) -> llvm::Constant* {
                   return answered_by(witness, own.answers, own.crossing);
@@ -1058,143 +1014,6 @@ auto CodeGenValueTypes::EmitDeclared() -> void {
   }
 }
 
-auto CodeGenValueTypes::Emit(
-    lir::TypeId type, LifecycleStep step, llvm::Function* fn) -> void {
-  llvm::LLVMContext& ctx = owner_->Module().getContext();
-  llvm::IRBuilder<> b(llvm::BasicBlock::Create(ctx, "", fn));
-  // A step of `of`'s, which its type says how to carry out. It fails only
-  // where the library realizes no type for it, which is what building the
-  // enclosing type refuses a component or a member for.
-  const auto step_of = [&](llvm::IRBuilderBase& at, lir::TypeId of,
-                           LifecycleStep taken,
-                           std::vector<llvm::Value*> args) {
-    if (!owner_->EmitLifecycle(at, of, taken, args)) {
-      throw InternalError(
-          "llvm codegen: a component or a member is no value the runtime "
-          "realizes");
-    }
-  };
-  std::visit(
-      Overloaded{
-          // An untagged union's members own nothing, so its steps are its
-          // bytes'; a tagged one's carry every byte over and then take the
-          // step of the member the tag names, as that member's type takes it,
-          // which owns what it holds.
-          [&](const UnionLayout* overlay) {
-            const llvm::Align align(overlay->storage.layout.align);
-            const std::size_t size = overlay->storage.layout.size;
-            const std::optional<value::TagPlacement>& tag = overlay->tag;
-            switch (step) {
-              case LifecycleStep::kCopy:
-              case LifecycleStep::kMove: {
-                llvm::Value* const from = fn->getArg(0);
-                llvm::Value* const out = fn->getArg(1);
-                b.CreateMemCpy(out, align, from, align, size);
-                if (tag.has_value()) {
-                  ForHeldMember(
-                      b, overlay->members, *tag, from,
-                      [&](llvm::IRBuilderBase& at, lir::TypeId member) {
-                        step_of(at, member, step, {from, out});
-                      });
-                }
-                break;
-              }
-              case LifecycleStep::kDestroy:
-                if (tag.has_value()) {
-                  llvm::Value* const value = fn->getArg(0);
-                  ForHeldMember(
-                      b, overlay->members, *tag, value,
-                      [&](llvm::IRBuilderBase& at, lir::TypeId member) {
-                        step_of(at, member, step, {value});
-                      });
-                }
-                break;
-              // Assigning ends what the storage held and builds a copy of the
-              // value in its place, unless the two are one.
-              case LifecycleStep::kAssign: {
-                llvm::Value* const storage_at = fn->getArg(0);
-                llvm::Value* const value = fn->getArg(1);
-                if (!tag.has_value()) {
-                  b.CreateMemMove(storage_at, align, value, align, size);
-                  break;
-                }
-                llvm::BasicBlock* const replace =
-                    llvm::BasicBlock::Create(ctx, "replace", fn);
-                llvm::BasicBlock* const done =
-                    llvm::BasicBlock::Create(ctx, "assigned", fn);
-                b.CreateCondBr(
-                    b.CreateICmpEQ(storage_at, value), done, replace);
-                b.SetInsertPoint(replace);
-                b.CreateCall(
-                    Function(type, LifecycleStep::kDestroy), {storage_at});
-                b.CreateCall(
-                    Function(type, LifecycleStep::kCopy), {value, storage_at});
-                b.CreateBr(done);
-                b.SetInsertPoint(done);
-                break;
-              }
-            }
-          },
-          // An array's steps are each element's, in position order.
-          [&](const ArrayLayout* laid) {
-            switch (step) {
-              case LifecycleStep::kCopy:
-              case LifecycleStep::kMove:
-              case LifecycleStep::kAssign: {
-                llvm::Value* const from = fn->getArg(0);
-                llvm::Value* const to = fn->getArg(1);
-                ForEachElement(
-                    b, type, from,
-                    [&](llvm::IRBuilderBase& at, llvm::Value* element) {
-                      llvm::Value* const offset =
-                          at.CreatePtrDiff(at.getInt8Ty(), element, from);
-                      step_of(
-                          at, laid->element, step,
-                          {element,
-                           at.CreateInBoundsGEP(at.getInt8Ty(), to, offset)});
-                    });
-                break;
-              }
-              case LifecycleStep::kDestroy:
-                ForEachElement(
-                    b, type, fn->getArg(0),
-                    [&](llvm::IRBuilderBase& at, llvm::Value* element) {
-                      step_of(at, laid->element, step, {element});
-                    });
-                break;
-            }
-          },
-          // A product's steps are each component's, in position order.
-          [&](const ProductLayout* product) {
-            // Where component `i` lies in the product at `base`.
-            const auto at = [&](llvm::Value* base,
-                                std::size_t i) -> llvm::Value* {
-              return b.CreateConstInBoundsGEP1_64(
-                  b.getInt8Ty(), base, product->offsets[i]);
-            };
-            const std::size_t count = product->components.size();
-            switch (step) {
-              case LifecycleStep::kCopy:
-              case LifecycleStep::kMove:
-              case LifecycleStep::kAssign:
-                for (std::size_t i = 0; i < count; ++i) {
-                  step_of(
-                      b, product->components[i], step,
-                      {at(fn->getArg(0), i), at(fn->getArg(1), i)});
-                }
-                break;
-              case LifecycleStep::kDestroy:
-                for (std::size_t i = 0; i < count; ++i) {
-                  step_of(
-                      b, product->components[i], step, {at(fn->getArg(0), i)});
-                }
-                break;
-            }
-          }},
-      types_->FieldsOf(type));
-  b.CreateRetVoid();
-}
-
 auto CodeGenValueTypes::GetAddrOfValueType(lir::TypeId type)
     -> diag::Result<llvm::Constant*> {
   using Answer = diag::Result<llvm::Constant*>;
@@ -1217,7 +1036,7 @@ auto CodeGenValueTypes::GetAddrOfValueType(lir::TypeId type)
           [&](ValueDomain domain) -> Answer {
             // A type laid out by the design, whose table the code generator
             // fills; any other domain's type is the library's own.
-            if (IsLaidOutByType(domain)) {
+            if (support::IsLaidOutByItsType(domain)) {
               return GetAddrOfLaidOutType(type);
             }
             return owner_->LibraryData(ValueTypeSymbol(domain));

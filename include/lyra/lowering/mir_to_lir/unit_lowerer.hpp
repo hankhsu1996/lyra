@@ -19,6 +19,7 @@
 #include "lyra/lir/symbol_name.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/lir/value_step.hpp"
 #include "lyra/mir/bring_up_entry.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
@@ -269,6 +270,23 @@ class UnitLowerer {
   // What a body a table holds is declared at where another unit defines it: a
   // table holds its address as data, and nothing here calls through it.
   auto TableBodyPrototype() const -> lir::TypeId;
+
+  // States, for every type the unit names, a function for each step whose
+  // answer is one, and for a value laid out by its type one for every step it
+  // has, which the library holding one reaches through its table. Runs once
+  // every body is lowered, since a body is what names a type.
+  void StateTypeSteps();
+  [[nodiscard]] auto NeedsStepFunction(
+      lir::TypeId type, lir::ValueStep step) const -> bool;
+  // The function carrying out `step` of a value of `type`, built from its
+  // parts: it takes where the value lies, and where the value it builds or
+  // writes lies.
+  auto BuildStepFunction(lir::TypeId type, lir::ValueStep step)
+      -> lir::Function;
+  // States, for every class this unit defines that a value is built of, how
+  // the parts it places begin and end and how an object of it is created and
+  // ended whole.
+  void StateClassSteps();
 
   const mir::CompilationUnit* mir_;
   lir::CompilationUnit out_;
