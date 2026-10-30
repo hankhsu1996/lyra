@@ -216,8 +216,9 @@ struct ClassCodeSlot {
   ClassCodePoint point;
   mir::CallableId slot;
   // What the method is called, which names it where it is dispatched: the
-  // class and the operation, apart by a space, which no identifier holds (LRM
-  // 5.6.1), so no subroutine the scope published shares it.
+  // class's path as an identity, since two classes of one scope may read alike
+  // (LRM 5.6.1), and the operation, apart by a space, which no identifier
+  // holds, so no subroutine the scope published shares it.
   std::string name;
   // What the operation's code takes and answers, read off the declaration;
   // the method takes the scope's object, then that.

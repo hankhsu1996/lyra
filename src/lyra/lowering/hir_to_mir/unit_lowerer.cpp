@@ -557,7 +557,8 @@ auto UnitLowerer::SettlePublishedScope(
             .cls = cls,
             .point = point,
             .slot = methods.Take(),
-            .name = std::format("{} {}", support::DisplayOf(path), operation),
+            .name =
+                std::format("{} {}", support::DefPathIdentity(path), operation),
             .operation = code});
     signatures.push_back(
         CallableSignature{

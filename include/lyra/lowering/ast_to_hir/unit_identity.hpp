@@ -77,13 +77,6 @@ enum class ParameterValueSource {
 // caught.
 [[nodiscard]] auto NameDigest(std::string_view bytes) -> std::uint64_t;
 
-// A declaration's path in its unit as an identity: each step as its kind and
-// then the length of its name and the name, or the position it stands at and a
-// terminator, and after a name whatever else tells the step from its siblings,
-// each behind a mark no kind is written with. So two paths that differ anywhere
-// never answer alike whatever characters a name holds (LRM 5.6.1).
-[[nodiscard]] auto DefPathIdentity(const support::DefPath& path) -> std::string;
-
 // A value as an identity: every bit of it, unknowns included, so two values
 // that differ anywhere never answer alike. The front end's own rendering is
 // for reading -- it shortens a value wider than it cares to print and folds

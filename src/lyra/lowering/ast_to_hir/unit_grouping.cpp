@@ -254,7 +254,7 @@ class Grouping {
         [&](const std::string& unit_name,
             const support::DefPath& path) -> std::string {
       if (unit_name != signature.unit_name) {
-        return unit_name + "|" + DefPathIdentity(path);
+        return unit_name + "|" + support::DefPathIdentity(path);
       }
       std::string out = "s|";
       support::DefPath prefix;
@@ -275,7 +275,7 @@ class Grouping {
             block != blocks.end()) {
           out += std::format("b{};", Hex(block->second));
         } else {
-          out += DefPathIdentity(support::DefPath{.data = {step}});
+          out += support::DefPathIdentity(support::DefPath{.data = {step}});
         }
       }
       return out;
