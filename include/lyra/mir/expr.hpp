@@ -469,13 +469,13 @@ struct BorrowExpr {
   ExprId operand;
 };
 
-// A consuming (transfer) read of the operand: the operand's contents flow
-// into the enclosing expression as the last use of that operand's storage,
-// and no subsequent read of the same storage is valid. `Expr::type` is the
-// operand's type -- move does not change what value the expression yields,
-// only how ownership crosses the boundary. Lowering emits this at last-use
-// sites where the backend must transfer rather than copy (a ctor param
-// forwarded to the base construction); an ordinary read is a copy.
+// A consuming (transfer) read of a place, rustc's `Operand::Move`: its value
+// flows into the enclosing expression together with the place's ownership of
+// it, so the place owns nothing afterwards, keeps no object in use, and ends
+// with nothing to release. `Expr::type` is the operand's type -- a move changes
+// how ownership crosses, not the value. The unit's verification takes it only
+// of a whole local, as that local's last use on every way that reaches the
+// local's end, run exactly once there. An ordinary read is a copy.
 //
 // Operand must be a type whose value can be transferred. Alias-style handle
 // types carry no ownership to move, so lowering never wraps them here -- a

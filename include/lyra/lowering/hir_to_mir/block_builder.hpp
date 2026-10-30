@@ -15,7 +15,10 @@ namespace lyra::lowering::hir_to_mir {
 // reaches for one when its evaluation takes several steps -- an SV subroutine
 // call that writes back to its actuals, a system function that both yields a
 // value and has an effect -- and finishes it as the expression those steps
-// yield, or as the statement they amount to when they yield nothing.
+// yield, or as the statement they amount to when they yield nothing. What a
+// step declares ends when the steps complete, so an evaluation whose staged
+// values must not outlive it is lowered through one even where it may stage
+// nothing.
 //
 // Nothing crosses a callable boundary, so a local declared inside is an
 // ordinary local of the enclosing body and a reference out of it resolves with

@@ -2055,6 +2055,128 @@ void VerifyBreaksAndSwitches(
   }
 }
 
+// How many nodes of `block`, and of every block inside it, name each local.
+void CountNamings(const Block& block, std::map<LocalId, int>& named) {
+  for (const ExprId id : block.exprs.Ids()) {
+    if (const std::optional<LocalId> local =
+            ReferencedLocal(block.exprs.Get(id).data)) {
+      ++named[*local];
+    }
+  }
+  for (const BlockId id : block.child_scopes.Ids()) {
+    CountNamings(block.child_scopes.Get(id), named);
+  }
+}
+
+// Marks `id` and every node of `block` it takes a value from.
+void MarkReached(const Block& block, ExprId id, std::vector<bool>& marked) {
+  if (marked.at(id.value)) {
+    return;
+  }
+  marked.at(id.value) = true;
+  ForEachOperand(
+      block.exprs.Get(id).data, [&](const ExprId& operand, OperandUse) {
+        MarkReached(block, operand, marked);
+      });
+}
+
+// A move hands a local's value on together with the local's end, so it is the
+// last use of the whole local, run exactly once on every way the body runs
+// that reaches that end: nothing else names the local, and nothing that runs on
+// only some ways or more than once stands between the move and the block
+// declaring the local, or the body for a parameter -- only blocks a run enters
+// once whenever the one around them runs, a block statement and a block
+// expression that neither an arm of a choice nor a loop's test or step holds.
+// A local used again after it, assigned again, or moved on some ways or many
+// times would be ended twice or not at all. `entered_with` is what a block
+// entered that way inherits.
+void VerifyMovesAreLastUses(
+    const Block& block, std::set<LocalId> entered_with,
+    const std::map<LocalId, int>& named, const auto& describe) {
+  std::vector<bool> not_once(block.exprs.size());
+  for (const ExprId id : block.exprs.Ids()) {
+    if (const auto* choice =
+            std::get_if<ConditionalExpr>(&block.exprs.Get(id).data)) {
+      MarkReached(block, choice->then_value, not_once);
+      MarkReached(block, choice->else_value, not_once);
+    }
+  }
+  for (const Stmt& stmt : block.stmts) {
+    std::visit(
+        Overloaded{
+            [&](const WhileStmt& s) {
+              MarkReached(block, s.condition, not_once);
+            },
+            [&](const DoWhileStmt& s) {
+              MarkReached(block, s.condition, not_once);
+            },
+            [&](const ForStmt& s) {
+              if (s.condition.has_value()) {
+                MarkReached(block, *s.condition, not_once);
+              }
+              for (const ExprId step : s.step) {
+                MarkReached(block, step, not_once);
+              }
+            },
+            [](const EmptyStmt&) {}, [](const LocalDeclStmt&) {},
+            [](const ExprStmt&) {}, [](const BlockStmt&) {},
+            [](const TryStmt&) {}, [](const RaiseStmt&) {},
+            [](const FinallyStmt&) {}, [](const IfStmt&) {},
+            [](const SwitchStmt&) {}, [](const BreakStmt&) {},
+            [](const ContinueStmt&) {}, [](const ReturnStmt&) {}},
+        stmt.data);
+  }
+  std::set<LocalId> movable = std::move(entered_with);
+  for (const Stmt& stmt : block.stmts) {
+    if (const auto* decl = std::get_if<LocalDeclStmt>(&stmt.data)) {
+      movable.insert(decl->target);
+    }
+  }
+  const auto refuse = [&](std::string_view what, ExprId id) {
+    throw InternalError(
+        std::format(
+            "mir verify: {} holds {} (expression {} of its block); a move is "
+            "the last use of a whole local on every way that reaches its end",
+            describe(), what, id.value));
+  };
+  for (const ExprId id : block.exprs.Ids()) {
+    const auto* move = std::get_if<MoveExpr>(&block.exprs.Get(id).data);
+    // A move of what names no place is refused where a place is asked for.
+    if (move == nullptr || !IsPlace(block.exprs.Get(move->operand).data)) {
+      continue;
+    }
+    const std::optional<LocalId> local =
+        ReferencedLocal(block.exprs.Get(move->operand).data);
+    if (!local.has_value()) {
+      refuse("a move of part of a value", id);
+    }
+    if (named.at(*local) != 1) {
+      refuse("a move of a local named elsewhere", id);
+    }
+    if (not_once.at(id.value) || !movable.contains(*local)) {
+      refuse("a move not run exactly once through its local's block", id);
+    }
+  }
+  std::set<BlockId> entered_whole;
+  for (const Stmt& stmt : block.stmts) {
+    if (const auto* inner = std::get_if<BlockStmt>(&stmt.data)) {
+      entered_whole.insert(inner->scope);
+    }
+  }
+  for (const ExprId id : block.exprs.Ids()) {
+    if (const auto* steps = std::get_if<BlockExpr>(&block.exprs.Get(id).data);
+        steps != nullptr && !not_once.at(id.value)) {
+      entered_whole.insert(steps->scope);
+    }
+  }
+  for (const BlockId id : block.child_scopes.Ids()) {
+    VerifyMovesAreLastUses(
+        block.child_scopes.Get(id),
+        entered_whole.contains(id) ? movable : std::set<LocalId>{}, named,
+        describe);
+  }
+}
+
 // `describe` names the body, and is asked only once there is something to
 // report: the check runs over every body of every unit, and composing a name
 // for each one costs more than the check itself.
@@ -2077,6 +2199,11 @@ void VerifyCode(
   }
   VerifyNoRunEvaluatesTwice(*code.body, {}, describe);
   VerifyPlacesAreRead(unit, *code.body, {}, describe);
+  std::map<LocalId, int> named;
+  CountNamings(*code.body, named);
+  VerifyMovesAreLastUses(
+      *code.body, std::set<LocalId>(code.params.begin(), code.params.end()),
+      named, describe);
   VerifyWritesLandInWritableStorage(unit, *code.body, describe);
   VerifyValuesMeetTheirTypes(unit, code, *code.body, describe);
   VerifyStorageWithoutAnAddress(unit, *code.body, describe);

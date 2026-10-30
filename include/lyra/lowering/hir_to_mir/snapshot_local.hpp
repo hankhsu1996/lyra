@@ -49,7 +49,8 @@ void AssignLocal(
     -> mir::ExprId;
 
 // Freezes an outer expression's value into a closure's environment: hoists it
-// into a temp local of the outer body (with a fresh synthesized origin) and
+// into a temp local of the block `outer_frame` is lowering, which ends with
+// that block (with a fresh synthesized origin), and
 // forwards that local into `closure` as a captured environment element,
 // returning the body-side read. This is how a deferred body (a non-blocking
 // assignment, a postponed `$display`) keeps a value computed at construction

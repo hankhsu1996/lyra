@@ -1,7 +1,8 @@
 # A rewrite of MIR says whether a program needs it
 
-Date: 2026-10-18. Status: accepted; D1 and D3 revised 2026-10-26. Revises the stage
-`a-process-stopping-only-at-its-loop-head-is-called.md` added.
+Date: 2026-10-18. Status: accepted; D1 and D3 revised 2026-10-26; why the conversions are MIR's
+re-derived 2026-10-30. Revises the stage `a-process-stopping-only-at-its-loop-head-is-called.md`
+added.
 
 The 2026-10-26 revision: a policy stated on each rewrite let a required rewrite and the phase it
 brings the unit into be two facts. Required is now where a rewrite stands -- inside a conversion
@@ -125,12 +126,18 @@ MIR's array type is an element type and a count, as LLVM's is.
   its types, and codegen refuses none. Both decide which conversions exist once, upstream of every
   backend.
 
-Where Lyra differs: MIR is a tree whose nodes are each reached once, so a rewrite builds the body
-that replaces one rather than editing it in place, as clang's does. Where rustc states a policy on
-each pass, a required one here is one inside a conversion, because each form between rewrites has to
-be one a check names, and rustc's validator names only its phases. rustc calls its backend-facing
-dialect runtime MIR; here "runtime" names the library a program links, so each phase is named by the
-conversion that reaches it instead.
+Where Lyra differs: rustc's required conversions run at the control-flow level, the layer below the
+one its THIR sits at, and clang rewrites nothing after Sema; here they are MIR's, the layer clang's
+AST and rustc's THIR correspond to, because one consumer writes MIR out as C++, whose own rules
+would otherwise decide the order operands run in and where a value lies, so a correct program needs
+those settled before either consumer reads it. Re-derived 2026-10-30 on whether every rewrite should
+instead be one a build may skip, as LLVM's are: that would make the order and placement each
+backend's own, which is the disagreement the conversions exist to prevent. MIR is a tree whose nodes
+are each reached once, so a rewrite builds the body that replaces one rather than editing it in
+place, as clang's does. Where rustc states a policy on each pass, a required one here is one inside
+a conversion, because each form between rewrites has to be one a check names, and rustc's validator
+names only its phases. rustc calls its backend-facing dialect runtime MIR; here "runtime" names the
+library a program links, so each phase is named by the conversion that reaches it instead.
 
 ## Rejected
 

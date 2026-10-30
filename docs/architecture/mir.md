@@ -172,6 +172,19 @@ what the construct means.
   C++'s `emplace` builds an element where its container holds it; a closure any other keeper holds
   in a box that keeper takes. Every body MIR holds is concrete: an operation over many types is
   built per site or per type by the lowering, never stated as a generic function.
+- Who owns each value and until when, stated by the nodes that take values and the scopes that hold
+  them, as clang's AST and rustc's THIR state it, and never by a node per copy or per end. A read of
+  a place makes a value of its own, independent of the place, as its type copies it: a handle's copy
+  names the same object, a queue's holds elements of its own. A move hands the place's value on with
+  its ownership, so the place owns nothing after it, keeps no object in use, and is ended with
+  nothing to release; it is the last use of a whole local on every way that reaches the local's end.
+  A borrow lends without owning, and a value it holds lives for the evaluation that made it. A local
+  is owned by the block declaring it and ends on every way out of that block. What the lowering
+  makes to carry one evaluation out -- a full-expression, a condition each time it is tested, an
+  operand before a suspension -- is a step of that evaluation, and ends when the evaluation
+  completes, as a C++ full-expression's temporaries do; what is wanted afterwards is owned by where
+  it went, a variable, a callee, or a deferred effect's closure. Every copy, transfer and end
+  follows from these by one rule, which the lowering to LIR and the C++ target both apply.
 - Action shapes for constructs that bind behavior to schedule events (always blocks, continuous
   assignments, deferred assertions, concurrent assertions).
 - A textual dumper that serializes MIR for inspection. The dumper is not a backend; its output is
@@ -360,7 +373,10 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
   together, which is the only phase a consumer takes. A conversion -- the rewrites that bring the
   unit from one phase into the next -- is what a correct program needs, so no build skips one; every
   other rewrite runs inside a phase, leaves the same program at another cost, and a build may skip
-  it. The verification asks of a unit what its phase requires; it is verified once, as it leaves the
+  it. The conversions are this layer's rather than each consumer's because one consumer writes MIR
+  out as C++, whose own rules would otherwise decide the order operands run in and where a value
+  lies; rustc keeps its required conversions at the layer below, which has no such consumer. The
+  verification asks of a unit what its phase requires; it is verified once, as it leaves the
   rewrites, since that is the form every consumer reads, and on reaching each phase and after each
   optional rewrite where a build asks; a dump, which a person reads rather than a consumer, shows it
   unchecked. A rewrite builds a node through the same builders as the lowering, folding included. A
@@ -542,9 +558,11 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
 - A mutation-op node family parallel to the expression family. A write reaches storage through the
   value's own store boundary, so there is one write vocabulary rather than two. (A second family
   would make "how does this program write" have two answers.)
-- A lifecycle node family for value copy or move. Copy and move independence is a property of the
-  value model itself, not an operation a program spells. (The layer would be modelling a C++
-  mechanism rather than the source language.)
+- A node per copy or per end of a value. Where each happens follows from what this layer already
+  states -- a read, a move, a borrow, each value's extent -- by one rule both consumers apply, so a
+  node stating each again is a second copy of that answer, which can disagree with the first.
+  Neither clang's AST nor rustc's THIR holds one; the layer that states each copy, transfer and end
+  is the one below, as rustc's MIR does. (A fact is stated once, at the layer that can state it.)
 
 ## Notes / Examples
 

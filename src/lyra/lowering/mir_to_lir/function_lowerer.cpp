@@ -3489,14 +3489,16 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
           },
           [&](const mir::MoveExpr& m) -> Lowered {
             // A move is a last use; it changes neither the value nor its type,
-            // so it reads its operand as a copy does, and what takes the value
-            // decides whether it is moved. A value with no copy moved out of a
-            // local's slot takes the local's end with it, as rustc's drop
-            // elaboration leaves a place moved out of with nothing to drop.
+            // so it reads its operand as a copy does. An owned value moved out
+            // of a local's slot takes the local's end with it, so whatever
+            // takes the value owns it and the local, ending, releases nothing,
+            // as rustc's drop elaboration leaves a place moved out of with
+            // nothing to drop. A value only lent to this body owes no end
+            // here, and what takes it copies it.
             auto value = LowerRead(block, m.operand);
             if (!value || !unit_->Types()
                                .Get(lir::OperandType(fn_, *value))
-                               .IsMoveOnly()) {
+                               .IsOwnedValue()) {
               return value;
             }
             if (const std::optional<std::size_t> owed =

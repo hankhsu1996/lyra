@@ -1129,6 +1129,109 @@ TEST(MirVerifyTest, AnAssignmentLandsOnAPlace) {
   ExpectRefused(assigning(false), "which names no place");
 }
 
+// A move hands a local's value on together with the local's end, so it is the
+// last use of the whole local, run exactly once on every way the body runs that
+// reaches that end: nothing else names the local, and only blocks a run enters
+// once whenever the one around them runs stand between the move and the
+// local's declaration. A local named again after it, and one moved under an arm
+// of a choice, in a branch of an `if`, in a loop's body or in its test, are
+// refused; one moved in a block statement is not.
+TEST(MirVerifyTest, AMoveIsTheLastUseOfAWholeLocal) {
+  enum class Shape : std::uint8_t {
+    kLastUse,
+    kInABlockStatement,
+    kNamedAgain,
+    kUnderAnArm,
+    kInABranch,
+    kInALoopBody,
+    kInALoopTest
+  };
+  const auto moving = [](Shape shape) {
+    return UnitWithCode([shape](CompilationUnit& u, CallableCode& code) {
+      const TypeId type = u.builtins.int_type;
+      const LocalId moved = code.locals.Add(LocalDecl{.type = type});
+      const LocalId taker = code.locals.Add(LocalDecl{.type = type});
+      Block& body = code.Body();
+      body.AppendStmt(
+          LocalDeclStmt{
+              .target = moved,
+              .init =
+                  body.exprs.Add(Expr{.data = NullLiteral{}, .type = type})});
+      const bool inside = shape == Shape::kInABlockStatement ||
+                          shape == Shape::kInABranch ||
+                          shape == Shape::kInALoopBody;
+      Block inner;
+      Block& at = inside ? inner : body;
+      ExprId taken = at.exprs.Add(
+          Expr{
+              .data =
+                  MoveExpr{
+                      .operand = at.exprs.Add(MakeLocalRefExpr(moved, type))},
+              .type = type});
+      if (shape == Shape::kUnderAnArm) {
+        taken = at.exprs.Add(
+            Expr{
+                .data =
+                    ConditionalExpr{
+                        .condition = at.exprs.Add(
+                            Expr{
+                                .data = NullLiteral{},
+                                .type = u.builtins.machine_bool}),
+                        .then_value = taken,
+                        .else_value = at.exprs.Add(
+                            Expr{.data = NullLiteral{}, .type = type})},
+                .type = type});
+      }
+      if (shape == Shape::kInALoopTest) {
+        body.AppendStmt(
+            WhileStmt{
+                .condition = taken, .scope = body.child_scopes.Add(Block{})});
+        return;
+      }
+      at.AppendStmt(LocalDeclStmt{.target = taker, .init = taken});
+      if (shape == Shape::kInALoopBody) {
+        const ExprId condition = body.exprs.Add(
+            Expr{.data = NullLiteral{}, .type = u.builtins.machine_bool});
+        body.AppendStmt(
+            WhileStmt{
+                .condition = condition,
+                .scope = body.child_scopes.Add(std::move(inner))});
+      }
+      if (shape == Shape::kInABlockStatement) {
+        body.AppendStmt(
+            BlockStmt{.scope = body.child_scopes.Add(std::move(inner))});
+      }
+      if (shape == Shape::kInABranch) {
+        const ExprId condition = body.exprs.Add(
+            Expr{.data = NullLiteral{}, .type = u.builtins.machine_bool});
+        body.AppendStmt(
+            IfStmt{
+                .condition = condition,
+                .then_scope = body.child_scopes.Add(std::move(inner)),
+                .else_scope = std::nullopt});
+      }
+      if (shape == Shape::kNamedAgain) {
+        body.AppendStmt(
+            ExprStmt{
+                .expr = body.exprs.Add(MakeCopyExpr(
+                    body.exprs.Add(MakeLocalRefExpr(moved, type)), type))});
+      }
+    });
+  };
+
+  EXPECT_NO_THROW(Verify(moving(Shape::kLastUse)));
+  EXPECT_NO_THROW(Verify(moving(Shape::kInABlockStatement)));
+  ExpectRefused(
+      moving(Shape::kNamedAgain), "a move of a local named elsewhere");
+  for (const Shape not_once :
+       {Shape::kUnderAnArm, Shape::kInABranch, Shape::kInALoopBody,
+        Shape::kInALoopTest}) {
+    ExpectRefused(
+        moving(not_once),
+        "a move not run exactly once through its local's block");
+  }
+}
+
 // A value handed to something of a type it states is of that type: a local's
 // initializer, what a body answers, what an assignment writes, and what a whole
 // write through a wrapper writes.
