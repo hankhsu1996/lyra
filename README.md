@@ -1,94 +1,128 @@
-# Lyra: A Modern SystemVerilog Simulation Toolchain
+# Lyra
 
-[![Bazel Build and Test](https://github.com/hankhsu1996/lyra/actions/workflows/bazel-build.yml/badge.svg?branch=main&event=push)](https://github.com/hankhsu1996/lyra/actions/workflows/bazel-build.yml)
-[![C++ Style](https://github.com/hankhsu1996/lyra/actions/workflows/cpp-style.yml/badge.svg?branch=main&event=push)](https://github.com/hankhsu1996/lyra/actions/workflows/cpp-style.yml)
-[![Bazel File Lint](https://github.com/hankhsu1996/lyra/actions/workflows/bazel-lint.yml/badge.svg?branch=main&event=push)](https://github.com/hankhsu1996/lyra/actions/workflows/bazel-lint.yml)
+[![Build and Test](https://github.com/hankhsu1996/lyra/actions/workflows/bazel-build.yml/badge.svg?branch=main&event=push)](https://github.com/hankhsu1996/lyra/actions/workflows/bazel-build.yml)
+[![Conformance](https://img.shields.io/badge/conformance-nightly-informational)](https://hankhsu1996.github.io/lyra/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**Lyra** is a SystemVerilog compiler and simulator built the way a modern language toolchain is
-built: around independently compilable units with explicit dependencies, where incremental and
-parallel compilation are constraints on the design rather than optimizations added to it later.
+Lyra is a SystemVerilog compiler and simulator. It builds a design into a native program and runs
+it. It's built on [slang](https://github.com/MikePopoloski/slang) and [LLVM](https://llvm.org/).
 
-The goal is a fast edit-run loop rather than peak simulation speed. Those two pull in different
-directions, and Lyra picks the loop. A module, package, or interface compiles on its own into
-class-level artifacts, and instantiation, parameter binding, and hierarchy all happen when the
-simulation starts. Compile time then follows how many distinct units a design has, not how many
-instances it elaborates into.
+## Building Lyra
 
-Those commitments, and the constraints that follow from them, are stated in
-[docs/architecture/north_star.md](docs/architecture/north_star.md). Every other design document in
-this repository answers to that one.
-
-Coverage is measured rather than described. Every construct Lyra handles is claimed by a case under
-`conformance/` stating what IEEE 1800 requires of a program and checking itself against it, and what
-each path cannot yet do is recorded once for that path, so what works is a fact about the corpus and
-not a promise made here. The open frontier is the
-[issues](https://github.com/hankhsu1996/lyra/issues), ordered on the
-[project board](https://github.com/users/hankhsu1996/projects/1).
-
-## Getting started
-
-You need [Bazel](https://bazel.build/), via [bazelisk](https://github.com/bazelbuild/bazelisk); the
-build fetches the compiler that builds Lyra and the C++ library it builds with. A design is compiled
-by your own C++ compiler, and [CONTRIBUTING.md](CONTRIBUTING.md) says which Linux and which compiler
-release Lyra supports.
+Lyra is built from source with [Bazel](https://bazel.build/), through
+[bazelisk](https://github.com/bazelbuild/bazelisk). The build fetches the compiler and the C++
+library it needs, so nothing else has to be installed first.
 
 ```bash
+git clone https://github.com/hankhsu1996/lyra
+cd lyra
 bazel build //:lyra
-./bazel-bin/lyra run --top Top examples/hello/hello.sv
 ```
 
-Alongside `run` there is `check` for diagnostics alone, `dump` for reading any stage of the
-pipeline, `build` for a program you keep, and `emit cpp` for a standalone C++ project. Everything
-after the command word is one command line shared with the slang driver, so slang's front-end
-options reach Lyra unchanged, and `lyra --help` is authoritative on all of it. A source that has to
-know it is being read by Lyra tests the predefined macro `__lyra__`.
+The command is then `bazel-bin/lyra`; the examples below call it `lyra`. It runs on x86-64 Linux,
+and [CONTRIBUTING.md](CONTRIBUTING.md) says which Linux and which C++ compiler release it needs.
 
-A program Lyra builds is kept in your cache directory under a name computed from what built it, so
-running an unchanged design again skips the compile, and nothing is written into your project.
+## Your first simulation
 
-A design is named by its sources on the command line, or by a `lyra.toml` beside them, which
-declares a library, what is run of it and the libraries it depends on, and which Lyra finds by
-walking up from where it is run.
+Save this as `counter.sv`:
 
-## Architecture
+```systemverilog
+module counter_tb;
+  logic clk = 0;
+  logic [3:0] count = 0;
 
-```mermaid
-flowchart LR
-  SV[SystemVerilog] --> AST[slang AST] --> HIR --> MIR
-  MIR -->|LLVM backend| LIR --> LLVM[LLVM IR]
-  MIR -->|C++ backend| CPP[C++ source] --> HOST[host C++ compiler]
+  always #5 clk = ~clk;
+  always @(posedge clk) count <= count + 1;
+
+  initial begin
+    repeat (3) begin
+      @(negedge clk);
+      $display("%0t: count = %0d", $time, count);
+    end
+    $finish;
+  end
+endmodule
 ```
 
-- **AST** is parsed by [slang](https://github.com/MikePopoloski/slang).
-- **HIR** still spells SystemVerilog, but on memory and identity the compiler owns: dense ids from
-  append-only containers, scoped so an edit in one unit shifts nothing in another. That ownership is
-  what makes incremental and parallel compilation possible at all.
-- **MIR** is object-oriented and language-neutral, and it is where meaning ends. Nothing below it
-  re-derives a fact settled above it.
-- **LIR** is execution-oriented, carrying control-flow graphs, basic blocks, and storage.
+Run it:
 
-A design takes one of the two paths out of MIR, not both, and they are not equals. The LLVM path is
-the product: it produces machine code itself, and asks the machine it runs on only for a linker.
+```console
+$ lyra run --top counter_tb counter.sv
+10: count = 1
+20: count = 2
+30: count = 3
+counter.sv:13:5: note: '$finish' at time 30
+```
 
-The C++ path is there to make MIR legible, because a person can read emitted C++ and judge whether a
-design was modeled correctly in a way that reading LLVM IR does not allow. Its output is source, so
-it needs a host compiler to finish.
+`lyra run` builds the design into a program and runs it. The program is kept in your cache
+directory, so running the unchanged design again skips the build, and nothing is written into your
+project. `lyra build` writes the program to a file you keep, and `lyra check` reports what is wrong
+with a design without building it. `lyra --help` lists every option.
+
+## A design of many files
+
+A `lyra.toml` beside the sources names them once, so a command run there names nothing. The
+[riscv-cpu example](examples/riscv-cpu) is a small RISC-V core and the testbenches that run programs
+on it:
+
+```toml
+[library]
+name = "riscv_cpu"
+files = [
+    "riscv_package.sv",
+    "register_file.sv",
+    "instr_memory.sv",
+    "data_memory.sv",
+    "instr_fetch.sv",
+    "instr_decode.sv",
+    "execution_unit.sv",
+    "writeback.sv",
+    "cpu.sv",
+]
+
+[design]
+top = ["all_tests"]
+files = [
+    "tests/sum_test.sv",
+    "tests/fib_test.sv",
+    "tests/all_tests.sv",
+]
+```
+
+```console
+$ cd examples/riscv-cpu
+$ lyra run
+Running all tests...
+
+sum_test: PASS (x3 = 55)
+fib_test: PASS (x3 = 55, fib(10))
+
+Results: 2 passed, 0 failed
+all_tests.sv:51:5: note: '$finish' at time 1015
+```
+
+The library is the design's own code, and the design is what runs: its tops and the files only it
+needs, such as testbenches. The [project file decision](docs/decisions/project-file.md) has the
+whole schema.
+
+## What Lyra reads
+
+Lyra reads SystemVerilog as IEEE 1800-2023 defines it, through slang, so a design needs no source
+change and no define of its own to be read. The language is large, and Lyra does not carry all of it
+out yet. A suite of self-checking programs, each one a requirement of the standard, runs every night
+on each way Lyra builds a design, and the result of every program is published on the
+[conformance site](https://hankhsu1996.github.io/lyra/).
+
+## Getting help
+
+Questions, bug reports and requests go to
+[GitHub issues](https://github.com/hankhsu1996/lyra/issues). A bug report is fixed fastest with the
+smallest program that shows it.
 
 ## Contributing
 
-Issues and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers the toolchain, the
-formatting and style rules, and what a change owes the documentation. The short version is that
-`bazel test //...` passes and formatters have run.
+[CONTRIBUTING.md](CONTRIBUTING.md) covers the toolchain, the checks a change runs and what it owes
+the documentation. [docs/](docs/) holds the architecture and the record of why each part is built as
+it is, starting from the [compiler overview](docs/architecture/compiler_overview.md).
 
-Worth knowing before proposing a design change: this repository argues with itself in writing.
-`docs/architecture/` holds binding contracts, `docs/decisions/` records why each choice beat its
-alternatives, and a change that contradicts one is expected to say so and make the case.
-
-## Where to go next
-
-- [docs/](docs/) for the architecture contracts and the design record behind them.
-- [examples/](examples/) for designs you can run.
-
-Lyra stands on [slang](https://github.com/MikePopoloski/slang) and [LLVM](https://llvm.org/), and
-would be a much longer project without either. Licensed under the [MIT License](LICENSE).
+Lyra is licensed under the [MIT License](LICENSE).
