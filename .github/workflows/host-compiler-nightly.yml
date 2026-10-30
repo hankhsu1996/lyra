@@ -41,20 +41,19 @@ jobs:
           disk-cache: ${{ github.workflow }}-read-${{ hashFiles('MODULE.bazel') }}
           repository-cache: true
 
-      # The built C++ library's headers as targets of their own, which a remote
-      # build otherwise never brings here (construction-order.yml says why).
+      # One configuration for every invocation, and the built C++ library's
+      # headers as targets of their own (construction-order.yml says why).
       - name: Build
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         run: |
-          RBE_FLAGS=""
           if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
-            RBE_FLAGS="--config=rbe --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+            printf 'build --config=dev\nbuild --remote_header=x-buildbuddy-api-key=%s\n' \
+              "$BUILDBUDDY_API_KEY" > .bazelrc.user
           fi
           bazel build //:lyra \
             @@llvm++gcc+gcc_13_2_0//:headers_include_search_directory \
-            @@llvm++gcc+gcc_13_2_0//:generated_host_headers_include_search_directory \
-            $RBE_FLAGS --remote_download_toplevel
+            @@llvm++gcc+gcc_13_2_0//:generated_host_headers_include_search_directory
 
       - name: Generate compile_commands.json
         run: bazel run //:refresh_compile_commands

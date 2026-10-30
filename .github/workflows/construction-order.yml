@@ -46,22 +46,23 @@ jobs:
           repository-cache: true
 
       # A source is read as it is compiled, against the C++ library the build
-      # makes. A remote build that finds Lyra cached never visits the action
-      # making that library's headers, so nothing would bring them here; they
-      # are built as targets of their own and downloaded as such.
+      # makes. Every invocation here, the database's own included, takes the
+      # one configuration the edit loop does, so a later one neither
+      # reconfigures nor drops what an earlier one fetched; and the library's
+      # headers are built as targets of their own, since a build that finds
+      # Lyra cached never visits the action making them.
       - name: Build
         if: steps.changed.outputs.count != '0'
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         run: |
-          RBE_FLAGS=""
           if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
-            RBE_FLAGS="--config=rbe --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+            printf 'build --config=dev\nbuild --remote_header=x-buildbuddy-api-key=%s\n' \
+              "$BUILDBUDDY_API_KEY" > .bazelrc.user
           fi
           bazel build //:lyra \
             @@llvm++gcc+gcc_13_2_0//:headers_include_search_directory \
-            @@llvm++gcc+gcc_13_2_0//:generated_host_headers_include_search_directory \
-            $RBE_FLAGS --remote_download_toplevel
+            @@llvm++gcc+gcc_13_2_0//:generated_host_headers_include_search_directory
 
       - name: Generate compile_commands.json
         if: steps.changed.outputs.count != '0'
