@@ -52,6 +52,20 @@ cc_library(
     deps = [":process"],
 )
 
+# A whole run, written as JSON for whatever presents or repeats it.
+cc_library(
+    name = "results",
+    srcs = ["results.cpp"],
+    hdrs = ["results.hpp"],
+    copts = LYRA_COPTS,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":framework",
+        ":process",
+        "@nlohmann_json//:json",
+    ],
+)
+
 cc_test(
     name = "process_test",
     srcs = ["process_test.cpp"],
@@ -60,6 +74,19 @@ cc_test(
         ":process",
         ":process_matchers",
         "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "results_test",
+    srcs = ["results_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        ":framework",
+        ":process",
+        ":results",
+        "@googletest//:gtest_main",
+        "@nlohmann_json//:json",
     ],
 )
 

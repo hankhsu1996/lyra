@@ -2,7 +2,8 @@ load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("//tools/bazel:copts.bzl", "LYRA_COPTS")
 
 # One tool held to the suite, judged by the same claims as any tool, with the
-# verdict and the evidence printed per case. It drives whatever binary of the
+# verdict and the evidence printed per case and the whole run written as JSON
+# where a file is named for it. It drives whatever binary of the
 # tool it is named or finds on PATH, and a case's program is built with the
 # machine's own compilers, so it is a program run by hand and never a test:
 # `bazel run //conformance/runner:conformance -- --tool verilator <case id>...`.
@@ -18,6 +19,7 @@ cc_binary(
         "//conformance/adapters/lyra:reader",
         "//conformance/adapters/verilator:reader",
         "//conformance/framework",
+        "//conformance/framework:results",
         "@bazel_tools//tools/cpp/runfiles",
         "@fmt",
     ],

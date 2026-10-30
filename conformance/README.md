@@ -10,7 +10,7 @@ the suite without building Lyra:
 cases/<clause>/<subject>/   what IEEE 1800 requires, one case a directory
 harness/                    SystemVerilog helpers a case includes by name
 selftest/                   cases that check those helpers, run by every tool, counted toward none
-framework/                  what a case is, what a tool was seen to do, the verdict; running a child
+framework/                  a case, running a child, what a tool was seen to do, the verdict, results
 adapters/<tool>/            a reader per tool: how to ask it to run a case, how to read what it wrote
 runner/                     a program that holds a tool to the whole suite
 docs/decisions/             why the suite has this shape
@@ -322,8 +322,8 @@ and that reading into a verdict, the same for every tool:
   claim asks about could be among the lines the reader could not place, or is one that lacks
   something the claim names; more reports of a kind asked for by kind alone were issued than asked;
   or the run ended at a report before the rest the case asks for were observed;
-- **not run** -- the case never reached the tool: the harness could not hand it the files. It says
-  nothing of the tool.
+- **not run** -- the case never reached the tool: the harness could not hand it the files, or had no
+  directory to run it in. It says nothing of the tool.
 
 A reader exists for Lyra and for Verilator, each under `adapters/`. `runner/` holds one tool to the
 suite, named by `--tool`, with the tool's own binaries named or found on PATH:
@@ -335,10 +335,44 @@ bazel run //conformance/runner:conformance -- --tool lyra --lyra ./bazel-bin/lyr
 
 It prints a verdict per case and the evidence for each that does not conform, and decides nothing
 else: whether a tool is known to give a verdict is that tool's own business, as Lyra's records are.
+Past reading its own command line, it exits non-zero only where a case was not run or its results
+could not be written.
 
-How wide it runs and how much memory each program it starts may take are the caller's to say
-(`--jobs`, `--address-limit`), since they are facts of the machine and not of the corpus; a whole
-run belongs inside one memory ceiling the caller sets, and its first line states what it ran under.
-A program stopped at one of those limits is unresolved, never a failure.
+How wide it runs, how long each case may take with all its commands together, and how much memory
+each program it starts may take are the caller's to say (`--jobs`, `--time-limit`,
+`--address-limit`), since they are facts of the machine and not of the corpus; a whole run belongs
+inside one memory ceiling the caller sets, and its first line states what it ran under. A program
+stopped at one of those limits is unresolved, never a failure.
+
+## What a run leaves
+
+`--output <file>` writes the whole run as JSON, for whatever presents the verdicts or runs them
+again; nothing reading it judges anything a second time. It is written only once every case asked
+for has been judged exactly once -- a case not run is judged so -- and is moved into place whole, so
+a file at that name is an account of every case it names. A case id the corpus does not hold, and a
+suite in which no case is found, are refused before anything runs. It holds:
+
+- `format_version`, which moves whenever a field goes or changes meaning;
+- `suite.revision` and `tool.revision`, which only the caller knows and states (`--suite-revision`,
+  `--tool-revision`), and `suite.directory`, where the run read the suite from, under which a step's
+  arguments name each case's files;
+- `tool`: its name, each program its reader runs with the path it was found at and the version it
+  says, and the options every case's build is given;
+- `environment`: the variables every program's behaviour can follow and the ones the tool's reader
+  says the tool reads, each as the run had it or `null` where unset. No other variable is written,
+  so a credential in the environment never is;
+- `host`, `limits` and `selection` (the case ids named, or `null` for the whole suite), and when the
+  run `started` and `ended`;
+- `cases`, in id order: each case's `verdict`, how its run `end`ed, what the reader read off it
+  (markers, `reports`, `unplaced` lines, the `outputs` the case expects), every command it ran as
+  one of its `steps` -- program, arguments, directory, how it ended, both streams -- and the
+  `seconds` it took.
+
+What nobody could know is `null` rather than a guess: a revision the caller did not state, a version
+a tool does not say, a field of a report the tool did not give. The case's clause and claim are not
+repeated; the id is the case's path, whose first part is its clause, and the claim is in the case at
+the revision named, which whoever reads the two together has to hold to the same revision. A step's
+directory is a scratch directory that no longer exists; it says where the command ran, not where to
+run it again.
 
 Verilator is a second opinion here, never an oracle: what it answers is judged by the same claim.

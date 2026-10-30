@@ -1,6 +1,7 @@
 #include "conformance/framework/observation.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <csignal>
 #include <filesystem>
 #include <format>
@@ -81,12 +82,36 @@ auto EndOf(
   return ended;
 }
 
-void RecordCommand(
+auto RunStep(
     Observation& seen, const std::filesystem::path& exe,
-    std::span<const std::string> args, const ProcessOutcome& outcome) {
-  seen.evidence += Transcript(exe, args, outcome);
-  seen.written += outcome.stdout_text;
-  seen.written += outcome.stderr_text;
+    std::span<const std::string> args, const std::filesystem::path& directory,
+    std::optional<std::chrono::steady_clock::time_point> deadline)
+    -> ProcessOutcome {
+  seen.steps.push_back(
+      Step{
+          .program = exe,
+          .arguments = {args.begin(), args.end()},
+          .directory = directory,
+          .outcome =
+              RunChildProcess(exe, args, TimeLeft(deadline), directory)});
+  return seen.steps.back().outcome;
+}
+
+auto WrittenBy(const Observation& seen) -> std::string {
+  std::string written;
+  for (const Step& step : seen.steps) {
+    written += step.outcome.stdout_text;
+    written += step.outcome.stderr_text;
+  }
+  return written;
+}
+
+auto Evidence(const Observation& seen) -> std::string {
+  std::string evidence;
+  for (const Step& step : seen.steps) {
+    evidence += Transcript(step);
+  }
+  return evidence;
 }
 
 void ReadOutputs(
