@@ -1,8 +1,11 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string_view>
+#include <utility>
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/class_id.hpp"
@@ -70,7 +73,7 @@ struct CovergroupClass {
 class CovergroupLowerer {
  public:
   CovergroupLowerer(
-      UnitLowerer& unit_lowerer, hir::CovergroupId covergroup,
+      UnitLowerer& unit_lowerer, const hir::ReplicatedCovergroup& covergroup,
       const StructuralScopeLowerer* declaring_scope);
 
   // Settles the class's shape. `declaring_shape` is the not-yet-published
@@ -103,6 +106,12 @@ class CovergroupLowerer {
   DeclaredScopes scopes_;
 };
 
+// The operations of the class a covergroup is written as besides its
+// constructor, each with the name the class gives it, in the order its shape
+// reserves them.
+[[nodiscard]] auto CovergroupOperations()
+    -> std::array<std::pair<mir::CallableId, std::string_view>, 4>;
+
 // The behavior the class embedding `first`, the first covergroup of a lineage,
 // makes it by, as a call through an object of that class and an override name
 // it.
@@ -116,14 +125,16 @@ class CovergroupLowerer {
 // variable every class of the lineage names (LRM 19.4.1).
 [[nodiscard]] auto LowerCovergroupFactory(
     UnitLowerer& unit_lowerer, const WalkFrame& owner, const ClassShape& shape,
-    hir::CovergroupId covergroup) -> diag::Result<mir::CallableCode>;
+    hir::CovergroupId covergroup, const hir::CovergroupDecl& decl)
+    -> diag::Result<mir::CallableCode>;
 
 // The triggers each block of a class's methods owes the covergroups the class
 // embeds that are sampled at it (LRM 19.3), added to `triggers`: the event of
-// the record of each instance a property of the object holds.
+// the record of each instance a property of the object holds. `replicating`
+// is the scope replicating the class, whose code the covergroups' is.
 void AddEmbeddedBlockEvents(
     UnitLowerer& unit_lowerer, hir::ClassId embedding,
-    BlockEventTriggers& triggers);
+    const hir::StructuralScope& replicating, BlockEventTriggers& triggers);
 
 // LRM 19.3 `new` of a covergroup: the first covergroup of a lineage a class
 // embeds made by the embedding object's method, which a class extending the

@@ -2,6 +2,11 @@
 
 Date: 2026-09-09 Status: accepted
 
+2026-10-30: Decision 5 added. Decisions 1 to 4 placed a class's storage per instance and left its
+code in the class, compiled into the unit's one body, which held only while a scope declaring a
+class was a class of its own per specialization and per place. Decision 5 puts the code in the body
+of the scope declaring the class, so that rule is gone.
+
 ## Why this decision matters
 
 A class declared inside a module, an interface, or a generate block is a scope in the name tree, and
@@ -117,7 +122,9 @@ A static property's cell belongs to whatever replicates the class declaration:
 | a structural scope                      | one per instance of that scope |
 
 This is the same sentence as `variable-lifetime-storage.md`'s rule for a static-lifetime local, one
-level up, and it uses the same placement vocabulary rather than a second one. The declared
+level up, and it uses the same placement vocabulary rather than a second one. Where a structural
+scope replicates the class, the cell is a field of the class the scope published, placed from the
+class's declaration alone, so every body realizing the scope places it alike. The declared
 initializer (LRM 10.5) runs once per cell, which for the second row is once per instance during that
 instance's initialization -- still before any `initial` or `always` procedure, as 10.5 requires.
 
@@ -157,8 +164,59 @@ This is stated because the case invites the opposite conclusion. Refusing it wou
 correct program because the per-unit shared form could not carry a value -- the shape
 `north_star.md` names as making an optimization a correctness precondition.
 
+## Decision 5: a class's code belongs to the body of the scope declaring it
+
+A class declares what operations it has; the body of the scope declaring it implements them; the
+instance an object belongs to selects whose implementation runs. A unit is compiled to one body per
+distinct code (`a-unit-is-compiled-to-one-body-per-distinct-code.md`), and the class's code is the
+code of whichever body compiled it -- a method reading a value one specialization folds is two
+methods in two bodies -- while every referrer, another unit's class extending it included, compiles
+against the class as the unit declared it and never against a body.
+
+- **HIR.** The unit's class registry holds each class's declaration, one per class whichever copy of
+  its text was elaborated. The code of each class -- its methods, constructor, initializers,
+  constraints, a covergroup's bodies -- is held by the structural scope replicating it and compared
+  with the rest of that scope, so two bodies differing only there are two bodies.
+- **MIR.** The class is stated alike by every body: its layout, and one entry per operation, which
+  reads the instance (the object's member, or the instance a construction or a static method is
+  handed) and dispatches on it. The class the scope published introduces a virtual method per
+  operation of each class it declares, after the subroutines it published, in an order the
+  declarations alone fix. Each body realizing the scope overrides each with the code it compiled: a
+  method of the body's class, the instance as its object and the operation's own object, if any,
+  after it.
+- **Backends.** The class is defined by every body alike and kept once by the link
+  (`mir::IsStatedByEveryBody`); the code is the body's own.
+
+A call through a handle to a class of a scope whose body it does not know goes through the entry,
+and so does a construction or a static call made in the declaring scope itself. Two calls instead of
+one, for a construction and a static call, are what removing the per-specialization class costs,
+against an artifact per specialization and per loop index. Where an operation is a task, the entry
+is a coroutine awaiting the override, one frame more per call.
+
+The survey: rustc keeps an item's signature and its bodies under different owners (`hir::OwnerNodes`
+holds the bodies an item's HIR contains, and `fn_sig` is a query of its own), as HIR here keeps the
+declaration in the unit and the code in the scope. clang compiles a class nested in a class template
+once per instantiation, its methods instantiated into that specialization; that is the rule this
+replaces, and the condition that differs is that a C++ referrer names the instantiation, while a
+referrer here names only what the scope published -- which body an instance is, is construction
+data. A `dyn Trait` call in Rust reaches the concrete type's method through the object's table
+(`rustc_codegen_ssa/src/meth.rs`); here the table dispatched on is the instance's, not the class
+object's, because a class of another unit extending this one fills its own table without knowing any
+body.
+
 ## Rejected alternatives
 
+- **A class per specialization of a scope declaring one, and per place of a block declaring one**
+  (the rule Decisions 1 to 4 rested on). A loop's blocks compile a class each, and a specialization
+  differing only in code is an artifact of its own.
+- **A run-time binding object per (class, instance), holding the implementations.** Every field it
+  would hold is held already: the instance by the object's member, the implementations by the
+  instance's own class.
+- **The body's override forwarding to a type-associated implementation taking the object first.** It
+  buys a call that skips the instance, and the one place a call could skip it, the declaring scope's
+  own code, has the instance at hand; a task through it is one coroutine frame more.
+- **MIR always dispatching, and the layer below calling directly where it can tell the target.**
+  What allows a direct call is which instance an object belongs to, which no type proves.
 - **Put the class object in the runtime object tree so the existing parent edge answers.** A scope's
   parent edge is a containment relation: it is what a hierarchical name, `%m`, and the elaboration
   walk traverse. A class object is on no hierarchical path and is reached by a managed reference, so

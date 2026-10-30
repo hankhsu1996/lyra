@@ -1110,8 +1110,9 @@ auto UnitLowerer::InternOwnClass(
   // A class is one declaration of its unit wherever its text was elaborated: a
   // class an instance declares is a type of that instance's own (LRM 8.25),
   // and each block of a loop builds its own copy, yet every such copy at one
-  // path is the same text compiled once. So a copy at a path already declared
-  // is that class, built again here so what it names is named alike.
+  // path declares the same thing. So a copy at a path already declared is that
+  // class, built again here so what it names is named alike; its code is the
+  // replicating scope's, lowered with that scope.
   const hir::ClassId id = unit_.classes.DeclareOwn(DefPathOf(cls, Naming()));
   class_cache_.emplace(&cls, id);
 
@@ -1129,7 +1130,6 @@ auto UnitLowerer::InternOwnClass(
   // instance is what they name it against: each instance has a type of its own
   // (LRM 6.22), and a specialization on such a type is one too (LRM 8.25).
   const slang::ast::Scope& replicating = ReplicatingScope(cls);
-  classes_by_scope_[&replicating].push_back(id);
   DeclareClassStatics(cls, replicating);
   const WalkFrame class_frame =
       WalkFrame{}
@@ -1459,7 +1459,7 @@ auto UnitLowerer::InternOwnClass(
     declaration.methods.Add(*std::move(factory));
   }
   // A copy at a path already declared declares the same class, which its first
-  // copy has already stated, as its body is defined once below.
+  // copy has already stated.
   if (!unit_.classes.HasDeclaration(id)) {
     unit_.classes.SetDeclaration(id, std::move(declaration));
   } else if (!(unit_.classes.Declaration(id) == declaration)) {
@@ -1486,7 +1486,8 @@ auto UnitLowerer::InternOwnClass(
 }
 
 auto UnitLowerer::PopulateClassBodiesReplicatedBy(
-    const slang::ast::Scope& scope) -> diag::Result<void> {
+    const slang::ast::Scope& scope)
+    -> diag::Result<std::vector<hir::ReplicatedClass>> {
   // A class body reaches the declarations of the scope that replicates it and
   // records its routes against that scope's frame, so it lowers while that
   // scope is being lowered -- with the same reach a process of the scope has,
@@ -1495,19 +1496,23 @@ auto UnitLowerer::PopulateClassBodiesReplicatedBy(
   if (pending == pending_class_bodies_.end()) return {};
   std::vector<PendingClassBody> batch = std::move(pending->second);
   pending_class_bodies_.erase(pending);
+  std::vector<hir::ReplicatedClass> replicated;
+  replicated.reserve(batch.size());
   for (PendingClassBody& body : batch) {
-    if (auto r = PopulateClassBody(body); !r) {
-      return std::unexpected(std::move(r.error()));
-    }
+    auto code = PopulateClassBody(body);
+    if (!code) return std::unexpected(std::move(code.error()));
+    classes_with_code_.insert(body.id);
+    replicated.push_back(
+        hir::ReplicatedClass{.id = body.id, .code = *std::move(code)});
   }
-  return {};
+  return replicated;
 }
 
 void UnitLowerer::RequireEveryClassBodyLowered() const {
   std::string left;
   for (const auto& [scope, bodies] : pending_class_bodies_) {
     for (const PendingClassBody& body : bodies) {
-      if (unit_.classes.HasBodies(body.id)) continue;
+      if (classes_with_code_.contains(body.id)) continue;
       left += std::format(
           "{}'{}' in '{}'", left.empty() ? "" : ", ",
           UnitName(*body.cls, Naming()), scope->asSymbol().name);
@@ -1535,7 +1540,7 @@ void UnitLowerer::ReadPendingDeclarations() {
 }
 
 auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
-    -> diag::Result<void> {
+    -> diag::Result<hir::ClassDecl> {
   const slang::ast::ClassType& cls = *pending.cls;
   const diag::SourceSpan span = pending.span;
   hir::ClassDecl& decl = *pending.decl;
@@ -1722,23 +1727,7 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
   constructor.reads = ReadsOfConstruction(
       init_lowerer, init_frame, cls, constructor_sym, base_clause);
   decl.constructor = std::move(constructor);
-
-  // Where the compile checks itself, every application of the unit builds the
-  // class at its path, each from its own copy of the text (LRM 8.25), and they
-  // agree on everything the class holds for the same reason their scopes
-  // agree: the lowering reads a value only through the unit's identity or as
-  // one the object is built with.
-  if (!unit_.classes.HasBodies(pending.id)) {
-    unit_.classes.Define(pending.id, std::move(*pending.decl));
-  } else if (!(unit_.classes.Get(pending.id) == *pending.decl)) {
-    throw InternalError(
-        std::format(
-            "UnitLowerer::PopulateClassBody: two applications of unit '{}' "
-            "build the class '{}' differently, so the lowering read a value "
-            "the unit's identity does not hold -- please report this as a bug",
-            unit_.name, support::DisplayOf(unit_.classes.PathOf(pending.id))));
-  }
-  return {};
+  return std::move(*pending.decl);
 }
 
 auto UnitLowerer::AddComposedType(hir::Type type) const -> hir::TypeId {

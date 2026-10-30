@@ -70,11 +70,6 @@ enum class ParameterValueSource {
 [[nodiscard]] auto InstanceHolding(const slang::ast::Scope& scope)
     -> const slang::ast::InstanceSymbol&;
 
-// Whether `scope`, or a generate block it builds, declares a class or a
-// covergroup (LRM 8.3, 19.2, 27.3), each a type of the scope declaring it
-// alone. A child instance's body is the child's, so it is not reached.
-[[nodiscard]] auto DeclaresAClass(const slang::ast::Scope& scope) -> bool;
-
 // The digest a name carries of `bytes`: the first 64 bits of their stable
 // fingerprint, so producer and consumer agree on the name across separately
 // compiled units and across sessions. Whoever names by it holds the name

@@ -133,9 +133,12 @@ class ProcessLowerer {
   // ahead of its formals is `member_form`, as the class declaring it declares
   // it (LRM 8.6, 8.10); a subroutine of a namespace unit (LRM 26.3) is a member
   // of no class, has no form, and takes nothing. Deferred static initializers
-  // are drained the same way as for a process body.
+  // are drained the same way as for a process body. A function's form a waited
+  // evaluation calls is defined at `reporting_at` where the class declaring it
+  // reserved one there, and otherwise added beside the form returned.
   auto Run(
-      const hir::SubroutineDecl& src, std::optional<CallableForm> member_form)
+      const hir::SubroutineDecl& src, std::optional<CallableForm> member_form,
+      std::optional<mir::CallableId> reporting_at)
       -> diag::Result<mir::CallableCode>;
 
   // Binds each of the constructor's formals -- an input where its lifetime puts

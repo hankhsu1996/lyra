@@ -1190,17 +1190,18 @@ class HirDumper {
     return *own_scope_;
   }
 
-  // Records, for every class and covergroup the unit declares, the scope that
-  // declares it (LRM 23.9), whose own subroutines its bodies call. Classes are
-  // printed before the scopes, so the walk that would have supplied it has not
-  // run when one is dumped.
+  // Records, for every class and covergroup the unit declares, each scope
+  // that holds code of it (LRM 23.9), whose own subroutines that code calls.
+  // Classes are printed before the scopes, so the walk that would have
+  // supplied it has not run when one is dumped.
   void RecordDeclaringScopes(const CompilationUnit& unit) {
     const auto record = [&](const StructuralScope& scope) {
-      for (const ClassId id : scope.replicated_classes) {
-        class_declaring_scopes_.emplace(id, &scope);
+      for (const ReplicatedClass& cls : scope.replicated_classes) {
+        class_declaring_scopes_[cls.id].push_back(&scope);
       }
-      for (const CovergroupId id : scope.replicated_covergroups) {
-        covergroup_declaring_scopes_.emplace(id, &scope);
+      for (const ReplicatedCovergroup& covergroup :
+           scope.replicated_covergroups) {
+        covergroup_declaring_scopes_[covergroup.id].push_back(&scope);
       }
     };
     record(unit.root_scope);
@@ -1709,16 +1710,19 @@ class HirDumper {
                   support::DisplayOf(u.classes.PathOf(id))));
           continue;
         }
-        if (!u.classes.HasBodies(id)) {
+        const auto declaring = class_declaring_scopes_.find(id);
+        if (declaring == class_declaring_scopes_.end()) {
           Line(
               std::format(
                   "[{}] <declared> \"{}\"", id.value,
                   support::DisplayOf(u.classes.PathOf(id))));
           continue;
         }
-        DumpClass(
-            id, support::DisplayOf(u.classes.PathOf(id)),
-            u.classes.Declaration(id), u.classes.Get(id));
+        for (const StructuralScope* scope : declaring->second) {
+          DumpClass(
+              id, support::DisplayOf(u.classes.PathOf(id)),
+              u.classes.Declaration(id), *scope);
+        }
       }
       Dedent();
     }
@@ -1735,9 +1739,16 @@ class HirDumper {
                   support::DisplayOf(u.covergroups.PathOf(id))));
           continue;
         }
-        DumpCovergroup(
-            id, support::DisplayOf(u.covergroups.PathOf(id)),
-            u.covergroups.Get(id));
+        const auto declaring = covergroup_declaring_scopes_.find(id);
+        if (declaring == covergroup_declaring_scopes_.end()) {
+          throw InternalError(
+              "HirDumper::Dump: every covergroup a unit declares is named by "
+              "one of its scopes");
+        }
+        for (const StructuralScope* scope : declaring->second) {
+          DumpCovergroup(
+              id, support::DisplayOf(u.covergroups.PathOf(id)), *scope);
+        }
       }
       Dedent();
     }
@@ -1931,14 +1942,10 @@ class HirDumper {
   }
 
   void DumpCovergroup(
-      CovergroupId id, std::string_view name, const CovergroupDecl& c) {
-    const auto declaring = covergroup_declaring_scopes_.find(id);
-    if (declaring == covergroup_declaring_scopes_.end()) {
-      throw InternalError(
-          "HirDumper::DumpCovergroup: every covergroup a unit declares is "
-          "named by one of its scopes");
-    }
-    const StructuralScope* outer = std::exchange(own_scope_, declaring->second);
+      CovergroupId id, std::string_view name,
+      const StructuralScope& declaring) {
+    const CovergroupDecl& c = CodeOf(declaring, id);
+    const StructuralScope* outer = std::exchange(own_scope_, &declaring);
     Line(std::format("[{}] covergroup \"{}\"", id.value, name));
     Indent();
     const auto vars = [](const std::vector<SubroutineParam>& listed) {
@@ -2018,16 +2025,11 @@ class HirDumper {
 
   void DumpClass(
       ClassId id, std::string_view name, const ClassDeclaration& declared,
-      const ClassDecl& c) {
+      const StructuralScope& declaring) {
+    const ClassDecl& c = CodeOf(declaring, id);
     // A class body calls the subroutines of the scope that declares the class
     // as that scope's own -- the same reading a process of that scope gets.
-    const auto declaring = class_declaring_scopes_.find(id);
-    if (declaring == class_declaring_scopes_.end()) {
-      throw InternalError(
-          "HirDumper::DumpClass: every class a unit declares is named by one "
-          "of its scopes");
-    }
-    const StructuralScope* outer = std::exchange(own_scope_, declaring->second);
+    const StructuralScope* outer = std::exchange(own_scope_, &declaring);
     const std::string kind =
         declared.is_interface_class ? "interface class" : "class";
     Line(std::format("[{}] {} \"{}\"", id.value, kind, name));
@@ -3533,8 +3535,10 @@ class HirDumper {
   std::string out_;
   int indent_ = 0;
   const StructuralScope* own_scope_ = nullptr;
-  std::map<ClassId, const StructuralScope*> class_declaring_scopes_;
-  std::map<CovergroupId, const StructuralScope*> covergroup_declaring_scopes_;
+  std::map<ClassId, std::vector<const StructuralScope*>>
+      class_declaring_scopes_;
+  std::map<CovergroupId, std::vector<const StructuralScope*>>
+      covergroup_declaring_scopes_;
   const CompilationUnit* unit_ = nullptr;
 };
 

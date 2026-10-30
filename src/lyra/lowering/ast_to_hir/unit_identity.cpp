@@ -780,26 +780,6 @@ auto Specializations::ReadThroughItsOwnBody() const -> HasBodyOfItsOwnFn {
   };
 }
 
-auto DeclaresAClass(const slang::ast::Scope& scope) -> bool {
-  for (const slang::ast::Symbol& member : scope.members()) {
-    if (member.kind == slang::ast::SymbolKind::ClassType ||
-        member.kind == slang::ast::SymbolKind::GenericClassDef ||
-        member.kind == slang::ast::SymbolKind::CovergroupType) {
-      return true;
-    }
-    if (const auto* block = member.as_if<slang::ast::GenerateBlockSymbol>()) {
-      if (!block->isUninstantiated && DeclaresAClass(*block)) return true;
-    } else if (
-        const auto* array =
-            member.as_if<slang::ast::GenerateBlockArraySymbol>()) {
-      for (const slang::ast::GenerateBlockSymbol* entry : array->entries) {
-        if (DeclaresAClass(*entry)) return true;
-      }
-    }
-  }
-  return false;
-}
-
 auto ArgumentsDigest(const UnitKey& key) -> std::optional<std::uint64_t> {
   if (key.inputs.empty()) return std::nullopt;
   return NameDigest(KeyBytes(key));

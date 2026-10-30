@@ -61,6 +61,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/runtime_class.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -523,22 +524,80 @@ auto UnitLowerer::SettlePublishedScope(
   // reaching another instance of this unit calls it by position before any
   // class realizing the scope is built. Which body runs is the answer of the
   // class the object is, which it carries.
-  shape.callable_signatures = {
+  std::vector<CallableSignature> signatures(
       signature.callables.size(),
-      std::vector<CallableSignature>(
-          signature.callables.size(),
-          CallableSignature{
-              .virtual_dispatch =
-                  mir::IntroducesVirtualSlot{.is_pure = true}})};
+      CallableSignature{
+          .virtual_dispatch = mir::IntroducesVirtualSlot{.is_pure = true}});
+  base::IdAllocator<mir::CallableId> methods;
   base::Translation<hir::PublishedCallableId, PublishedSubroutine> subroutines{
       signature.callables.size()};
   for (const hir::SubroutinePrototype& callable : signature.callables) {
+    methods.Take();
     subroutines.Append(
         PublishedSubroutine{
             .name = callable.name,
             .prototype =
                 PrototypeOf(*this, callable, shape.self_pointer_type)});
   }
+
+  // Then one virtual method per operation of each class its scopes declare,
+  // which each body realizing the scope answers with the code it compiled for
+  // it: the constructor, every method the declaration does not leave pure
+  // (LRM 8.21), and what `randomize()` asks of the class (LRM 18.6).
+  std::vector<ClassCodeSlot> class_code;
+  const auto introduce = [&](mir::ClassId cls, const support::DefPath& path,
+                             ClassCodePoint point, std::string_view operation) {
+    class_code.push_back(
+        ClassCodeSlot{
+            .cls = cls,
+            .point = point,
+            .slot = methods.Take(),
+            .name = std::format("{} {}", support::DisplayOf(path), operation),
+            .prototype = std::nullopt});
+    signatures.push_back(
+        CallableSignature{
+            .virtual_dispatch = mir::IntroducesVirtualSlot{.is_pure = true}});
+  };
+  for (const hir::ClassId hir_class : InstanceClassesOf(published)) {
+    const hir::ClassDeclaration& declared =
+        hir_->classes.Declaration(hir_class);
+    const mir::ClassId cls = ClassIdentity(hir_class);
+    const support::DefPath& path = hir_->classes.PathOf(hir_class);
+    introduce(cls, path, ClassConstructorCode{}, "new");
+    for (const hir::MethodId method : declared.methods.Ids()) {
+      const hir::DeclaredMethod& m = declared.methods.Get(method);
+      if (hir::IsLeftAbstract(m.dispatch)) continue;
+      introduce(
+          cls, path,
+          ClassCallableCode{.callable = mir::CallableId{method.value}},
+          m.prototype.name);
+    }
+    if (const std::optional<RandomizationHooks>& hooks =
+            RandomizationHooksOf(hir_class)) {
+      for (const auto& [body, callback] : hooks->Callbacks()) {
+        introduce(
+            cls, path, ClassCallableCode{.callable = body},
+            std::format("hook {}", support::LibraryCallbackName(callback)));
+      }
+    }
+    for (const auto& [method, form] : ReportingFormsOf(hir_class)) {
+      introduce(
+          cls, path, ClassCallableCode{.callable = form},
+          std::format(
+              "{} reporting", declared.methods.Get(method).prototype.name));
+    }
+  }
+  // A covergroup's class has four operations besides its constructor, each
+  // the code of the scope declaring it.
+  for (const hir::CovergroupId covergroup : InstanceCovergroupsOf(published)) {
+    const mir::ClassId cls = CovergroupClassIdentity(covergroup);
+    const support::DefPath& path = hir_->covergroups.PathOf(covergroup);
+    introduce(cls, path, ClassConstructorCode{}, "new");
+    for (const auto& [callable, operation] : CovergroupOperations()) {
+      introduce(cls, path, ClassCallableCode{.callable = callable}, operation);
+    }
+  }
+  shape.callable_signatures = {signatures.size(), std::move(signatures)};
 
   std::vector<mir::FieldId> slots;
   std::vector<mir::TypeId> field_types;
@@ -549,6 +608,27 @@ auto UnitLowerer::SettlePublishedScope(
             ? shape.AddNamedField(*std::move(field.name), field.type)
             : shape.AddField(field.type));
   }
+  // After what the scope published, the cell of every other static property of
+  // the classes it declares, in declaration order.
+  std::vector<ClassStaticCell> class_statics;
+  const std::set<std::pair<hir::ClassId, hir::StaticPropertyId>>
+      published_statics = PublishedStaticsOf(published);
+  for (const hir::ClassId cls : InstanceClassesOf(published)) {
+    const hir::ClassDeclaration& declared = hir_->classes.Declaration(cls);
+    for (const hir::StaticPropertyId property :
+         declared.static_properties.Ids()) {
+      if (published_statics.contains({cls, property})) continue;
+      class_statics.push_back(
+          ClassStaticCell{
+              .cls = cls,
+              .property = property,
+              .field = shape.AddField(
+                  mir::ObservableCellOf(
+                      unit_.types,
+                      TranslateType(
+                          declared.static_properties.Get(property).type)))});
+    }
+  }
   DefineClassShape(published, std::move(shape));
   const auto settled = published_scopes_.emplace(
       published, PublishedScope{
@@ -557,8 +637,112 @@ auto UnitLowerer::SettlePublishedScope(
                              .cls = published,
                              .field_types = std::move(field_types),
                              .published = PublishedLayoutAt(signature, slots)},
-                     .subroutines = std::move(subroutines)});
+                     .subroutines = std::move(subroutines),
+                     .class_statics = std::move(class_statics),
+                     .class_code = std::move(class_code)});
   return settled.first->second.layout.published;
+}
+
+auto UnitLowerer::PublishedStaticsOf(mir::ClassId published) const
+    -> std::set<std::pair<hir::ClassId, hir::StaticPropertyId>> {
+  std::set<std::pair<hir::ClassId, hir::StaticPropertyId>> statics;
+  for (const hir::StructuralScope* scope : ScopesPublishedAs(published)) {
+    for (const hir::PublishedDecl& decl : scope->published.members) {
+      if (const auto* property =
+              std::get_if<hir::ClassStaticPropertyTarget>(&decl)) {
+        statics.emplace(property->owner, property->prop);
+      }
+    }
+  }
+  return statics;
+}
+
+auto UnitLowerer::ScopesPublishedAs(mir::ClassId published) const
+    -> std::vector<const hir::StructuralScope*> {
+  std::vector<const hir::StructuralScope*> scopes;
+  const auto take = [&](const hir::StructuralScope& scope) {
+    if (ScopeClassIdentity(scope.published.scope_class) == published) {
+      scopes.push_back(&scope);
+    }
+  };
+  take(hir_->root_scope);
+  for (const hir::BlockBodyId id : hir_->block_bodies.Ids()) {
+    take(hir_->block_bodies.Get(id).scope);
+  }
+  return scopes;
+}
+
+auto UnitLowerer::InstanceCovergroupsOf(mir::ClassId published) const
+    -> std::vector<hir::CovergroupId> {
+  std::vector<hir::CovergroupId> covergroups;
+  for (const hir::StructuralScope* scope : ScopesPublishedAs(published)) {
+    for (const hir::ReplicatedCovergroup& replicated :
+         scope->replicated_covergroups) {
+      if (!std::ranges::contains(covergroups, replicated.id)) {
+        covergroups.push_back(replicated.id);
+      }
+    }
+  }
+  std::ranges::sort(
+      covergroups, {}, [&](hir::CovergroupId covergroup) -> const auto& {
+        return hir_->covergroups.PathOf(covergroup);
+      });
+  return covergroups;
+}
+
+auto UnitLowerer::InstanceClassesOf(mir::ClassId published) const
+    -> std::vector<hir::ClassId> {
+  std::vector<hir::ClassId> classes;
+  for (const hir::StructuralScope* scope : ScopesPublishedAs(published)) {
+    for (const hir::ReplicatedClass& replicated : scope->replicated_classes) {
+      if (hir_->classes.Declaration(replicated.id).takes_declaring_instance &&
+          !std::ranges::contains(classes, replicated.id)) {
+        classes.push_back(replicated.id);
+      }
+    }
+  }
+  std::ranges::sort(classes, {}, [&](hir::ClassId cls) -> const auto& {
+    return hir_->classes.PathOf(cls);
+  });
+  return classes;
+}
+
+auto UnitLowerer::ClassCodeSlotOf(
+    mir::ClassId published, mir::ClassId cls, ClassCodePoint point) const
+    -> mir::CallableId {
+  for (const ClassCodeSlot& code : published_scopes_.at(published).class_code) {
+    if (code.cls == cls && code.point == point) return code.slot;
+  }
+  throw InternalError(
+      std::format(
+          "UnitLowerer::ClassCodeSlotOf: the class {} published of a scope "
+          "introduces no method for {} of the class {} the scope declares "
+          "-- please report this as a bug",
+          published.value,
+          std::visit(
+              Overloaded{
+                  [](const ClassConstructorCode&) {
+                    return std::string{"the constructor"};
+                  },
+                  [](const ClassCallableCode& code) {
+                    return std::format("callable {}", code.callable.value);
+                  }},
+              point),
+          cls.value));
+}
+
+void UnitLowerer::StateClassCodePrototype(
+    mir::ClassId published, mir::ClassId cls, ClassCodePoint point,
+    mir::CallableCode prototype) {
+  for (ClassCodeSlot& code : published_scopes_.at(published).class_code) {
+    if (code.cls != cls || code.point != point) continue;
+    if (!code.prototype.has_value()) code.prototype = std::move(prototype);
+    return;
+  }
+  throw InternalError(
+      "UnitLowerer::StateClassCodePrototype: a scope's published class "
+      "introduces a method for every operation of each class the scope "
+      "declares -- please report this as a bug");
 }
 
 auto UnitLowerer::TakeRandomizationHooks(hir::ClassId cls)
@@ -592,6 +776,33 @@ auto UnitLowerer::TakeRandomizationHooks(hir::ClassId cls)
               .transform(calls_declared)};
 }
 
+auto UnitLowerer::TakeReportingForms(hir::ClassId cls)
+    -> std::vector<std::pair<hir::MethodId, mir::CallableId>> {
+  const hir::ClassDeclaration& declared = hir_->classes.Declaration(cls);
+  base::IdAllocator<mir::CallableId> callables;
+  for (std::size_t m = 0; m < declared.methods.size(); ++m) {
+    callables.Take();
+  }
+  if (const std::optional<RandomizationHooks>& hooks =
+          RandomizationHooksOf(cls)) {
+    for (std::size_t h = 0; h < hooks->Callbacks().size(); ++h) {
+      callables.Take();
+    }
+  }
+  // A pure method has no body (LRM 8.21), and the method making an embedded
+  // covergroup is written whole rather than compiled from a body.
+  std::vector<std::pair<hir::MethodId, mir::CallableId>> forms;
+  for (const hir::MethodId method : declared.methods.Ids()) {
+    const hir::DeclaredMethod& m = declared.methods.Get(method);
+    if (hir::IsLeftAbstract(m.dispatch) || m.makes.has_value() ||
+        !ReportParamTypeOf(unit_, m.prototype.interface.kind).has_value()) {
+      continue;
+    }
+    forms.emplace_back(method, callables.Take());
+  }
+  return forms;
+}
+
 auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
   unit_.name = hir_->name;
   unit_.body_name = hir_->body_name;
@@ -614,6 +825,7 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
   }
   for (const hir::ClassId hir_id : hir_->classes.OwnIds()) {
     randomization_hooks_.emplace(hir_id, TakeRandomizationHooks(hir_id));
+    reporting_forms_.emplace(hir_id, TakeReportingForms(hir_id));
   }
 
   // Every HIR type is MIR-representable: AST-to-HIR rejects the forms MIR has
@@ -859,7 +1071,8 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   // trigger.
   std::deque<CovergroupLowerer> covergroup_lowerers;
   BlockEventTriggers block_events;
-  for (const hir::CovergroupId covergroup : scope.replicated_covergroups) {
+  for (const hir::ReplicatedCovergroup& covergroup :
+       scope.replicated_covergroups) {
     CovergroupLowerer& lowerer =
         covergroup_lowerers.emplace_back(*this, covergroup, nullptr);
     lowerer.DeclareShape(nullptr, std::nullopt);
@@ -934,10 +1147,10 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   // brings up the rest of what it owns (LRM 8.9, 10.5).
   std::vector<ClassDeclLowerer> class_lowerers;
   class_lowerers.reserve(scope.replicated_classes.size());
-  for (const hir::ClassId hir_class : scope.replicated_classes) {
+  for (const hir::ReplicatedClass& replicated : scope.replicated_classes) {
     class_lowerers.emplace_back(
-        *this, hir_class, ClassIdentity(hir_class), ClassPointee(hir_class),
-        hir_->classes.Get(hir_class), nullptr);
+        *this, replicated, ClassIdentity(replicated.id),
+        ClassPointee(replicated.id), scope, nullptr);
   }
   for (ClassDeclLowerer& class_lowerer : class_lowerers) {
     if (auto r = class_lowerer.DeclareShape(nullptr, {}); !r) {
@@ -967,7 +1180,7 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
     ProcessLowerer subroutine_lowerer(
         *this, nullptr, scope.time_resolution, src.body, src.root_stmt,
         namespace_frame, package_scopes, subroutine_statics.Get(id));
-    auto code_or = subroutine_lowerer.Run(src, std::nullopt);
+    auto code_or = subroutine_lowerer.Run(src, std::nullopt, std::nullopt);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
     unit_.callables.Define(
         subroutine_callables.Get(id), mir::CallableDecl{

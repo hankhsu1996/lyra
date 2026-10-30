@@ -4,6 +4,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -986,22 +987,20 @@ class UnitLowerer {
       -> diag::Result<hir::DeclaredMethod>;
 
   // Records what each other unit published about every covergroup of its that
-  // a type of this unit names, once the bodies have lowered.
-  void ReadSignaturesOfNamedCovergroups();
+  // a type of this unit names, once the bodies have lowered, and names the
+  // coverage library those covergroups are written over.
+  auto ReadSignaturesOfNamedCovergroups() -> diag::Result<void>;
 
   // What this unit publishes about its own covergroup `covergroup`.
   auto PublishedCovergroupOf(
       const slang::ast::CovergroupType& covergroup, diag::SourceSpan span)
       -> diag::Result<hir::PublishedCovergroup>;
 
-  // Hands a structural scope the covergroups it replicates, once.
-  [[nodiscard]] auto TakeReplicatedCovergroups(const slang::ast::Scope& scope)
-      -> std::vector<hir::CovergroupId>;
-
   // Lowers every covergroup `scope` replicates, where a process of the scope
-  // is lowered, so its expressions reach what a body of the scope reaches.
+  // is lowered, so its expressions reach what a body of the scope reaches, and
+  // hands the scope each with its code.
   auto PopulateCovergroupsReplicatedBy(const slang::ast::Scope& scope)
-      -> diag::Result<void>;
+      -> diag::Result<std::vector<hir::ReplicatedCovergroup>>;
 
   // The classes of the coverage library this unit names, recorded once
   // anything of this unit is a covergroup or reads one's coverage (LRM 19).
@@ -1416,12 +1415,6 @@ class UnitLowerer {
   [[nodiscard]] auto TakePublication(const slang::ast::Scope& scope)
       -> hir::ScopePublication;
 
-  // Hands a structural scope the classes it replicates, once. Every class the
-  // unit holds is named by exactly one scope, so a scope that replicates none
-  // takes the empty list rather than being absent from the relation.
-  [[nodiscard]] auto TakeReplicatedClasses(const slang::ast::Scope& scope)
-      -> std::vector<hir::ClassId>;
-
   // Records the identity a declaration scope minted for one of its procedural
   // scopes, keyed by the symbol slang records the scope as.
   void DeclareProceduralScope(
@@ -1507,17 +1500,19 @@ class UnitLowerer {
     const slang::ast::SubroutineSymbol* constructor_sym = nullptr;
   };
 
-  // Lowers the body half of every class `scope` replicates: each method, the
-  // constructor, and every property initializer. Called while that scope is
-  // lowered, so a class body has the reach a process of the scope has.
+  // Lowers the code of every class `scope` replicates -- each method, the
+  // constructor, and every property initializer -- and hands the scope each
+  // class with its code. Called while that scope is lowered, so a class body
+  // has the reach a process of the scope has.
   auto PopulateClassBodiesReplicatedBy(const slang::ast::Scope& scope)
-      -> diag::Result<void>;
-  auto PopulateClassBody(PendingClassBody& pending) -> diag::Result<void>;
+      -> diag::Result<std::vector<hir::ReplicatedClass>>;
+  auto PopulateClassBody(PendingClassBody& pending)
+      -> diag::Result<hir::ClassDecl>;
 
-  // Requires every class the unit holds to be defined once its scopes are
-  // lowered. Each class is replicated by a structural scope the unit lowers,
-  // which lowers the class's body; a block instance no body was lowered from
-  // replicates only classes the block it shares a body with defined.
+  // Requires every class the unit holds to have its code in a scope once the
+  // unit's scopes are lowered. Each class is replicated by a structural scope,
+  // which lowers its code; a block instance no body was lowered from
+  // replicates only classes the block it shares a body with holds the code of.
   void RequireEveryClassBodyLowered() const;
 
   // Marks the class `cls` as one this unit reads, not only names: the
@@ -2053,8 +2048,6 @@ class UnitLowerer {
   };
   std::unordered_map<const slang::ast::Scope*, std::vector<PendingCovergroup>>
       pending_covergroups_;
-  std::unordered_map<const slang::ast::Scope*, std::vector<hir::CovergroupId>>
-      covergroups_by_scope_;
   std::unordered_map<const slang::ast::Scope*, std::vector<PendingClassBody>>
       pending_class_bodies_;
   StructuralDataObjectBindings structural_data_object_bindings_;
@@ -2083,8 +2076,8 @@ class UnitLowerer {
   std::unordered_map<const slang::ast::PatternVarSymbol*, hir::PatternId>
       pattern_var_bindings_;
   std::unordered_map<const slang::ast::Scope*, ScopeFrameId> scope_frames_;
-  std::unordered_map<const slang::ast::Scope*, std::vector<hir::ClassId>>
-      classes_by_scope_;
+  // The classes some lowered scope holds the code of.
+  std::set<hir::ClassId> classes_with_code_;
   std::map<ScopeFrameId, hir::ScopeRoutes> routes_by_frame_;
   std::map<ScopeFrameId, ScopeUnderConstruction> scopes_under_construction_;
   std::uint32_t next_scope_frame_ = 0;

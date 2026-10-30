@@ -1267,13 +1267,11 @@ TEST(ArtifactCount, AClassAModuleHoldsIsOneClassOfItsUnit) {
   // A class a module holds -- one it declares, one a generate block of it
   // declares, or a specialization of a generic placed in it because it is
   // specialized on a type of the module -- is a type of each instance's own
-  // (LRM 8.25), and the same text in every one. A specialization placed in it
-  // does not tell instances apart. One it declares does: its methods are the
-  // module's code, named by the module's class, so each specialization of a
-  // module declaring a class is a class of its own. A class each block of a
-  // loop declares is a type of that block alone (LRM 27.4), and its methods
-  // are still the module's code, so instances counting out different numbers
-  // of such blocks are different units.
+  // (LRM 8.25), and what it declares is the same in every one. What its
+  // methods do is the code of the body the instance is, so a class tells no
+  // instances apart. Which blocks of a loop an instance built is its
+  // construction's (LRM 27.4), so instances counting out different numbers of
+  // blocks are one unit, whatever the blocks declare.
   const auto design = LowerDesign(R"(
 package p;
   class Box #(type T = int);
@@ -1327,9 +1325,9 @@ module Top;
 endmodule
 )");
   ASSERT_TRUE(design.has_value());
-  EXPECT_EQ(UnitsOf(*design, "Declares"), 2U);
+  EXPECT_EQ(UnitsOf(*design, "Declares"), 1U);
   EXPECT_EQ(UnitsOf(*design, "Placed"), 1U);
-  EXPECT_EQ(UnitsOf(*design, "Counted"), 2U);
+  EXPECT_EQ(UnitsOf(*design, "Counted"), 1U);
 }
 
 TEST(ArtifactCount, AParameterLeftToItsDefaultIsHandedLikeOneAssigned) {
@@ -1443,10 +1441,11 @@ endmodule
   EXPECT_EQ(BodiesOf(*design, "Declared"), 1U);
 }
 
-TEST(ArtifactCount, AUnitDeclaringAClassIsAClassPerSpecialization) {
-  // A class a unit declares has its methods compiled into the unit's code and
-  // named by the unit's class, so a unit declaring one is a class per
-  // specialization, even where only its code differs.
+TEST(ArtifactCount, AUnitDeclaringAClassIsCompiledPerBodyAsAnyOther) {
+  // A class a unit declares is declared once by the unit, and what its methods
+  // do is the code of each body, so a unit declaring one whose specializations
+  // differ only in code is one class compiled to a body per value, as a unit
+  // declaring none is.
   const auto design = LowerDesign(R"(
 module Holds #(parameter int P = 1) (input logic [7:0] in, output logic [7:0] out);
   class Probe;
@@ -1462,7 +1461,7 @@ module Top;
 endmodule
 )");
   ASSERT_TRUE(design.has_value());
-  EXPECT_EQ(UnitsOf(*design, "Holds"), 2U);
+  EXPECT_EQ(UnitsOf(*design, "Holds"), 1U);
   EXPECT_EQ(BodiesOf(*design, "Holds"), 2U);
 }
 

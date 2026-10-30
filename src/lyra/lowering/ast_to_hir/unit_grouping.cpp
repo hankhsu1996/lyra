@@ -133,27 +133,6 @@ void HeldInstances(
   }
 }
 
-// Whether a class or a covergroup `signature` declares stands inside the scope
-// published under `path`.
-auto DeclaresAClassAt(
-    const hir::UnitSignature& signature, const support::DefPath& path) -> bool {
-  const auto inside = [&](const support::DefPath& declared) {
-    return declared.data.size() > path.data.size() &&
-           std::ranges::equal(
-               path.data, std::span{declared.data}.first(path.data.size()));
-  };
-  return std::ranges::any_of(
-             signature.classes,
-             [&](const hir::ClassDeclaration& cls) {
-               return inside(cls.class_path);
-             }) ||
-         std::ranges::any_of(
-             signature.covergroups,
-             [&](const hir::PublishedCovergroup& covergroup) {
-               return inside(covergroup.path);
-             });
-}
-
 class Grouping;
 
 // The naming one specialization is described in while classes are found: the
@@ -317,12 +296,6 @@ class Grouping {
         std::string written =
             hir::BlockClassBytes(signature, *block, reference);
         writing = nullptr;
-        // A class a block declares has methods that are the block's code,
-        // named by the block's class, so blocks whose code differs cannot be
-        // one class: such a block stays where it stands.
-        if (DeclaresAClassAt(signature, block->class_path)) {
-          written += "|at:" + DefPathIdentity(block->class_path);
-        }
         blocks.insert_or_assign(
             block->class_path, blocks_found_.Of(std::move(written)));
       }
@@ -335,10 +308,6 @@ class Grouping {
     // libraries (LRM 33.2.1) may publish alike and are still two.
     std::string written = keys_->DefinitionOf(described) + "|" +
                           hir::StructureBytes(signature, reference);
-    // The same holds of a design element declaring a class: its methods are
-    // the element's code, named by its class, and anything its key holds can
-    // change that code, so each specialization of it is a class of its own.
-    if (DeclaresAClass(described.body)) written += "|own:" + specialization;
     // Where what each instance it holds reaches outside itself lands: inside
     // this one, at a place, or outside it, among what this one reaches.
     std::vector<const slang::ast::InstanceSymbol*> held;

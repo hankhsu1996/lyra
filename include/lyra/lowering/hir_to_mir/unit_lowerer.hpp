@@ -1,12 +1,15 @@
 #pragma once
 
+#include <compare>
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -188,14 +191,61 @@ struct PublishedSubroutine {
   mir::CallableCode prototype;
 };
 
+// Which of a class's operations some code is: its constructor (LRM 8.7), or
+// the callable the class took for it at a position.
+struct ClassConstructorCode {
+  auto operator<=>(const ClassConstructorCode&) const
+      -> std::strong_ordering = default;
+};
+struct ClassCallableCode {
+  mir::CallableId callable;
+
+  auto operator<=>(const ClassCallableCode&) const
+      -> std::strong_ordering = default;
+};
+using ClassCodePoint = std::variant<ClassConstructorCode, ClassCallableCode>;
+
+// The virtual method a scope's published class introduces for one operation of
+// a class the scope declares, or of the class a covergroup it declares is
+// written as (LRM 6.22, 8.25, 19.3). What the operation does is the
+// code of the body realizing the scope, so each body overrides the method with
+// the code it compiled, and the class reaches it by dispatching on the
+// instance its object belongs to. Which methods there are follows from the
+// class's declaration alone, so every body of the unit states them alike.
+struct ClassCodeSlot {
+  mir::ClassId cls;
+  ClassCodePoint point;
+  mir::CallableId slot;
+  // What the method is called, which names it where it is dispatched: the
+  // class and the operation, apart by a space, which no identifier holds (LRM
+  // 5.6.1), so no subroutine the scope published shares it.
+  std::string name;
+  // What every override takes and answers, stated by the first body to compile
+  // the code; every body compiles it from one declaration.
+  std::optional<mir::CallableCode> prototype;
+};
+
+// The cell a static property of a class a scope declares is (LRM 8.9), a
+// field of what the scope published: each instance of the scope has its own
+// (LRM 6.22), and every body of the unit places it alike.
+struct ClassStaticCell {
+  hir::ClassId cls;
+  hir::StaticPropertyId property;
+  mir::FieldId field;
+};
+
 // A class this unit published of its scopes. Several scopes may be published
 // as one class -- the bodies a generate block came out as at its several
 // places (LRM 27.3) -- so what the signature fixes is held once: where it
 // placed what was published, and each subroutine it published, in the order
-// the signature gave them.
+// the signature gave them; then what each class the scopes declare is given
+// alike in every body -- the cells of the static properties the scope does not
+// publish, and a method per operation.
 struct PublishedScope {
   ScopeClassLayout layout;
   base::Translation<hir::PublishedCallableId, PublishedSubroutine> subroutines;
+  std::vector<ClassStaticCell> class_statics;
+  std::vector<ClassCodeSlot> class_code;
 };
 
 // Lowers one HIR compilation unit into one MIR compilation unit, holding that
@@ -307,6 +357,18 @@ class UnitLowerer {
     return published_scopes_;
   }
 
+  // The virtual method the class `published` introduces for the code at
+  // `point` of the class `cls` its scopes declare.
+  [[nodiscard]] auto ClassCodeSlotOf(
+      mir::ClassId published, mir::ClassId cls, ClassCodePoint point) const
+      -> mir::CallableId;
+
+  // States what that method takes and answers, read off the code a body
+  // compiled for it, the first time a body does.
+  void StateClassCodePrototype(
+      mir::ClassId published, mir::ClassId cls, ClassCodePoint point,
+      mir::CallableCode prototype);
+
   // What this unit knows of the scope class `hir_id` records: of one of its
   // own, where that scope's shape placed what was published; of another
   // unit's, the declaration this unit took of it, laid out where the object
@@ -358,6 +420,20 @@ class UnitLowerer {
       throw InternalError(
           "UnitLowerer::RandomizationHooksOf: only a class this unit declares "
           "takes randomization bodies -- please report this as a bug");
+    }
+    return it->second;
+  }
+
+  // The callable each function the class `owner` this unit declares is
+  // compiled to in the form a waited evaluation calls (LRM 9.4.2), by the
+  // method it is a form of, in method order.
+  [[nodiscard]] auto ReportingFormsOf(hir::ClassId owner) const
+      -> const std::vector<std::pair<hir::MethodId, mir::CallableId>>& {
+    const auto it = reporting_forms_.find(owner);
+    if (it == reporting_forms_.end()) {
+      throw InternalError(
+          "UnitLowerer::ReportingFormsOf: only a class this unit declares "
+          "takes reporting forms -- please report this as a bug");
     }
     return it->second;
   }
@@ -485,6 +561,13 @@ class UnitLowerer {
     return declarations_.Get(id);
   }
 
+  // Whether the class `id` has its declaration settled already. Two bodies of
+  // the unit may declare one class (LRM 27.3), and what it declares is one
+  // answer, so whichever is lowered first settles it.
+  [[nodiscard]] auto HasClassShape(mir::ClassId id) const -> bool {
+    return declarations_.Find(id) != nullptr;
+  }
+
   // What the class `id` extends, read while bodies lower: off the shape this
   // unit settled for a class it defines, and off the declaration of one another
   // unit defines.
@@ -561,6 +644,13 @@ class UnitLowerer {
   auto TakeRandomizationHooks(hir::ClassId cls)
       -> std::optional<RandomizationHooks>;
 
+  // The callables a class this unit declares has after its hooks: the form a
+  // waited evaluation calls of each function it compiles (LRM 9.4.2), every
+  // method with a body that a call hands a report. Fixed by the declaration,
+  // so a body defines each where the class reserved it.
+  auto TakeReportingForms(hir::ClassId cls)
+      -> std::vector<std::pair<hir::MethodId, mir::CallableId>>;
+
   // Publishes everything the unit declares before any root-scope body lowers:
   // every class identity and body, every interned type and the functions each
   // structure type answers a whole-value operation with, the default of each
@@ -599,6 +689,27 @@ class UnitLowerer {
   [[nodiscard]] auto UnionMemberTypes(const hir::UnpackedUnionDefinition& src)
       -> std::vector<mir::TypeId>;
 
+  // The scopes of this body published as `published`: the unit's own, or the
+  // bodies a generate block came out as at its places (LRM 27.3).
+  [[nodiscard]] auto ScopesPublishedAs(mir::ClassId published) const
+      -> std::vector<const hir::StructuralScope*>;
+
+  // The classes the scopes published as `published` declare that belong to
+  // their instance (LRM 6.22), ordered by path, so every body of the unit lists
+  // them alike whichever of the scopes it built.
+  [[nodiscard]] auto InstanceClassesOf(mir::ClassId published) const
+      -> std::vector<hir::ClassId>;
+
+  // The covergroups the scopes published as `published` declare (LRM 19.3),
+  // ordered by path, as their classes are.
+  [[nodiscard]] auto InstanceCovergroupsOf(mir::ClassId published) const
+      -> std::vector<hir::CovergroupId>;
+
+  // The static properties of those classes the scopes published (LRM 23.6),
+  // whose cells are where the publication put them.
+  [[nodiscard]] auto PublishedStaticsOf(mir::ClassId published) const
+      -> std::set<std::pair<hir::ClassId, hir::StaticPropertyId>>;
+
   // Defines the record `id` the struct or the union `source` names: its kind,
   // its members, and the unit declaring it where that is another, which a
   // value of it then depends on.
@@ -619,6 +730,8 @@ class UnitLowerer {
   base::Translation<hir::ClassId, mir::ClassId> class_identities_;
   std::map<hir::ClassId, std::optional<RandomizationHooks>>
       randomization_hooks_;
+  std::map<hir::ClassId, std::vector<std::pair<hir::MethodId, mir::CallableId>>>
+      reporting_forms_;
   // The callable and the cell each member of a unit's namespace this unit names
   // is, by that unit and the name the member was published under.
   std::map<std::pair<std::string, std::string>, mir::CallableId>

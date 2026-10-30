@@ -430,18 +430,17 @@ the detail lives in the entry itself.
   generate block is a definition nested in the scope holding it, and a block instance is an
   application of it, named from the front end by the function that names a unit: one published class
   per application, a loop an array of them, a child naming the block that holds it one unit. Read it
-  for what names a block -- what it declares as resolved, a nested construct only as written, or its
-  index where it declares a class, which is a type of each block alone -- and why an index decides
-  nothing where it is only read, selects an alternative, or sits in what a body's statements run,
-  for why a block's body is found by comparing what it came out as, among the blocks of the body
-  holding it, its nested blocks bodies of their own, and which body each place builds is its
-  object's construction, built through the entry its table holds there, with a published subroutine
-  a virtual method each body overrides, for why a class of a unit is identified by a path of steps
-  and never by a composed name, and for why a unit's scope classes are nested in one another and
-  written in the file that carries the unit's name. A file per class with its name shortened by a
-  digest, deciding by comparing published classes, naming a block's body before it lowers, holding
-  nested blocks inside a block's HIR, lowering a group of alike blocks together, and a non-virtual
-  method asking which realization the object is are rejected.
+  for what names a block -- what it declares as resolved, or a nested construct only as written --
+  and why an index decides nothing where it is only read, selects an alternative, or sits in what a
+  body's statements run, for why a block's body is found by comparing what it came out as, among the
+  blocks of the body holding it, its nested blocks bodies of their own, and which body each place
+  builds is its object's construction, built through the entry its table holds there, with a
+  published subroutine a virtual method each body overrides, for why a class of a unit is identified
+  by a path of steps and never by a composed name, and for why a unit's scope classes are nested in
+  one another and written in the file that carries the unit's name. A file per class with its name
+  shortened by a digest, deciding by comparing published classes, naming a block's body before it
+  lowers, holding nested blocks inside a block's HIR, lowering a group of alike blocks together, and
+  a non-virtual method asking which realization the object is are rejected.
 - [a-body-states-nothing-of-another-bodys-implementation](a-body-states-nothing-of-another-bodys-implementation.md)
   -- what a body's code states of anything outside itself is what that thing publishes and where the
   source wrote it: every reach leaving the reader's own scope, into a block or up to an enclosing
@@ -828,8 +827,12 @@ the detail lives in the entry itself.
   so the object records which instance it belongs to and construction supplies it -- one per class
   of its lineage, a base declared further out taking the instance that far out; the reference
   vocabulary is untouched because the hop is resolved once per body rather than once per reference.
-  Putting the object in the runtime tree, reaching the scope by lexical capture, and refusing a
-  construction reached through another unit's generic are rejected.
+  The class is declared once by the unit and its code is the code of the body of the scope declaring
+  it: each operation is an entry dispatching on the instance to the method the scope's published
+  class introduces for it, which each body overrides with what it compiled. Putting the object in
+  the runtime tree, reaching the scope by lexical capture, refusing a construction reached through
+  another unit's generic, a class per specialization of a scope declaring one, and a binding object
+  per class and instance are rejected.
 - [object-identity-is-carried-not-derived](object-identity-is-carried-not-derived.md) -- an object's
   identity is fixed when it is created and carried unchanged by every reference to it, and equality
   and null read it alone; a reference is one storage shape at every program point, because two sides
@@ -1335,13 +1338,13 @@ the detail lives in the entry itself.
   other by its class. A class is named by its definition and the digest of what it publishes, a
   generate block's class is found the same way inside its unit, a body by comparing HIR within one
   class and named for the first in design order, and a parameter the code reads as a value is a
-  field. Read it for why a design element declaring a class is still a class per specialization (its
-  methods are named by its class), why which alternative a construct built, or how many blocks a
-  loop counted, is no part of any class or unit, why every specialization of a class is declared
-  again and held to it, and why specializations differing only in where their names land are lowered
-  once for what they are built as. Predicting what a declaration relies on, a class per application,
-  a body named by its least key, and supplying a local parameter through construction data are
-  rejected. **Revises the three entries above and
+  field. Read it for why a scope declaring a class is grouped as any other (the class's code is the
+  body's), why which alternative a construct built, or how many blocks a loop counted, is no part of
+  any class or unit, why every specialization of a class is declared again and held to it, and why
+  specializations differing only in where their names land are lowered once for what they are built
+  as. Predicting what a declaration relies on, a class per application, a body named by its least
+  key, and supplying a local parameter through construction data are rejected. **Revises the three
+  entries above and
   [a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md) D4 and D7.**
 - [a-part-is-the-select-the-source-wrote](a-part-is-the-select-the-source-wrote.md) -- a part of a
   vector a genvar or a parameter selects -- the bits a wait watches, a part-select's type, the
@@ -1598,14 +1601,15 @@ the detail lives in the entry itself.
   -- a covergroup is a class over a coverage library in SystemVerilog, read only into a compilation
   whose design declares a covergroup or calls a coverage function, written straight into MIR by one
   lowering of the declaration HIR keeps as the source states it: bins are data built at `new` and
-  matched by the library, the record outlives the instance and holds the options as fields, a
-  clocking event samples inside its occurrence, a block event is triggered by the block's own code,
-  a `ref` argument is a property bound at construction, the database is UCIS XML written at the end
-  of a run that made an instance, and an extending covergroup is a class whose instance replaces the
-  base's, made through a virtual method of the embedding class. A class written in HIR beside facts,
-  a hidden argument telling a base constructor it builds the most derived object, compiled bins, the
-  library in the text of `std`'s classes, a C++ library, sampling from a woken process, a weak
-  embedding reference and the port bindings are rejected.
+  matched by the library, the record outlives the instance and holds the options as fields, the type
+  of a module's or a block's covergroup is one per instance of that scope, a clocking event samples
+  inside its occurrence, a block event is triggered by the block's own code, a `ref` argument is a
+  property bound at construction, the database is UCIS XML written at the end of a run that made an
+  instance, and an extending covergroup is a class whose instance replaces the base's, made through
+  a virtual method of the embedding class. A class written in HIR beside facts, a hidden argument
+  telling a base constructor it builds the most derived object, compiled bins, the library in the
+  text of `std`'s classes, a C++ library, sampling from a woken process, a weak embedding reference
+  and the port bindings are rejected.
 
 ### Conformance testing
 

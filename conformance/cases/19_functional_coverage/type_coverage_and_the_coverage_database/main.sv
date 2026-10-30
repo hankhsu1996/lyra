@@ -25,7 +25,7 @@ module Top;
     // A database another run wrote, holding b[2] hit.
     fd = $fopen("loaded_coverage.xml", "w");
     $fdisplay(fd, "<UCIS ucisVersion=\"1.0\" writtenBy=\"test\" writtenTime=\"1970-01-01T00:00:00\">");
-    $fdisplay(fd, "  <instanceCoverages name=\"Top::cg\" key=\"0\">");
+    $fdisplay(fd, "  <instanceCoverages name=\"Top.cg\" key=\"0\">");
     $fdisplay(fd, "        <coverpoint name=\"a\" key=\"0\">");
     $fdisplay(fd, "          <coverpointBin name=\"b[2]\" type=\"bins\" key=\"0\">");
     $fdisplay(fd, "              <contents coverageCount=\"4\"/>");

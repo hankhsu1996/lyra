@@ -760,7 +760,6 @@ auto UnitLowerer::InternOwnCovergroup(
   // Its expressions reach what encloses it as a body of the scope replicating
   // it does, so it lowers with that scope (LRM 6.22, 19.3).
   const slang::ast::Scope& replicating = ReplicatingScope(covergroup);
-  covergroups_by_scope_[&replicating].push_back(id);
   // One sampled where a block of the instance begins or ends is told so by
   // a cell the instance keeps for the covergroup's type (LRM 19.3); one a class
   // embeds is told through the object holding it.
@@ -820,11 +819,12 @@ auto UnitLowerer::CovergroupDeclarationOf(hir::CovergroupId covergroup)
   return unit_.covergroups.Published(covergroup);
 }
 
-void UnitLowerer::ReadSignaturesOfNamedCovergroups() {
+auto UnitLowerer::ReadSignaturesOfNamedCovergroups() -> diag::Result<void> {
   // Every covergroup another unit declares that a type of this unit names,
   // whichever way the type arrived: written here, or taken in with another
   // unit's signature. Reading one can take in more types, so the walk runs
-  // until it meets none it has not read.
+  // until it meets none it has not read. A unit naming one is laid out over
+  // the coverage library as the declaring unit is, however the name arrived.
   for (std::size_t read = 0; read != unit_.types.size();) {
     const std::size_t reached = unit_.types.size();
     for (const hir::TypeId id : unit_.types.Ids()) {
@@ -834,11 +834,15 @@ void UnitLowerer::ReadSignaturesOfNamedCovergroups() {
       // A type another unit's signature states may name a covergroup of this
       // unit, which is this unit's own and no signature to read.
       if (!unit_.covergroups.IsOwn(handle->covergroup)) {
+        if (auto named = NameCoverageLibrary(diag::SourceSpan{}); !named) {
+          return std::unexpected(std::move(named.error()));
+        }
         CovergroupDeclarationOf(handle->covergroup);
       }
     }
     read = reached;
   }
+  return {};
 }
 
 auto UnitLowerer::PublishedCovergroupOf(
@@ -913,33 +917,31 @@ auto UnitLowerer::PublishedCovergroupOf(
   return published;
 }
 
-auto UnitLowerer::TakeReplicatedCovergroups(const slang::ast::Scope& scope)
-    -> std::vector<hir::CovergroupId> {
-  const auto it = covergroups_by_scope_.find(&scope);
-  if (it == covergroups_by_scope_.end()) return {};
-  return std::move(it->second);
-}
-
 auto UnitLowerer::PopulateCovergroupsReplicatedBy(
-    const slang::ast::Scope& scope) -> diag::Result<void> {
+    const slang::ast::Scope& scope)
+    -> diag::Result<std::vector<hir::ReplicatedCovergroup>> {
   const auto pending = pending_covergroups_.find(&scope);
   if (pending == pending_covergroups_.end()) return {};
   std::vector<PendingCovergroup> batch = std::move(pending->second);
   pending_covergroups_.erase(pending);
+  std::vector<hir::ReplicatedCovergroup> replicated;
+  replicated.reserve(batch.size());
   for (const PendingCovergroup& covergroup : batch) {
-    if (unit_.covergroups.IsDefined(covergroup.id)) continue;
     const WalkFrame frame = WalkFrame{}.WithDeclaringScope(
         DeclaringScopeChain(*covergroup.replicating_scope),
         covergroup.replicating_scope);
     auto decl = LowerCovergroupDecl(
         *this, *covergroup.covergroup, frame, covergroup.span);
     if (!decl) return std::unexpected(std::move(decl.error()));
-    unit_.covergroups.Define(covergroup.id, *std::move(decl));
+    replicated.push_back(
+        hir::ReplicatedCovergroup{
+            .id = covergroup.id, .code = *std::move(decl)});
+    if (unit_.covergroups.IsPublished(covergroup.id)) continue;
     auto published =
         PublishedCovergroupOf(*covergroup.covergroup, covergroup.span);
     if (!published) return std::unexpected(std::move(published.error()));
   }
-  return {};
+  return replicated;
 }
 
 auto UnitLowerer::PublishedFactoryOf(

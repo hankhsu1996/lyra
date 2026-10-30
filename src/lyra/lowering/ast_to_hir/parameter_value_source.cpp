@@ -79,12 +79,9 @@ struct ReadsOfParameters
 
   const ParameterSet* own;
   ParameterSet read;
-  // Of `read`, those read somewhere other than a generate construct's scheme.
-  ParameterSet read_outside_schemes;
   ParameterSet read_in_a_nested_element;
   bool in_a_nested_element = false;
   bool in_an_initializer = false;
-  bool in_a_scheme = false;
 
   void Note(const slang::ast::ValueExpressionBase& e) {
     const auto* param = e.symbol.as_if<slang::ast::ParameterSymbol>();
@@ -95,7 +92,6 @@ struct ReadsOfParameters
       return;
     }
     read.insert(param);
-    if (!in_a_scheme) read_outside_schemes.insert(param);
   }
 
   void handle(const slang::ast::NamedValueExpression& e) {
@@ -118,24 +114,20 @@ struct ReadsOfParameters
   }
 
   void handle(const slang::ast::GenerateBlockArraySymbol& loop) {
-    in_a_scheme = true;
     for (const slang::ast::Expression* scheme :
          {loop.initialExpression, loop.stopExpression, loop.iterExpression}) {
       if (scheme != nullptr) scheme->visit(*this);
     }
-    in_a_scheme = false;
     visitDefault(loop);
   }
 
   void handle(const slang::ast::GenerateBlockSymbol& block) {
-    in_a_scheme = true;
     for (const slang::ast::GenerateSelection& selection : block.selectionPath) {
       if (selection.condition != nullptr) selection.condition->visit(*this);
       for (const slang::ast::Expression* item : selection.caseItems) {
         item->visit(*this);
       }
     }
-    in_a_scheme = false;
     visitDefault(block);
   }
 
@@ -197,27 +189,14 @@ auto CanBeSupplied(const slang::ast::ParameterSymbol& param) -> bool {
          !DeclaredInAClass(param);
 }
 
-// Whether the code of a scope declaring a class reads `param` as the
-// constant this elaboration settled: the class's methods are code of that
-// scope, compiled once for the specialization holding it, and reach the scope
-// as that code was compiled. What only decides which blocks the scope builds
-// is still handed when it is built.
-auto FixesTheCodeOfAClass(
-    const slang::ast::ParameterSymbol& param, const ReadsOfParameters& reads)
-    -> bool {
-  return DeclaresAClass(*param.getParentScope()) &&
-         reads.read_outside_schemes.contains(&param);
-}
-
 // Whether `param` must hold the value this elaboration settled, whatever the
-// code reads: a class's own, one a design element declared inside this one
-// reads, since that one is handed none, and one fixing the code of a class.
+// code reads: a class's own, and one a design element declared inside this one
+// reads, since that one is handed none.
 auto HeldAsSettled(
     const slang::ast::ParameterSymbol& param, const ReadsOfParameters& reads)
     -> bool {
   return DeclaredInAClass(param) ||
-         reads.read_in_a_nested_element.contains(&param) ||
-         FixesTheCodeOfAClass(param, reads);
+         reads.read_in_a_nested_element.contains(&param);
 }
 
 }  // namespace

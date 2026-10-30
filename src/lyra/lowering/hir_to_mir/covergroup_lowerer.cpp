@@ -25,6 +25,7 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/class_code.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/entry_walk.hpp"
@@ -664,11 +665,7 @@ class ClassWriter {
   }
 
   auto Write() -> diag::Result<void> {
-    for (const auto& [slot, name] :
-         {std::pair{kSample, kCovergroupSample},
-          std::pair{kMakeRecord, kCovergroupMakeRecord},
-          std::pair{kTypeRecord, kCovergroupTypeRecord},
-          std::pair{kDeclareType, kCovergroupDeclareType}}) {
+    for (const auto& [slot, name] : CovergroupOperations()) {
       cls_->named_callables.push_back(
           mir::NamedCallable{.name = std::string{name}, .body = slot});
     }
@@ -712,11 +709,45 @@ class ClassWriter {
   }
 
   // The name the run's registry knows the covergroup's type by (LRM 19.11.3).
-  [[nodiscard]] auto TypeName() const -> std::string {
-    const std::string& home = u_->Hir().source_name;
-    return std::format(
-        "{}::{}", home.empty() ? std::string{"$unit"} : home,
-        support::DisplayOf(own_.published->path));
+  // A covergroup a scope of the design hierarchy declares is a type of each
+  // instance of that scope (LRM 6.22, 19.3), so it is named by its
+  // hierarchical name (LRM 23.6), whose part below the instance its text
+  // fixes and whose instance answers the rest at run time. One no instance
+  // holds is named by its declaration.
+  [[nodiscard]] auto TypeName(const Writer& e) const -> mir::ExprId {
+    const support::DefPath& path = own_.published->path;
+    const std::string own_name =
+        support::DisplayOf(support::DefPath{.data = {path.data.back()}});
+    return std::visit(
+        Overloaded{
+            [&](const hir::NameBelowInstance& below) {
+              const mir::ExprId instance = BuildEnclosingScopeReceiver(
+                  e.Frame(), Unit(), mir::EnclosingHops{below.scopes_out});
+              return e.Block().exprs.Add(
+                  mir::Expr{
+                      .data =
+                          mir::CallExpr{
+                              .callee =
+                                  mir::Direct{
+                                      .target = support::BuiltinFn::
+                                          kHierarchicalPathOf,
+                                      .receiver = BuildObjectDeref(
+                                          Unit(), e.Block(), instance)},
+                              .arguments = {e.String(
+                                  below.text.empty()
+                                      ? own_name
+                                      : std::format(
+                                            "{}.{}", below.text, own_name))}},
+                      .type = Unit().builtins.string});
+            },
+            [&](const hir::WholeName&) {
+              const std::string& home = u_->Hir().source_name;
+              return e.String(
+                  std::format(
+                      "{}::{}", home.empty() ? std::string{"$unit"} : home,
+                      support::DisplayOf(path)));
+            }},
+        decl_->declared_in);
   }
 
   // The record of the instance, kept by the first class of the lineage.
@@ -1826,8 +1857,7 @@ class ClassWriter {
         mir::LocalDeclStmt{
             .target = found,
             .init = e.Call(
-                std::nullopt, Refs().registry, "type_named",
-                {e.String(TypeName())})});
+                std::nullopt, Refs().registry, "type_named", {TypeName(e)})});
     const AccessPath declared = e.LibraryProperty(
         e.Block().ReadLocal(found, type), Refs().group_type, "declared");
     const mir::ExprId undeclared = BuildConditionNot(
@@ -1956,13 +1986,13 @@ class ClassWriter {
 }  // namespace
 
 CovergroupLowerer::CovergroupLowerer(
-    UnitLowerer& unit_lowerer, hir::CovergroupId covergroup,
+    UnitLowerer& unit_lowerer, const hir::ReplicatedCovergroup& covergroup,
     const StructuralScopeLowerer* declaring_scope)
     : unit_lowerer_(&unit_lowerer),
-      covergroup_(covergroup),
-      decl_(&unit_lowerer.Hir().covergroups.Get(covergroup)),
+      covergroup_(covergroup.id),
+      decl_(&covergroup.code),
       declaring_scope_(declaring_scope),
-      class_id_(unit_lowerer.CovergroupClassIdentity(covergroup)) {
+      class_id_(unit_lowerer.CovergroupClassIdentity(covergroup.id)) {
 }
 
 void CovergroupLowerer::DeclareShape(
@@ -2042,7 +2072,9 @@ void CovergroupLowerer::DeclareShape(
       unit.types.Intern(
           mir::Type{mir::RuntimeLibraryType{
               .kind = mir::RuntimeLibraryKind::kCancellationTarget}}));
-  unit_lowerer.DefineClassShape(class_id_, std::move(shape));
+  if (!unit_lowerer.HasClassShape(class_id_)) {
+    unit_lowerer.DefineClassShape(class_id_, std::move(shape));
+  }
 }
 
 auto CovergroupLowerer::PopulateBodies(
@@ -2092,8 +2124,27 @@ auto CovergroupLowerer::PopulateBodies(
       unit_lowerer, covergroup_, *decl_, declaring_scope_, scopes_, cls,
       class_id_, owner, type_event_);
   if (auto r = writer.Write(); !r) return r;
-  unit.DefineClass(class_id_, std::move(cls));
+  // What the class states is the same from every body declaring the
+  // covergroup once its code has moved, so whichever body is lowered first
+  // states it.
+  if (shape.declaring_instance.has_value()) {
+    MoveCodeIntoBody(
+        unit_lowerer, class_id_, cls, declaring_frame,
+        declaring_scope_->PublishedClassId());
+  }
+  if (!unit.classes.IsDefined(class_id_)) {
+    unit.DefineClass(class_id_, std::move(cls));
+  }
   return {};
+}
+
+auto CovergroupOperations()
+    -> std::array<std::pair<mir::CallableId, std::string_view>, 4> {
+  return {
+      std::pair{kSample, kCovergroupSample},
+      std::pair{kMakeRecord, kCovergroupMakeRecord},
+      std::pair{kTypeRecord, kCovergroupTypeRecord},
+      std::pair{kDeclareType, kCovergroupDeclareType}};
 }
 
 auto FactorySlot(const UnitLowerer& unit_lowerer, hir::CovergroupId first)
@@ -2146,10 +2197,9 @@ auto HoldsObject(
 
 auto LowerCovergroupFactory(
     UnitLowerer& unit_lowerer, const WalkFrame& owner, const ClassShape& shape,
-    hir::CovergroupId covergroup) -> diag::Result<mir::CallableCode> {
+    hir::CovergroupId covergroup, const hir::CovergroupDecl& decl)
+    -> diag::Result<mir::CallableCode> {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  const hir::CovergroupDecl& decl =
-      unit_lowerer.Hir().covergroups.Get(covergroup);
   const hir::CovergroupId self = covergroup;
   const CovergroupClass own = CovergroupClassOf(unit_lowerer, self);
   SynthesizedFunction function(
@@ -2202,13 +2252,13 @@ auto LowerCovergroupFactory(
 
 void AddEmbeddedBlockEvents(
     UnitLowerer& unit_lowerer, hir::ClassId embedding,
-    BlockEventTriggers& triggers) {
+    const hir::StructuralScope& replicating, BlockEventTriggers& triggers) {
   const hir::ClassDeclaration& holder =
       unit_lowerer.Hir().classes.Declaration(embedding);
   for (const hir::CovergroupId covergroup :
        hir::EmbeddedCovergroupsOf(holder.methods)) {
     const auto* at_blocks = std::get_if<hir::SampledAtBlocks>(
-        &unit_lowerer.Hir().covergroups.Get(covergroup).sampling);
+        &hir::CodeOf(replicating, covergroup).sampling);
     if (at_blocks == nullptr) continue;
     for (const hir::FieldId field : holder.properties.Ids()) {
       const hir::TypeId type = holder.properties.Get(field).type;

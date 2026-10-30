@@ -266,8 +266,10 @@ auto UnitLowerer::LowerBodies(
     }
   }
   RequireEveryClassBodyLowered();
+  if (auto covergroups = ReadSignaturesOfNamedCovergroups(); !covergroups) {
+    return std::unexpected(std::move(covergroups.error()));
+  }
   ReadPendingDeclarations();
-  ReadSignaturesOfNamedCovergroups();
   ReadTypeDefinitions();
   hir::Verify(unit_, own->construction);
   unit_.body_name = implementations.Intern(specialization_, unit_);
@@ -967,13 +969,6 @@ auto UnitLowerer::DeclaringScopeHopsFrom(
         "from here is not yet supported");
   }
   return *hops;
-}
-
-auto UnitLowerer::TakeReplicatedClasses(const slang::ast::Scope& scope)
-    -> std::vector<hir::ClassId> {
-  const auto it = classes_by_scope_.find(&scope);
-  if (it == classes_by_scope_.end()) return {};
-  return std::move(it->second);
 }
 
 void UnitLowerer::MapStructuralDataObjectBinding(

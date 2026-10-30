@@ -16,7 +16,7 @@
 #include "lyra/base/pool_id.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/diag/source_span.hpp"
-#include "lyra/hir/class_ref.hpp"
+#include "lyra/hir/class_id.hpp"
 #include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/fixed_name.hpp"
@@ -371,7 +371,8 @@ struct CoverageLibraryRefs {
 // class registry holds its classes. A covergroup this unit declares is
 // nameable from the moment the source names it, as a class is (LRM 26.3); one
 // of another unit enters under the pair every unit names it by, the first time
-// it is named, and a pair naming this unit lands on its own covergroup.
+// it is named, and a pair naming this unit lands on its own covergroup. What a
+// covergroup's bodies do is the code of the scope replicating it, held there.
 class CovergroupRegistry {
  public:
   explicit CovergroupRegistry(std::string unit_name)
@@ -425,10 +426,6 @@ class CovergroupRegistry {
     return published_.Get(id);
   }
 
-  void Define(CovergroupId id, CovergroupDecl decl) {
-    decls_.Define(id, std::move(decl));
-  }
-
   [[nodiscard]] auto KeyOf(CovergroupId id) const -> const CovergroupKey& {
     return identities_.KeyOf(id);
   }
@@ -440,15 +437,6 @@ class CovergroupRegistry {
   // Whether this unit declares the covergroup.
   [[nodiscard]] auto IsOwn(CovergroupId id) const -> bool {
     return identities_.IsOwn(id);
-  }
-
-  // The declaration of a covergroup this unit declares.
-  [[nodiscard]] auto Get(CovergroupId id) const -> const CovergroupDecl& {
-    return decls_.Get(id);
-  }
-
-  [[nodiscard]] auto IsDefined(CovergroupId id) const -> bool {
-    return decls_.IsDefined(id);
   }
 
   [[nodiscard]] auto Ids() const -> base::IdRange<CovergroupId> {
@@ -474,14 +462,12 @@ class CovergroupRegistry {
   auto Enter(CovergroupKey key) -> CovergroupId {
     const auto [id, entered] = identities_.Enter(std::move(key));
     if (entered) {
-      decls_.Declare();
       published_.Declare();
     }
     return id;
   }
 
   KeyedIdentities<CovergroupKey, CovergroupId> identities_;
-  base::Registry<CovergroupDecl, CovergroupId> decls_;
   base::Registry<PublishedCovergroup, CovergroupId> published_;
 };
 

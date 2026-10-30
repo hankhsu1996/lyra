@@ -133,9 +133,10 @@ many of them it works on at a time.
    they come out as, each realization extending it and found by comparing what the blocks state. A
    unit is the same one level out: instances whose code comes out differently are one unit compiled
    to more than one body, each a compilation of its own that states the classes the unit published
-   alike, so the link keeps one of each. A referrer names the published class and is unaffected by
-   how many realizations stand beneath it, so a body edit that changes the count changes nothing a
-   referrer read.
+   and the classes it declares alike, so the link keeps one of each; what a declared class's
+   operations do is the code of each body, reached through the instance an object belongs to. A
+   referrer names the published class and is unaffected by how many realizations stand beneath it,
+   so a body edit that changes the count changes nothing a referrer read.
 
 9. **The design's own link-level unit is a unit, and invariant 2 binds it.** A design needs one
    artifact nothing in the source declares -- the one whose construct elaborates the design by
